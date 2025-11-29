@@ -2,7 +2,7 @@
 
 > Reactive UI with zero boilerplate.
 
-Fict is a tiny (6kb) UI library where you write plain JavaScript and the compiler figures out the reactivity.
+Fict is a tiny UI library where you write plain JavaScript and the compiler figures out the reactivity.
 
 - `$state` for reactive data
 - `$effect` for side effects
@@ -15,7 +15,7 @@ function Counter() {
   let count = $state(0)
   const doubled = count * 2  // auto-derived
 
-  return <button onClick={() => count++}>{doubled}
+  return <button onClick={() => count++}>{doubled}</button>
 }
 ```
 
