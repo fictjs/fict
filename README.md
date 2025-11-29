@@ -12,10 +12,10 @@ No `useMemo`. No dependency arrays. No `.value`. Just JavaScript.
 
 ```jsx
 function Counter() {
-  let count = $state(0)
-  const doubled = count * 2  // auto-derived
+  let count = $state(0);
+  const doubled = count * 2; // auto-derived
 
-  return <button onClick={() => count++}>{doubled}</button>
+  return <button onClick={() => count++}>{doubled}</button>;
 }
 ```
 
@@ -27,7 +27,7 @@ real data. Fict makes that fiction explicit, testable, and trivial to write.
 ## Status
 
 > ⚠️ **Experimental / pre-alpha**  
-> Fict is a design-driven experiment in what a “fiction-first” UI model and a compiler-powered DX could look like.  
+> Fict is a design-driven experiment in what a "fiction-first" UI model and a compiler-powered DX could look like.  
 > **Do not** ship critical production code with it yet.
 
 ---
@@ -56,7 +56,7 @@ What's happening here:
 - `count` is a real `number`, not `Ref<number>` or `() => number`.
 - You **read and write** it with normal JS (`count++`, `count = count + 1`).
 - `doubled` is just a plain expression; Fict tracks it as a derived value.
-- `$effect` marks “this code touches the outside world”.
+- `$effect` marks "this code touches the outside world".
 
 Only two things are special:
 
@@ -66,6 +66,7 @@ Only two things are special:
 Everything else is ordinary TypeScript + JSX.
 
 ## Quick Start
+
 ```bash
 # Not published yet — clone and build locally
 git clone https://github.com/fictjs/fict.git
@@ -79,32 +80,34 @@ pnpm dev
 ### Example: The "Add to Cart" fiction
 
 **Reality:**
+
 ```ts
 // What actually happens
 const addToCart = async (item) => {
-  const result = await api.cart.add(item)  // Takes 500ms
-  return result
-}
+  const result = await api.cart.add(item); // Takes 500ms
+  return result;
+};
 ```
 
 **Fiction (what the user experiences):**
+
 ```tsx
 function AddToCartButton({ item }) {
-  let status = $state<'idle' | 'adding' | 'added'>('idle')
-  
+  let status = $state<"idle" | "adding" | "added">("idle");
+
   const handleClick = async () => {
-    status = 'adding'      // Instant feedback (fiction)
-    await addToCart(item)  // Reality catches up
-    status = 'added'       // Fiction updated
-  }
-  
+    status = "adding"; // Instant feedback (fiction)
+    await addToCart(item); // Reality catches up
+    status = "added"; // Fiction updated
+  };
+
   return (
-    <button onClick={handleClick} disabled={status === 'adding'}>
-      {status === 'idle' && 'Add to Cart'}
-      {status === 'adding' && 'Adding...'}
-      {status === 'added' && '✓ Added'}
+    <button onClick={handleClick} disabled={status === "adding"}>
+      {status === "idle" && "Add to Cart"}
+      {status === "adding" && "Adding..."}
+      {status === "added" && "✓ Added"}
     </button>
-  )
+  );
 }
 ```
 
@@ -112,59 +115,63 @@ The user sees a story: "I clicked → it's working → done!"
 The reality is slower. Fict helps you write that story clearly.
 
 ### Conditional rendering
+
 ```tsx
 function App() {
-  let show = $state(true)
-  
+  let show = $state(true);
+
   return (
     <div>
       {show && <Modal />}
       {show ? <A /> : <B />}
     </div>
-  )
+  );
 }
 ```
 
 No `<Show>` or `{#if}` — just JavaScript.
 
 ### List rendering
+
 ```tsx
 function TodoList() {
   let todos = $state([
-    { id: 1, text: 'Learn Fict' },
-    { id: 2, text: 'Build something' }
-  ])
-  
+    { id: 1, text: "Learn Fict" },
+    { id: 2, text: "Build something" },
+  ]);
+
   return (
     <ul>
-      {todos.map(todo => (
+      {todos.map((todo) => (
         <li key={todo.id}>{todo.text}</li>
       ))}
     </ul>
-  )
+  );
 }
 ```
 
 No `<For>` or `v-for` — just `.map()`.
 
 ### What does Fict compile to?
+
 ```tsx
 // Your code
-let count = $state(0)
-const doubled = count * 2
+let count = $state(0);
+const doubled = count * 2;
 
-return <div>{doubled}</div>
+return <div>{doubled}</div>;
 ```
+
 ```tsx
 // Conceptually compiles to (simplified)
-const [$count, setCount] = createSignal(0)
-const $doubled = createMemo(() => $count() * 2)
+const [$count, setCount] = createSignal(0);
+const $doubled = createMemo(() => $count() * 2);
 
 return (() => {
-  const div = document.createElement('div')
-  createEffect(() => div.textContent = $doubled())
-  return div
-})()
+  const div = document.createElement("div");
+  createEffect(() => (div.textContent = $doubled()));
+  return div;
+})();
 ```
 
 You don't write this. Fict does.
@@ -173,9 +180,9 @@ You don't write this. Fict does.
 
 ## Why Fict?
 
-### 1. UI as a fiction layer, not just “views”
+### 1. UI as a fiction layer, not just "views"
 
-Most frameworks treat UI as “whatever your components render right now”. Fict is explicit about the gap between **reality** and **what the user sees**:
+Most frameworks treat UI as "whatever your components render right now". Fict is explicit about the gap between **reality** and **what the user sees**:
 
 - **Reality** = your domain state: data, business rules, permissions.
 - **Fiction** = a carefully constructed illusion on top of that state:
@@ -189,7 +196,7 @@ Most frameworks treat UI as “whatever your components render right now”. Fic
 Fict makes that fiction layer:
 
 - **First-class**: you write it as straight TypeScript, not scattered across hooks and templates.
-- **Testable**: you can assert on the narrative: “given this state, the user sees this story”.
+- **Testable**: you can assert on the narrative: "given this state, the user sees this story".
 - **Versionable**: product / design can evolve the fiction without rewriting the data layer.
 
 > Fict’s design goal:
@@ -222,7 +229,7 @@ Everything else – derived values, props, control flow, lists – is just **pla
 
 ---
 
-### 3. Derived values are “just expressions”
+### 3. Derived values are "just expressions"
 
 No more:
 
@@ -294,7 +301,7 @@ export function Greeting({ name, age = 18, onClick }: GreetingProps) {
 }
 ```
 
-No `defineProps`, no `toRefs`, no “don’t destructure or you lose reactivity” surprises.
+No `defineProps`, no `toRefs`, no "don’t destructure or you lose reactivity" surprises.
 Fict’s compiler keeps props reactive under the hood.
 
 ---
@@ -330,7 +337,7 @@ const $doubled = () => $count() * 2;
 const click = () => console.log("now", $doubled());
 ```
 
-You don’t write getters. You just get the “always current” behavior you expect.
+You don’t write getters. You just get the "always current" behavior you expect.
 
 ---
 
@@ -356,7 +363,7 @@ No `Ref<T>`, no `Signal<T>`, no `Accessor<T>` leaking into your IDE:
 
 ### 7. Less boilerplate for common tasks
 
-A typical “fetch & show” component in Fict:
+A typical "fetch & show" component in Fict:
 
 ```tsx
 import { $state, $effect } from "fict";
@@ -432,7 +439,7 @@ You never write `createMemo` / `$derived` / `computed`.
 
 ### `$effect(fn)`
 
-Mark “this code touches the outside world”:
+Mark "this code touches the outside world":
 
 ```ts
 $effect(() => {
@@ -454,8 +461,97 @@ Rules:
 
   - cleanup runs first (if you returned one)
   - then the effect runs again
+  - Async effects can return a cleanup that cancels in-flight work.
 
-- Async effects can return a cleanup that cancels in-flight work.
+### Async effects: dependency boundary
+
+Dependencies are tracked only during the **synchronous part** of an effect:
+
+```ts
+$effect(async () => {
+  // ✅ These reads are tracked
+  console.log(userId);
+
+  const data = await fetchUser(userId);
+
+  // ⚠️ Reads after `await` are NOT tracked
+  // If `somethingElse` changes, this effect won't re-run
+  console.log(somethingElse);
+});
+```
+
+If you need to track dependencies after async boundaries, structure your effect to read all dependencies upfront.
+
+### Handling race conditions
+
+When `userId` changes rapidly, you want to cancel in-flight requests:
+
+```tsx
+$effect(() => {
+  const controller = new AbortController();
+
+  loading = true;
+  fetch(`/api/user/${userId}`, { signal: controller.signal })
+    .then((res) => res.json())
+    .then((data) => {
+      user = data;
+      loading = false;
+    })
+    .catch((err) => {
+      if (err.name !== "AbortError") {
+        error = err.message;
+        loading = false;
+      }
+    });
+
+  return () => controller.abort(); // cleanup cancels the request
+});
+```
+
+Each time `userId` changes:
+
+1. Previous effect's cleanup runs → aborts old request
+2. New effect runs → starts new request
+
+### Error boundaries (planned)
+
+```tsx
+import { ErrorBoundary } from "fict";
+
+function App() {
+  return (
+    <ErrorBoundary fallback={(err) => <ErrorPage error={err} />}>
+      <RiskyWidget />
+    </ErrorBoundary>
+  );
+}
+```
+
+- Catches errors thrown during render or inside `$effect` in the wrapped subtree.
+- `fallback` can be JSX or a function `(error) => JSX` that receives the thrown value.
+- Boundary tries to recover when the error condition clears; a `reset` helper may be exposed for manual retries.
+- Intended to work alongside `resource`/`transition` without crashing the rest of the app.
+
+### onMount / onDestroy vs $effect
+
+|                     | $effect               | onMount            | onDestroy         |
+| ------------------- | --------------------- | ------------------ | ----------------- |
+| Dependency tracking | ✅ Auto-tracked       | ❌ None            | ❌ None           |
+| Execution timing    | When deps change      | Mount only         | Unmount only      |
+| Typical use         | Reactive side effects | Init / Measure DOM | Cleanup resources |
+
+```ts
+// $effect: Re-runs when userId changes
+$effect(() => {
+  fetchUser(userId);
+});
+
+// onMount: Runs once on mount
+onMount(() => {
+  const rect = element.getBoundingClientRect();
+  initAnimation(rect);
+});
+```
 
 ### Components as single-execution functions
 
@@ -476,7 +572,7 @@ Very roughly:
 
 - **vs React + Compiler**
 
-  - similar “auto-derived” ambition
+  - similar "auto-derived" ambition
   - but with **mutable assignments** (`count++`) and no setters
   - components run once, no VDOM required
 
@@ -503,9 +599,25 @@ If you like the **reading experience** of Svelte 5 / Vue SFCs, but want:
 
 - TSX
 - fewer concepts
-- and a stronger “UI as fiction over state” philosophy
+- and a stronger "UI as fiction over state" philosophy
 
 …Fict is aimed squarely at that spot.
+
+---
+
+## Detailed comparison
+
+| Feature           | React+Compiler | Solid            | Svelte 5         | Vue 3             | Fict             |
+| ----------------- | -------------- | ---------------- | ---------------- | ----------------- | ---------------- |
+| State syntax      | `useState()`   | `createSignal()` | `$state()`       | `ref()`           | `$state()`       |
+| Read state        | `count`        | `count()`        | `count`          | `count.value`     | `count`          |
+| Update state      | `setCount(n)`  | `setCount(n)`    | `count = n`      | `count.value = n` | `count = n`      |
+| Derived values    | auto           | `createMemo()`   | `$derived()`     | `computed()`      | **auto**         |
+| Effect deps       | auto           | auto             | auto             | auto              | auto             |
+| Props destructure | ✅             | ❌               | via `$props()`   | via `toRefs()`    | ✅               |
+| Control flow      | native JS      | `<Show>/<For>`   | `{#if}/{#each}`  | `v-if/v-for`      | native JS        |
+| File format       | `.tsx`         | `.tsx`           | `.svelte`        | `.vue`            | `.tsx`           |
+| Rendering         | VDOM           | fine-grained DOM | fine-grained DOM | fine-grained DOM  | fine-grained DOM |
 
 ---
 
@@ -523,7 +635,7 @@ The current focus is:
 
 1. Compiler & runtime core (`$state`, automatic derivations, `$effect`)
 2. Correct semantics in tricky cases (events, async effects, control flow)
-3. Tooling: diagnostics & DevTools that can explain “why did this update?”
+3. Tooling: diagnostics & DevTools that can explain "why did this update?"
 
 ---
 
@@ -548,11 +660,12 @@ Planned areas (subject to change):
 
   - [ ] Vite plugin
   - [ ] ESLint rules for common footguns
-  - [ ] DevTools panel (inspect graph, “why did this rerender?”)
+  - [ ] DevTools panel (inspect graph, "why did this rerender?")
+  - [ ] TypeScript language service plugin (keeps types/go-to-def aligned with compiled signals)
 
 - **Docs**
 
-  - [ ] Deeper “Fiction UI” guide – how to design the narrative layer
+  - [ ] Deeper "Fiction UI" guide – how to design the narrative layer
   - [ ] Migration notes from React / Vue / Svelte / Solid
   - [ ] Patterns for forms, lists, async flows
 
@@ -575,9 +688,10 @@ In theory, yes – they all compile to JS – but there is no official integrati
 ### How does Fict handle arrays/objects?
 
 Default: whole-value tracking (immutable style recommended)
+
 ```ts
-let todos = $state([])
-todos = [...todos, newTodo]  // ✅ Triggers update
+let todos = $state([]);
+todos = [...todos, newTodo]; // ✅ Triggers update
 ```
 
 For deep mutations, use `$store` from `fict/plus` (coming soon).
@@ -599,6 +713,7 @@ Target: ~6kb gzipped (core only).
 ### TypeScript setup
 
 Fict works with standard `tsconfig.json`:
+
 ```json
 {
   "compilerOptions": {
@@ -609,6 +724,8 @@ Fict works with standard `tsconfig.json`:
 ```
 
 Types flow naturally — `$state(0)` gives you `number`, not `Signal<number>`.
+
+Planned: a TypeScript language service plugin so IDEs stay aware of the compiler transforms (go-to-definition and quick info still point to your source symbols, not the lowered signal wrappers).
 
 ## Contributing
 
