@@ -1,22 +1,20 @@
-name: Release
+name: Version
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
-  release:
-    name: Release
+  version:
+    name: Version Packages
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      packages: write
-      id-token: write
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v4
@@ -31,13 +29,14 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
-          registry-url: https://registry.npmjs.org/
 
       - run: pnpm install
-      - run: pnpm build
 
-      - name: Publish to NPM
-        run: pnpm release
+      - name: Create Version Pull Request
+        uses: changesets/action@v1
+        with:
+          version: pnpm changeset version
+          title: 'chore(release): version packages'
+          commit: 'chore(release): version packages'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
