@@ -16,6 +16,7 @@ interface TransformContext {
   helpersUsed: HelperUsage
   factory: ts.NodeFactory
   context: ts.TransformationContext
+  sourceFile: ts.SourceFile
 }
 
 interface HelperUsage {
@@ -68,7 +69,8 @@ export function createFictTransformer(
         helpersUsed,
         factory,
         context,
-      }
+    sourceFile,
+  }
 
       const visitor = createVisitor(ctx)
       const transformed = (ts.visitNode(sourceFile, visitor) ?? sourceFile) as ts.SourceFile
@@ -198,6 +200,7 @@ function handleFunctionWithShadowing(
     helpersUsed,
     factory,
     context,
+    sourceFile: ctx.sourceFile,
   }
 
   // Create inner visitor with new context
@@ -253,7 +256,10 @@ function handleVariableDeclaration(
   const visitedInit = ts.visitNode(node.initializer, visitor) as ts.Expression
 
   // Handle $state declarations
-  if (isStateCall(visitedInit)) {
+    if (isStateCall(visitedInit)) {
+      if (isInsideLoop(node)) {
+      throw new Error(formatError(ctx.sourceFile, node, '$state() cannot be declared inside loops'))
+    }
     stateVars.add(node.name.text)
     helpersUsed.signal = true
 
@@ -279,21 +285,41 @@ function handleVariableDeclaration(
     dependsOnTracked(node.initializer, stateVars, memoVars, shadowedVars)
   ) {
     memoVars.add(node.name.text)
-    helpersUsed.memo = true
 
-    const memoCall = factory.createCallExpression(
-      factory.createIdentifier(RUNTIME_ALIASES.memo),
+    const useGetterOnly = shouldEmitGetter(node.name.text, ctx)
+    if (!useGetterOnly) {
+      helpersUsed.memo = true
+      const memoCall = factory.createCallExpression(
+        factory.createIdentifier(RUNTIME_ALIASES.memo),
+        undefined,
+        [
+          factory.createArrowFunction(
+            undefined,
+            undefined,
+            [],
+            undefined,
+            factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+            visitedInit,
+          ),
+        ],
+      )
+
+      return factory.updateVariableDeclaration(
+        node,
+        node.name,
+        node.exclamationToken,
+        node.type,
+        memoCall,
+      )
+    }
+
+    const getter = factory.createArrowFunction(
       undefined,
-      [
-        factory.createArrowFunction(
-          undefined,
-          undefined,
-          [],
-          undefined,
-          factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
-          visitedInit,
-        ),
-      ],
+      undefined,
+      [],
+      undefined,
+      factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+      visitedInit,
     )
 
     return factory.updateVariableDeclaration(
@@ -301,7 +327,7 @@ function handleVariableDeclaration(
       node.name,
       node.exclamationToken,
       node.type,
-      memoCall,
+      getter,
     )
   }
 
@@ -531,6 +557,130 @@ function isTrackedAndNotShadowed(
   shadowedVars: Set<string>,
 ): boolean {
   return (stateVars.has(name) || memoVars.has(name)) && !shadowedVars.has(name)
+}
+
+/**
+ * Detect whether a node is inside a loop statement
+ */
+function isInsideLoop(node: ts.Node): boolean {
+  let current: ts.Node | undefined = node
+  while (current) {
+    if (
+      ts.isForStatement(current) ||
+      ts.isForInStatement(current) ||
+      ts.isForOfStatement(current) ||
+      ts.isWhileStatement(current) ||
+      ts.isDoStatement(current)
+    ) {
+      return true
+    }
+    if (ts.isSourceFile(current)) break
+    current = current.parent
+  }
+  return false
+}
+
+/**
+ * Format an error with line/column info
+ */
+function formatError(sourceFile: ts.SourceFile, node: ts.Node, message: string): string {
+  const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart())
+  return `${message} (at ${sourceFile.fileName}:${line + 1}:${character + 1})`
+}
+
+/**
+ * Determine if a tracked variable is used in a reactive context (JSX non-event or $effect)
+ * If not, it can be emitted as a getter-only derived value.
+ */
+function shouldEmitGetter(name: string, ctx: TransformContext): boolean {
+  const { sourceFile } = ctx
+  let reactive = false
+  let eventUsage = false
+  let otherUsage = false
+
+  const visit = (node: ts.Node, shadow: Set<string>): void => {
+    if (!node || reactive) return
+
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node)
+    ) {
+      const nextShadow = new Set(shadow)
+      const params = collectParameterNames(node.parameters)
+      for (const p of params) nextShadow.add(p)
+      ts.forEachChild(node, child => visit(child, nextShadow))
+      return
+    }
+
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const nextShadow = new Set(shadow)
+      nextShadow.add(node.name.text)
+      if (node.initializer) visit(node.initializer, nextShadow)
+      return
+    }
+
+    if (ts.isIdentifier(node) && node.text === name && !shadow.has(name)) {
+      if (isInReactiveJsx(node) || isInsideEffect(node)) {
+        reactive = true
+        return
+      }
+      if (isInEventHandler(node)) {
+        eventUsage = true
+      } else {
+        otherUsage = true
+      }
+    }
+
+    ts.forEachChild(node, child => visit(child, shadow))
+  }
+
+  visit(sourceFile, new Set())
+  if (reactive || otherUsage) return false
+  return eventUsage
+}
+
+function isInsideEffect(node: ts.Node): boolean {
+  let current: ts.Node | undefined = node
+  while (current) {
+    if (
+      ts.isCallExpression(current) &&
+      ts.isIdentifier(current.expression) &&
+      current.expression.text === '$effect'
+    ) {
+      return true
+    }
+    current = current.parent
+  }
+  return false
+}
+
+function isInReactiveJsx(node: ts.Node): boolean {
+  let current: ts.Node | undefined = node
+  while (current) {
+    if (ts.isJsxAttribute(current)) {
+      const name = current.name.getText()
+      if (isEventHandler(name) || NON_REACTIVE_ATTRS.has(name)) {
+        return false
+      }
+      return true
+    }
+    if (ts.isJsxExpression(current)) return true
+    current = current.parent
+  }
+  return false
+}
+
+function isInEventHandler(node: ts.Node): boolean {
+  let current: ts.Node | undefined = node
+  while (current) {
+    if (ts.isJsxAttribute(current)) {
+      const name = current.name.getText()
+      return isEventHandler(name)
+    }
+    current = current.parent
+  }
+  return false
 }
 
 /**
