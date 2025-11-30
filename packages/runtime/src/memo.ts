@@ -7,5 +7,5 @@ export function createMemo<T>(fn: () => T): Memo<T> {
 }
 
 export function fromSignal<T>(signal: Signal<T>): Memo<T> {
-  return () => signal
+  return signal as unknown as Memo<T>
 }
