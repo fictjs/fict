@@ -213,12 +213,62 @@ function applyStyle(el: HTMLElement, value: unknown): void {
       if (v != null) {
         // Handle camelCase to kebab-case conversion
         const cssProperty = prop.replace(/([A-Z])/g, '-$1').toLowerCase()
-        el.style.setProperty(cssProperty, typeof v === 'number' ? `${v}px` : v)
+        const unitless = isUnitlessStyleProperty(prop) || isUnitlessStyleProperty(cssProperty)
+        const valueStr = typeof v === 'number' && !unitless ? `${v}px` : String(v)
+        el.style.setProperty(cssProperty, valueStr)
       }
     }
   } else {
     el.style.cssText = ''
   }
+}
+
+const UNITLESS_STYLES = new Set([
+  'animationIterationCount',
+  'borderImageOutset',
+  'borderImageSlice',
+  'borderImageWidth',
+  'boxFlex',
+  'boxFlexGroup',
+  'boxOrdinalGroup',
+  'columnCount',
+  'columns',
+  'flex',
+  'flexGrow',
+  'flexPositive',
+  'flexShrink',
+  'flexNegative',
+  'flexOrder',
+  'gridRow',
+  'gridRowEnd',
+  'gridRowSpan',
+  'gridRowStart',
+  'gridColumn',
+  'gridColumnEnd',
+  'gridColumnSpan',
+  'gridColumnStart',
+  'fontWeight',
+  'lineClamp',
+  'lineHeight',
+  'opacity',
+  'order',
+  'orphans',
+  'tabSize',
+  'widows',
+  'zIndex',
+  'zoom',
+  'fillOpacity',
+  'floodOpacity',
+  'stopOpacity',
+  'strokeDasharray',
+  'strokeDashoffset',
+  'strokeMiterlimit',
+  'strokeOpacity',
+  'strokeWidth',
+])
+
+function isUnitlessStyleProperty(prop: string): boolean {
+  return UNITLESS_STYLES.has(prop)
 }
 
 // ============================================================================
@@ -421,8 +471,8 @@ export function createChildBinding(
 export function createConditional(
   condition: () => boolean,
   renderTrue: () => FictNode,
+  createElementFn: CreateElementFn,
   renderFalse?: () => FictNode,
-  createElementFn?: CreateElementFn,
 ): BindingHandle {
   // Create a fragment with start and end markers
   const fragment = document.createDocumentFragment()
@@ -529,8 +579,8 @@ export type KeyFn<T> = (item: T, index: number) => string | number
 export function createList<T>(
   items: () => T[],
   renderItem: (item: T, index: number) => FictNode,
+  createElementFn: CreateElementFn,
   getKey?: KeyFn<T>,
-  createElementFn?: CreateElementFn,
 ): BindingHandle {
   // Create a fragment with start and end markers
   const fragment = document.createDocumentFragment()

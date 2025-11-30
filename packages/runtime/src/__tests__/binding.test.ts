@@ -244,8 +244,8 @@ describe('Reactive DOM Binding', () => {
       const { marker, dispose } = createConditional(
         () => show(),
         () => 'TRUE',
-        () => 'FALSE',
         createElement,
+        () => 'FALSE',
       )
       // marker is now a fragment - append it to container
       container.appendChild(marker)
@@ -267,8 +267,8 @@ describe('Reactive DOM Binding', () => {
       const { marker, dispose } = createConditional(
         () => show(),
         () => 'CONTENT',
-        undefined,
         createElement,
+        undefined,
       )
       container.appendChild(marker)
 
@@ -288,8 +288,8 @@ describe('Reactive DOM Binding', () => {
       const { marker, dispose } = createList(
         () => items(),
         item => item,
-        item => item,
         createElement,
+        item => item,
       )
       container.appendChild(marker)
 
@@ -304,8 +304,8 @@ describe('Reactive DOM Binding', () => {
       const { marker, dispose } = createList(
         () => items(),
         item => item,
-        item => item,
         createElement,
+        item => item,
       )
       container.appendChild(marker)
 
@@ -334,8 +334,8 @@ describe('Reactive DOM Binding', () => {
           renderCounts.set(item.id, (renderCounts.get(item.id) || 0) + 1)
           return item.text
         },
-        item => item.id,
         createElement,
+        item => item.id,
       )
       container.appendChild(marker)
 
