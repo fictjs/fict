@@ -13,7 +13,7 @@ export default tseslint.config(
       '**/*.d.ts',
       '**/build/**',
       '**/.vitepress/**',
-      '.cz-config.js',
+      '.cz-config.cjs',
     ],
   },
   eslint.configs.recommended,

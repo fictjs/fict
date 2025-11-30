@@ -1,6 +1,7 @@
 {
   "name": "fict-monorepo",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@9.1.1",
   "engines": {
     "node": ">=20.0.0",
@@ -79,7 +80,7 @@
       "path": "./node_modules/cz-customizable"
     },
     "cz-customizable": {
-      "config": ".cz-config.js"
+      "config": ".cz-config.cjs"
     }
   }
 }
