@@ -46,6 +46,7 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "clean": "rm -rf dist coverage"
