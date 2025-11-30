@@ -9,10 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "fict-runtime": "workspace:*"
+    "fict": "workspace:*"
   },
   "devDependencies": {
-    "fict-vite-plugin": "workspace:*",
     "typescript": "^5.9.3",
     "vite": "^7.2.4"
   }

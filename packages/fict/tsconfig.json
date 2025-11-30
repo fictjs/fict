@@ -23,7 +23,8 @@
     "declarationMap": true,
     "sourceMap": true,
     "skipLibCheck": true,
-    "baseUrl": ".",
+    "baseUrl": "../..",
+    "outDir": "dist",
     "paths": {
       "fict": ["packages/fict/src"],
       "fict/*": ["packages/fict/src/*"],
@@ -36,5 +37,6 @@
       "fict-devtools": ["packages/devtools/src"]
     }
   },
-  "exclude": ["node_modules", "dist", "coverage"]
+  "include": ["src"],
+  "exclude": ["node_modules", "dist", "tests"]
 }

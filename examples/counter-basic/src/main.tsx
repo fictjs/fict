@@ -1,4 +1,4 @@
-import { $state, $effect } from 'fict-runtime'
+import { $state, $effect } from 'fict'
 
 function Counter() {
   let count = $state(0)

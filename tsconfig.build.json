@@ -1,6 +1,7 @@
 {
   "files": [],
   "references": [
+    { "path": "./packages/fict" },
     { "path": "./packages/runtime" },
     { "path": "./packages/compiler-ts" },
     { "path": "./packages/vite-plugin" },
