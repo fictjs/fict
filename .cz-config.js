@@ -33,7 +33,6 @@ module.exports = {
 
   scopes: [
     { name: 'runtime' },
-    { name: 'compiler' },
     { name: 'compiler-ts' },
     { name: 'compiler-swc' },
     { name: 'vite-plugin' },
@@ -43,6 +42,8 @@ module.exports = {
     { name: 'examples' },
     { name: 'deps' },
     { name: 'release' },
+    { name: 'all' },
+    { name: 'others' },
   ],
 
   allowTicketNumber: false,

@@ -1,5 +1,9 @@
 # Fict
 
+![Node CI](https://github.com/fictjs/fict/workflows/Node%20CI/badge.svg)
+![npm](https://img.shields.io/npm/v/fict.svg)
+![license](https://img.shields.io/npm/l/fict)
+
 > Reactive UI with zero boilerplate.
 
 Fict is a tiny UI library where you write plain JavaScript and the compiler figures out the reactivity.
