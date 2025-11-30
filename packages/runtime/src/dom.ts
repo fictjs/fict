@@ -12,8 +12,6 @@
  * - List rendering: `{items.map(...)}` with efficient keyed updates
  */
 
-import { Fragment } from './jsx'
-import { createRootContext, destroyRoot, flushOnMount, pushRoot, popRoot } from './lifecycle'
 import {
   createTextBinding,
   createAttributeBinding,
@@ -25,6 +23,8 @@ import {
   type AttributeSetter,
   type BindingHandle,
 } from './binding'
+import { Fragment } from './jsx'
+import { createRootContext, destroyRoot, flushOnMount, pushRoot, popRoot } from './lifecycle'
 import type { DOMElement, FictNode, FictVNode } from './types'
 
 // ============================================================================
@@ -153,12 +153,9 @@ function appendChildNode(parent: HTMLElement | DocumentFragment, child: FictNode
   }
 
   // Reactive child - create binding
-  if (typeof child === 'function' && (child as Function).length === 0) {
-    createChildBinding(
-      parent as HTMLElement | DocumentFragment,
-      child as () => FictNode,
-      createElement,
-    )
+  if (typeof child === 'function' && (child as () => FictNode).length === 0) {
+    const childGetter = child as () => FictNode
+    createChildBinding(parent as HTMLElement | DocumentFragment, childGetter, createElement)
     return
   }
 

@@ -1,7 +1,7 @@
 import type { ESLint } from 'eslint'
 
-import noEmptyEffect from './rules/no-empty-effect'
 import noDirectMutation from './rules/no-direct-mutation'
+import noEmptyEffect from './rules/no-empty-effect'
 import noStateInLoop from './rules/no-state-in-loop'
 
 const plugin: ESLint.Plugin = {

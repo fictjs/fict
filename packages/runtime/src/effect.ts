@@ -1,5 +1,5 @@
-import { effect } from './signal'
 import { registerRootCleanup, runCleanupList, withEffectCleanups } from './lifecycle'
+import { effect } from './signal'
 import type { Cleanup } from './types'
 
 export type Effect = () => void | Cleanup

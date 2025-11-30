@@ -6,9 +6,5 @@ export default defineConfig({
   dts: true,
   clean: true,
   sourcemap: true,
-  external: [
-    'typescript',
-    'vite',
-    'fict-compiler-ts',
-  ],
+  external: ['typescript', 'vite', 'fict-compiler-ts'],
 })

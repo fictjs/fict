@@ -23,7 +23,7 @@ function Counter() {
           style={{
             padding: '0.5rem 1rem',
             fontSize: '1rem',
-            cursor: 'pointer'
+            cursor: 'pointer',
           }}
         >
           Decrement
@@ -33,7 +33,7 @@ function Counter() {
           style={{
             padding: '0.5rem 1rem',
             fontSize: '1rem',
-            cursor: 'pointer'
+            cursor: 'pointer',
           }}
         >
           Increment
@@ -43,7 +43,7 @@ function Counter() {
           style={{
             padding: '0.5rem 1rem',
             fontSize: '1rem',
-            cursor: 'pointer'
+            cursor: 'pointer',
           }}
         >
           Reset

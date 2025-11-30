@@ -26,15 +26,7 @@ export interface FictVNode {
  * Fict Node - represents any renderable value
  * This type covers all possible values that can appear in JSX
  */
-export type FictNode =
-  | FictVNode
-  | FictNode[]
-  | Node
-  | string
-  | number
-  | boolean
-  | null
-  | undefined
+export type FictNode = FictVNode | FictNode[] | Node | string | number | boolean | null | undefined
 
 // ============================================================================
 // Reactive Types
@@ -146,9 +138,7 @@ export type StyleValue = string | number
 /** CSS style object */
 export type CSSStyleObject = {
   [K in keyof CSSStyleDeclaration]?: StyleValue
-} & {
-  [key: string]: StyleValue
-}
+} & Record<string, StyleValue>
 
 /** Style prop type - can be string or object */
 export type StyleProp = string | CSSStyleObject | null | undefined

@@ -131,23 +131,17 @@ export interface SignalAccessor<T> {
 /**
  * Computed accessor - function to get computed value
  */
-export interface ComputedAccessor<T> {
-  (): T
-}
+export type ComputedAccessor<T> = () => T
 
 /**
  * Effect disposer - function to dispose an effect
  */
-export interface EffectDisposer {
-  (): void
-}
+export type EffectDisposer = () => void
 
 /**
  * Effect scope disposer - function to dispose an effect scope
  */
-export interface EffectScopeDisposer {
-  (): void
-}
+export type EffectScopeDisposer = () => void
 
 /**
  * Options for creating a custom reactive system
@@ -225,7 +219,7 @@ export function createReactiveSystem({
     let next = link.nextSub
     let stack: StackFrame | undefined
 
-    top: do {
+    top: for (;;) {
       const sub = link.sub
       let flags = sub.flags
 
@@ -285,7 +279,7 @@ export function createReactiveSystem({
         }
       }
       break
-    } while (true)
+    }
   }
   function customCheckDirty(firstLink: Link, sub: ReactiveNode): boolean {
     let link = firstLink
@@ -293,7 +287,7 @@ export function createReactiveSystem({
     let checkDepth = 0
     let dirty = false
 
-    top: do {
+    top: for (;;) {
       const dep = link.dep
       const depFlags = dep.flags
 
@@ -354,7 +348,7 @@ export function createReactiveSystem({
       }
 
       return dirty
-    } while (true)
+    }
   }
   function customShallowPropagate(firstLink: Link): void {
     let link: Link | undefined = firstLink
@@ -475,7 +469,7 @@ function propagate(firstLink: Link): void {
   let next = link.nextSub
   let stack: StackFrame | undefined
 
-  top: do {
+  top: for (;;) {
     const sub = link.sub
     let flags = sub.flags
 
@@ -535,7 +529,7 @@ function propagate(firstLink: Link): void {
       }
     }
     break
-  } while (true)
+  }
 }
 /**
  * Check if a node is dirty by traversing its dependencies
@@ -549,7 +543,7 @@ function checkDirty(firstLink: Link, sub: ReactiveNode): boolean {
   let checkDepth = 0
   let dirty = false
 
-  top: do {
+  top: for (;;) {
     const dep = link.dep
     const depFlags = dep.flags
 
@@ -586,7 +580,9 @@ function checkDirty(firstLink: Link, sub: ReactiveNode): boolean {
       if (hasMultipleSubs) {
         link = stack!.value!
         stack = stack!.prev
-      } else link = firstSub
+      } else {
+        link = firstSub
+      }
 
       if (dirty) {
         if (update(sub)) {
@@ -608,7 +604,7 @@ function checkDirty(firstLink: Link, sub: ReactiveNode): boolean {
     }
 
     return dirty
-  } while (true)
+  }
 }
 /**
  * Shallow propagate changes without traversing deeply
@@ -645,14 +641,14 @@ function notify(effect: ReactiveNode): void {
   let insertIndex = queuedLength
   const firstInsertedIndex = insertIndex
 
-  do {
+  for (;;) {
     queued[insertIndex++] = effect as EffectNode
     const nextLink = effect.subs
     if (nextLink === undefined) break
     effect = nextLink.sub
     if (effect === undefined || !(effect.flags & Watching)) break
     effect.flags &= ~Watching
-  } while (true)
+  }
 
   queuedLength = insertIndex
 
@@ -861,12 +857,11 @@ function computedOper<T>(this: ComputedNode<T>): T {
     }
   } else if (!flags) {
     this.flags = MutableRunning
-    const prevSub = activeSub
-    activeSub = this
+    const prevSub = setActiveSub(this)
     try {
       this.value = this.getter(undefined)
     } finally {
-      activeSub = prevSub
+      setActiveSub(prevSub)
       this.flags &= ~Running
     }
   }

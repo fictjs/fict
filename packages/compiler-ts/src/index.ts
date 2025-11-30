@@ -69,8 +69,8 @@ export function createFictTransformer(
         helpersUsed,
         factory,
         context,
-    sourceFile,
-  }
+        sourceFile,
+      }
 
       const visitor = createVisitor(ctx)
       const transformed = (ts.visitNode(sourceFile, visitor) ?? sourceFile) as ts.SourceFile
@@ -259,8 +259,8 @@ function handleVariableDeclaration(
   const visitedInit = ts.visitNode(node.initializer, visitor) as ts.Expression
 
   // Handle $state declarations
-    if (isStateCall(visitedInit)) {
-      if (isInsideLoop(node)) {
+  if (isStateCall(visitedInit)) {
+    if (isInsideLoop(node)) {
       throw new Error(formatError(ctx.sourceFile, node, '$state() cannot be declared inside loops'))
     }
     stateVars.add(node.name.text)

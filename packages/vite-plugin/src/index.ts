@@ -104,9 +104,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       } catch (error) {
         // Better error handling
         const message =
-          error instanceof Error
-            ? error.message
-            : 'Unknown error during Fict transformation'
+          error instanceof Error ? error.message : 'Unknown error during Fict transformation'
 
         this.error({
           message: `[fict] Transform failed for ${id}: ${message}`,

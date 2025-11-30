@@ -690,11 +690,7 @@ export function createList<T>(
  * createShow(container, () => $visible())
  * ```
  */
-export function createShow(
-  el: HTMLElement,
-  condition: () => boolean,
-  displayValue: string = '',
-): void {
+export function createShow(el: HTMLElement, condition: () => boolean, displayValue = ''): void {
   createEffect(() => {
     el.style.display = condition() ? displayValue : 'none'
   })
