@@ -83,6 +83,12 @@ importers:
       fict:
         specifier: workspace:*
         version: link:../../packages/fict
+      fict-runtime:
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      fict-vite-plugin:
+        specifier: workspace:*
+        version: link:../../packages/vite-plugin
     devDependencies:
       typescript:
         specifier: ^5.9.3

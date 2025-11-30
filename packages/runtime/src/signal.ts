@@ -1107,7 +1107,8 @@ export default {
   createReactiveSystem,
   ReactiveFlags,
 }
-export const $state = signal
+export const $state = signal as <T>(value: T) => T
+
 let devtoolsSignalId = 0
 let devtoolsEffectId = 0
 

@@ -21,6 +21,11 @@ export namespace JSX {
     div: HTMLAttributes<HTMLDivElement>
     span: HTMLAttributes<HTMLSpanElement>
     p: HTMLAttributes<HTMLParagraphElement>
+    strong: HTMLAttributes<HTMLElement>
+    b: HTMLAttributes<HTMLElement>
+    em: HTMLAttributes<HTMLElement>
+    i: HTMLAttributes<HTMLElement>
+    small: HTMLAttributes<HTMLElement>
     a: AnchorHTMLAttributes<HTMLAnchorElement>
     button: ButtonHTMLAttributes<HTMLButtonElement>
     input: InputHTMLAttributes<HTMLInputElement>
