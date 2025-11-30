@@ -18,8 +18,10 @@ describe('fict-vite-plugin', () => {
         : transform?.handler.call({} as any, sample, '/src/Button.tsx')
     expect(result && typeof result === 'object').toBe(true)
     if (result && typeof result === 'object' && 'code' in result) {
+      // Check that $state is transformed to createSignal
       expect(result.code).toContain('__fictSignal')
-      expect(result.code).toContain('{count()}')
+      // Check that JSX reactive binding is applied: {count} -> {() => count()}
+      expect(result.code).toContain('{() => count()}')
     }
   })
 })
