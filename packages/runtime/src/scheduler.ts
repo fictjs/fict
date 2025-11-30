@@ -1,7 +1,9 @@
+import { batch as baseBatch, untrack as baseUntrack } from './signal'
+
 export function batch<T>(fn: () => T): T {
-  return fn()
+  return baseBatch(fn)
 }
 
 export function untrack<T>(fn: () => T): T {
-  return fn()
+  return baseUntrack(fn)
 }

@@ -5,7 +5,12 @@
 /**
  * Reactive node that can be either a signal, computed, effect, or effect scope
  */
-export type ReactiveNode = SignalNode<any> | ComputedNode<any> | EffectNode | EffectScopeNode | SubscriberNode
+export type ReactiveNode =
+  | SignalNode<any>
+  | ComputedNode<any>
+  | EffectNode
+  | EffectScopeNode
+  | SubscriberNode
 
 /**
  * Link between a dependency and a subscriber in the reactive graph
@@ -208,7 +213,11 @@ export const ReactiveFlags = {
  * @param options - Reactive system options
  * @returns Custom reactive system methods
  */
-export function createReactiveSystem({ update, notify: notifyFn, unwatched: unwatchedFn }: ReactiveSystemOptions): ReactiveSystem {
+export function createReactiveSystem({
+  update,
+  notify: notifyFn,
+  unwatched: unwatchedFn,
+}: ReactiveSystemOptions): ReactiveSystem {
   function customPropagate(firstLink: Link): void {
     let link = firstLink
     let next = link.nextSub
@@ -621,7 +630,9 @@ function shallowPropagate(firstLink: Link): void {
  * @returns True if the value changed
  */
 function update(node: ReactiveNode): boolean {
-  return 'getter' in node && node.getter !== undefined ? updateComputed(node as ComputedNode) : updateSignal(node as SignalNode)
+  return 'getter' in node && node.getter !== undefined
+    ? updateComputed(node as ComputedNode)
+    : updateSignal(node as SignalNode)
 }
 /**
  * Notify an effect and add it to the queue

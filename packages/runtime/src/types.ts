@@ -1,9 +1,11 @@
-export type DOMElement = HTMLElement | Text
+export type DOMElement = Node
+
+export type Cleanup = () => void
 
 export interface FictVNode {
-  type: unknown
+  type: string | symbol | ((props: Record<string, unknown>) => FictNode)
   props: Record<string, unknown> | null
   key?: string | undefined
 }
 
-export type FictNode = FictVNode | string | number | boolean | null | undefined
+export type FictNode = FictVNode | FictNode[] | Node | string | number | boolean | null | undefined

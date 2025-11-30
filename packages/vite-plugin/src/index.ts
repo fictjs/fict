@@ -1,4 +1,4 @@
-import { /* createFictTransformer, */ type FictCompilerOptions } from 'fict-compiler-ts'
+import { createFictTransformer, type FictCompilerOptions } from 'fict-compiler-ts'
 import ts from 'typescript'
 import type { Plugin, TransformResult } from 'vite'
 
@@ -11,7 +11,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const {
     include = ['**/*.tsx', '**/*.jsx'],
     exclude = ['**/node_modules/**'],
-    // ...compilerOptions
+    ...compilerOptions
   } = options
 
   return {
@@ -32,22 +32,21 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         return null
       }
 
-      const result = ts.transpileModule(code, {
-        compilerOptions: {
-          module: ts.ModuleKind.ESNext,
-          target: ts.ScriptTarget.ESNext,
-          jsx: ts.JsxEmit.Preserve,
-          // jsxImportSource: 'fict-runtime',
-        },
-        fileName: id,
-        // transformers: {
-        //   before: [createFictTransformer(ts.createProgram([id], {}), compilerOptions)],
-        // },
-      })
+      const compilerOpts: ts.CompilerOptions = {
+        module: ts.ModuleKind.ESNext,
+        target: ts.ScriptTarget.ESNext,
+        jsx: ts.JsxEmit.Preserve,
+        jsxImportSource: 'fict',
+        sourceMap: compilerOptions.sourcemap ?? true,
+      }
 
-      console.log('--- Transformed Code for', id, '---')
-      console.log(result.outputText)
-      console.log('-----------------------------------')
+      const result = ts.transpileModule(code, {
+        compilerOptions: compilerOpts,
+        fileName: id,
+        transformers: {
+          before: [createFictTransformer(null, compilerOptions)],
+        },
+      })
 
       return {
         code: result.outputText,

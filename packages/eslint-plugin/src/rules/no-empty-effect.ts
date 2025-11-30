@@ -4,7 +4,7 @@ const rule: Rule.RuleModule = {
   meta: {
     type: 'suggestion',
     docs: {
-      description: 'Ensure $effect has tracked dependencies',
+      description: 'Disallow empty $effect bodies that likely forgot to track reactive values',
       recommended: true,
     },
     messages: {
