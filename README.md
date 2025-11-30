@@ -12,10 +12,10 @@ No `useMemo`. No dependency arrays. No `.value`. Just JavaScript.
 
 ```jsx
 function Counter() {
-  let count = $state(0);
-  const doubled = count * 2; // auto-derived
+  let count = $state(0)
+  const doubled = count * 2 // auto-derived
 
-  return <button onClick={() => count++}>{doubled}</button>;
+  return <button onClick={() => count++}>{doubled}</button>
 }
 ```
 
@@ -35,19 +35,19 @@ real data. Fict makes that fiction explicit, testable, and trivial to write.
 ## Quick look
 
 ```tsx
-import { $state, $effect } from "fict";
+import { $state, $effect } from 'fict'
 
 export function Counter() {
-  let count = $state(0);
+  let count = $state(0)
 
-  const doubled = count * 2; // derived automatically
+  const doubled = count * 2 // derived automatically
 
   $effect(() => {
     // explicit side effect
-    document.title = `Count: ${count}`;
-  });
+    document.title = `Count: ${count}`
+  })
 
-  return <button onClick={() => count++}>{doubled}</button>;
+  return <button onClick={() => count++}>{doubled}</button>
 }
 ```
 
@@ -83,31 +83,31 @@ pnpm dev
 
 ```ts
 // What actually happens
-const addToCart = async (item) => {
-  const result = await api.cart.add(item); // Takes 500ms
-  return result;
-};
+const addToCart = async item => {
+  const result = await api.cart.add(item) // Takes 500ms
+  return result
+}
 ```
 
 **Fiction (what the user experiences):**
 
 ```tsx
 function AddToCartButton({ item }) {
-  let status = $state<"idle" | "adding" | "added">("idle");
+  let status = $state<'idle' | 'adding' | 'added'>('idle')
 
   const handleClick = async () => {
-    status = "adding"; // Instant feedback (fiction)
-    await addToCart(item); // Reality catches up
-    status = "added"; // Fiction updated
-  };
+    status = 'adding' // Instant feedback (fiction)
+    await addToCart(item) // Reality catches up
+    status = 'added' // Fiction updated
+  }
 
   return (
-    <button onClick={handleClick} disabled={status === "adding"}>
-      {status === "idle" && "Add to Cart"}
-      {status === "adding" && "Adding..."}
-      {status === "added" && "✓ Added"}
+    <button onClick={handleClick} disabled={status === 'adding'}>
+      {status === 'idle' && 'Add to Cart'}
+      {status === 'adding' && 'Adding...'}
+      {status === 'added' && '✓ Added'}
     </button>
-  );
+  )
 }
 ```
 
@@ -118,14 +118,14 @@ The reality is slower. Fict helps you write that story clearly.
 
 ```tsx
 function App() {
-  let show = $state(true);
+  let show = $state(true)
 
   return (
     <div>
       {show && <Modal />}
       {show ? <A /> : <B />}
     </div>
-  );
+  )
 }
 ```
 
@@ -136,17 +136,17 @@ No `<Show>` or `{#if}` — just JavaScript.
 ```tsx
 function TodoList() {
   let todos = $state([
-    { id: 1, text: "Learn Fict" },
-    { id: 2, text: "Build something" },
-  ]);
+    { id: 1, text: 'Learn Fict' },
+    { id: 2, text: 'Build something' },
+  ])
 
   return (
     <ul>
-      {todos.map((todo) => (
+      {todos.map(todo => (
         <li key={todo.id}>{todo.text}</li>
       ))}
     </ul>
-  );
+  )
 }
 ```
 
@@ -156,22 +156,22 @@ No `<For>` or `v-for` — just `.map()`.
 
 ```tsx
 // Your code
-let count = $state(0);
-const doubled = count * 2;
+let count = $state(0)
+const doubled = count * 2
 
-return <div>{doubled}</div>;
+return <div>{doubled}</div>
 ```
 
 ```tsx
 // Conceptually compiles to (simplified)
-const [$count, setCount] = createSignal(0);
-const $doubled = createMemo(() => $count() * 2);
+const [$count, setCount] = createSignal(0)
+const $doubled = createMemo(() => $count() * 2)
 
 return (() => {
-  const div = document.createElement("div");
-  createEffect(() => (div.textContent = $doubled()));
-  return div;
-})();
+  const div = document.createElement('div')
+  createEffect(() => (div.textContent = $doubled()))
+  return div
+})()
 ```
 
 You don't write this. Fict does.
@@ -186,7 +186,6 @@ Most frameworks treat UI as "whatever your components render right now". Fict is
 
 - **Reality** = your domain state: data, business rules, permissions.
 - **Fiction** = a carefully constructed illusion on top of that state:
-
   - loading spinners
   - optimistic updates
   - skeletons and placeholders
@@ -216,7 +215,7 @@ All modern UI frameworks have accumulated a zoo of primitives:
 Fict is intentionally boring:
 
 ```ts
-import { $state, $effect } from "fict";
+import { $state, $effect } from 'fict'
 // (plus a tiny optional set of extras in `fict/plus` for advanced cases)
 ```
 
@@ -241,18 +240,18 @@ No more:
 In Fict:
 
 ```ts
-let price = $state(100);
-let quantity = $state(2);
+let price = $state(100)
+let quantity = $state(2)
 
 // simple derivations
-const subtotal = price * quantity;
-const tax = subtotal * 0.1;
-const total = subtotal + tax;
+const subtotal = price * quantity
+const tax = subtotal * 0.1
+const total = subtotal + tax
 
 // conditional derivations
-let discount = 0;
+let discount = 0
 if (total > 100) {
-  discount = total * 0.1;
+  discount = total * 0.1
 }
 ```
 
@@ -279,25 +278,25 @@ Props behave the way you expect:
 
 ```tsx
 interface GreetingProps {
-  name: string;
-  age?: number;
-  onClick: (id: string) => void;
+  name: string
+  age?: number
+  onClick: (id: string) => void
 }
 
 export function Greeting({ name, age = 18, onClick }: GreetingProps) {
-  let count = $state(0);
-  const label = `${name} (${age}) – clicks: ${count}`;
+  let count = $state(0)
+  const label = `${name} (${age}) – clicks: ${count}`
 
   return (
     <button
       onClick={() => {
-        count++;
-        onClick(name);
+        count++
+        onClick(name)
       }}
     >
       {label}
     </button>
-  );
+  )
 }
 ```
 
@@ -321,20 +320,20 @@ Fict bakes in a hard rule to match your intuition:
 > If a derived expression is **only used in events / plain functions**, it is compiled into an **on-demand getter**, so it always sees the latest state.
 
 ```tsx
-let count = $state(0);
-const doubled = count * 2; // used only in click handler below
+let count = $state(0)
+const doubled = count * 2 // used only in click handler below
 
 const click = () => {
   // always logs the current value
-  console.log("now", doubled);
-};
+  console.log('now', doubled)
+}
 ```
 
 The compiler turns this into something conceptually like:
 
 ```ts
-const $doubled = () => $count() * 2;
-const click = () => console.log("now", $doubled());
+const $doubled = () => $count() * 2
+const click = () => console.log('now', $doubled())
 ```
 
 You don’t write getters. You just get the "always current" behavior you expect.
@@ -346,10 +345,10 @@ You don’t write getters. You just get the "always current" behavior you expect
 In Fict, your types are the types you’d expect:
 
 ```ts
-let count = $state(0); // count: number
-const label = `Count: ${count}`; // label: string
+let count = $state(0) // count: number
+const label = `Count: ${count}` // label: string
 
-let user = $state<{ name: string; age: number } | null>(null);
+let user = $state<{ name: string; age: number } | null>(null)
 // user: { name: string; age: number } | null
 ```
 
@@ -366,30 +365,30 @@ No `Ref<T>`, no `Signal<T>`, no `Accessor<T>` leaking into your IDE:
 A typical "fetch & show" component in Fict:
 
 ```tsx
-import { $state, $effect } from "fict";
+import { $state, $effect } from 'fict'
 
 interface Props {
-  userId: string;
+  userId: string
 }
 
 export function UserProfile({ userId }: Props) {
-  let user = $state<{ firstName: string; lastName: string } | null>(null);
-  let loading = $state(true);
+  let user = $state<{ firstName: string; lastName: string } | null>(null)
+  let loading = $state(true)
 
-  const fullName = user ? `${user.firstName} ${user.lastName}` : "";
+  const fullName = user ? `${user.firstName} ${user.lastName}` : ''
 
   $effect(() => {
-    loading = true;
+    loading = true
     fetch(`/api/user/${userId}`)
-      .then((res) => res.json())
-      .then((data) => {
-        user = data;
-        loading = false;
-      });
-  });
+      .then(res => res.json())
+      .then(data => {
+        user = data
+        loading = false
+      })
+  })
 
-  if (loading) return <Spinner />;
-  return <div>{fullName}</div>;
+  if (loading) return <Spinner />
+  return <div>{fullName}</div>
 }
 ```
 
@@ -409,9 +408,9 @@ Compared to equivalent React / Solid / Vue / Svelte implementations, you avoid:
 Declare something that can change:
 
 ```ts
-let count = $state(0);
-count++; // update
-count = count + 1; // still fine
+let count = $state(0)
+count++ // update
+count = count + 1 // still fine
 ```
 
 - Reads are plain (`count`).
@@ -424,9 +423,9 @@ count = count + 1; // still fine
 Any expression that depends (directly or indirectly) on `$state` is a **derived value**:
 
 ```ts
-const subtotal = price * quantity;
-const tax = subtotal * 0.1;
-const total = subtotal + tax;
+const subtotal = price * quantity
+const tax = subtotal * 0.1
+const total = subtotal + tax
 ```
 
 Fict’s compiler:
@@ -443,22 +442,21 @@ Mark "this code touches the outside world":
 
 ```ts
 $effect(() => {
-  console.log("count changed to", count);
-});
+  console.log('count changed to', count)
+})
 
 $effect(() => {
   const id = setInterval(() => {
-    console.log("tick", count);
-  }, 1000);
-  return () => clearInterval(id); // cleanup when dependencies change
-});
+    console.log('tick', count)
+  }, 1000)
+  return () => clearInterval(id) // cleanup when dependencies change
+})
 ```
 
 Rules:
 
 - Fict tracks which `$state` values are read inside the effect.
 - When those change:
-
   - cleanup runs first (if you returned one)
   - then the effect runs again
   - Async effects can return a cleanup that cancels in-flight work.
@@ -470,14 +468,14 @@ Dependencies are tracked only during the **synchronous part** of an effect:
 ```ts
 $effect(async () => {
   // ✅ These reads are tracked
-  console.log(userId);
+  console.log(userId)
 
-  const data = await fetchUser(userId);
+  const data = await fetchUser(userId)
 
   // ⚠️ Reads after `await` are NOT tracked
   // If `somethingElse` changes, this effect won't re-run
-  console.log(somethingElse);
-});
+  console.log(somethingElse)
+})
 ```
 
 If you need to track dependencies after async boundaries, structure your effect to read all dependencies upfront.
@@ -488,24 +486,24 @@ When `userId` changes rapidly, you want to cancel in-flight requests:
 
 ```tsx
 $effect(() => {
-  const controller = new AbortController();
+  const controller = new AbortController()
 
-  loading = true;
+  loading = true
   fetch(`/api/user/${userId}`, { signal: controller.signal })
-    .then((res) => res.json())
-    .then((data) => {
-      user = data;
-      loading = false;
+    .then(res => res.json())
+    .then(data => {
+      user = data
+      loading = false
     })
-    .catch((err) => {
-      if (err.name !== "AbortError") {
-        error = err.message;
-        loading = false;
+    .catch(err => {
+      if (err.name !== 'AbortError') {
+        error = err.message
+        loading = false
       }
-    });
+    })
 
-  return () => controller.abort(); // cleanup cancels the request
-});
+  return () => controller.abort() // cleanup cancels the request
+})
 ```
 
 Each time `userId` changes:
@@ -516,14 +514,14 @@ Each time `userId` changes:
 ### Error boundaries (planned)
 
 ```tsx
-import { ErrorBoundary } from "fict";
+import { ErrorBoundary } from 'fict'
 
 function App() {
   return (
-    <ErrorBoundary fallback={(err) => <ErrorPage error={err} />}>
+    <ErrorBoundary fallback={err => <ErrorPage error={err} />}>
       <RiskyWidget />
     </ErrorBoundary>
-  );
+  )
 }
 ```
 
@@ -543,14 +541,14 @@ function App() {
 ```ts
 // $effect: Re-runs when userId changes
 $effect(() => {
-  fetchUser(userId);
-});
+  fetchUser(userId)
+})
 
 // onMount: Runs once on mount
 onMount(() => {
-  const rect = element.getBoundingClientRect();
-  initAnimation(rect);
-});
+  const rect = element.getBoundingClientRect()
+  initAnimation(rect)
+})
 ```
 
 ### Components as single-execution functions
@@ -571,26 +569,22 @@ Fine-grained updates are driven by the dependency graph, not by calling the comp
 Very roughly:
 
 - **vs React + Compiler**
-
   - similar "auto-derived" ambition
   - but with **mutable assignments** (`count++`) and no setters
   - components run once, no VDOM required
 
 - **vs Solid**
-
   - similar fine-grained graph
   - but without `signal()` / `()` getter ceremony
   - props can be freely destructured
   - deriveds and effects are inferred, not manually wired
 
 - **vs Svelte 5 (Runes)**
-
   - similar `$state` & `$effect` feel
   - but no `$derived` primitive
   - no Svelte-specific file format or template syntax – just TSX
 
 - **vs Vue 3**
-
   - no `ref` vs `reactive` split
   - no `.value`
   - no template DSL – JSX only
@@ -644,27 +638,23 @@ The current focus is:
 Planned areas (subject to change):
 
 - **Core**
-
   - [ ] Stable `$state` / `$effect` semantics
   - [ ] Cross-module derived value support
   - [ ] Better dev warnings for unsafe patterns
 
 - **Advanced APIs (opt-in, likely in `fict/plus`)**
-
   - [ ] `$store` for deep/path-level tracking (complex forms, editors)
   - [ ] `resource` for declarative async data (cache, de-dupe, cancellation)
   - [ ] `transition` / `task` for scheduling and low-priority updates
   - [ ] `noTrack` escape hatch for black-box libraries
 
 - **Tooling**
-
   - [ ] Vite plugin
   - [ ] ESLint rules for common footguns
   - [ ] DevTools panel (inspect graph, "why did this rerender?")
   - [ ] TypeScript language service plugin (keeps types/go-to-def aligned with compiled signals)
 
 - **Docs**
-
   - [ ] Deeper "Fiction UI" guide – how to design the narrative layer
   - [ ] Migration notes from React / Vue / Svelte / Solid
   - [ ] Patterns for forms, lists, async flows
@@ -690,8 +680,8 @@ In theory, yes – they all compile to JS – but there is no official integrati
 Default: whole-value tracking (immutable style recommended)
 
 ```ts
-let todos = $state([]);
-todos = [...todos, newTodo]; // ✅ Triggers update
+let todos = $state([])
+todos = [...todos, newTodo] // ✅ Triggers update
 ```
 
 For deep mutations, use `$store` from `fict/plus` (coming soon).

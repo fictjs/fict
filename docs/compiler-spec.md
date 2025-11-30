@@ -38,9 +38,9 @@ const y = $state({ foo: 1 })
 
 Constraints:
 
-* `$state` must be imported from `'fict'` (or subsequent official packages).
-* Calls must appear at the top level of a module / component function body.
-* `$state` is not allowed in loops or conditions (if present -> compilation error or strong warning).
+- `$state` must be imported from `'fict'` (or subsequent official packages).
+- Calls must appear at the top level of a module / component function body.
+- `$state` is not allowed in loops or conditions (if present -> compilation error or strong warning).
 
 ### Compilation Behavior
 
@@ -50,8 +50,8 @@ Constraints:
 
    ```ts
    interface SourceNode {
-     id: string      // "s1"
-     name: string    // Source variable name: x
+     id: string // "s1"
+     name: string // Source variable name: x
      type: 'state'
      initial: ASTNode
      scope: ScopeId
@@ -59,9 +59,8 @@ Constraints:
    ```
 
 3. Record all **read/write positions** for that variable:
-
-   * Read: Appears as part of an expression (`x + 1`, `foo(x)`, etc.)
-   * Write: Assignment / Increment / Decrement / Compound Assignment (`x = ...`, `x++`, `x += 1`, etc.)
+   - Read: Appears as part of an expression (`x + 1`, `foo(x)`, etc.)
+   - Write: Assignment / Increment / Decrement / Compound Assignment (`x = ...`, `x++`, `x += 1`, etc.)
 
 4. Generate runtime initialization code (conceptually):
 
@@ -80,8 +79,8 @@ Constraints:
 
 Any expression `E` that satisfies:
 
-* Directly or indirectly reads a `$state` variable (`SourceNode`);
-* And `E` is not at the outermost layer of an `$effect` call (effects are counted separately);
+- Directly or indirectly reads a `$state` variable (`SourceNode`);
+- And `E` is not at the outermost layer of an `$effect` call (effects are counted separately);
 
 For example:
 
@@ -97,12 +96,12 @@ The compiler needs to:
 
    ```ts
    interface DerivedNode {
-     id: string      // "d1"
-     ast: ASTNode    // AST of the corresponding expression
+     id: string // "d1"
+     ast: ASTNode // AST of the corresponding expression
      scope: ScopeId
-     sources: SourceNode[]   // Direct dependencies
+     sources: SourceNode[] // Direct dependencies
      derivedDeps: DerivedNode[] // Indirect dependencies
-     usages: UsageSite[]     // JSX / effect / event / etc.
+     usages: UsageSite[] // JSX / effect / event / etc.
    }
    ```
 
@@ -114,10 +113,10 @@ The compiler needs to:
 
 Each `DerivedNode` will be used several times in the source code. Usage types include:
 
-* `JSXBinding`: Used in JSX attributes/children
-* `EffectUsage`: Read in `$effect` function body
-* `EventUsage`: Used in JSX event handlers (e.g., `onClick` closure)
-* `PlainUsage`: Used in other plain functions / plain closures
+- `JSXBinding`: Used in JSX attributes/children
+- `EffectUsage`: Read in `$effect` function body
+- `EventUsage`: Used in JSX event handlers (e.g., `onClick` closure)
+- `PlainUsage`: Used in other plain functions / plain closures
 
 ### Decision Logic
 
@@ -131,8 +130,8 @@ For each `DerivedNode`:
 
 **Special: When both memo usage and event usage exist**
 
-* Still compile as memo.
-* Reads in events become "read current memo value".
+- Still compile as memo.
+- Reads in events become "read current memo value".
 
 ### Example 1: Bind only to JSX
 
@@ -141,7 +140,7 @@ const total = price * quantity
 return <div>{total}</div>
 ```
 
-* `total` only has `JSXBinding` usage → memo.
+- `total` only has `JSXBinding` usage → memo.
 
 ### Example 2: Use only in events
 
@@ -150,7 +149,7 @@ const doubled = count * 2
 const click = () => console.log(doubled)
 ```
 
-* `doubled` only has `EventUsage` → getter.
+- `doubled` only has `EventUsage` → getter.
 
 ### Example 3: Use in both
 
@@ -165,7 +164,7 @@ return (
 )
 ```
 
-* → memo + event reads current memo value.
+- → memo + event reads current memo value.
 
 ---
 
@@ -189,23 +188,21 @@ if (count > 0) {
 
 If we build memos for `heading` and `extra` separately, it leads to:
 
-* Duplicate calculation of `count`
-* Duplicate evaluation of if conditions
-* Logic fragmentation
+- Duplicate calculation of `count`
+- Duplicate evaluation of if conditions
+- Logic fragmentation
 
 ### Strategy: Build **Region**
 
 1. Find the AST subtree containing all Derived expressions, assignments, and supporting control flow (`if` / `switch` / `for`).
 
 2. Through static analysis, aggregate them into a **Minimal Enclosed Region** `Region`:
-
-   * Variables before entering Region (e.g., `videos`, `emptyHeading`) as input;
-   * Region internally freely uses local variables, control flow;
-   * Region outputs several derived results (e.g., `heading`, `extra`).
+   - Variables before entering Region (e.g., `videos`, `emptyHeading`) as input;
+   - Region internally freely uses local variables, control flow;
+   - Region outputs several derived results (e.g., `heading`, `extra`).
 
 3. Create a `MemoNode` for the entire Region, returning an object or tuple:
-
-   * `{ heading, extra }` or `[heading, extra]`
+   - `{ heading, extra }` or `[heading, extra]`
 
 ### Compilation Illustration
 
@@ -229,9 +226,9 @@ const { heading, extra } = $viewState()
 
 This way:
 
-* Logic stays together (readable)
-* Only one memo (maintainable)
-* Reasonable performance (avoids duplicate calculation)
+- Logic stays together (readable)
+- Only one memo (maintainable)
+- Reasonable performance (avoids duplicate calculation)
 
 ---
 
@@ -254,8 +251,8 @@ export function Greeting({ name, age = 18, onClick }: Props) {
 
 ### Compilation Target
 
-* For the user, this is normal TS destructuring;
-* For Fict, it needs to maintain tracking of the original `props` source.
+- For the user, this is normal TS destructuring;
+- For Fict, it needs to maintain tracking of the original `props` source.
 
 ### Processing Steps
 
@@ -273,8 +270,7 @@ export function Greeting({ name, age = 18, onClick }: Props) {
    ```
 
 2. Trace read/write behavior of `name` / `age` / `onClick` back to the `__props` source:
-
-   * If props change at the runtime layer (e.g., parent component state change), memo / effect / binding can track the latest value.
+   - If props change at the runtime layer (e.g., parent component state change), memo / effect / binding can track the latest value.
 
 3. Do not expose `__props` at the type level, keeping the IDE experience natural.
 
@@ -293,9 +289,8 @@ For each JSX element:
 The compiler will:
 
 1. Generate an "instance structure" for that element:
-
-   * Native DOM creation logic
-   * Dynamic binding list
+   - Native DOM creation logic
+   - Dynamic binding list
 
 2. Create `BindingNode` for each dynamic position:
 
@@ -310,8 +305,7 @@ The compiler will:
    ```
 
 3. In runtime:
-
-   * When `deps` change, call `updateFn` to perform DOM operations.
+   - When `deps` change, call `updateFn` to perform DOM operations.
 
 ---
 
@@ -340,10 +334,8 @@ $effect(() => {
    ```
 
 3. Runtime semantics:
-
-   * First mount: Execute `fn` once, record returned cleanup (if any).
-   * When any `deps` change:
-
+   - First mount: Execute `fn` once, record returned cleanup (if any).
+   - When any `deps` change:
      1. Call previously recorded cleanup (if any)
      2. Execute `fn` again, record new cleanup
 
@@ -360,9 +352,9 @@ $effect(async () => {
 
 Rules:
 
-* Dependency collection only happens during the "initial synchronous execution phase", i.e., parts before `await`;
-* Reads after `await` will not append dependencies (consistent with most frameworks);
-* If precise control of async lifecycle is needed, rewrite to explicit cleanup pattern.
+- Dependency collection only happens during the "initial synchronous execution phase", i.e., parts before `await`;
+- Reads after `await` will not append dependencies (consistent with most frameworks);
+- If precise control of async lifecycle is needed, rewrite to explicit cleanup pattern.
 
 ---
 
@@ -370,17 +362,16 @@ Rules:
 
 For the following cases where the compiler cannot safely perform fine-grained analysis, fallback to conservative mode:
 
-* Dynamic property access: `obj[key] = value`, where `key` comes from runtime.
-* Passing to black-box functions: `thirdPartyMutation(user)`, which might modify the object arbitrarily.
-* Using highly dynamic language features like `eval` / `with` / `Proxy`.
+- Dynamic property access: `obj[key] = value`, where `key` comes from runtime.
+- Passing to black-box functions: `thirdPartyMutation(user)`, which might modify the object arbitrarily.
+- Using highly dynamic language features like `eval` / `with` / `Proxy`.
 
 Strategy:
 
 1. **Conservative Subscription**: Establish coarse-grained subscription to the entire object / larger scope state.
 2. **Compilation Warning**: Output explanation in dev mode:
-
-   * "Dependency scope widened due to dynamic path access here"
-   * "This function call is treated as a black box, may cause over-recomputation"
+   - "Dependency scope widened due to dynamic path access here"
+   - "This function call is treated as a black box, may cause over-recomputation"
 
 Developers can locally turn off Fict's smart behavior via escape hatches like `noTrack` / `"use no memo"`.
 
@@ -406,20 +397,23 @@ const click = () => console.log(doubled)
 
 To ensure consistency:
 
-* Module-level derivation **always compiles to memo**;
+- Module-level derivation **always compiles to memo**;
 
-* Exported as a getter:
+- Exported as a getter:
 
   ```ts
   const $__doubled = createMemo(() => $__count.get() * 2)
-  export const doubled = { get value() { return $__doubled() } }
+  export const doubled = {
+    get value() {
+      return $__doubled()
+    },
+  }
   // Or export function directly: export const doubled = () => $__doubled()
   ```
 
-* When reading at import side:
-
-  * In JSX / effect: Use as memo node;
-  * In event / function: Read latest value.
+- When reading at import side:
+  - In JSX / effect: Use as memo node;
+  - In event / function: Read latest value.
 
 ---
 
@@ -438,9 +432,9 @@ if (show) {
 
 Optimization Strategy (Optional):
 
-* If `heavy` is only used within the Region where `show` is `true`, and there are no other usages;
+- If `heavy` is only used within the Region where `show` is `true`, and there are no other usages;
 
-* Condition can be inlined in memo:
+- Condition can be inlined in memo:
 
   ```ts
   const $viewState = createMemo(() => {
@@ -449,7 +443,7 @@ Optimization Strategy (Optional):
   })
   ```
 
-* Prevent calculating `expensiveComputation()` when `show === false`.
+- Prevent calculating `expensiveComputation()` when `show === false`.
 
 This is a "good but not mandatory" optimization, which can be part of subsequent iterations.
 
@@ -468,12 +462,11 @@ const c = b + 1
 Handling:
 
 1. After building the `DerivedNode` graph, run topological sort:
+   - Detect if a cycle exists.
 
-   * Detect if a cycle exists.
 2. If a cycle exists:
-
-   * Compilation error, pointing out relevant expression locations.
-   * Hint error message as: "Detected cyclic derived dependency between X and Y".
+   - Compilation error, pointing out relevant expression locations.
+   - Hint error message as: "Detected cyclic derived dependency between X and Y".
 
 ---
 
@@ -508,10 +501,11 @@ For objects/arrays declared with `$state`, if deep property assignment is detect
 
 ```ts
 let user = $state({ addr: { city: 'London' } })
-user.addr.city = 'Paris'  // ⚠️ Compilation Warning
+user.addr.city = 'Paris' // ⚠️ Compilation Warning
 ```
 
 Compiler should:
+
 1. Output warning: "Direct mutation of nested property won't trigger update. Use spread or $store."
 2. Give correction suggestion: `user = { ...user, addr: { ...user.addr, city: 'Paris' } }`
 
@@ -524,26 +518,25 @@ Compiler should:
 3. **Build Scope Info** (Function, Block, Module)
 4. **Scan `$state`** → Generate `SourceNode` set
 5. **Static Data Flow Analysis**:
+   - Mark expressions dependent on `SourceNode` → `DerivedNode`
+   - Identify `$effect` / JSX dynamic bindings → usage list
 
-   * Mark expressions dependent on `SourceNode` → `DerivedNode`
-   * Identify `$effect` / JSX dynamic bindings → usage list
 6. **Build Dependency Graph**:
+   - `SourceNode → DerivedNode → Effect/Binding`
+   - Handle cross-module memo
+   - Apply Region grouping (control flow)
 
-   * `SourceNode → DerivedNode → Effect/Binding`
-   * Handle cross-module memo
-   * Apply Region grouping (control flow)
 7. **Apply Rules C–L**:
+   - Classify memo / getter
+   - Control flow grouping
+   - Cycle detection
+   - Conservative downgrade & Warning
 
-   * Classify memo / getter
-   * Control flow grouping
-   * Cycle detection
-   * Conservative downgrade & Warning
 8. **Generate Runtime Call IR**:
+   - Similar to: `createState`, `createMemo`, `createEffect`, `createBinding`, etc.
 
-   * Similar to: `createState`, `createMemo`, `createEffect`, `createBinding`, etc.
 9. **IR → JS Output**:
-
-   * Generate final code according to target runtime API (`@fict/runtime`)
+   - Generate final code according to target runtime API (`@fict/runtime`)
 
 ---
 
@@ -555,14 +548,12 @@ Fict's principle is:
 
 Therefore:
 
-* If you write unconventional/highly dynamic code, Fict will:
+- If you write unconventional/highly dynamic code, Fict will:
+  - Guarantee semantic correctness as much as possible (no random optimizations)
+  - Tell you via warning "I can only be crude here"
 
-  * Guarantee semantic correctness as much as possible (no random optimizations)
-  * Tell you via warning "I can only be crude here"
-* If you want to completely turn off analysis for a file/function:
-
-  * You can use escape hatches like `// "use no memo"` or `noTrack`.
+- If you want to completely turn off analysis for a file/function:
+  - You can use escape hatches like `// "use no memo"` or `noTrack`.
 
 This Spec itself will be constantly corrected with implementation:
 **The final criterion is the balance of "User Intuition + Implementability + Performance".**
-

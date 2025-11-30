@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/runtime" },
+    { "path": "./packages/compiler-ts" },
+    { "path": "./packages/vite-plugin" },
+    { "path": "./packages/eslint-plugin" }
+  ]
+}

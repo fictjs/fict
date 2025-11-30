@@ -137,3 +137,13 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+.pnpm-store/
+.turbo/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+packages/devtools/build/
+
