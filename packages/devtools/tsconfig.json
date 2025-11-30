@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "skipLibCheck": true,
+    "baseUrl": "../..",
+    "paths": {
+      "fict-runtime": ["packages/runtime/src"],
+      "fict-runtime/*": ["packages/runtime/src/*"],
+      "fict-compiler-ts": ["packages/compiler-ts/src"],
+      "fict-compiler-swc": ["packages/compiler-swc/src"],
+      "fict-vite-plugin": ["packages/vite-plugin/src"],
+      "eslint-plugin-fict": ["packages/eslint-plugin/src"],
+      "fict-devtools": ["packages/devtools/src"]
+    },
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist"]
+}

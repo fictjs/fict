@@ -56,7 +56,7 @@ pnpm format        # Prettier
 
 ```bash
 pnpm build                    # Build all packages
-pnpm build --filter @fict/runtime  # Build specific package
+pnpm build --filter fict-runtime  # Build specific package
 ```
 
 ## Commit Convention

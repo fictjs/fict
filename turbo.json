@@ -1,7 +1,7 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalDependencies": [".env", "tsconfig.base.json"],
-  "pipeline": {
+  "tasks": {
     "build": {
       "dependsOn": ["^build", "typecheck"],
       "outputs": ["dist/**", "lib/**", "types/**"],

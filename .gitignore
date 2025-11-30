@@ -146,4 +146,5 @@ vite.config.ts.timestamp-*
 .DS_Store
 Thumbs.db
 packages/devtools/build/
+esbuild-why-*
 

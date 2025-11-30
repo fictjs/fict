@@ -5,7 +5,7 @@
     "moduleResolution": "bundler",
     "lib": ["DOM", "DOM.Iterable", "ES2020"],
     "jsx": "preserve",
-    "jsxImportSource": "@fict/runtime",
+    "jsxImportSource": "fict-runtime",
     "strict": true,
     "noImplicitAny": true,
     "noImplicitReturns": true,
@@ -25,13 +25,13 @@
     "skipLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@fict/runtime": ["packages/runtime/src"],
-      "@fict/runtime/*": ["packages/runtime/src/*"],
-      "@fict/compiler-ts": ["packages/compiler-ts/src"],
-      "@fict/compiler-swc": ["packages/compiler-swc/src"],
-      "@fict/vite-plugin": ["packages/vite-plugin/src"],
+      "fict-runtime": ["packages/runtime/src"],
+      "fict-runtime/*": ["packages/runtime/src/*"],
+      "fict-compiler-ts": ["packages/compiler-ts/src"],
+      "fict-compiler-swc": ["packages/compiler-swc/src"],
+      "fict-vite-plugin": ["packages/vite-plugin/src"],
       "eslint-plugin-fict": ["packages/eslint-plugin/src"],
-      "@fict/devtools": ["packages/devtools/src"]
+      "fict-devtools": ["packages/devtools/src"]
     }
   },
   "exclude": ["node_modules", "dist", "coverage"]

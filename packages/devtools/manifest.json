@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Fict DevTools",
+  "version": "0.0.1",
+  "description": "Developer tools for Fict applications",
+  "permissions": ["storage"],
+  "devtools_page": "src/panel/devtools.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

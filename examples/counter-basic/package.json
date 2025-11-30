@@ -1,0 +1,19 @@
+{
+  "name": "fict-example-counter-basic",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build:dev": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "fict-runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "fict-vite-plugin": "workspace:*",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.4"
+  }
+}

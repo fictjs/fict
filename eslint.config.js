@@ -1,11 +1,19 @@
 import eslint from '@eslint/js'
-import tseslint from 'typescript-eslint'
 import prettier from 'eslint-config-prettier'
 import importX from 'eslint-plugin-import-x'
+import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/node_modules/**', '**/coverage/**', '**/.turbo/**', '**/*.d.ts'],
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      '**/coverage/**',
+      '**/.turbo/**',
+      '**/*.d.ts',
+      '**/build/**',
+      '**/.vitepress/**',
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommended,
@@ -50,6 +58,19 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',
+    },
+  },
+  {
+    files: [
+      '**/vite.config.ts',
+      '**/vitest.config.ts',
+      '**/vitest.workspace.ts',
+      '**/tsup.config.ts',
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: false,
+      },
     },
   },
   prettier,

@@ -1,0 +1,20 @@
+{
+  "name": "fict-devtools",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Fict DevTools browser extension",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch --mode development",
+    "build": "vite build",
+    "build:chrome": "vite build --mode chrome",
+    "build:firefox": "vite build --mode firefox",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist build"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "vite": "^5.0.0"
+  }
+}

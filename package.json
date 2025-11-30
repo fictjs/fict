@@ -17,18 +17,20 @@
     "format:check": "prettier --check .",
     "test": "turbo run test",
     "test:watch": "turbo run test:watch",
-    "test:coverage": "vitest run --coverage",
+    "test:coverage": "turbo run test:coverage",
     "size": "size-limit",
-    "size:check": "size-limit --ci",
+    "size:analyze": "size-limit --why",
     "changeset": "changeset",
     "version": "changeset version",
-    "release": "pnpm build && changeset publish",
+    "release": "turbo run build && changeset publish",
     "prepare": "husky"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.8",
     "@commitlint/cli": "^19.8.1",
     "@commitlint/config-conventional": "^19.8.1",
+    "@size-limit/esbuild": "^12.0.0",
+    "@size-limit/esbuild-why": "^12.0.0",
     "@size-limit/preset-small-lib": "^11.2.0",
     "@testing-library/dom": "^10.4.1",
     "@types/node": "^22.19.1",
@@ -57,13 +59,13 @@
   },
   "size-limit": [
     {
-      "name": "@fict/runtime (ESM)",
+      "name": "fict-runtime (ESM)",
       "path": "packages/runtime/dist/index.js",
       "limit": "6 KB",
       "gzip": true
     },
     {
-      "name": "@fict/runtime (CJS)",
+      "name": "fict-runtime (CJS)",
       "path": "packages/runtime/dist/index.cjs",
       "limit": "7 KB",
       "gzip": true

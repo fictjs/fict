@@ -1,0 +1,11 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "fixed": [],
+  "linked": [["fict-runtime", "fict-compiler-ts", "fict-compiler-swc", "fict-vite-plugin"]],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": ["fict-docs-site", "fict-devtools", "fict-example-*"]
+}
