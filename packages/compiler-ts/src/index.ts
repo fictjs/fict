@@ -102,7 +102,7 @@ function createVisitor(ctx: TransformContext): ts.Visitor {
     }
 
     // Handle variable declarations
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+    if (ts.isVariableDeclaration(node) && node.initializer) {
       return handleVariableDeclaration(node, ctx, visitor)
     }
 
@@ -250,6 +250,9 @@ function handleVariableDeclaration(
   const { stateVars, memoVars, shadowedVars, helpersUsed, factory, context } = ctx
 
   if (!ts.isIdentifier(node.name) || !node.initializer) {
+    if (node.initializer && isStateCall(node.initializer)) {
+      throw new Error(formatError(ctx.sourceFile, node, '$state() must assign to an identifier'))
+    }
     return ts.visitEachChild(node, visitor, context) as ts.VariableDeclaration
   }
 

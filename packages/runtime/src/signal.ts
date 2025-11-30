@@ -1,3 +1,5 @@
+import { getDevtoolsHook } from './devtools'
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
@@ -734,6 +736,7 @@ function runEffect(e: EffectNode): void {
   const flags = e.flags
   if (flags & Dirty || (flags & Pending && e.deps && checkDirty(e.deps, e))) {
     ++cycle
+    effectRunDevtools(e)
     e.depsTail = undefined
     e.flags = WatchingRunning
     const prevSub = activeSub
@@ -779,7 +782,9 @@ export function signal<T>(initialValue: T): SignalAccessor<T> {
     subs: undefined,
     subsTail: undefined,
     flags: Mutable,
+    __id: undefined as number | undefined,
   }
+  registerSignalDevtools(initialValue, s)
   return signalOper.bind(s) as SignalAccessor<T>
 }
 function signalOper<T>(this: SignalNode<T>, value?: T): T | void {
@@ -787,6 +792,7 @@ function signalOper<T>(this: SignalNode<T>, value?: T): T | void {
     if (this.pendingValue !== value) {
       this.pendingValue = value as T
       this.flags = MutableDirty
+      updateSignalDevtools(this, value)
       const subs = this.subs
       if (subs !== undefined) {
         propagate(subs)
@@ -884,13 +890,17 @@ export function effect(fn: () => void): EffectDisposer {
     deps: undefined,
     depsTail: undefined,
     flags: WatchingRunning,
+    __id: undefined as number | undefined,
   }
+
+  registerEffectDevtools(e)
 
   const prevSub = activeSub
   if (prevSub !== undefined) link(e, prevSub, 0)
   activeSub = e
 
   try {
+    effectRunDevtools(e)
     fn()
   } finally {
     activeSub = prevSub
@@ -1098,3 +1108,37 @@ export default {
   ReactiveFlags,
 }
 export const $state = signal
+let devtoolsSignalId = 0
+let devtoolsEffectId = 0
+
+function registerSignalDevtools(value: unknown, node: SignalNode): number | undefined {
+  const hook = getDevtoolsHook()
+  if (!hook) return undefined
+  const id = ++devtoolsSignalId
+  hook.registerSignal(id, value)
+  ;(node as any).__id = id
+  return id
+}
+
+function updateSignalDevtools(node: SignalNode, value: unknown): void {
+  const hook = getDevtoolsHook()
+  if (!hook) return
+  const id = (node as any).__id
+  if (id) hook.updateSignal(id, value)
+}
+
+function registerEffectDevtools(node: EffectNode): number | undefined {
+  const hook = getDevtoolsHook()
+  if (!hook) return undefined
+  const id = ++devtoolsEffectId
+  hook.registerEffect(id)
+  ;(node as any).__id = id
+  return id
+}
+
+function effectRunDevtools(node: EffectNode): void {
+  const hook = getDevtoolsHook()
+  if (!hook) return
+  const id = (node as any).__id
+  if (id) hook.effectRun(id)
+}

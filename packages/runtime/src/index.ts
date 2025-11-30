@@ -85,3 +85,6 @@ export type {
   ClassProp,
   EventHandler,
 } from './types'
+
+// Devtools hook (optional)
+export { getDevtoolsHook, type FictDevtoolsHook } from './devtools'

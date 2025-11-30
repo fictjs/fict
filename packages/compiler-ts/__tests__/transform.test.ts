@@ -40,6 +40,24 @@ describe('createFictTransformer', () => {
       expect(output).toContain(`const doubled = __fictMemo(() => count() * 2);`)
     })
 
+    it('throws on non-identifier $state targets', () => {
+      expect(() =>
+        transform(`
+          const [a] = $state(0)
+        `),
+      ).toThrow('$state() must assign to an identifier')
+    })
+
+    it('throws on $state inside loops', () => {
+      expect(() =>
+        transform(`
+          for (let i = 0; i < 3; i++) {
+            let x = $state(i)
+          }
+        `),
+      ).toThrow('$state() cannot be declared inside loops')
+    })
+
     it('rewrites $effect to createEffect', () => {
       const output = transform(`
         import { $state, $effect } from 'fict'
