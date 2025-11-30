@@ -13,6 +13,10 @@ import {
   createElement,
   Fragment,
   createRoot,
+  bindText,
+  bindAttribute,
+  bindProperty,
+  insert,
 } from '..'
 
 describe('fict-runtime', () => {
@@ -124,5 +128,79 @@ describe('fict-runtime', () => {
 
     expect(frag.childNodes).toHaveLength(2)
     expect((frag.childNodes[0] as Text).textContent).toBe('0')
+  })
+
+  it('updates DOM via effects', () => {
+    const container = document.createElement('div')
+    const div = document.createElement('div')
+    const count = createSignal(0)
+
+    createEffect(() => {
+      div.textContent = String(count())
+    })
+
+    container.appendChild(div)
+    expect(div.textContent).toBe('0')
+
+    count(2)
+    expect(div.textContent).toBe('2')
+  })
+
+  it('bindText updates a text node reactively', () => {
+    const text = document.createTextNode('')
+    const count = createSignal(1)
+    bindText(text, () => count())
+    expect(text.textContent).toBe('1')
+    count(5)
+    expect(text.textContent).toBe('5')
+  })
+
+  it('bindAttribute and bindProperty update DOM reactively', () => {
+    const el = document.createElement('input')
+    const value = createSignal('a')
+    const checked = createSignal(false)
+
+    bindAttribute(el, 'data-value', () => value())
+    bindProperty(el, 'checked', () => checked())
+
+    expect(el.getAttribute('data-value')).toBe('a')
+    expect(el.checked).toBe(false)
+
+    value('b')
+    checked(true)
+
+    expect(el.getAttribute('data-value')).toBe('b')
+    expect(el.checked).toBe(true)
+  })
+
+  it('insert swaps child nodes reactively', () => {
+    const parent = document.createElement('div')
+    const toggle = createSignal(true)
+    insert(parent, () => (toggle() ? 'yes' : document.createElement('span')))
+
+    expect(parent.textContent).toBe('yes')
+    toggle(false)
+    expect(parent.firstChild instanceof HTMLElement).toBe(true)
+  })
+
+  it('runs lifecycles in nested components within render', () => {
+    const container = document.createElement('div')
+    const calls: string[] = []
+
+    const Child = () => {
+      onMount(() => calls.push('child-mount'))
+      onDestroy(() => calls.push('child-destroy'))
+      return document.createElement('span')
+    }
+
+    const dispose = render(() => {
+      onMount(() => calls.push('root-mount'))
+      onDestroy(() => calls.push('root-destroy'))
+      return { type: Child, props: null, key: undefined }
+    }, container)
+
+    expect(calls).toEqual(['root-mount', 'child-mount'])
+    dispose()
+    expect(calls).toEqual(['root-mount', 'child-mount', 'child-destroy', 'root-destroy'])
   })
 })

@@ -1,4 +1,5 @@
 import { Fragment } from './jsx'
+import { createEffect } from './effect'
 import { createRootContext, destroyRoot, flushOnMount, pushRoot, popRoot } from './lifecycle'
 import type { DOMElement, FictNode, FictVNode } from './types'
 
@@ -6,11 +7,10 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
   const root = createRootContext()
   const prev = pushRoot(root)
   const output = view()
-  popRoot(prev)
-
   const dom = createElement(output)
   container.replaceChildren(dom)
   flushOnMount(root)
+  popRoot(prev)
 
   const teardown = () => {
     destroyRoot(root)
@@ -18,6 +18,51 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
   }
 
   return teardown
+}
+
+export function bindText(node: Text | HTMLElement, accessor: () => unknown): () => void {
+  return createEffect(() => {
+    const value = accessor()
+    node.textContent = value == null ? '' : String(value)
+  })
+}
+
+export function bindAttribute(el: HTMLElement, name: string, accessor: () => unknown): () => void {
+  return createEffect(() => {
+    const value = accessor()
+    setAttribute(el, name, value)
+  })
+}
+
+export function bindProperty(el: HTMLElement, name: string, accessor: () => unknown): () => void {
+  return createEffect(() => {
+    const value = accessor()
+    if (value === undefined) return
+    ;(el as unknown as Record<string, unknown>)[name] = value as unknown
+  })
+}
+
+export function insert(
+  parent: HTMLElement | DocumentFragment,
+  accessor: () => FictNode,
+): () => void {
+  const marker = document.createTextNode('')
+  parent.appendChild(marker)
+  let current: Node | null = null
+
+  return createEffect(() => {
+    const next = createElement(accessor())
+    if (current === next) return
+
+    if (current) {
+      parent.insertBefore(next, current)
+      parent.removeChild(current)
+    } else {
+      parent.insertBefore(next, marker)
+    }
+
+    current = next
+  })
 }
 
 export function createElement(node: FictNode): DOMElement {
