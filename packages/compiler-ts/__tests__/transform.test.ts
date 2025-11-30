@@ -94,6 +94,16 @@ describe('createFictTransformer', () => {
         `const payload = __fictMemo(() => ({ count: count(), other: count() + 1 }));`,
       )
     })
+
+    it('memoizes derived values that are only shorthand', () => {
+      const output = transform(`
+        let count = $state(1)
+        const payload = { count }
+      `)
+
+      expect(output).toContain(`let count = __fictSignal(1);`)
+      expect(output).toContain(`const payload = __fictMemo(() => ({ count: count() }));`)
+    })
   })
 
   describe('JSX child expressions', () => {
@@ -150,6 +160,15 @@ describe('createFictTransformer', () => {
       `)
 
       expect(output).toContain(`{() => items().map(item => <li>{item}</li>)}`)
+    })
+
+    it('wraps expressions even when inner callback shadows a tracked name', () => {
+      const output = transform(`
+        let count = $state(0)
+        const view = () => <div>{[1,2,3].map(count => <span>{count}</span>) && count}</div>
+      `)
+
+      expect(output).toContain(`{() => [1, 2, 3].map(count => <span>{count}</span>) && count()}`)
     })
 
     it('does not wrap already-function expressions', () => {

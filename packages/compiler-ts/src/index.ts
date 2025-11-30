@@ -477,62 +477,41 @@ function dependsOnTracked(
   memoVars: Set<string>,
   shadowedVars: Set<string>,
 ): boolean {
-  // First, collect all local bindings within this expression
-  const localBindings = collectLocalBindingsInExpr(expr)
-
   let depends = false
-  const visit = (node: ts.Node): void => {
+  const visit = (node: ts.Node, locals: Set<string>): void => {
     if (depends) return
-
-    // When entering a function, track its parameters as local bindings
-    if (
-      ts.isArrowFunction(node) ||
-      ts.isFunctionExpression(node) ||
-      ts.isFunctionDeclaration(node)
-    ) {
-      const paramNames = collectParameterNames(node.parameters)
-      for (const name of paramNames) {
-        localBindings.add(name)
-      }
-    }
 
     if (ts.isIdentifier(node)) {
       const name = node.text
-      // Skip if this identifier is a local binding or shadowed
-      if (localBindings.has(name) || shadowedVars.has(name)) return
-
-      if (isTracked(name, stateVars, memoVars) && shouldTransformIdentifier(node)) {
-        depends = true
-        return
+      if (!locals.has(name)) {
+        const tracked = isTracked(name, stateVars, memoVars)
+        const shorthandUse =
+          ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
+        if (tracked && (shouldTransformIdentifier(node) || shorthandUse)) {
+          depends = true
+          return
+        }
       }
     }
-    ts.forEachChild(node, visit)
-  }
-  visit(expr)
-  return depends
-}
 
-/**
- * Collect local bindings defined within an expression (for dependency checking)
- */
-function collectLocalBindingsInExpr(expr: ts.Expression): Set<string> {
-  const bindings = new Set<string>()
-
-  const visit = (node: ts.Node): void => {
     if (
       ts.isArrowFunction(node) ||
       ts.isFunctionExpression(node) ||
       ts.isFunctionDeclaration(node)
     ) {
-      for (const param of node.parameters) {
-        collectBindingNames(param.name, bindings)
+      const next = new Set(locals)
+      const paramNames = collectParameterNames(node.parameters)
+      for (const name of paramNames) {
+        next.add(name)
       }
+      ts.forEachChild(node, child => visit(child, next))
+      return
     }
-    ts.forEachChild(node, visit)
-  }
-  visit(expr)
 
-  return bindings
+    ts.forEachChild(node, child => visit(child, locals))
+  }
+  visit(expr, new Set(shadowedVars))
+  return depends
 }
 
 /**
