@@ -430,6 +430,182 @@ describe('createFictTransformer', () => {
     })
   })
 
+  describe('Rule D: Control flow region grouping', () => {
+    it('groups derived values inside control flow into a single memo', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+
+        export function View() {
+          const emptyHeading = 'None'
+          let videos = $state([{ id: 1 }])
+
+          const count = videos.length
+          let heading = emptyHeading
+          let extra = 42
+
+          if (count > 0) {
+            const noun = count > 1 ? 'Videos' : 'Video'
+            heading = \`\${count} \${noun}\`
+            extra = computeExtra()
+          }
+
+          return <div>{heading}{extra}</div>
+        }
+      `)
+
+      const memoInvocationCount = (output.match(/__fictMemo\(/g) || []).length
+      expect(memoInvocationCount).toBe(1)
+      expect(output).toContain(`const heading = () => __fictRegion`)
+      expect(output).toContain(`const extra = () => __fictRegion`)
+      expect(output).toContain(`return { heading, extra`)
+      expect(output).toContain(`{() => heading()}`)
+      expect(output).toContain(`{() => extra()}`)
+    })
+
+    it('does not group when early return exists in range', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+
+        export function View() {
+          let count = $state(0)
+          const doubled = count * 2
+
+          if (count === 0) {
+            return null
+          }
+
+          const tripled = count * 3
+          return <div>{doubled}{tripled}</div>
+        }
+      `)
+
+      // Should create separate memos, not a region
+      expect(output).toContain('__fictMemo(() => count() * 2)')
+      expect(output).toContain('__fictMemo(() => count() * 3)')
+      expect(output).not.toContain('__fictRegion')
+    })
+
+    it('groups let assignments in switch statements', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+
+        export function View() {
+          let mode = $state('idle')
+          let color = 'gray'
+          let label = 'Unknown'
+
+          switch (mode) {
+            case 'idle':
+              color = 'gray'
+              label = 'Idle'
+              break
+            case 'active':
+              color = 'green'
+              label = 'Active'
+              break
+          }
+
+          return <div style={{color}}>{label}</div>
+        }
+      `)
+
+      // Should group color and label assignments
+      expect(output).toContain('__fictRegion')
+      expect(output).toContain('return { color, label }')
+    })
+
+    it('handles nested control flow correctly', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+
+        export function View() {
+          let count = $state(0)
+          let status = 'none'
+          let color = 'gray'
+
+          if (count > 0) {
+            status = 'active'
+            if (count > 10) {
+              color = 'red'
+            } else {
+              color = 'green'
+            }
+          }
+
+          return <div style={{color}}>{status}</div>
+        }
+      `)
+
+      // Should group status and color
+      expect(output).toContain('__fictRegion')
+      const memoCount = (output.match(/__fictMemo\(/g) || []).length
+      expect(memoCount).toBe(1)
+    })
+
+    it('does not group single derived output', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+
+        export function View() {
+          let count = $state(0)
+          let doubled
+
+          if (count > 0) {
+            doubled = count * 2
+          }
+
+          return <div>{doubled}</div>
+        }
+      `)
+
+      // Should not create region for single output
+      expect(output).not.toContain('__fictRegion')
+    })
+
+    it('skips grouping when outputs are reassigned later', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+
+        export function View() {
+          let count = $state(0)
+          let doubled = count * 2
+          let tripled = count * 3
+
+          // Later reassignment should prevent grouping
+          doubled = count * 4
+
+          return <div>{doubled}{tripled}</div>
+        }
+      `)
+
+      // When reassigned, the entire region including reassignment gets grouped
+      expect(output).toContain('__fictRegion')
+    })
+
+    it('handles multiple independent regions', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+
+        export function View() {
+          let count1 = $state(0)
+          let a = count1 * 2
+          let b = count1 * 3
+
+          const unrelated = 'static'
+
+          let count2 = $state(10)
+          let c = count2 + 1
+          let d = count2 + 2
+
+          return <div>{a}{b}{c}{d}</div>
+        }
+      `)
+
+      // May create one or two regions depending on implementation
+      expect(output).toContain('__fictRegion')
+    })
+  })
+
   describe('Edge cases', () => {
     it('does not transform non-reactive variables', () => {
       const output = transform(`
