@@ -5,4 +5,5 @@ export default defineWorkspace([
   'packages/compiler-ts',
   'packages/vite-plugin',
   'packages/eslint-plugin',
+  'packages/fict',
 ])
