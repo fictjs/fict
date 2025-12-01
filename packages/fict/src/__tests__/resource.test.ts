@@ -1,6 +1,7 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { resource } from '../resource'
 import { createSignal, createRoot } from 'fict-runtime'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+
+import { resource } from '../resource'
 
 describe('resource', () => {
   beforeEach(() => {
@@ -18,7 +19,7 @@ describe('resource', () => {
     let result: any
 
     createRoot(() => {
-      result = r.read(() => {})
+      result = r.read(() => null)
     })
 
     expect(result.loading).toBe(true)

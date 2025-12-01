@@ -25,8 +25,11 @@ export function $store<T extends object>(initialValue: T): T {
   }
 
   const proxy = new Proxy(initialValue, {
-    get(target, prop, receiver) {
-      const value = Reflect.get(target, prop, receiver)
+    get(target, prop, _receiver) {
+      // Always touch the signal so reference changes to this property are tracked,
+      // even if the value is an object we proxy further.
+      const signal = getSignal(target, prop)
+      const value = signal()
 
       // If it's a function (e.g. array methods), just return it bound to the proxy
       // Note: For array mutation methods (push, pop), we might need more complex handling
@@ -40,15 +43,11 @@ export function $store<T extends object>(initialValue: T): T {
 
       // If the value is an object/array, we recursively wrap it in a store
       if (typeof value === 'object' && value !== null) {
-        // We don't track the *access* to the object itself (unless we want to track reference changes),
-        // but we return a proxy so that *its* properties are tracked.
-        // However, if we replace `store.user = newValue`, the parent setter handles that.
         return $store(value)
       }
 
-      // For primitives, we return the signal value (which tracks the read)
-      const signal = getSignal(target, prop)
-      return signal()
+      // For primitives (and functions), we return the signal value (which tracks the read)
+      return value
     },
 
     set(target, prop, newValue, receiver) {

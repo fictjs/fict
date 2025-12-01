@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from 'vitest'
-import { $store } from '../store'
 import { createEffect } from 'fict-runtime'
+import { describe, it, expect, vi } from 'vitest'
+
+import { $store } from '../store'
 
 describe('$store', () => {
   it('should be reactive for direct properties', () => {
