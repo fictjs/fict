@@ -1,16 +1,24 @@
 import { createSignal, type Signal } from 'fict-runtime'
 
-const PROXY_CACHE = new WeakMap<object, any>()
-const SIGNAL_CACHE = new WeakMap<object, Record<string | symbol, Signal<any>>>()
+type AnyFn = (...args: unknown[]) => unknown
+interface BoundMethodEntry {
+  ref: AnyFn
+  bound: AnyFn
+}
 
-function getSignal(target: object, prop: string | symbol): Signal<any> {
+const PROXY_CACHE = new WeakMap<object, unknown>()
+const SIGNAL_CACHE = new WeakMap<object, Record<string | symbol, Signal<unknown>>>()
+const BOUND_METHOD_CACHE = new WeakMap<object, Map<string | symbol, BoundMethodEntry>>()
+
+function getSignal(target: object, prop: string | symbol): Signal<unknown> {
   let signals = SIGNAL_CACHE.get(target)
   if (!signals) {
     signals = {}
     SIGNAL_CACHE.set(target, signals)
   }
   if (!signals[prop]) {
-    signals[prop] = createSignal((target as any)[prop])
+    const initial = (target as Record<string | symbol, unknown>)[prop]
+    signals[prop] = createSignal(initial)
   }
   return signals[prop]
 }
@@ -21,15 +29,36 @@ export function $store<T extends object>(initialValue: T): T {
   }
 
   if (PROXY_CACHE.has(initialValue)) {
-    return PROXY_CACHE.get(initialValue)
+    return PROXY_CACHE.get(initialValue) as T
   }
 
   const proxy = new Proxy(initialValue, {
-    get(target, prop, _receiver) {
+    get(target, prop, receiver) {
       // Always touch the signal so reference changes to this property are tracked,
       // even if the value is an object we proxy further.
       const signal = getSignal(target, prop)
-      const value = signal()
+      const trackedValue = signal()
+
+      const currentValue = Reflect.get(target, prop, receiver ?? proxy)
+      if (currentValue !== trackedValue) {
+        signal(currentValue)
+      }
+
+      if (typeof currentValue === 'function') {
+        let boundMethods = BOUND_METHOD_CACHE.get(target)
+        if (!boundMethods) {
+          boundMethods = new Map()
+          BOUND_METHOD_CACHE.set(target, boundMethods)
+        }
+        const cached = boundMethods.get(prop)
+        if (cached && cached.ref === currentValue) {
+          return cached.bound
+        }
+
+        const bound = (currentValue as AnyFn).bind(receiver ?? proxy)
+        boundMethods.set(prop, { ref: currentValue as AnyFn, bound })
+        return bound
+      }
 
       // If it's a function (e.g. array methods), just return it bound to the proxy
       // Note: For array mutation methods (push, pop), we might need more complex handling
@@ -42,12 +71,12 @@ export function $store<T extends object>(initialValue: T): T {
       // that triggers updates. But let's start with simple property access tracking.
 
       // If the value is an object/array, we recursively wrap it in a store
-      if (typeof value === 'object' && value !== null) {
-        return $store(value)
+      if (typeof currentValue === 'object' && currentValue !== null) {
+        return $store(currentValue as Record<string, unknown>)
       }
 
       // For primitives (and functions), we return the signal value (which tracks the read)
-      return value
+      return currentValue
     },
 
     set(target, prop, newValue, receiver) {
@@ -60,7 +89,16 @@ export function $store<T extends object>(initialValue: T): T {
 
       const result = Reflect.set(target, prop, newValue, receiver)
 
+      // IMPORTANT: Clear bound method cache BEFORE updating the signal
+      // This ensures that if a function property is reassigned and the signal update
+      // triggers effects that immediately access the property, they get the new bound method
+      const boundMethods = BOUND_METHOD_CACHE.get(target)
+      if (boundMethods && boundMethods.has(prop)) {
+        boundMethods.delete(prop)
+      }
+
       // Update the signal if it exists
+      // This may trigger effects that access the property, so cache must be cleared first
       const signals = SIGNAL_CACHE.get(target)
       if (signals && signals[prop]) {
         signals[prop](newValue)
@@ -86,6 +124,13 @@ export function $store<T extends object>(initialValue: T): T {
         // What to set it to? undefined?
         signals[prop](undefined)
       }
+
+      // Clear bound method cache when a property is deleted
+      const boundMethods = BOUND_METHOD_CACHE.get(target)
+      if (boundMethods && boundMethods.has(prop)) {
+        boundMethods.delete(prop)
+      }
+
       return result
     },
   })
