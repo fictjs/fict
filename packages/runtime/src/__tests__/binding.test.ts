@@ -13,8 +13,10 @@ import {
   createClassBinding,
   createConditional,
   createList,
+  insert,
   createShow,
   createPortal,
+  onDestroy,
   isReactive,
   unwrap,
 } from '..'
@@ -235,6 +237,42 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('Visible')
 
       dispose()
+    })
+  })
+
+  describe('insert', () => {
+    it('cleans up fragment outputs and lifecycles when swapped', () => {
+      const show = createSignal(true)
+      const cleanups: string[] = []
+
+      const Child = () => {
+        onDestroy(() => cleanups.push('child'))
+        return {
+          type: Fragment,
+          props: {
+            children: ['X', { type: 'span', props: { children: 'Y' }, key: undefined }],
+          },
+          key: undefined,
+        }
+      }
+
+      const root = createRoot(() =>
+        insert(
+          container,
+          () => (show() ? { type: Child, props: {}, key: undefined } : null),
+          createElement,
+        ),
+      )
+      const disposeInsert = root.value
+
+      expect(container.textContent).toBe('XY')
+
+      show(false)
+      expect(container.textContent).toBe('')
+      expect(cleanups).toEqual(['child'])
+
+      disposeInsert()
+      root.dispose()
     })
   })
 

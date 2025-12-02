@@ -327,16 +327,8 @@ export function insert(
   const marker = document.createComment('fict:insert')
   parent.appendChild(marker)
 
-  let currentNode: Node | null = null
-
   const dispose = createEffect(() => {
     const value = getValue()
-
-    // Remove previous node
-    if (currentNode && currentNode.parentNode) {
-      currentNode.parentNode.removeChild(currentNode)
-      currentNode = null
-    }
 
     // Skip if value is null/undefined/false
     if (value == null || value === false) {
@@ -344,26 +336,37 @@ export function insert(
     }
 
     // Create new content
-    let newNode: Node
-    if (value instanceof Node) {
-      newNode = value
-    } else if (typeof value === 'string' || typeof value === 'number') {
-      newNode = document.createTextNode(String(value))
-    } else if (createElementFn) {
-      newNode = createElementFn(value)
-    } else {
-      newNode = document.createTextNode(String(value))
+    const root = createRootContext()
+    const prev = pushRoot(root)
+    let nodes: Node[] = []
+    try {
+      const newNode =
+        value instanceof Node
+          ? value
+          : typeof value === 'string' || typeof value === 'number'
+            ? document.createTextNode(String(value))
+            : createElementFn
+              ? createElementFn(value)
+              : document.createTextNode(String(value))
+
+      nodes = toNodeArray(newNode)
+      const parentNode = marker.parentNode as (ParentNode & Node) | null
+      if (parentNode) {
+        insertNodesBefore(parentNode, nodes, marker)
+      }
+    } finally {
+      popRoot(prev)
+      flushOnMount(root)
     }
 
-    marker.parentNode?.insertBefore(newNode, marker)
-    currentNode = newNode
+    return () => {
+      destroyRoot(root)
+      removeNodes(nodes)
+    }
   })
 
   return () => {
     dispose()
-    if (currentNode && currentNode.parentNode) {
-      currentNode.parentNode.removeChild(currentNode)
-    }
     marker.parentNode?.removeChild(marker)
   }
 }
@@ -389,23 +392,8 @@ export function createChildBinding(
   const marker = document.createComment('fict:child')
   parent.appendChild(marker)
 
-  let currentNodes: Node[] = []
-  let currentRoot: RootContext | null = null
-
   const dispose = createEffect(() => {
     const value = getValue()
-
-    // Clean up previous nodes
-    if (currentRoot) {
-      destroyRoot(currentRoot)
-      currentRoot = null
-    }
-    for (const node of currentNodes) {
-      if (node.parentNode) {
-        node.parentNode.removeChild(node)
-      }
-    }
-    currentNodes = []
 
     // Skip if value is null/undefined/false
     if (value == null || value === false) {
@@ -415,32 +403,29 @@ export function createChildBinding(
     // Create new content within a root context
     const root = createRootContext()
     const prev = pushRoot(root)
+    let nodes: Node[] = []
     try {
-      const newNode = createElementFn(value)
-      if (newNode instanceof DocumentFragment) {
-        // Collect all child nodes before inserting (fragment gets emptied)
-        currentNodes = Array.from(newNode.childNodes)
-      } else {
-        currentNodes = [newNode]
+      const output = createElementFn(value)
+      nodes = toNodeArray(output)
+      const parentNode = marker.parentNode as (ParentNode & Node) | null
+      if (parentNode) {
+        insertNodesBefore(parentNode, nodes, marker)
       }
-      marker.parentNode?.insertBefore(newNode, marker)
     } finally {
       popRoot(prev)
       flushOnMount(root)
     }
-    currentRoot = root
+
+    return () => {
+      destroyRoot(root)
+      removeNodes(nodes)
+    }
   })
 
   return {
     marker,
     dispose: () => {
       dispose()
-      if (currentRoot) {
-        destroyRoot(currentRoot)
-      }
-      for (const node of currentNodes) {
-        node.parentNode?.removeChild(node)
-      }
       marker.parentNode?.removeChild(marker)
     },
   }

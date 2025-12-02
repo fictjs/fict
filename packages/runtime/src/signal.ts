@@ -8,8 +8,8 @@ import { getDevtoolsHook } from './devtools'
  * Reactive node that can be either a signal, computed, effect, or effect scope
  */
 export type ReactiveNode =
-  | SignalNode<any>
-  | ComputedNode<any>
+  | SignalNode<unknown>
+  | ComputedNode<unknown>
   | EffectNode
   | EffectScopeNode
   | SubscriberNode
@@ -59,7 +59,7 @@ export interface BaseNode {
 /**
  * Signal node - mutable reactive value
  */
-export interface SignalNode<T = any> extends BaseNode {
+export interface SignalNode<T = unknown> extends BaseNode {
   /** Current committed value */
   currentValue: T
   /** Pending value to be committed */
@@ -73,7 +73,7 @@ export interface SignalNode<T = any> extends BaseNode {
 /**
  * Computed node - derived reactive value
  */
-export interface ComputedNode<T = any> extends BaseNode {
+export interface ComputedNode<T = unknown> extends BaseNode {
   /** Current computed value */
   value: T
   /** First dependency link */
@@ -700,7 +700,7 @@ function updateSignal(s: SignalNode): boolean {
  * @param c - The computed node
  * @returns True if the value changed
  */
-function updateComputed(c: ComputedNode): boolean {
+function updateComputed<T>(c: ComputedNode<T>): boolean {
   ++cycle
   const oldValue = c.value
   c.depsTail = undefined
@@ -827,8 +827,8 @@ function signalOper<T>(this: SignalNode<T>, value?: T): T | void {
  * @returns A computed accessor function
  */
 export function computed<T>(getter: (oldValue?: T) => T): ComputedAccessor<T> {
-  const c: any = {
-    value: undefined,
+  const c: ComputedNode<T> = {
+    value: undefined as unknown as T,
     subs: undefined,
     subsTail: undefined,
     deps: undefined,
@@ -836,7 +836,8 @@ export function computed<T>(getter: (oldValue?: T) => T): ComputedAccessor<T> {
     flags: 0,
     getter,
   }
-  return computedOper.bind(c) as ComputedAccessor<T>
+  const bound = (computedOper as (this: ComputedNode<T>) => T).bind(c)
+  return bound as ComputedAccessor<T>
 }
 function computedOper<T>(this: ComputedNode<T>): T {
   const flags = this.flags
@@ -1043,32 +1044,32 @@ export function peek<T>(accessor: () => T): T {
  * @param fn - The function to check
  * @returns True if the function is a signal accessor
  */
-export function isSignal(fn: any): fn is SignalAccessor<any> {
-  return fn?.name === 'bound signalOper'
+export function isSignal(fn: unknown): fn is SignalAccessor<unknown> {
+  return typeof fn === 'function' && fn.name === 'bound signalOper'
 }
 /**
  * Check if a function is a computed accessor
  * @param fn - The function to check
  * @returns True if the function is a computed accessor
  */
-export function isComputed(fn: any): fn is ComputedAccessor<any> {
-  return fn?.name === 'bound computedOper'
+export function isComputed(fn: unknown): fn is ComputedAccessor<unknown> {
+  return typeof fn === 'function' && fn.name === 'bound computedOper'
 }
 /**
  * Check if a function is an effect disposer
  * @param fn - The function to check
  * @returns True if the function is an effect disposer
  */
-export function isEffect(fn: any): fn is EffectDisposer {
-  return fn?.name === 'bound effectOper'
+export function isEffect(fn: unknown): fn is EffectDisposer {
+  return typeof fn === 'function' && fn.name === 'bound effectOper'
 }
 /**
  * Check if a function is an effect scope disposer
  * @param fn - The function to check
  * @returns True if the function is an effect scope disposer
  */
-export function isEffectScope(fn: any): fn is EffectScopeDisposer {
-  return fn?.name === 'bound effectScopeOper'
+export function isEffectScope(fn: unknown): fn is EffectScopeDisposer {
+  return typeof fn === 'function' && fn.name === 'bound effectScopeOper'
 }
 // Export aliases for API compatibility
 export { signal as createSignal }
@@ -1107,19 +1108,23 @@ export const $state = signal as <T>(value: T) => T
 let devtoolsSignalId = 0
 let devtoolsEffectId = 0
 
+interface DevtoolsIdentifiable {
+  __id?: number
+}
+
 function registerSignalDevtools(value: unknown, node: SignalNode): number | undefined {
   const hook = getDevtoolsHook()
   if (!hook) return undefined
   const id = ++devtoolsSignalId
   hook.registerSignal(id, value)
-  ;(node as any).__id = id
+  ;(node as SignalNode & DevtoolsIdentifiable).__id = id
   return id
 }
 
 function updateSignalDevtools(node: SignalNode, value: unknown): void {
   const hook = getDevtoolsHook()
   if (!hook) return
-  const id = (node as any).__id
+  const id = (node as SignalNode & DevtoolsIdentifiable).__id
   if (id) hook.updateSignal(id, value)
 }
 
@@ -1128,13 +1133,13 @@ function registerEffectDevtools(node: EffectNode): number | undefined {
   if (!hook) return undefined
   const id = ++devtoolsEffectId
   hook.registerEffect(id)
-  ;(node as any).__id = id
+  ;(node as EffectNode & DevtoolsIdentifiable).__id = id
   return id
 }
 
 function effectRunDevtools(node: EffectNode): void {
   const hook = getDevtoolsHook()
   if (!hook) return
-  const id = (node as any).__id
+  const id = (node as EffectNode & DevtoolsIdentifiable).__id
   if (id) hook.effectRun(id)
 }

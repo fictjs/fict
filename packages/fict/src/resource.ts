@@ -3,12 +3,12 @@ import { createSignal, createEffect, onCleanup } from 'fict-runtime'
 export interface ResourceResult<T> {
   data: T | undefined
   loading: boolean
-  error: any
+  error: unknown
   refresh: () => void
 }
 
 export interface ResourceOptions<T, Args> {
-  key?: any[]
+  key?: unknown[]
   fetch: (ctx: { signal: AbortSignal }, args: Args) => Promise<T>
 }
 
@@ -28,7 +28,7 @@ export function resource<T, Args = void>(
     read(argsAccessor: () => Args | Args): ResourceResult<T> {
       const data = createSignal<T | undefined>(undefined)
       const loading = createSignal(true)
-      const error = createSignal<any>(undefined)
+      const error = createSignal<unknown>(undefined)
 
       const refresh = () => {
         version(version() + 1)
