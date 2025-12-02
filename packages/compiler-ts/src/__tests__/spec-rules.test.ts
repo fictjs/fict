@@ -76,6 +76,20 @@ describe('Spec rule coverage', () => {
     expect(output).toContain("=== undefined ? { name: 'Anon' } : __props_1.profile")
   })
 
+  it('rewrites destructured props that shadow tracked names inside JSX', () => {
+    const input = `
+      import { $state } from 'fict'
+      const count = $state(0)
+      function Child({ count }) {
+        return <div>{count}</div>
+      }
+    `
+    const output = transform(input)
+    expect(output).toContain('const count = () =>')
+    expect(output).toContain('__props_1.count')
+    expect(output).toContain('{() => count()}')
+  })
+
   it('emits warnings for deep mutations and dynamic property access', () => {
     const warnings: any[] = []
     const input = `

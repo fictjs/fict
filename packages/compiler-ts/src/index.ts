@@ -998,18 +998,36 @@ function handleFunctionWithShadowing(
 
   const functionMemoVars = new Set(memoVars)
 
-  // Create new context with updated shadowed vars
-  const newCtx: TransformContext = {
+  // Use a provisional context to build destructuring plan
+  const provisionalCtx: TransformContext = {
     ...ctx,
     shadowedVars: newShadowed,
     memoVars: functionMemoVars,
   }
 
-  const innerVisitor = createVisitorWithOptions(newCtx, opts)
-  const destructPlan = buildPropsDestructurePlan(node, newCtx, innerVisitor)
+  const provisionalVisitor = createVisitorWithOptions(provisionalCtx, opts)
+  const enablePropTracking = functionContainsJsx(node)
+  const destructPlan = enablePropTracking
+    ? buildPropsDestructurePlan(node, provisionalCtx, provisionalVisitor)
+    : null
   if (destructPlan) {
     destructPlan.trackedNames.forEach(name => functionMemoVars.add(name))
   }
+
+  // Remove destructured prop names from shadowing so their getters are callable
+  const activeShadowed = new Set(newShadowed)
+  if (destructPlan) {
+    destructPlan.trackedNames.forEach(name => activeShadowed.delete(name))
+  }
+
+  // Create final context with updated shadowed vars
+  const newCtx: TransformContext = {
+    ...ctx,
+    shadowedVars: activeShadowed,
+    memoVars: functionMemoVars,
+  }
+
+  const innerVisitor = createVisitorWithOptions(newCtx, opts)
   const updatedParams =
     destructPlan?.parameters ??
     ts.factory.createNodeArray(
@@ -1344,6 +1362,29 @@ function transformFunctionBody(
     : factory.createReturnStatement()
 
   return factory.createBlock([...visitedPrologue, returnStmt], true)
+}
+
+function functionContainsJsx(
+  node: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
+): boolean {
+  let found = false
+  const visit = (child: ts.Node): void => {
+    if (found) return
+    if (
+      ts.isJsxElement(child) ||
+      ts.isJsxSelfClosingElement(child) ||
+      ts.isJsxFragment(child) ||
+      ts.isJsxOpeningElement(child) ||
+      ts.isJsxOpeningFragment(child)
+    ) {
+      found = true
+      return
+    }
+    ts.forEachChild(child, visit)
+  }
+
+  if (node.body) visit(node.body)
+  return found
 }
 
 /**
