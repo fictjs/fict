@@ -182,4 +182,259 @@ describe('$store', () => {
       expect(results).toEqual(['a', 'a!', 'b!'])
     })
   })
+
+  describe('Edge cases verification', () => {
+    it('should react to property deletion', () => {
+      const state = $store<{ prop?: string }>({ prop: 'exists' })
+      const fn = vi.fn()
+
+      createEffect(() => {
+        fn('prop' in state)
+      })
+
+      expect(fn).toHaveBeenCalledWith(true)
+
+      delete state.prop
+      expect(fn).toHaveBeenCalledWith(false)
+      expect(fn).toHaveBeenCalledTimes(2)
+    })
+
+    it('should react to Object.keys iteration', () => {
+      const state = $store<Record<string, number>>({ a: 1, b: 2 })
+      const fn = vi.fn()
+
+      createEffect(() => {
+        fn(Object.keys(state).join(','))
+      })
+
+      expect(fn).toHaveBeenCalledWith('a,b')
+
+      state.c = 3
+      expect(fn).toHaveBeenCalledWith('a,b,c')
+
+      delete state.a
+      expect(fn).toHaveBeenCalledWith('b,c')
+
+      expect(fn).toHaveBeenCalledTimes(3)
+    })
+
+    it('should react to for...in loop', () => {
+      const state = $store<Record<string, number>>({ x: 10 })
+      const fn = vi.fn()
+
+      createEffect(() => {
+        const keys = []
+        for (const key in state) {
+          keys.push(key)
+        }
+        fn(keys.join(','))
+      })
+
+      expect(fn).toHaveBeenCalledWith('x')
+
+      state.y = 20
+      expect(fn).toHaveBeenCalledWith('x,y')
+      expect(fn).toHaveBeenCalledTimes(2)
+    })
+
+    it('should handle deep nesting with arrays', () => {
+      const state = $store({
+        users: [
+          { id: 1, name: 'Alice', posts: [{ title: 'A' }] },
+          { id: 2, name: 'Bob', posts: [] },
+        ],
+      })
+      const fn = vi.fn()
+
+      createEffect(() => {
+        fn(state.users[0]!.posts[0]!.title)
+      })
+
+      expect(fn).toHaveBeenCalledWith('A')
+
+      state.users[0]!.posts[0]!.title = 'B'
+      expect(fn).toHaveBeenCalledWith('B')
+      expect(fn).toHaveBeenCalledTimes(2)
+    })
+
+    it('should react to "in" operator for property additions', () => {
+      const state = $store<{ prop?: string }>({})
+      const fn = vi.fn()
+
+      createEffect(() => {
+        fn('prop' in state)
+      })
+
+      expect(fn).toHaveBeenCalledWith(false)
+
+      state.prop = 'value'
+      expect(fn).toHaveBeenCalledWith(true)
+      expect(fn).toHaveBeenCalledTimes(2)
+    })
+
+    it('should react to "in" operator after property modification', () => {
+      const state = $store<{ existing?: string; other?: string }>({ existing: 'initial' })
+      const fn = vi.fn()
+
+      createEffect(() => {
+        const hasExisting = 'existing' in state
+        const hasOther = 'other' in state
+        fn({ hasExisting, hasOther })
+      })
+
+      expect(fn).toHaveBeenCalledWith({ hasExisting: true, hasOther: false })
+
+      state.other = 'new'
+      expect(fn).toHaveBeenCalledWith({ hasExisting: true, hasOther: true })
+
+      delete state.existing
+      expect(fn).toHaveBeenCalledWith({ hasExisting: false, hasOther: true })
+
+      expect(fn).toHaveBeenCalledTimes(3)
+    })
+  })
+
+  describe('Array methods reactivity', () => {
+    it('should react to array.push()', () => {
+      const state = $store({ items: [1, 2] })
+      const results: number[] = []
+
+      createEffect(() => {
+        results.push(state.items.length)
+      })
+
+      expect(results).toEqual([2])
+
+      state.items.push(3)
+      // Verify the final state is correct
+      expect(state.items.length).toBe(3)
+      expect(state.items).toEqual([1, 2, 3])
+      // The effect should have been triggered and updated with the new length
+      expect(results[results.length - 1]).toBe(3)
+    })
+
+    it('should react to array.pop()', () => {
+      const state = $store({ items: [1, 2, 3] })
+      const fn = vi.fn()
+
+      createEffect(() => {
+        fn(state.items.length)
+      })
+
+      expect(fn).toHaveBeenCalledWith(3)
+
+      state.items.pop()
+      expect(fn).toHaveBeenLastCalledWith(2)
+      expect(state.items.length).toBe(2)
+    })
+
+    it('should react to array.splice()', () => {
+      const state = $store({ items: [1, 2, 3, 4] })
+      const lengthFn = vi.fn()
+      const contentFn = vi.fn()
+
+      createEffect(() => {
+        lengthFn(state.items.length)
+      })
+
+      createEffect(() => {
+        contentFn(state.items.join(','))
+      })
+
+      expect(lengthFn).toHaveBeenCalledWith(4)
+      expect(contentFn).toHaveBeenCalledWith('1,2,3,4')
+
+      // Remove 1 element at index 1
+      state.items.splice(1, 1)
+      expect(lengthFn).toHaveBeenLastCalledWith(3)
+      expect(contentFn).toHaveBeenLastCalledWith('1,3,4')
+
+      // Add elements
+      state.items.splice(1, 0, 10, 20)
+      expect(lengthFn).toHaveBeenLastCalledWith(5)
+      expect(contentFn).toHaveBeenLastCalledWith('1,10,20,3,4')
+    })
+
+    it('should react to array.unshift()', () => {
+      const state = $store({ items: [2, 3] })
+      const fn = vi.fn()
+
+      createEffect(() => {
+        fn(state.items.join(','))
+      })
+
+      expect(fn).toHaveBeenCalledWith('2,3')
+
+      state.items.unshift(1)
+      // unshift moves all elements, so may trigger multiple times
+      expect(fn).toHaveBeenLastCalledWith('1,2,3')
+      expect(state.items.join(',')).toBe('1,2,3')
+    })
+
+    it('should react to array.shift()', () => {
+      const state = $store({ items: [1, 2, 3] })
+      const fn = vi.fn()
+
+      createEffect(() => {
+        fn(state.items.join(','))
+      })
+
+      expect(fn).toHaveBeenCalledWith('1,2,3')
+
+      state.items.shift()
+      // shift moves all elements, so may trigger multiple times
+      expect(fn).toHaveBeenLastCalledWith('2,3')
+      expect(state.items.join(',')).toBe('2,3')
+    })
+
+    it('should react to array.reverse()', () => {
+      const state = $store({ items: [1, 2, 3] })
+      const fn = vi.fn()
+
+      createEffect(() => {
+        fn(state.items.join(','))
+      })
+
+      expect(fn).toHaveBeenCalledWith('1,2,3')
+
+      state.items.reverse()
+      // reverse swaps elements in place, may trigger multiple times
+      expect(fn).toHaveBeenLastCalledWith('3,2,1')
+      expect(state.items.join(',')).toBe('3,2,1')
+    })
+
+    it('should react to array.sort()', () => {
+      const state = $store({ items: [3, 1, 2] })
+      const fn = vi.fn()
+
+      createEffect(() => {
+        fn(state.items.join(','))
+      })
+
+      expect(fn).toHaveBeenCalledWith('3,1,2')
+
+      state.items.sort()
+      // sort swaps elements in place, may trigger multiple times
+      expect(fn).toHaveBeenLastCalledWith('1,2,3')
+      expect(state.items.join(',')).toBe('1,2,3')
+    })
+
+    it('should track array iteration with Object.keys', () => {
+      const state = $store({ items: ['a', 'b'] })
+      const fn = vi.fn()
+
+      createEffect(() => {
+        fn(Object.keys(state.items).join(','))
+      })
+
+      expect(fn).toHaveBeenCalledWith('0,1')
+
+      state.items.push('c')
+      expect(fn).toHaveBeenLastCalledWith('0,1,2')
+
+      state.items.splice(1, 1)
+      expect(fn).toHaveBeenLastCalledWith('0,1')
+      expect(Object.keys(state.items).join(',')).toBe('0,1')
+    })
+  })
 })
