@@ -43,6 +43,10 @@ export interface FictCompilerOptions {
   dev?: boolean
   sourcemap?: boolean
   onWarn?: (warning: CompilerWarning) => void
+  /** Enable lazy evaluation of conditional derived values (Rule J optimization) */
+  lazyConditional?: boolean
+  /** Enable getter caching within the same sync block (Rule L optimization) */
+  getterCache?: boolean
 }
 
 const RUNTIME_MODULE = 'fict-runtime'
@@ -70,6 +74,66 @@ const RUNTIME_ALIASES = {
 
 // Attributes that should NOT be wrapped in reactive functions
 const NON_REACTIVE_ATTRS = new Set(['key', 'ref'])
+
+// Functions that are known to be safe (read-only, won't mutate passed objects)
+const SAFE_FUNCTIONS = new Set([
+  // Console methods
+  'console.log',
+  'console.info',
+  'console.warn',
+  'console.error',
+  'console.debug',
+  'console.trace',
+  'console.dir',
+  'console.table',
+  // JSON methods
+  'JSON.stringify',
+  'JSON.parse',
+  // Object methods (read-only)
+  'Object.keys',
+  'Object.values',
+  'Object.entries',
+  'Object.freeze',
+  'Object.isFrozen',
+  'Object.isSealed',
+  'Object.isExtensible',
+  'Object.getOwnPropertyNames',
+  'Object.getOwnPropertyDescriptor',
+  'Object.getPrototypeOf',
+  // Array methods (read-only)
+  'Array.isArray',
+  'Array.from',
+  'Array.of',
+  // Math methods
+  'Math.abs',
+  'Math.ceil',
+  'Math.floor',
+  'Math.round',
+  'Math.max',
+  'Math.min',
+  'Math.pow',
+  'Math.sqrt',
+  'Math.random',
+  'Math.sin',
+  'Math.cos',
+  'Math.tan',
+  'Math.log',
+  'Math.exp',
+  'Math.sign',
+  'Math.trunc',
+  // Type conversion/checking
+  'String',
+  'Number',
+  'Boolean',
+  'parseInt',
+  'parseFloat',
+  'isNaN',
+  'isFinite',
+  'typeof',
+  // Date methods (read-only)
+  'Date.now',
+  'Date.parse',
+])
 
 // ============================================================================
 // Main Transformer
@@ -263,6 +327,11 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
       return handleElementAccess(node, ctx, visitor)
     }
 
+    // Rule H: Detect black-box function calls that receive state objects
+    if (ts.isCallExpression(node)) {
+      checkBlackBoxFunctionCall(node, ctx)
+    }
+
     // Handle shorthand properties: { count } -> { count: count() }
     if (
       ts.isShorthandPropertyAssignment(node) &&
@@ -307,12 +376,312 @@ interface RegionMemoResult {
   regionId: ts.Identifier
 }
 
+/**
+ * Rule J: Information about conditional usage of derived values
+ */
+interface ConditionalDerivedInfo {
+  /** The condition expression */
+  condition: ts.Expression
+  /** Derived values only used when condition is true */
+  trueBranchOnlyDerived: Set<string>
+  /** Derived values only used when condition is false */
+  falseBranchOnlyDerived: Set<string>
+}
+
+/**
+ * Rule J: Analyze which derived values are only used in conditional branches
+ */
+function analyzeConditionalUsage(
+  statements: ts.Statement[],
+  derivedOutputs: Set<string>,
+  _ctx: TransformContext,
+): ConditionalDerivedInfo | null {
+  // Find if statements in the region
+  const ifStmt = statements.find((stmt): stmt is ts.IfStatement => ts.isIfStatement(stmt))
+
+  if (!ifStmt) return null
+
+  const trueBranchUsed = new Set<string>()
+  const falseBranchUsed = new Set<string>()
+  const outsideConditionUsed = new Set<string>()
+
+  // Collect derived values used in each branch
+  const collectUsedDerived = (node: ts.Node, target: Set<string>): void => {
+    // Skip variable declaration names - they are definitions, not usages
+    if (ts.isVariableDeclaration(node)) {
+      if (node.initializer) {
+        collectUsedDerived(node.initializer, target)
+      }
+      return
+    }
+
+    if (ts.isIdentifier(node) && derivedOutputs.has(node.text)) {
+      target.add(node.text)
+    }
+    ts.forEachChild(node, child => collectUsedDerived(child, target))
+  }
+
+  // Check true branch
+  collectUsedDerived(ifStmt.thenStatement, trueBranchUsed)
+
+  // Check false branch if exists
+  if (ifStmt.elseStatement) {
+    collectUsedDerived(ifStmt.elseStatement, falseBranchUsed)
+  }
+
+  // Check usages outside the if statement
+  for (const stmt of statements) {
+    if (stmt === ifStmt) continue
+    collectUsedDerived(stmt, outsideConditionUsed)
+  }
+
+  // Find derived values only used in true branch (not in false branch or outside)
+  const trueBranchOnlyDerived = new Set<string>()
+  for (const name of trueBranchUsed) {
+    if (!falseBranchUsed.has(name) && !outsideConditionUsed.has(name)) {
+      trueBranchOnlyDerived.add(name)
+    }
+  }
+
+  // Find derived values only used in false branch (not in true branch or outside)
+  const falseBranchOnlyDerived = new Set<string>()
+  for (const name of falseBranchUsed) {
+    if (!trueBranchUsed.has(name) && !outsideConditionUsed.has(name)) {
+      falseBranchOnlyDerived.add(name)
+    }
+  }
+
+  if (trueBranchOnlyDerived.size === 0 && falseBranchOnlyDerived.size === 0) {
+    return null
+  }
+
+  return {
+    condition: ifStmt.expression,
+    trueBranchOnlyDerived,
+    falseBranchOnlyDerived,
+  }
+}
+
+/**
+ * Rule J: Generate optimized region memo with lazy conditional evaluation
+ */
+function generateLazyConditionalRegionMemo(
+  regionStatements: ts.Statement[],
+  orderedOutputs: string[],
+  conditionalInfo: ConditionalDerivedInfo,
+  ctx: TransformContext,
+): RegionMemoResult {
+  const { factory, memoVars } = ctx
+
+  // Categorize statements while preserving their original indices
+  interface TaggedStatement {
+    stmt: ts.Statement
+    index: number
+    kind: 'always' | 'lazyTrue' | 'lazyFalse'
+  }
+
+  const taggedStatements: TaggedStatement[] = regionStatements.map((stmt, index) => {
+    if (ts.isVariableStatement(stmt)) {
+      const decl = stmt.declarationList.declarations[0]
+      if (decl && ts.isIdentifier(decl.name)) {
+        if (conditionalInfo.trueBranchOnlyDerived.has(decl.name.text)) {
+          return { stmt, index, kind: 'lazyTrue' as const }
+        }
+        if (conditionalInfo.falseBranchOnlyDerived.has(decl.name.text)) {
+          return { stmt, index, kind: 'lazyFalse' as const }
+        }
+      }
+    }
+    return { stmt, index, kind: 'always' as const }
+  })
+
+  const lazyTrueStatements = taggedStatements.filter(t => t.kind === 'lazyTrue').map(t => t.stmt)
+  const lazyFalseStatements = taggedStatements.filter(t => t.kind === 'lazyFalse').map(t => t.stmt)
+
+  // Find the index of the first lazy statement to know where to insert the conditional block
+  const firstLazyIndex = taggedStatements.findIndex(t => t.kind !== 'always')
+
+  // Separate always statements into those before and after the first lazy statement
+  const alwaysBeforeLazy: ts.Statement[] = []
+  const alwaysAfterLazy: ts.Statement[] = []
+
+  for (const tagged of taggedStatements) {
+    if (tagged.kind === 'always') {
+      if (firstLazyIndex === -1 || tagged.index < firstLazyIndex) {
+        alwaysBeforeLazy.push(tagged.stmt)
+      } else {
+        alwaysAfterLazy.push(tagged.stmt)
+      }
+    }
+  }
+
+  // Helper to create return statement with null fields
+  const createReturnWithNulls = (nullFields: Set<string>): ts.ReturnStatement => {
+    return factory.createReturnStatement(
+      factory.createObjectLiteralExpression(
+        orderedOutputs.map(name => {
+          if (nullFields.has(name)) {
+            return factory.createPropertyAssignment(
+              factory.createIdentifier(name),
+              factory.createNull(),
+            )
+          }
+          return factory.createShorthandPropertyAssignment(name)
+        }),
+        false,
+      ),
+    )
+  }
+
+  // Build the optimized memo body preserving statement order
+  const memoBody: ts.Statement[] = [...alwaysBeforeLazy]
+
+  // Add conditional logic for lazy evaluation
+  if (lazyTrueStatements.length > 0 || lazyFalseStatements.length > 0) {
+    if (
+      (lazyTrueStatements.length > 0 && lazyFalseStatements.length > 0) ||
+      alwaysAfterLazy.length > 0
+    ) {
+      // Both branches have lazy statements OR we have always statements after the lazy block
+      // In either case, we use if-else structure and duplicate alwaysAfterLazy to preserve order
+      const ifElseBlock = factory.createIfStatement(
+        conditionalInfo.condition,
+        factory.createBlock(
+          [
+            ...lazyTrueStatements,
+            ...alwaysAfterLazy,
+            createReturnWithNulls(conditionalInfo.falseBranchOnlyDerived),
+          ],
+          true,
+        ),
+        factory.createBlock(
+          [
+            ...lazyFalseStatements,
+            ...alwaysAfterLazy,
+            createReturnWithNulls(conditionalInfo.trueBranchOnlyDerived),
+          ],
+          true,
+        ),
+      )
+      memoBody.push(ifElseBlock)
+    } else if (lazyTrueStatements.length > 0) {
+      // Only true-branch lazy statements: early return when condition is false
+      const ifFalseReturn = factory.createIfStatement(
+        factory.createPrefixUnaryExpression(
+          ts.SyntaxKind.ExclamationToken,
+          factory.createParenthesizedExpression(conditionalInfo.condition),
+        ),
+        factory.createBlock([createReturnWithNulls(conditionalInfo.trueBranchOnlyDerived)], true),
+      )
+      memoBody.push(ifFalseReturn)
+      memoBody.push(...lazyTrueStatements)
+      memoBody.push(...alwaysAfterLazy)
+      // Fall through to final return
+    } else {
+      // Only false-branch lazy statements: early return when condition is true
+      const ifTrueReturn = factory.createIfStatement(
+        conditionalInfo.condition,
+        factory.createBlock([createReturnWithNulls(conditionalInfo.falseBranchOnlyDerived)], true),
+      )
+      memoBody.push(ifTrueReturn)
+      memoBody.push(...lazyFalseStatements)
+      memoBody.push(...alwaysAfterLazy)
+      // Fall through to final return
+    }
+  }
+
+  // Add final return statement (only reached when one or no lazy set exists)
+  if (lazyTrueStatements.length === 0 || lazyFalseStatements.length === 0) {
+    const returnStatement = factory.createReturnStatement(
+      factory.createObjectLiteralExpression(
+        orderedOutputs.map(name => factory.createShorthandPropertyAssignment(name)),
+        false,
+      ),
+    )
+    memoBody.push(returnStatement)
+  }
+
+  const memoArrow = factory.createArrowFunction(
+    undefined,
+    undefined,
+    [],
+    undefined,
+    factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+    factory.createBlock(memoBody, true),
+  )
+
+  ctx.helpersUsed.memo = true
+  const regionId = factory.createUniqueName(`__fictRegion`)
+
+  const memoDecl = factory.createVariableStatement(
+    undefined,
+    factory.createVariableDeclarationList(
+      [
+        factory.createVariableDeclaration(
+          regionId,
+          undefined,
+          undefined,
+          factory.createCallExpression(factory.createIdentifier(RUNTIME_ALIASES.memo), undefined, [
+            memoArrow,
+          ]),
+        ),
+      ],
+      ts.NodeFlags.Const,
+    ),
+  )
+
+  const getterDecls = orderedOutputs.map(name =>
+    factory.createVariableStatement(
+      undefined,
+      factory.createVariableDeclarationList(
+        [
+          factory.createVariableDeclaration(
+            factory.createIdentifier(name),
+            undefined,
+            undefined,
+            factory.createArrowFunction(
+              undefined,
+              undefined,
+              [],
+              undefined,
+              factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+              factory.createPropertyAccessExpression(
+                factory.createCallExpression(regionId, undefined, []),
+                factory.createIdentifier(name),
+              ),
+            ),
+          ),
+        ],
+        ts.NodeFlags.Const,
+      ),
+    ),
+  )
+
+  // Register outputs as memo vars
+  orderedOutputs.forEach(out => memoVars.add(out))
+
+  return { memoDecl, getterDecls, regionId }
+}
+
 function generateRegionMemo(
   regionStatements: ts.Statement[],
   orderedOutputs: string[],
   ctx: TransformContext,
 ): RegionMemoResult {
   const { factory, memoVars } = ctx
+
+  // Rule J: Check for lazy conditional optimization
+  if (ctx.options.lazyConditional) {
+    const conditionalInfo = analyzeConditionalUsage(regionStatements, new Set(orderedOutputs), ctx)
+    if (conditionalInfo) {
+      return generateLazyConditionalRegionMemo(
+        regionStatements,
+        orderedOutputs,
+        conditionalInfo,
+        ctx,
+      )
+    }
+  }
 
   const returnStatement = factory.createReturnStatement(
     factory.createObjectLiteralExpression(
@@ -517,6 +886,20 @@ function transformStatementList(
     regionEnd--
   }
   if (regionEnd < firstTouched) {
+    return factory.createNodeArray(result)
+  }
+
+  const fallbackHasEarlyReturn = (() => {
+    for (let i = firstTouched; i <= regionEnd; i++) {
+      const stmt = statements[i]
+      if (stmt && containsEarlyReturn(stmt)) {
+        return true
+      }
+    }
+    return false
+  })()
+
+  if (fallbackHasEarlyReturn) {
     return factory.createNodeArray(result)
   }
 
@@ -933,6 +1316,14 @@ function collectOutputsInOrder(statements: ts.Statement[], outputs: Set<string>)
 
     const nextShadow = new Set(shadow)
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      // Explicitly collect the variable name if it's an output
+      // We do this before shadowing it for children
+      if (outputs.has(node.name.text) && !shadow.has(node.name.text)) {
+        if (!seen.has(node.name.text)) {
+          seen.add(node.name.text)
+          order.push(node.name.text)
+        }
+      }
       nextShadow.add(node.name.text)
     }
     ts.forEachChild(node, child => visit(child, nextShadow))
@@ -1061,7 +1452,16 @@ function handleFunctionWithShadowing(
       node.parameters.map(param => ts.visitEachChild(param, innerVisitor, context)),
     )
 
-  const updatedBody = transformFunctionBody(node.body, destructPlan, innerVisitor, factory)
+  let updatedBody = transformFunctionBody(node.body, destructPlan, innerVisitor, factory)
+
+  // Rule L: Apply getter caching if enabled
+  if (ctx.options.getterCache && updatedBody) {
+    if (ts.isBlock(updatedBody)) {
+      updatedBody = applyGetterCaching(updatedBody, newCtx)
+    } else {
+      updatedBody = applyGetterCachingToArrowBody(updatedBody, newCtx)
+    }
+  }
 
   // Create inner visitor with new context
   if (ts.isArrowFunction(node)) {
@@ -1389,6 +1789,190 @@ function transformFunctionBody(
     : factory.createReturnStatement()
 
   return factory.createBlock([...visitedPrologue, returnStmt], true)
+}
+
+// ============================================================================
+// Rule L: Getter Cache in Same Sync Block
+// ============================================================================
+
+/**
+ * Rule L: Analyze getter usage counts in a block
+ * Returns a map of getter names to their usage counts
+ */
+function analyzeGetterUsage(
+  node: ts.Node,
+  memoVars: Set<string>,
+  shadowedVars: Set<string>,
+): Map<string, number> {
+  const usageCounts = new Map<string, number>()
+
+  const visit = (n: ts.Node, localShadow: Set<string>): void => {
+    // Don't descend into nested functions - they have their own sync block
+    if (ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n)) {
+      return
+    }
+
+    // Track variable declarations for shadowing
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name)) {
+      const nextShadow = new Set(localShadow)
+      nextShadow.add(n.name.text)
+      if (n.initializer) {
+        visit(n.initializer, localShadow)
+      }
+      return
+    }
+
+    // Check for getter calls: identifier()
+    if (
+      ts.isCallExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      n.arguments.length === 0 &&
+      memoVars.has(n.expression.text) &&
+      !localShadow.has(n.expression.text)
+    ) {
+      const name = n.expression.text
+      usageCounts.set(name, (usageCounts.get(name) || 0) + 1)
+    }
+
+    ts.forEachChild(n, child => visit(child, localShadow))
+  }
+
+  visit(node, new Set(shadowedVars))
+  return usageCounts
+}
+
+/**
+ * Rule L: Transform a block to cache getters that are used multiple times
+ */
+function applyGetterCaching(block: ts.Block, ctx: TransformContext): ts.Block {
+  const { factory, memoVars, shadowedVars } = ctx
+
+  // Analyze getter usage
+  const usageCounts = analyzeGetterUsage(block, memoVars, shadowedVars)
+
+  // Find getters used more than once
+  const toCache = new Map<string, ts.Identifier>()
+  for (const [name, count] of usageCounts) {
+    if (count > 1) {
+      toCache.set(name, factory.createUniqueName(`__cached_${name}`))
+    }
+  }
+
+  if (toCache.size === 0) {
+    return block
+  }
+
+  // Create cache variable declarations
+  const cacheDecls: ts.Statement[] = []
+  for (const [name, cacheId] of toCache) {
+    cacheDecls.push(
+      factory.createVariableStatement(
+        undefined,
+        factory.createVariableDeclarationList(
+          [
+            factory.createVariableDeclaration(
+              cacheId,
+              undefined,
+              undefined,
+              factory.createCallExpression(factory.createIdentifier(name), undefined, []),
+            ),
+          ],
+          ts.NodeFlags.Const,
+        ),
+      ),
+    )
+  }
+
+  // Transform the block to replace getter calls with cached variables
+  const transformVisitor = (n: ts.Node): ts.Node => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      n.arguments.length === 0 &&
+      toCache.has(n.expression.text)
+    ) {
+      return toCache.get(n.expression.text)!
+    }
+
+    // Don't transform nested functions
+    if (ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n)) {
+      return n
+    }
+
+    return ts.visitEachChild(n, transformVisitor, ctx.context)
+  }
+
+  const transformedStatements = block.statements.map(
+    stmt => ts.visitNode(stmt, transformVisitor) as ts.Statement,
+  )
+
+  return factory.updateBlock(block, [...cacheDecls, ...transformedStatements])
+}
+
+/**
+ * Rule L: Apply getter caching to an arrow function body
+ */
+function applyGetterCachingToArrowBody(
+  body: ts.ConciseBody,
+  ctx: TransformContext,
+): ts.ConciseBody {
+  const { factory, memoVars, shadowedVars } = ctx
+
+  if (ts.isBlock(body)) {
+    return applyGetterCaching(body, ctx)
+  }
+
+  // For concise arrow body (expression), analyze usage
+  const usageCounts = analyzeGetterUsage(body, memoVars, shadowedVars)
+
+  // Find getters used more than once
+  const toCache = new Map<string, ts.Identifier>()
+  for (const [name, count] of usageCounts) {
+    if (count > 1) {
+      toCache.set(name, factory.createUniqueName(`__cached_${name}`))
+    }
+  }
+
+  if (toCache.size === 0) {
+    return body
+  }
+
+  // Convert to block body with caching
+  const cacheDecls: ts.Statement[] = []
+  for (const [name, cacheId] of toCache) {
+    cacheDecls.push(
+      factory.createVariableStatement(
+        undefined,
+        factory.createVariableDeclarationList(
+          [
+            factory.createVariableDeclaration(
+              cacheId,
+              undefined,
+              undefined,
+              factory.createCallExpression(factory.createIdentifier(name), undefined, []),
+            ),
+          ],
+          ts.NodeFlags.Const,
+        ),
+      ),
+    )
+  }
+
+  // Transform the expression
+  const transformVisitor = (n: ts.Node): ts.Node => {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      n.arguments.length === 0 &&
+      toCache.has(n.expression.text)
+    ) {
+      return toCache.get(n.expression.text)!
+    }
+    return ts.visitEachChild(n, transformVisitor, ctx.context)
+  }
+
+  const transformedExpr = ts.visitNode(body, transformVisitor) as ts.Expression
+  return factory.createBlock([...cacheDecls, factory.createReturnStatement(transformedExpr)], true)
 }
 
 function functionContainsJsx(
@@ -1899,6 +2483,94 @@ function wrapBindingHandle(handleExpr: ts.Expression, ctx: TransformContext): ts
 // ============================================================================
 // Assignment and Unary Expression Handling
 // ============================================================================
+
+/**
+ * Rule H: Check for black-box function calls that receive state objects
+ * When a state object is passed to an unknown function, emit a warning
+ */
+function checkBlackBoxFunctionCall(node: ts.CallExpression, ctx: TransformContext): void {
+  const { stateVars, shadowedVars } = ctx
+
+  // Skip if no arguments
+  if (!node.arguments.length) return
+
+  // Get the function name to check if it's a safe function
+  const funcName = getCallExpressionName(node.expression)
+
+  // Skip known safe functions
+  if (funcName && SAFE_FUNCTIONS.has(funcName)) return
+
+  // Skip $effect, $state and other fict macros
+  if (funcName && (funcName === '$effect' || funcName === '$state')) return
+
+  // Check each argument to see if it's a state variable being passed directly
+  for (const arg of node.arguments) {
+    // Check if argument is a state variable identifier
+    if (ts.isIdentifier(arg) && stateVars.has(arg.text) && !shadowedVars.has(arg.text)) {
+      emitWarning(
+        ctx,
+        node,
+        'FICT-H',
+        `State object "${arg.text}" passed to function "${funcName || '<anonymous>'}" ` +
+          'is treated as a black box and may cause over-recomputation. ' +
+          'Consider passing only the specific properties needed.',
+      )
+    }
+
+    // Also check for property access on state variables (e.g., user.profile passed to fn)
+    const stateRoot = getStateRootFromExpression(arg, stateVars, shadowedVars)
+    if (stateRoot && !ts.isIdentifier(arg)) {
+      // Only warn for non-identifier expressions (complex object access)
+      emitWarning(
+        ctx,
+        node,
+        'FICT-H',
+        `Expression derived from state "${stateRoot}" passed to function "${funcName || '<anonymous>'}" ` +
+          'may be mutated. Consider using immutable patterns or explicit dependency tracking.',
+      )
+    }
+  }
+}
+
+/**
+ * Get the name of a function being called (handles both simple identifiers and property access)
+ */
+function getCallExpressionName(expr: ts.Expression): string | null {
+  if (ts.isIdentifier(expr)) {
+    return expr.text
+  }
+  if (ts.isPropertyAccessExpression(expr)) {
+    const obj = ts.isIdentifier(expr.expression) ? expr.expression.text : null
+    const prop = expr.name.text
+    if (obj) {
+      return `${obj}.${prop}`
+    }
+    return prop
+  }
+  return null
+}
+
+/**
+ * Check if an expression is derived from a state variable and return the root state name
+ */
+function getStateRootFromExpression(
+  expr: ts.Expression,
+  stateVars: Set<string>,
+  shadowedVars: Set<string>,
+): string | null {
+  if (ts.isIdentifier(expr)) {
+    if (stateVars.has(expr.text) && !shadowedVars.has(expr.text)) {
+      return expr.text
+    }
+    return null
+  }
+
+  if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
+    return getStateRootFromExpression(expr.expression, stateVars, shadowedVars)
+  }
+
+  return null
+}
 
 function handlePropertyMutation(
   node: ts.BinaryExpression,
