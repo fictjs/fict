@@ -273,7 +273,13 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
       node.expression.text === '$effect'
     ) {
       helpersUsed.effect = true
-      const updatedArgs = node.arguments.map(arg => ts.visitNode(arg, visitor) as ts.Expression)
+      const effectVisitor = createVisitorWithOptions(ctx, {
+        ...opts,
+        disableMemoize: true,
+      })
+      const updatedArgs = node.arguments.map(
+        arg => ts.visitNode(arg, effectVisitor) as ts.Expression,
+      )
       return factory.updateCallExpression(
         node,
         factory.createIdentifier(RUNTIME_ALIASES.effect),
@@ -398,21 +404,26 @@ function analyzeConditionalUsage(
   derivedOutputs: Set<string>,
   _ctx: TransformContext,
 ): ConditionalDerivedInfo | null {
-  // Find if statements in the region
-  const ifStmt = statements.find((stmt): stmt is ts.IfStatement => ts.isIfStatement(stmt))
-
-  if (!ifStmt) return null
+  interface ConditionalNode {
+    node: ts.IfStatement | ts.ConditionalExpression
+    condition: ts.Expression
+    trueBranch: ts.Node
+    falseBranch: ts.Node | undefined
+  }
 
   const trueBranchUsed = new Set<string>()
   const falseBranchUsed = new Set<string>()
   const outsideConditionUsed = new Set<string>()
 
-  // Collect derived values used in each branch
-  const collectUsedDerived = (node: ts.Node, target: Set<string>): void => {
+  // Collect derived values used in a subtree, skipping function bodies and optional skip node
+  const collectUsedDerived = (node: ts.Node, target: Set<string>, skipNode?: ts.Node): void => {
+    if (node === skipNode) return
+    if (ts.isFunctionLike(node)) return
+
     // Skip variable declaration names - they are definitions, not usages
     if (ts.isVariableDeclaration(node)) {
       if (node.initializer) {
-        collectUsedDerived(node.initializer, target)
+        collectUsedDerived(node.initializer, target, skipNode)
       }
       return
     }
@@ -420,48 +431,82 @@ function analyzeConditionalUsage(
     if (ts.isIdentifier(node) && derivedOutputs.has(node.text)) {
       target.add(node.text)
     }
-    ts.forEachChild(node, child => collectUsedDerived(child, target))
+    ts.forEachChild(node, child => collectUsedDerived(child, target, skipNode))
   }
 
-  // Check true branch
-  collectUsedDerived(ifStmt.thenStatement, trueBranchUsed)
-
-  // Check false branch if exists
-  if (ifStmt.elseStatement) {
-    collectUsedDerived(ifStmt.elseStatement, falseBranchUsed)
+  // Find the first conditional (if-statement or ternary) in the region
+  const conditionals: ConditionalNode[] = []
+  const findConditional = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node)) return
+    if (ts.isIfStatement(node)) {
+      conditionals.push({
+        node,
+        condition: node.expression,
+        trueBranch: node.thenStatement,
+        falseBranch: node.elseStatement ?? undefined,
+      })
+      return
+    }
+    if (ts.isConditionalExpression(node)) {
+      conditionals.push({
+        node,
+        condition: node.condition,
+        trueBranch: node.whenTrue,
+        falseBranch: node.whenFalse ?? undefined,
+      })
+      return
+    }
+    ts.forEachChild(node, findConditional)
   }
 
-  // Check usages outside the if statement
   for (const stmt of statements) {
-    if (stmt === ifStmt) continue
-    collectUsedDerived(stmt, outsideConditionUsed)
+    findConditional(stmt)
   }
 
-  // Find derived values only used in true branch (not in false branch or outside)
-  const trueBranchOnlyDerived = new Set<string>()
-  for (const name of trueBranchUsed) {
-    if (!falseBranchUsed.has(name) && !outsideConditionUsed.has(name)) {
-      trueBranchOnlyDerived.add(name)
+  for (const conditional of conditionals) {
+    trueBranchUsed.clear()
+    falseBranchUsed.clear()
+    outsideConditionUsed.clear()
+
+    // Check each branch of the conditional
+    collectUsedDerived(conditional.trueBranch, trueBranchUsed)
+    if (conditional.falseBranch) {
+      collectUsedDerived(conditional.falseBranch, falseBranchUsed)
+    }
+
+    // Check usages outside the conditional node
+    for (const stmt of statements) {
+      collectUsedDerived(stmt, outsideConditionUsed, conditional.node)
+    }
+
+    // Find derived values only used in true branch (not in false branch or outside)
+    const trueBranchOnlyDerived = new Set<string>()
+    for (const name of trueBranchUsed) {
+      if (!falseBranchUsed.has(name) && !outsideConditionUsed.has(name)) {
+        trueBranchOnlyDerived.add(name)
+      }
+    }
+
+    // Find derived values only used in false branch (not in true branch or outside)
+    const falseBranchOnlyDerived = new Set<string>()
+    for (const name of falseBranchUsed) {
+      if (!trueBranchUsed.has(name) && !outsideConditionUsed.has(name)) {
+        falseBranchOnlyDerived.add(name)
+      }
+    }
+
+    if (trueBranchOnlyDerived.size === 0 && falseBranchOnlyDerived.size === 0) {
+      continue
+    }
+
+    return {
+      condition: conditional.condition,
+      trueBranchOnlyDerived,
+      falseBranchOnlyDerived,
     }
   }
 
-  // Find derived values only used in false branch (not in true branch or outside)
-  const falseBranchOnlyDerived = new Set<string>()
-  for (const name of falseBranchUsed) {
-    if (!trueBranchUsed.has(name) && !outsideConditionUsed.has(name)) {
-      falseBranchOnlyDerived.add(name)
-    }
-  }
-
-  if (trueBranchOnlyDerived.size === 0 && falseBranchOnlyDerived.size === 0) {
-    return null
-  }
-
-  return {
-    condition: ifStmt.expression,
-    trueBranchOnlyDerived,
-    falseBranchOnlyDerived,
-  }
+  return null
 }
 
 /**
@@ -474,6 +519,13 @@ function generateLazyConditionalRegionMemo(
   ctx: TransformContext,
 ): RegionMemoResult {
   const { factory, memoVars, getterOnlyVars } = ctx
+  const conditionVisitor = createVisitorWithOptions(ctx, {
+    disableRegionTransform: true,
+    disableMemoize: true,
+  })
+  const conditionExpr =
+    (ts.visitNode(conditionalInfo.condition, conditionVisitor) as ts.Expression) ??
+    conditionalInfo.condition
 
   // Categorize statements while preserving their original indices
   interface TaggedStatement {
@@ -547,7 +599,7 @@ function generateLazyConditionalRegionMemo(
       // Both branches have lazy statements OR we have always statements after the lazy block
       // In either case, we use if-else structure and duplicate alwaysAfterLazy to preserve order
       const ifElseBlock = factory.createIfStatement(
-        conditionalInfo.condition,
+        conditionExpr,
         factory.createBlock(
           [
             ...lazyTrueStatements,
@@ -571,7 +623,7 @@ function generateLazyConditionalRegionMemo(
       const ifFalseReturn = factory.createIfStatement(
         factory.createPrefixUnaryExpression(
           ts.SyntaxKind.ExclamationToken,
-          factory.createParenthesizedExpression(conditionalInfo.condition),
+          factory.createParenthesizedExpression(conditionExpr),
         ),
         factory.createBlock([createReturnWithNulls(conditionalInfo.trueBranchOnlyDerived)], true),
       )
@@ -582,7 +634,7 @@ function generateLazyConditionalRegionMemo(
     } else {
       // Only false-branch lazy statements: early return when condition is true
       const ifTrueReturn = factory.createIfStatement(
-        conditionalInfo.condition,
+        conditionExpr,
         factory.createBlock([createReturnWithNulls(conditionalInfo.falseBranchOnlyDerived)], true),
       )
       memoBody.push(ifTrueReturn)
@@ -672,12 +724,17 @@ function generateRegionMemo(
   regionStatements: ts.Statement[],
   orderedOutputs: string[],
   ctx: TransformContext,
+  analysisStatements?: ts.Statement[],
 ): RegionMemoResult {
   const { factory, memoVars, getterOnlyVars } = ctx
 
   // Rule J: Check for lazy conditional optimization
   if (ctx.options.lazyConditional) {
-    const conditionalInfo = analyzeConditionalUsage(regionStatements, new Set(orderedOutputs), ctx)
+    const conditionalInfo = analyzeConditionalUsage(
+      analysisStatements ?? regionStatements,
+      new Set(orderedOutputs),
+      ctx,
+    )
     if (conditionalInfo) {
       return generateLazyConditionalRegionMemo(
         regionStatements,
@@ -845,6 +902,7 @@ function transformStatementList(
       disableRegionTransform: true,
       disableMemoize: true,
     })
+    const analysisStatements = statements.slice(start, end + 1)
     const regionStatements = statements.slice(start, regionEnd + 1).map(stmt => {
       return ts.visitNode(stmt, innerVisitor) as ts.Statement
     })
@@ -855,7 +913,12 @@ function transformStatementList(
     }
 
     // Use the extracted helper function to generate region memo
-    const { memoDecl, getterDecls } = generateRegionMemo(regionStatements, orderedOutputs, ctx)
+    const { memoDecl, getterDecls } = generateRegionMemo(
+      regionStatements,
+      orderedOutputs,
+      ctx,
+      analysisStatements,
+    )
 
     result.push(memoDecl, ...getterDecls)
     regionCreated = true
@@ -933,6 +996,7 @@ function transformStatementList(
     disableRegionTransform: true,
     disableMemoize: true,
   })
+  const analysisStatements = statements.slice(firstTouched, lastTouched + 1)
   const regionStatements = statements.slice(firstTouched, regionEnd + 1).map(stmt => {
     return ts.visitNode(stmt, innerVisitor) as ts.Statement
   })
@@ -942,7 +1006,12 @@ function transformStatementList(
     return factory.createNodeArray(result)
   }
 
-  const { memoDecl, getterDecls } = generateRegionMemo(regionStatements, orderedOutputs, ctx)
+  const { memoDecl, getterDecls } = generateRegionMemo(
+    regionStatements,
+    orderedOutputs,
+    ctx,
+    analysisStatements,
+  )
 
   const after: ts.Statement[] = []
   for (let i = regionEnd + 1; i < statements.length; i++) {
