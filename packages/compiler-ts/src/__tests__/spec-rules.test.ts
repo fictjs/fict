@@ -87,7 +87,8 @@ describe('Spec rule coverage', () => {
     const output = transform(input)
     expect(output).toContain('const count = () =>')
     expect(output).toContain('__props_1.count')
-    expect(output).toContain('{() => count()}')
+    expect(output).toContain('__fictInsert')
+    expect(output).toContain('() => count()')
   })
 
   it('emits warnings for deep mutations and dynamic property access', () => {

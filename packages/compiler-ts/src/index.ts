@@ -1,4 +1,4 @@
-import ts from 'typescript'
+import * as ts from 'typescript'
 
 // ============================================================================
 // Types and Constants
@@ -23,6 +23,11 @@ interface HelperUsage {
   signal: boolean
   memo: boolean
   effect: boolean
+  createElement: boolean
+  conditional: boolean
+  list: boolean
+  insert: boolean
+  onDestroy: boolean
 }
 
 export interface CompilerWarning {
@@ -44,12 +49,22 @@ const RUNTIME_HELPERS = {
   signal: 'createSignal',
   memo: 'createMemo',
   effect: 'createEffect',
+  createElement: 'createElement',
+  conditional: 'createConditional',
+  list: 'createList',
+  insert: 'insert',
+  onDestroy: 'onDestroy',
 } as const
 
 const RUNTIME_ALIASES = {
   signal: '__fictSignal',
   memo: '__fictMemo',
   effect: '__fictEffect',
+  createElement: '__fictCreateElement',
+  conditional: '__fictConditional',
+  list: '__fictList',
+  insert: '__fictInsert',
+  onDestroy: '__fictOnDestroy',
 } as const
 
 // Attributes that should NOT be wrapped in reactive functions
@@ -74,7 +89,16 @@ export function createFictTransformer(
 
       // Phase 2: Track memo variables and used helpers
       const memoVars = new Set<string>()
-      const helpersUsed: HelperUsage = { signal: false, memo: false, effect: false }
+      const helpersUsed: HelperUsage = {
+        signal: false,
+        memo: false,
+        effect: false,
+        createElement: false,
+        conditional: false,
+        list: false,
+        insert: false,
+        onDestroy: false,
+      }
 
       // Phase 3: Create transform context and visitor
       const ctx: TransformContext = {
@@ -1588,25 +1612,284 @@ function handleJsxExpression(
   // First, recursively transform the expression (converts identifiers to getter calls)
   const transformedExpr = ts.visitNode(expr, visitor) as ts.Expression
 
-  if (shouldWrap) {
-    // Wrap in an arrow function: () => transformedExpr
-    const wrappedExpr = factory.createArrowFunction(
-      undefined,
-      undefined,
-      [],
-      undefined,
-      factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
-      transformedExpr,
-    )
-    return factory.updateJsxExpression(node, wrappedExpr)
+  // Attribute bindings keep the existing reactive wrapper behavior
+  if (isInAttribute) {
+    if (shouldWrap) {
+      const wrappedExpr = factory.createArrowFunction(
+        undefined,
+        undefined,
+        [],
+        undefined,
+        factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+        transformedExpr,
+      )
+      return factory.updateJsxExpression(node, wrappedExpr)
+    }
+
+    if (transformedExpr !== expr) {
+      return factory.updateJsxExpression(node, transformedExpr)
+    }
+
+    return node
   }
 
-  // Not wrapping, but the expression might have been transformed
+  // Child expressions lower to binding helpers when reactive
+  if (shouldWrap) {
+    const lowered =
+      createConditionalBinding(transformedExpr, ctx) ??
+      createListBinding(transformedExpr, ctx) ??
+      createInsertBinding(transformedExpr, ctx)
+
+    return factory.updateJsxExpression(node, lowered)
+  }
+
   if (transformedExpr !== expr) {
     return factory.updateJsxExpression(node, transformedExpr)
   }
 
   return node
+}
+
+function createConditionalBinding(
+  expr: ts.Expression,
+  ctx: TransformContext,
+): ts.Expression | null {
+  const { factory, helpersUsed } = ctx
+
+  let condition: ts.Expression | null = null
+  let whenTrue: ts.Expression | null = null
+  let whenFalse: ts.Expression | null = null
+
+  if (ts.isConditionalExpression(expr)) {
+    condition = expr.condition
+    whenTrue = expr.whenTrue
+    whenFalse = expr.whenFalse
+  } else if (
+    ts.isBinaryExpression(expr) &&
+    expr.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+  ) {
+    condition = expr.left
+    whenTrue = expr.right
+  }
+
+  if (!condition || !whenTrue) return null
+
+  helpersUsed.createElement = true
+  helpersUsed.conditional = true
+
+  const args: ts.Expression[] = [
+    factory.createArrowFunction(
+      undefined,
+      undefined,
+      [],
+      undefined,
+      factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+      condition,
+    ),
+    factory.createArrowFunction(
+      undefined,
+      undefined,
+      [],
+      undefined,
+      factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+      whenTrue,
+    ),
+    factory.createIdentifier(RUNTIME_ALIASES.createElement),
+  ]
+
+  if (whenFalse) {
+    args.push(
+      factory.createArrowFunction(
+        undefined,
+        undefined,
+        [],
+        undefined,
+        factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+        whenFalse,
+      ),
+    )
+  }
+
+  const handleExpr = factory.createCallExpression(
+    factory.createIdentifier(RUNTIME_ALIASES.conditional),
+    undefined,
+    args,
+  )
+
+  return wrapBindingHandle(handleExpr, ctx)
+}
+
+function createListBinding(expr: ts.Expression, ctx: TransformContext): ts.Expression | null {
+  const { factory, helpersUsed } = ctx
+
+  if (
+    !ts.isCallExpression(expr) ||
+    !ts.isPropertyAccessExpression(expr.expression) ||
+    expr.expression.name.text !== 'map'
+  ) {
+    return null
+  }
+
+  const callback = expr.arguments[0]
+  if (!callback || (!ts.isArrowFunction(callback) && !ts.isFunctionExpression(callback))) {
+    return null
+  }
+
+  const listExpr = expr.expression.expression
+
+  helpersUsed.createElement = true
+  helpersUsed.list = true
+
+  const renderArrow = callback as ts.ArrowFunction | ts.FunctionExpression
+
+  const listCall = factory.createCallExpression(
+    factory.createIdentifier(RUNTIME_ALIASES.list),
+    undefined,
+    [
+      factory.createArrowFunction(
+        undefined,
+        undefined,
+        [],
+        undefined,
+        factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+        listExpr,
+      ),
+      renderArrow,
+      factory.createIdentifier(RUNTIME_ALIASES.createElement),
+    ],
+  )
+
+  return wrapBindingHandle(listCall, ctx)
+}
+
+function createInsertBinding(expr: ts.Expression, ctx: TransformContext): ts.Expression {
+  const { factory, helpersUsed } = ctx
+
+  helpersUsed.insert = true
+  helpersUsed.createElement = true
+  helpersUsed.onDestroy = true
+
+  const fragId = factory.createUniqueName('__fictFrag')
+  const disposeId = factory.createUniqueName('__fictDispose')
+
+  const createFrag = factory.createVariableStatement(
+    undefined,
+    factory.createVariableDeclarationList(
+      [
+        factory.createVariableDeclaration(
+          fragId,
+          undefined,
+          undefined,
+          factory.createCallExpression(
+            factory.createPropertyAccessExpression(
+              factory.createIdentifier('document'),
+              factory.createIdentifier('createDocumentFragment'),
+            ),
+            undefined,
+            [],
+          ),
+        ),
+      ],
+      ts.NodeFlags.Const,
+    ),
+  )
+
+  const disposeStmt = factory.createVariableStatement(
+    undefined,
+    factory.createVariableDeclarationList(
+      [
+        factory.createVariableDeclaration(
+          disposeId,
+          undefined,
+          undefined,
+          factory.createCallExpression(
+            factory.createIdentifier(RUNTIME_ALIASES.insert),
+            undefined,
+            [
+              fragId,
+              factory.createArrowFunction(
+                undefined,
+                undefined,
+                [],
+                undefined,
+                factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+                expr,
+              ),
+              factory.createIdentifier(RUNTIME_ALIASES.createElement),
+            ],
+          ),
+        ),
+      ],
+      ts.NodeFlags.Const,
+    ),
+  )
+
+  const onDestroyCall = factory.createExpressionStatement(
+    factory.createCallExpression(factory.createIdentifier(RUNTIME_ALIASES.onDestroy), undefined, [
+      disposeId,
+    ]),
+  )
+
+  const returnFrag = factory.createReturnStatement(fragId)
+
+  const block = factory.createBlock([createFrag, disposeStmt, onDestroyCall, returnFrag], true)
+
+  return factory.createParenthesizedExpression(
+    factory.createCallExpression(
+      factory.createArrowFunction(
+        undefined,
+        undefined,
+        [],
+        undefined,
+        factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+        block,
+      ),
+      undefined,
+      [],
+    ),
+  )
+}
+
+function wrapBindingHandle(handleExpr: ts.Expression, ctx: TransformContext): ts.Expression {
+  const { factory, helpersUsed } = ctx
+  helpersUsed.onDestroy = true
+
+  const handleId = factory.createUniqueName('__fictBinding')
+
+  const handleDecl = factory.createVariableStatement(
+    undefined,
+    factory.createVariableDeclarationList(
+      [factory.createVariableDeclaration(handleId, undefined, undefined, handleExpr)],
+      ts.NodeFlags.Const,
+    ),
+  )
+
+  const registerDispose = factory.createExpressionStatement(
+    factory.createCallExpression(factory.createIdentifier(RUNTIME_ALIASES.onDestroy), undefined, [
+      factory.createPropertyAccessExpression(handleId, factory.createIdentifier('dispose')),
+    ]),
+  )
+
+  const returnMarker = factory.createReturnStatement(
+    factory.createPropertyAccessExpression(handleId, factory.createIdentifier('marker')),
+  )
+
+  const block = factory.createBlock([handleDecl, registerDispose, returnMarker], true)
+
+  return factory.createParenthesizedExpression(
+    factory.createCallExpression(
+      factory.createArrowFunction(
+        undefined,
+        undefined,
+        [],
+        undefined,
+        factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+        block,
+      ),
+      undefined,
+      [],
+    ),
+  )
 }
 
 // ============================================================================
@@ -2325,6 +2608,51 @@ function addRuntimeImports(
         false,
         factory.createIdentifier(RUNTIME_HELPERS.effect),
         factory.createIdentifier(RUNTIME_ALIASES.effect),
+      ),
+    )
+  }
+  if (helpers.createElement) {
+    neededSpecifiers.push(
+      factory.createImportSpecifier(
+        false,
+        factory.createIdentifier(RUNTIME_HELPERS.createElement),
+        factory.createIdentifier(RUNTIME_ALIASES.createElement),
+      ),
+    )
+  }
+  if (helpers.conditional) {
+    neededSpecifiers.push(
+      factory.createImportSpecifier(
+        false,
+        factory.createIdentifier(RUNTIME_HELPERS.conditional),
+        factory.createIdentifier(RUNTIME_ALIASES.conditional),
+      ),
+    )
+  }
+  if (helpers.list) {
+    neededSpecifiers.push(
+      factory.createImportSpecifier(
+        false,
+        factory.createIdentifier(RUNTIME_HELPERS.list),
+        factory.createIdentifier(RUNTIME_ALIASES.list),
+      ),
+    )
+  }
+  if (helpers.insert) {
+    neededSpecifiers.push(
+      factory.createImportSpecifier(
+        false,
+        factory.createIdentifier(RUNTIME_HELPERS.insert),
+        factory.createIdentifier(RUNTIME_ALIASES.insert),
+      ),
+    )
+  }
+  if (helpers.onDestroy) {
+    neededSpecifiers.push(
+      factory.createImportSpecifier(
+        false,
+        factory.createIdentifier(RUNTIME_HELPERS.onDestroy),
+        factory.createIdentifier(RUNTIME_ALIASES.onDestroy),
       ),
     )
   }

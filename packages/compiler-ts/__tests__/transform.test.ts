@@ -136,7 +136,8 @@ describe('createFictTransformer', () => {
         const view = () => <div>{count}</div>
       `)
 
-      expect(output).toContain(`{() => count()}`)
+      expect(output).toContain('__fictInsert')
+      expect(output).toContain('() => count()')
     })
 
     it('wraps derived values in JSX children', () => {
@@ -146,7 +147,8 @@ describe('createFictTransformer', () => {
         const view = () => <div>{doubled}</div>
       `)
 
-      expect(output).toContain(`{() => doubled()}`)
+      expect(output).toContain('__fictInsert')
+      expect(output).toContain('() => doubled()')
     })
 
     it('does not wrap static values in JSX children', () => {
@@ -155,7 +157,7 @@ describe('createFictTransformer', () => {
       `)
 
       expect(output).toContain(`{"static"}`)
-      expect(output).not.toContain(`{() =>`)
+      expect(output).not.toContain(`__fictInsert`)
     })
 
     it('does not wrap static expressions in JSX children', () => {
@@ -164,7 +166,7 @@ describe('createFictTransformer', () => {
       `)
 
       expect(output).toContain(`{1 + 2}`)
-      expect(output).not.toContain(`{() =>`)
+      expect(output).not.toContain(`__fictInsert`)
     })
 
     it('wraps complex expressions that depend on state', () => {
@@ -173,7 +175,8 @@ describe('createFictTransformer', () => {
         const view = () => <div>{count > 0 ? 'positive' : 'zero'}</div>
       `)
 
-      expect(output).toContain(`{() => count() > 0 ? 'positive' : 'zero'}`)
+      expect(output).toContain('__fictConditional')
+      expect(output).toContain(`__fictConditional(() => count() > 0`)
     })
 
     it('wraps array.map expressions that depend on state', () => {
@@ -182,7 +185,8 @@ describe('createFictTransformer', () => {
         const view = () => <ul>{items.map(item => <li>{item}</li>)}</ul>
       `)
 
-      expect(output).toContain(`{() => items().map(item => <li>{item}</li>)}`)
+      expect(output).toContain('__fictList')
+      expect(output).toContain('items()')
     })
 
     it('wraps expressions even when inner callback shadows a tracked name', () => {
@@ -191,7 +195,8 @@ describe('createFictTransformer', () => {
         const view = () => <div>{[1,2,3].map(count => <span>{count}</span>) && count}</div>
       `)
 
-      expect(output).toContain(`{() => [1, 2, 3].map(count => <span>{count}</span>) && count()}`)
+      expect(output).toContain('__fictConditional')
+      expect(output).toContain('count()')
     })
 
     it('does not wrap already-function expressions', () => {
@@ -201,8 +206,8 @@ describe('createFictTransformer', () => {
       `)
 
       // Should not double-wrap
-      expect(output).not.toContain(`{() => () =>`)
-      expect(output).toContain(`{() => count()}`)
+      expect(output).not.toContain(`__fictInsert`)
+      expect(output).toContain(`() => count()`)
     })
   })
 
@@ -282,7 +287,7 @@ describe('createFictTransformer', () => {
         const view = () => <div>{show && <span>Visible</span>}</div>
       `)
 
-      expect(output).toContain(`{() => show() && <span>Visible</span>}`)
+      expect(output).toContain(`__fictConditional`)
     })
 
     it('handles ternary conditional rendering', () => {
@@ -291,7 +296,7 @@ describe('createFictTransformer', () => {
         const view = () => <div>{show ? <span>Yes</span> : <span>No</span>}</div>
       `)
 
-      expect(output).toContain(`{() => show() ? <span>Yes</span> : <span>No</span>}`)
+      expect(output).toContain(`__fictConditional`)
     })
 
     it('handles nested components with reactive props', () => {
@@ -311,7 +316,8 @@ describe('createFictTransformer', () => {
         const view = () => <div>{a + b}</div>
       `)
 
-      expect(output).toContain(`{() => a() + b()}`)
+      expect(output).toContain(`__fictInsert`)
+      expect(output).toContain(`() => a() + b()`)
     })
 
     it('handles class binding with reactive value', () => {
@@ -330,6 +336,58 @@ describe('createFictTransformer', () => {
       `)
 
       expect(output).toContain(`style={() => ({ color: color() })}`)
+    })
+  })
+
+  describe('Binding helper lowering', () => {
+    it('emits helper-based bindings for dynamic children', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+
+        function View() {
+          let show = $state(true)
+          let items = $state([
+            { id: 1, text: 'A' },
+            { id: 2, text: 'B' },
+          ])
+
+          return (
+            <section>
+              {show ? <span>A</span> : <span>B</span>}
+              {items.map(item => <p key={item.id}>{item.text}</p>)}
+              {show && items.length}
+            </section>
+          )
+        }
+      `)
+
+      expect(output).toMatchInlineSnapshot(`
+        "import { createSignal as __fictSignal, createElement as __fictCreateElement, createConditional as __fictConditional, createList as __fictList, onDestroy as __fictOnDestroy } from "fict-runtime";
+        function View() {
+            let show = __fictSignal(true);
+            let items = __fictSignal([
+                { id: 1, text: 'A' },
+                { id: 2, text: 'B' },
+            ]);
+            return (<section>
+                      {((() => {
+                const __fictBinding_1 = __fictConditional(() => show(), () => <span>A</span>, __fictCreateElement, () => <span>B</span>);
+                __fictOnDestroy(__fictBinding_1.dispose);
+                return __fictBinding_1.marker;
+            })())}
+                      {((() => {
+                const __fictBinding_2 = __fictList(() => items(), item => <p key={item.id}>{item.text}</p>, __fictCreateElement);
+                __fictOnDestroy(__fictBinding_2.dispose);
+                return __fictBinding_2.marker;
+            })())}
+                      {((() => {
+                const __fictBinding_3 = __fictConditional(() => show(), () => items().length, __fictCreateElement);
+                __fictOnDestroy(__fictBinding_3.dispose);
+                return __fictBinding_3.marker;
+            })())}
+                    </section>);
+        }"
+      `)
     })
   })
 
@@ -358,9 +416,12 @@ describe('createFictTransformer', () => {
       `)
 
       // Check imports
-      expect(output).toContain(
-        `import { createSignal as __fictSignal, createMemo as __fictMemo, createEffect as __fictEffect } from "fict-runtime";`,
-      )
+      expect(output).toContain(`createSignal as __fictSignal`)
+      expect(output).toContain(`createMemo as __fictMemo`)
+      expect(output).toContain(`createEffect as __fictEffect`)
+      expect(output).toContain(`createElement as __fictCreateElement`)
+      expect(output).toContain(`insert as __fictInsert`)
+      expect(output).toContain(`onDestroy as __fictOnDestroy`)
 
       // Check state and memo
       expect(output).toContain(`let count = __fictSignal(0);`)
@@ -371,8 +432,9 @@ describe('createFictTransformer', () => {
       expect(output).toContain('document.title = `Count: ${count()}`')
 
       // Check JSX reactive bindings
-      expect(output).toContain(`{() => count()}`)
-      expect(output).toContain(`{() => doubled()}`)
+      expect(output).toContain(`__fictInsert`)
+      expect(output).toContain(`() => count()`)
+      expect(output).toContain(`() => doubled()`)
 
       // Check event handlers (should not be double-wrapped)
       expect(output).toContain(`onClick={() => count(count() + 1)}`)
@@ -424,7 +486,7 @@ describe('createFictTransformer', () => {
 
       // Check reactive bindings
       expect(output).toContain(`value={() => filter()}`)
-      expect(output).toContain(`{() => filteredTodos().map(todo => (`)
+      expect(output).toContain(`__fictList`)
 
       // Check key is not wrapped
       expect(output).toContain(`key={todo.id}`)
@@ -463,8 +525,9 @@ describe('createFictTransformer', () => {
       expect(output).toContain(`const heading = () => __fictRegion`)
       expect(output).toContain(`const extra = () => __fictRegion`)
       expect(output).toContain(`return { heading, extra`)
-      expect(output).toContain(`{() => heading()}`)
-      expect(output).toContain(`{() => extra()}`)
+      expect(output).toContain(`__fictInsert`)
+      expect(output).toContain(`() => heading()`)
+      expect(output).toContain(`() => extra()`)
     })
 
     it('does not group when early return exists in range', () => {
@@ -619,7 +682,7 @@ describe('createFictTransformer', () => {
       `)
 
       expect(output).toContain(`{staticValue}`)
-      expect(output).not.toContain(`{() =>`)
+      expect(output).not.toContain(`__fictInsert`)
     })
 
     it('handles function parameters that shadow state variables', () => {
@@ -632,7 +695,7 @@ describe('createFictTransformer', () => {
       // The expression [1,2,3].map(...) doesn't depend on reactive values
       // because: 1) [1,2,3] is static, 2) inner count is a parameter, not the $state
       expect(output1).toContain(`{[1, 2, 3].map(count => <span>{count}</span>)}`)
-      expect(output1).not.toContain(`{() =>`)
+      expect(output1).not.toContain(`__fictInsert`)
       expect(output1).not.toContain(`count()`) // The inner count should NOT be converted
 
       // Case 2: Reactive array with shadowing parameter - outer needs wrapping
@@ -644,7 +707,7 @@ describe('createFictTransformer', () => {
 
       // The expression items.map(...) DOES depend on reactive items
       // The wrapper is needed, but inner count should not be converted
-      expect(output2).toContain(`{() => items().map(count => <li>{count}</li>)}`)
+      expect(output2).toContain(`__fictList`)
       // Make sure only items() is called, not the shadowed count
       expect(output2.match(/items\(\)/g)?.length).toBe(1)
     })
@@ -673,7 +736,7 @@ describe('createFictTransformer', () => {
         const view = () => <><span>{count}</span></>
       `)
 
-      expect(output).toContain(`{() => count()}`)
+      expect(output).toContain(`__fictInsert`)
     })
   })
 })
