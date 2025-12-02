@@ -17,6 +17,7 @@ interface TransformContext {
   derivedDecls: Map<string, ts.Node>
   hasStateImport: boolean
   hasEffectImport: boolean
+  exportedNames: Set<string>
 }
 
 interface HelperUsage {
@@ -83,6 +84,7 @@ export function createFictTransformer(
 
     return sourceFile => {
       const macroInfo = analyzeMacroImports(sourceFile)
+      const exportedNames = collectExportedNames(sourceFile)
       // Phase 1: Collect all $state variables
       const stateVars = new Set<string>()
       collectStateVariables(sourceFile, stateVars)
@@ -114,6 +116,7 @@ export function createFictTransformer(
         derivedDecls: new Map(),
         hasStateImport: macroInfo.hasStateImport,
         hasEffectImport: macroInfo.hasEffectImport,
+        exportedNames,
       }
 
       const visitor = createVisitor(ctx)
@@ -1512,7 +1515,8 @@ function handleVariableDeclaration(
     memoVars.add(node.name.text)
 
     const isModuleScope = isTopLevelDeclaration(node)
-    const useGetterOnly = !isModuleScope && shouldEmitGetter(node.name.text, ctx)
+    const isExported = isExportedDeclaration(node, ctx)
+    const useGetterOnly = !isModuleScope && !isExported && shouldEmitGetter(node.name.text, ctx)
     if (!useGetterOnly) {
       helpersUsed.memo = true
       const memoCall = factory.createCallExpression(
@@ -1908,7 +1912,7 @@ function handlePropertyMutation(
       ctx,
       node,
       'FICT-M',
-      'Direct mutation of nested property will not trigger updates; use an immutable update instead.',
+      'Direct mutation of nested property will not trigger updates; use an immutable update or $store().',
     )
   }
 
@@ -1937,7 +1941,7 @@ function handlePropertyUnaryMutation(
       ctx,
       node,
       'FICT-M',
-      'Direct mutation of nested property will not trigger updates; use an immutable update instead.',
+      'Direct mutation of nested property will not trigger updates; use an immutable update or $store().',
     )
   }
   const updatedOperand = ts.visitNode(node.operand, visitor) as ts.Expression
@@ -2057,6 +2061,25 @@ function analyzeMacroImports(sourceFile: ts.SourceFile): {
 
   visit(sourceFile)
   return { hasStateImport, hasEffectImport }
+}
+
+function collectExportedNames(sourceFile: ts.SourceFile): Set<string> {
+  const exported = new Set<string>()
+  for (const stmt of sourceFile.statements) {
+    if (ts.isExportDeclaration(stmt) && !stmt.moduleSpecifier && stmt.exportClause) {
+      if (ts.isNamedExports(stmt.exportClause)) {
+        for (const el of stmt.exportClause.elements) {
+          const localName = el.propertyName ? el.propertyName.text : el.name.text
+          exported.add(localName)
+        }
+      }
+    }
+
+    if (ts.isExportAssignment(stmt) && ts.isIdentifier(stmt.expression)) {
+      exported.add(stmt.expression.text)
+    }
+  }
+  return exported
 }
 
 function emitWarning(ctx: TransformContext, node: ts.Node, code: string, message: string): void {
@@ -2273,6 +2296,17 @@ function isTopLevelDeclaration(node: ts.VariableDeclaration): boolean {
   return ts.isVariableStatement(parentStmt) && ts.isSourceFile(parentStmt.parent)
 }
 
+function isExportedDeclaration(node: ts.VariableDeclaration, ctx: TransformContext): boolean {
+  const parentList = node.parent
+  if (!ts.isVariableDeclarationList(parentList)) return false
+  const stmt = parentList.parent
+  if (!ts.isVariableStatement(stmt)) return false
+  if (stmt.modifiers?.some(mod => mod.kind === ts.SyntaxKind.ExportKeyword)) {
+    return true
+  }
+  return ctx.exportedNames.has(node.name.getText())
+}
+
 /**
  * Format an error with line/column info
  */
@@ -2291,7 +2325,7 @@ function shouldEmitGetter(name: string, ctx: TransformContext): boolean {
   let eventUsage = false
   let otherUsage = false
 
-  const visit = (node: ts.Node, shadow: Set<string>): void => {
+  const visit = (node: ts.Node, shadow: Set<string>, inFunction: boolean): void => {
     if (!node || reactive) return
 
     if (
@@ -2302,14 +2336,14 @@ function shouldEmitGetter(name: string, ctx: TransformContext): boolean {
       const nextShadow = new Set(shadow)
       const params = collectParameterNames(node.parameters)
       for (const p of params) nextShadow.add(p)
-      ts.forEachChild(node, child => visit(child, nextShadow))
+      ts.forEachChild(node, child => visit(child, nextShadow, true))
       return
     }
 
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
       const nextShadow = new Set(shadow)
       nextShadow.add(node.name.text)
-      if (node.initializer) visit(node.initializer, nextShadow)
+      if (node.initializer) visit(node.initializer, nextShadow, inFunction)
       return
     }
 
@@ -2320,15 +2354,18 @@ function shouldEmitGetter(name: string, ctx: TransformContext): boolean {
       }
       if (isInEventHandler(node)) {
         eventUsage = true
+      } else if (inFunction) {
+        // Reads inside plain functions/handlers should stay live via getter
+        eventUsage = true
       } else {
         otherUsage = true
       }
     }
 
-    ts.forEachChild(node, child => visit(child, shadow))
+    ts.forEachChild(node, child => visit(child, shadow, inFunction))
   }
 
-  visit(sourceFile, new Set())
+  visit(sourceFile, new Set(), false)
   if (reactive || otherUsage) return false
   return eventUsage
 }

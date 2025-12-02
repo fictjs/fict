@@ -102,14 +102,35 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('creates getter for event-only usage', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        const doubled = count * 2
-        const onClick = () => console.log(doubled)
+        function Component() {
+          let count = $state(0)
+          const doubled = count * 2
+          const onClick = () => console.log(doubled)
+          return onClick
+        }
       `
       const output = transform(input)
-      // TODO: Optimization - should create a getter, not a memo, when only used in events
-      // For now, we create memo for all derived values, which is correct but not optimal
-      expect(output).toContain('doubled()')
+      expect(output).toContain('const doubled = () =>')
+      expect(output).toContain('console.log(doubled())')
+      expect(output).not.toContain('__fictMemo')
+    })
+
+    it('creates getter for plain function-only usage (non-JSX handler)', () => {
+      const input = `
+        import { $state } from 'fict'
+        function useLog() {
+          let count = $state(0)
+          const doubled = count * 2
+          function log() {
+            return doubled
+          }
+          return log
+        }
+      `
+      const output = transform(input)
+      expect(output).toContain('const doubled = () =>')
+      expect(output).toContain('return doubled()')
+      expect(output).not.toContain('__fictMemo')
     })
   })
 

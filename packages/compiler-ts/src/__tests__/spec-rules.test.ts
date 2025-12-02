@@ -105,6 +105,14 @@ describe('Spec rule coverage', () => {
 
     expect(warnings.some(w => w.code === 'FICT-M')).toBe(true)
     expect(warnings.some(w => w.code === 'FICT-H')).toBe(true)
+    expect(
+      warnings.some(
+        w =>
+          w.code === 'FICT-M' &&
+          w.message.includes('immutable update') &&
+          w.message.includes('$store'),
+      ),
+    ).toBe(true)
   })
 
   it('detects cyclic derived dependencies', () => {
@@ -123,6 +131,39 @@ describe('Spec rule coverage', () => {
       let count = $state(1)
       export const doubled = count * 2
       export const click = () => console.log(doubled)
+    `
+    const output = transform(input)
+    expect(output).toContain('__fictMemo(() => count() * 2)')
+  })
+
+  it('keeps exported via export clause derived values as memos', () => {
+    const input = `
+      import { $state } from 'fict'
+      let count = $state(1)
+      const doubled = count * 2
+      export { doubled }
+    `
+    const output = transform(input)
+    expect(output).toContain('__fictMemo(() => count() * 2)')
+  })
+
+  it('keeps default exported derived values as memos', () => {
+    const input = `
+      import { $state } from 'fict'
+      let count = $state(1)
+      const doubled = count * 2
+      export default doubled
+    `
+    const output = transform(input)
+    expect(output).toContain('__fictMemo(() => count() * 2)')
+  })
+
+  it('keeps export-as derived values as memos', () => {
+    const input = `
+      import { $state } from 'fict'
+      let count = $state(1)
+      const doubled = count * 2
+      export { doubled as renamed }
     `
     const output = transform(input)
     expect(output).toContain('__fictMemo(() => count() * 2)')
