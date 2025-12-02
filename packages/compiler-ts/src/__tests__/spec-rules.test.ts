@@ -669,6 +669,41 @@ describe('Rule L: Getter cache in same sync block', () => {
     expect(output).toContain('__cached_doubleA')
     expect(output).toContain('__cached_doubleB')
   })
+
+  it('does not cache memo-based derived values', () => {
+    const output = transformWithGetterCache(`
+      import { $state } from 'fict'
+      function Component() {
+        let count = $state(0)
+        const doubled = count * 2
+        return <div>{doubled}</div>
+      }
+    `)
+    expect(output).toContain('__fictMemo')
+    expect(output).not.toContain('__cached_doubled')
+  })
+
+  it('respects locally shadowed identifiers when caching', () => {
+    const output = transformWithGetterCache(`
+      import { $state } from 'fict'
+      function Component() {
+        let count = $state(0)
+        const doubled = count * 2
+        const click = () => {
+          console.log(doubled)
+          console.log(doubled)
+          {
+            const doubled = () => 'local'
+            console.log(doubled())
+          }
+        }
+        return click
+      }
+    `)
+    expect(output).toContain('__cached_doubled')
+    expect(output).toMatch(/const doubled = \(\) => ['"]local['"]/)
+    expect(output).toMatch(/console\.log\(doubled\(\)\)/)
+  })
 })
 
 describe('Rule C: memo vs getter selection', () => {

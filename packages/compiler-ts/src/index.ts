@@ -7,6 +7,7 @@ import * as ts from 'typescript'
 interface TransformContext {
   stateVars: Set<string>
   memoVars: Set<string>
+  getterOnlyVars: Set<string>
   shadowedVars: Set<string>
   helpersUsed: HelperUsage
   factory: ts.NodeFactory
@@ -170,6 +171,7 @@ export function createFictTransformer(
       const ctx: TransformContext = {
         stateVars,
         memoVars,
+        getterOnlyVars: new Set(),
         shadowedVars: new Set(),
         helpersUsed,
         factory,
@@ -471,7 +473,7 @@ function generateLazyConditionalRegionMemo(
   conditionalInfo: ConditionalDerivedInfo,
   ctx: TransformContext,
 ): RegionMemoResult {
-  const { factory, memoVars } = ctx
+  const { factory, memoVars, getterOnlyVars } = ctx
 
   // Categorize statements while preserving their original indices
   interface TaggedStatement {
@@ -657,8 +659,11 @@ function generateLazyConditionalRegionMemo(
     ),
   )
 
-  // Register outputs as memo vars
-  orderedOutputs.forEach(out => memoVars.add(out))
+  // Register outputs as memo vars / getters
+  orderedOutputs.forEach(out => {
+    memoVars.add(out)
+    getterOnlyVars.add(out)
+  })
 
   return { memoDecl, getterDecls, regionId }
 }
@@ -668,7 +673,7 @@ function generateRegionMemo(
   orderedOutputs: string[],
   ctx: TransformContext,
 ): RegionMemoResult {
-  const { factory, memoVars } = ctx
+  const { factory, memoVars, getterOnlyVars } = ctx
 
   // Rule J: Check for lazy conditional optimization
   if (ctx.options.lazyConditional) {
@@ -746,8 +751,11 @@ function generateRegionMemo(
     ),
   )
 
-  // Register outputs as memo vars
-  orderedOutputs.forEach(out => memoVars.add(out))
+  // Register outputs as memo vars / getters
+  orderedOutputs.forEach(out => {
+    memoVars.add(out)
+    getterOnlyVars.add(out)
+  })
 
   return { memoDecl, getterDecls, regionId }
 }
@@ -1415,12 +1423,14 @@ function handleFunctionWithShadowing(
   }
 
   const functionMemoVars = new Set(memoVars)
+  const functionGetterOnlyVars = new Set(ctx.getterOnlyVars)
 
   // Use a provisional context to build destructuring plan
   const provisionalCtx: TransformContext = {
     ...ctx,
     shadowedVars: newShadowed,
     memoVars: functionMemoVars,
+    getterOnlyVars: functionGetterOnlyVars,
   }
 
   const provisionalVisitor = createVisitorWithOptions(provisionalCtx, opts)
@@ -1443,6 +1453,7 @@ function handleFunctionWithShadowing(
     ...ctx,
     shadowedVars: activeShadowed,
     memoVars: functionMemoVars,
+    getterOnlyVars: functionGetterOnlyVars,
   }
 
   const innerVisitor = createVisitorWithOptions(newCtx, opts)
@@ -1801,7 +1812,7 @@ function transformFunctionBody(
  */
 function analyzeGetterUsage(
   node: ts.Node,
-  memoVars: Set<string>,
+  getterOnlyVars: Set<string>,
   shadowedVars: Set<string>,
 ): Map<string, number> {
   const usageCounts = new Map<string, number>()
@@ -1812,14 +1823,34 @@ function analyzeGetterUsage(
       return
     }
 
+    let shadowForNode = localShadow
+    if (
+      ts.isSourceFile(n) ||
+      ts.isBlock(n) ||
+      ts.isModuleBlock(n) ||
+      ts.isCaseClause(n) ||
+      ts.isDefaultClause(n) ||
+      ts.isCatchClause(n)
+    ) {
+      shadowForNode = new Set(localShadow)
+    }
+
     // Track variable declarations for shadowing
     if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name)) {
-      const nextShadow = new Set(localShadow)
-      nextShadow.add(n.name.text)
+      shadowForNode.add(n.name.text)
       if (n.initializer) {
-        visit(n.initializer, localShadow)
+        visit(n.initializer, shadowForNode)
       }
       return
+    }
+
+    // Track catch clause variables
+    if (
+      ts.isCatchClause(n) &&
+      n.variableDeclaration &&
+      ts.isIdentifier(n.variableDeclaration.name)
+    ) {
+      shadowForNode.add(n.variableDeclaration.name.text)
     }
 
     // Check for getter calls: identifier()
@@ -1827,14 +1858,14 @@ function analyzeGetterUsage(
       ts.isCallExpression(n) &&
       ts.isIdentifier(n.expression) &&
       n.arguments.length === 0 &&
-      memoVars.has(n.expression.text) &&
-      !localShadow.has(n.expression.text)
+      getterOnlyVars.has(n.expression.text) &&
+      !shadowForNode.has(n.expression.text)
     ) {
       const name = n.expression.text
       usageCounts.set(name, (usageCounts.get(name) || 0) + 1)
     }
 
-    ts.forEachChild(n, child => visit(child, localShadow))
+    ts.forEachChild(n, child => visit(child, shadowForNode))
   }
 
   visit(node, new Set(shadowedVars))
@@ -1845,10 +1876,10 @@ function analyzeGetterUsage(
  * Rule L: Transform a block to cache getters that are used multiple times
  */
 function applyGetterCaching(block: ts.Block, ctx: TransformContext): ts.Block {
-  const { factory, memoVars, shadowedVars } = ctx
+  const { factory, getterOnlyVars, shadowedVars, context } = ctx
 
   // Analyze getter usage
-  const usageCounts = analyzeGetterUsage(block, memoVars, shadowedVars)
+  const usageCounts = analyzeGetterUsage(block, getterOnlyVars, shadowedVars)
 
   // Find getters used more than once
   const toCache = new Map<string, ts.Identifier>()
@@ -1883,13 +1914,27 @@ function applyGetterCaching(block: ts.Block, ctx: TransformContext): ts.Block {
     )
   }
 
-  // Transform the block to replace getter calls with cached variables
-  const transformVisitor = (n: ts.Node): ts.Node => {
+  const cloneShadowIfNeeded = (node: ts.Node, shadow: Set<string>): Set<string> => {
+    if (
+      ts.isSourceFile(node) ||
+      ts.isBlock(node) ||
+      ts.isModuleBlock(node) ||
+      ts.isCaseClause(node) ||
+      ts.isDefaultClause(node) ||
+      ts.isCatchClause(node)
+    ) {
+      return new Set(shadow)
+    }
+    return shadow
+  }
+
+  const visitWithShadow = (n: ts.Node, localShadow: Set<string>): ts.Node => {
     if (
       ts.isCallExpression(n) &&
       ts.isIdentifier(n.expression) &&
       n.arguments.length === 0 &&
-      toCache.has(n.expression.text)
+      toCache.has(n.expression.text) &&
+      !localShadow.has(n.expression.text)
     ) {
       return toCache.get(n.expression.text)!
     }
@@ -1899,12 +1944,26 @@ function applyGetterCaching(block: ts.Block, ctx: TransformContext): ts.Block {
       return n
     }
 
-    return ts.visitEachChild(n, transformVisitor, ctx.context)
+    const shadowForChildren = cloneShadowIfNeeded(n, localShadow)
+
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name)) {
+      shadowForChildren.add(n.name.text)
+    } else if (
+      ts.isCatchClause(n) &&
+      n.variableDeclaration &&
+      ts.isIdentifier(n.variableDeclaration.name)
+    ) {
+      shadowForChildren.add(n.variableDeclaration.name.text)
+    }
+
+    return ts.visitEachChild(n, child => visitWithShadow(child, shadowForChildren), context)
   }
 
-  const transformedStatements = block.statements.map(
-    stmt => ts.visitNode(stmt, transformVisitor) as ts.Statement,
-  )
+  const blockShadow = new Set(shadowedVars)
+  const transformedStatements: ts.Statement[] = []
+  for (const stmt of block.statements) {
+    transformedStatements.push(visitWithShadow(stmt, blockShadow) as ts.Statement)
+  }
 
   return factory.updateBlock(block, [...cacheDecls, ...transformedStatements])
 }
@@ -1916,14 +1975,14 @@ function applyGetterCachingToArrowBody(
   body: ts.ConciseBody,
   ctx: TransformContext,
 ): ts.ConciseBody {
-  const { factory, memoVars, shadowedVars } = ctx
+  const { factory, getterOnlyVars, shadowedVars, context } = ctx
 
   if (ts.isBlock(body)) {
     return applyGetterCaching(body, ctx)
   }
 
   // For concise arrow body (expression), analyze usage
-  const usageCounts = analyzeGetterUsage(body, memoVars, shadowedVars)
+  const usageCounts = analyzeGetterUsage(body, getterOnlyVars, shadowedVars)
 
   // Find getters used more than once
   const toCache = new Map<string, ts.Identifier>()
@@ -1958,20 +2017,51 @@ function applyGetterCachingToArrowBody(
     )
   }
 
-  // Transform the expression
-  const transformVisitor = (n: ts.Node): ts.Node => {
+  const cloneShadowIfNeeded = (node: ts.Node, shadow: Set<string>): Set<string> => {
+    if (
+      ts.isSourceFile(node) ||
+      ts.isBlock(node) ||
+      ts.isModuleBlock(node) ||
+      ts.isCaseClause(node) ||
+      ts.isDefaultClause(node) ||
+      ts.isCatchClause(node)
+    ) {
+      return new Set(shadow)
+    }
+    return shadow
+  }
+
+  const visitWithShadow = (n: ts.Node, localShadow: Set<string>): ts.Node => {
     if (
       ts.isCallExpression(n) &&
       ts.isIdentifier(n.expression) &&
       n.arguments.length === 0 &&
-      toCache.has(n.expression.text)
+      toCache.has(n.expression.text) &&
+      !localShadow.has(n.expression.text)
     ) {
       return toCache.get(n.expression.text)!
     }
-    return ts.visitEachChild(n, transformVisitor, ctx.context)
+
+    if (ts.isArrowFunction(n) || ts.isFunctionExpression(n) || ts.isFunctionDeclaration(n)) {
+      return n
+    }
+
+    const shadowForChildren = cloneShadowIfNeeded(n, localShadow)
+
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name)) {
+      shadowForChildren.add(n.name.text)
+    } else if (
+      ts.isCatchClause(n) &&
+      n.variableDeclaration &&
+      ts.isIdentifier(n.variableDeclaration.name)
+    ) {
+      shadowForChildren.add(n.variableDeclaration.name.text)
+    }
+
+    return ts.visitEachChild(n, child => visitWithShadow(child, shadowForChildren), context)
   }
 
-  const transformedExpr = ts.visitNode(body, transformVisitor) as ts.Expression
+  const transformedExpr = visitWithShadow(body, new Set(shadowedVars)) as ts.Expression
   return factory.createBlock([...cacheDecls, factory.createReturnStatement(transformedExpr)], true)
 }
 
@@ -2127,6 +2217,7 @@ function handleVariableDeclaration(
       )
     }
 
+    ctx.getterOnlyVars.add(node.name.text)
     const getter = factory.createArrowFunction(
       undefined,
       undefined,
