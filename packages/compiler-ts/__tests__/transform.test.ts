@@ -4,7 +4,12 @@ import { describe, expect, it } from 'vitest'
 import { createFictTransformer } from '../src'
 
 function transform(code: string): string {
-  const result = ts.transpileModule(code, {
+  const normalized =
+    code.includes('$state') && !code.includes("from 'fict'") && !code.includes('from "fict"')
+      ? `import { $state } from 'fict'\n${code}`
+      : code
+
+  const result = ts.transpileModule(normalized, {
     compilerOptions: {
       module: ts.ModuleKind.ESNext,
       target: ts.ScriptTarget.ESNext,

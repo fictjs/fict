@@ -4,11 +4,6 @@ import ts from 'typescript'
 // Types and Constants
 // ============================================================================
 
-export interface FictCompilerOptions {
-  dev?: boolean
-  sourcemap?: boolean
-}
-
 interface TransformContext {
   stateVars: Set<string>
   memoVars: Set<string>
@@ -17,12 +12,31 @@ interface TransformContext {
   factory: ts.NodeFactory
   context: ts.TransformationContext
   sourceFile: ts.SourceFile
+  options: FictCompilerOptions
+  dependencyGraph: Map<string, Set<string>>
+  derivedDecls: Map<string, ts.Node>
+  hasStateImport: boolean
+  hasEffectImport: boolean
 }
 
 interface HelperUsage {
   signal: boolean
   memo: boolean
   effect: boolean
+}
+
+export interface CompilerWarning {
+  code: string
+  message: string
+  fileName: string
+  line: number
+  column: number
+}
+
+export interface FictCompilerOptions {
+  dev?: boolean
+  sourcemap?: boolean
+  onWarn?: (warning: CompilerWarning) => void
 }
 
 const RUNTIME_MODULE = 'fict-runtime'
@@ -53,6 +67,7 @@ export function createFictTransformer(
     const factory = context.factory
 
     return sourceFile => {
+      const macroInfo = analyzeMacroImports(sourceFile)
       // Phase 1: Collect all $state variables
       const stateVars = new Set<string>()
       collectStateVariables(sourceFile, stateVars)
@@ -70,10 +85,16 @@ export function createFictTransformer(
         factory,
         context,
         sourceFile,
+        options: _options,
+        dependencyGraph: new Map(),
+        derivedDecls: new Map(),
+        hasStateImport: macroInfo.hasStateImport,
+        hasEffectImport: macroInfo.hasEffectImport,
       }
 
       const visitor = createVisitor(ctx)
       const transformed = (ts.visitNode(sourceFile, visitor) ?? sourceFile) as ts.SourceFile
+      detectDerivedCycles(ctx)
       return addRuntimeImports(transformed, helpersUsed, factory)
     }
   }
@@ -173,6 +194,15 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
       return handleJsxExpression(node, ctx, visitor)
     }
 
+    // Warn on deep property mutations and dynamic assignments
+    if (
+      ts.isBinaryExpression(node) &&
+      isAssignmentOperator(node.operatorToken.kind) &&
+      (ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left))
+    ) {
+      return handlePropertyMutation(node, ctx, visitor)
+    }
+
     // Handle assignment expressions: count = x, count += x
     if (
       ts.isBinaryExpression(node) &&
@@ -191,6 +221,19 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
       isIncrementOrDecrement(node.operator)
     ) {
       return handleUnaryExpression(node, factory)
+    }
+
+    // Warn on deep property increments/decrements
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (ts.isPropertyAccessExpression(node.operand) || ts.isElementAccessExpression(node.operand)) &&
+      isIncrementOrDecrement(node.operator)
+    ) {
+      return handlePropertyUnaryMutation(node, ctx, visitor)
+    }
+
+    if (ts.isElementAccessExpression(node)) {
+      return handleElementAccess(node, ctx, visitor)
     }
 
     // Handle shorthand properties: { count } -> { count: count() }
@@ -941,7 +984,7 @@ function handleFunctionWithShadowing(
   ctx: TransformContext,
   opts: VisitorOptions,
 ): ts.Node {
-  const { stateVars, memoVars, shadowedVars, helpersUsed, factory, context } = ctx
+  const { stateVars, memoVars, shadowedVars, factory, context } = ctx
 
   // Collect parameter names that shadow tracked variables
   const paramNames = collectParameterNames(node.parameters)
@@ -953,22 +996,354 @@ function handleFunctionWithShadowing(
     }
   }
 
+  const functionMemoVars = new Set(memoVars)
+
   // Create new context with updated shadowed vars
   const newCtx: TransformContext = {
-    stateVars,
-    memoVars,
+    ...ctx,
     shadowedVars: newShadowed,
-    helpersUsed,
-    factory,
-    context,
-    sourceFile: ctx.sourceFile,
+    memoVars: functionMemoVars,
   }
 
-  // Create inner visitor with new context
   const innerVisitor = createVisitorWithOptions(newCtx, opts)
+  const destructPlan = buildPropsDestructurePlan(node, newCtx, innerVisitor)
+  if (destructPlan) {
+    destructPlan.trackedNames.forEach(name => functionMemoVars.add(name))
+  }
+  const updatedParams =
+    destructPlan?.parameters ??
+    ts.factory.createNodeArray(
+      node.parameters.map(param => ts.visitEachChild(param, innerVisitor, context)),
+    )
 
-  // Visit children with inner visitor
-  return ts.visitEachChild(node, innerVisitor, context)
+  const updatedBody = transformFunctionBody(node.body, destructPlan, innerVisitor, factory)
+
+  // Create inner visitor with new context
+  if (ts.isArrowFunction(node)) {
+    return factory.updateArrowFunction(
+      node,
+      node.modifiers,
+      node.typeParameters,
+      updatedParams,
+      node.type,
+      node.equalsGreaterThanToken,
+      updatedBody ?? node.body,
+    )
+  }
+
+  if (ts.isFunctionExpression(node)) {
+    const ensuredBody = (updatedBody as ts.Block | undefined) ?? (node.body as ts.Block)
+    return factory.updateFunctionExpression(
+      node,
+      node.modifiers,
+      node.asteriskToken,
+      node.name,
+      node.typeParameters,
+      updatedParams,
+      node.type,
+      ensuredBody,
+    )
+  }
+
+  const ensuredBody = (updatedBody as ts.Block | undefined) ?? (node.body as ts.Block)
+  return factory.updateFunctionDeclaration(
+    node,
+    node.modifiers,
+    node.asteriskToken,
+    node.name,
+    node.typeParameters,
+    updatedParams,
+    node.type,
+    ensuredBody,
+  )
+}
+
+// ============================================================================
+// Props Destructuring Handling (Rule E)
+// ============================================================================
+
+interface PropsDestructurePlan {
+  parameters: ts.NodeArray<ts.ParameterDeclaration>
+  prologue: ts.Statement[]
+  trackedNames: string[]
+}
+
+function buildPropsDestructurePlan(
+  node: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
+  ctx: TransformContext,
+  visitor: ts.Visitor,
+): PropsDestructurePlan | null {
+  const parameters: ts.ParameterDeclaration[] = []
+  const prologue: ts.Statement[] = []
+  const trackedNames: string[] = []
+  let changed = false
+
+  for (const param of node.parameters) {
+    if (ts.isObjectBindingPattern(param.name) || ts.isArrayBindingPattern(param.name)) {
+      changed = true
+      const alias = ctx.factory.createUniqueName('__props')
+      const updatedParam = ctx.factory.updateParameterDeclaration(
+        param,
+        param.modifiers,
+        param.dotDotDotToken,
+        alias,
+        param.questionToken,
+        param.type,
+        param.initializer ? (ts.visitNode(param.initializer, visitor) as ts.Expression) : undefined,
+      )
+      parameters.push(updatedParam)
+
+      const { statements, names } = createPropGetterDeclarations(param.name, alias, ctx, visitor)
+      statements.forEach(stmt => prologue.push(stmt))
+      names.forEach(name => trackedNames.push(name))
+    } else {
+      parameters.push(ts.visitEachChild(param, visitor, ctx.context))
+    }
+  }
+
+  if (!changed) return null
+  return {
+    parameters: ctx.factory.createNodeArray(parameters),
+    prologue,
+    trackedNames,
+  }
+}
+
+function createPropGetterDeclarations(
+  binding: ts.BindingName,
+  base: ts.Expression,
+  ctx: TransformContext,
+  visitor: ts.Visitor,
+): { statements: ts.Statement[]; names: string[] } {
+  const statements: ts.Statement[] = []
+  const names: string[] = []
+  const { factory } = ctx
+
+  const combineWithDefault = (
+    accessExpr: ts.Expression,
+    initializer: ts.Expression,
+  ): ts.Expression => {
+    const visitedInit = ts.visitNode(initializer, visitor) as ts.Expression
+    return factory.createConditionalExpression(
+      factory.createBinaryExpression(
+        accessExpr,
+        ts.SyntaxKind.EqualsEqualsEqualsToken,
+        factory.createIdentifier('undefined'),
+      ),
+      undefined,
+      visitedInit,
+      undefined,
+      accessExpr,
+    )
+  }
+
+  const emitGetter = (
+    id: ts.Identifier,
+    accessExpr: ts.Expression,
+    initializer?: ts.Expression,
+  ) => {
+    const tmp = factory.createUniqueName('__fictProp')
+    const visitedInitializer = initializer
+      ? (ts.visitNode(initializer, visitor) as ts.Expression)
+      : undefined
+
+    const returnExpr = visitedInitializer
+      ? factory.createConditionalExpression(
+          factory.createBinaryExpression(
+            tmp,
+            ts.SyntaxKind.EqualsEqualsEqualsToken,
+            factory.createIdentifier('undefined'),
+          ),
+          undefined,
+          visitedInitializer,
+          undefined,
+          tmp,
+        )
+      : tmp
+
+    const getter = factory.createArrowFunction(
+      undefined,
+      undefined,
+      [],
+      undefined,
+      factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+      factory.createBlock(
+        [
+          factory.createVariableStatement(
+            undefined,
+            factory.createVariableDeclarationList(
+              [factory.createVariableDeclaration(tmp, undefined, undefined, accessExpr)],
+              ts.NodeFlags.Const,
+            ),
+          ),
+          factory.createReturnStatement(returnExpr),
+        ],
+        true,
+      ),
+    )
+
+    statements.push(
+      factory.createVariableStatement(
+        undefined,
+        factory.createVariableDeclarationList(
+          [factory.createVariableDeclaration(id, undefined, undefined, getter)],
+          ts.NodeFlags.Const,
+        ),
+      ),
+    )
+    names.push(id.text)
+  }
+
+  const visitBinding = (name: ts.BindingName, currentBase: ts.Expression): void => {
+    if (ts.isIdentifier(name)) {
+      emitGetter(name, currentBase)
+      return
+    }
+
+    if (ts.isObjectBindingPattern(name)) {
+      for (const element of name.elements) {
+        if (!ts.isBindingElement(element)) continue
+        const propertyName = element.propertyName
+
+        if (ts.isOmittedExpression(element.name)) continue
+        if (element.dotDotDotToken) {
+          emitWarning(
+            ctx,
+            element,
+            'FICT-E',
+            'Object rest in props destructuring falls back to non-reactive binding.',
+          )
+          const destructuring = factory.createVariableStatement(
+            undefined,
+            factory.createVariableDeclarationList(
+              [
+                factory.createVariableDeclaration(
+                  factory.createObjectBindingPattern([element]),
+                  undefined,
+                  undefined,
+                  currentBase,
+                ),
+              ],
+              ts.NodeFlags.Const,
+            ),
+          )
+          statements.push(destructuring)
+          continue
+        }
+
+        const safePropertyName =
+          propertyName &&
+          ts.isPropertyName(propertyName) &&
+          !ts.isComputedPropertyName(propertyName)
+            ? propertyName
+            : ts.isIdentifier(element.name) || ts.isStringLiteral(element.name)
+              ? element.name
+              : null
+        if (!safePropertyName) continue
+
+        let accessExpr = createPropertyAccessFromName(factory, currentBase, safePropertyName)
+        if (element.initializer) {
+          accessExpr = combineWithDefault(accessExpr, element.initializer)
+        }
+
+        if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
+          visitBinding(element.name, accessExpr)
+        } else if (ts.isIdentifier(element.name)) {
+          emitGetter(element.name, accessExpr, element.initializer)
+        }
+      }
+      return
+    }
+
+    if (ts.isArrayBindingPattern(name)) {
+      name.elements.forEach((element, index) => {
+        if (ts.isOmittedExpression(element)) return
+        if (!ts.isBindingElement(element)) return
+        let accessExpr: ts.Expression = factory.createElementAccessExpression(
+          currentBase,
+          factory.createNumericLiteral(index),
+        )
+        if (element.initializer) {
+          accessExpr = combineWithDefault(accessExpr, element.initializer)
+        }
+        if (element.dotDotDotToken) {
+          emitWarning(
+            ctx,
+            element,
+            'FICT-E',
+            'Array rest in props destructuring falls back to non-reactive binding.',
+          )
+          const destructuring = factory.createVariableStatement(
+            undefined,
+            factory.createVariableDeclarationList(
+              [
+                factory.createVariableDeclaration(
+                  factory.createArrayBindingPattern([element]),
+                  undefined,
+                  undefined,
+                  currentBase,
+                ),
+              ],
+              ts.NodeFlags.Const,
+            ),
+          )
+          statements.push(destructuring)
+          return
+        }
+
+        if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
+          visitBinding(element.name, accessExpr)
+        } else if (ts.isIdentifier(element.name)) {
+          emitGetter(element.name, accessExpr, element.initializer)
+        }
+      })
+    }
+  }
+
+  visitBinding(binding, base)
+  return { statements, names }
+}
+
+function createPropertyAccessFromName(
+  factory: ts.NodeFactory,
+  base: ts.Expression,
+  name: ts.PropertyName,
+): ts.Expression {
+  if (ts.isIdentifier(name) || ts.isPrivateIdentifier(name)) {
+    return factory.createPropertyAccessExpression(base, name)
+  }
+  if (ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+    return factory.createElementAccessExpression(base, name)
+  }
+  if (ts.isComputedPropertyName(name)) {
+    return factory.createElementAccessExpression(base, name.expression)
+  }
+  return factory.createElementAccessExpression(base, name as ts.Expression)
+}
+
+function transformFunctionBody(
+  body: ts.ConciseBody | undefined,
+  plan: PropsDestructurePlan | null,
+  visitor: ts.Visitor,
+  factory: ts.NodeFactory,
+): ts.ConciseBody | undefined {
+  const visitedBody = body ? (ts.visitNode(body, visitor) as ts.ConciseBody) : body
+  if (!plan || !plan.prologue.length) return visitedBody
+
+  const visitedPrologue = plan.prologue.map(stmt => ts.visitNode(stmt, visitor) as ts.Statement)
+
+  if (visitedBody && ts.isBlock(visitedBody)) {
+    return factory.updateBlock(
+      visitedBody,
+      factory.createNodeArray([...visitedPrologue, ...visitedBody.statements]),
+    )
+  }
+
+  const returnStmt = visitedBody
+    ? factory.createReturnStatement(visitedBody as ts.Expression)
+    : factory.createReturnStatement()
+
+  return factory.createBlock([...visitedPrologue, returnStmt], true)
 }
 
 /**
@@ -1022,9 +1397,12 @@ function handleVariableDeclaration(
 
   // Handle $state declarations
   if (isStateCall(visitedInit)) {
-    if (isInsideLoop(node)) {
-      throw new Error(formatError(ctx.sourceFile, node, '$state() cannot be declared inside loops'))
+    if (!ctx.hasStateImport) {
+      throw new Error(
+        formatError(ctx.sourceFile, node, '$state() must be imported from "fict" before use'),
+      )
     }
+    ensureValidStatePlacement(node, ctx)
     stateVars.add(node.name.text)
     helpersUsed.signal = true
 
@@ -1046,13 +1424,30 @@ function handleVariableDeclaration(
 
   // Handle derived values (const declarations that depend on state/memo)
   if (
-    !opts.disableMemoize &&
     shouldMemoize(node, stateVars) &&
-    dependsOnTracked(node.initializer, stateVars, memoVars, shadowedVars)
+    dependsOnTracked(
+      node.initializer,
+      stateVars,
+      memoVars,
+      shadowedVars,
+      opts.disableMemoize ? new Set(ctx.dependencyGraph.keys()) : undefined,
+    )
   ) {
+    recordDerivedDependencies(node.name.text, node.initializer, ctx)
+    if (opts.disableMemoize) {
+      return factory.updateVariableDeclaration(
+        node,
+        node.name,
+        node.exclamationToken,
+        node.type,
+        visitedInit,
+      )
+    }
+
     memoVars.add(node.name.text)
 
-    const useGetterOnly = shouldEmitGetter(node.name.text, ctx)
+    const isModuleScope = isTopLevelDeclaration(node)
+    const useGetterOnly = !isModuleScope && shouldEmitGetter(node.name.text, ctx)
     if (!useGetterOnly) {
       helpersUsed.memo = true
       const memoCall = factory.createCallExpression(
@@ -1177,6 +1572,86 @@ function handleJsxExpression(
 // Assignment and Unary Expression Handling
 // ============================================================================
 
+function handlePropertyMutation(
+  node: ts.BinaryExpression,
+  ctx: TransformContext,
+  visitor: ts.Visitor,
+): ts.Expression {
+  const { factory, stateVars } = ctx
+  const root = getRootIdentifier(node.left)
+  if (root && stateVars.has(root.text)) {
+    emitWarning(
+      ctx,
+      node,
+      'FICT-M',
+      'Direct mutation of nested property will not trigger updates; use an immutable update instead.',
+    )
+  }
+
+  if (
+    ts.isElementAccessExpression(node.left) &&
+    isDynamicElementAccess(node.left) &&
+    isTrackedRoot(node.left.expression, ctx)
+  ) {
+    emitWarning(ctx, node, 'FICT-H', 'Dynamic property access widens dependency tracking scope.')
+  }
+
+  const updatedLeft = ts.visitNode(node.left, visitor) as ts.Expression
+  const updatedRight = ts.visitNode(node.right, visitor) as ts.Expression
+  return factory.updateBinaryExpression(node, updatedLeft, node.operatorToken, updatedRight)
+}
+
+function handlePropertyUnaryMutation(
+  node: ts.PrefixUnaryExpression | ts.PostfixUnaryExpression,
+  ctx: TransformContext,
+  visitor: ts.Visitor,
+): ts.Expression {
+  const { factory, stateVars } = ctx
+  const root = getRootIdentifier(node.operand)
+  if (root && stateVars.has(root.text)) {
+    emitWarning(
+      ctx,
+      node,
+      'FICT-M',
+      'Direct mutation of nested property will not trigger updates; use an immutable update instead.',
+    )
+  }
+  const updatedOperand = ts.visitNode(node.operand, visitor) as ts.Expression
+  return ts.isPrefixUnaryExpression(node)
+    ? factory.updatePrefixUnaryExpression(node, updatedOperand)
+    : factory.updatePostfixUnaryExpression(node as ts.PostfixUnaryExpression, updatedOperand)
+}
+
+function handleElementAccess(
+  node: ts.ElementAccessExpression,
+  ctx: TransformContext,
+  visitor: ts.Visitor,
+): ts.ElementAccessExpression {
+  const parent = node.parent
+  const isWriteContext =
+    !!parent &&
+    ((ts.isBinaryExpression(parent) &&
+      parent.left === node &&
+      isAssignmentOperator(parent.operatorToken.kind)) ||
+      ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+        parent.operand === node &&
+        isIncrementOrDecrement(parent.operator)))
+
+  if (!isWriteContext && isDynamicElementAccess(node) && isTrackedRoot(node.expression, ctx)) {
+    emitWarning(ctx, node, 'FICT-H', 'Dynamic property access widens dependency tracking scope.')
+  }
+
+  const updatedExpression = ts.visitNode(node.expression, visitor) as ts.LeftHandSideExpression
+  if (!node.argumentExpression) {
+    return ctx.factory.createElementAccessExpression(
+      updatedExpression,
+      ctx.factory.createIdentifier('undefined'),
+    )
+  }
+  const updatedArgument = ts.visitNode(node.argumentExpression, visitor) as ts.Expression
+  return ctx.factory.updateElementAccessExpression(node, updatedExpression, updatedArgument)
+}
+
 function handleAssignmentExpression(
   node: ts.BinaryExpression,
   ctx: TransformContext,
@@ -1233,6 +1708,52 @@ function handleUnaryExpression(
 // Helper Functions
 // ============================================================================
 
+function analyzeMacroImports(sourceFile: ts.SourceFile): {
+  hasStateImport: boolean
+  hasEffectImport: boolean
+} {
+  let hasStateImport = false
+  let hasEffectImport = false
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      if (node.moduleSpecifier.text === 'fict') {
+        const clause = node.importClause
+        if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+          for (const element of clause.namedBindings.elements) {
+            const imported = element.propertyName ? element.propertyName.text : element.name.text
+            if (imported === '$state') hasStateImport = true
+            if (imported === '$effect') hasEffectImport = true
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sourceFile)
+  return { hasStateImport, hasEffectImport }
+}
+
+function emitWarning(ctx: TransformContext, node: ts.Node, code: string, message: string): void {
+  const { line, character } = ctx.sourceFile.getLineAndCharacterOfPosition(node.getStart())
+  const warning: CompilerWarning = {
+    code,
+    message,
+    fileName: ctx.sourceFile.fileName,
+    line: line + 1,
+    column: character + 1,
+  }
+
+  if (ctx.options.onWarn) {
+    ctx.options.onWarn(warning)
+  } else {
+    console.warn(
+      `[${warning.code}] ${warning.fileName}:${warning.line}:${warning.column} ${message}`,
+    )
+  }
+}
+
 /**
  * Collect all $state variable declarations in the source file
  */
@@ -1278,8 +1799,9 @@ function dependsOnTracked(
       const name = node.text
       if (!locals.has(name)) {
         const tracked = isTracked(name, stateVars, memoVars, additionalTracked)
+        const parent = node.parent
         const shorthandUse =
-          ts.isShorthandPropertyAssignment(node.parent) && node.parent.name === node
+          !!parent && ts.isShorthandPropertyAssignment(parent) && parent.name === node
         if (tracked && (shouldTransformIdentifier(node) || shorthandUse)) {
           depends = true
           return
@@ -1305,6 +1827,40 @@ function dependsOnTracked(
   }
   visit(expr, new Set(shadowedVars))
   return depends
+}
+
+function collectIdentifierDependencies(
+  expr: ts.Expression,
+  shadowedVars: Set<string>,
+): Set<string> {
+  const deps = new Set<string>()
+  const visit = (node: ts.Node, locals: Set<string>): void => {
+    if (ts.isFunctionLike(node)) return
+
+    if (ts.isIdentifier(node) && !locals.has(node.text) && shouldTransformIdentifier(node)) {
+      deps.add(node.text)
+    }
+
+    const next = new Set(locals)
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      next.add(node.name.text)
+    }
+
+    ts.forEachChild(node, child => visit(child, next))
+  }
+
+  visit(expr, new Set(shadowedVars))
+  return deps
+}
+
+function recordDerivedDependencies(name: string, expr: ts.Expression, ctx: TransformContext): void {
+  if (!ctx.dependencyGraph.has(name)) {
+    ctx.dependencyGraph.set(name, new Set())
+  }
+  const deps = collectIdentifierDependencies(expr, ctx.shadowedVars)
+  ctx.dependencyGraph.get(name)!.forEach(existing => deps.add(existing))
+  ctx.dependencyGraph.set(name, deps)
+  ctx.derivedDecls.set(name, expr)
 }
 
 /**
@@ -1351,9 +1907,46 @@ function isInsideLoop(node: ts.Node): boolean {
       return true
     }
     if (ts.isSourceFile(current)) break
+    if (ts.isFunctionLike(current)) break
     current = current.parent
   }
   return false
+}
+
+function isInsideConditional(node: ts.Node): boolean {
+  let current: ts.Node | undefined = node
+  while (current) {
+    if (
+      ts.isIfStatement(current) ||
+      ts.isSwitchStatement(current) ||
+      ts.isConditionalExpression(current) ||
+      ts.isCaseClause(current) ||
+      ts.isDefaultClause(current)
+    ) {
+      return true
+    }
+    if (ts.isFunctionLike(current) || ts.isSourceFile(current)) break
+    current = current.parent
+  }
+  return false
+}
+
+function ensureValidStatePlacement(node: ts.VariableDeclaration, ctx: TransformContext): void {
+  if (isInsideLoop(node)) {
+    throw new Error(formatError(ctx.sourceFile, node, '$state() cannot be declared inside loops'))
+  }
+  if (isInsideConditional(node)) {
+    throw new Error(
+      formatError(ctx.sourceFile, node, '$state() must be declared at top-level scope'),
+    )
+  }
+}
+
+function isTopLevelDeclaration(node: ts.VariableDeclaration): boolean {
+  const parentList = node.parent
+  if (!ts.isVariableDeclarationList(parentList)) return false
+  const parentStmt = parentList.parent
+  return ts.isVariableStatement(parentStmt) && ts.isSourceFile(parentStmt.parent)
 }
 
 /**
@@ -1464,8 +2057,9 @@ function isInEventHandler(node: ts.Node): boolean {
  */
 function shouldMemoize(node: ts.VariableDeclaration, stateVars: Set<string>): boolean {
   const list = node.parent
-  const isConst =
-    ts.isVariableDeclarationList(list) && (list.flags & ts.NodeFlags.Const) === ts.NodeFlags.Const
+  if (!list || !ts.isVariableDeclarationList(list)) return false
+
+  const isConst = (list.flags & ts.NodeFlags.Const) === ts.NodeFlags.Const
   if (!isConst || node.initializer === undefined) return false
 
   // Don't memoize function declarations
@@ -1520,6 +2114,39 @@ function toBinaryOperator(kind: ts.SyntaxKind): ts.BinaryOperator | undefined {
   }
 }
 
+function getRootIdentifier(expr: ts.Expression): ts.Identifier | null {
+  let current: ts.Expression = expr
+  while (true) {
+    if (ts.isIdentifier(current)) return current
+    if (
+      ts.isPropertyAccessExpression(current) ||
+      ts.isElementAccessExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isAsExpression(current)
+    ) {
+      current = current.expression
+      continue
+    }
+    return null
+  }
+}
+
+function isTrackedRoot(expr: ts.Expression, ctx: TransformContext): boolean {
+  const root = getRootIdentifier(expr)
+  if (!root) return false
+  return ctx.stateVars.has(root.text) || ctx.memoVars.has(root.text)
+}
+
+function isDynamicElementAccess(node: ts.ElementAccessExpression): boolean {
+  const arg = node.argumentExpression
+  if (!arg) return true
+  return !(
+    ts.isStringLiteral(arg) ||
+    ts.isNumericLiteral(arg) ||
+    ts.isNoSubstitutionTemplateLiteral(arg)
+  )
+}
+
 /**
  * Check if an attribute name is an event handler (onClick, onSubmit, etc.)
  */
@@ -1566,6 +2193,57 @@ function shouldTransformIdentifier(node: ts.Identifier): boolean {
   if (ts.isQualifiedName(parent)) return false
 
   return true
+}
+
+function detectDerivedCycles(ctx: TransformContext): void {
+  const filteredGraph = new Map<string, Set<string>>()
+  ctx.dependencyGraph.forEach((deps, name) => {
+    const filtered = new Set<string>()
+    deps.forEach(dep => {
+      if (ctx.dependencyGraph.has(dep)) {
+        filtered.add(dep)
+      }
+    })
+    filteredGraph.set(name, filtered)
+  })
+
+  const visiting = new Set<string>()
+  const visited = new Set<string>()
+  const stack: string[] = []
+
+  const dfs = (name: string): void => {
+    if (visited.has(name)) return
+    if (visiting.has(name)) {
+      const cycleStart = stack.indexOf(name)
+      const cyclePath = stack.slice(cycleStart).concat(name)
+      throw new Error(formatCycleError(ctx, cyclePath))
+    }
+
+    visiting.add(name)
+    stack.push(name)
+    const deps = filteredGraph.get(name)
+    if (deps) {
+      deps.forEach(dep => dfs(dep))
+    }
+    stack.pop()
+    visiting.delete(name)
+    visited.add(name)
+  }
+
+  filteredGraph.forEach((_deps, name) => {
+    if (!visited.has(name)) dfs(name)
+  })
+}
+
+function formatCycleError(ctx: TransformContext, path: string[]): string {
+  const head = path[0]
+  if (!head) return 'Detected cyclic derived dependency'
+  const locationNode = ctx.derivedDecls.get(head)
+  const msg = `Detected cyclic derived dependency: ${path.join(' -> ')}`
+  if (locationNode) {
+    return formatError(ctx.sourceFile, locationNode, msg)
+  }
+  return msg
 }
 
 // ============================================================================
