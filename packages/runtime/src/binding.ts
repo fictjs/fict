@@ -41,8 +41,8 @@ export interface BindingHandle {
 }
 
 /** Managed child node with its dispose function */
-interface ManagedNode {
-  node: Node
+interface ManagedBlock {
+  nodes: Node[]
   root: RootContext
 }
 
@@ -481,7 +481,7 @@ export function createConditional(
   fragment.appendChild(startMarker)
   fragment.appendChild(endMarker)
 
-  let currentNode: Node | null = null
+  let currentNodes: Node[] = []
   let currentRoot: RootContext | null = null
   let lastCondition: boolean | undefined = undefined
 
@@ -489,7 +489,7 @@ export function createConditional(
     const cond = condition()
 
     // Skip if condition hasn't changed and we already rendered
-    if (lastCondition === cond && currentNode !== null) {
+    if (lastCondition === cond && currentNodes.length > 0) {
       return
     }
     // For initial false condition, we still need to mark as initialized
@@ -503,10 +503,8 @@ export function createConditional(
       destroyRoot(currentRoot)
       currentRoot = null
     }
-    if (currentNode && currentNode.parentNode) {
-      currentNode.parentNode.removeChild(currentNode)
-      currentNode = null
-    }
+    removeNodes(currentNodes)
+    currentNodes = []
 
     // Determine what to render
     const render = cond ? renderTrue : renderFalse
@@ -524,13 +522,14 @@ export function createConditional(
         return
       }
       const el = createElementFn!(output)
-
-      // Insert before endMarker (works whether we're in fragment or real DOM)
-      const parent = startMarker.parentNode
+      const nodes = toNodeArray(el)
+      const parent = startMarker.parentNode as (ParentNode & Node) | null
       if (parent) {
-        parent.insertBefore(el, endMarker)
+        insertNodesBefore(parent, nodes, endMarker)
+        currentNodes = nodes
+      } else {
+        currentNodes = nodes
       }
-      currentNode = el
     } finally {
       popRoot(prev)
       flushOnMount(root)
@@ -545,9 +544,8 @@ export function createConditional(
       if (currentRoot) {
         destroyRoot(currentRoot)
       }
-      if (currentNode && currentNode.parentNode) {
-        currentNode.parentNode.removeChild(currentNode)
-      }
+      removeNodes(currentNodes)
+      currentNodes = []
       startMarker.parentNode?.removeChild(startMarker)
       endMarker.parentNode?.removeChild(endMarker)
     },
@@ -589,70 +587,57 @@ export function createList<T>(
   fragment.appendChild(startMarker)
   fragment.appendChild(endMarker)
 
-  // Map of key -> managed node
-  const nodeMap = new Map<string | number, ManagedNode>()
+  // Map of key -> managed block
+  const nodeMap = new Map<string | number, ManagedBlock>()
 
   const dispose = createEffect(() => {
     const arr = items()
-    const parent = startMarker.parentNode
+    const parent = startMarker.parentNode as (ParentNode & Node) | null
     if (!parent) return
 
-    const newKeys: (string | number)[] = []
-    const newNodeMap = new Map<string | number, ManagedNode>()
-    const reusedKeys = new Set<string | number>()
+    const newNodeMap = new Map<string | number, ManagedBlock>()
+    const blocks: ManagedBlock[] = []
 
-    // Phase 1: Determine new keys and which nodes can be reused
+    // Build or refresh blocks for the new array
     for (let i = 0; i < arr.length; i++) {
       const item = arr[i]!
       const key = getKey ? getKey(item, i) : i
-      newKeys.push(key)
-
       const existing = nodeMap.get(key)
+
+      let block: ManagedBlock
       if (existing) {
-        // Reuse existing node
-        newNodeMap.set(key, existing)
-        reusedKeys.add(key)
+        // Always refresh to reflect latest item value
+        block = refreshBlock(
+          existing,
+          () => renderItem(item, i),
+          parent,
+          endMarker,
+          createElementFn,
+        )
+      } else {
+        block = mountBlock(() => renderItem(item, i), parent, endMarker, createElementFn)
       }
+
+      newNodeMap.set(key, block)
+      blocks.push(block)
     }
 
-    // Phase 2: Remove nodes that are no longer needed
+    // Cleanup removed blocks
     for (const [key, managed] of nodeMap) {
-      if (!reusedKeys.has(key)) {
-        destroyRoot(managed.root)
-        managed.node.parentNode?.removeChild(managed.node)
-      }
-    }
-
-    // Phase 3: Create new nodes
-    for (let i = 0; i < arr.length; i++) {
-      const item = arr[i]!
-      const key = newKeys[i]!
-
       if (!newNodeMap.has(key)) {
-        // Create new node
-        const root = createRootContext()
-        const prev = pushRoot(root)
-        try {
-          const output = renderItem(item, i)
-          const node = createElementFn!(output)
-          newNodeMap.set(key, { node, root })
-        } finally {
-          popRoot(prev)
-          flushOnMount(root)
-        }
+        destroyRoot(managed.root)
+        removeNodes(managed.nodes)
       }
     }
 
-    // Phase 4: Reorder nodes efficiently - insert before endMarker in correct order
-    let nextSibling: Node = endMarker
-    for (let i = newKeys.length - 1; i >= 0; i--) {
-      const key = newKeys[i]!
-      const managed = newNodeMap.get(key)!
-      // Only move if not already in correct position
-      if (managed.node.nextSibling !== nextSibling) {
-        parent.insertBefore(managed.node, nextSibling)
+    // Reorder nodes efficiently - insert blocks before endMarker in correct order
+    let anchor: Node = endMarker
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const block = blocks[i]!
+      insertNodesBefore(parent, block.nodes, anchor)
+      if (block.nodes.length > 0) {
+        anchor = block.nodes[0]!
       }
-      nextSibling = managed.node
     }
 
     // Update state
@@ -668,7 +653,7 @@ export function createList<T>(
       dispose()
       for (const [, managed] of nodeMap) {
         destroyRoot(managed.root)
-        managed.node.parentNode?.removeChild(managed.node)
+        removeNodes(managed.nodes)
       }
       nodeMap.clear()
       startMarker.parentNode?.removeChild(startMarker)
@@ -720,7 +705,7 @@ export function createPortal(
   const marker = document.createComment('fict:portal')
   container.appendChild(marker)
 
-  let currentNode: Node | null = null
+  let currentNodes: Node[] = []
   let currentRoot: RootContext | null = null
 
   const dispose = createEffect(() => {
@@ -729,9 +714,9 @@ export function createPortal(
       destroyRoot(currentRoot)
       currentRoot = null
     }
-    if (currentNode) {
-      currentNode.parentNode?.removeChild(currentNode)
-      currentNode = null
+    if (currentNodes.length > 0) {
+      removeNodes(currentNodes)
+      currentNodes = []
     }
 
     // Create new content
@@ -740,8 +725,12 @@ export function createPortal(
     try {
       const output = render()
       if (output != null && output !== false) {
-        currentNode = createElementFn(output)
-        marker.parentNode?.insertBefore(currentNode, marker)
+        const el = createElementFn(output)
+        const nodes = toNodeArray(el)
+        if (marker.parentNode) {
+          insertNodesBefore(marker.parentNode as ParentNode & Node, nodes, marker)
+        }
+        currentNodes = nodes
       }
     } finally {
       popRoot(prev)
@@ -757,10 +746,67 @@ export function createPortal(
       if (currentRoot) {
         destroyRoot(currentRoot)
       }
-      if (currentNode) {
-        currentNode.parentNode?.removeChild(currentNode)
+      if (currentNodes.length > 0) {
+        removeNodes(currentNodes)
       }
       marker.parentNode?.removeChild(marker)
     },
+  }
+}
+
+// ============================================================================
+// Internal helpers
+// ============================================================================
+
+function mountBlock(
+  render: () => FictNode,
+  parent: ParentNode & Node,
+  anchor: Node,
+  createElementFn: CreateElementFn,
+): ManagedBlock {
+  const root = createRootContext()
+  const prev = pushRoot(root)
+  let nodes: Node[] = []
+  try {
+    const output = render()
+    if (output != null && output !== false) {
+      const el = createElementFn(output)
+      nodes = toNodeArray(el)
+      insertNodesBefore(parent, nodes, anchor)
+    }
+  } finally {
+    popRoot(prev)
+    flushOnMount(root)
+  }
+  return { nodes, root }
+}
+
+function refreshBlock(
+  block: ManagedBlock,
+  render: () => FictNode,
+  parent: ParentNode & Node,
+  anchor: Node,
+  createElementFn: CreateElementFn,
+): ManagedBlock {
+  destroyRoot(block.root)
+  removeNodes(block.nodes)
+  return mountBlock(render, parent, anchor, createElementFn)
+}
+
+function toNodeArray(node: Node): Node[] {
+  return node instanceof DocumentFragment ? Array.from(node.childNodes) : [node]
+}
+
+function insertNodesBefore(parent: ParentNode & Node, nodes: Node[], anchor: Node): void {
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const node = nodes[i]!
+    parent.insertBefore(node, anchor)
+    anchor = node
+  }
+}
+
+function removeNodes(nodes: Node[]): void {
+  for (const node of nodes) {
+    node.parentNode?.removeChild(node)
   }
 }

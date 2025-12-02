@@ -14,6 +14,7 @@ import {
   createConditional,
   createList,
   createShow,
+  createPortal,
   isReactive,
   unwrap,
 } from '..'
@@ -279,6 +280,32 @@ describe('Reactive DOM Binding', () => {
 
       dispose()
     })
+
+    it('cleans up fragment branches', () => {
+      const show = createSignal(true)
+
+      const { marker, dispose } = createConditional(
+        () => show(),
+        () => ({
+          type: Fragment,
+          props: { children: ['A', { type: 'span', props: { children: 'B' }, key: undefined }] },
+          key: undefined,
+        }),
+        createElement,
+        () => 'X',
+      )
+      container.appendChild(marker)
+
+      expect(container.textContent).toBe('AB')
+
+      show(false)
+      expect(container.textContent).toBe('X')
+
+      show(true)
+      expect(container.textContent).toBe('AB')
+
+      dispose()
+    })
   })
 
   describe('createList', () => {
@@ -350,9 +377,47 @@ describe('Reactive DOM Binding', () => {
       ])
 
       expect(container.textContent).toBe('twoone')
-      // Render counts should not increase (nodes reused)
-      expect(renderCounts.get(1)).toBe(1)
-      expect(renderCounts.get(2)).toBe(1)
+      // Re-rendered to reflect new ordering/content
+      expect(renderCounts.get(1)).toBe(2)
+      expect(renderCounts.get(2)).toBe(2)
+
+      dispose()
+    })
+
+    it('updates reused keyed items and removes fragment outputs correctly', () => {
+      const items = createSignal([
+        { id: 1, text: 'one' },
+        { id: 2, text: 'two' },
+      ])
+
+      const { marker, dispose } = createList(
+        () => items(),
+        item => ({
+          type: Fragment,
+          props: {
+            children: [
+              item.text,
+              { type: 'span', props: { children: item.text.toUpperCase() }, key: undefined },
+            ],
+          },
+          key: undefined,
+        }),
+        createElement,
+        item => item.id,
+      )
+      container.appendChild(marker)
+
+      expect(container.textContent).toBe('oneONEtwoTWO')
+
+      items([
+        { id: 2, text: 'dos' },
+        { id: 1, text: 'uno' },
+      ])
+
+      expect(container.textContent).toBe('dosDOSunoUNO')
+
+      items([{ id: 2, text: 'done' }])
+      expect(container.textContent).toBe('doneDONE')
 
       dispose()
     })
@@ -376,6 +441,36 @@ describe('Reactive DOM Binding', () => {
       expect(el.style.display).toBe('')
 
       dispose()
+    })
+  })
+
+  describe('createPortal', () => {
+    it('renders and cleans up fragment output', () => {
+      const portalContainer = document.createElement('div')
+      const visible = createSignal(true)
+
+      const { marker, dispose } = createPortal(
+        portalContainer,
+        () =>
+          visible()
+            ? {
+                type: Fragment,
+                props: {
+                  children: ['P', { type: 'span', props: { children: 'Q' }, key: undefined }],
+                },
+                key: undefined,
+              }
+            : null,
+        createElement,
+      )
+
+      expect(portalContainer.textContent).toBe('PQ')
+
+      visible(false)
+      expect(portalContainer.textContent).toBe('')
+
+      dispose()
+      expect(portalContainer.contains(marker)).toBe(false)
     })
   })
 
