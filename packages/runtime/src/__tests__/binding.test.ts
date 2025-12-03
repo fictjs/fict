@@ -21,6 +21,13 @@ import {
   unwrap,
 } from '..'
 
+const tick = () =>
+  new Promise<void>(resolve =>
+    typeof queueMicrotask === 'function'
+      ? queueMicrotask(resolve)
+      : Promise.resolve().then(resolve),
+  )
+
 describe('Reactive DOM Binding', () => {
   let container: HTMLElement
 
@@ -77,16 +84,18 @@ describe('Reactive DOM Binding', () => {
       expect(text.data).toBe('Hello')
     })
 
-    it('creates reactive text node', () => {
+    it('creates reactive text node', async () => {
       const count = createSignal(0)
       const { value: text, dispose } = createRoot(() => createTextBinding(() => count()))
 
       expect(text.data).toBe('0')
 
       count(5)
+      await tick()
       expect(text.data).toBe('5')
 
       count(100)
+      await tick()
       expect(text.data).toBe('100')
 
       dispose()
@@ -112,7 +121,7 @@ describe('Reactive DOM Binding', () => {
       expect(el.hasAttribute('disabled')).toBe(true)
     })
 
-    it('creates reactive attribute binding', () => {
+    it('creates reactive attribute binding', async () => {
       const el = document.createElement('button')
       const disabled = createSignal(false)
       const setter = (el: HTMLElement, key: string, value: unknown) => {
@@ -128,9 +137,11 @@ describe('Reactive DOM Binding', () => {
       expect(el.hasAttribute('disabled')).toBe(false)
 
       disabled(true)
+      await tick()
       expect(el.hasAttribute('disabled')).toBe(true)
 
       disabled(false)
+      await tick()
       expect(el.hasAttribute('disabled')).toBe(false)
 
       dispose()
@@ -152,7 +163,7 @@ describe('Reactive DOM Binding', () => {
       expect(el.style.fontSize).toBe('16px')
     })
 
-    it('creates reactive style binding', () => {
+    it('creates reactive style binding', async () => {
       const el = document.createElement('div')
       const color = createSignal('red')
 
@@ -163,6 +174,7 @@ describe('Reactive DOM Binding', () => {
       expect(el.style.color).toBe('red')
 
       color('blue')
+      await tick()
       expect(el.style.color).toBe('blue')
 
       dispose()
@@ -182,7 +194,7 @@ describe('Reactive DOM Binding', () => {
       expect(el.className).toBe('foo baz')
     })
 
-    it('creates reactive class binding', () => {
+    it('creates reactive class binding', async () => {
       const el = document.createElement('div')
       const active = createSignal(false)
 
@@ -193,9 +205,11 @@ describe('Reactive DOM Binding', () => {
       expect(el.className).toBe('base')
 
       active(true)
+      await tick()
       expect(el.className).toBe('active base')
 
       active(false)
+      await tick()
       expect(el.className).toBe('base')
 
       dispose()
@@ -203,7 +217,7 @@ describe('Reactive DOM Binding', () => {
   })
 
   describe('createChildBinding', () => {
-    it('creates reactive child that updates', () => {
+    it('creates reactive child that updates', async () => {
       const count = createSignal(0)
 
       const { dispose } = createRoot(() => {
@@ -213,15 +227,17 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('0')
 
       count(5)
+      await tick()
       expect(container.textContent).toBe('5')
 
       count(100)
+      await tick()
       expect(container.textContent).toBe('100')
 
       dispose()
     })
 
-    it('handles conditional content', () => {
+    it('handles conditional content', async () => {
       const show = createSignal(true)
 
       const { dispose } = createRoot(() => {
@@ -231,9 +247,11 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('Visible')
 
       show(false)
+      await tick()
       expect(container.textContent).toBe('')
 
       show(true)
+      await tick()
       expect(container.textContent).toBe('Visible')
 
       dispose()
@@ -241,7 +259,7 @@ describe('Reactive DOM Binding', () => {
   })
 
   describe('insert', () => {
-    it('cleans up fragment outputs and lifecycles when swapped', () => {
+    it('cleans up fragment outputs and lifecycles when swapped', async () => {
       const show = createSignal(true)
       const cleanups: string[] = []
 
@@ -268,6 +286,7 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('XY')
 
       show(false)
+      await tick()
       expect(container.textContent).toBe('')
       expect(cleanups).toEqual(['child'])
 
@@ -277,7 +296,7 @@ describe('Reactive DOM Binding', () => {
   })
 
   describe('createConditional', () => {
-    it('renders true branch when condition is true', () => {
+    it('renders true branch when condition is true', async () => {
       const show = createSignal(true)
 
       const { marker, dispose } = createConditional(
@@ -292,15 +311,17 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('TRUE')
 
       show(false)
+      await tick()
       expect(container.textContent).toBe('FALSE')
 
       show(true)
+      await tick()
       expect(container.textContent).toBe('TRUE')
 
       dispose()
     })
 
-    it('handles undefined false branch', () => {
+    it('handles undefined false branch', async () => {
       const show = createSignal(true)
 
       const { marker, dispose } = createConditional(
@@ -314,12 +335,13 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('CONTENT')
 
       show(false)
+      await tick()
       expect(container.textContent).toBe('')
 
       dispose()
     })
 
-    it('cleans up fragment branches', () => {
+    it('cleans up fragment branches', async () => {
       const show = createSignal(true)
 
       const { marker, dispose } = createConditional(
@@ -337,9 +359,11 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('AB')
 
       show(false)
+      await tick()
       expect(container.textContent).toBe('X')
 
       show(true)
+      await tick()
       expect(container.textContent).toBe('AB')
 
       dispose()
@@ -363,7 +387,7 @@ describe('Reactive DOM Binding', () => {
       dispose()
     })
 
-    it('updates when items change', () => {
+    it('updates when items change', async () => {
       const items = createSignal(['a', 'b'])
 
       const { marker, dispose } = createList(
@@ -377,15 +401,17 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('ab')
 
       items(['x', 'y', 'z'])
+      await tick()
       expect(container.textContent).toBe('xyz')
 
       items([])
+      await tick()
       expect(container.textContent).toBe('')
 
       dispose()
     })
 
-    it('reuses nodes with keys', () => {
+    it('reuses nodes with keys', async () => {
       const items = createSignal([
         { id: 1, text: 'one' },
         { id: 2, text: 'two' },
@@ -414,6 +440,7 @@ describe('Reactive DOM Binding', () => {
         { id: 1, text: 'one' },
       ])
 
+      await tick()
       expect(container.textContent).toBe('twoone')
       // Re-rendered to reflect new ordering/content
       expect(renderCounts.get(1)).toBe(2)
@@ -422,7 +449,7 @@ describe('Reactive DOM Binding', () => {
       dispose()
     })
 
-    it('updates reused keyed items and removes fragment outputs correctly', () => {
+    it('updates reused keyed items and removes fragment outputs correctly', async () => {
       const items = createSignal([
         { id: 1, text: 'one' },
         { id: 2, text: 'two' },
@@ -452,15 +479,17 @@ describe('Reactive DOM Binding', () => {
         { id: 1, text: 'uno' },
       ])
 
+      await tick()
       expect(container.textContent).toBe('dosDOSunoUNO')
 
       items([{ id: 2, text: 'done' }])
+      await tick()
       expect(container.textContent).toBe('doneDONE')
 
       dispose()
     })
 
-    it('handles unkeyed reorders and disposes replaced blocks in order', () => {
+    it('handles unkeyed reorders and disposes replaced blocks in order', async () => {
       const items = createSignal(['a', 'b', 'c', 'd'])
       const cleanups: string[] = []
 
@@ -478,13 +507,14 @@ describe('Reactive DOM Binding', () => {
 
       items(['d', 'c', 'b'])
 
+      await tick()
       expect(container.textContent).toBe('dcb')
       expect(cleanups).toEqual(['destroy-a', 'destroy-b', 'destroy-c', 'destroy-d'])
 
       dispose()
     })
 
-    it('reorders keyed lists while keeping cleanup order deterministic', () => {
+    it('reorders keyed lists while keeping cleanup order deterministic', async () => {
       const items = createSignal([
         { id: 'a', text: 'one' },
         { id: 'b', text: 'two' },
@@ -514,6 +544,7 @@ describe('Reactive DOM Binding', () => {
         { id: 'd', text: 'cuatro' },
       ])
 
+      await tick()
       expect(container.textContent).toBe('tresunocuatro')
       expect(renders).toEqual([
         'render-a',
@@ -530,7 +561,7 @@ describe('Reactive DOM Binding', () => {
   })
 
   describe('createShow', () => {
-    it('toggles display style', () => {
+    it('toggles display style', async () => {
       const el = document.createElement('div')
       const visible = createSignal(true)
 
@@ -541,9 +572,11 @@ describe('Reactive DOM Binding', () => {
       expect(el.style.display).toBe('')
 
       visible(false)
+      await tick()
       expect(el.style.display).toBe('none')
 
       visible(true)
+      await tick()
       expect(el.style.display).toBe('')
 
       dispose()
@@ -551,7 +584,7 @@ describe('Reactive DOM Binding', () => {
   })
 
   describe('createPortal', () => {
-    it('renders and cleans up fragment output', () => {
+    it('renders and cleans up fragment output', async () => {
       const portalContainer = document.createElement('div')
       const visible = createSignal(true)
 
@@ -573,6 +606,7 @@ describe('Reactive DOM Binding', () => {
       expect(portalContainer.textContent).toBe('PQ')
 
       visible(false)
+      await tick()
       expect(portalContainer.textContent).toBe('')
 
       dispose()
@@ -581,7 +615,7 @@ describe('Reactive DOM Binding', () => {
   })
 
   describe('Full Integration: render with reactive children', () => {
-    it('keeps render function single-run while bindings update', () => {
+    it('keeps render function single-run while bindings update', async () => {
       let renderCount = 0
       let setCount!: (value: number) => void
 
@@ -605,12 +639,13 @@ describe('Reactive DOM Binding', () => {
       setCount(2)
 
       expect(renderCount).toBe(1)
+      await tick()
       expect(container.textContent).toBe('Count: 2')
 
       teardown()
     })
 
-    it('updates text content reactively', () => {
+    it('updates text content reactively', async () => {
       const count = createSignal(0)
 
       const teardown = render(
@@ -627,12 +662,13 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('Count: 0')
 
       count(5)
+      await tick()
       expect(container.textContent).toBe('Count: 5')
 
       teardown()
     })
 
-    it('updates attributes reactively', () => {
+    it('updates attributes reactively', async () => {
       const disabled = createSignal(false)
 
       const teardown = render(
@@ -651,15 +687,17 @@ describe('Reactive DOM Binding', () => {
       expect(button.hasAttribute('disabled')).toBe(false)
 
       disabled(true)
+      await tick()
       expect(button.hasAttribute('disabled')).toBe(true)
 
       disabled(false)
+      await tick()
       expect(button.hasAttribute('disabled')).toBe(false)
 
       teardown()
     })
 
-    it('handles conditional rendering', () => {
+    it('handles conditional rendering', async () => {
       const show = createSignal(true)
 
       const teardown = render(
@@ -676,15 +714,17 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('Visible')
 
       show(false)
+      await tick()
       expect(container.textContent).toBe('')
 
       show(true)
+      await tick()
       expect(container.textContent).toBe('Visible')
 
       teardown()
     })
 
-    it('handles list rendering with nested reactive content', () => {
+    it('handles list rendering with nested reactive content', async () => {
       const items = createSignal(['a', 'b', 'c'])
 
       const teardown = render(
@@ -707,13 +747,14 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('abc')
 
       items(['x', 'y'])
+      await tick()
       expect(container.querySelectorAll('li').length).toBe(2)
       expect(container.textContent).toBe('xy')
 
       teardown()
     })
 
-    it('handles multiple reactive attributes', () => {
+    it('handles multiple reactive attributes', async () => {
       const className = createSignal('base')
       const title = createSignal('Hello')
 
@@ -736,13 +777,14 @@ describe('Reactive DOM Binding', () => {
 
       className('updated')
       title('World')
+      await tick()
       expect(div.className).toBe('updated')
       expect(div.getAttribute('title')).toBe('World')
 
       teardown()
     })
 
-    it('handles Fragment with reactive children', () => {
+    it('handles Fragment with reactive children', async () => {
       const count = createSignal(0)
 
       const teardown = render(
@@ -759,6 +801,7 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('Static: Dynamic: 0')
 
       count(42)
+      await tick()
       expect(container.textContent).toBe('Static: Dynamic: 42')
 
       teardown()

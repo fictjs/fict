@@ -192,6 +192,13 @@ let notifyIndex = 0
 let queuedLength = 0
 let activeSub: ReactiveNode | undefined
 const queued: (EffectNode | undefined)[] = []
+let flushScheduled = false
+const enqueueMicrotask =
+  typeof queueMicrotask === 'function'
+    ? queueMicrotask
+    : (fn: () => void) => {
+        Promise.resolve().then(fn)
+      }
 export const ReactiveFlags = {
   None: 0,
   Mutable,
@@ -752,9 +759,30 @@ function runEffect(e: EffectNode): void {
   }
 }
 /**
+ * Schedule a flush in a microtask to coalesce synchronous writes
+ */
+function scheduleFlush(): void {
+  if (flushScheduled || queuedLength === 0) return
+  if (batchDepth > 0) return
+  flushScheduled = true
+  enqueueMicrotask(() => {
+    flush()
+  })
+}
+/**
  * Flush all queued effects
  */
 function flush(): void {
+  if (batchDepth > 0) {
+    // If batching is active, defer until the batch completes
+    scheduleFlush()
+    return
+  }
+  if (!queuedLength) {
+    flushScheduled = false
+    return
+  }
+  flushScheduled = false
   while (notifyIndex < queuedLength) {
     const e = queued[notifyIndex]!
     queued[notifyIndex++] = undefined
@@ -792,7 +820,7 @@ function signalOper<T>(this: SignalNode<T>, value?: T): T | void {
       const subs = this.subs
       if (subs !== undefined) {
         propagate(subs)
-        if (!batchDepth) flush()
+        if (!batchDepth) scheduleFlush()
       }
     }
     return
@@ -961,7 +989,7 @@ export function trigger(fn: () => void): void {
         shallowPropagate(subs)
       }
     }
-    if (!batchDepth) flush()
+    if (!batchDepth) scheduleFlush()
   }
 }
 // ============================================================================

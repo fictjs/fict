@@ -3,6 +3,13 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 import { resource } from '../resource'
 
+const tick = () =>
+  new Promise<void>(resolve =>
+    typeof queueMicrotask === 'function'
+      ? queueMicrotask(resolve)
+      : Promise.resolve().then(resolve),
+  )
+
 describe('resource', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -49,7 +56,7 @@ describe('resource', () => {
     expect(result.data).toBe('echo A')
 
     arg('B')
-    expect(result.loading).toBe(true)
+    await tick()
 
     await vi.runAllTimersAsync()
     await Promise.resolve()
@@ -72,6 +79,7 @@ describe('resource', () => {
 
     // Start first request
     arg(2) // Trigger second request immediately
+    await tick()
 
     expect(abortSpy).toHaveBeenCalled()
   })

@@ -109,6 +109,15 @@ export function $store<T extends object>(initialValue: T): T {
         triggerIteration(target)
       }
 
+      // Ensure array length subscribers are notified even if the native push/pop
+      // doesn't trigger a separate set trap for "length" (defensive).
+      if (Array.isArray(target) && prop !== 'length') {
+        const signals = SIGNAL_CACHE.get(target)
+        if (signals && signals.length) {
+          signals.length((target as unknown as { length: number }).length)
+        }
+      }
+
       // If it's an array and length changed implicitly, we might need to handle it.
       // But usually 'length' is set explicitly or handled by the runtime.
       if (Array.isArray(target) && prop === 'length') {

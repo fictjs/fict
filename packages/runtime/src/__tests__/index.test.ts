@@ -19,8 +19,15 @@ import {
   insert,
 } from '..'
 
+const tick = () =>
+  new Promise<void>(resolve =>
+    typeof queueMicrotask === 'function'
+      ? queueMicrotask(resolve)
+      : Promise.resolve().then(resolve),
+  )
+
 describe('fict-runtime', () => {
-  it('runs effects when signals change', () => {
+  it('runs effects when signals change', async () => {
     const count = createSignal(0)
     const doubled = createMemo(() => count() * 2)
     const seen: number[] = []
@@ -32,13 +39,15 @@ describe('fict-runtime', () => {
     expect(seen).toEqual([0])
 
     count(1)
+    await tick()
     expect(seen).toEqual([0, 2])
 
     count(5)
+    await tick()
     expect(seen).toEqual([0, 2, 10])
   })
 
-  it('runs onCleanup before re-run', () => {
+  it('runs onCleanup before re-run', async () => {
     const count = createSignal(0)
     const cleanups: number[] = []
 
@@ -48,7 +57,9 @@ describe('fict-runtime', () => {
     })
 
     count(1)
+    await tick()
     count(2)
+    await tick()
 
     expect(cleanups).toEqual([0, 1])
   })
@@ -66,7 +77,7 @@ describe('fict-runtime', () => {
     expect(seen).toEqual([0, 2])
   })
 
-  it('untrack prevents dependency collection', () => {
+  it('untrack prevents dependency collection', async () => {
     const count = createSignal(0)
     const seen: number[] = []
     createEffect(() => {
@@ -75,6 +86,7 @@ describe('fict-runtime', () => {
     })
 
     count(1)
+    await tick()
     expect(seen).toEqual([0, 1])
   })
 
@@ -130,7 +142,7 @@ describe('fict-runtime', () => {
     expect((frag.childNodes[0] as Text).textContent).toBe('0')
   })
 
-  it('updates DOM via effects', () => {
+  it('updates DOM via effects', async () => {
     const container = document.createElement('div')
     const div = document.createElement('div')
     const count = createSignal(0)
@@ -143,19 +155,21 @@ describe('fict-runtime', () => {
     expect(div.textContent).toBe('0')
 
     count(2)
+    await tick()
     expect(div.textContent).toBe('2')
   })
 
-  it('bindText updates a text node reactively', () => {
+  it('bindText updates a text node reactively', async () => {
     const text = document.createTextNode('')
     const count = createSignal(1)
     bindText(text, () => count())
     expect(text.textContent).toBe('1')
     count(5)
+    await tick()
     expect(text.textContent).toBe('5')
   })
 
-  it('bindAttribute and bindProperty update DOM reactively', () => {
+  it('bindAttribute and bindProperty update DOM reactively', async () => {
     const el = document.createElement('input')
     const value = createSignal('a')
     const checked = createSignal(false)
@@ -168,18 +182,20 @@ describe('fict-runtime', () => {
 
     value('b')
     checked(true)
+    await tick()
 
     expect(el.getAttribute('data-value')).toBe('b')
     expect(el.checked).toBe(true)
   })
 
-  it('insert swaps child nodes reactively', () => {
+  it('insert swaps child nodes reactively', async () => {
     const parent = document.createElement('div')
     const toggle = createSignal(true)
     insert(parent, () => (toggle() ? 'yes' : document.createElement('span')))
 
     expect(parent.textContent).toBe('yes')
     toggle(false)
+    await tick()
     expect(parent.firstChild instanceof HTMLElement).toBe(true)
   })
 
