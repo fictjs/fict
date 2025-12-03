@@ -459,6 +459,74 @@ describe('Reactive DOM Binding', () => {
 
       dispose()
     })
+
+    it('handles unkeyed reorders and disposes replaced blocks in order', () => {
+      const items = createSignal(['a', 'b', 'c', 'd'])
+      const cleanups: string[] = []
+
+      const { marker, dispose } = createList(
+        () => items(),
+        item => {
+          onDestroy(() => cleanups.push(`destroy-${item}`))
+          return { type: 'span', props: { children: item }, key: undefined }
+        },
+        createElement,
+      )
+      container.appendChild(marker)
+
+      expect(container.textContent).toBe('abcd')
+
+      items(['d', 'c', 'b'])
+
+      expect(container.textContent).toBe('dcb')
+      expect(cleanups).toEqual(['destroy-a', 'destroy-b', 'destroy-c', 'destroy-d'])
+
+      dispose()
+    })
+
+    it('reorders keyed lists while keeping cleanup order deterministic', () => {
+      const items = createSignal([
+        { id: 'a', text: 'one' },
+        { id: 'b', text: 'two' },
+        { id: 'c', text: 'three' },
+      ])
+
+      const renders: string[] = []
+      const cleanups: string[] = []
+
+      const { marker, dispose } = createList(
+        () => items(),
+        item => {
+          renders.push(`render-${item.id}`)
+          onDestroy(() => cleanups.push(`destroy-${item.id}`))
+          return { type: 'span', props: { children: item.text }, key: undefined }
+        },
+        createElement,
+        item => item.id,
+      )
+      container.appendChild(marker)
+
+      expect(container.textContent).toBe('onetwothree')
+
+      items([
+        { id: 'c', text: 'tres' },
+        { id: 'a', text: 'uno' },
+        { id: 'd', text: 'cuatro' },
+      ])
+
+      expect(container.textContent).toBe('tresunocuatro')
+      expect(renders).toEqual([
+        'render-a',
+        'render-b',
+        'render-c',
+        'render-c',
+        'render-a',
+        'render-d',
+      ])
+      expect(cleanups).toEqual(['destroy-c', 'destroy-a', 'destroy-b'])
+
+      dispose()
+    })
   })
 
   describe('createShow', () => {
@@ -513,6 +581,35 @@ describe('Reactive DOM Binding', () => {
   })
 
   describe('Full Integration: render with reactive children', () => {
+    it('keeps render function single-run while bindings update', () => {
+      let renderCount = 0
+      let setCount!: (value: number) => void
+
+      const teardown = render(() => {
+        renderCount++
+        const count = createSignal(0)
+        setCount = count
+        return {
+          type: 'div',
+          props: {
+            children: () => `Count: ${count()}`,
+          },
+          key: undefined,
+        }
+      }, container)
+
+      expect(renderCount).toBe(1)
+      expect(container.textContent).toBe('Count: 0')
+
+      setCount(1)
+      setCount(2)
+
+      expect(renderCount).toBe(1)
+      expect(container.textContent).toBe('Count: 2')
+
+      teardown()
+    })
+
     it('updates text content reactively', () => {
       const count = createSignal(0)
 
