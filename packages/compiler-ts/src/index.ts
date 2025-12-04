@@ -28,6 +28,7 @@ interface HelperUsage {
   createElement: boolean
   conditional: boolean
   list: boolean
+  keyedList: boolean
   insert: boolean
   onDestroy: boolean
 }
@@ -58,6 +59,7 @@ const RUNTIME_HELPERS = {
   createElement: 'createElement',
   conditional: 'createConditional',
   list: 'createList',
+  keyedList: 'createKeyedList',
   insert: 'insert',
   onDestroy: 'onDestroy',
 } as const
@@ -69,6 +71,7 @@ const RUNTIME_ALIASES = {
   createElement: '__fictCreateElement',
   conditional: '__fictConditional',
   list: '__fictList',
+  keyedList: '__fictKeyedList',
   insert: '__fictInsert',
   onDestroy: '__fictOnDestroy',
 } as const
@@ -163,6 +166,7 @@ export function createFictTransformer(
         createElement: false,
         conditional: false,
         list: false,
+        keyedList: false,
         insert: false,
         onDestroy: false,
       }
@@ -2467,6 +2471,43 @@ function createConditionalBinding(
   return wrapBindingHandle(handleExpr, ctx)
 }
 
+/**
+ * Extract key attribute from JSX element
+ */
+function extractKeyAttribute(node: ts.Node): ts.Expression | null {
+  let jsxElement: ts.JsxElement | ts.JsxSelfClosingElement | null = null
+
+  // Find JSX element in the node
+  if (ts.isJsxElement(node)) {
+    jsxElement = node
+  } else if (ts.isJsxSelfClosingElement(node)) {
+    jsxElement = node
+  } else if (ts.isParenthesizedExpression(node)) {
+    return extractKeyAttribute(node.expression)
+  }
+
+  if (!jsxElement) return null
+
+  const attributes = ts.isJsxElement(jsxElement)
+    ? jsxElement.openingElement.attributes
+    : jsxElement.attributes
+
+  for (const attr of attributes.properties) {
+    if (
+      ts.isJsxAttribute(attr) &&
+      ts.isIdentifier(attr.name) &&
+      attr.name.text === 'key' &&
+      attr.initializer &&
+      ts.isJsxExpression(attr.initializer) &&
+      attr.initializer.expression
+    ) {
+      return attr.initializer.expression
+    }
+  }
+
+  return null
+}
+
 function createListBinding(expr: ts.Expression, ctx: TransformContext): ts.Expression | null {
   const { factory, helpersUsed } = ctx
 
@@ -2484,30 +2525,100 @@ function createListBinding(expr: ts.Expression, ctx: TransformContext): ts.Expre
   }
 
   const listExpr = expr.expression.expression
-
-  helpersUsed.createElement = true
-  helpersUsed.list = true
-
   const renderArrow = callback as ts.ArrowFunction | ts.FunctionExpression
 
-  const listCall = factory.createCallExpression(
-    factory.createIdentifier(RUNTIME_ALIASES.list),
-    undefined,
-    [
-      factory.createArrowFunction(
-        undefined,
-        undefined,
-        [],
-        undefined,
-        factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
-        listExpr,
-      ),
-      renderArrow,
-      factory.createIdentifier(RUNTIME_ALIASES.createElement),
-    ],
-  )
+  // Extract key attribute from JSX in callback body
+  const keyExpr = extractKeyAttribute(renderArrow.body)
 
-  return wrapBindingHandle(listCall, ctx)
+  helpersUsed.createElement = true
+
+  if (keyExpr) {
+    // Use createKeyedList for keyed rendering
+    helpersUsed.keyedList = true
+
+    // Get parameter names from the map callback
+    const itemParam = renderArrow.parameters[0]
+    const indexParam = renderArrow.parameters[1]
+
+    if (!itemParam) {
+      // No parameters - can't create key function
+      return null
+    }
+
+    const itemParamName = itemParam.name
+    const indexParamName = indexParam?.name
+
+    // Create key function: (item, index) => keyExpr
+    const keyFn = factory.createArrowFunction(
+      undefined,
+      undefined,
+      [
+        factory.createParameterDeclaration(
+          undefined,
+          undefined,
+          itemParamName,
+          undefined,
+          undefined,
+          undefined,
+        ),
+        factory.createParameterDeclaration(
+          undefined,
+          undefined,
+          indexParamName || factory.createIdentifier('_index'),
+          undefined,
+          undefined,
+          undefined,
+        ),
+      ],
+      undefined,
+      factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+      keyExpr,
+    )
+
+    const listCall = factory.createCallExpression(
+      factory.createIdentifier(RUNTIME_ALIASES.keyedList),
+      undefined,
+      [
+        // getItems: () => items()
+        factory.createArrowFunction(
+          undefined,
+          undefined,
+          [],
+          undefined,
+          factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+          listExpr,
+        ),
+        // keyFn: (item, index) => item.id
+        keyFn,
+        // renderItem: (itemSig, indexSig) => ...
+        renderArrow,
+      ],
+    )
+
+    return wrapBindingHandle(listCall, ctx)
+  } else {
+    // Use old createList for non-keyed rendering (fallback)
+    helpersUsed.list = true
+
+    const listCall = factory.createCallExpression(
+      factory.createIdentifier(RUNTIME_ALIASES.list),
+      undefined,
+      [
+        factory.createArrowFunction(
+          undefined,
+          undefined,
+          [],
+          undefined,
+          factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+          listExpr,
+        ),
+        renderArrow,
+        factory.createIdentifier(RUNTIME_ALIASES.createElement),
+      ],
+    )
+
+    return wrapBindingHandle(listCall, ctx)
+  }
 }
 
 function createInsertBinding(expr: ts.Expression, ctx: TransformContext): ts.Expression {
@@ -3504,6 +3615,15 @@ function addRuntimeImports(
         false,
         factory.createIdentifier(RUNTIME_HELPERS.list),
         factory.createIdentifier(RUNTIME_ALIASES.list),
+      ),
+    )
+  }
+  if (helpers.keyedList) {
+    neededSpecifiers.push(
+      factory.createImportSpecifier(
+        false,
+        factory.createIdentifier(RUNTIME_HELPERS.keyedList),
+        factory.createIdentifier(RUNTIME_ALIASES.keyedList),
       ),
     )
   }

@@ -88,3 +88,28 @@ export type {
 
 // Devtools hook (optional)
 export { getDevtoolsHook, type FictDevtoolsHook } from './devtools'
+
+// ============================================================================
+// List Helpers (for compiler-generated code)
+// ============================================================================
+
+export {
+  // DOM manipulation primitives
+  moveNodesBefore,
+  removeNodes,
+  insertNodesBefore,
+  // Keyed list container
+  createKeyedListContainer,
+  // Block creation
+  createKeyedBlock,
+  // High-level list binding (for compiler-generated code)
+  createKeyedList,
+  // Utilities
+  toNodeArray,
+  getFirstNodeAfter,
+  isNodeBetweenMarkers,
+  // Types
+  type KeyedBlock,
+  type KeyedListContainer,
+  type KeyedListBinding,
+} from './list-helpers'

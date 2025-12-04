@@ -58,17 +58,45 @@ describe('Fict Compiler - Control Flow', () => {
   })
 
   describe('List rendering', () => {
-    it('handles array map in JSX', () => {
+    it('handles array map in JSX with key (keyed list)', () => {
       const input = `
         import { $state } from 'fict'
         let items = $state([1, 2, 3])
         const el = <ul>{items.map(item => <li key={item}>{item}</li>)}</ul>
       `
       const output = transform(input)
-      // items() call should be present
-      expect(output).toContain('items()')
-      // Should wrap in arrow function for reactive child
+      // Should use createKeyedList
+      expect(output).toContain('__fictKeyedList')
+      // Should have getItems arrow function
       expect(output).toContain('() => items()')
+      // Should have keyFn
+      expect(output).toContain('(item')
+    })
+
+    it('handles keyed list with object property as key', () => {
+      const input = `
+        import { $state } from 'fict'
+        let users = $state([{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }])
+        const el = <ul>{users.map(user => <li key={user.id}>{user.name}</li>)}</ul>
+      `
+      const output = transform(input)
+      // Should use createKeyedList
+      expect(output).toContain('__fictKeyedList')
+      // Should extract user.id as key
+      expect(output).toContain('user.id')
+    })
+
+    it('handles list without key (fallback to old createList)', () => {
+      const input = `
+        import { $state } from 'fict'
+        let items = $state([1, 2, 3])
+        const el = <ul>{items.map(item => <li>{item}</li>)}</ul>
+      `
+      const output = transform(input)
+      // Should use old createList (not keyed)
+      expect(output).toContain('__fictList')
+      // Should NOT use createKeyedList
+      expect(output).not.toContain('__fictKeyedList')
     })
 
     it('handles array map with index', () => {

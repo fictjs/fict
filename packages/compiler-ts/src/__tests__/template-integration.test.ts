@@ -25,10 +25,17 @@ function compileAndLoad<TModule extends Record<string, any>>(
     },
   })
 
+  // Debug output - uncomment to see generated code
+  // if (source.includes('todo')) {
+  //   console.log('=== Generated Code ===')
+  //   console.log(result.outputText)
+  //   console.log('======================')
+  // }
+
   const module: { exports: any } = { exports: {} }
   const prelude =
     "const __fictRuntime = require('fict-runtime');" +
-    'const { createSignal: __fictSignal, createMemo: __fictMemo, createEffect: __fictEffect, createConditional: __fictConditional, createList: __fictList, insert: __fictInsert, createElement: __fictCreateElement, onDestroy: __fictOnDestroy } = __fictRuntime;'
+    'const { createSignal: __fictSignal, createMemo: __fictMemo, createEffect: __fictEffect, createConditional: __fictConditional, createList: __fictList, createKeyedList: __fictKeyedList, insert: __fictInsert, createElement: __fictCreateElement, onDestroy: __fictOnDestroy } = __fictRuntime;'
 
   const dynamicRequire = createRequire(import.meta.url)
 
@@ -52,8 +59,23 @@ async function flushUpdates(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 0))
 }
 
-describe('compiled templates DOM integration', () => {
-  it('mounts and cleans up fragment output produced via insert', () => {
+describe.sequential('compiled templates DOM integration', () => {
+  beforeEach(async () => {
+    // Clear document before each test
+    document.body.innerHTML = ''
+    // Wait for any pending effects from previous tests
+    await flushUpdates()
+  })
+
+  afterEach(async () => {
+    // Wait for any pending effects to settle between tests
+    await flushUpdates()
+    await flushUpdates()
+    // Clear any remaining containers from document.body
+    document.body.innerHTML = ''
+  })
+
+  it('mounts and cleans up fragment output produced via insert', async () => {
     const source = `
       import { $state, onDestroy } from 'fict'
       import { render } from 'fict'
@@ -103,7 +125,7 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  it('keeps todo list DOM in sync with keyed state updates', () => {
+  it('keeps todo list DOM in sync with keyed state updates', async () => {
     const source = `
       import { $state, render } from 'fict'
 
@@ -142,7 +164,7 @@ describe('compiled templates DOM integration', () => {
         return (
           <ul data-testid="todos">
             {todos.map(todo => (
-              <li data-id={todo.id}>
+              <li key={todo.id} data-id={todo.id}>
                 <span className="text">{todo.text}</span>
               </li>
             ))}
@@ -357,7 +379,7 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  it('exposes latest state to DOM event handlers', () => {
+  it('exposes latest state to DOM event handlers', async () => {
     const source = `
       import { $state, render } from 'fict'
 

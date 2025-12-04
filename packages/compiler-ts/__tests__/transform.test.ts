@@ -362,7 +362,7 @@ describe('createFictTransformer', () => {
       `)
 
       expect(output).toMatchInlineSnapshot(`
-        "import { createSignal as __fictSignal, createElement as __fictCreateElement, createConditional as __fictConditional, createList as __fictList, onDestroy as __fictOnDestroy } from "fict-runtime";
+        "import { createSignal as __fictSignal, createElement as __fictCreateElement, createConditional as __fictConditional, createKeyedList as __fictKeyedList, onDestroy as __fictOnDestroy } from "fict-runtime";
         function View() {
             let show = __fictSignal(true);
             let items = __fictSignal([
@@ -376,7 +376,7 @@ describe('createFictTransformer', () => {
                 return __fictBinding_1.marker;
             })())}
                       {((() => {
-                const __fictBinding_2 = __fictList(() => items(), item => <p key={item.id}>{item.text}</p>, __fictCreateElement);
+                const __fictBinding_2 = __fictKeyedList(() => items(), (item, _index) => item.id, item => <p key={item.id}>{item.text}</p>);
                 __fictOnDestroy(__fictBinding_2.dispose);
                 return __fictBinding_2.marker;
             })())}
@@ -486,7 +486,8 @@ describe('createFictTransformer', () => {
 
       // Check reactive bindings
       expect(output).toContain(`value={() => filter()}`)
-      expect(output).toContain(`__fictList`)
+      // Should use createKeyedList because of key attribute
+      expect(output).toContain(`__fictKeyedList`)
 
       // Check key is not wrapped
       expect(output).toContain(`key={todo.id}`)
