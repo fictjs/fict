@@ -276,9 +276,24 @@ export function createKeyedList<T>(
         // Reuse existing block - update signals
         block.item(item)
         block.index(index)
+
+        // If newBlocks already has this key (duplicate key case), clean up the previous block
+        const existingBlock = newBlocks.get(key)
+        if (existingBlock) {
+          destroyRoot(existingBlock.root)
+          removeNodes(existingBlock.nodes)
+        }
+
         newBlocks.set(key, block)
         oldBlocks.delete(key)
       } else {
+        // If newBlocks already has this key (duplicate key case), clean up the previous block
+        const existingBlock = newBlocks.get(key)
+        if (existingBlock) {
+          destroyRoot(existingBlock.root)
+          removeNodes(existingBlock.nodes)
+        }
+
         // Create new block
         block = createKeyedBlock(key, item, index, renderItem)
         newBlocks.set(key, block)
