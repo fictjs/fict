@@ -625,6 +625,61 @@ describe('Reactive DOM Binding', () => {
       dispose()
     })
 
+    it('reuses fragment outputs when keyed items reorder', async () => {
+      const items = createSignal([
+        { id: 'a', text: 'alpha' },
+        { id: 'b', text: 'beta' },
+      ])
+
+      const { marker, dispose } = createList(
+        () => items(),
+        item => ({
+          type: Fragment,
+          props: {
+            children: [
+              {
+                type: 'input',
+                props: {
+                  'data-id': `input-${item.id}`,
+                  value: String(item.text),
+                },
+                key: undefined,
+              },
+              {
+                type: 'span',
+                props: {
+                  'data-span-id': `span-${item.id}`,
+                  children: item.text.toUpperCase(),
+                },
+                key: undefined,
+              },
+            ],
+          },
+          key: undefined,
+        }),
+        createElement,
+        item => item.id,
+      )
+      container.appendChild(marker)
+
+      const inputA = container.querySelector('input[data-id="input-a"]') as HTMLInputElement
+      inputA.dataset.keep = 'yes'
+
+      items([
+        { id: 'b', text: 'beta' },
+        { id: 'a', text: 'gamma' },
+      ])
+      await tick()
+
+      const inputAAfter = container.querySelector('input[data-id="input-a"]') as HTMLInputElement
+      expect(inputAAfter).toBe(inputA)
+      expect(inputAAfter.dataset.keep).toBe('yes')
+      const spanA = container.querySelector('span[data-span-id="span-a"]')!
+      expect(spanA.textContent).toBe('GAMMA')
+
+      dispose()
+    })
+
     it('unwrapPrimitive extracts raw values from keyed primitive proxies', async () => {
       const items = createSignal([1, 2, 3])
       const typeResults: string[] = []

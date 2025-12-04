@@ -21,6 +21,7 @@ import {
   popRoot,
   type RootContext,
 } from './lifecycle'
+import { Fragment } from './jsx'
 import { createSignal, type Signal } from './signal'
 import type { Cleanup, FictNode } from './types'
 
@@ -614,7 +615,6 @@ export function createConditional(
   createElementFn: CreateElementFn,
   renderFalse?: () => FictNode,
 ): BindingHandle {
-  // Create a fragment with start and end markers
   const fragment = document.createDocumentFragment()
   const startMarker = document.createComment('fict:cond:start')
   const endMarker = document.createComment('fict:cond:end')
@@ -628,17 +628,14 @@ export function createConditional(
   const dispose = createEffect(() => {
     const cond = condition()
 
-    // Skip if condition hasn't changed and we already rendered
     if (lastCondition === cond && currentNodes.length > 0) {
       return
     }
-    // For initial false condition, we still need to mark as initialized
     if (lastCondition === cond && lastCondition === false && renderFalse === undefined) {
       return
     }
     lastCondition = cond
 
-    // Clean up previous node
     if (currentRoot) {
       destroyRoot(currentRoot)
       currentRoot = null
@@ -646,13 +643,11 @@ export function createConditional(
     removeNodes(currentNodes)
     currentNodes = []
 
-    // Determine what to render
     const render = cond ? renderTrue : renderFalse
     if (!render) {
       return
     }
 
-    // Create new content
     const root = createRootContext()
     const prev = pushRoot(root)
     try {
@@ -661,7 +656,7 @@ export function createConditional(
         currentRoot = root
         return
       }
-      const el = createElementFn!(output)
+      const el = createElementFn(output)
       const nodes = toNodeArray(el)
       const parent = startMarker.parentNode as (ParentNode & Node) | null
       if (parent) {
@@ -937,7 +932,7 @@ function rerenderBlock<T>(
   block: ManagedBlock<T>,
   createElementFn: CreateElementFn,
 ): ManagedBlock<T> {
-  const currentContent = collectContent(block)
+  const currentContent = block.nodes.slice(1, Math.max(1, block.nodes.length - 1))
   const currentNode = currentContent.length === 1 ? currentContent[0] : null
 
   clearRoot(block.root)
@@ -950,35 +945,19 @@ function rerenderBlock<T>(
     popRoot(prev)
   }
 
-  if (
-    currentNode instanceof Text &&
-    (nextOutput === null ||
-      nextOutput === undefined ||
-      nextOutput === false ||
-      typeof nextOutput === 'string' ||
-      typeof nextOutput === 'number' ||
-      nextOutput instanceof Text)
-  ) {
-    const nextText =
-      nextOutput instanceof Text
-        ? nextOutput.data
-        : nextOutput === null || nextOutput === undefined || nextOutput === false
-          ? ''
-          : String(nextOutput)
-    currentNode.data = nextText
-    block.nodes = [block.start, currentNode, block.end]
-    return block
-  }
-
-  if (currentNode instanceof Element) {
-    const patched = patchElement(currentNode, nextOutput)
+  if (isFragmentVNode(nextOutput) && currentContent.length > 0) {
+    const patched = patchFragmentChildren(
+      currentContent,
+      nextOutput.props?.children,
+      createElementFn,
+    )
     if (patched) {
-      block.nodes = [block.start, currentNode, block.end]
+      block.nodes = [block.start, ...currentContent, block.end]
       return block
     }
   }
 
-  if (nextOutput instanceof Node && currentNode && currentNode === nextOutput) {
+  if (currentNode && patchNode(currentNode, nextOutput, createElementFn)) {
     block.nodes = [block.start, currentNode, block.end]
     return block
   }
@@ -1072,23 +1051,94 @@ function patchElement(el: Element, output: FictNode): boolean {
   return false
 }
 
-function collectContent(block: ManagedBlock): Node[] {
-  const nodes: Node[] = []
-  let cursor = block.start.nextSibling
-  while (cursor && cursor !== block.end) {
-    nodes.push(cursor)
-    cursor = cursor.nextSibling
+function patchNode(
+  currentNode: Node | null,
+  nextOutput: FictNode,
+  createElementFn: CreateElementFn,
+): boolean {
+  if (!currentNode) return false
+
+  if (
+    currentNode instanceof Text &&
+    (nextOutput === null ||
+      nextOutput === undefined ||
+      nextOutput === false ||
+      typeof nextOutput === 'string' ||
+      typeof nextOutput === 'number' ||
+      nextOutput instanceof Text)
+  ) {
+    const nextText =
+      nextOutput instanceof Text
+        ? nextOutput.data
+        : nextOutput === null || nextOutput === undefined || nextOutput === false
+          ? ''
+          : String(nextOutput)
+    currentNode.data = nextText
+    return true
   }
-  return nodes
+
+  if (currentNode instanceof Element && patchElement(currentNode, nextOutput)) {
+    return true
+  }
+
+  if (nextOutput instanceof Node && currentNode === nextOutput) {
+    return true
+  }
+
+  return false
+}
+
+function isFragmentVNode(
+  value: unknown,
+): value is { type: typeof Fragment; props?: { children?: FictNode | FictNode[] } } {
+  return (
+    value != null &&
+    typeof value === 'object' &&
+    !(value instanceof Node) &&
+    (value as any).type === Fragment
+  )
+}
+
+function normalizeChildren(
+  children: FictNode | FictNode[] | undefined,
+  result: FictNode[] = [],
+): FictNode[] {
+  if (children === undefined) {
+    return result
+  }
+  if (Array.isArray(children)) {
+    for (const child of children) {
+      normalizeChildren(child, result)
+    }
+    return result
+  }
+  if (children === null || children === false) {
+    return result
+  }
+  result.push(children)
+  return result
+}
+
+function patchFragmentChildren(
+  nodes: Node[],
+  children: FictNode | FictNode[] | undefined,
+  createElementFn: CreateElementFn,
+): boolean {
+  const normalized = normalizeChildren(children)
+  if (normalized.length !== nodes.length) {
+    return false
+  }
+  for (let i = 0; i < normalized.length; i++) {
+    if (!patchNode(nodes[i]!, normalized[i]!, createElementFn)) {
+      return false
+    }
+  }
+  return true
 }
 
 function clearContent(block: ManagedBlock): void {
-  let cursor = block.start.nextSibling
-  while (cursor && cursor !== block.end) {
-    const next = cursor.nextSibling
-    cursor.parentNode?.removeChild(cursor)
-    cursor = next
-  }
+  const nodes = block.nodes.slice(1, Math.max(1, block.nodes.length - 1))
+  removeNodes(nodes)
 }
 
 function removeBlockNodes(block: ManagedBlock): void {
