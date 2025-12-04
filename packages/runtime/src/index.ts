@@ -10,6 +10,14 @@ export {
   type VersionedSignal,
   type VersionedSignalOptions,
 } from './versioned-signal'
+export {
+  enableFineGrainedRuntime,
+  disableFineGrainedRuntime,
+  setRuntimeFeatureFlags,
+  getRuntimeFeatureFlags,
+  isFineGrainedRuntimeEnabled,
+  type RuntimeFeatureFlags,
+} from './feature-flags'
 
 // ============================================================================
 // Lifecycle

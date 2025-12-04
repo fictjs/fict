@@ -81,6 +81,25 @@ pnpm install && pnpm build
 pnpm dev
 ```
 
+## Fine-grained runtime preview
+
+Fict now ships an opt-in fine-grained DOM runtime that keeps keyed lists, fragments, and conditional regions fully live without remounting. The compiler work is ongoing, but you can already exercise the runtime helpers today:
+
+```ts
+import { enableFineGrainedRuntime, render } from 'fict/runtime'
+
+enableFineGrainedRuntime()
+render(() => <App />, document.getElementById('root')!)
+```
+
+When the flag is enabled, `render` annotates the root container with `data-fict-fine-grained="1"`, and the runtime routes keyed list updates through the new helper stack (`bindText`, `bindStyle`, `moveMarkerBlock`, `createVersionedSignal`, etc.).
+
+- 📘 Architecture notes: [`docs/architecture.md`](./docs/architecture.md#fine-grained-dom-pipeline-preview)
+- 🧠 Compiler plan: [`docs/compiler-fine-grained-plan.md`](./docs/compiler-fine-grained-plan.md)
+- 🔬 Helper specs & IR: [`docs/fine-grained-jsx-subset.md`](./docs/fine-grained-jsx-subset.md), [`docs/fine-grained-ir.md`](./docs/fine-grained-ir.md)
+
+---
+
 ### Example: The "Add to Cart" fiction
 
 **Reality:**

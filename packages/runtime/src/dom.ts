@@ -26,6 +26,7 @@ import {
 } from './binding'
 import { Fragment } from './jsx'
 import { createRootContext, destroyRoot, flushOnMount, pushRoot, popRoot } from './lifecycle'
+import { isFineGrainedRuntimeEnabled } from './feature-flags'
 import type { DOMElement, FictNode, FictVNode } from './types'
 
 // ============================================================================
@@ -59,6 +60,13 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
   }
 
   container.replaceChildren(dom)
+
+  if (isFineGrainedRuntimeEnabled()) {
+    container.setAttribute('data-fict-fine-grained', '1')
+  } else {
+    container.removeAttribute('data-fict-fine-grained')
+  }
+
   flushOnMount(root)
 
   const teardown = () => {
