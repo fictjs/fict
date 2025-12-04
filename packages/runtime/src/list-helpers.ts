@@ -314,6 +314,9 @@ export function createKeyedList<T>(
         const block = newBlocks.get(key)!
         const firstNode = block.nodes[0]
 
+        // Skip blocks with no nodes
+        if (!firstNode) continue
+
         // Check if block's nodes are in the DOM
         if (!firstNode.parentNode) {
           // New block - insert it
@@ -324,7 +327,8 @@ export function createKeyedList<T>(
         }
 
         // Move anchor to after this block's last node
-        anchor = block.nodes[block.nodes.length - 1].nextSibling
+        const lastNode = block.nodes[block.nodes.length - 1]
+        anchor = lastNode ? lastNode.nextSibling : anchor
       }
     }
 
