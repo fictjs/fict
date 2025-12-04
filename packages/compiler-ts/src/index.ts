@@ -31,6 +31,10 @@ interface HelperUsage {
   keyedList: boolean
   insert: boolean
   onDestroy: boolean
+  bindText: boolean
+  bindAttribute: boolean
+  bindClass: boolean
+  bindStyle: boolean
 }
 
 export interface CompilerWarning {
@@ -49,6 +53,8 @@ export interface FictCompilerOptions {
   lazyConditional?: boolean
   /** Enable getter caching within the same sync block (Rule L optimization) */
   getterCache?: boolean
+  /** Emit fine-grained DOM creation/binding code for supported JSX templates */
+  fineGrainedDom?: boolean
 }
 
 const RUNTIME_MODULE = 'fict-runtime'
@@ -62,6 +68,10 @@ const RUNTIME_HELPERS = {
   keyedList: 'createKeyedList',
   insert: 'insert',
   onDestroy: 'onDestroy',
+  bindText: 'bindText',
+  bindAttribute: 'bindAttribute',
+  bindClass: 'bindClass',
+  bindStyle: 'bindStyle',
 } as const
 
 const RUNTIME_ALIASES = {
@@ -74,6 +84,10 @@ const RUNTIME_ALIASES = {
   keyedList: '__fictKeyedList',
   insert: '__fictInsert',
   onDestroy: '__fictOnDestroy',
+  bindText: '__fictBindText',
+  bindAttribute: '__fictBindAttribute',
+  bindClass: '__fictBindClass',
+  bindStyle: '__fictBindStyle',
 } as const
 
 // Attributes that should NOT be wrapped in reactive functions
@@ -169,6 +183,10 @@ export function createFictTransformer(
         keyedList: false,
         insert: false,
         onDestroy: false,
+        bindText: false,
+        bindAttribute: false,
+        bindClass: false,
+        bindStyle: false,
       }
 
       // Phase 3: Create transform context and visitor
@@ -202,12 +220,17 @@ export function createFictTransformer(
 // ============================================================================
 
 function createVisitor(ctx: TransformContext): ts.Visitor {
-  return createVisitorWithOptions(ctx, { disableRegionTransform: false, disableMemoize: false })
+  return createVisitorWithOptions(ctx, {
+    disableRegionTransform: false,
+    disableMemoize: false,
+    disableFineGrainedDom: false,
+  })
 }
 
 interface VisitorOptions {
   disableRegionTransform: boolean
   disableMemoize: boolean
+  disableFineGrainedDom: boolean
 }
 
 function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): ts.Visitor {
@@ -230,6 +253,7 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
       const nestedVisitor = createVisitorWithOptions(ctx, {
         ...opts,
         disableRegionTransform: true,
+        disableFineGrainedDom: opts.disableFineGrainedDom,
       })
       return ts.visitEachChild(node, nestedVisitor, context)
     }
@@ -238,6 +262,12 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
     // Only for function bodies, not for nested blocks
     if (!opts.disableRegionTransform && ts.isBlock(node)) {
       return transformBlock(node, ctx, opts)
+    }
+
+    if (ctx.options.fineGrainedDom && (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node))) {
+      const visited = ts.visitEachChild(node, visitor, context) as typeof node
+      const fineGrained = transformFineGrainedJsx(visited, ctx)
+      return fineGrained ?? visited
     }
 
     // Handle top-level source file (needed for module scope grouping)
@@ -280,6 +310,7 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
       const effectVisitor = createVisitorWithOptions(ctx, {
         ...opts,
         disableMemoize: true,
+        disableFineGrainedDom: opts.disableFineGrainedDom,
       })
       const updatedArgs = node.arguments.map(
         arg => ts.visitNode(arg, effectVisitor) as ts.Expression,
@@ -526,6 +557,7 @@ function generateLazyConditionalRegionMemo(
   const conditionVisitor = createVisitorWithOptions(ctx, {
     disableRegionTransform: true,
     disableMemoize: true,
+    disableFineGrainedDom: true,
   })
   const conditionExpr =
     (ts.visitNode(conditionalInfo.condition, conditionVisitor) as ts.Expression) ??
@@ -905,6 +937,7 @@ function transformStatementList(
     const innerVisitor = createVisitorWithOptions(ctx, {
       disableRegionTransform: true,
       disableMemoize: true,
+      disableFineGrainedDom: true,
     })
     const analysisStatements = statements.slice(start, end + 1)
     const regionStatements = statements.slice(start, regionEnd + 1).map(stmt => {
@@ -999,6 +1032,7 @@ function transformStatementList(
   const innerVisitor = createVisitorWithOptions(ctx, {
     disableRegionTransform: true,
     disableMemoize: true,
+    disableFineGrainedDom: true,
   })
   const analysisStatements = statements.slice(firstTouched, lastTouched + 1)
   const regionStatements = statements.slice(firstTouched, regionEnd + 1).map(stmt => {
@@ -2317,6 +2351,369 @@ function handleVariableDeclaration(
     node.type,
     visitedInit,
   )
+}
+
+// ============================================================================
+// Fine-grained JSX Lowering (opt-in)
+// ============================================================================
+
+type SupportedJsxElement = ts.JsxElement | ts.JsxSelfClosingElement
+
+interface TemplateBuilderState {
+  ctx: TransformContext
+  statements: ts.Statement[]
+}
+
+function transformFineGrainedJsx(
+  node: SupportedJsxElement,
+  ctx: TransformContext,
+): ts.Expression | null {
+  if (!ctx.options.fineGrainedDom) return null
+  const tagName = getIntrinsicTagName(node)
+  if (!tagName) return null
+
+  const state: TemplateBuilderState = {
+    ctx,
+    statements: [],
+  }
+
+  const rootId = emitJsxElementToTemplate(node, tagName, state)
+  if (!rootId) return null
+
+  state.statements.push(ctx.factory.createReturnStatement(rootId))
+
+  const block = ctx.factory.createBlock(state.statements, true)
+  return ctx.factory.createCallExpression(
+    ctx.factory.createParenthesizedExpression(
+      ctx.factory.createArrowFunction(
+        undefined,
+        undefined,
+        [],
+        undefined,
+        ctx.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+        block,
+      ),
+    ),
+    undefined,
+    [],
+  )
+}
+
+function emitJsxElementToTemplate(
+  node: SupportedJsxElement,
+  tagName: string,
+  state: TemplateBuilderState,
+): ts.Identifier | null {
+  const { factory } = state.ctx
+  const elementId = factory.createUniqueName('el')
+  const createEl = factory.createCallExpression(
+    factory.createPropertyAccessExpression(factory.createIdentifier('document'), 'createElement'),
+    undefined,
+    [factory.createStringLiteral(tagName)],
+  )
+  state.statements.push(createConstDeclaration(factory, elementId, createEl))
+
+  const attributes = ts.isJsxElement(node)
+    ? node.openingElement.attributes.properties
+    : node.attributes.properties
+  if (!emitAttributes(elementId, attributes, state)) {
+    return null
+  }
+
+  if (ts.isJsxElement(node)) {
+    if (!emitChildren(elementId, node.children, state)) {
+      return null
+    }
+  }
+
+  return elementId
+}
+
+function emitAttributes(
+  elementId: ts.Identifier,
+  attributes: ts.NodeArray<ts.JsxAttributeLike>,
+  state: TemplateBuilderState,
+): boolean {
+  for (const attr of attributes) {
+    if (ts.isJsxSpreadAttribute(attr) || !ts.isIdentifier(attr.name)) {
+      return false
+    }
+
+    const normalized = normalizeAttributeName(attr.name.text)
+    if (!normalized) {
+      return false
+    }
+
+    if (normalized.kind === 'skip') {
+      continue
+    }
+
+    if (!attr.initializer) {
+      emitStaticAttribute(elementId, normalized, state.ctx.factory.createStringLiteral(''), state)
+      continue
+    }
+
+    if (ts.isStringLiteral(attr.initializer)) {
+      emitStaticAttribute(elementId, normalized, attr.initializer, state)
+      continue
+    }
+
+    if (ts.isJsxExpression(attr.initializer) && attr.initializer.expression) {
+      const expr = transformExpressionForFineGrained(attr.initializer.expression, state.ctx)
+      if (!emitDynamicAttribute(elementId, normalized, expr, state)) {
+        return false
+      }
+      continue
+    }
+
+    return false
+  }
+
+  return true
+}
+
+function emitChildren(
+  parentId: ts.Identifier,
+  children: ts.NodeArray<ts.JsxChild>,
+  state: TemplateBuilderState,
+): boolean {
+  for (const child of children) {
+    if (ts.isJsxText(child)) {
+      const text = child.getText()
+      if (!text.trim()) continue
+      const literal = state.ctx.factory.createStringLiteral(text)
+      const textId = state.ctx.factory.createUniqueName('txt')
+      const textNode = state.ctx.factory.createCallExpression(
+        state.ctx.factory.createPropertyAccessExpression(
+          state.ctx.factory.createIdentifier('document'),
+          'createTextNode',
+        ),
+        undefined,
+        [literal],
+      )
+      state.statements.push(createConstDeclaration(state.ctx.factory, textId, textNode))
+      state.statements.push(createAppendStatement(parentId, textId, state.ctx.factory))
+      continue
+    }
+
+    if (ts.isJsxExpression(child)) {
+      if (!child.expression) continue
+      if (
+        ts.isJsxElement(child.expression) ||
+        ts.isJsxSelfClosingElement(child.expression) ||
+        ts.isJsxFragment(child.expression)
+      ) {
+        return false
+      }
+      const expr = transformExpressionForFineGrained(child.expression, state.ctx)
+      emitDynamicTextChild(parentId, expr, state)
+      continue
+    }
+
+    if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
+      const tagName = getIntrinsicTagName(child)
+      if (!tagName) return false
+      const childId = emitJsxElementToTemplate(child, tagName, state)
+      if (!childId) return false
+      state.statements.push(createAppendStatement(parentId, childId, state.ctx.factory))
+      continue
+    }
+
+    return false
+  }
+
+  return true
+}
+
+function emitStaticAttribute(
+  elementId: ts.Identifier,
+  attr: NormalizedAttribute,
+  value: ts.Expression,
+  state: TemplateBuilderState,
+): void {
+  const { factory } = state.ctx
+  if (attr.kind === 'class') {
+    state.statements.push(
+      factory.createExpressionStatement(
+        factory.createBinaryExpression(
+          factory.createPropertyAccessExpression(elementId, 'className'),
+          factory.createToken(ts.SyntaxKind.EqualsToken),
+          value,
+        ),
+      ),
+    )
+    return
+  }
+
+  const call = factory.createCallExpression(
+    factory.createPropertyAccessExpression(elementId, 'setAttribute'),
+    undefined,
+    [factory.createStringLiteral(attr.name), value],
+  )
+  state.statements.push(factory.createExpressionStatement(call))
+}
+
+function emitDynamicAttribute(
+  elementId: ts.Identifier,
+  attr: NormalizedAttribute,
+  expr: ts.Expression,
+  state: TemplateBuilderState,
+): boolean {
+  const { factory } = state.ctx
+  const getter = createGetterArrow(factory, expr)
+
+  if (attr.kind === 'class') {
+    state.ctx.helpersUsed.bindClass = true
+    state.statements.push(
+      factory.createExpressionStatement(
+        factory.createCallExpression(
+          factory.createIdentifier(RUNTIME_ALIASES.bindClass),
+          undefined,
+          [elementId, getter],
+        ),
+      ),
+    )
+    return true
+  }
+
+  if (attr.kind === 'style') {
+    state.ctx.helpersUsed.bindStyle = true
+    state.statements.push(
+      factory.createExpressionStatement(
+        factory.createCallExpression(
+          factory.createIdentifier(RUNTIME_ALIASES.bindStyle),
+          undefined,
+          [elementId, getter],
+        ),
+      ),
+    )
+    return true
+  }
+
+  state.ctx.helpersUsed.bindAttribute = true
+  state.statements.push(
+    factory.createExpressionStatement(
+      factory.createCallExpression(
+        factory.createIdentifier(RUNTIME_ALIASES.bindAttribute),
+        undefined,
+        [elementId, factory.createStringLiteral(attr.name), getter],
+      ),
+    ),
+  )
+  return true
+}
+
+function emitDynamicTextChild(
+  parentId: ts.Identifier,
+  expr: ts.Expression,
+  state: TemplateBuilderState,
+): void {
+  const { factory } = state.ctx
+  const textId = factory.createUniqueName('txt')
+  const textNode = factory.createCallExpression(
+    factory.createPropertyAccessExpression(factory.createIdentifier('document'), 'createTextNode'),
+    undefined,
+    [factory.createStringLiteral('')],
+  )
+  state.statements.push(createConstDeclaration(factory, textId, textNode))
+  state.statements.push(createAppendStatement(parentId, textId, factory))
+  state.ctx.helpersUsed.bindText = true
+  state.statements.push(
+    factory.createExpressionStatement(
+      factory.createCallExpression(factory.createIdentifier(RUNTIME_ALIASES.bindText), undefined, [
+        textId,
+        createGetterArrow(factory, expr),
+      ]),
+    ),
+  )
+}
+
+interface NormalizedAttribute {
+  name: string
+  kind: 'attr' | 'class' | 'style' | 'skip'
+}
+
+function normalizeAttributeName(name: string): NormalizedAttribute | null {
+  switch (name) {
+    case 'key':
+    case 'ref':
+      return { name, kind: 'skip' }
+    case 'class':
+    case 'className':
+      return { name: 'class', kind: 'class' }
+    case 'style':
+      return { name: 'style', kind: 'style' }
+    case 'htmlFor':
+      return { name: 'for', kind: 'attr' }
+    case 'dangerouslySetInnerHTML':
+      return null
+    default:
+      if (name[0] === name[0]?.toUpperCase()) {
+        return null
+      }
+      return { name, kind: 'attr' }
+  }
+}
+
+function getIntrinsicTagName(node: SupportedJsxElement): string | null {
+  const tag = ts.isJsxElement(node) ? node.openingElement.tagName : node.tagName
+  if (!ts.isIdentifier(tag)) return null
+  const text = tag.text
+  if (!text || text[0] !== text[0].toLowerCase()) {
+    return null
+  }
+  return text
+}
+
+function createConstDeclaration(
+  factory: ts.NodeFactory,
+  identifier: ts.Identifier,
+  initializer: ts.Expression,
+): ts.VariableStatement {
+  return factory.createVariableStatement(
+    undefined,
+    factory.createVariableDeclarationList(
+      [factory.createVariableDeclaration(identifier, undefined, undefined, initializer)],
+      ts.NodeFlags.Const,
+    ),
+  )
+}
+
+function createAppendStatement(
+  parentId: ts.Identifier,
+  childId: ts.Expression,
+  factory: ts.NodeFactory,
+): ts.Statement {
+  return factory.createExpressionStatement(
+    factory.createCallExpression(
+      factory.createPropertyAccessExpression(parentId, 'appendChild'),
+      undefined,
+      [childId],
+    ),
+  )
+}
+
+function createGetterArrow(factory: ts.NodeFactory, expr: ts.Expression): ts.ArrowFunction {
+  return factory.createArrowFunction(
+    undefined,
+    undefined,
+    [],
+    undefined,
+    factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+    expr,
+  )
+}
+
+function transformExpressionForFineGrained(
+  expr: ts.Expression,
+  ctx: TransformContext,
+): ts.Expression {
+  const visitor = createVisitorWithOptions(ctx, {
+    disableRegionTransform: true,
+    disableMemoize: false,
+    disableFineGrainedDom: true,
+  })
+  return (ts.visitNode(expr, visitor) as ts.Expression) ?? expr
 }
 
 // ============================================================================
@@ -3642,6 +4039,42 @@ function addRuntimeImports(
         false,
         factory.createIdentifier(RUNTIME_HELPERS.onDestroy),
         factory.createIdentifier(RUNTIME_ALIASES.onDestroy),
+      ),
+    )
+  }
+  if (helpers.bindText) {
+    neededSpecifiers.push(
+      factory.createImportSpecifier(
+        false,
+        factory.createIdentifier(RUNTIME_HELPERS.bindText),
+        factory.createIdentifier(RUNTIME_ALIASES.bindText),
+      ),
+    )
+  }
+  if (helpers.bindAttribute) {
+    neededSpecifiers.push(
+      factory.createImportSpecifier(
+        false,
+        factory.createIdentifier(RUNTIME_HELPERS.bindAttribute),
+        factory.createIdentifier(RUNTIME_ALIASES.bindAttribute),
+      ),
+    )
+  }
+  if (helpers.bindClass) {
+    neededSpecifiers.push(
+      factory.createImportSpecifier(
+        false,
+        factory.createIdentifier(RUNTIME_HELPERS.bindClass),
+        factory.createIdentifier(RUNTIME_ALIASES.bindClass),
+      ),
+    )
+  }
+  if (helpers.bindStyle) {
+    neededSpecifiers.push(
+      factory.createImportSpecifier(
+        false,
+        factory.createIdentifier(RUNTIME_HELPERS.bindStyle),
+        factory.createIdentifier(RUNTIME_ALIASES.bindStyle),
       ),
     )
   }

@@ -1,12 +1,16 @@
 import ts from 'typescript'
 import { describe, it, expect } from 'vitest'
 
-import { createFictTransformer } from '../index'
+import { createFictTransformer, type FictCompilerOptions } from '../index'
 
 /**
  * Helper to transform source code and return the result
  */
 function transform(source: string): string {
+  return transformWithOptions(source)
+}
+
+function transformWithOptions(source: string, options?: FictCompilerOptions): string {
   const result = ts.transpileModule(source, {
     compilerOptions: {
       target: ts.ScriptTarget.ES2020,
@@ -14,7 +18,7 @@ function transform(source: string): string {
       jsx: ts.JsxEmit.Preserve,
     },
     transformers: {
-      before: [createFictTransformer()],
+      before: [createFictTransformer(undefined, options)],
     },
   })
   return result.outputText
@@ -228,6 +232,24 @@ describe('Fict Compiler - Basic Transforms', () => {
       // key attribute should get the reactive value but not be wrapped in arrow function
       expect(output).toContain('key={id()}')
       expect(output).not.toContain('key={() =>')
+    })
+  })
+
+  describe('Fine-grained DOM lowering (opt-in)', () => {
+    it('emits direct DOM creation and bindings for simple intrinsic JSX', () => {
+      const input = `
+        import { $state } from 'fict'
+        function View() {
+          let count = $state(0)
+          return <button data-count={count}>{count}</button>
+        }
+      `
+      const output = transformWithOptions(input, { fineGrainedDom: true })
+      expect(output).toContain('document.createElement("button")')
+      expect(output).toContain('document.createTextNode')
+      expect(output).toContain('__fictBindAttribute')
+      expect(output).toContain('__fictBindText')
+      expect(output).toContain('count()')
     })
   })
 
