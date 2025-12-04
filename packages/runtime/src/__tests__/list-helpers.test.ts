@@ -4,6 +4,8 @@ import {
   moveNodesBefore,
   removeNodes,
   insertNodesBefore,
+  moveMarkerBlock,
+  destroyMarkerBlock,
   createKeyedListContainer,
   createKeyedBlock,
   createKeyedList,
@@ -13,6 +15,7 @@ import {
 } from '../list-helpers'
 import { createSignal } from '../signal'
 import { createEffect } from '../effect'
+import { createRootContext, flushOnMount, onDestroy, popRoot, pushRoot } from '../lifecycle'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -112,6 +115,48 @@ describe('List Helpers', () => {
       insertNodesBefore(container, [div1, div2], anchor)
 
       expect(container.textContent).toBe('12anchor')
+    })
+
+    it('moveMarkerBlock repositions marker ranges without recreating nodes', () => {
+      const before = document.createElement('div')
+      before.textContent = 'before'
+      const after = document.createElement('div')
+      after.textContent = 'after'
+      const start = document.createComment('start')
+      const child = document.createElement('span')
+      child.textContent = 'X'
+      const end = document.createComment('end')
+
+      container.append(before, start, child, end, after)
+
+      moveMarkerBlock(container, { start, end }, before)
+
+      expect(container.firstChild).toBe(start)
+      expect(container.childNodes[1]).toBe(child)
+      expect(container.childNodes[2]).toBe(end)
+    })
+
+    it('destroyMarkerBlock removes nodes and flushes root', () => {
+      const start = document.createComment('start')
+      const text = document.createTextNode('payload')
+      const end = document.createComment('end')
+      container.append(start, text, end)
+
+      const root = createRootContext()
+      const prev = pushRoot(root)
+      let destroyed = 0
+      onDestroy(() => {
+        destroyed++
+      })
+      popRoot(prev)
+      flushOnMount(root)
+
+      destroyMarkerBlock({ start, end, root })
+
+      expect(container.contains(text)).toBe(false)
+      expect(container.contains(start)).toBe(false)
+      expect(container.contains(end)).toBe(false)
+      expect(destroyed).toBe(1)
     })
   })
 

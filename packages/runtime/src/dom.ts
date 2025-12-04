@@ -98,16 +98,14 @@ export function createElement(node: FictNode): DOMElement {
   }
 
   // Primitive proxy produced by keyed list binding
-  if (
-    typeof node === 'object' &&
-    node !== null &&
-    !(node instanceof Node) &&
-    Boolean((node as Record<PropertyKey, unknown>)[PRIMITIVE_PROXY])
-  ) {
-    const primitiveGetter = (node as Record<PropertyKey, unknown>)[Symbol.toPrimitive]
-    const value =
-      typeof primitiveGetter === 'function' ? primitiveGetter.call(node, 'default') : node
-    return document.createTextNode(value == null || value === false ? '' : String(value))
+  if (typeof node === 'object' && node !== null && !(node instanceof Node)) {
+    const nodeRecord = node as unknown as Record<PropertyKey, unknown>
+    if (Boolean(nodeRecord[PRIMITIVE_PROXY])) {
+      const primitiveGetter = nodeRecord[Symbol.toPrimitive]
+      const value =
+        typeof primitiveGetter === 'function' ? primitiveGetter.call(node, 'default') : node
+      return document.createTextNode(value == null || value === false ? '' : String(value))
+    }
   }
 
   // Array - create fragment

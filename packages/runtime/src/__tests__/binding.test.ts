@@ -12,6 +12,8 @@ import {
   createAttributeBinding,
   createStyleBinding,
   createClassBinding,
+  bindStyle,
+  bindClass,
   createConditional,
   createList,
   insert,
@@ -183,6 +185,21 @@ describe('Reactive DOM Binding', () => {
     })
   })
 
+  describe('bindStyle', () => {
+    it('reactively updates style on existing nodes', async () => {
+      const el = document.createElement('div')
+      const size = createSignal(12)
+
+      bindStyle(el, () => ({ fontSize: `${size()}px`, color: 'black' }))
+      expect(el.style.fontSize).toBe('12px')
+      expect(el.style.color).toBe('black')
+
+      size(18)
+      await tick()
+      expect(el.style.fontSize).toBe('18px')
+    })
+  })
+
   describe('createClassBinding', () => {
     it('applies string class', () => {
       const el = document.createElement('div')
@@ -215,6 +232,20 @@ describe('Reactive DOM Binding', () => {
       expect(el.className).toBe('base')
 
       dispose()
+    })
+  })
+
+  describe('bindClass', () => {
+    it('reactively updates classes on existing nodes', async () => {
+      const el = document.createElement('div')
+      const isActive = createSignal(false)
+
+      bindClass(el, () => ({ base: true, active: isActive() }))
+      expect(el.className).toBe('base')
+
+      isActive(true)
+      await tick()
+      expect(el.className).toBe('base active')
     })
   })
 

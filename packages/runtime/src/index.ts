@@ -5,6 +5,11 @@
 export { createSignal, type Signal, $state } from './signal'
 export { createMemo, type Memo } from './memo'
 export { createEffect, type Effect, $effect } from './effect'
+export {
+  createVersionedSignal,
+  type VersionedSignal,
+  type VersionedSignalOptions,
+} from './versioned-signal'
 
 // ============================================================================
 // Lifecycle
@@ -45,6 +50,8 @@ export {
   // Low-level binding helpers (for direct DOM manipulation)
   bindText,
   bindAttribute,
+  bindStyle,
+  bindClass,
   bindProperty,
   insert,
   // Reactive detection
@@ -99,6 +106,8 @@ export {
   moveNodesBefore,
   removeNodes,
   insertNodesBefore,
+  moveMarkerBlock,
+  destroyMarkerBlock,
   // Keyed list container
   createKeyedListContainer,
   // Block creation
@@ -113,4 +122,5 @@ export {
   type KeyedBlock,
   type KeyedListContainer,
   type KeyedListBinding,
+  type MarkerBlock,
 } from './list-helpers'

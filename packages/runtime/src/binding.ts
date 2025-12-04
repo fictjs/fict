@@ -356,6 +356,18 @@ export function createStyleBinding(
 }
 
 /**
+ * Bind a reactive style value to an existing element.
+ */
+export function bindStyle(
+  el: HTMLElement,
+  getValue: () => string | Record<string, string | number> | null | undefined,
+): Cleanup {
+  return createEffect(() => {
+    applyStyle(el, getValue())
+  })
+}
+
+/**
  * Apply a style value to an element
  */
 function applyStyle(el: HTMLElement, value: unknown): void {
@@ -445,6 +457,18 @@ export function createClassBinding(
   } else {
     applyClass(el, value)
   }
+}
+
+/**
+ * Bind a reactive class value to an existing element.
+ */
+export function bindClass(
+  el: HTMLElement,
+  getValue: () => string | Record<string, boolean> | null | undefined,
+): Cleanup {
+  return createEffect(() => {
+    applyClass(el, getValue())
+  })
 }
 
 /**
@@ -720,7 +744,7 @@ export function createList<T>(
     const blocks: ManagedBlock<T>[] = []
 
     for (let i = 0; i < arr.length; i++) {
-      const item = arr[i]!
+      const item = arr[i]! as T
       const key = getKey ? getKey(item, i) : i
       const existing = nodeMap.get(key)
 
@@ -946,18 +970,14 @@ function rerenderBlock<T>(
   }
 
   if (isFragmentVNode(nextOutput) && currentContent.length > 0) {
-    const patched = patchFragmentChildren(
-      currentContent,
-      nextOutput.props?.children,
-      createElementFn,
-    )
+    const patched = patchFragmentChildren(currentContent, nextOutput.props?.children)
     if (patched) {
       block.nodes = [block.start, ...currentContent, block.end]
       return block
     }
   }
 
-  if (currentNode && patchNode(currentNode, nextOutput, createElementFn)) {
+  if (currentNode && patchNode(currentNode, nextOutput)) {
     block.nodes = [block.start, currentNode, block.end]
     return block
   }
@@ -1051,11 +1071,7 @@ function patchElement(el: Element, output: FictNode): boolean {
   return false
 }
 
-function patchNode(
-  currentNode: Node | null,
-  nextOutput: FictNode,
-  createElementFn: CreateElementFn,
-): boolean {
+function patchNode(currentNode: Node | null, nextOutput: FictNode): boolean {
   if (!currentNode) return false
 
   if (
@@ -1122,37 +1138,36 @@ function normalizeChildren(
 function patchFragmentChildren(
   nodes: Node[],
   children: FictNode | FictNode[] | undefined,
-  createElementFn: CreateElementFn,
 ): boolean {
   const normalized = normalizeChildren(children)
   if (normalized.length !== nodes.length) {
     return false
   }
   for (let i = 0; i < normalized.length; i++) {
-    if (!patchNode(nodes[i]!, normalized[i]!, createElementFn)) {
+    if (!patchNode(nodes[i]!, normalized[i]!)) {
       return false
     }
   }
   return true
 }
 
-function clearContent(block: ManagedBlock): void {
+function clearContent<T>(block: ManagedBlock<T>): void {
   const nodes = block.nodes.slice(1, Math.max(1, block.nodes.length - 1))
   removeNodes(nodes)
 }
 
-function removeBlockNodes(block: ManagedBlock): void {
+function removeBlockNodes<T>(block: ManagedBlock<T>): void {
   let cursor: Node | null = block.start
   const end = block.end
   while (cursor) {
-    const next = cursor.nextSibling
+    const next: Node | null = cursor.nextSibling
     cursor.parentNode?.removeChild(cursor)
     if (cursor === end) break
     cursor = next
   }
 }
 
-function bumpBlockVersion(block: ManagedBlock): void {
+function bumpBlockVersion<T>(block: ManagedBlock<T>): void {
   block.version(block.version() + 1)
 }
 

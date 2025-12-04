@@ -62,6 +62,15 @@ export interface KeyedListBinding {
   dispose: () => void
 }
 
+/**
+ * A block identified by start/end comment markers.
+ */
+export interface MarkerBlock {
+  start: Comment
+  end: Comment
+  root?: RootContext
+}
+
 // ============================================================================
 // DOM Manipulation Primitives
 // ============================================================================
@@ -108,6 +117,50 @@ export function removeNodes(nodes: Node[]): void {
 export function insertNodesBefore(parent: Node, nodes: Node[], anchor: Node | null): void {
   for (const node of nodes) {
     parent.insertBefore(node, anchor)
+  }
+}
+
+/**
+ * Move an entire marker-delimited block (including markers) before the anchor.
+ */
+export function moveMarkerBlock(parent: Node, block: MarkerBlock, anchor: Node | null): void {
+  const nodes = collectBlockNodes(block)
+  if (nodes.length === 0) return
+  moveNodesBefore(parent, nodes, anchor)
+}
+
+/**
+ * Destroy a marker-delimited block, removing nodes and destroying the associated root.
+ */
+export function destroyMarkerBlock(block: MarkerBlock): void {
+  if (block.root) {
+    destroyRoot(block.root)
+  }
+  removeBlockRange(block)
+}
+
+function collectBlockNodes(block: MarkerBlock): Node[] {
+  const nodes: Node[] = []
+  let cursor: Node | null = block.start
+  while (cursor) {
+    nodes.push(cursor)
+    if (cursor === block.end) {
+      break
+    }
+    cursor = cursor.nextSibling
+  }
+  return nodes
+}
+
+function removeBlockRange(block: MarkerBlock): void {
+  let cursor: Node | null = block.start
+  while (cursor) {
+    const next = cursor.nextSibling
+    cursor.parentNode?.removeChild(cursor)
+    if (cursor === block.end) {
+      break
+    }
+    cursor = next
   }
 }
 
