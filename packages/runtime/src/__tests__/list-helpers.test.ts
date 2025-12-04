@@ -248,6 +248,26 @@ describe('List Helpers', () => {
       expect((block.nodes[0] as HTMLDivElement).textContent).toBe('Alice')
       expect((block.nodes[1] as HTMLDivElement).textContent).toBe('0')
     })
+
+    it('bumps version when assigning same reference', async () => {
+      const user = { id: 1, name: 'Alice' }
+      const block = createKeyedBlock('key1', user, 0, itemSig => {
+        const div = document.createElement('div')
+        createEffect(() => {
+          div.textContent = itemSig().name
+        })
+        return [div]
+      })
+
+      const div = block.nodes[0] as HTMLDivElement
+      expect(div.textContent).toBe('Alice')
+
+      user.name = 'Carol'
+      block.item(user)
+      await tick()
+
+      expect(div.textContent).toBe('Carol')
+    })
   })
 
   describe('Utilities', () => {

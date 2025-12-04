@@ -6,6 +6,7 @@
  */
 
 import { createSignal, type Signal } from './signal'
+import { createVersionedSignal } from './versioned-signal'
 import {
   createRootContext,
   destroyRoot,
@@ -164,6 +165,17 @@ function removeBlockRange(block: MarkerBlock): void {
   }
 }
 
+function createVersionedSignalAccessor<T>(initialValue: T): Signal<T> {
+  const versioned = createVersionedSignal(initialValue)
+  function accessor(value?: T): T | void {
+    if (arguments.length === 0) {
+      return versioned.read()
+    }
+    versioned.write(value as T)
+  }
+  return accessor as Signal<T>
+}
+
 // ============================================================================
 // Keyed List Container
 // ============================================================================
@@ -219,7 +231,7 @@ export function createKeyedBlock<T>(
   index: number,
   render: (item: Signal<T>, index: Signal<number>) => Node[],
 ): KeyedBlock<T> {
-  const itemSig = createSignal<T>(item)
+  const itemSig = createVersionedSignalAccessor(item)
   const indexSig = createSignal<number>(index)
   const root = createRootContext()
   const prev = pushRoot(root)
