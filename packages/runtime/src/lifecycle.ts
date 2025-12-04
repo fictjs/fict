@@ -5,13 +5,14 @@ type LifecycleFn = () => void | Cleanup
 interface RootContext {
   onMountCallbacks: LifecycleFn[]
   cleanups: Cleanup[]
+  destroyCallbacks: Cleanup[]
 }
 
 let currentRoot: RootContext | undefined
 let currentEffectCleanups: Cleanup[] | undefined
 
 export function createRootContext(): RootContext {
-  return { onMountCallbacks: [], cleanups: [] }
+  return { onMountCallbacks: [], cleanups: [], destroyCallbacks: [] }
 }
 
 export function pushRoot(root: RootContext): RootContext | undefined {
@@ -33,7 +34,11 @@ export function onMount(fn: LifecycleFn): void {
 }
 
 export function onDestroy(fn: LifecycleFn): void {
-  registerRootCleanup(() => runLifecycle(fn))
+  if (currentRoot) {
+    currentRoot.destroyCallbacks.push(() => runLifecycle(fn))
+    return
+  }
+  runLifecycle(fn)
 }
 
 export function onCleanup(fn: Cleanup): void {
@@ -55,8 +60,14 @@ export function registerRootCleanup(fn: Cleanup): void {
   }
 }
 
-export function destroyRoot(root: RootContext): void {
+export function clearRoot(root: RootContext): void {
   runCleanupList(root.cleanups)
+  root.onMountCallbacks.length = 0
+}
+
+export function destroyRoot(root: RootContext): void {
+  clearRoot(root)
+  runCleanupList(root.destroyCallbacks)
 }
 
 export function createRoot<T>(fn: () => T): { dispose: () => void; value: T } {

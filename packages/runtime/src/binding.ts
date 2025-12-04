@@ -13,6 +13,7 @@
 
 import { createEffect } from './effect'
 import {
+  clearRoot,
   createRootContext,
   destroyRoot,
   flushOnMount,
@@ -20,6 +21,7 @@ import {
   popRoot,
   type RootContext,
 } from './lifecycle'
+import { createSignal, type Signal } from './signal'
 import type { Cleanup, FictNode } from './types'
 
 // ============================================================================
@@ -41,9 +43,16 @@ export interface BindingHandle {
 }
 
 /** Managed child node with its dispose function */
-interface ManagedBlock {
+interface ManagedBlock<T = unknown> {
   nodes: Node[]
   root: RootContext
+  value: Signal<T>
+  index: Signal<number>
+  version: Signal<number>
+  start: Comment
+  end: Comment
+  valueProxy: T
+  renderCurrent: () => FictNode
 }
 
 // ============================================================================
@@ -63,6 +72,113 @@ export function isReactive(value: unknown): value is () => unknown {
  */
 export function unwrap<T>(value: MaybeReactive<T>): T {
   return isReactive(value) ? (value as () => T)() : value
+}
+
+export const PRIMITIVE_PROXY = Symbol('fict:primitive-proxy')
+
+function createValueProxy<T>(valueSignal: Signal<T>, versionSignal: Signal<number>): T {
+  const read = () => {
+    versionSignal()
+    return valueSignal()
+  }
+
+  const getPrimitivePrototype = (value: unknown): Record<PropertyKey, unknown> | undefined => {
+    switch (typeof value) {
+      case 'string':
+        return String.prototype as unknown as Record<PropertyKey, unknown>
+      case 'number':
+        return Number.prototype as unknown as Record<PropertyKey, unknown>
+      case 'boolean':
+        return Boolean.prototype as unknown as Record<PropertyKey, unknown>
+      case 'bigint':
+        return BigInt.prototype as unknown as Record<PropertyKey, unknown>
+      case 'symbol':
+        return Symbol.prototype as unknown as Record<PropertyKey, unknown>
+      default:
+        return undefined
+    }
+  }
+
+  const target: Record<PropertyKey, unknown> = {}
+  const handler: ProxyHandler<Record<PropertyKey, unknown>> = {
+    get(_target, prop, receiver) {
+      if (prop === PRIMITIVE_PROXY) {
+        return true
+      }
+      if (prop === Symbol.toPrimitive) {
+        return (hint: 'string' | 'number' | 'default') => {
+          const value = read() as any
+          if (value != null && (typeof value === 'object' || typeof value === 'function')) {
+            const toPrimitive = value[Symbol.toPrimitive]
+            if (typeof toPrimitive === 'function') {
+              return toPrimitive.call(value, hint)
+            }
+            if (hint === 'string') return value.toString?.() ?? '[object Object]'
+            if (hint === 'number') return value.valueOf?.() ?? value
+            return value.valueOf?.() ?? value
+          }
+          return value
+        }
+      }
+      if (prop === 'valueOf') {
+        return () => {
+          const value = read() as any
+          if (value != null && (typeof value === 'object' || typeof value === 'function')) {
+            return typeof value.valueOf === 'function' ? value.valueOf() : value
+          }
+          return value
+        }
+      }
+      if (prop === 'toString') {
+        return () => String(read())
+      }
+
+      const value = read() as any
+      if (value != null && (typeof value === 'object' || typeof value === 'function')) {
+        return Reflect.get(value, prop, receiver === _target ? value : receiver)
+      }
+
+      const proto = getPrimitivePrototype(value)
+      if (proto && prop in proto) {
+        const descriptor = Reflect.get(proto, prop, value)
+        return typeof descriptor === 'function' ? descriptor.bind(value) : descriptor
+      }
+      return undefined
+    },
+    set(_target, prop, newValue, receiver) {
+      const value = read() as any
+      if (value != null && (typeof value === 'object' || typeof value === 'function')) {
+        return Reflect.set(value, prop, newValue, receiver === _target ? value : receiver)
+      }
+      return false
+    },
+    has(_target, prop) {
+      const value = read() as any
+      if (value != null && (typeof value === 'object' || typeof value === 'function')) {
+        return prop in value
+      }
+      const proto = getPrimitivePrototype(value)
+      return proto ? prop in proto : false
+    },
+    ownKeys() {
+      const value = read() as any
+      if (value != null && (typeof value === 'object' || typeof value === 'function')) {
+        return Reflect.ownKeys(value)
+      }
+      const proto = getPrimitivePrototype(value)
+      return proto ? Reflect.ownKeys(proto) : []
+    },
+    getOwnPropertyDescriptor(_target, prop) {
+      const value = read() as any
+      if (value != null && (typeof value === 'object' || typeof value === 'function')) {
+        return Object.getOwnPropertyDescriptor(value, prop)
+      }
+      const proto = getPrimitivePrototype(value)
+      return proto ? Object.getOwnPropertyDescriptor(proto, prop) || undefined : undefined
+    },
+  }
+
+  return new Proxy(target, handler) as T
 }
 
 // ============================================================================
@@ -545,19 +661,7 @@ export function createConditional(
 export type KeyFn<T> = (item: T, index: number) => string | number
 
 /**
- * Create a reactive list rendering binding.
- * Efficiently renders and updates a list of items with optional keying.
- *
- * @example
- * ```ts
- * // Compiler output for {items.map(item => <Item item={item} />)}
- * createList(
- *   () => $items(),
- *   (item, index) => jsx(Item, { item }),
- *   item => item.id,  // optional key function
- *   createElement
- * )
- * ```
+ * Create a reactive list rendering binding with optional keying.
  */
 export function createList<T>(
   items: () => T[],
@@ -565,57 +669,61 @@ export function createList<T>(
   createElementFn: CreateElementFn,
   getKey?: KeyFn<T>,
 ): BindingHandle {
-  // Create a fragment with start and end markers
   const fragment = document.createDocumentFragment()
   const startMarker = document.createComment('fict:list:start')
   const endMarker = document.createComment('fict:list:end')
   fragment.appendChild(startMarker)
   fragment.appendChild(endMarker)
 
-  // Map of key -> managed block
-  const nodeMap = new Map<string | number, ManagedBlock>()
+  const nodeMap = new Map<string | number, ManagedBlock<T>>()
 
   const dispose = createEffect(() => {
     const arr = items()
     const parent = startMarker.parentNode as (ParentNode & Node) | null
     if (!parent) return
 
-    const newNodeMap = new Map<string | number, ManagedBlock>()
-    const blocks: ManagedBlock[] = []
+    const newNodeMap = new Map<string | number, ManagedBlock<T>>()
+    const blocks: ManagedBlock<T>[] = []
 
-    // Build or refresh blocks for the new array
     for (let i = 0; i < arr.length; i++) {
       const item = arr[i]!
       const key = getKey ? getKey(item, i) : i
       const existing = nodeMap.get(key)
 
-      let block: ManagedBlock
+      let block: ManagedBlock<T>
       if (existing) {
-        // Always refresh to reflect latest item value
-        block = refreshBlock(
-          existing,
-          () => renderItem(item, i),
-          parent,
-          endMarker,
-          createElementFn,
-        )
+        const previousValue = existing.value()
+        if (!getKey && previousValue !== item) {
+          destroyRoot(existing.root)
+          removeBlockNodes(existing)
+          block = mountBlock(item, i, renderItem, parent, endMarker, createElementFn)
+        } else {
+          const previousIndex = existing.index()
+          existing.value(item)
+          existing.index(i)
+
+          if (previousValue === item) {
+            bumpBlockVersion(existing)
+          }
+
+          const needsRerender = getKey ? true : previousValue !== item || previousIndex !== i
+          block = needsRerender ? rerenderBlock(existing, createElementFn) : existing
+        }
       } else {
-        block = mountBlock(() => renderItem(item, i), parent, endMarker, createElementFn)
+        block = mountBlock(item, i, renderItem, parent, endMarker, createElementFn)
       }
 
       newNodeMap.set(key, block)
       blocks.push(block)
     }
 
-    // Cleanup removed blocks
     for (const [key, managed] of nodeMap) {
       if (!newNodeMap.has(key)) {
         destroyRoot(managed.root)
-        removeNodes(managed.nodes)
+        removeBlockNodes(managed)
       }
     }
 
-    // Reorder nodes efficiently - insert blocks before endMarker in correct order
     let anchor: Node = endMarker
     for (let i = blocks.length - 1; i >= 0; i--) {
       const block = blocks[i]!
@@ -625,7 +733,6 @@ export function createList<T>(
       }
     }
 
-    // Update state
     nodeMap.clear()
     for (const [k, v] of newNodeMap) {
       nodeMap.set(k, v)
@@ -638,7 +745,7 @@ export function createList<T>(
       dispose()
       for (const [, managed] of nodeMap) {
         destroyRoot(managed.root)
-        removeNodes(managed.nodes)
+        removeBlockNodes(managed)
       }
       nodeMap.clear()
       startMarker.parentNode?.removeChild(startMarker)
@@ -743,39 +850,221 @@ export function createPortal(
 // Internal helpers
 // ============================================================================
 
-function mountBlock(
-  render: () => FictNode,
+function mountBlock<T>(
+  initialValue: T,
+  initialIndex: number,
+  renderItem: (item: T, index: number) => FictNode,
   parent: ParentNode & Node,
   anchor: Node,
   createElementFn: CreateElementFn,
-): ManagedBlock {
+): ManagedBlock<T> {
+  const start = document.createComment('fict:block:start')
+  const end = document.createComment('fict:block:end')
+  const valueSig = createSignal<T>(initialValue)
+  const indexSig = createSignal<number>(initialIndex)
+  const versionSig = createSignal(0)
+  const valueProxy = createValueProxy(valueSig, versionSig) as T
+  const renderCurrent = () => renderItem(valueProxy, indexSig())
   const root = createRootContext()
   const prev = pushRoot(root)
-  let nodes: Node[] = []
+  let nodes: Node[] = [start]
   try {
-    const output = render()
+    const output = renderCurrent()
     if (output != null && output !== false) {
       const el = createElementFn(output)
-      nodes = toNodeArray(el)
-      insertNodesBefore(parent, nodes, anchor)
+      const rendered = toNodeArray(el)
+      nodes.push(...rendered)
     }
+    nodes.push(end)
+    insertNodesBefore(parent, nodes, anchor)
   } finally {
     popRoot(prev)
     flushOnMount(root)
   }
-  return { nodes, root }
+  return {
+    nodes,
+    root,
+    value: valueSig,
+    index: indexSig,
+    version: versionSig,
+    start,
+    end,
+    valueProxy,
+    renderCurrent,
+  }
 }
 
-function refreshBlock(
-  block: ManagedBlock,
-  render: () => FictNode,
-  parent: ParentNode & Node,
-  anchor: Node,
+function rerenderBlock<T>(
+  block: ManagedBlock<T>,
   createElementFn: CreateElementFn,
-): ManagedBlock {
-  destroyRoot(block.root)
-  removeNodes(block.nodes)
-  return mountBlock(render, parent, anchor, createElementFn)
+): ManagedBlock<T> {
+  const currentContent = collectContent(block)
+  const currentNode = currentContent.length === 1 ? currentContent[0] : null
+
+  clearRoot(block.root)
+
+  const prev = pushRoot(block.root)
+  let nextOutput: FictNode
+  try {
+    nextOutput = block.renderCurrent()
+  } finally {
+    popRoot(prev)
+  }
+
+  if (
+    currentNode instanceof Text &&
+    (nextOutput === null ||
+      nextOutput === undefined ||
+      nextOutput === false ||
+      typeof nextOutput === 'string' ||
+      typeof nextOutput === 'number' ||
+      nextOutput instanceof Text)
+  ) {
+    const nextText =
+      nextOutput instanceof Text
+        ? nextOutput.data
+        : nextOutput === null || nextOutput === undefined || nextOutput === false
+          ? ''
+          : String(nextOutput)
+    currentNode.data = nextText
+    block.nodes = [block.start, currentNode, block.end]
+    return block
+  }
+
+  if (currentNode instanceof Element) {
+    const patched = patchElement(currentNode, nextOutput)
+    if (patched) {
+      block.nodes = [block.start, currentNode, block.end]
+      return block
+    }
+  }
+
+  if (nextOutput instanceof Node && currentNode && currentNode === nextOutput) {
+    block.nodes = [block.start, currentNode, block.end]
+    return block
+  }
+
+  clearContent(block)
+
+  if (nextOutput != null && nextOutput !== false) {
+    const newNodes = toNodeArray(
+      nextOutput instanceof Node ? nextOutput : (createElementFn(nextOutput) as Node),
+    )
+    insertNodesBefore(block.start.parentNode as ParentNode & Node, newNodes, block.end)
+    block.nodes = [block.start, ...newNodes, block.end]
+  } else {
+    block.nodes = [block.start, block.end]
+  }
+  return block
+}
+
+function patchElement(el: Element, output: FictNode): boolean {
+  if (
+    output === null ||
+    output === undefined ||
+    output === false ||
+    typeof output === 'string' ||
+    typeof output === 'number'
+  ) {
+    el.textContent =
+      output === null || output === undefined || output === false ? '' : String(output)
+    return true
+  }
+
+  if (output instanceof Text) {
+    el.textContent = output.data
+    return true
+  }
+
+  if (output && typeof output === 'object' && !(output instanceof Node)) {
+    const vnode = output as any
+    if (typeof vnode.type === 'string' && vnode.type.toLowerCase() === el.tagName.toLowerCase()) {
+      const children = vnode.props?.children
+      if (
+        typeof children === 'string' ||
+        typeof children === 'number' ||
+        children === null ||
+        children === undefined ||
+        children === false
+      ) {
+        el.textContent =
+          children === null || children === undefined || children === false ? '' : String(children)
+        const props = vnode.props ?? {}
+        for (const [key, value] of Object.entries(props)) {
+          if (key === 'children' || key === 'key') continue
+          if (
+            typeof value === 'string' ||
+            typeof value === 'number' ||
+            typeof value === 'boolean' ||
+            value === null ||
+            value === undefined
+          ) {
+            if (key === 'class' || key === 'className') {
+              el.setAttribute('class', value === false || value === null ? '' : String(value))
+            } else if (key === 'style' && typeof value === 'string') {
+              ;(el as HTMLElement).style.cssText = value
+            } else if (value === false || value === null || value === undefined) {
+              el.removeAttribute(key)
+            } else if (value === true) {
+              el.setAttribute(key, '')
+            } else {
+              el.setAttribute(key, String(value))
+            }
+          }
+        }
+        return true
+      }
+    }
+  }
+
+  if (output instanceof Node) {
+    if (output.nodeType === Node.ELEMENT_NODE) {
+      const nextEl = output as Element
+      if (nextEl.tagName.toLowerCase() === el.tagName.toLowerCase()) {
+        el.textContent = nextEl.textContent
+        return true
+      }
+    } else if (output.nodeType === Node.TEXT_NODE) {
+      el.textContent = (output as Text).data
+      return true
+    }
+  }
+
+  return false
+}
+
+function collectContent(block: ManagedBlock): Node[] {
+  const nodes: Node[] = []
+  let cursor = block.start.nextSibling
+  while (cursor && cursor !== block.end) {
+    nodes.push(cursor)
+    cursor = cursor.nextSibling
+  }
+  return nodes
+}
+
+function clearContent(block: ManagedBlock): void {
+  let cursor = block.start.nextSibling
+  while (cursor && cursor !== block.end) {
+    const next = cursor.nextSibling
+    cursor.parentNode?.removeChild(cursor)
+    cursor = next
+  }
+}
+
+function removeBlockNodes(block: ManagedBlock): void {
+  let cursor: Node | null = block.start
+  const end = block.end
+  while (cursor) {
+    const next = cursor.nextSibling
+    cursor.parentNode?.removeChild(cursor)
+    if (cursor === end) break
+    cursor = next
+  }
+}
+
+function bumpBlockVersion(block: ManagedBlock): void {
+  block.version(block.version() + 1)
 }
 
 function toNodeArray(node: Node): Node[] {

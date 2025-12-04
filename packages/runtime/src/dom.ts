@@ -19,6 +19,7 @@ import {
   createClassBinding,
   createChildBinding,
   isReactive,
+  PRIMITIVE_PROXY,
   type MaybeReactive,
   type AttributeSetter,
   type BindingHandle,
@@ -94,6 +95,19 @@ export function createElement(node: FictNode): DOMElement {
   // Null/undefined/false - empty placeholder
   if (node === null || node === undefined || node === false) {
     return document.createTextNode('')
+  }
+
+  // Primitive proxy produced by keyed list binding
+  if (
+    typeof node === 'object' &&
+    node !== null &&
+    !(node instanceof Node) &&
+    Boolean((node as Record<PropertyKey, unknown>)[PRIMITIVE_PROXY])
+  ) {
+    const primitiveGetter = (node as Record<PropertyKey, unknown>)[Symbol.toPrimitive]
+    const value =
+      typeof primitiveGetter === 'function' ? primitiveGetter.call(node, 'default') : node
+    return document.createTextNode(value == null || value === false ? '' : String(value))
   }
 
   // Array - create fragment

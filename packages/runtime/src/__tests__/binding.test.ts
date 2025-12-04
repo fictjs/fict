@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import {
   createSignal,
+  createEffect,
   createRoot,
   render,
   createElement,
@@ -554,7 +555,71 @@ describe('Reactive DOM Binding', () => {
         'render-a',
         'render-d',
       ])
-      expect(cleanups).toEqual(['destroy-c', 'destroy-a', 'destroy-b'])
+      expect(cleanups).toEqual(['destroy-b'])
+
+      dispose()
+    })
+
+    it('updates keyed items when reference is stable but fields change', async () => {
+      const user = { id: 1, name: 'Alice' }
+      const items = createSignal([user])
+      const effectRuns: string[] = []
+
+      const { marker, dispose } = createList(
+        () => items(),
+        item => {
+          const div = document.createElement('div')
+          createEffect(() => {
+            effectRuns.push(item.name)
+            div.textContent = item.name
+          })
+          return div
+        },
+        createElement,
+        item => item.id,
+      )
+      container.appendChild(marker)
+
+      const firstNode = container.firstChild
+      expect(container.textContent).toBe('Alice')
+
+      user.name = 'Bob'
+      items([user])
+      await tick()
+
+      expect(container.textContent).toBe('Bob')
+      expect(container.firstChild).toBe(firstNode)
+      expect(effectRuns).toEqual(['Alice', 'Bob'])
+
+      dispose()
+    })
+
+    it('updates primitive keyed items without remounting nodes', async () => {
+      const items = createSignal([1, 2, 3])
+
+      const { marker, dispose } = createList(
+        () => items(),
+        item => {
+          const span = document.createElement('span')
+          createEffect(() => {
+            span.textContent = String(item)
+          })
+          return span
+        },
+        createElement,
+        (_item, index) => index,
+      )
+      container.appendChild(marker)
+
+      const spansBefore = Array.from(container.querySelectorAll('span'))
+      expect(container.textContent).toBe('123')
+
+      items([1, 2, 4])
+      await tick()
+
+      const spansAfter = Array.from(container.querySelectorAll('span'))
+      expect(spansAfter[2]).toBe(spansBefore[2])
+      expect(container.textContent).toBe('124')
 
       dispose()
     })
