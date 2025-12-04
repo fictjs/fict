@@ -514,6 +514,206 @@ Semantics (Target Design):
 
 ---
 
+## 10. Keyed List Runtime Semantics
+
+Recent runtime changes introduced a managed-block implementation for keyed lists that preserves DOM identity, state, and event listeners across updates. This section documents the intentional design decisions and their implications.
+
+### 10.1 Core Architecture: ManagedBlock
+
+Each item in a keyed list gets its own `ManagedBlock<T>` containing:
+
+- **Signals**: `valueSig`, `indexSig`, `versionSig` for tracking item state
+- **Value Proxy**: A reactive wrapper that always reads from the live signal
+- **DOM Markers**: `start`/`end` comment nodes defining block boundaries
+- **Root Context**: Preserved across updates to maintain component lifecycle
+
+When the list updates:
+
+1. **Unkeyed lists**: Items with different references are destroyed and remounted (destructive update)
+2. **Keyed lists**: Items are matched by key, signals are updated, and DOM is patched in-place (preserving identity)
+
+### 10.2 Primitive Value Proxies
+
+#### Behavior
+
+Each keyed block wraps its item value in a proxy that:
+
+- For **objects**: Transparently forwards all property access to the live signal value
+- For **primitives** (number, string, boolean, etc.): Implements `Symbol.toPrimitive`, `valueOf`, `toString`, and exposes native prototype methods
+
+This ensures that code like `item.toFixed(2)` or `item.toLowerCase()` works naturally.
+
+#### ⚠️ Important Limitations
+
+**DO NOT rely on type checks:**
+
+```ts
+createList(
+  () => [1, 2, 3],
+  item => {
+    // ❌ Wrong - Returns 'object', not 'number'
+    if (typeof item === 'number') {
+    }
+
+    // ❌ Wrong - Reference inequality
+    if (item === 1) {
+    }
+
+    // ✅ Correct - Coercion triggers proxy
+    if (item == 1) {
+    }
+    if (Number(item) === 1) {
+    }
+
+    // ✅ Correct - Use prototype methods naturally
+    const formatted = item.toFixed(2) // Works!
+  },
+  item => item,
+)
+```
+
+**Rationale**: This trade-off preserves the natural JavaScript API for primitives while maintaining reactivity. The alternative (creating new primitives on each read) would break reference equality everywhere and lose reactivity.
+
+#### Helper Function (Optional)
+
+For advanced use cases requiring the raw value:
+
+```ts
+import { unwrapPrimitive } from 'fict/runtime'
+
+const rawValue = unwrapPrimitive(item) // Returns actual primitive
+```
+
+### 10.3 Keyed Blocks Always Rerender
+
+#### Current Behavior
+
+When a keyed list updates, **all matched blocks execute `rerenderBlock`** even if their value and index are unchanged.
+
+```ts
+const items = [
+  { id: 1, name: 'Alice' },
+  { id: 2, name: 'Bob' },
+  { id: 3, name: 'Charlie' },
+]
+
+// Later: Only item 2 changed
+setItems([
+  items[0], // Same reference
+  { ...items[1], name: 'Robert' }, // New reference
+  items[2], // Same reference
+])
+
+// Current: All 3 items rerender
+// Rationale: Guarantees effects/DOM stay synchronized
+```
+
+#### Why This Design?
+
+1. **Same-reference mutations are detectable**: If `items[0]` is mutated in-place, the rerender ensures effects see the new values
+2. **Effects always run**: `createEffect` subscriptions inside blocks are guaranteed to see updates
+3. **Version bumping works**: When value reference is identical, `versionSig` is bumped to trigger proxy reads
+
+#### Performance Considerations
+
+For **large lists (100+ items)** with frequent updates, this can be expensive. Mitigation strategies:
+
+1. **Use immutable updates**: Only changed items should have new references
+2. **Memoize expensive renders**: Wrap list items in `memo()` components
+3. **Virtual scrolling**: Only render visible items
+4. **Optimize `rerenderBlock` fast paths**: The runtime tries to patch text/elements in-place when possible
+
+#### Example: Optimizing Large Lists
+
+```tsx
+// ❌ Potentially slow for large lists
+createList(
+  () => hugeArray, // 1000+ items
+  item => <ExpensiveComponent item={item} />,
+  createElement,
+  item => item.id,
+)
+
+// ✅ Better: Memoize expensive components
+const MemoizedItem = memo(ExpensiveComponent)
+createList(
+  () => hugeArray,
+  item => <MemoizedItem item={item} />,
+  createElement,
+  item => item.id,
+)
+
+// ✅ Best: Virtual scrolling for very large lists
+createList(
+  () => visibleItems, // Only render visible slice
+  item => <Item item={item} />,
+  createElement,
+  item => item.id,
+)
+```
+
+#### Future: Configurable Strategy?
+
+A potential future enhancement could add an option:
+
+```ts
+createList(items, renderItem, createElement, getKey, {
+  rerenderStrategy: 'always' | 'on-change', // Default: 'always'
+})
+```
+
+Where `'on-change'` would skip rerender when `value` and `index` are unchanged. However, this requires users to guarantee immutable updates or manually trigger version bumps for mutations.
+
+### 10.4 Primitive Proxies Are Internal Only
+
+#### Scope
+
+The `PRIMITIVE_PROXY` symbol is recognized by `createElement` **only during keyed-block mounting**. This is an internal implementation detail.
+
+#### ⚠️ Do Not Use Outside Lists
+
+```ts
+// ❌ Wrong - Won't update reactively
+const count = createSignal(0)
+const proxy = createValueProxy(count, versionSig)
+return createElement(proxy)  // Creates static text node!
+
+// ✅ Correct - Use standard bindings
+const count = createSignal(0)
+return <div>{count}</div>  // Uses reactive text binding
+```
+
+**Rationale**: Primitive proxies are designed specifically for the keyed-list update flow. Using them elsewhere bypasses the standard binding system and creates non-reactive DOM.
+
+### 10.5 Incremental DOM Updates
+
+To preserve DOM identity, `rerenderBlock` implements several fast paths:
+
+1. **Text node → Text-like value**: Updates `.data` in-place
+2. **Element → Simple element**: Patches tag/attributes/textContent if structure matches
+3. **Same node instance**: Reuses without changes
+4. **Fallback**: Clears content and inserts new nodes
+
+This means:
+
+- ✅ Event listeners survive rerender (attached to preserved elements)
+- ✅ Input focus survives rerender (element identity preserved)
+- ✅ Component state survives rerender (root context reused)
+- ⚠️ Complex attribute changes (event handlers, style objects) may trigger fallback
+
+### 10.6 Summary of Design Trade-offs
+
+| Decision                            | Rationale                          | Trade-off                                      |
+| ----------------------------------- | ---------------------------------- | ---------------------------------------------- |
+| Primitive proxies expose prototypes | Preserves natural JS API           | `typeof` checks return `'object'`              |
+| Keyed blocks always rerender        | Guarantees effect/DOM sync         | Performance cost for large lists               |
+| Proxies are internal-only           | Maintains binding system integrity | Cannot use for custom scenarios                |
+| Incremental DOM patching            | Preserves identity/state/events    | Limited attribute patching (simple props only) |
+
+**Bottom Line**: Keyed lists prioritize **correctness and developer ergonomics** over raw performance. For performance-critical scenarios, use the optimization strategies documented above.
+
+---
+
 ## 11. DevTools Specification (Draft)
 
 ### Core Features

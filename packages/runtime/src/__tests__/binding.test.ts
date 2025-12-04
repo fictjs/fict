@@ -18,6 +18,7 @@ import {
   createShow,
   createPortal,
   onDestroy,
+  unwrapPrimitive,
   isReactive,
   unwrap,
 } from '..'
@@ -622,6 +623,55 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('124')
 
       dispose()
+    })
+
+    it('unwrapPrimitive extracts raw values from keyed primitive proxies', async () => {
+      const items = createSignal([1, 2, 3])
+      const typeResults: string[] = []
+      const equalityResults: boolean[] = []
+      const unwrappedTypeResults: string[] = []
+      const unwrappedEqualityResults: boolean[] = []
+
+      const { marker, dispose } = createList(
+        () => items(),
+        item => {
+          // Proxied primitive behavior
+          typeResults.push(typeof item)
+          equalityResults.push(item === 1)
+
+          // Unwrapped primitive behavior
+          const raw = unwrapPrimitive(item)
+          unwrappedTypeResults.push(typeof raw)
+          unwrappedEqualityResults.push(raw === 1)
+
+          const div = document.createElement('div')
+          div.textContent = String(item)
+          return div
+        },
+        createElement,
+        item => item,
+      )
+      container.appendChild(marker)
+
+      // Proxied values return 'object' and fail strict equality
+      expect(typeResults).toEqual(['object', 'object', 'object'])
+      expect(equalityResults).toEqual([false, false, false])
+
+      // Unwrapped values return correct type and pass strict equality
+      expect(unwrappedTypeResults).toEqual(['number', 'number', 'number'])
+      expect(unwrappedEqualityResults).toEqual([true, false, false])
+
+      dispose()
+    })
+
+    it('unwrapPrimitive passes through non-proxy values unchanged', () => {
+      expect(unwrapPrimitive(42)).toBe(42)
+      expect(unwrapPrimitive('hello')).toBe('hello')
+      expect(unwrapPrimitive(true)).toBe(true)
+      expect(unwrapPrimitive(null)).toBe(null)
+      expect(unwrapPrimitive(undefined)).toBe(undefined)
+      const obj = { foo: 'bar' }
+      expect(unwrapPrimitive(obj)).toBe(obj)
     })
   })
 

@@ -56,6 +56,7 @@ export {
   createShow,
   // Utility functions
   unwrap,
+  unwrapPrimitive,
 } from './binding'
 
 // ============================================================================

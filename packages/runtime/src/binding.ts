@@ -75,6 +75,39 @@ export function unwrap<T>(value: MaybeReactive<T>): T {
 }
 
 export const PRIMITIVE_PROXY = Symbol('fict:primitive-proxy')
+const PRIMITIVE_PROXY_RAW_VALUE = Symbol('fict:primitive-proxy:raw-value')
+
+/**
+ * Unwrap a primitive proxy value to get the raw primitive value.
+ * This is primarily useful for advanced scenarios where you need the actual
+ * primitive type (e.g., for typeof checks or strict equality comparisons).
+ *
+ * @param value - A potentially proxied primitive value
+ * @returns The raw primitive value
+ *
+ * @example
+ * ```ts
+ * createList(
+ *   () => [1, 2, 3],
+ *   (item) => {
+ *     const raw = unwrapPrimitive(item)
+ *     typeof raw === 'number'  // true
+ *     raw === 1  // true (for first item)
+ *   },
+ *   item => item
+ * )
+ * ```
+ */
+export function unwrapPrimitive<T>(value: T): T {
+  if (value && typeof value === 'object' && PRIMITIVE_PROXY in value) {
+    // Use the internal raw value getter
+    const getRawValue = (value as any)[PRIMITIVE_PROXY_RAW_VALUE]
+    if (typeof getRawValue === 'function') {
+      return getRawValue()
+    }
+  }
+  return value
+}
 
 function createValueProxy<T>(valueSignal: Signal<T>, versionSignal: Signal<number>): T {
   const read = () => {
@@ -104,6 +137,9 @@ function createValueProxy<T>(valueSignal: Signal<T>, versionSignal: Signal<numbe
     get(_target, prop, receiver) {
       if (prop === PRIMITIVE_PROXY) {
         return true
+      }
+      if (prop === PRIMITIVE_PROXY_RAW_VALUE) {
+        return () => read()
       }
       if (prop === Symbol.toPrimitive) {
         return (hint: 'string' | 'number' | 'default') => {
@@ -153,6 +189,9 @@ function createValueProxy<T>(valueSignal: Signal<T>, versionSignal: Signal<numbe
       return false
     },
     has(_target, prop) {
+      if (prop === PRIMITIVE_PROXY || prop === PRIMITIVE_PROXY_RAW_VALUE) {
+        return true
+      }
       const value = read() as any
       if (value != null && (typeof value === 'object' || typeof value === 'function')) {
         return prop in value
