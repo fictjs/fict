@@ -47,6 +47,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "bench": "vitest bench --run",
+    "bench:watch": "vitest bench",
     "lint": "eslint src",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "clean": "rm -rf dist coverage"
