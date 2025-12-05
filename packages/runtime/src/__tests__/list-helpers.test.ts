@@ -16,7 +16,6 @@ import {
 import { createSignal } from '../signal'
 import { createEffect } from '../effect'
 import { createRootContext, flushOnMount, onDestroy, popRoot, pushRoot } from '../lifecycle'
-import { enableFineGrainedRuntime, disableFineGrainedRuntime } from '../feature-flags'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -462,46 +461,6 @@ describe('List Helpers', () => {
 
       expect(container.children.length).toBe(1)
       expect(container.children[0].textContent).toBe('Bob-0')
-    })
-
-    it('falls back to the legacy keyed list path when the flag is disabled', async () => {
-      disableFineGrainedRuntime()
-
-      const items = createSignal([
-        { id: 1, name: 'Alice' },
-        { id: 2, name: 'Bob' },
-      ])
-
-      const listBinding = createKeyedList(
-        () => items(),
-        item => item.id,
-        (item, index) => {
-          const div = document.createElement('div')
-          div.textContent = `legacy-${(item as { name: string }).name}-${index}`
-          return [div]
-        },
-      )
-
-      container.appendChild(listBinding.marker)
-
-      await tick()
-
-      expect(container.children.length).toBe(2)
-      expect(container.children[0].textContent).toBe('legacy-Alice-0')
-      expect(container.children[1].textContent).toBe('legacy-Bob-1')
-
-      items([
-        { id: 1, name: 'Carol' },
-        { id: 2, name: 'Dave' },
-      ])
-
-      await tick()
-
-      expect(container.children[0].textContent).toBe('legacy-Carol-0')
-      expect(container.children[1].textContent).toBe('legacy-Dave-1')
-
-      enableFineGrainedRuntime()
-      listBinding.dispose()
     })
 
     it('reorders items correctly', async () => {

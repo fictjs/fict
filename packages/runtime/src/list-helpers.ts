@@ -16,10 +16,6 @@ import {
   type RootContext,
 } from './lifecycle'
 import { createEffect } from './effect'
-import { createList } from './binding'
-import { createElement } from './dom'
-import { isFineGrainedRuntimeEnabled } from './feature-flags'
-import type { FictNode } from './types'
 
 // ============================================================================
 // Types
@@ -70,7 +66,6 @@ export interface KeyedListBinding {
 }
 
 type FineGrainedRenderItem<T> = (itemSig: Signal<T>, indexSig: Signal<number>) => Node[]
-type LegacyRenderItem<T> = (item: T, index: number) => FictNode
 
 /**
  * A block identified by start/end comment markers.
@@ -318,12 +313,9 @@ export function isNodeBetweenMarkers(
 export function createKeyedList<T>(
   getItems: () => T[],
   keyFn: (item: T, index: number) => string | number,
-  renderItem: FineGrainedRenderItem<T> | LegacyRenderItem<T>,
+  renderItem: FineGrainedRenderItem<T>,
 ): KeyedListBinding {
-  if (!isFineGrainedRuntimeEnabled()) {
-    return createLegacyKeyedList(getItems, keyFn, renderItem as LegacyRenderItem<T>)
-  }
-  return createFineGrainedKeyedList(getItems, keyFn, renderItem as FineGrainedRenderItem<T>)
+  return createFineGrainedKeyedList(getItems, keyFn, renderItem)
 }
 
 function createFineGrainedKeyedList<T>(
@@ -438,32 +430,5 @@ function createFineGrainedKeyedList<T>(
       effectDispose?.()
       container.dispose()
     },
-  }
-}
-
-function createLegacyKeyedList<T>(
-  getItems: () => T[],
-  keyFn: (item: T, index: number) => string | number,
-  renderItem: LegacyRenderItem<T>,
-): KeyedListBinding {
-  const binding = createList(getItems, renderItem, createElement, keyFn)
-  const fragment = binding.marker
-
-  if (!(fragment instanceof DocumentFragment)) {
-    throw new Error('createList did not produce a fragment marker')
-  }
-
-  const startMarker = fragment.firstChild
-  const endMarker = fragment.lastChild
-
-  if (!(startMarker instanceof Comment) || !(endMarker instanceof Comment)) {
-    throw new Error('createList did not produce keyed list markers')
-  }
-
-  return {
-    marker: fragment,
-    startMarker,
-    endMarker,
-    dispose: binding.dispose,
   }
 }

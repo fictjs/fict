@@ -85,7 +85,7 @@ Runtime keeps ManagedBlock for legacy paths, but compiler-generated code bypasse
 ### Phase 4 – Rollout & cleanup
 
 - [x] Default flag to new compiler output after internal verification. _(`fineGrainedRendering` now defaults to `true`, the compiler merges `fineGrainedDom: true` by default, and the migration guide documents the opt-out path.)_
-- [ ] Deprecate rerender-specific code (ManagedBranch, rerenderBlock fast paths) once no longer needed.
+- [x] Deprecate rerender-specific code (ManagedBranch, rerenderBlock fast paths) once no longer needed. _(Removed feature flag infrastructure and legacy keyed list adapter on 2025-12-05. Core rerender functions retained as they're used by fine-grained mode.)_
 - [x] Update docs (architecture, README, contributing) to describe the new compilation model. _(Updated `README.md`, `docs/architecture.md`, `docs/fine-grained-migration.md`, and `CONTRIBUTING.md` with the new defaults and rollback instructions.)_
 
 ## 6. Risks & mitigations
