@@ -209,7 +209,7 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  it.skip(
+  it(
     'lazily evaluates branch-only derived regions when conditionally rendered',
     { timeout: 10000 },
     async () => {
@@ -312,11 +312,8 @@ describe('compiled templates DOM integration', () => {
     },
   )
 
-  it.skip(
-    'keeps async $effect boundaries from committing stale data',
-    { timeout: 10000 },
-    async () => {
-      const source = `
+  it('keeps async $effect boundaries from committing stale data', { timeout: 10000 }, async () => {
+    const source = `
       import { $state, $effect, render } from 'fict'
 
       const pending: Array<() => void> = []
@@ -358,35 +355,34 @@ describe('compiled templates DOM integration', () => {
       }
     `
 
-      const mod = compileAndLoad<{
-        mount: (el: HTMLElement) => () => void
-        effectLog: string[]
-        flushPending(): void
-      }>(source, { fineGrainedDom: false })
-      const container = document.createElement('div')
-      document.body.appendChild(container)
-      const teardown = mod.mount(container)
-      const incButton = container.querySelector('[data-id="increment"]') as HTMLButtonElement
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      effectLog: string[]
+      flushPending(): void
+    }>(source, { fineGrainedDom: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const incButton = container.querySelector('[data-id="increment"]') as HTMLButtonElement
 
-      await flushUpdates()
-      await flushUpdates()
-      mod.flushPending()
-      expect(mod.effectLog).toEqual(['commit:0'])
-      mod.effectLog.length = 0
+    await flushUpdates()
+    await flushUpdates()
+    mod.flushPending()
+    expect(mod.effectLog).toEqual(['commit:0'])
+    mod.effectLog.length = 0
 
-      incButton.click()
-      incButton.click()
-      await flushUpdates()
-      await flushUpdates()
-      mod.flushPending()
+    incButton.click()
+    incButton.click()
+    await flushUpdates()
+    await flushUpdates()
+    mod.flushPending()
 
-      expect(mod.effectLog).toEqual(['commit:2'])
-      expect(container.querySelector('[data-id="value"]')?.textContent).toBe('2')
+    expect(mod.effectLog).toEqual(['commit:2'])
+    expect(container.querySelector('[data-id="value"]')?.textContent).toBe('2')
 
-      teardown()
-      container.remove()
-    },
-  )
+    teardown()
+    container.remove()
+  })
 
   it('exposes latest state to DOM event handlers', { timeout: 10000 }, async () => {
     const source = `

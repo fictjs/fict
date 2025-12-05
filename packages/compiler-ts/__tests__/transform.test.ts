@@ -398,6 +398,48 @@ describe('createFictTransformer', () => {
     })
   })
 
+  describe('Fine-grained DOM lowering (fineGrainedDom=true)', () => {
+    it('binds element attributes/styles/text via DOM helpers', () => {
+      const output = transform(
+        `
+        import { $state } from 'fict'
+        function View() {
+          let count = $state(1)
+          return (
+            <section class={count > 1 ? 'large' : 'small'} style={{ opacity: count / 10 }}>
+              <p data-id="value">{count}</p>
+            </section>
+          )
+        }
+      `,
+        { fineGrainedDom: true },
+      )
+
+      expect(output).toContain('document.createElement("section")')
+      expect(output).toContain('__fictBindClass(')
+      expect(output).toContain('__fictBindStyle(')
+      expect(output).toContain('__fictBindText(')
+      expect(output).not.toContain('__fictInsert(')
+    })
+
+    it('lowers keyed lists to fine-grained DOM renderers', () => {
+      const output = transform(
+        `
+        import { $state } from 'fict'
+        function List() {
+          let items = $state([{ id: 1, text: 'One' }])
+          return <ul>{items.map(item => <li key={item.id}>{item.text}</li>)}</ul>
+        }
+      `,
+        { fineGrainedDom: true },
+      )
+
+      expect(output).toContain('__fictKeyedList')
+      expect(output).toContain('__fictBindText(')
+      expect(output).toContain('document.createElement("li")')
+    })
+  })
+
   describe('Full component transformation', () => {
     it('transforms a complete Counter component', () => {
       const output = transform(`
