@@ -76,17 +76,17 @@ Runtime keeps ManagedBlock for legacy paths, but compiler-generated code bypasse
 - [x] Output list updaters with explicit key diff logic and version counter usage. _(Compiler now lowers keyed `map` calls (when JSX + `key`) into fine-grained renderers that operate on versioned `itemSig`/`indexSig` signals, emitting DOM creation + `bind_` calls instead of rerendering strings.)\*
 - [x] Ensure conditional outputs map to "truthy branch" / "fallback branch" functions that only mount once. _(Conditional lowering now detects JSX branches and routes them through the fine-grained template builder so both true/false branches emit stable DOM graphs with `bind_` hooks instead of runtime rerendering.)\*
 
-### Phase 3 – Runtime integration & opt-in flag
+### Phase 3 – Runtime integration & testing
 
-- [x] Add feature flag to switch between legacy rerender path and new fine-grained path. _(`createKeyedList` now consults `isFineGrainedRuntimeEnabled()` to choose between the legacy `createList` implementation and the new fine-grained block manager, and runtime tests toggle the flag via `vitest.setup.ts`.)_
-- [x] Update tests to cover both modes (especially nested keyed lists, conditional toggles, primitive updates). _(Extended `packages/runtime/src/__tests__/fine-grained-flag.e2e.test.ts` with a primitive keyed-list scenario to exercise same data across legacy and fine-grained modes.)_
-- [x] Document migration guidance. _(See `docs/fine-grained-migration.md` for rollout instructions.)_
+- [x] Add feature flag to switch between legacy rerender path and new fine-grained path. _(Feature flag infrastructure was implemented and later removed on 2025-12-05 after validation.)_
+- [x] Update tests to cover fine-grained implementation (nested keyed lists, conditional toggles, primitive updates). _(Comprehensive test suite validates fine-grained rendering across all scenarios.)_
+- [x] Document migration guidance. _(Migration documentation was provided and later archived after legacy mode removal.)_
 
 ### Phase 4 – Rollout & cleanup
 
-- [x] Default flag to new compiler output after internal verification. _(`fineGrainedRendering` now defaults to `true`, the compiler merges `fineGrainedDom: true` by default, and the migration guide documents the opt-out path.)_
-- [x] Deprecate rerender-specific code (ManagedBranch, rerenderBlock fast paths) once no longer needed. _(Removed feature flag infrastructure and legacy keyed list adapter on 2025-12-05. Core rerender functions retained as they're used by fine-grained mode.)_
-- [x] Update docs (architecture, README, contributing) to describe the new compilation model. _(Updated `README.md`, `docs/architecture.md`, `docs/fine-grained-migration.md`, and `CONTRIBUTING.md` with the new defaults and rollback instructions.)_
+- [x] Default flag to new compiler output after internal verification. _(Fine-grained rendering became the default and only mode.)_
+- [x] Deprecate rerender-specific code (ManagedBranch, rerenderBlock fast paths) once no longer needed. _(Removed feature flag infrastructure and legacy keyed list adapter on 2025-12-05. Core block management functions retained as they implement the fine-grained mechanism.)_
+- [x] Update docs (architecture, README, contributing) to describe the new compilation model. _(Updated all documentation to reflect fine-grained as the only rendering mode on 2025-12-05.)_
 
 ## 6. Risks & mitigations
 
@@ -101,5 +101,5 @@ Runtime keeps ManagedBlock for legacy paths, but compiler-generated code bypasse
 - [x] Implement Phase 1 helpers + tests.
 - [x] Draft IR for compiler codegen, including node/anchor allocation strategy. _(See `docs/fine-grained-ir.md`.)_
 - [x] Implement list updater generator with version counters. _(`createKeyedBlock` now wraps items in `createVersionedSignal`, see `list-helpers.ts` and accompanying tests.)_
-- [x] Integrate flag + end-to-end tests (counter, keyed list, nested conditionals). _(Runtime exports `enable/disableFineGrainedRuntime`, `render` now annotates containers, and `src/__tests__/fine-grained-flag.e2e.test.ts` exercises both modes.)_
-- [x] Update docs (architecture + new plan) once feature is stable. _(README + `docs/architecture.md` now document the flag/preview, and this plan references the supporting specs.)_
+- [x] Integrate flag + end-to-end tests (counter, keyed list, nested conditionals). _(End-to-end tests validated fine-grained rendering; flag infrastructure was later removed on 2025-12-05.)_
+- [x] Update docs (architecture + new plan) once feature is stable. _(Documentation updated to reflect fine-grained as the only rendering mode on 2025-12-05.)_

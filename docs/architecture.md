@@ -204,11 +204,11 @@ No resident memo node is established; instead, it is calculated on demand when t
 The compiler refactor described in [`docs/compiler-fine-grained-plan.md`](./compiler-fine-grained-plan.md) is landing in phases. As of the current build:
 
 - Runtime helper layer (`bindText`, `bindClass`, `bindStyle`, `moveMarkerBlock`, `createVersionedSignal`, etc.) is in place.
-- Fine-grained runtime execution is **enabled by default**; `disableFineGrainedRuntime()` / `enableFineGrainedRuntime()` remain as escape hatches, and `render()` annotates the container with `data-fict-fine-grained="1"` when the new path is active.
-- End-to-end scenarios (counter, keyed lists, nested conditionals) run in both legacy and fine-grained modes to ensure feature parity (`src/__tests__/fine-grained-flag.e2e.test.ts`).
+- Fine-grained runtime execution is **the only mode**; `render()` annotates the container with `data-fict-fine-grained="1"` for debugging and monitoring.
+- End-to-end scenarios (counter, keyed lists, nested conditionals, primitives) verify the fine-grained implementation.
 - The compiler work (IR + JSX subset) is documented in [`docs/fine-grained-jsx-subset.md`](./fine-grained-jsx-subset.md) and [`docs/fine-grained-ir.md`](./fine-grained-ir.md).
 
-This section will continue to expand as we retire the rerender fallback entirely; for now it documents the architectural hand-off between runtime helpers and the new codegen.
+Legacy mode infrastructure was removed on 2025-12-05; the architecture is now fully unified around fine-grained updates.
 
 ---
 
