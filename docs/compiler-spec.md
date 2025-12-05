@@ -5,12 +5,12 @@
 Goal:
 Given a piece of TSX source code, the Fict compiler needs to:
 
-1. Find all `$state` declarations (signal sources)
-2. Infer all derived expressions dependent on `$state`
-3. Identify dependencies in `$effect` and JSX dynamic bindings
-4. Build a minimized, glitch-free dependency graph
-5. Generate corresponding runtime calls (state/memo/effect/binding)
-6. Conservatively downgrade and issue compilation warnings where semantics are uncertain
+1. **Find** all `$state` declarations (signal sources) according to strict validity rules.
+2. **Infer** all derived expressions dependent on `$state`.
+3. **Identify** dependencies in `$effect` and JSX dynamic bindings.
+4. **Build** a minimized, glitch-free dependency graph.
+5. **Generate** corresponding runtime calls (state/memo/effect/binding).
+6. **Conservatively downgrade** and issue compilation warnings where semantics are uncertain.
 
 This specification uses a set of "Rules A–L" to describe the entire process.
 
@@ -39,8 +39,9 @@ const y = $state({ foo: 1 })
 Constraints:
 
 - `$state` must be imported from `'fict'` (or subsequent official packages).
-- Calls must appear at the top level of a module / component function body.
-- `$state` is not allowed in loops or conditions (if present -> compilation error or strong warning).
+- Calls must appear at the **top level** of a module / component function body.
+- `$state` **cannot** be called inside loops (`for`, `while`, `do-while`) or conditional branches (`if`, `switch`, ternary). This is a **hard compilation error**.
+  - Rationale: Signals must be topologically stable; dynamic creation of signals inside control flow breaks the static graph and is often a bug (e.g., recreating state on every render if it were allowed).
 
 ### Compilation Behavior
 
@@ -540,7 +541,9 @@ Compiler should:
 
 ---
 
-## 14. Boundaries: When "Not To Be Smart"
+## 14. **Boundaries**: When "Not To Be Smart"
+
+15. **Appendix**: Formal Semantics (v1.0)
 
 Fict's principle is:
 
@@ -557,3 +560,53 @@ Therefore:
 
 This Spec itself will be constantly corrected with implementation:
 **The final criterion is the balance of "User Intuition + Implementability + Performance".**
+
+---
+
+## 15. Appendix: Formal Semantics (v1.0)
+
+This section defines the "contract" for v1.0. These rules are enforced by the compiler.
+
+### 15.1 State Semantics
+
+1.  **Top-Level Only**: `$state(v)` defines a storage cell. It is valid **only** at the top level of a component or module.
+    - **Illegal**: Inside `if`, `for`, `while`, `do`, `switch`. (Compiler Error)
+    - **Illegal**: Inside nested functions/callbacks. (Compiler Warning/Error, depending on usage)
+
+2.  **Assignment**:
+    - `x = v` where `x` is a `$state` variable compiles to `x(v)` (write).
+    - `x` appearing in an expression compiles to `x()` (read).
+    - **Aliasing**: `const y = x` creates a **reactive getter** `() => x()`.
+      - Since components run once, this ensures `y` remains up-to-date.
+      - To create a **snapshot** (static value), you must explicitly unwrap or untrack (not yet fully defined, usually `untrack(() => x)`).
+
+### 15.2 Derived Value Semantics
+
+1.  **Implicit Derivation**: `const y = x * 2` is automatically a memo _if_ `y` is used in a reactive sink (Effect/JSX).
+2.  **Snapshotting**: If `const y = x * 2` is never used in a reactive sink, it remains a one-time calculation (standard JS behavior).
+3.  **Closures & Events**:
+    - **Rule**: A closure created in the component body that reads `$state` (e.g., `const onClick = () => console.log(count)`) always reads the **live** value.
+    - **Implementation**: The compiler ensures `count` inside the closure becomes `count()` (getter), not a captured variable.
+    - **Contrast**: `const snapshot = count; const onClick = () => console.log(snapshot)` logs the value at creation time.
+
+### 15.3 Effect Semantics
+
+1.  **Scope**: `$effect` registers a side effect that runs after render and tracks dependencies.
+2.  **Tracking**: Sync reads of `$state` / derived memos within the function are tracked.
+3.  **Untracked**: Reads after `await` or inside untracked scopes are not tracked.
+4.  **Placement**: `$effect` must be at the top level (similar to hooks). Conditional `$effect` is **illegal**.
+
+### 15.4 Loop Semantics
+
+1.  **Keyed List**: `items.map(item => ...)` inside JSX is optimized to `createKeyedList`.
+2.  **No State in Loop**: As per 15.1, you cannot create new `$state` sources inside a loop.
+3.  **Derived in Loop**:
+    - `for (let item of list) { const label = item.name; ... }`
+    - If `label` depends on a signal, it is a local derived value. The compiler treats this as a "fresh" derivation for each iteration.
+
+### 15.5 Ambiguity Resolution
+
+- **Destructuring**: `const { id } = $state({ id: 1 })`.
+  - `id` is a **snapshot** (number), not a signal.
+  - To track `id`, use `const id = () => state.id` or access deeply `$state.id`.
+- **Blackbox Functions**: Passing `$state` to a function `fn(state)` passes the _current value_. `fn` cannot subscribe to updates unless it receives a getter or signal object (future `$store`).

@@ -100,6 +100,18 @@ The `render` function automatically marks containers with `data-fict-fine-graine
 - 🧠 Compiler plan: [`docs/compiler-fine-grained-plan.md`](./docs/compiler-fine-grained-plan.md)
 - 🔬 Technical specs: [`docs/fine-grained-jsx-subset.md`](./docs/fine-grained-jsx-subset.md), [`docs/fine-grained-ir.md`](./docs/fine-grained-ir.md)
 
+### Compiler modes & `fineGrainedDom`
+
+The TypeScript transformer ships with `fineGrainedDom` **enabled by default** so that generated code matches the runtime pipeline above. If you are wiring the transformer manually (e.g. inside a custom build step) make sure you pass through the same option:
+
+```ts
+import { createFictTransformer } from 'fict/compiler-ts'
+
+const transformer = createFictTransformer(program, { fineGrainedDom: true })
+```
+
+Only set `fineGrainedDom: false` when you explicitly need the legacy `insert()` fallback (for example, when bisecting compiler output or comparing against older fixtures). Mixing the runtime's fine-grained renderer with legacy compiler output will lead to missing helpers at runtime, so keep the option consistent across build tools and CI.
+
 ---
 
 ### Example: The "Add to Cart" fiction

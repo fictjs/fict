@@ -1,8 +1,10 @@
 # Fict Architecture
 
-> It looks like normal TSX, but inside it's a sophisticated dependency graph + compilation pipeline.
+> It looks like normal TSX, but inside Fict is a compiler-first framework that converts React-like semantics into fine-grained reactive primitives.
 
-This document introduces Fict's core architecture from an engineering perspective:
+For the rigorous Formal Semantics specification (v1.0), please refer to [compiler-spec.md](./compiler-spec.md#15-appendix-formal-semantics-v10).
+
+This document outlines the high-level engineering architecture. from an engineering perspective:
 
 - How the compiler understands `$state` / `$effect`
 - How the dependency graph is built and how the DOM is updated
