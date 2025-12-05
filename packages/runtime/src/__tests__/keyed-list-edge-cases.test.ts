@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 
-import { createSignal } from '../signal'
-import { createKeyedList } from '../list-helpers'
 import { createEffect } from '../effect'
+import { createKeyedList } from '../list-helpers'
+import { createSignal } from '../signal'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -820,8 +820,8 @@ describe('Keyed List Edge Cases', () => {
 
       expect(container.querySelectorAll('li').length).toBe(2)
 
-      const startMarkerParent = listBinding.startMarker.parentNode
-      const endMarkerParent = listBinding.endMarker.parentNode
+      const _startMarkerParent = listBinding.startMarker.parentNode
+      const _endMarkerParent = listBinding.endMarker.parentNode
 
       listBinding.dispose()
 

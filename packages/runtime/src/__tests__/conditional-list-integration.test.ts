@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 
-import { createSignal } from '../signal'
-import { createKeyedList } from '../list-helpers'
 import { createConditional } from '../binding'
-import { createEffect } from '../effect'
 import { createElement } from '../dom'
+import { createEffect } from '../effect'
+import { createKeyedList } from '../list-helpers'
+import { createSignal } from '../signal'
 
 const tick = () =>
   new Promise<void>(resolve =>

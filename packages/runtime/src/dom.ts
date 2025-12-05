@@ -102,7 +102,7 @@ export function createElement(node: FictNode): DOMElement {
   // Primitive proxy produced by keyed list binding
   if (typeof node === 'object' && node !== null && !(node instanceof Node)) {
     const nodeRecord = node as unknown as Record<PropertyKey, unknown>
-    if (Boolean(nodeRecord[PRIMITIVE_PROXY])) {
+    if (nodeRecord[PRIMITIVE_PROXY]) {
       const primitiveGetter = nodeRecord[Symbol.toPrimitive]
       const value =
         typeof primitiveGetter === 'function' ? primitiveGetter.call(node, 'default') : node

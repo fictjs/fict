@@ -2,10 +2,10 @@
 
 import { bench, describe } from 'vitest'
 
-import { createSignal, type Signal } from '../signal'
-import { createKeyedList } from '../list-helpers'
 import { createList } from '../binding'
 import { createElement } from '../dom'
+import { createKeyedList } from '../list-helpers'
+import { createSignal, type Signal } from '../signal'
 
 const tick = () =>
   new Promise<void>(resolve =>

@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 
+import { createEffect } from '../effect'
+import { createRootContext, flushOnMount, onDestroy, popRoot, pushRoot } from '../lifecycle'
 import {
   moveNodesBefore,
   removeNodes,
@@ -14,8 +16,6 @@ import {
   isNodeBetweenMarkers,
 } from '../list-helpers'
 import { createSignal } from '../signal'
-import { createEffect } from '../effect'
-import { createRootContext, flushOnMount, onDestroy, popRoot, pushRoot } from '../lifecycle'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -177,7 +177,7 @@ describe('List Helpers', () => {
       container.appendChild(listContainer.endMarker)
 
       // Create some blocks
-      const block1 = createKeyedBlock(1, { id: 1, name: 'Alice' }, 0, (itemSig, indexSig) => {
+      const block1 = createKeyedBlock(1, { id: 1, name: 'Alice' }, 0, (itemSig, _indexSig) => {
         const div = document.createElement('div')
         createEffect(() => {
           div.textContent = itemSig().name
@@ -186,7 +186,7 @@ describe('List Helpers', () => {
         return [div]
       })
 
-      const block2 = createKeyedBlock(2, { id: 2, name: 'Bob' }, 1, (itemSig, indexSig) => {
+      const block2 = createKeyedBlock(2, { id: 2, name: 'Bob' }, 1, (itemSig, _indexSig) => {
         const div = document.createElement('div')
         createEffect(() => {
           div.textContent = itemSig().name
@@ -557,7 +557,7 @@ describe('List Helpers', () => {
       const listBinding = createKeyedList(
         () => items(),
         item => item.id,
-        (itemSig, indexSig) => {
+        (itemSig, _indexSig) => {
           const dt = document.createElement('dt')
           const dd = document.createElement('dd')
 
@@ -587,12 +587,12 @@ describe('List Helpers', () => {
         { id: 2, name: 'Bob' },
       ])
 
-      let destroyCount = 0
+      const _destroyCount = 0
 
       const listBinding = createKeyedList(
         () => items(),
         item => item.id,
-        (itemSig, indexSig) => {
+        (itemSig, _indexSig) => {
           const div = document.createElement('div')
           createEffect(() => {
             div.textContent = itemSig().name

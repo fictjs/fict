@@ -12,6 +12,7 @@
  */
 
 import { createEffect } from './effect'
+import { Fragment } from './jsx'
 import {
   clearRoot,
   createRootContext,
@@ -21,7 +22,6 @@ import {
   popRoot,
   type RootContext,
 } from './lifecycle'
-import { Fragment } from './jsx'
 import { createSignal, type Signal } from './signal'
 import type { Cleanup, FictNode } from './types'
 
@@ -923,7 +923,7 @@ function mountBlock<T>(
   const renderCurrent = () => renderItem(valueProxy, indexSig())
   const root = createRootContext()
   const prev = pushRoot(root)
-  let nodes: Node[] = [start]
+  const nodes: Node[] = [start]
   try {
     const output = renderCurrent()
     if (output != null && output !== false) {

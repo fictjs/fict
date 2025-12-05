@@ -5,8 +5,7 @@
  * They provide low-level primitives for DOM node manipulation without rebuilding.
  */
 
-import { createSignal, type Signal } from './signal'
-import { createVersionedSignal } from './versioned-signal'
+import { createEffect } from './effect'
 import {
   createRootContext,
   destroyRoot,
@@ -15,7 +14,8 @@ import {
   pushRoot,
   type RootContext,
 } from './lifecycle'
-import { createEffect } from './effect'
+import { createSignal, type Signal } from './signal'
+import { createVersionedSignal } from './versioned-signal'
 
 // ============================================================================
 // Types
