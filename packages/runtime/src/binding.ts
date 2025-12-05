@@ -110,12 +110,7 @@ export function unwrapPrimitive<T>(value: T): T {
   return value
 }
 
-function createValueProxy<T>(valueSignal: Signal<T>, versionSignal: Signal<number>): T {
-  const read = () => {
-    versionSignal()
-    return valueSignal()
-  }
-
+function createValueProxy<T>(read: () => T): T {
   const getPrimitivePrototype = (value: unknown): Record<PropertyKey, unknown> | undefined => {
     switch (typeof value) {
       case 'string':
@@ -814,7 +809,7 @@ export function createList<T>(
 
 // ============================================================================
 // Show/Hide Helper
-// ============================================================================
+// ==========================================================================
 
 /**
  * Create a show/hide binding that uses CSS display instead of DOM manipulation.
@@ -921,7 +916,10 @@ function mountBlock<T>(
   const valueSig = createSignal<T>(initialValue)
   const indexSig = createSignal<number>(initialIndex)
   const versionSig = createSignal(0)
-  const valueProxy = createValueProxy(valueSig, versionSig) as T
+  const valueProxy = createValueProxy(() => {
+    versionSig()
+    return valueSig()
+  }) as T
   const renderCurrent = () => renderItem(valueProxy, indexSig())
   const root = createRootContext()
   const prev = pushRoot(root)

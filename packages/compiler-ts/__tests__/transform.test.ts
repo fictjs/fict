@@ -1,13 +1,18 @@
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
-import { createFictTransformer } from '../src'
+import { createFictTransformer, type FictCompilerOptions } from '../src'
 
-function transform(code: string): string {
+function transform(code: string, options?: FictCompilerOptions): string {
   const normalized =
     code.includes('$state') && !code.includes("from 'fict'") && !code.includes('from "fict"')
       ? `import { $state } from 'fict'\n${code}`
       : code
+
+  const mergedOptions: FictCompilerOptions = {
+    fineGrainedDom: false,
+    ...options,
+  }
 
   const result = ts.transpileModule(normalized, {
     compilerOptions: {
@@ -16,7 +21,7 @@ function transform(code: string): string {
       jsx: ts.JsxEmit.Preserve,
     },
     transformers: {
-      before: [createFictTransformer(null)],
+      before: [createFictTransformer(null, mergedOptions)],
     },
   })
 

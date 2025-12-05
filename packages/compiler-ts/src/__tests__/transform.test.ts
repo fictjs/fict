@@ -4,10 +4,10 @@ import { describe, it, expect } from 'vitest'
 import { createFictTransformer, type FictCompilerOptions } from '../index'
 
 /**
- * Helper to transform source code and return the result
+ * Helper to transform source code with the legacy DOM lowering (fine-grained disabled).
  */
 function transform(source: string): string {
-  return transformWithOptions(source)
+  return transformWithOptions(source, { fineGrainedDom: false })
 }
 
 function transformWithOptions(source: string, options?: FictCompilerOptions): string {
@@ -235,7 +235,7 @@ describe('Fict Compiler - Basic Transforms', () => {
     })
   })
 
-  describe('Fine-grained DOM lowering (opt-in)', () => {
+  describe('Fine-grained DOM lowering (default)', () => {
     it('emits direct DOM creation and bindings for simple intrinsic JSX', () => {
       const input = `
         import { $state } from 'fict'
@@ -244,12 +244,45 @@ describe('Fict Compiler - Basic Transforms', () => {
           return <button data-count={count}>{count}</button>
         }
       `
-      const output = transformWithOptions(input, { fineGrainedDom: true })
+      const output = transformWithOptions(input)
       expect(output).toContain('document.createElement("button")')
       expect(output).toContain('document.createTextNode')
       expect(output).toContain('__fictBindAttribute')
       expect(output).toContain('__fictBindText')
+      expect(output).toContain('const __fg0_el0 = document.createElement("button")')
+      expect(output).toContain('const __fg0_txt0 = document.createTextNode("")')
       expect(output).toContain('count()')
+    })
+
+    it('lowers keyed list renderers to fine-grained DOM operations', () => {
+      const input = `
+        import { $state } from 'fict'
+        function List() {
+          let items = $state([{ id: 1, label: 'One' }])
+          return <ul>{items.map(item => <li key={item.id}>{item.label}</li>)}</ul>
+        }
+      `
+      const output = transformWithOptions(input)
+      expect(output).toContain('__fictKeyedList')
+      expect(output).toContain('document.createElement("li")')
+      expect(output).toContain('__fictBindText')
+      expect(output).toContain('__fgValueSig().label')
+    })
+
+    it('lowers conditional branches to fine-grained DOM operations', () => {
+      const input = `
+        import { $state } from 'fict'
+        function View() {
+          const show = $state(true)
+          const label = $state('ready')
+          return <section>{show() ? <span>{label()}</span> : <p>off</p>}</section>
+        }
+      `
+      const output = transformWithOptions(input)
+      expect(output).toContain('__fictConditional')
+      expect(output).toContain('document.createElement("span")')
+      expect(output).toContain('__fictBindText')
+      expect(output).toContain('document.createElement("p")')
     })
   })
 

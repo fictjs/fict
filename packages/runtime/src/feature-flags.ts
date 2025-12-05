@@ -3,7 +3,7 @@ export interface RuntimeFeatureFlags {
 }
 
 const flags: RuntimeFeatureFlags = {
-  fineGrainedRendering: false,
+  fineGrainedRendering: true,
 }
 
 export function enableFineGrainedRuntime(): void {

@@ -50,8 +50,7 @@ describe('Conditional + Keyed List Integration', () => {
         )
 
         const ul = document.createElement('ul')
-        ul.appendChild(listBinding.startMarker)
-        ul.appendChild(listBinding.endMarker)
+        ul.appendChild(listBinding.marker)
 
         return ul
       },
@@ -114,8 +113,7 @@ describe('Conditional + Keyed List Integration', () => {
         )
 
         const ul = document.createElement('ul')
-        ul.appendChild(listBinding.startMarker)
-        ul.appendChild(listBinding.endMarker)
+        ul.appendChild(listBinding.marker)
 
         return ul
       },
@@ -171,8 +169,7 @@ describe('Conditional + Keyed List Integration', () => {
         )
 
         const ul = document.createElement('ul')
-        ul.appendChild(listBinding.startMarker)
-        ul.appendChild(listBinding.endMarker)
+        ul.appendChild(listBinding.marker)
 
         return ul
       },
@@ -236,8 +233,7 @@ describe('Conditional + Keyed List Integration', () => {
         )
 
         const ul = document.createElement('ul')
-        ul.appendChild(listBinding.startMarker)
-        ul.appendChild(listBinding.endMarker)
+        ul.appendChild(listBinding.marker)
 
         return ul
       },
@@ -293,8 +289,7 @@ describe('Conditional + Keyed List Integration', () => {
         )
 
         const ul = document.createElement('ul')
-        ul.appendChild(listBinding.startMarker)
-        ul.appendChild(listBinding.endMarker)
+        ul.appendChild(listBinding.marker)
 
         return ul
       },
@@ -364,8 +359,7 @@ describe('Conditional + Keyed List Integration', () => {
         )
 
         const ul = document.createElement('ul')
-        ul.appendChild(listBinding.startMarker)
-        ul.appendChild(listBinding.endMarker)
+        ul.appendChild(listBinding.marker)
 
         return ul
       },

@@ -50,8 +50,7 @@ describe('Keyed List E2E', () => {
       },
     )
 
-    container.appendChild(listBinding.startMarker)
-    container.appendChild(listBinding.endMarker)
+    container.appendChild(listBinding.marker)
 
     await tick()
 
@@ -128,8 +127,7 @@ describe('Keyed List E2E', () => {
       },
     )
 
-    container.appendChild(listBinding.startMarker)
-    container.appendChild(listBinding.endMarker)
+    container.appendChild(listBinding.marker)
 
     await tick()
 
@@ -170,8 +168,7 @@ describe('Keyed List E2E', () => {
       },
     )
 
-    container.appendChild(listBinding.startMarker)
-    container.appendChild(listBinding.endMarker)
+    container.appendChild(listBinding.marker)
 
     await tick()
 
@@ -202,8 +199,7 @@ describe('Keyed List E2E', () => {
       },
     )
 
-    container.appendChild(listBinding.startMarker)
-    container.appendChild(listBinding.endMarker)
+    container.appendChild(listBinding.marker)
 
     await tick()
 

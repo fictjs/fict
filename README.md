@@ -81,18 +81,21 @@ pnpm install && pnpm build
 pnpm dev
 ```
 
-## Fine-grained runtime preview
+## Fine-grained runtime (default)
 
-Fict now ships an opt-in fine-grained DOM runtime that keeps keyed lists, fragments, and conditional regions fully live without remounting. The compiler work is ongoing, but you can already exercise the runtime helpers today:
+Fict now ships with the fine-grained DOM runtime **enabled by default**. Keyed lists, fragments, and conditional regions reuse their existing nodes; effects stay attached, focus is preserved, and primitive values remain live without forcing rerenders. Keep the legacy path around only when you need a quick rollback.
 
 ```ts
-import { enableFineGrainedRuntime, render } from 'fict/runtime'
+import { disableFineGrainedRuntime, render } from 'fict/runtime'
 
-enableFineGrainedRuntime()
+if (import.meta.env.VITE_USE_LEGACY_RUNTIME === '1') {
+  disableFineGrainedRuntime()
+}
+
 render(() => <App />, document.getElementById('root')!)
 ```
 
-When the flag is enabled, `render` annotates the root container with `data-fict-fine-grained="1"`, and the runtime routes keyed list updates through the new helper stack (`bindText`, `bindStyle`, `moveMarkerBlock`, `createVersionedSignal`, etc.).
+`render` annotates the root container with `data-fict-fine-grained="1"` whenever the new path is active (the default). Call `disableFineGrainedRuntime()` before rendering to fall back, and `enableFineGrainedRuntime()` to re-enter the fine-grained mode.
 
 - 📘 Architecture notes: [`docs/architecture.md`](./docs/architecture.md#fine-grained-dom-pipeline-preview)
 - 🧠 Compiler plan: [`docs/compiler-fine-grained-plan.md`](./docs/compiler-fine-grained-plan.md)

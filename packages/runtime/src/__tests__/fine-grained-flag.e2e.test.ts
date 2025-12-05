@@ -71,6 +71,15 @@ describe('fine-grained runtime flag integration', () => {
     expect(baseline.attr).toBeNull()
     expect(flagged.attr).toBe('1')
   })
+
+  it('primitive keyed list scenario stays in sync', async () => {
+    const baseline = await runScenario(false, primitiveKeyedListScenario)
+    const flagged = await runScenario(true, primitiveKeyedListScenario)
+
+    expect(flagged.snapshots).toEqual(baseline.snapshots)
+    expect(baseline.attr).toBeNull()
+    expect(flagged.attr).toBe('1')
+  })
 })
 
 async function counterScenario(container: HTMLElement): Promise<ScenarioResult> {
@@ -162,6 +171,42 @@ async function nestedConditionalScenario(container: HTMLElement): Promise<Scenar
   snapshots.push(container.textContent || '')
 
   showOuter(false)
+  await tick()
+  snapshots.push(container.textContent || '')
+
+  teardown()
+  return { snapshots, attr: container.getAttribute('data-fict-fine-grained') }
+}
+
+async function primitiveKeyedListScenario(container: HTMLElement): Promise<ScenarioResult> {
+  const items = createSignal([1, 2, 3])
+  const snapshots: string[] = []
+
+  const teardown = render(() => {
+    const binding = createList(
+      () => items(),
+      value => {
+        const span = document.createElement('span')
+        span.setAttribute('data-primitive', '1')
+        createEffect(() => {
+          span.textContent = `#${value}`
+        })
+        return span
+      },
+      createElement,
+      (_value, index) => index,
+    )
+    onCleanup(() => binding.dispose())
+    return binding.marker
+  }, container)
+
+  snapshots.push(container.textContent || '')
+
+  items([1, 2, 4])
+  await tick()
+  snapshots.push(container.textContent || '')
+
+  items([7, 2, 4])
   await tick()
   snapshots.push(container.textContent || '')
 

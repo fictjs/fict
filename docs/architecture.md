@@ -204,11 +204,11 @@ No resident memo node is established; instead, it is calculated on demand when t
 The compiler refactor described in [`docs/compiler-fine-grained-plan.md`](./compiler-fine-grained-plan.md) is landing in phases. As of the current build:
 
 - Runtime helper layer (`bindText`, `bindClass`, `bindStyle`, `moveMarkerBlock`, `createVersionedSignal`, etc.) is in place.
-- An opt-in feature flag (`enableFineGrainedRuntime`, `disableFineGrainedRuntime`) toggles the new execution path; `render()` annotates the container with `data-fict-fine-grained="1"` when active.
+- Fine-grained runtime execution is **enabled by default**; `disableFineGrainedRuntime()` / `enableFineGrainedRuntime()` remain as escape hatches, and `render()` annotates the container with `data-fict-fine-grained="1"` when the new path is active.
 - End-to-end scenarios (counter, keyed lists, nested conditionals) run in both legacy and fine-grained modes to ensure feature parity (`src/__tests__/fine-grained-flag.e2e.test.ts`).
 - The compiler work (IR + JSX subset) is documented in [`docs/fine-grained-jsx-subset.md`](./fine-grained-jsx-subset.md) and [`docs/fine-grained-ir.md`](./fine-grained-ir.md).
 
-This section will be expanded once the compiler emits the new IR by default; for now it serves as the architectural hand-off between runtime helpers and upcoming codegen.
+This section will continue to expand as we retire the rerender fallback entirely; for now it documents the architectural hand-off between runtime helpers and the new codegen.
 
 ---
 
@@ -688,7 +688,7 @@ The `PRIMITIVE_PROXY` symbol is recognized by `createElement` **only during keye
 ```ts
 // ❌ Wrong - Won't update reactively
 const count = createSignal(0)
-const proxy = createValueProxy(count, versionSig)
+const proxy = createValueProxy(() => count())
 return createElement(proxy)  // Creates static text node!
 
 // ✅ Correct - Use standard bindings

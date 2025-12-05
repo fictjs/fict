@@ -44,6 +44,11 @@ pnpm test:watch     # Watch mode
 pnpm test:coverage  # With coverage
 ```
 
+### Fine-grained DOM defaults
+
+- The TypeScript transformer now emits fine-grained DOM bindings by default; set `fineGrainedDom: false` in your `tsconfig` plugin entry only when bisecting regressions.
+- The runtime also defaults to the fine-grained path. Call `disableFineGrainedRuntime()` before `render()` in local repros if you need to compare against the legacy rerender implementation, then re-enable it afterwards.
+
 ### Code Quality
 
 ```bash

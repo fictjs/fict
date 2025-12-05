@@ -16,6 +16,10 @@ import {
   type RootContext,
 } from './lifecycle'
 import { createEffect } from './effect'
+import { createList } from './binding'
+import { createElement } from './dom'
+import { isFineGrainedRuntimeEnabled } from './feature-flags'
+import type { FictNode } from './types'
 
 // ============================================================================
 // Types
@@ -55,6 +59,8 @@ export interface KeyedListContainer<T = unknown> {
  * Binding handle returned by createKeyedList for compiler-generated code
  */
 export interface KeyedListBinding {
+  /** Document fragment placeholder inserted by the compiler/runtime */
+  marker: DocumentFragment
   /** Start marker comment node */
   startMarker: Comment
   /** End marker comment node */
@@ -62,6 +68,9 @@ export interface KeyedListBinding {
   /** Cleanup function */
   dispose: () => void
 }
+
+type FineGrainedRenderItem<T> = (itemSig: Signal<T>, indexSig: Signal<number>) => Node[]
+type LegacyRenderItem<T> = (item: T, index: number) => FictNode
 
 /**
  * A block identified by start/end comment markers.
@@ -156,7 +165,7 @@ function collectBlockNodes(block: MarkerBlock): Node[] {
 function removeBlockRange(block: MarkerBlock): void {
   let cursor: Node | null = block.start
   while (cursor) {
-    const next = cursor.nextSibling
+    const next: Node | null = cursor.nextSibling
     cursor.parentNode?.removeChild(cursor)
     if (cursor === block.end) {
       break
@@ -309,7 +318,18 @@ export function isNodeBetweenMarkers(
 export function createKeyedList<T>(
   getItems: () => T[],
   keyFn: (item: T, index: number) => string | number,
-  renderItem: (itemSig: Signal<T>, indexSig: Signal<number>) => Node[],
+  renderItem: FineGrainedRenderItem<T> | LegacyRenderItem<T>,
+): KeyedListBinding {
+  if (!isFineGrainedRuntimeEnabled()) {
+    return createLegacyKeyedList(getItems, keyFn, renderItem as LegacyRenderItem<T>)
+  }
+  return createFineGrainedKeyedList(getItems, keyFn, renderItem as FineGrainedRenderItem<T>)
+}
+
+function createFineGrainedKeyedList<T>(
+  getItems: () => T[],
+  keyFn: (item: T, index: number) => string | number,
+  renderItem: FineGrainedRenderItem<T>,
 ): KeyedListBinding {
   const container = createKeyedListContainer<T>()
   let pendingItems: T[] | null = null
@@ -405,8 +425,12 @@ export function createKeyedList<T>(
   }
 
   const effectDispose = createEffect(performDiff)
+  const marker = document.createDocumentFragment()
+  marker.appendChild(container.startMarker)
+  marker.appendChild(container.endMarker)
 
   return {
+    marker,
     startMarker: container.startMarker,
     endMarker: container.endMarker,
     dispose: () => {
@@ -414,5 +438,32 @@ export function createKeyedList<T>(
       effectDispose?.()
       container.dispose()
     },
+  }
+}
+
+function createLegacyKeyedList<T>(
+  getItems: () => T[],
+  keyFn: (item: T, index: number) => string | number,
+  renderItem: LegacyRenderItem<T>,
+): KeyedListBinding {
+  const binding = createList(getItems, renderItem, createElement, keyFn)
+  const fragment = binding.marker
+
+  if (!(fragment instanceof DocumentFragment)) {
+    throw new Error('createList did not produce a fragment marker')
+  }
+
+  const startMarker = fragment.firstChild
+  const endMarker = fragment.lastChild
+
+  if (!(startMarker instanceof Comment) || !(endMarker instanceof Comment)) {
+    throw new Error('createList did not produce keyed list markers')
+  }
+
+  return {
+    marker: fragment,
+    startMarker,
+    endMarker,
+    dispose: binding.dispose,
   }
 }

@@ -2,7 +2,7 @@
 
 import { bench, describe } from 'vitest'
 
-import { createSignal } from '../signal'
+import { createSignal, type Signal } from '../signal'
 import { createKeyedList } from '../list-helpers'
 import { createList } from '../binding'
 import { createElement } from '../dom'
@@ -37,15 +37,14 @@ describe('Keyed List Performance Benchmarks', () => {
       const listBinding = createKeyedList(
         () => items(),
         item => item.id,
-        itemSig => {
+        (itemSig: Signal<Item>, _indexSig: Signal<number>) => {
           const li = document.createElement('li')
           li.textContent = itemSig().name
           return [li]
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       listBinding.dispose()
@@ -80,15 +79,14 @@ describe('Keyed List Performance Benchmarks', () => {
       const listBinding = createKeyedList(
         () => items(),
         item => item.id,
-        itemSig => {
+        (itemSig: Signal<Item>, _indexSig: Signal<number>) => {
           const li = document.createElement('li')
           li.textContent = itemSig().name
           return [li]
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       // Prepend new item
@@ -131,15 +129,14 @@ describe('Keyed List Performance Benchmarks', () => {
       const listBinding = createKeyedList(
         () => items(),
         item => item.id,
-        itemSig => {
+        (itemSig: Signal<Item>, _indexSig: Signal<number>) => {
           const li = document.createElement('li')
           li.textContent = itemSig().name
           return [li]
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       // Append new item
@@ -182,15 +179,14 @@ describe('Keyed List Performance Benchmarks', () => {
       const listBinding = createKeyedList(
         () => items(),
         item => item.id,
-        itemSig => {
+        (itemSig: Signal<Item>, _indexSig: Signal<number>) => {
           const li = document.createElement('li')
           li.textContent = itemSig().name
           return [li]
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       // Remove middle item
@@ -233,15 +229,14 @@ describe('Keyed List Performance Benchmarks', () => {
       const listBinding = createKeyedList(
         () => items(),
         item => item.id,
-        itemSig => {
+        (itemSig: Signal<Item>, _indexSig: Signal<number>) => {
           const li = document.createElement('li')
           li.textContent = itemSig().name
           return [li]
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       // Reverse order
@@ -284,7 +279,7 @@ describe('Keyed List Performance Benchmarks', () => {
       const listBinding = createKeyedList(
         () => items(),
         item => item.id,
-        itemSig => {
+        (itemSig: Signal<Item>, _indexSig: Signal<number>) => {
           const li = document.createElement('li')
           const span = document.createElement('span')
 
@@ -299,8 +294,7 @@ describe('Keyed List Performance Benchmarks', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       // Update all item properties
@@ -360,15 +354,14 @@ describe('Keyed List Performance Benchmarks', () => {
       const listBinding = createKeyedList(
         () => items(),
         item => item.id,
-        itemSig => {
+        (itemSig: Signal<Item>, _indexSig: Signal<number>) => {
           const li = document.createElement('li')
           li.textContent = itemSig().name
           return [li]
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       // Mixed: prepend, remove, append

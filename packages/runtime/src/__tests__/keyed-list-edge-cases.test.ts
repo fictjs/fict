@@ -45,8 +45,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       const listItems = container.querySelectorAll('li')
@@ -84,8 +83,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       const listItems = container.querySelectorAll('li')
@@ -134,8 +132,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       const listItems = container.querySelectorAll('li')
@@ -170,8 +167,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       const listItems = container.querySelectorAll('li')
@@ -206,8 +202,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       const listItems = container.querySelectorAll('li')
@@ -253,8 +248,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       expect(container.querySelectorAll('li').length).toBe(2)
@@ -298,8 +292,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       const listItems = container.querySelectorAll('li')
@@ -333,8 +326,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       // Rapid updates
@@ -373,8 +365,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       // Rapid add/remove
@@ -422,8 +413,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       // Multiple operations in sync
@@ -479,8 +469,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       expect(container.querySelectorAll('li').length).toBe(1000)
@@ -519,8 +508,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       const firstItem = container.querySelector('[data-id="0"]')
@@ -572,8 +560,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       // Complex operation:
@@ -628,8 +615,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       expect(container.querySelectorAll('.odd').length).toBe(5)
@@ -667,8 +653,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       expect(container.querySelectorAll('li').length).toBe(0)
@@ -703,8 +688,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       expect(container.querySelectorAll('li').length).toBe(1)
@@ -737,8 +721,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       for (let i = 0; i < 5; i++) {
@@ -781,8 +764,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       expect(container.querySelectorAll('li').length).toBe(3)
@@ -833,8 +815,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       expect(container.querySelectorAll('li').length).toBe(2)
@@ -876,8 +857,7 @@ describe('Keyed List Edge Cases', () => {
         },
       )
 
-      container.appendChild(listBinding.startMarker)
-      container.appendChild(listBinding.endMarker)
+      container.appendChild(listBinding.marker)
       await tick()
 
       const initialRunCount = effectRunCount

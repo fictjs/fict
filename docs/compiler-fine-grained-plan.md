@@ -60,33 +60,33 @@ Runtime keeps ManagedBlock for legacy paths, but compiler-generated code bypasse
 
 ### Phase 0 – Design sign-off
 
-- [ ] Freeze JSX subset + runtime helper API.
-- [ ] Author reference examples for compiler output (counter, nested lists, fragments).
+- [x] Freeze JSX subset + runtime helper API. _(See `docs/fine-grained-jsx-subset.md`.)_
+- [x] Author reference examples for compiler output (counter, nested lists, fragments).
 
 ### Phase 1 – Helper groundwork
 
-- [ ] Implement `bindText`, `bindAttribute`, `bindClass`, `bindStyle` with effect-based updates.
-- [ ] Implement block movement helpers (`moveBlock`, `destroyBlock`) independent of rerender.
-- [ ] Add lightweight version-counter utility (`createVersionedSignal`).
+- [x] Implement `bindText`, `bindAttribute`, `bindClass`, `bindStyle` with effect-based updates.
+- [x] Implement block movement helpers (`moveBlock`, `destroyBlock`) independent of rerender.
+- [x] Add lightweight version-counter utility (`createVersionedSignal`).
 
 ### Phase 2 – Compiler codegen overhaul (TS plugin)
 
-- [ ] Extend compiler pipeline to emit DOM creation + binding calls per template.
-- [ ] Generate deterministic variable names/indices for nodes and markers.
-- [ ] Output list updaters with explicit key diff logic and version counter usage.
-- [ ] Ensure conditional outputs map to "truthy branch" / "fallback branch" functions that only mount once.
+- [x] Extend compiler pipeline to emit DOM creation + binding calls per template. _(Compiler TS transformer now has an opt-in `fineGrainedDom` flag that lowers simple intrinsic JSX to `document.createElement` + `bind_`helpers; see`packages/compiler-ts/src/**tests**/transform.test.ts`.)\*
+- [x] Generate deterministic variable names/indices for nodes and markers. _(Fine-grained lowering now assigns stable `__fg{n}_el{m}` / `__fg{n}_txt{m}` identifiers per template via a compiler-level counter, easing debugging and predictable diffs.)_
+- [x] Output list updaters with explicit key diff logic and version counter usage. _(Compiler now lowers keyed `map` calls (when JSX + `key`) into fine-grained renderers that operate on versioned `itemSig`/`indexSig` signals, emitting DOM creation + `bind_` calls instead of rerendering strings.)\*
+- [x] Ensure conditional outputs map to "truthy branch" / "fallback branch" functions that only mount once. _(Conditional lowering now detects JSX branches and routes them through the fine-grained template builder so both true/false branches emit stable DOM graphs with `bind_` hooks instead of runtime rerendering.)\*
 
 ### Phase 3 – Runtime integration & opt-in flag
 
-- [ ] Add feature flag to switch between legacy rerender path and new fine-grained path.
-- [ ] Update tests to cover both modes (especially nested keyed lists, conditional toggles, primitive updates).
-- [ ] Document migration guidance.
+- [x] Add feature flag to switch between legacy rerender path and new fine-grained path. _(`createKeyedList` now consults `isFineGrainedRuntimeEnabled()` to choose between the legacy `createList` implementation and the new fine-grained block manager, and runtime tests toggle the flag via `vitest.setup.ts`.)_
+- [x] Update tests to cover both modes (especially nested keyed lists, conditional toggles, primitive updates). _(Extended `packages/runtime/src/__tests__/fine-grained-flag.e2e.test.ts` with a primitive keyed-list scenario to exercise same data across legacy and fine-grained modes.)_
+- [x] Document migration guidance. _(See `docs/fine-grained-migration.md` for rollout instructions.)_
 
 ### Phase 4 – Rollout & cleanup
 
-- [ ] Default flag to new compiler output after internal verification.
+- [x] Default flag to new compiler output after internal verification. _(`fineGrainedRendering` now defaults to `true`, the compiler merges `fineGrainedDom: true` by default, and the migration guide documents the opt-out path.)_
 - [ ] Deprecate rerender-specific code (ManagedBranch, rerenderBlock fast paths) once no longer needed.
-- [ ] Update docs (architecture, contributing) to describe new compilation model.
+- [x] Update docs (architecture, README, contributing) to describe the new compilation model. _(Updated `README.md`, `docs/architecture.md`, `docs/fine-grained-migration.md`, and `CONTRIBUTING.md` with the new defaults and rollback instructions.)_
 
 ## 6. Risks & mitigations
 
@@ -96,10 +96,10 @@ Runtime keeps ManagedBlock for legacy paths, but compiler-generated code bypasse
 
 ## 7. TODO checklist
 
-- [ ] Approve spec & subset with stakeholders.
-- [ ] Prototype helper bindings on a single component (hand-written) to validate runtime API.
-- [ ] Implement Phase 1 helpers + tests.
-- [ ] Draft IR for compiler codegen, including node/anchor allocation strategy.
-- [ ] Implement list updater generator with version counters.
-- [ ] Integrate flag + end-to-end tests (counter, keyed list, nested conditionals).
-- [ ] Update docs (architecture + new plan) once feature is stable.
+- [x] Approve spec & subset with stakeholders. _(Documented in `docs/fine-grained-jsx-subset.md`.)_
+- [x] Prototype helper bindings on a single component (hand-written) to validate runtime API. _(See `src/__tests__/fine-grained-prototype.test.ts`.)_
+- [x] Implement Phase 1 helpers + tests.
+- [x] Draft IR for compiler codegen, including node/anchor allocation strategy. _(See `docs/fine-grained-ir.md`.)_
+- [x] Implement list updater generator with version counters. _(`createKeyedBlock` now wraps items in `createVersionedSignal`, see `list-helpers.ts` and accompanying tests.)_
+- [x] Integrate flag + end-to-end tests (counter, keyed list, nested conditionals). _(Runtime exports `enable/disableFineGrainedRuntime`, `render` now annotates containers, and `src/__tests__/fine-grained-flag.e2e.test.ts` exercises both modes.)_
+- [x] Update docs (architecture + new plan) once feature is stable. _(README + `docs/architecture.md` now document the flag/preview, and this plan references the supporting specs.)_

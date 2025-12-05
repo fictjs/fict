@@ -19,6 +19,7 @@ interface TransformContext {
   hasStateImport: boolean
   hasEffectImport: boolean
   exportedNames: Set<string>
+  fineGrainedTemplateId: number
 }
 
 interface HelperUsage {
@@ -161,6 +162,11 @@ export function createFictTransformer(
   _program?: ts.Program | null,
   _options: FictCompilerOptions = {},
 ): ts.TransformerFactory<ts.SourceFile> {
+  const options: FictCompilerOptions = {
+    ..._options,
+    fineGrainedDom: _options.fineGrainedDom ?? true,
+  }
+
   return context => {
     const factory = context.factory
 
@@ -199,12 +205,13 @@ export function createFictTransformer(
         factory,
         context,
         sourceFile,
-        options: _options,
+        options,
         dependencyGraph: new Map(),
         derivedDecls: new Map(),
         hasStateImport: macroInfo.hasStateImport,
         hasEffectImport: macroInfo.hasEffectImport,
         exportedNames,
+        fineGrainedTemplateId: 0,
       }
 
       const visitor = createVisitor(ctx)
@@ -2359,14 +2366,31 @@ function handleVariableDeclaration(
 
 type SupportedJsxElement = ts.JsxElement | ts.JsxSelfClosingElement
 
+type IdentifierOverrideMap = Record<string, () => ts.Expression>
+
 interface TemplateBuilderState {
   ctx: TransformContext
   statements: ts.Statement[]
+  namePrefix: string
+  nameCounters: Record<string, number>
+  identifierOverrides: IdentifierOverrideMap | undefined
+}
+
+function createTemplateNamePrefix(ctx: TransformContext): string {
+  const id = ctx.fineGrainedTemplateId++
+  return `__fg${id}`
+}
+
+function allocateTemplateIdentifier(state: TemplateBuilderState, kind: string): ts.Identifier {
+  const index = state.nameCounters[kind] ?? 0
+  state.nameCounters[kind] = index + 1
+  return state.ctx.factory.createIdentifier(`${state.namePrefix}_${kind}${index}`)
 }
 
 function transformFineGrainedJsx(
   node: SupportedJsxElement,
   ctx: TransformContext,
+  identifierOverrides?: IdentifierOverrideMap,
 ): ts.Expression | null {
   if (!ctx.options.fineGrainedDom) return null
   const tagName = getIntrinsicTagName(node)
@@ -2375,6 +2399,9 @@ function transformFineGrainedJsx(
   const state: TemplateBuilderState = {
     ctx,
     statements: [],
+    namePrefix: createTemplateNamePrefix(ctx),
+    nameCounters: Object.create(null),
+    identifierOverrides,
   }
 
   const rootId = emitJsxElementToTemplate(node, tagName, state)
@@ -2405,7 +2432,7 @@ function emitJsxElementToTemplate(
   state: TemplateBuilderState,
 ): ts.Identifier | null {
   const { factory } = state.ctx
-  const elementId = factory.createUniqueName('el')
+  const elementId = allocateTemplateIdentifier(state, 'el')
   const createEl = factory.createCallExpression(
     factory.createPropertyAccessExpression(factory.createIdentifier('document'), 'createElement'),
     undefined,
@@ -2459,7 +2486,11 @@ function emitAttributes(
     }
 
     if (ts.isJsxExpression(attr.initializer) && attr.initializer.expression) {
-      const expr = transformExpressionForFineGrained(attr.initializer.expression, state.ctx)
+      const expr = transformExpressionForFineGrained(
+        attr.initializer.expression,
+        state.ctx,
+        state.identifierOverrides,
+      )
       if (!emitDynamicAttribute(elementId, normalized, expr, state)) {
         return false
       }
@@ -2482,7 +2513,7 @@ function emitChildren(
       const text = child.getText()
       if (!text.trim()) continue
       const literal = state.ctx.factory.createStringLiteral(text)
-      const textId = state.ctx.factory.createUniqueName('txt')
+      const textId = allocateTemplateIdentifier(state, 'txt')
       const textNode = state.ctx.factory.createCallExpression(
         state.ctx.factory.createPropertyAccessExpression(
           state.ctx.factory.createIdentifier('document'),
@@ -2505,7 +2536,18 @@ function emitChildren(
       ) {
         return false
       }
-      const expr = transformExpressionForFineGrained(child.expression, state.ctx)
+
+      const conditionalBinding = createConditionalBinding(child.expression, state.ctx)
+      if (conditionalBinding) {
+        emitBindingChild(parentId, conditionalBinding, state)
+        continue
+      }
+
+      const expr = transformExpressionForFineGrained(
+        child.expression,
+        state.ctx,
+        state.identifierOverrides,
+      )
       emitDynamicTextChild(parentId, expr, state)
       continue
     }
@@ -2609,7 +2651,7 @@ function emitDynamicTextChild(
   state: TemplateBuilderState,
 ): void {
   const { factory } = state.ctx
-  const textId = factory.createUniqueName('txt')
+  const textId = allocateTemplateIdentifier(state, 'txt')
   const textNode = factory.createCallExpression(
     factory.createPropertyAccessExpression(factory.createIdentifier('document'), 'createTextNode'),
     undefined,
@@ -2626,6 +2668,17 @@ function emitDynamicTextChild(
       ]),
     ),
   )
+}
+
+function emitBindingChild(
+  parentId: ts.Identifier,
+  bindingExpr: ts.Expression,
+  state: TemplateBuilderState,
+): void {
+  const { factory } = state.ctx
+  const markerId = allocateTemplateIdentifier(state, 'frag')
+  state.statements.push(createConstDeclaration(factory, markerId, bindingExpr))
+  state.statements.push(createAppendStatement(parentId, markerId, factory))
 }
 
 interface NormalizedAttribute {
@@ -2659,7 +2712,11 @@ function getIntrinsicTagName(node: SupportedJsxElement): string | null {
   const tag = ts.isJsxElement(node) ? node.openingElement.tagName : node.tagName
   if (!ts.isIdentifier(tag)) return null
   const text = tag.text
-  if (!text || text[0] !== text[0].toLowerCase()) {
+  if (!text) {
+    return null
+  }
+  const firstChar = text[0]
+  if (!firstChar || firstChar !== firstChar.toLowerCase()) {
     return null
   }
   return text
@@ -2707,13 +2764,110 @@ function createGetterArrow(factory: ts.NodeFactory, expr: ts.Expression): ts.Arr
 function transformExpressionForFineGrained(
   expr: ts.Expression,
   ctx: TransformContext,
+  overrides?: IdentifierOverrideMap,
 ): ts.Expression {
   const visitor = createVisitorWithOptions(ctx, {
     disableRegionTransform: true,
     disableMemoize: false,
     disableFineGrainedDom: true,
   })
-  return (ts.visitNode(expr, visitor) as ts.Expression) ?? expr
+  let transformed = (ts.visitNode(expr, visitor) as ts.Expression) ?? expr
+
+  if (overrides && Object.keys(overrides).length) {
+    const overrideVisitor = (node: ts.Node): ts.VisitResult<ts.Node> => {
+      if (ts.isIdentifier(node)) {
+        const factoryFn = overrides[node.text]
+        if (factoryFn) {
+          return factoryFn()
+        }
+      }
+      return ts.visitEachChild(node, overrideVisitor, ctx.context)
+    }
+    transformed = (ts.visitNode(transformed, overrideVisitor) as ts.Expression) ?? transformed
+  }
+
+  return transformed
+}
+
+function getSupportedJsxElementFromExpression(expr: ts.Expression): SupportedJsxElement | null {
+  if (ts.isJsxElement(expr) || ts.isJsxSelfClosingElement(expr)) {
+    return expr
+  }
+  if (ts.isParenthesizedExpression(expr)) {
+    return getSupportedJsxElementFromExpression(expr.expression)
+  }
+  return null
+}
+
+function maybeCreateFineGrainedKeyedRenderer(
+  renderArrow: ts.ArrowFunction | ts.FunctionExpression,
+  originalArrow: ts.ArrowFunction | ts.FunctionExpression | null,
+  itemParam: ts.ParameterDeclaration | undefined,
+  indexParam: ts.ParameterDeclaration | undefined,
+  ctx: TransformContext,
+): ts.ArrowFunction | null {
+  if (!ctx.options.fineGrainedDom) return null
+
+  const analysisArrow =
+    originalArrow && ts.isArrowFunction(originalArrow) ? originalArrow : renderArrow
+
+  if (!ts.isArrowFunction(renderArrow) || !ts.isArrowFunction(analysisArrow)) {
+    return null
+  }
+  if (ts.isBlock(analysisArrow.body)) return null
+  if (!itemParam || !ts.isIdentifier(itemParam.name)) return null
+
+  const jsxExpr = getSupportedJsxElementFromExpression(analysisArrow.body)
+  if (!jsxExpr) return null
+
+  const { factory } = ctx
+  const valueParam = factory.createIdentifier('__fgValueSig')
+  const indexParamId = factory.createIdentifier('__fgIndexSig')
+
+  const overrides: IdentifierOverrideMap = Object.create(null)
+  overrides[itemParam.name.text] = () => factory.createCallExpression(valueParam, undefined, [])
+
+  if (indexParam && ts.isIdentifier(indexParam.name)) {
+    overrides[indexParam.name.text] = () =>
+      factory.createCallExpression(indexParamId, undefined, [])
+  }
+
+  const templateExpr = transformFineGrainedJsx(jsxExpr, ctx, overrides)
+  if (!templateExpr) return null
+
+  const body = factory.createBlock(
+    [factory.createReturnStatement(factory.createArrayLiteralExpression([templateExpr], false))],
+    true,
+  )
+
+  return factory.createArrowFunction(
+    undefined,
+    undefined,
+    [
+      factory.createParameterDeclaration(undefined, undefined, valueParam),
+      factory.createParameterDeclaration(undefined, undefined, indexParamId),
+    ],
+    undefined,
+    factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+    body,
+  )
+}
+
+function lowerConditionalBranchExpression(
+  expr: ts.Expression,
+  ctx: TransformContext,
+): ts.Expression {
+  if (!ctx.options.fineGrainedDom) {
+    return expr
+  }
+
+  const jsxExpr = getSupportedJsxElementFromExpression(expr)
+  if (!jsxExpr) {
+    return expr
+  }
+
+  const lowered = transformFineGrainedJsx(jsxExpr, ctx)
+  return lowered ?? expr
 }
 
 // ============================================================================
@@ -2786,7 +2940,7 @@ function handleJsxExpression(
   if (shouldWrap) {
     const lowered =
       createConditionalBinding(transformedExpr, ctx) ??
-      createListBinding(transformedExpr, ctx) ??
+      createListBinding(transformedExpr, ctx, expr) ??
       createInsertBinding(transformedExpr, ctx)
 
     return factory.updateJsxExpression(node, lowered)
@@ -2823,6 +2977,9 @@ function createConditionalBinding(
 
   if (!condition || !whenTrue) return null
 
+  const loweredTrue = lowerConditionalBranchExpression(whenTrue, ctx)
+  const loweredFalse = whenFalse ? lowerConditionalBranchExpression(whenFalse, ctx) : null
+
   helpersUsed.createElement = true
   helpersUsed.conditional = true
 
@@ -2841,12 +2998,12 @@ function createConditionalBinding(
       [],
       undefined,
       factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
-      whenTrue,
+      loweredTrue,
     ),
     factory.createIdentifier(RUNTIME_ALIASES.createElement),
   ]
 
-  if (whenFalse) {
+  if (loweredFalse) {
     args.push(
       factory.createArrowFunction(
         undefined,
@@ -2854,7 +3011,7 @@ function createConditionalBinding(
         [],
         undefined,
         factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
-        whenFalse,
+        loweredFalse,
       ),
     )
   }
@@ -2905,7 +3062,11 @@ function extractKeyAttribute(node: ts.Node): ts.Expression | null {
   return null
 }
 
-function createListBinding(expr: ts.Expression, ctx: TransformContext): ts.Expression | null {
+function createListBinding(
+  expr: ts.Expression,
+  ctx: TransformContext,
+  originalExpr?: ts.Expression,
+): ts.Expression | null {
   const { factory, helpersUsed } = ctx
 
   if (
@@ -2921,11 +3082,26 @@ function createListBinding(expr: ts.Expression, ctx: TransformContext): ts.Expre
     return null
   }
 
+  const originalCallback =
+    originalExpr &&
+    ts.isCallExpression(originalExpr) &&
+    ts.isPropertyAccessExpression(originalExpr.expression) &&
+    originalExpr.expression.name.text === 'map'
+      ? originalExpr.arguments[0]
+      : undefined
+
   const listExpr = expr.expression.expression
   const renderArrow = callback as ts.ArrowFunction | ts.FunctionExpression
+  const originalRenderArrow = originalCallback as
+    | ts.ArrowFunction
+    | ts.FunctionExpression
+    | undefined
 
   // Extract key attribute from JSX in callback body
-  const keyExpr = extractKeyAttribute(renderArrow.body)
+  let keyExpr = extractKeyAttribute(renderArrow.body)
+  if (!keyExpr && originalRenderArrow) {
+    keyExpr = extractKeyAttribute(originalRenderArrow.body)
+  }
 
   helpersUsed.createElement = true
 
@@ -2944,6 +3120,15 @@ function createListBinding(expr: ts.Expression, ctx: TransformContext): ts.Expre
 
     const itemParamName = itemParam.name
     const indexParamName = indexParam?.name
+
+    const fgRenderer = maybeCreateFineGrainedKeyedRenderer(
+      renderArrow,
+      originalRenderArrow ?? null,
+      itemParam,
+      indexParam,
+      ctx,
+    )
+    const renderFnExpression: ts.Expression = fgRenderer ?? renderArrow
 
     // Create key function: (item, index) => keyExpr
     const keyFn = factory.createArrowFunction(
@@ -2988,7 +3173,7 @@ function createListBinding(expr: ts.Expression, ctx: TransformContext): ts.Expre
         // keyFn: (item, index) => item.id
         keyFn,
         // renderItem: (itemSig, indexSig) => ...
-        renderArrow,
+        renderFnExpression,
       ],
     )
 
