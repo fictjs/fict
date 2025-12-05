@@ -36,6 +36,7 @@ interface HelperUsage {
   bindAttribute: boolean
   bindClass: boolean
   bindStyle: boolean
+  toNodeArray: boolean
 }
 
 export interface CompilerWarning {
@@ -73,6 +74,7 @@ const RUNTIME_HELPERS = {
   bindAttribute: 'bindAttribute',
   bindClass: 'bindClass',
   bindStyle: 'bindStyle',
+  toNodeArray: 'toNodeArray',
 } as const
 
 const RUNTIME_ALIASES = {
@@ -89,6 +91,7 @@ const RUNTIME_ALIASES = {
   bindAttribute: '__fictBindAttribute',
   bindClass: '__fictBindClass',
   bindStyle: '__fictBindStyle',
+  toNodeArray: '__fictToNodeArray',
 } as const
 
 // Attributes that should NOT be wrapped in reactive functions
@@ -193,6 +196,7 @@ export function createFictTransformer(
         bindAttribute: false,
         bindClass: false,
         bindStyle: false,
+        toNodeArray: false,
       }
 
       // Phase 3: Create transform context and visitor
@@ -271,10 +275,17 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
       return transformBlock(node, ctx, opts)
     }
 
-    if (ctx.options.fineGrainedDom && (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node))) {
+    if (
+      ctx.options.fineGrainedDom &&
+      !opts.disableFineGrainedDom &&
+      (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node))
+    ) {
+      const fineGrained = transformFineGrainedJsx(node, ctx)
+      if (fineGrained) {
+        return fineGrained
+      }
       const visited = ts.visitEachChild(node, visitor, context) as typeof node
-      const fineGrained = transformFineGrainedJsx(visited, ctx)
-      return fineGrained ?? visited
+      return visited
     }
 
     // Handle top-level source file (needed for module scope grouping)
@@ -2548,6 +2559,13 @@ function emitChildren(
         state.ctx,
         state.identifierOverrides,
       )
+
+      const listBinding = createListBinding(expr, state.ctx, child.expression)
+      if (listBinding) {
+        emitBindingChild(parentId, listBinding, state)
+        continue
+      }
+
       emitDynamicTextChild(parentId, expr, state)
       continue
     }
@@ -2853,6 +2871,51 @@ function maybeCreateFineGrainedKeyedRenderer(
   )
 }
 
+function createLegacyKeyedRenderer(
+  renderArrow: ts.ArrowFunction | ts.FunctionExpression,
+  ctx: TransformContext,
+): ts.ArrowFunction {
+  const { factory } = ctx
+  const valueParam = factory.createIdentifier('__fictItemSig')
+  const indexParamId = factory.createIdentifier('__fictIndexSig')
+
+  const callArgs: ts.Expression[] = []
+  if (renderArrow.parameters.length > 0) {
+    callArgs.push(factory.createCallExpression(valueParam, undefined, []))
+    if (renderArrow.parameters.length > 1) {
+      callArgs.push(factory.createCallExpression(indexParamId, undefined, []))
+    }
+  }
+
+  const invocation = factory.createCallExpression(renderArrow, undefined, callArgs)
+
+  ctx.helpersUsed.toNodeArray = true
+
+  const elementExpr = factory.createCallExpression(
+    factory.createIdentifier(RUNTIME_ALIASES.createElement),
+    undefined,
+    [invocation],
+  )
+
+  const nodesExpr = factory.createCallExpression(
+    factory.createIdentifier(RUNTIME_ALIASES.toNodeArray),
+    undefined,
+    [elementExpr],
+  )
+
+  return factory.createArrowFunction(
+    undefined,
+    undefined,
+    [
+      factory.createParameterDeclaration(undefined, undefined, valueParam),
+      factory.createParameterDeclaration(undefined, undefined, indexParamId),
+    ],
+    undefined,
+    factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+    factory.createBlock([factory.createReturnStatement(nodesExpr)], true),
+  )
+}
+
 function lowerConditionalBranchExpression(
   expr: ts.Expression,
   ctx: TransformContext,
@@ -3128,7 +3191,8 @@ function createListBinding(
       indexParam,
       ctx,
     )
-    const renderFnExpression: ts.Expression = fgRenderer ?? renderArrow
+    const legacyRenderer = fgRenderer == null ? createLegacyKeyedRenderer(renderArrow, ctx) : null
+    const renderFnExpression: ts.Expression = fgRenderer ?? legacyRenderer ?? renderArrow
 
     // Create key function: (item, index) => keyExpr
     const keyFn = factory.createArrowFunction(
@@ -4260,6 +4324,15 @@ function addRuntimeImports(
         false,
         factory.createIdentifier(RUNTIME_HELPERS.bindStyle),
         factory.createIdentifier(RUNTIME_ALIASES.bindStyle),
+      ),
+    )
+  }
+  if (helpers.toNodeArray) {
+    neededSpecifiers.push(
+      factory.createImportSpecifier(
+        false,
+        factory.createIdentifier(RUNTIME_HELPERS.toNodeArray),
+        factory.createIdentifier(RUNTIME_ALIASES.toNodeArray),
       ),
     )
   }

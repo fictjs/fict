@@ -12,7 +12,7 @@ function transform(source: string, options?: Parameters<typeof createFictTransfo
       jsx: ts.JsxEmit.Preserve,
     },
     transformers: {
-      before: [createFictTransformer(undefined, options)],
+      before: [createFictTransformer(undefined, { fineGrainedDom: false, ...options })],
     },
   })
   return result.outputText

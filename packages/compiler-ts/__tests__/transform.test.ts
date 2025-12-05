@@ -367,7 +367,7 @@ describe('createFictTransformer', () => {
       `)
 
       expect(output).toMatchInlineSnapshot(`
-        "import { createSignal as __fictSignal, createElement as __fictCreateElement, createConditional as __fictConditional, createKeyedList as __fictKeyedList, onDestroy as __fictOnDestroy } from "fict-runtime";
+        "import { createSignal as __fictSignal, createElement as __fictCreateElement, createConditional as __fictConditional, createKeyedList as __fictKeyedList, onDestroy as __fictOnDestroy, toNodeArray as __fictToNodeArray } from "fict-runtime";
         function View() {
             let show = __fictSignal(true);
             let items = __fictSignal([
@@ -381,7 +381,9 @@ describe('createFictTransformer', () => {
                 return __fictBinding_1.marker;
             })())}
                       {((() => {
-                const __fictBinding_2 = __fictKeyedList(() => items(), (item, _index) => item.id, item => <p key={item.id}>{item.text}</p>);
+                const __fictBinding_2 = __fictKeyedList(() => items(), (item, _index) => item.id, (__fictItemSig, __fictIndexSig) => {
+                    return __fictToNodeArray(__fictCreateElement((item => <p key={item.id}>{item.text}</p>)(__fictItemSig())));
+                });
                 __fictOnDestroy(__fictBinding_2.dispose);
                 return __fictBinding_2.marker;
             })())}

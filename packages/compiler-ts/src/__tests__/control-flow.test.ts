@@ -14,7 +14,7 @@ function transform(source: string): string {
       jsx: ts.JsxEmit.Preserve,
     },
     transformers: {
-      before: [createFictTransformer()],
+      before: [createFictTransformer(undefined, { fineGrainedDom: false })],
     },
   })
   return result.outputText

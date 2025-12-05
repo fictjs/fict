@@ -35,7 +35,7 @@ function compileAndLoad<TModule extends Record<string, any>>(
   const module: { exports: any } = { exports: {} }
   const prelude =
     "const __fictRuntime = require('fict-runtime');" +
-    'const { createSignal: __fictSignal, createMemo: __fictMemo, createEffect: __fictEffect, createConditional: __fictConditional, createList: __fictList, createKeyedList: __fictKeyedList, insert: __fictInsert, createElement: __fictCreateElement, onDestroy: __fictOnDestroy } = __fictRuntime;'
+    'const { createSignal: __fictSignal, createMemo: __fictMemo, createEffect: __fictEffect, createConditional: __fictConditional, createList: __fictList, createKeyedList: __fictKeyedList, insert: __fictInsert, createElement: __fictCreateElement, onDestroy: __fictOnDestroy, bindText: __fictBindText, bindAttribute: __fictBindAttribute, bindClass: __fictBindClass, bindStyle: __fictBindStyle, toNodeArray: __fictToNodeArray } = __fictRuntime;'
 
   const dynamicRequire = createRequire(import.meta.url)
 
@@ -122,7 +122,7 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  it.skip('keeps todo list DOM in sync with keyed state updates', { timeout: 10000 }, async () => {
+  it('keeps todo list DOM in sync with keyed state updates', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
 
@@ -188,17 +188,21 @@ describe('compiled templates DOM integration', () => {
     const readTexts = () =>
       Array.from(container.querySelectorAll('li')).map(li => li.textContent?.trim())
 
+    await flushUpdates()
     expect(readIds()).toEqual([1, 2, 3])
     expect(readTexts()).toEqual(['wake up', 'hydrate', 'ship code'])
 
     mod.api.rotate()
+    await flushUpdates()
     expect(readIds()).toEqual([2, 3, 1])
 
     mod.api.prepend()
+    await flushUpdates()
     expect(readIds()).toEqual([0, 2, 3, 1])
     expect(readTexts()[0]).toBe('stretch')
 
     mod.api.dropSecond()
+    await flushUpdates()
     expect(readIds()).toEqual([0, 3, 1])
 
     teardown()
@@ -440,6 +444,59 @@ describe('compiled templates DOM integration', () => {
 
     teardown()
     await flushUpdates()
+    container.remove()
+  })
+
+  it('updates DOM via fine-grained bindings when enabled', { timeout: 10000 }, async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { inc(): void }
+
+      export function App() {
+        let count = $state(1)
+        api = { inc: () => (count = count + 1) }
+
+        return (
+          <section
+            data-mode={count > 1 ? 'many' : 'single'}
+            class={count > 1 ? 'large' : 'small'}
+            style={{ opacity: count / 10 }}
+          >
+            <p data-id="value">{count}</p>
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { inc(): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const section = () => container.querySelector('section') as HTMLElement
+    const valueNode = () => container.querySelector('[data-id="value"]')!
+
+    expect(section().dataset.mode).toBe('single')
+    expect(section().className).toBe('small')
+    expect(section().style.opacity).toBe('0.1')
+    expect(valueNode().textContent).toBe('1')
+
+    mod.api.inc()
+    await flushUpdates()
+    expect(section().dataset.mode).toBe('many')
+    expect(section().className).toBe('large')
+    expect(section().style.opacity).toBe('0.2')
+    expect(valueNode().textContent).toBe('2')
+
+    teardown()
     container.remove()
   })
 })
