@@ -495,4 +495,45 @@ describe('compiled templates DOM integration', () => {
     teardown()
     container.remove()
   })
+
+  it('wires event handlers in fine-grained mode', { timeout: 10000 }, async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export function App() {
+        let count = $state(0)
+
+        return (
+          <div>
+            <button data-id="inc" onClick={() => count++}>inc</button>
+            <p data-id="value">{count}</p>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const incButton = container.querySelector('[data-id="inc"]') as HTMLButtonElement
+    const value = () => container.querySelector('[data-id="value"]')?.textContent
+
+    expect(value()).toBe('0')
+
+    incButton.click()
+    await flushUpdates()
+
+    expect(value()).toBe('1')
+
+    teardown()
+    container.remove()
+  })
 })

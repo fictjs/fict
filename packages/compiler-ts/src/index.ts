@@ -2482,6 +2482,25 @@ function emitAttributes(
       return false
     }
 
+    if (normalized.kind === 'event') {
+      if (
+        !attr.initializer ||
+        !ts.isJsxExpression(attr.initializer) ||
+        !attr.initializer.expression
+      ) {
+        return false
+      }
+      const expr = transformExpressionForFineGrained(
+        attr.initializer.expression,
+        state.ctx,
+        state.identifierOverrides,
+      )
+      if (!emitDynamicAttribute(elementId, normalized, expr, state)) {
+        return false
+      }
+      continue
+    }
+
     if (normalized.kind === 'skip') {
       continue
     }
@@ -2622,6 +2641,21 @@ function emitDynamicAttribute(
   const { factory } = state.ctx
   const getter = createGetterArrow(factory, expr)
 
+  if (attr.kind === 'event') {
+    const handlerId = allocateTemplateIdentifier(state, 'evt')
+    state.statements.push(createConstDeclaration(factory, handlerId, expr))
+    state.statements.push(
+      factory.createExpressionStatement(
+        factory.createCallExpression(
+          factory.createPropertyAccessExpression(elementId, 'addEventListener'),
+          undefined,
+          [factory.createStringLiteral(attr.eventName), handlerId],
+        ),
+      ),
+    )
+    return true
+  }
+
   if (attr.kind === 'class') {
     state.ctx.helpersUsed.bindClass = true
     state.statements.push(
@@ -2699,12 +2733,26 @@ function emitBindingChild(
   state.statements.push(createAppendStatement(parentId, markerId, factory))
 }
 
-interface NormalizedAttribute {
-  name: string
-  kind: 'attr' | 'class' | 'style' | 'skip'
-}
+type NormalizedAttribute =
+  | {
+      name: string
+      kind: 'attr' | 'class' | 'style' | 'skip'
+    }
+  | {
+      name: string
+      kind: 'event'
+      eventName: string
+    }
 
 function normalizeAttributeName(name: string): NormalizedAttribute | null {
+  if (name.length > 2 && name.startsWith('on') && name[2]!.toUpperCase() === name[2]) {
+    return {
+      name,
+      kind: 'event',
+      eventName: name.slice(2).toLowerCase(),
+    }
+  }
+
   switch (name) {
     case 'key':
     case 'ref':
