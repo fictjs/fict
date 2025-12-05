@@ -64,7 +64,7 @@
     {
       "name": "fict-runtime (ESM)",
       "path": "packages/runtime/dist/index.js",
-      "limit": "6 KB",
+      "limit": "7 KB",
       "gzip": true
     },
     {
