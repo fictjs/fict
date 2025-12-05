@@ -65,7 +65,55 @@ describe('createFictTransformer', () => {
             let x = $state(i)
           }
         `),
-      ).toThrow('$state() cannot be declared inside loops')
+      ).toThrow('$state() cannot be declared inside loops or conditionals')
+
+      expect(() =>
+        transform(`
+          let i = 0
+          while (i < 3) {
+            let x = $state(i)
+            i++
+          }
+        `),
+      ).toThrow('$state() cannot be declared inside loops or conditionals')
+    })
+
+    it('throws on $state inside conditionals', () => {
+      expect(() =>
+        transform(`
+          if (true) {
+            let x = $state(1)
+          }
+        `),
+      ).toThrow('$state() cannot be declared inside loops or conditionals')
+
+      expect(() =>
+        transform(`
+          switch (true) {
+            case true:
+              let x = $state(1)
+              break
+          }
+        `),
+      ).toThrow('$state() cannot be declared inside loops or conditionals')
+    })
+
+    it('throws on $effect inside loops or conditionals', () => {
+      expect(() =>
+        transform(`
+          if (true) {
+            $effect(() => {})
+          }
+        `),
+      ).toThrow('$effect() cannot be called inside loops or conditionals')
+
+      expect(() =>
+        transform(`
+          for (let i=0; i<3; i++) {
+            $effect(() => {})
+          }
+        `),
+      ).toThrow('$effect() cannot be called inside loops or conditionals')
     })
 
     it('rewrites $effect to createEffect', () => {

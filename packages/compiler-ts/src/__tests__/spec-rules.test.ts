@@ -34,12 +34,13 @@ describe('Spec rule coverage', () => {
 
   it('throws when $state is declared inside conditional blocks', () => {
     const input = `
-      import { $state } from 'fict'
-      if (true) {
-        const count = $state(0)
-      }
-    `
-    expect(() => transform(input)).toThrow('top-level scope')
+        if (true) {
+          const s = $state(0)
+        }
+      `
+    expect(() => transform(input)).toThrow(
+      '$state() cannot be declared inside loops or conditionals',
+    )
   })
 
   it('supports props destructuring with tracked getters', () => {
@@ -174,6 +175,35 @@ describe('Spec rule coverage', () => {
     `
     const output = transform(input)
     expect(output).toContain('__fictMemo(() => count() * 2)')
+  })
+
+  it('aliasing state inside component creates a snapshot', () => {
+    const input = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        const snap = count
+        // snap should be value at this point
+        console.log(snap)
+      }
+    `
+    const output = transform(input)
+    // Should be reactive getter in run-once component
+    expect(output).toContain('const snap = () => count()')
+    expect(output).not.toContain('__fictMemo')
+    // usage rewrite
+    expect(output).toContain('console.log(snap())')
+  })
+
+  it('closure always reads live value (getter)', () => {
+    const input = `
+      import { $state } from 'fict'
+      let count = $state(0)
+      const onClick = () => console.log(count)
+    `
+    const output = transform(input)
+    // Should rewrite count to count() inside the function
+    expect(output).toContain('console.log(count())')
   })
 })
 
@@ -475,25 +505,28 @@ describe('Rule A: $state placement constraints', () => {
 
   it('throws when $state declared in if block', () => {
     const input = `
-      import { $state } from 'fict'
-      if (true) {
-        let count = $state(0)
-      }
-    `
-    expect(() => transform(input)).toThrow('top-level scope')
+        let x
+        if (true) {
+          x = $state(0)
+        }
+      `
+    expect(() => transform(input)).toThrow(
+      '$state() cannot be declared inside loops or conditionals',
+    )
   })
 
   it('throws when $state declared in switch case', () => {
     const input = `
-      import { $state } from 'fict'
-      const x = 1
-      switch (x) {
-        case 1:
-          let count = $state(0)
-          break
-      }
-    `
-    expect(() => transform(input)).toThrow('top-level scope')
+        let x
+        switch (true) {
+          case true:
+            x = $state(0)
+            break
+        }
+      `
+    expect(() => transform(input)).toThrow(
+      '$state() cannot be declared inside loops or conditionals',
+    )
   })
 
   it('allows $state at function top-level', () => {

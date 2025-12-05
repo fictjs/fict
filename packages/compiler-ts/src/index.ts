@@ -248,6 +248,14 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
   const { stateVars, memoVars, shadowedVars, helpersUsed, factory, context } = ctx
 
   const visitor: ts.Visitor = node => {
+    if (ctx.options.fineGrainedDom && ts.isJsxFragment(node) && fragmentHasCreatePortal(node)) {
+      const nestedVisitor = createVisitorWithOptions(ctx, {
+        ...opts,
+        disableFineGrainedDom: true,
+      })
+      return ts.visitEachChild(node, nestedVisitor, context)
+    }
+
     // Handle control flow statements - disable region transform for nested blocks
     if (
       ts.isIfStatement(node) ||
@@ -2585,6 +2593,14 @@ function emitChildren(
         continue
       }
 
+      if (
+        ts.isCallExpression(expr) &&
+        ts.isIdentifier(expr.expression) &&
+        expr.expression.text === 'createPortal'
+      ) {
+        return false
+      }
+
       emitDynamicTextChild(parentId, expr, state)
       continue
     }
@@ -2855,6 +2871,24 @@ function transformExpressionForFineGrained(
   return transformed
 }
 
+function fragmentHasCreatePortal(node: ts.JsxFragment): boolean {
+  let found = false
+  const visit = (n: ts.Node): void => {
+    if (found) return
+    if (
+      ts.isCallExpression(n) &&
+      ts.isIdentifier(n.expression) &&
+      n.expression.text === 'createPortal'
+    ) {
+      found = true
+      return
+    }
+    ts.forEachChild(n, visit)
+  }
+  ts.forEachChild(node, visit)
+  return found
+}
+
 function getSupportedJsxElementFromExpression(expr: ts.Expression): SupportedJsxElement | null {
   if (ts.isJsxElement(expr) || ts.isJsxSelfClosingElement(expr)) {
     return expr
@@ -2997,6 +3031,16 @@ function handleJsxExpression(
     return node
   }
 
+  if (
+    ts.isCallExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === 'createPortal'
+  ) {
+    const processed = ts.visitEachChild(expr, visitor, ctx.context)
+    const wrapped = wrapBindingHandle(processed as ts.Expression, ctx)
+    return factory.updateJsxExpression(node, wrapped)
+  }
+
   // Check if we're inside a JSX attribute
   const parent = node.parent
   const isInAttribute = ts.isJsxAttribute(parent)
@@ -3090,6 +3134,7 @@ function createConditionalBinding(
 
   const loweredTrue = lowerConditionalBranchExpression(whenTrue, ctx)
   const loweredFalse = whenFalse ? lowerConditionalBranchExpression(whenFalse, ctx) : null
+  const normalizedCondition = transformExpressionForFineGrained(condition, ctx)
 
   helpersUsed.createElement = true
   helpersUsed.conditional = true
@@ -3101,7 +3146,7 @@ function createConditionalBinding(
       [],
       undefined,
       factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
-      condition,
+      normalizedCondition,
     ),
     factory.createArrowFunction(
       undefined,
@@ -3742,15 +3787,38 @@ function emitWarning(ctx: TransformContext, node: ts.Node, code: string, message
  * Collect all $state variable declarations in the source file
  */
 function collectStateVariables(sourceFile: ts.SourceFile, stateVars: Set<string>): void {
-  const visit = (node: ts.Node): void => {
+  const visit = (node: ts.Node, inControlFlow: boolean): void => {
+    // Check for control flow statements that make execution conditional or looped
+    const isControlFlow =
+      inControlFlow ||
+      ts.isIfStatement(node) ||
+      ts.isForStatement(node) ||
+      ts.isForInStatement(node) ||
+      ts.isForOfStatement(node) ||
+      ts.isWhileStatement(node) ||
+      ts.isDoStatement(node) ||
+      ts.isSwitchStatement(node)
+
+    // Check for illegal $state() usage in control flow
+    if (inControlFlow) {
+      if (isStateCall(node)) {
+        throw new Error(`$state() cannot be declared inside loops or conditionals.`)
+      }
+      if (isEffectCall(node)) {
+        throw new Error(`$effect() cannot be called inside loops or conditionals.`)
+      }
+    }
+
+    // Collect state declarations
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
       if (isStateCall(node.initializer)) {
         stateVars.add(node.name.text)
       }
     }
-    ts.forEachChild(node, visit)
+    ts.forEachChild(node, child => visit(child, isControlFlow))
   }
-  visit(sourceFile)
+
+  ts.forEachChild(sourceFile, child => visit(child, false))
 }
 
 /**
@@ -3761,6 +3829,17 @@ function isStateCall(node: ts.Node): node is ts.CallExpression {
     ts.isCallExpression(node) &&
     ts.isIdentifier(node.expression) &&
     node.expression.text === '$state'
+  )
+}
+
+/**
+ * Check if a node is an $effect() call
+ */
+function isEffectCall(node: ts.Node): node is ts.CallExpression {
+  return (
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === '$effect'
   )
 }
 

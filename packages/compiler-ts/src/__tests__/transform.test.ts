@@ -284,6 +284,25 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('__fictBindText')
       expect(output).toContain('document.createElement("p")')
     })
+
+    it('wraps createPortal calls with dispose registration', () => {
+      const input = `
+        import { $state, createPortal, createElement } from 'fict'
+        function View() {
+          let count = $state(0)
+          return (
+            <>
+              <div data-id="host">host</div>
+              {createPortal(document.body, () => <div data-id="portal">{count}</div>, createElement)}
+            </>
+          )
+        }
+      `
+      const output = transformWithOptions(input)
+      expect(output).toContain('createPortal(document.body')
+      expect(output).toContain('__fictOnDestroy(__fictBinding')
+      expect(output).toContain('__fictBinding')
+    })
   })
 
   describe('Shorthand properties', () => {

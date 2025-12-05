@@ -536,4 +536,202 @@ describe('compiled templates DOM integration', () => {
     teardown()
     container.remove()
   })
+
+  it('keeps keyed list DOM in sync in fine-grained mode', { timeout: 10000 }, async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      type Todo = { id: number; text: string }
+
+      export let api: {
+        rotate(): void
+        prepend(): void
+        dropSecond(): void
+      }
+
+      export function App() {
+        let todos = $state<Todo[]>([
+          { id: 1, text: 'wake up' },
+          { id: 2, text: 'hydrate' },
+          { id: 3, text: 'ship code' },
+        ])
+
+        api = {
+          rotate() {
+            if (todos.length < 2) return
+            const [first, ...rest] = todos
+            todos = [...rest, first]
+          },
+          prepend() {
+            todos = [
+              { id: 0, text: 'stretch' },
+              ...todos,
+            ]
+          },
+          dropSecond() {
+            todos = todos.filter(todo => todo.id !== 2)
+          },
+        }
+
+        return (
+          <ul data-testid="todos">
+            {todos.map(todo => (
+              <li key={todo.id} data-id={todo.id}>
+                <span className="text">{todo.text}</span>
+              </li>
+            ))}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { rotate(): void; prepend(): void; dropSecond(): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const readIds = () =>
+      Array.from(container.querySelectorAll('li')).map(li => Number(li.getAttribute('data-id')))
+
+    await flushUpdates()
+    expect(readIds()).toEqual([1, 2, 3])
+
+    mod.api.rotate()
+    await flushUpdates()
+    expect(readIds()).toEqual([2, 3, 1])
+
+    mod.api.prepend()
+    await flushUpdates()
+    expect(readIds()).toEqual([0, 2, 3, 1])
+
+    mod.api.dropSecond()
+    await flushUpdates()
+    expect(readIds()).toEqual([0, 3, 1])
+
+    teardown()
+    container.remove()
+  })
+
+  it(
+    'switches conditional branches and updates attributes in fine-grained mode',
+    { timeout: 10000 },
+    async () => {
+      const source = `
+      import { $state, render } from 'fict'
+
+      export function App() {
+        let show = $state(true)
+        let count = $state(1)
+
+        return (
+          <section data-mode={show ? 'on' : 'off'}>
+            {show ? <p data-id="on">on:{count}</p> : <p data-id="off">off:{count}</p>}
+            <button data-id="toggle" onClick={() => (show = !show)}>toggle</button>
+            <button data-id="inc" disabled={count > 2} onClick={() => count++}>inc</button>
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+      }>(source, { fineGrainedDom: true })
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const teardown = mod.mount(container)
+
+      const section = () => container.querySelector('section') as HTMLElement
+      const toggle = () => container.querySelector('[data-id="toggle"]') as HTMLButtonElement
+      const inc = () => container.querySelector('[data-id="inc"]') as HTMLButtonElement
+      const onText = () => container.querySelector('[data-id="on"]')?.textContent ?? ''
+      const offText = () => container.querySelector('[data-id="off"]')?.textContent ?? ''
+
+      expect(section().dataset.mode).toBe('on')
+      expect(onText()).toContain('on:1')
+      expect(offText()).toBe('')
+      expect(inc().disabled).toBe(false)
+
+      toggle().click()
+      await flushUpdates()
+      expect(section().dataset.mode).toBe('off')
+      expect(onText()).toBe('')
+      expect(offText()).toContain('off:1')
+
+      inc().click()
+      await flushUpdates()
+      expect(offText()).toContain('off:2')
+      expect(inc().disabled).toBe(false)
+
+      inc().click()
+      await flushUpdates()
+      expect(section().dataset.mode).toBe('off')
+      expect(inc().disabled).toBe(true)
+
+      toggle().click()
+      await flushUpdates()
+      expect(section().dataset.mode).toBe('on')
+      expect(onText()).toContain('on:3')
+
+      teardown()
+      container.remove()
+    },
+  )
+
+  it('renders and cleans up a portal in fine-grained mode', { timeout: 10000 }, async () => {
+    const source = `
+      import { $state, render, createPortal, createElement } from 'fict'
+
+      export let api: { inc(): void }
+
+      export function App() {
+        let count = $state(0)
+        api = { inc: () => (count = count + 1) }
+
+        return (
+          <>
+            <div data-id="host">host</div>
+            {createPortal(document.body, () => <div data-id="portal">{count}</div>, createElement)}
+          </>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { inc(): void }
+    }>(source, { fineGrainedDom: true })
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const portal = () => document.body.querySelector('[data-id="portal"]') as HTMLElement
+
+    await flushUpdates()
+    expect(portal().textContent).toBe('0')
+
+    mod.api.inc()
+    await flushUpdates()
+    expect(portal().textContent).toBe('1')
+
+    teardown()
+    await flushUpdates()
+    expect(document.body.querySelector('[data-id="portal"]')).toBeNull()
+    container.remove()
+  })
 })

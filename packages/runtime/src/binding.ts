@@ -102,9 +102,9 @@ const PRIMITIVE_PROXY_RAW_VALUE = Symbol('fict:primitive-proxy:raw-value')
 export function unwrapPrimitive<T>(value: T): T {
   if (value && typeof value === 'object' && PRIMITIVE_PROXY in value) {
     // Use the internal raw value getter
-    const getRawValue = (value as any)[PRIMITIVE_PROXY_RAW_VALUE]
+    const getRawValue = (value as Record<PropertyKey, unknown>)[PRIMITIVE_PROXY_RAW_VALUE]
     if (typeof getRawValue === 'function') {
-      return getRawValue()
+      return (getRawValue as () => T)()
     }
   }
   return value
@@ -139,9 +139,11 @@ function createValueProxy<T>(read: () => T): T {
       }
       if (prop === Symbol.toPrimitive) {
         return (hint: 'string' | 'number' | 'default') => {
-          const value = read() as any
+          const value = read() as unknown
           if (value != null && (typeof value === 'object' || typeof value === 'function')) {
-            const toPrimitive = value[Symbol.toPrimitive]
+            const toPrimitive = (value as { [Symbol.toPrimitive]?: (hint: string) => unknown })[
+              Symbol.toPrimitive
+            ]
             if (typeof toPrimitive === 'function') {
               return toPrimitive.call(value, hint)
             }
@@ -154,9 +156,11 @@ function createValueProxy<T>(read: () => T): T {
       }
       if (prop === 'valueOf') {
         return () => {
-          const value = read() as any
+          const value = read() as unknown
           if (value != null && (typeof value === 'object' || typeof value === 'function')) {
-            return typeof value.valueOf === 'function' ? value.valueOf() : value
+            return typeof (value as { valueOf?: () => unknown }).valueOf === 'function'
+              ? (value as { valueOf: () => unknown }).valueOf()
+              : value
           }
           return value
         }
@@ -165,9 +169,9 @@ function createValueProxy<T>(read: () => T): T {
         return () => String(read())
       }
 
-      const value = read() as any
+      const value = read() as unknown
       if (value != null && (typeof value === 'object' || typeof value === 'function')) {
-        return Reflect.get(value, prop, receiver === _target ? value : receiver)
+        return Reflect.get(value as object, prop, receiver === _target ? value : receiver)
       }
 
       const proto = getPrimitivePrototype(value)
@@ -178,9 +182,9 @@ function createValueProxy<T>(read: () => T): T {
       return undefined
     },
     set(_target, prop, newValue, receiver) {
-      const value = read() as any
+      const value = read() as unknown
       if (value != null && (typeof value === 'object' || typeof value === 'function')) {
-        return Reflect.set(value, prop, newValue, receiver === _target ? value : receiver)
+        return Reflect.set(value as object, prop, newValue, receiver === _target ? value : receiver)
       }
       return false
     },
@@ -188,25 +192,25 @@ function createValueProxy<T>(read: () => T): T {
       if (prop === PRIMITIVE_PROXY || prop === PRIMITIVE_PROXY_RAW_VALUE) {
         return true
       }
-      const value = read() as any
+      const value = read() as unknown
       if (value != null && (typeof value === 'object' || typeof value === 'function')) {
-        return prop in value
+        return prop in (value as object)
       }
       const proto = getPrimitivePrototype(value)
       return proto ? prop in proto : false
     },
     ownKeys() {
-      const value = read() as any
+      const value = read() as unknown
       if (value != null && (typeof value === 'object' || typeof value === 'function')) {
-        return Reflect.ownKeys(value)
+        return Reflect.ownKeys(value as object)
       }
       const proto = getPrimitivePrototype(value)
       return proto ? Reflect.ownKeys(proto) : []
     },
     getOwnPropertyDescriptor(_target, prop) {
-      const value = read() as any
+      const value = read() as unknown
       if (value != null && (typeof value === 'object' || typeof value === 'function')) {
-        return Object.getOwnPropertyDescriptor(value, prop)
+        return Object.getOwnPropertyDescriptor(value as object, prop)
       }
       const proto = getPrimitivePrototype(value)
       return proto ? Object.getOwnPropertyDescriptor(proto, prop) || undefined : undefined
@@ -1013,7 +1017,7 @@ function patchElement(el: Element, output: FictNode): boolean {
   }
 
   if (output && typeof output === 'object' && !(output instanceof Node)) {
-    const vnode = output as any
+    const vnode = output as { type?: unknown; props?: Record<string, unknown> }
     if (typeof vnode.type === 'string' && vnode.type.toLowerCase() === el.tagName.toLowerCase()) {
       const children = vnode.props?.children
       if (
@@ -1109,7 +1113,7 @@ function isFragmentVNode(
     value != null &&
     typeof value === 'object' &&
     !(value instanceof Node) &&
-    (value as any).type === Fragment
+    (value as { type?: unknown }).type === Fragment
   )
 }
 
