@@ -731,4 +731,130 @@ describe('compiled templates DOM integration', () => {
     expect(document.body.querySelector('[data-id="portal"]')).toBeNull()
     container.remove()
   })
+
+  it(
+    'updates nested text content without re-rendering parent elements',
+    { timeout: 10000 },
+    async () => {
+      const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { inc(): void }
+
+      export function App() {
+        let count = $state(0)
+        api = { inc: () => (count = count + 1) }
+
+        return (
+          <div data-id="parent">
+            Static
+            <span data-id="child">
+              Count: {count}
+            </span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        api: { inc(): void }
+      }>(source, { fineGrainedDom: true })
+
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const teardown = mod.mount(container)
+
+      const parent = container.querySelector('[data-id="parent"]') as HTMLElement
+      const child = container.querySelector('[data-id="child"]') as HTMLElement
+
+      expect(child.textContent).toContain('Count: 0')
+
+      mod.api.inc()
+      await flushUpdates()
+
+      // Verify content updated
+      expect(child.textContent).toContain('Count: 1')
+
+      // Verify DOM nodes are exactly the same instances (no re-render)
+      const newParent = container.querySelector('[data-id="parent"]') as HTMLElement
+      const newChild = container.querySelector('[data-id="child"]') as HTMLElement
+
+      expect(newParent).toBe(parent)
+      expect(newChild).toBe(child)
+
+      teardown()
+      container.remove()
+    },
+  )
+
+  it('supports dynamic swapping of event handlers', { timeout: 10000 }, async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const log: string[] = []
+
+      export function App() {
+        let mode = $state('A')
+
+        const handlerA = () => log.push('A')
+        const handlerB = () => log.push('B')
+
+        return (
+          <div>
+            <button data-id="btn" onClick={mode === 'A' ? handlerA : handlerB}>
+              Click
+            </button>
+            <button data-id="toggle" onClick={() => (mode = mode === 'A' ? 'B' : 'A')}>
+              Toggle
+            </button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      log: string[]
+    }>(source, { fineGrainedDom: true })
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const btn = container.querySelector('[data-id="btn"]') as HTMLButtonElement
+    const toggle = container.querySelector('[data-id="toggle"]') as HTMLButtonElement
+
+    // Initial state: Handler A
+    btn.click()
+    expect(mod.log).toEqual(['A'])
+    mod.log.length = 0
+
+    // Swap to Handler B
+    toggle.click()
+    await flushUpdates()
+
+    btn.click()
+    expect(mod.log).toEqual(['B'])
+    mod.log.length = 0
+
+    // Swap back to Handler A
+    toggle.click()
+    await flushUpdates()
+
+    btn.click()
+    expect(mod.log).toEqual(['A'])
+
+    teardown()
+    container.remove()
+  })
 })
