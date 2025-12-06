@@ -70,6 +70,10 @@ export function Suspense(props: SuspenseProps): FictNode {
       cleanup()
       cleanup = undefined
     }
+    if (activeNodes.length) {
+      removeNodes(activeNodes)
+      activeNodes = []
+    }
 
     if (view == null || view === false) {
       return
@@ -93,12 +97,6 @@ export function Suspense(props: SuspenseProps): FictNode {
       }
       const parentNode = marker.parentNode as (ParentNode & Node) | null
       if (parentNode) {
-        let sibling = marker.previousSibling
-        while (sibling) {
-          const prevSibling = sibling.previousSibling
-          parentNode.removeChild(sibling)
-          sibling = prevSibling
-        }
         insertNodesBefore(parentNode, nodes, marker)
       }
     } catch (err) {
@@ -115,12 +113,14 @@ export function Suspense(props: SuspenseProps): FictNode {
       destroyRoot(root)
       removeNodes(nodes)
     }
+    activeNodes = nodes
   }
 
   const fragment = document.createDocumentFragment()
   const marker = document.createComment('fict:suspense')
   fragment.appendChild(marker)
   let cleanup: (() => void) | undefined
+  let activeNodes: Node[] = []
 
   const onResolveMaybe = () => {
     if (!resolvedOnce) {

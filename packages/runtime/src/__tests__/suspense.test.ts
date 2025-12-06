@@ -186,4 +186,44 @@ describe('Suspense', () => {
 
     dispose()
   })
+
+  it('does not remove sibling nodes when showing fallback', async () => {
+    const { token, resolve } = createSuspenseToken()
+    const container = document.createElement('div')
+
+    let first = true
+    const Child = () => {
+      if (first) {
+        first = false
+        throw token
+      }
+      return { type: 'span', props: { children: 'C' } }
+    }
+
+    render(
+      () => ({
+        type: 'div',
+        props: {
+          children: [
+            { type: 'span', props: { children: 'L' } },
+            {
+              type: Suspense,
+              props: { fallback: 'loading', children: { type: Child, props: {} } },
+            },
+            { type: 'span', props: { children: 'R' } },
+          ],
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('LloadingR')
+
+    resolve()
+    await tick()
+    await tick()
+
+    expect(container.textContent).toBe('LCR')
+  })
 })

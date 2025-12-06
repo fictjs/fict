@@ -26,6 +26,8 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   const currentView = createSignal<FictNode | null>(props.children ?? null)
 
   let cleanup: (() => void) | undefined
+  let activeNodes: Node[] = []
+  let renderingFallback = false
 
   const toView = (err: unknown | null): FictNode | null => {
     if (err != null) {
@@ -41,6 +43,10 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       cleanup()
       cleanup = undefined
     }
+    if (activeNodes.length) {
+      removeNodes(activeNodes)
+      activeNodes = []
+    }
 
     if (value == null || value === false) {
       return
@@ -54,21 +60,23 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       nodes = toNodeArray(output)
       const parentNode = marker.parentNode as (ParentNode & Node) | null
       if (parentNode) {
-        let sibling = marker.previousSibling
-        while (sibling) {
-          const prevSibling = sibling.previousSibling
-          parentNode.removeChild(sibling)
-          sibling = prevSibling
-        }
         insertNodesBefore(parentNode, nodes, marker)
       }
     } catch (err) {
       popRoot(prev)
       flushOnMount(root)
       destroyRoot(root)
-      // Fall back immediately on render errors
+      // Fall back immediately on render errors, avoid infinite recursion
+      if (renderingFallback) {
+        throw err
+      }
+      renderingFallback = true
+      try {
+        renderValue(toView(err))
+      } finally {
+        renderingFallback = false
+      }
       props.onError?.(err)
-      renderValue(toView(err))
       return
     }
     popRoot(prev)
@@ -78,6 +86,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       destroyRoot(root)
       removeNodes(nodes)
     }
+    activeNodes = nodes
   }
 
   createEffect(() => {

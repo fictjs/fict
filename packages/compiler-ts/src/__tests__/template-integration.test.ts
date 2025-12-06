@@ -55,8 +55,11 @@ function compileAndLoad<TModule extends Record<string, any>>(
 }
 
 async function flushUpdates(): Promise<void> {
+  // Drain microtasks and one macrotask to let reactive queues and timers settle.
+  await Promise.resolve()
   await Promise.resolve()
   await new Promise(resolve => setTimeout(resolve, 0))
+  await Promise.resolve()
 }
 
 describe('compiled templates DOM integration', () => {
@@ -281,12 +284,14 @@ describe('compiled templates DOM integration', () => {
       incButton.click()
       await flushUpdates()
       await flushUpdates()
+      await flushUpdates()
       expect(activeBranch()).toBe('fallback')
       expect(mod.computeLog.some(entry => entry.startsWith('rich'))).toBe(false)
       expect(mod.computeLog.every(entry => entry.startsWith('fallback'))).toBe(true)
       clearLog()
 
       incButton.click()
+      await flushUpdates()
       await flushUpdates()
       await flushUpdates()
       expect(activeBranch()).toBe('rich')
@@ -300,6 +305,7 @@ describe('compiled templates DOM integration', () => {
       clearLog()
 
       resetButton.click()
+      await flushUpdates()
       await flushUpdates()
       expect(activeBranch()).toBe('fallback')
       expect(fallbackText()).toContain('fallback=0')
@@ -364,12 +370,14 @@ describe('compiled templates DOM integration', () => {
 
     await flushUpdates()
     await flushUpdates()
+    await flushUpdates()
     mod.flushPending()
     expect(mod.effectLog[0]).toMatch(/commit:/)
     mod.effectLog.length = 0
 
     incButton.click()
     incButton.click()
+    await flushUpdates()
     await flushUpdates()
     await flushUpdates()
     mod.flushPending()
@@ -417,10 +425,12 @@ describe('compiled templates DOM integration', () => {
     const readButton = container.querySelector('[data-id="read"]') as HTMLButtonElement
     const value = () => container.querySelector('[data-id="value"]')?.textContent
 
+    await flushUpdates()
     readButton.click()
     expect(mod.eventLog).toEqual([0])
 
     incButton.click()
+    await flushUpdates()
     await flushUpdates()
     expect(value()).toBe('1')
 
@@ -428,6 +438,7 @@ describe('compiled templates DOM integration', () => {
     expect(mod.eventLog).toEqual([0, 1])
 
     incButton.click()
+    await flushUpdates()
     await flushUpdates()
     expect(value()).toBe('2')
 

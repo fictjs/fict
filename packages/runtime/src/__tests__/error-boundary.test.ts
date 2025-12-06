@@ -143,4 +143,57 @@ describe('ErrorBoundary', () => {
 
     dispose()
   })
+
+  it('does not remove sibling nodes when rendering fallback', () => {
+    const Crash = () => {
+      throw new Error('boom')
+    }
+    const container = document.createElement('div')
+    render(
+      () => ({
+        type: 'div',
+        props: {
+          children: [
+            { type: 'span', props: { children: 'left' } },
+            {
+              type: ErrorBoundary,
+              props: { fallback: 'error', children: { type: Crash, props: {} } },
+            },
+            { type: 'span', props: { children: 'right' } },
+          ],
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('lefterrorright')
+  })
+
+  it('renders fallback and triggers onError', () => {
+    const order: string[] = []
+    const Crash = () => {
+      throw new Error('boom')
+    }
+    const container = document.createElement('div')
+    render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: () => {
+            order.push('fallback')
+            return 'oops'
+          },
+          onError: () => {
+            order.push(container.textContent || '')
+          },
+          children: { type: Crash, props: {} },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('oops')
+    expect(order[0]).toBe('fallback')
+    expect(order[1]).toBeDefined()
+  })
 })
