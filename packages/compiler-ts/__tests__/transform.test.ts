@@ -55,7 +55,7 @@ describe('createFictTransformer', () => {
         transform(`
           const [a] = $state(0)
         `),
-      ).toThrow('$state() must assign to an identifier')
+      ).toThrow(/Destructuring \$state is not supported/)
     })
 
     it('throws on $state inside loops', () => {

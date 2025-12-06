@@ -321,30 +321,30 @@ describe('Fict Compiler - Basic Transforms', () => {
 describe('Fict Compiler - Error Cases', () => {
   it('throws error for $state in loop', () => {
     const input = `
-      import { $state } from 'fict'
-      for (let i = 0; i < 10; i++) {
-        let count = $state(0)
-      }
-    `
+        import { $state } from 'fict'
+        for (let i = 0; i < 10; i++) {
+          let count = $state(0)
+        }
+      `
     expect(() => transform(input)).toThrow('cannot be declared inside loops')
   })
 
   it('throws error for $state in while loop', () => {
     const input = `
-      import { $state } from 'fict'
-      while (true) {
-        let count = $state(0)
-      }
-    `
+        import { $state } from 'fict'
+        while (true) {
+          let count = $state(0)
+        }
+      `
     expect(() => transform(input)).toThrow('cannot be declared inside loops')
   })
 
   it('throws error for $state with destructuring', () => {
     const input = `
-      import { $state } from 'fict'
-      const { x } = $state({ x: 1 })
-    `
-    expect(() => transform(input)).toThrow('must assign to an identifier')
+        import { $state } from 'fict'
+        const { x } = $state({ x: 1 })
+      `
+    expect(() => transform(input)).toThrow(/Destructuring \$state is not supported/)
   })
 })
 

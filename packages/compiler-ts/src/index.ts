@@ -336,6 +336,7 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
       ts.isIdentifier(node.expression) &&
       node.expression.text === '$effect'
     ) {
+      ensureValidEffectPlacement(node, ctx)
       helpersUsed.effect = true
       const effectVisitor = createVisitorWithOptions(ctx, {
         ...opts,
@@ -2267,7 +2268,7 @@ function handleVariableDeclaration(
 
   if (!ts.isIdentifier(node.name) || !node.initializer) {
     if (node.initializer && isStateCall(node.initializer)) {
-      throw new Error(formatError(ctx.sourceFile, node, '$state() must assign to an identifier'))
+      throw new Error(formatError(ctx.sourceFile, node, 'Destructuring $state is not supported'))
     }
     return ts.visitEachChild(node, visitor, context) as ts.VariableDeclaration
   }
@@ -3834,8 +3835,8 @@ function emitWarning(ctx: TransformContext, node: ts.Node, code: string, message
  * Collect all $state variable declarations in the source file
  */
 function collectStateVariables(sourceFile: ts.SourceFile, stateVars: Set<string>): void {
-  const visit = (node: ts.Node, inControlFlow: boolean): void => {
-    // Check for control flow statements that make execution conditional or looped
+  const visit = (node: ts.Node, inControlFlow: boolean, functionDepth: number): void => {
+    // Check for control flow statements
     const isControlFlow =
       inControlFlow ||
       ts.isIfStatement(node) ||
@@ -3846,26 +3847,48 @@ function collectStateVariables(sourceFile: ts.SourceFile, stateVars: Set<string>
       ts.isDoStatement(node) ||
       ts.isSwitchStatement(node)
 
-    // Check for illegal $state() usage in control flow
-    if (inControlFlow) {
-      if (isStateCall(node)) {
+    // Check for illegal $state() usage in control flow or nested functions
+    if (isStateCall(node)) {
+      if (inControlFlow) {
         throw new Error(`$state() cannot be declared inside loops or conditionals.`)
       }
-      if (isEffectCall(node)) {
+      if (functionDepth > 1) {
+        throw new Error(`$state() cannot be declared inside nested functions.`)
+      }
+    }
+    if (isEffectCall(node)) {
+      if (inControlFlow) {
         throw new Error(`$effect() cannot be called inside loops or conditionals.`)
+      }
+      if (functionDepth > 1) {
+        throw new Error(`$effect() cannot be called inside nested functions.`)
       }
     }
 
     // Collect state declarations
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
-      if (isStateCall(node.initializer)) {
-        stateVars.add(node.name.text)
-      }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      isStateCall(node.initializer)
+    ) {
+      stateVars.add(node.name.text)
     }
-    ts.forEachChild(node, child => visit(child, isControlFlow))
+
+    // Track function depth
+    let nextDepth = functionDepth
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isArrowFunction(node) ||
+      ts.isFunctionExpression(node)
+    ) {
+      nextDepth++
+    }
+
+    ts.forEachChild(node, child => visit(child, isControlFlow, nextDepth))
   }
 
-  ts.forEachChild(sourceFile, child => visit(child, false))
+  ts.forEachChild(sourceFile, child => visit(child, false, 0))
 }
 
 /**
@@ -4041,6 +4064,19 @@ function isInsideConditional(node: ts.Node): boolean {
   return false
 }
 
+function getFunctionDepth(node: ts.Node): number {
+  let depth = 0
+  let current: ts.Node | undefined = node.parent
+  while (current) {
+    if (ts.isFunctionLike(current)) {
+      depth++
+    }
+    if (ts.isSourceFile(current)) break
+    current = current.parent
+  }
+  return depth
+}
+
 function ensureValidStatePlacement(node: ts.VariableDeclaration, ctx: TransformContext): void {
   if (isInsideLoop(node)) {
     throw new Error(formatError(ctx.sourceFile, node, '$state() cannot be declared inside loops'))
@@ -4048,6 +4084,35 @@ function ensureValidStatePlacement(node: ts.VariableDeclaration, ctx: TransformC
   if (isInsideConditional(node)) {
     throw new Error(
       formatError(ctx.sourceFile, node, '$state() must be declared at top-level scope'),
+    )
+  }
+  if (getFunctionDepth(node) > 1) {
+    throw new Error(
+      formatError(
+        ctx.sourceFile,
+        node,
+        '$state() must be declared at module or component top-level (no nested functions)',
+      ),
+    )
+  }
+}
+
+function ensureValidEffectPlacement(node: ts.CallExpression, ctx: TransformContext): void {
+  if (isInsideLoop(node)) {
+    throw new Error(formatError(ctx.sourceFile, node, '$effect() cannot be called inside loops'))
+  }
+  if (isInsideConditional(node)) {
+    throw new Error(
+      formatError(ctx.sourceFile, node, '$effect() must be called at top-level scope'),
+    )
+  }
+  if (getFunctionDepth(node) > 1) {
+    throw new Error(
+      formatError(
+        ctx.sourceFile,
+        node,
+        '$effect() must be called at module or component top-level (no nested functions)',
+      ),
     )
   }
 }

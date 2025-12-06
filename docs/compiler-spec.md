@@ -569,16 +569,17 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
 
 ### 15.1 State Semantics
 
-1.  **Top-Level Only**: `$state(v)` defines a storage cell. It is valid **only** at the top level of a component or module.
-    - **Illegal**: Inside `if`, `for`, `while`, `do`, `switch`. (Compiler Error)
-    - **Illegal**: Inside nested functions/callbacks. (Compiler Warning/Error, depending on usage)
+1.  **Top-Level Only**: `$state(v)` defines a storage cell. It is valid **only** at module scope or the immediate top level of a component function body.
+    - **Illegal**: Inside `if`, `for`, `while`, `do`, `switch`, ternary. (Compiler Error)
+    - **Illegal**: Inside nested functions/callbacks (including event handlers). (Compiler Error)
 
-2.  **Assignment**:
+2.  **Assignment & Aliasing**:
     - `x = v` where `x` is a `$state` variable compiles to `x(v)` (write).
     - `x` appearing in an expression compiles to `x()` (read).
     - **Aliasing**: `const y = x` creates a **reactive getter** `() => x()`.
-      - Since components run once, this ensures `y` remains up-to-date.
-      - To create a **snapshot** (static value), you must explicitly unwrap or untrack (not yet fully defined, usually `untrack(() => x)`).
+      - Components run once; this keeps `y` live.
+      - To create a **snapshot**, use an explicit escape such as `untrack(() => x)` (or future helper).
+    - **Destructuring**: `const { x } = $state(...)` is **illegal**. The compiler errors rather than emitting a silent snapshot.
 
 ### 15.2 Derived Value Semantics
 
@@ -587,14 +588,15 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
 3.  **Closures & Events**:
     - **Rule**: A closure created in the component body that reads `$state` (e.g., `const onClick = () => console.log(count)`) always reads the **live** value.
     - **Implementation**: The compiler ensures `count` inside the closure becomes `count()` (getter), not a captured variable.
-    - **Contrast**: `const snapshot = count; const onClick = () => console.log(snapshot)` logs the value at creation time.
+    - **Snapshot**: `const snap = count; const fn = () => snap` reads the definition-time value by design.
+4.  **Control Flow Regions**: Derived values defined across `if`/`switch`/early-return paths are grouped into a single region memo that returns the outward-facing values, ensuring consistent dependency tracking and avoiding duplicated condition evaluation.
 
 ### 15.3 Effect Semantics
 
 1.  **Scope**: `$effect` registers a side effect that runs after render and tracks dependencies.
 2.  **Tracking**: Sync reads of `$state` / derived memos within the function are tracked.
 3.  **Untracked**: Reads after `await` or inside untracked scopes are not tracked.
-4.  **Placement**: `$effect` must be at the top level (similar to hooks). Conditional `$effect` is **illegal**.
+4.  **Placement**: `$effect` must be at module or component top level (similar to hooks). Conditional/looped `$effect`, or `$effect` inside nested functions/callbacks, is **illegal** (Compiler Error).
 
 ### 15.4 Loop Semantics
 
@@ -606,7 +608,14 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
 
 ### 15.5 Ambiguity Resolution
 
-- **Destructuring**: `const { id } = $state({ id: 1 })`.
-  - `id` is a **snapshot** (number), not a signal.
-  - To track `id`, use `const id = () => state.id` or access deeply `$state.id`.
+- **Destructuring**: `const { id } = $state({ id: 1 })` is **Illegal** (Compiler Error).
+  - Rationale: Destructuring would create a static snapshot `id` (the number 1), losing reactivity immediately. To prevent user confusion, this pattern is forbidden.
+  - Correct Usage: `const s = $state({ id: 1 }); const id = () => s.id;` or usage in JSX `{s.id}`.
 - **Blackbox Functions**: Passing `$state` to a function `fn(state)` passes the _current value_. `fn` cannot subscribe to updates unless it receives a getter or signal object (future `$store`).
+
+### 15.6 Illegal Patterns (Compile Errors)
+
+- `$state()` or `$effect()` inside loops/conditionals or nested functions/callbacks.
+- Destructuring a `$state` return value.
+- Assigning directly to the return of `$state()` (must assign to an identifier).
+- `$effect` outside top-level placement (module/component body).

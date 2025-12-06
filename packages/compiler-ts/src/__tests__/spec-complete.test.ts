@@ -618,17 +618,18 @@ describe('Error cases', () => {
     expect(output).toContain('__fictEffect')
   })
 
-  it('handles $state in nested function', () => {
-    // Compiler allows $state in nested functions (component pattern)
-    const output = transform(`
-      import { $state } from 'fict'
-      function outer() {
-        function inner() {
-          let count = $state(0)
+  it('throws on $state in nested function', () => {
+    // Nested functions are not allowed to declare $state
+    expect(() =>
+      transform(`
+        import { $state } from 'fict'
+        function outer() {
+          function inner() {
+            let count = $state(0)
+          }
         }
-      }
-    `)
-    expect(output).toContain('__fictSignal')
+      `),
+    ).toThrow(/cannot be declared inside nested functions/)
   })
 
   it('throws on $state in conditional', () => {
@@ -641,6 +642,39 @@ describe('Error cases', () => {
         }
       `),
     ).toThrow()
+  })
+
+  it('throws on $effect in conditional or loop', () => {
+    expect(() =>
+      transform(`
+        import { $effect } from 'fict'
+        if (true) {
+          $effect(() => {})
+        }
+      `),
+    ).toThrow(/\$effect\(\) cannot be called inside loops or conditionals/)
+
+    expect(() =>
+      transform(`
+        import { $effect } from 'fict'
+        for (let i = 0; i < 1; i++) {
+          $effect(() => {})
+        }
+      `),
+    ).toThrow(/\$effect\(\) cannot be called inside loops/)
+  })
+
+  it('throws on $effect in nested function', () => {
+    expect(() =>
+      transform(`
+        import { $effect } from 'fict'
+        function outer() {
+          function inner() {
+            $effect(() => {})
+          }
+        }
+      `),
+    ).toThrow(/cannot be called inside nested functions/)
   })
 })
 
