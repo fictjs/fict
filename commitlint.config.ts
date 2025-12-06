@@ -33,6 +33,7 @@ export default {
         'examples',
         'deps',
         'release',
+        'others',
       ],
     ],
   },
