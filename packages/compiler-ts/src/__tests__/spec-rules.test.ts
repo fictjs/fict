@@ -205,6 +205,19 @@ describe('Spec rule coverage', () => {
     // Should rewrite count to count() inside the function
     expect(output).toContain('console.log(count())')
   })
+
+  it('event handler reads latest derived value', () => {
+    const input = `
+      import { $state } from 'fict'
+      let count = $state(0)
+      const doubled = count * 2
+      const onClick = () => console.log(doubled)
+    `
+    const output = transform(input)
+    // Module-level derived uses memo; handler reads current value
+    expect(output).toContain('__fictMemo(() => count() * 2)')
+    expect(output).toContain('console.log(doubled())')
+  })
 })
 
 // ============================================================================

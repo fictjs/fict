@@ -346,6 +346,15 @@ describe('Fict Compiler - Error Cases', () => {
       `
     expect(() => transform(input)).toThrow(/Destructuring \$state is not supported/)
   })
+
+  it('throws error when assigning to $state call result', () => {
+    const input = `
+      import { $state } from 'fict'
+      let count = $state(0)
+      $state(1) = 2
+    `
+    expect(() => transform(input)).toThrow(/\$state\(\) must assign to an identifier/)
+  })
 })
 
 describe('Fict Compiler - Integration', () => {

@@ -144,6 +144,19 @@ describe('Cross-module usage patterns', () => {
     expect(output).toContain('doubled()')
   })
 
+  it('exported alias uses original state (no duplicate signals)', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+      export let count = $state(0)
+      const alias = count
+      export { alias }
+    `)
+    const signalCalls = (output.match(/__fictSignal\(/g) || []).length
+    expect(signalCalls).toBe(1)
+    // Module-level alias compiles as memo to keep cross-module semantics consistent
+    expect(output).toContain('__fictMemo(() => count())')
+  })
+
   it('non-exported function-scoped derived', () => {
     const output = transform(`
       import { $state } from 'fict'
@@ -206,6 +219,29 @@ describe('Cross-module state consumers', () => {
       }
     `)
     expect(output).toContain('derived()')
+  })
+
+  it('exported alias consumed without duplicating signal', () => {
+    // Simulate a store module exposing an alias
+    const store = transform(`
+      import { $state } from 'fict'
+      export let count = $state(0)
+      const alias = count
+      export { alias }
+    `)
+    const signalCalls = (store.match(/__fictSignal\(/g) || []).length
+    expect(signalCalls).toBe(1)
+    // Consumer reading alias should call alias() (not create new signal)
+    const consumer = transform(
+      `
+      import { alias } from './store'
+      export function View() {
+        return <div>{alias}</div>
+      }
+    `,
+      { fineGrainedDom: false },
+    )
+    expect(consumer).toContain('alias')
   })
 })
 

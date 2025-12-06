@@ -645,7 +645,7 @@ describe('createFictTransformer', () => {
         }
       `)
 
-      // Should create separate memos, not a region
+      // Early return prevents grouping; should emit separate memos
       expect(output).toContain('__fictMemo(() => count() * 2)')
       expect(output).toContain('__fictMemo(() => count() * 3)')
       expect(output).not.toContain('__fictRegion')

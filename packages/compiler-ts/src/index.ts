@@ -377,6 +377,10 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
       return handleAssignmentExpression(node, ctx, visitor)
     }
 
+    if (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) {
+      ensureValidAssignmentTarget(node, ctx)
+    }
+
     // Handle increment/decrement: count++, count--, ++count, --count
     // Only handle ++ and -- operators, not ! or other prefix operators
     if (
@@ -2384,6 +2388,11 @@ function handleVariableDeclaration(
   )
 }
 
+function ensureValidAssignmentTarget(node: ts.BinaryExpression, ctx: TransformContext): void {
+  if (ts.isCallExpression(node.left) && isStateCall(node.left)) {
+    throw new Error(formatError(ctx.sourceFile, node, '$state() must assign to an identifier'))
+  }
+}
 // ============================================================================
 // Fine-grained JSX Lowering (opt-in)
 // ============================================================================

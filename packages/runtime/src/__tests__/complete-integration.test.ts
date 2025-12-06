@@ -566,6 +566,29 @@ describe('Complete Integration Tests', () => {
     })
   })
 
+  describe('Event capture reads latest value', () => {
+    it('handler sees freshest signal and derived', async () => {
+      const count = createSignal(0)
+      const doubled = createMemo(() => count() * 2)
+      const log: number[] = []
+
+      const button = document.createElement('button')
+      button.onclick = () => {
+        log.push(count())
+        log.push(doubled())
+      }
+      container.appendChild(button)
+
+      button.click()
+      expect(log).toEqual([0, 0])
+
+      count(2)
+      await tick()
+      button.click()
+      expect(log).toEqual([0, 0, 2, 4])
+    })
+  })
+
   describe('Full Component Integration', () => {
     it('Counter component: state → DOM → update → verify', async () => {
       const Counter = () => {

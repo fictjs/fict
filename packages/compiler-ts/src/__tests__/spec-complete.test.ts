@@ -385,6 +385,24 @@ describe('R014: State formal semantics', () => {
     expect(output).toContain('const alias = () => count()')
   })
 
+  it('alias reassignment is a TS error; compiler leaves as-is', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+      function Component() {
+        let count = $state(0)
+        const alias = count
+        // TS would flag this; compiler does not transform further
+        // @ts-ignore
+        // eslint-disable-next-line no-const-assign
+        // @ts-expect-error
+        // @ts-ignore-line
+        // we just ensure transform does not crash
+        alias = 1
+      }
+    `)
+    expect(output).toContain('__fictSignal')
+  })
+
   it('destructuring from state creates snapshot', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
@@ -418,6 +436,21 @@ describe('R015: Derived formal semantics', () => {
     expect(output).toContain('doubled')
     // Verify count is still transformed to signal
     expect(output).toContain('__fictSignal')
+  })
+
+  it('snapshot vs live value in closures', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+      let count = $state(0)
+      const snap = count
+      const onClick = () => console.log(count)
+      const onSnap = () => console.log(snap)
+    `)
+    // live
+    expect(output).toContain('const onClick = () => console.log(count())')
+    // snapshot preserved (module-level derived becomes memo)
+    expect(output).toContain('__fictMemo(() => count())')
+    expect(output).toContain('const onSnap = () => console.log(snap())')
   })
 })
 

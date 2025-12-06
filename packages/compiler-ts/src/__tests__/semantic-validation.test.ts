@@ -76,4 +76,21 @@ describe('semantic validation', () => {
      `
     expect(() => transform(source)).toThrow(/Destructuring \$state is not supported/)
   })
+
+  it('throws when $state assignment target is not an identifier', () => {
+    const source = `
+      import { $state } from 'fict'
+      const [x] = $state(0)
+    `
+    expect(() => transform(source)).toThrow(/Destructuring \$state is not supported/)
+  })
+
+  it('throws when assigning to $state call result', () => {
+    const source = `
+      import { $state } from 'fict'
+      let count = $state(0)
+      $state(1) = 2
+    `
+    expect(() => transform(source)).toThrow(/\$state\(\) must assign to an identifier/)
+  })
 })
