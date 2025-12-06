@@ -2706,6 +2706,11 @@ function emitChildren(
   state: TemplateBuilderState,
 ): boolean {
   for (const child of children) {
+    if (ts.isJsxFragment(child)) {
+      if (!emitChildren(parentId, child.children, state)) return false
+      continue
+    }
+
     if (ts.isJsxText(child)) {
       const text = child.getText()
       if (!text.trim()) continue
@@ -2726,12 +2731,15 @@ function emitChildren(
 
     if (ts.isJsxExpression(child)) {
       if (!child.expression) continue
-      if (
-        ts.isJsxElement(child.expression) ||
-        ts.isJsxSelfClosingElement(child.expression) ||
-        ts.isJsxFragment(child.expression)
-      ) {
+      if (ts.isJsxElement(child.expression) || ts.isJsxSelfClosingElement(child.expression)) {
         return false
+      }
+
+      // Handle fragments inside expressions {<><div/></>}
+      if (ts.isJsxFragment(child.expression)) {
+        if (!emitChildren(parentId, (child.expression as ts.JsxFragment).children, state))
+          return false
+        continue
       }
 
       const conditionalBinding = createConditionalBinding(child.expression, state.ctx)
