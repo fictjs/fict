@@ -376,6 +376,11 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
       ts.isIdentifier(node.left) &&
       isAssignmentOperator(node.operatorToken.kind)
     ) {
+      if (ctx.memoVars.has(node.left.text) && !shadowedVars.has(node.left.text)) {
+        throw new Error(
+          formatError(ctx.sourceFile, node, `Cannot reassign derived value "${node.left.text}"`),
+        )
+      }
       if (ctx.aliasVars.has(node.left.text)) {
         throw new Error(
           formatError(
@@ -611,6 +616,15 @@ function generateLazyConditionalRegionMemo(
     (ts.visitNode(conditionalInfo.condition, conditionVisitor) as ts.Expression) ??
     conditionalInfo.condition
 
+  const conditionId = factory.createUniqueName('__fictCond')
+  const conditionDecl = factory.createVariableStatement(
+    undefined,
+    factory.createVariableDeclarationList(
+      [factory.createVariableDeclaration(conditionId, undefined, undefined, conditionExpr)],
+      ts.NodeFlags.Const,
+    ),
+  )
+
   // Categorize statements while preserving their original indices
   interface TaggedStatement {
     stmt: ts.Statement
@@ -673,6 +687,7 @@ function generateLazyConditionalRegionMemo(
 
   // Build the optimized memo body preserving statement order
   const memoBody: ts.Statement[] = [...alwaysBeforeLazy]
+  memoBody.unshift(conditionDecl)
 
   // Add conditional logic for lazy evaluation
   if (lazyTrueStatements.length > 0 || lazyFalseStatements.length > 0) {
@@ -683,7 +698,7 @@ function generateLazyConditionalRegionMemo(
       // Both branches have lazy statements OR we have always statements after the lazy block
       // In either case, we use if-else structure and duplicate alwaysAfterLazy to preserve order
       const ifElseBlock = factory.createIfStatement(
-        conditionExpr,
+        conditionId,
         factory.createBlock(
           [
             ...lazyTrueStatements,
@@ -707,7 +722,7 @@ function generateLazyConditionalRegionMemo(
       const ifFalseReturn = factory.createIfStatement(
         factory.createPrefixUnaryExpression(
           ts.SyntaxKind.ExclamationToken,
-          factory.createParenthesizedExpression(conditionExpr),
+          factory.createParenthesizedExpression(conditionId),
         ),
         factory.createBlock([createReturnWithNulls(conditionalInfo.trueBranchOnlyDerived)], true),
       )
@@ -718,7 +733,7 @@ function generateLazyConditionalRegionMemo(
     } else {
       // Only false-branch lazy statements: early return when condition is true
       const ifTrueReturn = factory.createIfStatement(
-        conditionExpr,
+        conditionId,
         factory.createBlock([createReturnWithNulls(conditionalInfo.falseBranchOnlyDerived)], true),
       )
       memoBody.push(ifTrueReturn)
@@ -812,6 +827,8 @@ function generateRegionMemo(
 ): RegionMemoResult {
   const { factory, memoVars, getterOnlyVars } = ctx
 
+  const { hoistDecls, transformedStatements } = hoistConditions(regionStatements, ctx)
+
   // Rule J: Check for lazy conditional optimization
   if (ctx.options.lazyConditional) {
     const conditionalInfo = analyzeConditionalUsage(
@@ -821,7 +838,7 @@ function generateRegionMemo(
     )
     if (conditionalInfo) {
       return generateLazyConditionalRegionMemo(
-        regionStatements,
+        [...hoistDecls, ...transformedStatements],
         orderedOutputs,
         conditionalInfo,
         ctx,
@@ -831,7 +848,12 @@ function generateRegionMemo(
 
   const returnStatement = factory.createReturnStatement(
     factory.createObjectLiteralExpression(
-      orderedOutputs.map(name => factory.createShorthandPropertyAssignment(name)),
+      orderedOutputs.map(name =>
+        factory.createPropertyAssignment(
+          factory.createIdentifier(name),
+          factory.createIdentifier(name),
+        ),
+      ),
       false,
     ),
   )
@@ -842,7 +864,7 @@ function generateRegionMemo(
     [],
     undefined,
     factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
-    factory.createBlock([...regionStatements, returnStatement], true),
+    factory.createBlock([...hoistDecls, ...transformedStatements, returnStatement], true),
   )
 
   ctx.helpersUsed.memo = true
@@ -1045,20 +1067,6 @@ function transformStatementList(
     return factory.createNodeArray(result)
   }
 
-  const fallbackHasEarlyReturn = (() => {
-    for (let i = firstTouched; i <= regionEnd; i++) {
-      const stmt = statements[i]
-      if (stmt && containsEarlyReturn(stmt)) {
-        return true
-      }
-    }
-    return false
-  })()
-
-  if (fallbackHasEarlyReturn) {
-    return factory.createNodeArray(result)
-  }
-
   const startAfterRegion = regionEnd + 1
   const referencedOutside = collectReferencedOutputs(
     statements,
@@ -1148,28 +1156,94 @@ function findNextRegion(
 ): RegionCandidate | null {
   let start = -1
   let end = -1
+  let lastNonEarlyReturnTouched = -1
   const outputs = new Set<string>()
 
   for (let i = startIndex; i < statements.length; i++) {
     const stmt = statements[i]
     if (!stmt) continue
     const touched = statementTouchesOutputs(stmt, derivedOutputs, ctx)
-    if (!touched) {
-      if (start !== -1) break
-      continue
+
+    if (touched) {
+      if (start === -1) start = i
+      collectOutputsFromStatement(stmt, derivedOutputs, outputs, ctx)
+      if (!containsEarlyReturn(stmt)) {
+        end = i
+        lastNonEarlyReturnTouched = i
+      }
+    } else if (start !== -1 && !containsEarlyReturn(stmt)) {
+      // Once we've started a region, encountering a non-touching, non-return statement means stop.
+      break
     }
 
-    if (start === -1) start = i
-    end = i
-    collectOutputsFromStatement(stmt, derivedOutputs, outputs, ctx)
     if (containsEarlyReturn(stmt)) {
-      // Stop region detection if control flow escapes mid-block
+      // Early return marks the end boundary; avoid including the return-holding statement.
+      if (lastNonEarlyReturnTouched !== -1) {
+        end = lastNonEarlyReturnTouched
+      }
       break
     }
   }
 
   if (start === -1 || outputs.size === 0) return null
+  if (end === -1) return null
   return { start, end, outputs }
+}
+
+/**
+ * Hoist conditional expressions and if-statement conditions into consts
+ * so they are evaluated only once within a region.
+ */
+function hoistConditions(
+  statements: ts.Statement[],
+  ctx: TransformContext,
+): { hoistDecls: ts.Statement[]; transformedStatements: ts.Statement[] } {
+  const { factory } = ctx
+  const hoistDecls: ts.Statement[] = []
+
+  const hoistCondition = (expr: ts.Expression): ts.Identifier => {
+    const condId = factory.createUniqueName('__fictCond')
+    hoistDecls.push(
+      factory.createVariableStatement(
+        undefined,
+        factory.createVariableDeclarationList(
+          [factory.createVariableDeclaration(condId, undefined, undefined, expr)],
+          ts.NodeFlags.Const,
+        ),
+      ),
+    )
+    return condId
+  }
+
+  const visitor = (node: ts.Node): ts.Node => {
+    if (ts.isIfStatement(node)) {
+      const visitedCond = ts.visitNode(node.expression, visitor) as ts.Expression
+      const condId = hoistCondition(visitedCond)
+      const thenStmt = ts.visitNode(node.thenStatement, visitor) as ts.Statement
+      const elseStmt = ts.visitNode(node.elseStatement, visitor) as ts.Statement | undefined
+      return factory.updateIfStatement(node, condId, thenStmt, elseStmt)
+    }
+
+    if (ts.isConditionalExpression(node)) {
+      const visitedCond = ts.visitNode(node.condition, visitor) as ts.Expression
+      const condId = hoistCondition(visitedCond)
+      const whenTrue = ts.visitNode(node.whenTrue, visitor) as ts.Expression
+      const whenFalse = ts.visitNode(node.whenFalse, visitor) as ts.Expression
+      return factory.updateConditionalExpression(
+        node,
+        condId,
+        node.questionToken,
+        whenTrue,
+        node.colonToken,
+        whenFalse,
+      )
+    }
+
+    return ts.visitEachChild(node, visitor, ctx.context)
+  }
+
+  const transformedStatements = statements.map(stmt => ts.visitNode(stmt, visitor) as ts.Statement)
+  return { hoistDecls, transformedStatements }
 }
 
 function collectDerivedOutputs(

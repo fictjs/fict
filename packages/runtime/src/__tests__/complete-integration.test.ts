@@ -619,6 +619,87 @@ describe('Complete Integration Tests', () => {
       expect(updated.doubled).toBe(4)
       expect(updated.tripled).toBe(6)
     })
+
+    it('avoids recomputing untouched conditional branches', async () => {
+      const count = createSignal(0)
+      let branchRuns = 0
+
+      const viewState = createMemo(() => {
+        const c = count()
+        if (c > 0) {
+          branchRuns++
+          return { value: c * 2 }
+        }
+        return { value: 0 }
+      })
+
+      expect(viewState().value).toBe(0)
+      expect(branchRuns).toBe(0)
+
+      count(1)
+      await tick()
+      expect(viewState().value).toBe(2)
+      expect(branchRuns).toBe(1)
+
+      count(0)
+      await tick()
+      expect(viewState().value).toBe(0)
+      // branchRuns should not increment when false branch is taken
+      expect(branchRuns).toBe(1)
+    })
+
+    it('handles switch-derived branches without extra recompute', async () => {
+      const mode = createSignal<'a' | 'b' | 'c'>('a')
+      let compute = 0
+
+      const view = createMemo(() => {
+        compute++
+        switch (mode()) {
+          case 'a':
+            return 'alpha'
+          case 'b':
+            return 'beta'
+          default:
+            return 'gamma'
+        }
+      })
+
+      expect(view()).toBe('alpha')
+      expect(compute).toBe(1)
+
+      mode('b')
+      await tick()
+      expect(view()).toBe('beta')
+      expect(compute).toBe(2)
+
+      mode('c')
+      await tick()
+      expect(view()).toBe('gamma')
+      expect(compute).toBe(3)
+    })
+
+    it('recomputes ternary-derived values once per change', async () => {
+      const count = createSignal(0)
+      let computeCalls = 0
+
+      const value = createMemo(() => {
+        computeCalls++
+        return count() > 0 ? count() * 2 : count() * 3
+      })
+
+      expect(value()).toBe(0)
+      expect(computeCalls).toBe(1)
+
+      count(2)
+      await tick()
+      expect(value()).toBe(4)
+      expect(computeCalls).toBe(2)
+
+      count(1)
+      await tick()
+      expect(value()).toBe(2)
+      expect(computeCalls).toBe(3)
+    })
   })
 
   describe('Full Component Integration', () => {

@@ -134,7 +134,7 @@ describe('Scope Handling', () => {
       `
       const output = transform(input)
 
-      expect(output).toMatch(/return { a, b }/)
+      expect(output).toMatch(/return { a: a, b: b }/)
     })
   })
 

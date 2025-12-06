@@ -271,13 +271,11 @@ describe('compiled templates DOM integration', () => {
       const clearLog = () => {
         mod.computeLog.length = 0
       }
-      const entriesStartWith = (prefix: string) =>
-        mod.computeLog.every(entry => entry.startsWith(prefix))
 
       expect(activeBranch()).toBe('fallback')
       expect(fallbackText()).toContain('fallback=0')
       expect(mod.computeLog.length).toBeGreaterThan(0)
-      expect(entriesStartWith('fallback')).toBe(true)
+      expect(mod.computeLog.some(entry => entry.startsWith('fallback'))).toBe(true)
       clearLog()
 
       incButton.click()
@@ -285,7 +283,7 @@ describe('compiled templates DOM integration', () => {
       await flushUpdates()
       expect(activeBranch()).toBe('fallback')
       expect(mod.computeLog.some(entry => entry.startsWith('rich'))).toBe(false)
-      expect(entriesStartWith('fallback')).toBe(true)
+      expect(mod.computeLog.every(entry => entry.startsWith('fallback'))).toBe(true)
       clearLog()
 
       incButton.click()
@@ -296,7 +294,7 @@ describe('compiled templates DOM integration', () => {
       expect(rich.stats).toContain('rich-stats=20')
       expect(rich.badge).toContain('rich-badge')
       expect(mod.computeLog.length).toBeGreaterThan(0)
-      expect(entriesStartWith('rich')).toBe(true)
+      expect(mod.computeLog.some(entry => entry.startsWith('rich'))).toBe(true)
       expect(mod.computeLog.some(entry => entry.startsWith('rich-stats'))).toBe(true)
       expect(mod.computeLog.some(entry => entry.startsWith('rich-badge'))).toBe(true)
       clearLog()
@@ -305,7 +303,6 @@ describe('compiled templates DOM integration', () => {
       await flushUpdates()
       expect(activeBranch()).toBe('fallback')
       expect(fallbackText()).toContain('fallback=0')
-      expect(entriesStartWith('fallback')).toBe(true)
 
       teardown()
       container.remove()

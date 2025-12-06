@@ -622,13 +622,13 @@ describe('createFictTransformer', () => {
       expect(memoInvocationCount).toBe(1)
       expect(output).toContain(`const heading = () => __fictRegion`)
       expect(output).toContain(`const extra = () => __fictRegion`)
-      expect(output).toContain(`return { heading, extra`)
+      expect(output).toContain(`return { heading: heading, extra: extra`)
       expect(output).toContain(`__fictInsert`)
       expect(output).toContain(`() => heading()`)
       expect(output).toContain(`() => extra()`)
     })
 
-    it('does not group when early return exists in range', () => {
+    it('still groups when early return exits after derived values', () => {
       const output = transform(`
         import { $state } from 'fict'
 
@@ -645,10 +645,11 @@ describe('createFictTransformer', () => {
         }
       `)
 
-      // Early return prevents grouping; should emit separate memos
-      expect(output).toContain('__fictMemo(() => count() * 2)')
-      expect(output).toContain('__fictMemo(() => count() * 3)')
-      expect(output).not.toContain('__fictRegion')
+      // Early return no longer prevents grouping; derived values share a region
+      expect(output).toContain('__fictRegion')
+      expect(output).toContain('return { doubled: doubled, tripled: tripled }')
+      expect(output).toMatch(/const doubled = \(\) => __fictRegion_\d+\(\)\.doubled/)
+      expect(output).toMatch(/const tripled = \(\) => __fictRegion_\d+\(\)\.tripled/)
     })
 
     it('groups let assignments in switch statements', () => {
@@ -677,7 +678,7 @@ describe('createFictTransformer', () => {
 
       // Should group color and label assignments
       expect(output).toContain('__fictRegion')
-      expect(output).toContain('return { color, label }')
+      expect(output).toContain('return { color: color, label: label }')
     })
 
     it('handles nested control flow correctly', () => {

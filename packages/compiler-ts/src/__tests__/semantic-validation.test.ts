@@ -102,4 +102,17 @@ describe('semantic validation', () => {
     `
     expect(() => transform(source)).toThrow(/Illegal assignment target/)
   })
+
+  it('throws when derived is reassigned inside a branch', () => {
+    const source = `
+      import { $state } from 'fict'
+      const count = $state(0)
+      const doubled = count * 2
+
+      if (count > 0) {
+        doubled = 3
+      }
+    `
+    expect(() => transform(source)).toThrow()
+  })
 })
