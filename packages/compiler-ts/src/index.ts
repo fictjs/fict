@@ -7,6 +7,7 @@ import * as ts from 'typescript'
 interface TransformContext {
   stateVars: Set<string>
   memoVars: Set<string>
+  guardedDerived: Set<string>
   aliasVars: Set<string>
   getterOnlyVars: Set<string>
   shadowedVars: Set<string>
@@ -186,6 +187,7 @@ export function createFictTransformer(
 
       // Phase 2: Track memo variables and used helpers
       const memoVars = new Set<string>()
+      const guardedDerived = new Set<string>()
       const helpersUsed: HelperUsage = {
         signal: false,
         memo: false,
@@ -208,6 +210,7 @@ export function createFictTransformer(
       const ctx: TransformContext = {
         stateVars,
         memoVars,
+        guardedDerived,
         aliasVars: new Set(),
         getterOnlyVars: new Set(),
         shadowedVars: new Set(),
@@ -223,6 +226,10 @@ export function createFictTransformer(
         exportedNames,
         fineGrainedTemplateId: 0,
       }
+
+      // Pre-analysis: Identify all derived variables (fixed-point)
+      const derivedVars = collectDerivedOutputs(sourceFile.statements, ctx)
+      derivedVars.forEach(v => memoVars.add(v))
 
       const visitor = createVisitor(ctx)
       const transformed = (ts.visitNode(sourceFile, visitor) ?? sourceFile) as ts.SourceFile
@@ -376,7 +383,7 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
       ts.isIdentifier(node.left) &&
       isAssignmentOperator(node.operatorToken.kind)
     ) {
-      if (ctx.memoVars.has(node.left.text) && !shadowedVars.has(node.left.text)) {
+      if (ctx.guardedDerived.has(node.left.text) && !shadowedVars.has(node.left.text)) {
         throw new Error(
           formatError(ctx.sourceFile, node, `Cannot reassign derived value "${node.left.text}"`),
         )
@@ -1227,6 +1234,10 @@ function hoistConditions(
   }
 
   const visitor = (node: ts.Node): ts.Node => {
+    if (ts.isFunctionLike(node)) {
+      return node
+    }
+
     if (ts.isIfStatement(node)) {
       const visitedCond = ts.visitNode(node.expression, visitor) as ts.Expression
       const condId = hoistCondition(visitedCond)
@@ -2460,6 +2471,7 @@ function handleVariableDeclaration(
     }
 
     memoVars.add(node.name.text)
+    ctx.guardedDerived.add(node.name.text)
 
     const isModuleScope = isTopLevelDeclaration(node)
     const isExported = isExportedDeclaration(node, ctx)
