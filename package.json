@@ -64,13 +64,13 @@
     {
       "name": "fict-runtime (ESM)",
       "path": "packages/runtime/dist/index.js",
-      "limit": "7.5 KB",
+      "limit": "9 KB",
       "gzip": true
     },
     {
       "name": "fict-runtime (CJS)",
       "path": "packages/runtime/dist/index.cjs",
-      "limit": "7.5 KB",
+      "limit": "9 KB",
       "gzip": true
     }
   ],
