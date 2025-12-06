@@ -18,6 +18,7 @@ import {
   createStyleBinding,
   createClassBinding,
   createChildBinding,
+  bindEvent,
   isReactive,
   PRIMITIVE_PROXY,
   type MaybeReactive,
@@ -25,7 +26,14 @@ import {
   type BindingHandle,
 } from './binding'
 import { Fragment } from './jsx'
-import { createRootContext, destroyRoot, flushOnMount, pushRoot, popRoot } from './lifecycle'
+import {
+  createRootContext,
+  destroyRoot,
+  flushOnMount,
+  handleError,
+  pushRoot,
+  popRoot,
+} from './lifecycle'
 import type { DOMElement, FictNode, FictVNode } from './types'
 
 // ============================================================================
@@ -134,8 +142,13 @@ export function createElement(node: FictNode): DOMElement {
   // Function component
   if (typeof vnode.type === 'function') {
     const props = { ...(vnode.props ?? {}), key: vnode.key }
-    const rendered = vnode.type(props)
-    return createElement(rendered as FictNode)
+    try {
+      const rendered = vnode.type(props)
+      return createElement(rendered as FictNode)
+    } catch (err) {
+      handleError(err, { source: 'render', componentName: vnode.type.name })
+      throw err
+    }
   }
 
   // Fragment
@@ -217,9 +230,11 @@ function applyProps(el: HTMLElement, props: Record<string, unknown>): void {
 
     // Event handling
     if (isEventKey(key)) {
-      if (typeof value === 'function') {
-        el.addEventListener(eventNameFromProp(key), value as EventListener)
-      }
+      bindEvent(
+        el,
+        eventNameFromProp(key),
+        value as MaybeReactive<EventListenerOrEventListenerObject | null | undefined>,
+      )
       continue
     }
 

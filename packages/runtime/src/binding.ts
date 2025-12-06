@@ -18,6 +18,8 @@ import {
   createRootContext,
   destroyRoot,
   flushOnMount,
+  getCurrentRoot,
+  handleError,
   pushRoot,
   popRoot,
   registerRootCleanup,
@@ -631,6 +633,7 @@ export function createChildBinding(
     const root = createRootContext()
     const prev = pushRoot(root)
     let nodes: Node[] = []
+    let handledError = false
     try {
       const output = createElementFn(value)
       nodes = toNodeArray(output)
@@ -638,14 +641,46 @@ export function createChildBinding(
       if (parentNode) {
         insertNodesBefore(parentNode, nodes, marker)
       }
+      return () => {
+        destroyRoot(root)
+        removeNodes(nodes)
+      }
+    } catch (err) {
+      if (handleError(err, { source: 'renderChild' }, root)) {
+        handledError = true
+        destroyRoot(root)
+        // Attempt to render fallback immediately using updated reactive state
+        const fallbackRoot = createRootContext()
+        const fallbackPrev = pushRoot(fallbackRoot)
+        try {
+          const fallbackValue = getValue()
+          if (fallbackValue == null || fallbackValue === false) {
+            return
+          }
+          const fallbackOutput = createElementFn(fallbackValue)
+          nodes = toNodeArray(fallbackOutput)
+          const parentNode = marker.parentNode as (ParentNode & Node) | null
+          if (parentNode) {
+            insertNodesBefore(parentNode, nodes, marker)
+          }
+          return () => {
+            destroyRoot(fallbackRoot)
+            removeNodes(nodes)
+          }
+        } catch {
+          destroyRoot(fallbackRoot)
+          return
+        } finally {
+          popRoot(fallbackPrev)
+          flushOnMount(fallbackRoot)
+        }
+      }
+      throw err
     } finally {
       popRoot(prev)
-      flushOnMount(root)
-    }
-
-    return () => {
-      destroyRoot(root)
-      removeNodes(nodes)
+      if (!handledError) {
+        flushOnMount(root)
+      }
     }
   })
 
@@ -683,6 +718,26 @@ export function bindEvent(
   value: MaybeReactive<EventListenerOrEventListenerObject | null | undefined>,
   options?: boolean | AddEventListenerOptions,
 ): Cleanup {
+  const wrapHandler = (
+    handler: EventListenerOrEventListenerObject,
+    rootRef: RootContext | undefined,
+  ): EventListener => {
+    return event => {
+      try {
+        if (typeof handler === 'function') {
+          ;(handler as EventListener)(event)
+        } else if (handler && typeof (handler as EventListenerObject).handleEvent === 'function') {
+          ;(handler as EventListenerObject).handleEvent(event)
+        }
+      } catch (err) {
+        if (handleError(err, { source: 'event', eventName }, rootRef)) {
+          return
+        }
+        throw err
+      }
+    }
+  }
+
   if (isReactive(value)) {
     // Reactive: create effect to update listener when handler changes
     return createEffect(() => {
@@ -691,8 +746,10 @@ export function bindEvent(
       if (handler == null) {
         return
       }
-      el.addEventListener(eventName, handler, options)
-      return () => el.removeEventListener(eventName, handler, options)
+      const rootRef = getCurrentRoot()
+      const wrapped = wrapHandler(handler, rootRef)
+      el.addEventListener(eventName, wrapped, options)
+      return () => el.removeEventListener(eventName, wrapped, options)
     })
   } else {
     // Static: attach once
@@ -701,8 +758,10 @@ export function bindEvent(
     if (handler == null) {
       return () => {}
     }
-    el.addEventListener(eventName, handler, options)
-    const cleanup = () => el.removeEventListener(eventName, handler, options)
+    const rootRef = getCurrentRoot()
+    const wrapped = wrapHandler(handler, rootRef)
+    el.addEventListener(eventName, wrapped, options)
+    const cleanup = () => el.removeEventListener(eventName, wrapped, options)
     registerRootCleanup(cleanup)
     return cleanup
   }
@@ -771,10 +830,10 @@ export function createConditional(
 
     const root = createRootContext()
     const prev = pushRoot(root)
+    let handledError = false
     try {
       const output = render()
       if (output == null || output === false) {
-        currentRoot = root
         return
       }
       const el = createElementFn(output)
@@ -786,11 +845,22 @@ export function createConditional(
       } else {
         currentNodes = nodes
       }
+    } catch (err) {
+      if (handleError(err, { source: 'renderChild' }, root)) {
+        handledError = true
+        destroyRoot(root)
+        return
+      }
+      throw err
     } finally {
       popRoot(prev)
-      flushOnMount(root)
+      if (!handledError) {
+        flushOnMount(root)
+        currentRoot = root
+      } else {
+        currentRoot = null
+      }
     }
-    currentRoot = root
   })
 
   return {
@@ -970,6 +1040,7 @@ export function createPortal(
     // Create new content
     const root = createRootContext()
     const prev = pushRoot(root)
+    let handledError = false
     try {
       const output = render()
       if (output != null && output !== false) {
@@ -980,11 +1051,23 @@ export function createPortal(
         }
         currentNodes = nodes
       }
+    } catch (err) {
+      if (handleError(err, { source: 'renderChild' }, root)) {
+        handledError = true
+        destroyRoot(root)
+        currentNodes = []
+        return
+      }
+      throw err
     } finally {
       popRoot(prev)
-      flushOnMount(root)
+      if (!handledError) {
+        flushOnMount(root)
+        currentRoot = root
+      } else {
+        currentRoot = null
+      }
     }
-    currentRoot = root
   })
 
   return {
@@ -1027,6 +1110,7 @@ function mountBlock<T>(
   const root = createRootContext()
   const prev = pushRoot(root)
   const nodes: Node[] = [start]
+  let handledError = false
   try {
     const output = renderCurrent()
     if (output != null && output !== false) {
@@ -1036,9 +1120,21 @@ function mountBlock<T>(
     }
     nodes.push(end)
     insertNodesBefore(parent, nodes, anchor)
+  } catch (err) {
+    if (handleError(err, { source: 'renderChild' }, root)) {
+      handledError = true
+      nodes.push(end)
+      insertNodesBefore(parent, nodes, anchor)
+    } else {
+      throw err
+    }
   } finally {
     popRoot(prev)
-    flushOnMount(root)
+    if (!handledError) {
+      flushOnMount(root)
+    } else {
+      destroyRoot(root)
+    }
   }
   return {
     nodes,
@@ -1064,10 +1160,22 @@ function rerenderBlock<T>(
 
   const prev = pushRoot(block.root)
   let nextOutput: FictNode
+  let handledError = false
   try {
     nextOutput = block.renderCurrent()
+  } catch (err) {
+    if (handleError(err, { source: 'renderChild' }, block.root)) {
+      handledError = true
+      popRoot(prev)
+      destroyRoot(block.root)
+      block.nodes = [block.start, block.end]
+      return block
+    }
+    throw err
   } finally {
-    popRoot(prev)
+    if (!handledError) {
+      popRoot(prev)
+    }
   }
 
   if (isFragmentVNode(nextOutput) && currentContent.length > 0) {

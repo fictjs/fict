@@ -2,23 +2,38 @@ import type { Cleanup } from './types'
 
 type LifecycleFn = () => void | Cleanup
 
-interface RootContext {
+export interface RootContext {
+  parent?: RootContext | undefined
   onMountCallbacks: LifecycleFn[]
   cleanups: Cleanup[]
   destroyCallbacks: Cleanup[]
+  errorHandlers?: ErrorHandler[]
 }
+
+export interface ErrorInfo {
+  source: 'render' | 'effect' | 'event' | 'renderChild' | 'cleanup'
+  componentName?: string
+  eventName?: string
+}
+
+type ErrorHandler = (err: unknown, info?: ErrorInfo) => boolean | void
 
 let currentRoot: RootContext | undefined
 let currentEffectCleanups: Cleanup[] | undefined
+const globalErrorHandlers: ErrorHandler[] = []
 
-export function createRootContext(): RootContext {
-  return { onMountCallbacks: [], cleanups: [], destroyCallbacks: [] }
+export function createRootContext(parent: RootContext | undefined = currentRoot): RootContext {
+  return { parent, onMountCallbacks: [], cleanups: [], destroyCallbacks: [] }
 }
 
 export function pushRoot(root: RootContext): RootContext | undefined {
   const prev = currentRoot
   currentRoot = root
   return prev
+}
+
+export function getCurrentRoot(): RootContext | undefined {
+  return currentRoot
 }
 
 export function popRoot(prev: RootContext | undefined): void {
@@ -129,4 +144,49 @@ function runLifecycle(fn: LifecycleFn): void {
   }
 }
 
-export type { RootContext }
+export function registerErrorHandler(fn: ErrorHandler): void {
+  if (!currentRoot) {
+    throw new Error('registerErrorHandler must be called within a root')
+  }
+  if (!currentRoot.errorHandlers) {
+    currentRoot.errorHandlers = []
+  }
+  currentRoot.errorHandlers.push(fn)
+  globalErrorHandlers.push(fn)
+}
+
+export function handleError(err: unknown, info?: ErrorInfo, startRoot?: RootContext): boolean {
+  let root: RootContext | undefined = startRoot ?? currentRoot
+  let error = err
+  while (root) {
+    const handlers = root.errorHandlers
+    if (handlers && handlers.length) {
+      for (let i = handlers.length - 1; i >= 0; i--) {
+        const handler = handlers[i]!
+        try {
+          const handled = handler(error, info)
+          if (handled !== false) {
+            return true
+          }
+        } catch (nextErr) {
+          error = nextErr
+        }
+      }
+    }
+    root = root.parent
+  }
+  if (globalErrorHandlers.length) {
+    for (let i = globalErrorHandlers.length - 1; i >= 0; i--) {
+      const handler = globalErrorHandlers[i]!
+      try {
+        const handled = handler(error, info)
+        if (handled !== false) {
+          return true
+        }
+      } catch (nextErr) {
+        error = nextErr
+      }
+    }
+  }
+  throw error
+}

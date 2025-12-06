@@ -35,6 +35,7 @@ export { Fragment } from './jsx'
 // ============================================================================
 
 export { createElement, render } from './dom'
+export { ErrorBoundary } from './error-boundary'
 
 // ============================================================================
 // Reactive DOM Bindings
