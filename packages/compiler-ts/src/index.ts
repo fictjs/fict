@@ -848,12 +848,23 @@ function generateRegionMemo(
 
   const returnStatement = factory.createReturnStatement(
     factory.createObjectLiteralExpression(
-      orderedOutputs.map(name =>
-        factory.createPropertyAssignment(
-          factory.createIdentifier(name),
-          factory.createIdentifier(name),
-        ),
-      ),
+      orderedOutputs.map(name => {
+        const id = factory.createIdentifier(name)
+        return factory.createPropertyAssignment(
+          id,
+          factory.createConditionalExpression(
+            factory.createBinaryExpression(
+              id,
+              factory.createToken(ts.SyntaxKind.ExclamationEqualsToken),
+              factory.createIdentifier('undefined'),
+            ),
+            factory.createToken(ts.SyntaxKind.QuestionToken),
+            id,
+            factory.createToken(ts.SyntaxKind.ColonToken),
+            factory.createIdentifier('undefined'),
+          ),
+        )
+      }),
       false,
     ),
   )

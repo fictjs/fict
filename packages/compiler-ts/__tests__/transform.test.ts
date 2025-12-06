@@ -622,7 +622,9 @@ describe('createFictTransformer', () => {
       expect(memoInvocationCount).toBe(1)
       expect(output).toContain(`const heading = () => __fictRegion`)
       expect(output).toContain(`const extra = () => __fictRegion`)
-      expect(output).toContain(`return { heading: heading, extra: extra`)
+      expect(output).toContain(
+        `return { heading: heading != undefined ? heading : undefined, extra: extra != undefined ? extra : undefined`,
+      )
       expect(output).toContain(`__fictInsert`)
       expect(output).toContain(`() => heading()`)
       expect(output).toContain(`() => extra()`)
@@ -647,7 +649,9 @@ describe('createFictTransformer', () => {
 
       // Early return no longer prevents grouping; derived values share a region
       expect(output).toContain('__fictRegion')
-      expect(output).toContain('return { doubled: doubled, tripled: tripled }')
+      expect(output).toContain(
+        'return { doubled: doubled != undefined ? doubled : undefined, tripled: tripled != undefined ? tripled : undefined }',
+      )
       expect(output).toMatch(/const doubled = \(\) => __fictRegion_\d+\(\)\.doubled/)
       expect(output).toMatch(/const tripled = \(\) => __fictRegion_\d+\(\)\.tripled/)
     })
@@ -678,7 +682,9 @@ describe('createFictTransformer', () => {
 
       // Should group color and label assignments
       expect(output).toContain('__fictRegion')
-      expect(output).toContain('return { color: color, label: label }')
+      expect(output).toContain(
+        'return { color: color != undefined ? color : undefined, label: label != undefined ? label : undefined }',
+      )
     })
 
     it('handles nested control flow correctly', () => {

@@ -54,7 +54,9 @@ describe('Rule D Verification', () => {
     // Should contain the region marker
     expect(output).toContain('__fictRegion')
     // Should return an object with heading and extra (not noun - it's a local variable)
-    expect(output).toMatch(/return { heading: heading, extra: extra }/)
+    expect(output).toMatch(
+      /return { heading: heading != undefined \? heading : undefined, extra: extra != undefined \? extra : undefined }/,
+    )
     // Should expose getters for external variables only
     expect(output).toMatch(/const heading = \(\) => __fictRegion_\d+\(\)\.heading/)
     expect(output).toMatch(/const extra = \(\) => __fictRegion_\d+\(\)\.extra/)
@@ -73,7 +75,9 @@ describe('Rule D Verification', () => {
     const output = transform(input)
 
     expect(output).toContain('__fictRegion')
-    expect(output).toMatch(/return { doubled: doubled, heading: heading, summary: summary }/)
+    expect(output).toMatch(
+      /return { doubled: doubled != undefined \? doubled : undefined, heading: heading != undefined \? heading : undefined, summary: summary != undefined \? summary : undefined }/,
+    )
     expect(output).toMatch(/const heading = \(\) => __fictRegion_\d+\(\)\.heading/)
     expect(output).toMatch(/const summary = \(\) => __fictRegion_\d+\(\)\.summary/)
   })
@@ -95,7 +99,9 @@ describe('Rule D Verification', () => {
     const output = transform(input)
 
     expect(output).toContain('__fictRegion')
-    expect(output).toMatch(/return { doubled: doubled, tripled: tripled }/)
+    expect(output).toMatch(
+      /return { doubled: doubled != undefined \? doubled : undefined, tripled: tripled != undefined \? tripled : undefined }/,
+    )
     expect(output).toMatch(/const doubled = \(\) => __fictRegion_\d+\(\)\.doubled/)
     expect(output).toMatch(/const tripled = \(\) => __fictRegion_\d+\(\)\.tripled/)
   })
@@ -142,7 +148,9 @@ describe('Rule D Verification', () => {
 
     const output = transform(input)
     expect(output).toContain('__fictRegion')
-    expect(output).toMatch(/return { label: label, bonus: bonus }/)
+    expect(output).toMatch(
+      /return { label: label != undefined \? label : undefined, bonus: bonus != undefined \? bonus : undefined }/,
+    )
     expect(output).toMatch(/const label = \(\) => __fictRegion_\d+\(\)\.label/)
     expect(output).toMatch(/const bonus = \(\) => __fictRegion_\d+\(\)\.bonus/)
   })

@@ -51,7 +51,7 @@ describe('Fict Compiler - Control Flow', () => {
         const status = count > 10 ? 'high' : 'low'
       `
       const output = transform(input)
-      // Derived const value should be memoized
+      // Ternary derived should be memoized
       expect(output).toContain('__fictMemo')
       expect(output).toContain('count() > 10')
     })
