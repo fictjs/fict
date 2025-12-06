@@ -199,6 +199,35 @@ const doubled = count * 2
 return <div>{doubled}</div>
 ```
 
+### Suspense & async boundaries
+
+- `<Suspense fallback>` captures suspend tokens thrown during render (`createSuspenseToken()` or a compatible Promise), shows the placeholder UI, and restores the subtree once everything resolves; rejects are handled by the nearest ErrorBoundary.
+- Suspension can only be triggered from the render path (JSX/list/conditional/portal); events or `$effect` don't suspend automatically, so throw a token yourself if needed.
+- Resources and lazy:
+  - `resource({ fetch, suspense: true, key? })`'s `result.data` throws a token while loading; use `key` to keep the same resource instance across rerenders.
+  - `lazy(() => import('./Foo'))` throws a token until the module loads, then renders the real component once resolved.
+
+```tsx
+import { Suspense } from 'fict'
+import { resource, lazy } from 'fict/plus'
+
+const userResource = resource({
+  suspense: true,
+  fetch: (_, id: number) => fetch(`/api/user/${id}`).then(r => r.json()),
+})
+
+const LazyChart = lazy(() => import('./Chart'))
+
+export function Profile({ id }) {
+  return (
+    <Suspense fallback="Loading...">
+      <h1>{userResource.read(() => id).data?.name}</h1>
+      <LazyChart />
+    </Suspense>
+  )
+}
+```
+
 ### Error boundaries
 
 Fict ships a built-in `<ErrorBoundary>` that captures errors from rendering, events, effects, and cleanups, then swaps the subtree with a fallback view.

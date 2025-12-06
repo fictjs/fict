@@ -101,6 +101,17 @@ Fict is closer to Solid's execution model but uses a **TSX + Compiler Automatic 
 - **Uncaught errors**: If no boundary is registered or a handler returns `false`, the error continues to bubble so failures remain visible during development.
 - **Cleanup safety**: Errors thrown during lifecycle cleanups are routed through the boundary to prevent the entire tree from crashing.
 
+### 2.4 Suspense & Async Boundaries
+
+- **Trigger scope**: Only Suspense tokens thrown along the render path (JSX/list/conditional/Portal) are caught by the nearest `<Suspense>`; events/`$effect` won't suspend by default, so throw a token explicitly if needed.
+- **Resource coordination**: `resource({ fetch, suspense: true, key? })`'s `read()` throws a token while pending; `key` lets you reuse/share the same resource instance (across components or stable params) to avoid duplicate requests and leaks.
+- **Lazy components**: `lazy(() => import('./Foo'))` throws a token while the module is still loading; once the fallback renders and the module resolves, it resumes automatically.
+- **Parallel suspension**: Suspense counts tokens and only resumes after all resolve; rejects go to the nearest ErrorBoundary or `onReject`.
+- **Best practices**:
+  - Pass a `key` for resources with stable params (e.g. `[userId]`) to reuse caches; when params change or you refresh, changing the key re-suspends and refetches.
+  - For "silent retries", wrap the region with an ErrorBoundary to catch rejects, or retry inside the resource before resolving.
+  - Don't suspend implicitly inside events or effects; if you want users to see loading states, wrap the async data as a resource/lazy ahead of time and throw tokens from the render path.
+
 ---
 
 ## 3. $state: Signal Source Node
