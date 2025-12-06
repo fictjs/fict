@@ -297,7 +297,9 @@ describe('Reactive DOM Binding', () => {
       const cleanups: string[] = []
 
       const Child = () => {
-        onDestroy(() => cleanups.push('child'))
+        onDestroy(() => {
+          cleanups.push('child')
+        })
         return {
           type: Fragment,
           props: {
@@ -529,7 +531,9 @@ describe('Reactive DOM Binding', () => {
       const { marker, dispose } = createList(
         () => items(),
         item => {
-          onDestroy(() => cleanups.push(`destroy-${item}`))
+          onDestroy(() => {
+            cleanups.push(`destroy-${item}`)
+          })
           return { type: 'span', props: { children: item }, key: undefined }
         },
         createElement,
@@ -561,7 +565,9 @@ describe('Reactive DOM Binding', () => {
         () => items(),
         item => {
           renders.push(`render-${item.id}`)
-          onDestroy(() => cleanups.push(`destroy-${item.id}`))
+          onDestroy(() => {
+            cleanups.push(`destroy-${item.id}`)
+          })
           return { type: 'span', props: { children: item.text }, key: undefined }
         },
         createElement,
@@ -779,6 +785,28 @@ describe('Reactive DOM Binding', () => {
       visible(true)
       await tick()
       expect(el.style.display).toBe('')
+
+      dispose()
+    })
+
+    it('preserves original display style', async () => {
+      const el = document.createElement('div')
+      el.style.display = 'flex'
+      const visible = createSignal(true)
+
+      const { dispose } = createRoot(() => {
+        createShow(el, () => visible())
+      })
+
+      expect(el.style.display).toBe('flex')
+
+      visible(false)
+      await tick()
+      expect(el.style.display).toBe('none')
+
+      visible(true)
+      await tick()
+      expect(el.style.display).toBe('flex')
 
       dispose()
     })

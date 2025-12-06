@@ -347,11 +347,14 @@ export function createStyleBinding(
   value: MaybeReactive<string | Record<string, string | number> | null | undefined>,
 ): void {
   if (isReactive(value)) {
+    let prev: unknown
     createEffect(() => {
-      applyStyle(el, (value as () => unknown)())
+      const next = (value as () => unknown)()
+      applyStyle(el, next, prev)
+      prev = next
     })
   } else {
-    applyStyle(el, value)
+    applyStyle(el, value, undefined)
   }
 }
 
@@ -362,21 +365,39 @@ export function bindStyle(
   el: HTMLElement,
   getValue: () => string | Record<string, string | number> | null | undefined,
 ): Cleanup {
+  let prev: unknown
   return createEffect(() => {
-    applyStyle(el, getValue())
+    const next = getValue()
+    applyStyle(el, next, prev)
+    prev = next
   })
 }
 
 /**
  * Apply a style value to an element
  */
-function applyStyle(el: HTMLElement, value: unknown): void {
+function applyStyle(el: HTMLElement, value: unknown, prev: unknown): void {
   if (typeof value === 'string') {
     el.style.cssText = value
   } else if (value && typeof value === 'object') {
-    // Reset styles first for reactive updates
-    el.style.cssText = ''
     const styles = value as Record<string, string | number>
+
+    // If we previously set styles via string, clear before applying object map
+    if (typeof prev === 'string') {
+      el.style.cssText = ''
+    }
+
+    // Remove styles that were present in prev but not in current
+    if (prev && typeof prev === 'object') {
+      const prevStyles = prev as Record<string, string | number>
+      for (const key of Object.keys(prevStyles)) {
+        if (!(key in styles)) {
+          const cssProperty = key.replace(/([A-Z])/g, '-$1').toLowerCase()
+          el.style.removeProperty(cssProperty)
+        }
+      }
+    }
+
     for (const [prop, v] of Object.entries(styles)) {
       if (v != null) {
         // Handle camelCase to kebab-case conversion
@@ -384,10 +405,24 @@ function applyStyle(el: HTMLElement, value: unknown): void {
         const unitless = isUnitlessStyleProperty(prop) || isUnitlessStyleProperty(cssProperty)
         const valueStr = typeof v === 'number' && !unitless ? `${v}px` : String(v)
         el.style.setProperty(cssProperty, valueStr)
+      } else {
+        const cssProperty = prop.replace(/([A-Z])/g, '-$1').toLowerCase()
+        el.style.removeProperty(cssProperty) // Handle null/undefined values by removing
       }
     }
   } else {
-    el.style.cssText = ''
+    // If value is null/undefined, we might want to clear styles set by PREVIOUS binding?
+    // But blindly clearing cssText is dangerous.
+    // Ideally we remove keys from prev.
+    if (prev && typeof prev === 'object') {
+      const prevStyles = prev as Record<string, string | number>
+      for (const key of Object.keys(prevStyles)) {
+        const cssProperty = key.replace(/([A-Z])/g, '-$1').toLowerCase()
+        el.style.removeProperty(cssProperty)
+      }
+    } else if (typeof prev === 'string') {
+      el.style.cssText = ''
+    }
   }
 }
 
@@ -451,11 +486,14 @@ export function createClassBinding(
   value: MaybeReactive<string | Record<string, boolean> | null | undefined>,
 ): void {
   if (isReactive(value)) {
+    let prev: unknown
     createEffect(() => {
-      applyClass(el, (value as () => unknown)())
+      const next = (value as () => unknown)()
+      applyClass(el, next, prev)
+      prev = next
     })
   } else {
-    applyClass(el, value)
+    applyClass(el, value, undefined)
   }
 }
 
@@ -466,30 +504,39 @@ export function bindClass(
   el: HTMLElement,
   getValue: () => string | Record<string, boolean> | null | undefined,
 ): Cleanup {
+  let prev: unknown
   return createEffect(() => {
-    applyClass(el, getValue())
+    const next = getValue()
+    applyClass(el, next, prev)
+    prev = next
   })
 }
 
 /**
  * Apply a class value to an element
  */
-function applyClass(el: HTMLElement, value: unknown): void {
+function applyClass(el: HTMLElement, value: unknown, _prev: unknown): void {
+  let staticClasses = STATIC_CLASS_MAP.get(el)
+  if (!staticClasses) {
+    staticClasses = el.className ? el.className.split(/\s+/).filter(Boolean) : []
+    STATIC_CLASS_MAP.set(el, staticClasses)
+  }
+
   if (typeof value === 'string') {
     el.className = value
   } else if (value && typeof value === 'object') {
-    // Object syntax: { 'class-name': boolean }
-    const classes: string[] = []
-    for (const [className, enabled] of Object.entries(value)) {
-      if (enabled) {
-        classes.push(className)
-      }
-    }
-    el.className = classes.join(' ')
+    const classes = value as Record<string, boolean>
+    const enabled = Object.entries(classes)
+      .filter(([, on]) => !!on)
+      .map(([name]) => name)
+    const merged = [...enabled, ...staticClasses.filter(name => !classes[name])]
+    el.className = merged.join(' ')
   } else {
-    el.className = ''
+    el.className = staticClasses ? staticClasses.join(' ') : ''
   }
 }
+
+const STATIC_CLASS_MAP = new WeakMap<HTMLElement, string[]>()
 
 // ============================================================================
 // Child/Insert Binding (Dynamic Children)
@@ -875,9 +922,10 @@ export function createList<T>(
  * createShow(container, () => $visible())
  * ```
  */
-export function createShow(el: HTMLElement, condition: () => boolean, displayValue = ''): void {
+export function createShow(el: HTMLElement, condition: () => boolean, displayValue?: string): void {
+  const originalDisplay = displayValue ?? el.style.display
   createEffect(() => {
-    el.style.display = condition() ? displayValue : 'none'
+    el.style.display = condition() ? originalDisplay : 'none'
   })
 }
 
