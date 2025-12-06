@@ -52,6 +52,7 @@ export {
   bindAttribute,
   bindStyle,
   bindClass,
+  bindEvent,
   bindProperty,
   insert,
   // Reactive detection

@@ -20,6 +20,7 @@ import {
   flushOnMount,
   pushRoot,
   popRoot,
+  registerRootCleanup,
   type RootContext,
 } from './lifecycle'
 import { createSignal, type Signal } from './signal'
@@ -607,6 +608,56 @@ export function createChildBinding(
       dispose()
       marker.parentNode?.removeChild(marker)
     },
+  }
+}
+
+// ============================================================================
+// Event Binding
+// ============================================================================
+
+/**
+ * Bind an event listener to an element.
+ *
+ * @example
+ * ```ts
+ * // Static event
+ * bindEvent(button, 'click', handleClick)
+ *
+ * // Reactive event (compiler output)
+ * bindEvent(button, 'click', () => $handler())
+ *
+ * // With modifiers
+ * bindEvent(button, 'click', handler, { capture: true, passive: true, once: true })
+ * ```
+ */
+export function bindEvent(
+  el: HTMLElement,
+  eventName: string,
+  value: MaybeReactive<EventListenerOrEventListenerObject | null | undefined>,
+  options?: boolean | AddEventListenerOptions,
+): Cleanup {
+  if (isReactive(value)) {
+    // Reactive: create effect to update listener when handler changes
+    return createEffect(() => {
+      const handler = (value as () => EventListenerOrEventListenerObject | null | undefined)()
+      // Skip if handler is null/undefined
+      if (handler == null) {
+        return
+      }
+      el.addEventListener(eventName, handler, options)
+      return () => el.removeEventListener(eventName, handler, options)
+    })
+  } else {
+    // Static: attach once
+    const handler = value as EventListenerOrEventListenerObject | null | undefined
+    // Skip if handler is null/undefined
+    if (handler == null) {
+      return () => {}
+    }
+    el.addEventListener(eventName, handler, options)
+    const cleanup = () => el.removeEventListener(eventName, handler, options)
+    registerRootCleanup(cleanup)
+    return cleanup
   }
 }
 

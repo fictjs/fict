@@ -36,6 +36,7 @@ interface HelperUsage {
   bindAttribute: boolean
   bindClass: boolean
   bindStyle: boolean
+  bindEvent: boolean
   toNodeArray: boolean
 }
 
@@ -74,6 +75,7 @@ const RUNTIME_HELPERS = {
   bindAttribute: 'bindAttribute',
   bindClass: 'bindClass',
   bindStyle: 'bindStyle',
+  bindEvent: 'bindEvent',
   toNodeArray: 'toNodeArray',
 } as const
 
@@ -91,6 +93,7 @@ const RUNTIME_ALIASES = {
   bindAttribute: '__fictBindAttribute',
   bindClass: '__fictBindClass',
   bindStyle: '__fictBindStyle',
+  bindEvent: '__fictBindEvent',
   toNodeArray: '__fictToNodeArray',
 } as const
 
@@ -196,6 +199,7 @@ export function createFictTransformer(
         bindAttribute: false,
         bindClass: false,
         bindStyle: false,
+        bindEvent: false,
         toNodeArray: false,
       }
 
@@ -2658,14 +2662,27 @@ function emitDynamicAttribute(
   const getter = createGetterArrow(factory, expr)
 
   if (attr.kind === 'event') {
-    const handlerId = allocateTemplateIdentifier(state, 'evt')
-    state.statements.push(createConstDeclaration(factory, handlerId, expr))
+    state.ctx.helpersUsed.bindEvent = true
+    const args: ts.Expression[] = [elementId, factory.createStringLiteral(attr.eventName), getter]
+    if (attr.capture || attr.passive || attr.once) {
+      const props: ts.PropertyAssignment[] = []
+      if (attr.capture) {
+        props.push(factory.createPropertyAssignment('capture', factory.createTrue()))
+      }
+      if (attr.passive) {
+        props.push(factory.createPropertyAssignment('passive', factory.createTrue()))
+      }
+      if (attr.once) {
+        props.push(factory.createPropertyAssignment('once', factory.createTrue()))
+      }
+      args.push(factory.createObjectLiteralExpression(props, true))
+    }
     state.statements.push(
       factory.createExpressionStatement(
         factory.createCallExpression(
-          factory.createPropertyAccessExpression(elementId, 'addEventListener'),
+          factory.createIdentifier(RUNTIME_ALIASES.bindEvent),
           undefined,
-          [factory.createStringLiteral(attr.eventName), handlerId],
+          args,
         ),
       ),
     )
@@ -2758,14 +2775,44 @@ type NormalizedAttribute =
       name: string
       kind: 'event'
       eventName: string
+      capture?: boolean
+      passive?: boolean
+      once?: boolean
     }
 
 function normalizeAttributeName(name: string): NormalizedAttribute | null {
   if (name.length > 2 && name.startsWith('on') && name[2]!.toUpperCase() === name[2]) {
+    let eventName = name.slice(2)
+    let capture = false
+    let passive = false
+    let once = false
+    // Support suffix modifiers, order-insensitive (Capture/Passive/Once)
+    let changed = true
+    while (changed) {
+      changed = false
+      if (eventName.endsWith('Capture')) {
+        eventName = eventName.slice(0, -7)
+        capture = true
+        changed = true
+      }
+      if (eventName.endsWith('Passive')) {
+        eventName = eventName.slice(0, -7)
+        passive = true
+        changed = true
+      }
+      if (eventName.endsWith('Once')) {
+        eventName = eventName.slice(0, -4)
+        once = true
+        changed = true
+      }
+    }
     return {
       name,
       kind: 'event',
-      eventName: name.slice(2).toLowerCase(),
+      eventName: eventName.toLowerCase(),
+      capture,
+      passive,
+      once,
     }
   }
 
@@ -4451,6 +4498,15 @@ function addRuntimeImports(
         false,
         factory.createIdentifier(RUNTIME_HELPERS.bindStyle),
         factory.createIdentifier(RUNTIME_ALIASES.bindStyle),
+      ),
+    )
+  }
+  if (helpers.bindEvent) {
+    neededSpecifiers.push(
+      factory.createImportSpecifier(
+        false,
+        factory.createIdentifier(RUNTIME_HELPERS.bindEvent),
+        factory.createIdentifier(RUNTIME_ALIASES.bindEvent),
       ),
     )
   }
