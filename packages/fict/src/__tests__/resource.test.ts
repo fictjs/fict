@@ -1,4 +1,4 @@
-import { createSignal, createRoot } from 'fict-runtime'
+import { Suspense, createSignal, createRoot, render } from 'fict-runtime'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 import { resource } from '../resource'
@@ -82,5 +82,45 @@ describe('resource', () => {
     await tick()
 
     expect(abortSpy).toHaveBeenCalled()
+  })
+
+  it('supports suspense fallback while fetching', async () => {
+    vi.useRealTimers()
+    const fetcher = vi.fn(() => new Promise(resolve => setTimeout(() => resolve('done'), 0)))
+    const r = resource({ fetch: fetcher, suspense: true, key: ['static'] })
+    const container = document.createElement('div')
+    let lastResult: any
+    const args = () => null
+
+    const View = () => {
+      const result = r.read(args)
+      lastResult = result
+      return { type: 'span', props: { children: result.data } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense as any,
+        props: {
+          fallback: 'loading',
+          children: { type: View, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('loading')
+
+    await new Promise(resolve => setTimeout(resolve, 1))
+    await tick()
+    await tick()
+    await tick()
+
+    expect(container.textContent).toBe('done')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(lastResult?.loading).toBe(false)
+    expect(lastResult?.data).toBe('done')
+    dispose()
   })
 })

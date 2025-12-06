@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onCleanup } from 'fict-runtime'
+import { createSignal, createEffect, onCleanup, createSuspenseToken } from 'fict-runtime'
 
 export interface ResourceResult<T> {
   data: T | undefined
@@ -10,6 +10,7 @@ export interface ResourceResult<T> {
 export interface ResourceOptions<T, Args> {
   key?: unknown[]
   fetch: (ctx: { signal: AbortSignal }, args: Args) => Promise<T>
+  suspense?: boolean
 }
 
 /**
@@ -23,18 +24,51 @@ export function resource<T, Args = void>(
     | ResourceOptions<T, Args>,
 ) {
   const fetcher = typeof optionsOrFetcher === 'function' ? optionsOrFetcher : optionsOrFetcher.fetch
+  const useSuspense = typeof optionsOrFetcher === 'object' && !!optionsOrFetcher.suspense
+  const cache = new Map<unknown, ResourceState>()
+
+  interface ResourceState {
+    data: ReturnType<typeof createSignal<T | undefined>>
+    loading: ReturnType<typeof createSignal<boolean>>
+    error: ReturnType<typeof createSignal<unknown>>
+    version: ReturnType<typeof createSignal<number>>
+    pendingToken: ReturnType<typeof createSuspenseToken> | null
+    lastArgs: Args | undefined
+    lastVersion: number
+    hasValue: boolean
+    activeVersion: number
+    refresh: () => void
+  }
 
   return {
     read(argsAccessor: () => Args | Args): ResourceResult<T> {
-      const data = createSignal<T | undefined>(undefined)
-      const loading = createSignal(true)
-      const error = createSignal<unknown>(undefined)
+      const key =
+        typeof optionsOrFetcher === 'object' && optionsOrFetcher.key
+          ? optionsOrFetcher.key
+          : typeof argsAccessor === 'function'
+            ? argsAccessor
+            : argsAccessor
 
-      const refresh = () => {
-        version(version() + 1)
+      let state = cache.get(key)
+      if (!state) {
+        const data = createSignal<T | undefined>(undefined)
+        const loading = createSignal(true)
+        const error = createSignal<unknown>(undefined)
+        const version = createSignal(0)
+        state = {
+          data,
+          loading,
+          error,
+          version,
+          pendingToken: null,
+          lastArgs: undefined,
+          lastVersion: -1,
+          hasValue: false,
+          activeVersion: -1,
+          refresh: () => version(version() + 1),
+        }
+        cache.set(key, state)
       }
-
-      const version = createSignal(0)
 
       createEffect(() => {
         // Track args
@@ -42,41 +76,67 @@ export function resource<T, Args = void>(
           typeof argsAccessor === 'function' ? (argsAccessor as () => Args)() : argsAccessor
 
         // Track version for manual refresh
-        version()
+        const currentVersion = state!.version()
+
+        // Skip refetch if args/version unchanged and we already have data
+        if (state!.hasValue && state!.lastArgs === args && state!.lastVersion === currentVersion) {
+          return
+        }
+        state!.lastArgs = args
+        state!.lastVersion = currentVersion
 
         const controller = new AbortController()
+        state!.activeVersion = currentVersion
+        const versionAtStart = currentVersion
 
-        loading(true)
-        error(undefined)
+        state!.loading(true)
+        state!.error(undefined)
+
+        state!.pendingToken = useSuspense ? createSuspenseToken() : null
 
         onCleanup(() => {
-          controller.abort()
+          if (!useSuspense) {
+            controller.abort()
+            cache.delete(key)
+          }
         })
 
         fetcher({ signal: controller.signal }, args)
           .then(res => {
-            if (controller.signal.aborted) return
-            data(res)
-            loading(false)
+            if (controller.signal.aborted || state!.activeVersion !== versionAtStart) return
+            state!.data(res)
+            state!.loading(false)
+            state!.hasValue = true
+            if (state!.pendingToken) {
+              state!.pendingToken.resolve()
+              state!.pendingToken = null
+            }
           })
           .catch(err => {
-            if (controller.signal.aborted) return
-            error(err)
-            loading(false)
+            if (controller.signal.aborted || state!.activeVersion !== versionAtStart) return
+            state!.error(err)
+            state!.loading(false)
+            if (state!.pendingToken) {
+              state!.pendingToken.reject(err)
+              state!.pendingToken = null
+            }
           })
       })
 
       return {
         get data() {
-          return data()
+          if (useSuspense && state!.loading() && state!.pendingToken) {
+            throw state!.pendingToken.token
+          }
+          return state!.data()
         },
         get loading() {
-          return loading()
+          return state!.loading()
         },
         get error() {
-          return error()
+          return state!.error()
         },
-        refresh,
+        refresh: state!.refresh,
       }
     },
   }
