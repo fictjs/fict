@@ -153,8 +153,8 @@ describe('Cross-module usage patterns', () => {
     `)
     const signalCalls = (output.match(/__fictSignal\(/g) || []).length
     expect(signalCalls).toBe(1)
-    // Module-level alias compiles as memo to keep cross-module semantics consistent
-    expect(output).toContain('__fictMemo(() => count())')
+    // Module-level alias compiles as getter
+    expect(output).toContain('const alias = () => count()')
   })
 
   it('non-exported function-scoped derived', () => {

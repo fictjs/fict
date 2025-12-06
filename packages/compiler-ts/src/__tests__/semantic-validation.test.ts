@@ -93,4 +93,13 @@ describe('semantic validation', () => {
     `
     expect(() => transform(source)).toThrow(/\$state\(\) must assign to an identifier/)
   })
+
+  it('throws on spread/object left assignment of reactive', () => {
+    const source = `
+      import { $state } from 'fict'
+      let count = $state(0)
+      ;[count] = [1]
+    `
+    expect(() => transform(source)).toThrow(/Illegal assignment target/)
+  })
 })

@@ -589,6 +589,38 @@ describe('Complete Integration Tests', () => {
     })
   })
 
+  describe('Region memo recomputation count', () => {
+    it('recomputes region exactly once per dependency change', async () => {
+      const count = createSignal(0)
+      let computeCalls = 0
+
+      const viewState = createMemo(() => {
+        computeCalls++
+        const c = count()
+        const doubled = c * 2
+        let tripled = c * 3
+        if (c === 0) {
+          tripled = 0
+        }
+        return { doubled, tripled }
+      })
+
+      // Initial run occurs on first read
+      expect(computeCalls).toBe(0)
+      expect(viewState().doubled).toBe(0)
+      expect(viewState().tripled).toBe(0)
+      expect(computeCalls).toBe(1)
+
+      count(2)
+      await tick()
+
+      const updated = viewState()
+      expect(computeCalls).toBe(2)
+      expect(updated.doubled).toBe(4)
+      expect(updated.tripled).toBe(6)
+    })
+  })
+
   describe('Full Component Integration', () => {
     it('Counter component: state → DOM → update → verify', async () => {
       const Counter = () => {

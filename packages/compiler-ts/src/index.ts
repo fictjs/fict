@@ -7,6 +7,7 @@ import * as ts from 'typescript'
 interface TransformContext {
   stateVars: Set<string>
   memoVars: Set<string>
+  aliasVars: Set<string>
   getterOnlyVars: Set<string>
   shadowedVars: Set<string>
   helpersUsed: HelperUsage
@@ -207,6 +208,7 @@ export function createFictTransformer(
       const ctx: TransformContext = {
         stateVars,
         memoVars,
+        aliasVars: new Set(),
         getterOnlyVars: new Set(),
         shadowedVars: new Set(),
         helpersUsed,
@@ -374,6 +376,15 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
       ts.isIdentifier(node.left) &&
       isAssignmentOperator(node.operatorToken.kind)
     ) {
+      if (ctx.aliasVars.has(node.left.text)) {
+        throw new Error(
+          formatError(
+            ctx.sourceFile,
+            node,
+            'Aliasing $state values must remain getters; reassignment is not supported',
+          ),
+        )
+      }
       return handleAssignmentExpression(node, ctx, visitor)
     }
 
@@ -413,7 +424,8 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
     // Handle shorthand properties: { count } -> { count: count() }
     if (
       ts.isShorthandPropertyAssignment(node) &&
-      isTrackedAndNotShadowed(node.name.text, stateVars, memoVars, shadowedVars)
+      (isTrackedAndNotShadowed(node.name.text, stateVars, memoVars, shadowedVars) ||
+        (ctx.getterOnlyVars.has(node.name.text) && !shadowedVars.has(node.name.text)))
     ) {
       return factory.createPropertyAssignment(node.name, createGetterCall(factory, node.name.text))
     }
@@ -421,7 +433,8 @@ function createVisitorWithOptions(ctx: TransformContext, opts: VisitorOptions): 
     // Handle identifier references
     if (
       ts.isIdentifier(node) &&
-      isTrackedAndNotShadowed(node.text, stateVars, memoVars, shadowedVars)
+      (isTrackedAndNotShadowed(node.text, stateVars, memoVars, shadowedVars) ||
+        (ctx.getterOnlyVars.has(node.text) && !shadowedVars.has(node.text)))
     ) {
       if (shouldTransformIdentifier(node)) {
         return createGetterCall(factory, node.text)
@@ -2306,6 +2319,39 @@ function handleVariableDeclaration(
     )
   }
 
+  // Prevent const alias reassignment of $state
+  if (
+    node.initializer &&
+    ts.isIdentifier(node.initializer) &&
+    stateVars.has(node.initializer.text) &&
+    !shadowedVars.has(node.initializer.text) &&
+    getFunctionDepth(node) <= 1 &&
+    !isInsideLoop(node) &&
+    !isInsideConditional(node)
+  ) {
+    const newDecl = factory.updateVariableDeclaration(
+      node,
+      node.name,
+      node.exclamationToken,
+      node.type,
+      factory.createArrowFunction(
+        undefined,
+        undefined,
+        [],
+        undefined,
+        factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+        factory.createCallExpression(
+          factory.createIdentifier(node.initializer.text),
+          undefined,
+          [],
+        ),
+      ),
+    )
+    ctx.getterOnlyVars.add(node.name.text)
+    ctx.aliasVars.add(node.name.text)
+    return newDecl
+  }
+
   // Handle derived values (const declarations that depend on state/memo)
   if (
     shouldMemoize(node, stateVars) &&
@@ -2391,6 +2437,20 @@ function handleVariableDeclaration(
 function ensureValidAssignmentTarget(node: ts.BinaryExpression, ctx: TransformContext): void {
   if (ts.isCallExpression(node.left) && isStateCall(node.left)) {
     throw new Error(formatError(ctx.sourceFile, node, '$state() must assign to an identifier'))
+  }
+  if (
+    ts.isArrayLiteralExpression(node.left) ||
+    ts.isObjectLiteralExpression(node.left) ||
+    ts.isSpreadElement(node.left)
+  ) {
+    const leftText = node.left.getText(ctx.sourceFile)
+    throw new Error(
+      formatError(
+        ctx.sourceFile,
+        node,
+        `Illegal assignment target "${leftText}" for reactive value`,
+      ),
+    )
   }
 }
 // ============================================================================
