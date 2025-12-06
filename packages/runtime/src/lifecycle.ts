@@ -1,4 +1,4 @@
-import type { Cleanup } from './types'
+import type { Cleanup, ErrorInfo } from './types'
 
 type LifecycleFn = () => void | Cleanup
 
@@ -10,17 +10,11 @@ export interface RootContext {
   errorHandlers?: ErrorHandler[]
 }
 
-export interface ErrorInfo {
-  source: 'render' | 'effect' | 'event' | 'renderChild' | 'cleanup'
-  componentName?: string
-  eventName?: string
-}
-
 type ErrorHandler = (err: unknown, info?: ErrorInfo) => boolean | void
 
 let currentRoot: RootContext | undefined
 let currentEffectCleanups: Cleanup[] | undefined
-const globalErrorHandlers: ErrorHandler[] = []
+const globalErrorHandlers = new WeakMap<RootContext, ErrorHandler[]>()
 
 export function createRootContext(parent: RootContext | undefined = currentRoot): RootContext {
   return { parent, onMountCallbacks: [], cleanups: [], destroyCallbacks: [] }
@@ -83,6 +77,12 @@ export function clearRoot(root: RootContext): void {
 export function destroyRoot(root: RootContext): void {
   clearRoot(root)
   runCleanupList(root.destroyCallbacks)
+  if (root.errorHandlers) {
+    root.errorHandlers.length = 0
+  }
+  if (globalErrorHandlers.has(root)) {
+    globalErrorHandlers.delete(root)
+  }
 }
 
 export function createRoot<T>(fn: () => T): { dispose: () => void; value: T } {
@@ -133,7 +133,9 @@ export function runCleanupList(list: Cleanup[]): void {
   }
   list.length = 0
   if (error !== undefined) {
-    throw error
+    if (!handleError(error, { source: 'cleanup' })) {
+      throw error
+    }
   }
 }
 
@@ -152,7 +154,12 @@ export function registerErrorHandler(fn: ErrorHandler): void {
     currentRoot.errorHandlers = []
   }
   currentRoot.errorHandlers.push(fn)
-  globalErrorHandlers.push(fn)
+  const existing = globalErrorHandlers.get(currentRoot)
+  if (existing) {
+    existing.push(fn)
+  } else {
+    globalErrorHandlers.set(currentRoot, [fn])
+  }
 }
 
 export function handleError(err: unknown, info?: ErrorInfo, startRoot?: RootContext): boolean {
@@ -175,9 +182,14 @@ export function handleError(err: unknown, info?: ErrorInfo, startRoot?: RootCont
     }
     root = root.parent
   }
-  if (globalErrorHandlers.length) {
-    for (let i = globalErrorHandlers.length - 1; i >= 0; i--) {
-      const handler = globalErrorHandlers[i]!
+  const globalForRoot = startRoot
+    ? globalErrorHandlers.get(startRoot)
+    : currentRoot
+      ? globalErrorHandlers.get(currentRoot)
+      : undefined
+  if (globalForRoot && globalForRoot.length) {
+    for (let i = globalForRoot.length - 1; i >= 0; i--) {
+      const handler = globalForRoot[i]!
       try {
         const handled = handler(error, info)
         if (handled !== false) {

@@ -10,6 +10,7 @@ This document outlines the high-level engineering architecture. from an engineer
 - How the dependency graph is built and how the DOM is updated
 - Why components "run only once" but still feel intuitive
 - How edge semantics (events, async, side effects) are guaranteed to be consistent
+- How runtime errors are caught and isolated
 
 ---
 
@@ -91,6 +92,14 @@ $state ──▶ memo ──▶ binding
 | Fict      | Component executes once, internal signal graph + compilation | DOM-level (Fine-grained) |
 
 Fict is closer to Solid's execution model but uses a **TSX + Compiler Automatic Inference** style.
+
+---
+
+## 2.3 Error Handling
+
+- **ErrorBoundary**: Captures errors from rendering, event handlers, effects, and cleanups using the nearest boundary first, switches to the `fallback` view, and rebuilds the subtree when `resetKeys` change.
+- **Uncaught errors**: If no boundary is registered or a handler returns `false`, the error continues to bubble so failures remain visible during development.
+- **Cleanup safety**: Errors thrown during lifecycle cleanups are routed through the boundary to prevent the entire tree from crashing.
 
 ---
 

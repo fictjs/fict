@@ -11,6 +11,7 @@ Given a piece of TSX source code, the Fict compiler needs to:
 4. **Build** a minimized, glitch-free dependency graph.
 5. **Generate** corresponding runtime calls (state/memo/effect/binding).
 6. **Conservatively downgrade** and issue compilation warnings where semantics are uncertain.
+7. **Ensure error isolation**: generated event/effect/child bindings run inside an error boundary if present; otherwise errors are allowed to surface.
 
 This specification uses a set of "Rules A–L" to describe the entire process.
 
@@ -24,6 +25,7 @@ This specification uses a set of "Rules A–L" to describe the entire process.
 - **Binding**: Dynamic attribute / children update function in JSX.
 - **Region**: A group of Derived expressions closely related in terms of control flow/scope.
 - **IR (Intermediate Representation)**: Abstract structure used internally by the compiler, not directly exposed to user code.
+- **Error Boundary**: Runtime component that captures errors in render/effect/event/cleanup for its subtree and renders a fallback.
 
 ---
 

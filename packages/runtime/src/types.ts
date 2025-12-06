@@ -61,6 +61,16 @@ export type PropsWithChildren<P = unknown> = P & {
 }
 
 // ============================================================================
+// Error Handling Types
+// ============================================================================
+
+export interface ErrorInfo {
+  source: 'render' | 'effect' | 'event' | 'renderChild' | 'cleanup'
+  componentName?: string
+  eventName?: string
+}
+
+// ============================================================================
 // Event Handler Types
 // ============================================================================
 

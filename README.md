@@ -199,6 +199,26 @@ const doubled = count * 2
 return <div>{doubled}</div>
 ```
 
+### Error boundaries
+
+Fict ships a built-in `<ErrorBoundary>` that captures errors from rendering, events, effects, and cleanups, then swaps the subtree with a fallback view.
+
+```tsx
+import { ErrorBoundary } from 'fict'
+
+function App() {
+  return (
+    <ErrorBoundary fallback={err => <p>Oops: {String(err)}</p>} resetKeys={() => keySignal()}>
+      <BuggyChild />
+    </ErrorBoundary>
+  )
+}
+```
+
+- `fallback` can be a node or a function `(err) => node`
+- `resetKeys` (value or signal) clearing the error forces the subtree to remount
+- The nearest boundary handles the error first; unhandled errors keep bubbling upward
+
 ```tsx
 // Conceptually compiles to (simplified)
 const [$count, setCount] = createSignal(0)

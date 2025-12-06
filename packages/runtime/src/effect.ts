@@ -24,7 +24,7 @@ export function createEffect(fn: Effect): () => void {
           bucket.push(maybeCleanup)
         }
       } catch (err) {
-        if (handleError(err, { source: 'effect' }, rootForError as any)) {
+        if (handleError(err, { source: 'effect' }, rootForError)) {
           return
         }
         throw err

@@ -1,5 +1,5 @@
-import { createEffect } from './effect'
 import { createElement } from './dom'
+import { createEffect } from './effect'
 import {
   createRootContext,
   destroyRoot,
@@ -92,16 +92,17 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   })
 
   if (props.resetKeys !== undefined) {
-    const maybeGet =
+    const isGetter =
       typeof props.resetKeys === 'function' && (props.resetKeys as () => unknown).length === 0
-        ? (props.resetKeys as () => unknown)
-        : undefined
-    if (maybeGet) {
-      createEffect(() => {
-        void maybeGet()
+    const getter = isGetter ? (props.resetKeys as () => unknown) : undefined
+    let prev = isGetter ? getter!() : props.resetKeys
+    createEffect(() => {
+      const next = getter ? getter() : props.resetKeys
+      if (prev !== next) {
+        prev = next
         renderValue(toView(null))
-      })
-    }
+      }
+    })
   }
 
   return fragment
