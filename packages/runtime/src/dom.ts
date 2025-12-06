@@ -31,6 +31,7 @@ import {
   destroyRoot,
   flushOnMount,
   handleError,
+  handleSuspend,
   pushRoot,
   popRoot,
 } from './lifecycle'
@@ -146,6 +147,9 @@ export function createElement(node: FictNode): DOMElement {
       const rendered = vnode.type(props)
       return createElement(rendered as FictNode)
     } catch (err) {
+      if (handleSuspend(err as any)) {
+        return document.createComment('fict:suspend')
+      }
       handleError(err, { source: 'render', componentName: vnode.type.name })
       throw err
     }

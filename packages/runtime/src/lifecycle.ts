@@ -1,4 +1,4 @@
-import type { Cleanup, ErrorInfo } from './types'
+import type { Cleanup, ErrorInfo, SuspenseToken } from './types'
 
 type LifecycleFn = () => void | Cleanup
 
@@ -8,13 +8,16 @@ export interface RootContext {
   cleanups: Cleanup[]
   destroyCallbacks: Cleanup[]
   errorHandlers?: ErrorHandler[]
+  suspenseHandlers?: SuspenseHandler[]
 }
 
 type ErrorHandler = (err: unknown, info?: ErrorInfo) => boolean | void
+type SuspenseHandler = (token: SuspenseToken | PromiseLike<unknown>) => boolean | void
 
 let currentRoot: RootContext | undefined
 let currentEffectCleanups: Cleanup[] | undefined
 const globalErrorHandlers = new WeakMap<RootContext, ErrorHandler[]>()
+const globalSuspenseHandlers = new WeakMap<RootContext, SuspenseHandler[]>()
 
 export function createRootContext(parent: RootContext | undefined = currentRoot): RootContext {
   return { parent, onMountCallbacks: [], cleanups: [], destroyCallbacks: [] }
@@ -82,6 +85,12 @@ export function destroyRoot(root: RootContext): void {
   }
   if (globalErrorHandlers.has(root)) {
     globalErrorHandlers.delete(root)
+  }
+  if (root.suspenseHandlers) {
+    root.suspenseHandlers.length = 0
+  }
+  if (globalSuspenseHandlers.has(root)) {
+    globalSuspenseHandlers.delete(root)
   }
 }
 
@@ -162,6 +171,22 @@ export function registerErrorHandler(fn: ErrorHandler): void {
   }
 }
 
+export function registerSuspenseHandler(fn: SuspenseHandler): void {
+  if (!currentRoot) {
+    throw new Error('registerSuspenseHandler must be called within a root')
+  }
+  if (!currentRoot.suspenseHandlers) {
+    currentRoot.suspenseHandlers = []
+  }
+  currentRoot.suspenseHandlers.push(fn)
+  const existing = globalSuspenseHandlers.get(currentRoot)
+  if (existing) {
+    existing.push(fn)
+  } else {
+    globalSuspenseHandlers.set(currentRoot, [fn])
+  }
+}
+
 export function handleError(err: unknown, info?: ErrorInfo, startRoot?: RootContext): boolean {
   let root: RootContext | undefined = startRoot ?? currentRoot
   let error = err
@@ -201,4 +226,36 @@ export function handleError(err: unknown, info?: ErrorInfo, startRoot?: RootCont
     }
   }
   throw error
+}
+
+export function handleSuspend(
+  token: SuspenseToken | PromiseLike<unknown>,
+  startRoot?: RootContext,
+): boolean {
+  let root: RootContext | undefined = startRoot ?? currentRoot
+  while (root) {
+    const handlers = root.suspenseHandlers
+    if (handlers && handlers.length) {
+      for (let i = handlers.length - 1; i >= 0; i--) {
+        const handler = handlers[i]!
+        const handled = handler(token)
+        if (handled !== false) return true
+      }
+    }
+    root = root.parent
+  }
+  const globalForRoot =
+    startRoot && globalSuspenseHandlers.get(startRoot)
+      ? globalSuspenseHandlers.get(startRoot)
+      : currentRoot
+        ? globalSuspenseHandlers.get(currentRoot)
+        : undefined
+  if (globalForRoot && globalForRoot.length) {
+    for (let i = globalForRoot.length - 1; i >= 0; i--) {
+      const handler = globalForRoot[i]!
+      const handled = handler(token)
+      if (handled !== false) return true
+    }
+  }
+  return false
 }

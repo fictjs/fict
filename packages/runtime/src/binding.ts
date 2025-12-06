@@ -20,6 +20,7 @@ import {
   flushOnMount,
   getCurrentRoot,
   handleError,
+  handleSuspend,
   pushRoot,
   popRoot,
   registerRootCleanup,
@@ -646,34 +647,15 @@ export function createChildBinding(
         removeNodes(nodes)
       }
     } catch (err) {
+      if (handleSuspend(err as any, root)) {
+        handledError = true
+        destroyRoot(root)
+        return
+      }
       if (handleError(err, { source: 'renderChild' }, root)) {
         handledError = true
         destroyRoot(root)
-        // Attempt to render fallback immediately using updated reactive state
-        const fallbackRoot = createRootContext()
-        const fallbackPrev = pushRoot(fallbackRoot)
-        try {
-          const fallbackValue = getValue()
-          if (fallbackValue == null || fallbackValue === false) {
-            return
-          }
-          const fallbackOutput = createElementFn(fallbackValue)
-          nodes = toNodeArray(fallbackOutput)
-          const parentNode = marker.parentNode as (ParentNode & Node) | null
-          if (parentNode) {
-            insertNodesBefore(parentNode, nodes, marker)
-          }
-          return () => {
-            destroyRoot(fallbackRoot)
-            removeNodes(nodes)
-          }
-        } catch {
-          destroyRoot(fallbackRoot)
-          return
-        } finally {
-          popRoot(fallbackPrev)
-          flushOnMount(fallbackRoot)
-        }
+        return
       }
       throw err
     } finally {
@@ -846,6 +828,11 @@ export function createConditional(
         currentNodes = nodes
       }
     } catch (err) {
+      if (handleSuspend(err as any, root)) {
+        handledError = true
+        destroyRoot(root)
+        return
+      }
       if (handleError(err, { source: 'renderChild' }, root)) {
         handledError = true
         destroyRoot(root)
@@ -1052,6 +1039,12 @@ export function createPortal(
         currentNodes = nodes
       }
     } catch (err) {
+      if (handleSuspend(err as any, root)) {
+        handledError = true
+        destroyRoot(root)
+        currentNodes = []
+        return
+      }
       if (handleError(err, { source: 'renderChild' }, root)) {
         handledError = true
         destroyRoot(root)
@@ -1121,7 +1114,11 @@ function mountBlock<T>(
     nodes.push(end)
     insertNodesBefore(parent, nodes, anchor)
   } catch (err) {
-    if (handleError(err, { source: 'renderChild' }, root)) {
+    if (handleSuspend(err as any, root)) {
+      handledError = true
+      nodes.push(end)
+      insertNodesBefore(parent, nodes, anchor)
+    } else if (handleError(err, { source: 'renderChild' }, root)) {
       handledError = true
       nodes.push(end)
       insertNodesBefore(parent, nodes, anchor)
@@ -1164,6 +1161,13 @@ function rerenderBlock<T>(
   try {
     nextOutput = block.renderCurrent()
   } catch (err) {
+    if (handleSuspend(err as any, block.root)) {
+      handledError = true
+      popRoot(prev)
+      destroyRoot(block.root)
+      block.nodes = [block.start, block.end]
+      return block
+    }
     if (handleError(err, { source: 'renderChild' }, block.root)) {
       handledError = true
       popRoot(prev)

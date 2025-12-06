@@ -162,3 +162,11 @@ export type ClassObject = Record<string, boolean | undefined | null>
 
 /** Class prop type - can be string or object */
 export type ClassProp = string | ClassObject | null | undefined
+
+// ============================================================================
+// Suspense Types
+// ============================================================================
+
+export interface SuspenseToken {
+  then: Promise<unknown>['then']
+}

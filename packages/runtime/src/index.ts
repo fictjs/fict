@@ -36,6 +36,7 @@ export { Fragment } from './jsx'
 
 export { createElement, render } from './dom'
 export { ErrorBoundary } from './error-boundary'
+export { Suspense, createSuspenseToken } from './suspense'
 
 // ============================================================================
 // Reactive DOM Bindings
@@ -94,6 +95,8 @@ export type {
   StyleProp,
   ClassProp,
   EventHandler,
+  ErrorInfo,
+  SuspenseToken,
 } from './types'
 
 // Devtools hook (optional)
