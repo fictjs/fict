@@ -487,20 +487,27 @@ Updates notify only the specific paths that changed.
 ```ts
 import { resource } from 'fict/plus'
 
-const userResource = resource((id: string) => ({
-  key: ['user', id],
-  fetch: ({ signal }) => fetch(`/api/user/${id}`, { signal }).then(r => r.json()),
-  staleTime: 10_000,
-}))
+const userResource = resource({
+  key: (id: string) => ['user', id], // if omitted, args value is the key
+  suspense: true,
+  cache: { mode: 'memory', ttlMs: 10_000, staleWhileRevalidate: true },
+  reset: () => sessionVersion(), // reset token changes will invalidate/refetch
+  fetch: ({ signal }, id: string) => fetch(`/api/user/${id}`, { signal }).then(r => r.json()),
+})
 
 function User({ id }: { id: string }) {
-  const user = userResource.read(id)
-  return <div>{user.name}</div>
+  const user = userResource.read(() => id)
+  return <div>{user.data?.name}</div>
 }
+
+// Control plane
+userResource.prefetch('42') // warm up
+userResource.invalidate(['user', '42']) // drop cached entry
 ```
 
-- Handles caching, deduplication, cancellation, error boundaries.
-- Can be used with Suspense / streaming SSR.
+- Requests sharing the same key are automatically deduplicated; the in-memory cache persists by default, and the `cache` option lets you configure TTL / SWR / whether errors are cached.
+- Works with Suspense / ErrorBoundary: pending states throw suspend tokens, and once they resolve the cached data is reused without re-entering the fallback UI.
+- `invalidate(key?)` clears the cache so the next read refetches; `prefetch` can warm data ahead of navigation.
 
 ### 9.3 Escape Hatches: noTrack / "use no memo"
 

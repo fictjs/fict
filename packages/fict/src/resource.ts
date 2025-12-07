@@ -7,10 +7,43 @@ export interface ResourceResult<T> {
   refresh: () => void
 }
 
+export interface ResourceCacheOptions {
+  mode?: 'memory' | 'none'
+  ttlMs?: number
+  staleWhileRevalidate?: boolean
+  cacheErrors?: boolean
+}
+
 export interface ResourceOptions<T, Args> {
-  key?: unknown[]
+  key?: unknown
   fetch: (ctx: { signal: AbortSignal }, args: Args) => Promise<T>
   suspense?: boolean
+  cache?: ResourceCacheOptions
+  reset?: unknown | (() => unknown)
+}
+
+interface ResourceEntry<T, Args> {
+  data: ReturnType<typeof createSignal<T | undefined>>
+  loading: ReturnType<typeof createSignal<boolean>>
+  error: ReturnType<typeof createSignal<unknown>>
+  version: ReturnType<typeof createSignal<number>>
+  pendingToken: ReturnType<typeof createSuspenseToken> | null
+  lastArgs: Args | undefined
+  lastVersion: number
+  lastReset: unknown
+  hasValue: boolean
+  status: 'idle' | 'pending' | 'success' | 'error'
+  generation: number
+  expiresAt: number | undefined
+  inFlight: Promise<void> | undefined
+  controller: AbortController | undefined
+}
+
+const defaultCacheOptions: Required<ResourceCacheOptions> = {
+  mode: 'memory',
+  ttlMs: Number.POSITIVE_INFINITY,
+  staleWhileRevalidate: false,
+  cacheErrors: false,
 }
 
 /**
@@ -25,119 +58,236 @@ export function resource<T, Args = void>(
 ) {
   const fetcher = typeof optionsOrFetcher === 'function' ? optionsOrFetcher : optionsOrFetcher.fetch
   const useSuspense = typeof optionsOrFetcher === 'object' && !!optionsOrFetcher.suspense
-  const cache = new Map<unknown, ResourceState>()
+  const cacheOptions: ResourceCacheOptions =
+    typeof optionsOrFetcher === 'object' ? (optionsOrFetcher.cache ?? {}) : {}
+  const resolvedCacheOptions = { ...defaultCacheOptions, ...cacheOptions }
+  const cache = new Map<unknown, ResourceEntry<T, Args>>()
 
-  interface ResourceState {
-    data: ReturnType<typeof createSignal<T | undefined>>
-    loading: ReturnType<typeof createSignal<boolean>>
-    error: ReturnType<typeof createSignal<unknown>>
-    version: ReturnType<typeof createSignal<number>>
-    pendingToken: ReturnType<typeof createSuspenseToken> | null
-    lastArgs: Args | undefined
-    lastVersion: number
-    hasValue: boolean
-    activeVersion: number
-    refresh: () => void
+  const readArgs = (argsAccessor: (() => Args) | Args): Args =>
+    typeof argsAccessor === 'function' ? (argsAccessor as () => Args)() : argsAccessor
+
+  const computeKey = (argsAccessor: (() => Args) | Args): unknown => {
+    const argsValue = readArgs(argsAccessor)
+    if (typeof optionsOrFetcher === 'object' && optionsOrFetcher.key !== undefined) {
+      const key = optionsOrFetcher.key
+      return typeof key === 'function' ? (key as (args: Args) => unknown)(argsValue) : key
+    }
+    return argsValue
+  }
+
+  const readResetToken = (): unknown => {
+    if (typeof optionsOrFetcher !== 'object') return undefined
+    const reset = optionsOrFetcher.reset
+    if (typeof reset === 'function' && (reset as () => unknown).length === 0) {
+      return (reset as () => unknown)()
+    }
+    return reset
+  }
+
+  const ensureEntry = (key: unknown): ResourceEntry<T, Args> => {
+    let state = cache.get(key)
+    if (!state) {
+      state = {
+        data: createSignal<T | undefined>(undefined),
+        loading: createSignal<boolean>(false),
+        error: createSignal<unknown>(undefined),
+        version: createSignal(0),
+        pendingToken: null,
+        lastArgs: undefined,
+        lastVersion: -1,
+        lastReset: undefined,
+        hasValue: false,
+        status: 'idle',
+        generation: 0,
+        expiresAt: undefined,
+        inFlight: undefined,
+        controller: undefined,
+      }
+      cache.set(key, state)
+    }
+    return state!
+  }
+
+  const isExpired = (entry: ResourceEntry<T, Args>): boolean => {
+    if (resolvedCacheOptions.mode === 'none') return true
+    if (!Number.isFinite(resolvedCacheOptions.ttlMs)) return false
+    if (entry.expiresAt === undefined) return false
+    return entry.expiresAt < Date.now()
+  }
+
+  const markExpiry = (entry: ResourceEntry<T, Args>) => {
+    if (resolvedCacheOptions.mode === 'none') {
+      entry.expiresAt = Date.now() - 1
+      return
+    }
+    entry.expiresAt = Number.isFinite(resolvedCacheOptions.ttlMs)
+      ? Date.now() + resolvedCacheOptions.ttlMs
+      : undefined
+  }
+
+  const startFetch = (entry: ResourceEntry<T, Args>, key: unknown, args: Args) => {
+    entry.controller?.abort()
+    entry.inFlight = undefined
+    const controller = new AbortController()
+    entry.controller = controller
+    entry.status = 'pending'
+    entry.loading(true)
+    entry.error(undefined)
+    entry.generation += 1
+    const currentGen = entry.generation
+
+    const shouldSuspend = useSuspense && !entry.hasValue
+    entry.pendingToken = shouldSuspend ? createSuspenseToken() : null
+
+    const fetchPromise = fetcher({ signal: controller.signal }, args)
+      .then(res => {
+        if (controller.signal.aborted || entry.generation !== currentGen) return
+        entry.data(res)
+        entry.hasValue = true
+        entry.status = 'success'
+        entry.loading(false)
+        markExpiry(entry)
+        if (entry.pendingToken) {
+          entry.pendingToken.resolve()
+          entry.pendingToken = null
+        }
+      })
+      .catch(err => {
+        if (controller.signal.aborted || entry.generation !== currentGen) return
+        entry.error(err)
+        entry.status = 'error'
+        entry.loading(false)
+        if (resolvedCacheOptions.cacheErrors) {
+          markExpiry(entry)
+        } else {
+          entry.expiresAt = Date.now() - 1
+          entry.hasValue = false
+        }
+        if (entry.pendingToken) {
+          entry.pendingToken.reject(err)
+          entry.pendingToken = null
+        }
+      })
+      .finally(() => {
+        entry.inFlight = undefined
+        entry.controller = undefined
+      })
+
+    entry.inFlight = fetchPromise
+
+    onCleanup(() => {
+      if (resolvedCacheOptions.mode === 'none') {
+        controller.abort()
+        cache.delete(key)
+      }
+    })
+  }
+
+  const invalidate = (key?: unknown) => {
+    if (key === undefined) {
+      cache.forEach(entry => {
+        entry.controller?.abort()
+        entry.version(entry.version() + 1)
+        entry.expiresAt = Date.now() - 1
+      })
+      cache.clear()
+      return
+    }
+    const entry = cache.get(key)
+    if (entry) {
+      entry.controller?.abort()
+      entry.version(entry.version() + 1)
+      entry.expiresAt = Date.now() - 1
+      cache.delete(key)
+    }
+  }
+
+  const prefetch = (args: Args, keyOverride?: unknown) => {
+    const key = keyOverride ?? computeKey(args)
+    const entry = ensureEntry(key)
+    const usableData = entry.hasValue && !isExpired(entry)
+    if (!usableData) {
+      entry.lastArgs = args
+      entry.lastVersion = entry.version()
+      startFetch(entry, key, args)
+    }
   }
 
   return {
-    read(argsAccessor: () => Args | Args): ResourceResult<T> {
-      const key =
-        typeof optionsOrFetcher === 'object' && optionsOrFetcher.key
-          ? optionsOrFetcher.key
-          : typeof argsAccessor === 'function'
-            ? argsAccessor
-            : argsAccessor
-
-      let state = cache.get(key)
-      if (!state) {
-        const data = createSignal<T | undefined>(undefined)
-        const loading = createSignal(true)
-        const error = createSignal<unknown>(undefined)
-        const version = createSignal(0)
-        state = {
-          data,
-          loading,
-          error,
-          version,
-          pendingToken: null,
-          lastArgs: undefined,
-          lastVersion: -1,
-          hasValue: false,
-          activeVersion: -1,
-          refresh: () => version(version() + 1),
-        }
-        cache.set(key, state)
-      }
+    read(argsAccessor: (() => Args) | Args): ResourceResult<T> {
+      const entryRef = createSignal<ResourceEntry<T, Args> | null>(null)
 
       createEffect(() => {
-        // Track args
-        const args =
-          typeof argsAccessor === 'function' ? (argsAccessor as () => Args)() : argsAccessor
+        const key = computeKey(argsAccessor)
+        const entry = ensureEntry(key)
+        entryRef(entry)
+        const args = readArgs(argsAccessor)
+        const currentVersion = entry.version()
+        const expired = isExpired(entry)
+        const argsChanged = entry.lastArgs !== args
+        const versionChanged = entry.lastVersion !== currentVersion
+        const resetToken = readResetToken()
+        const resetChanged = entry.lastReset !== resetToken
+        const shouldRefetch =
+          expired ||
+          argsChanged ||
+          versionChanged ||
+          resetChanged ||
+          (entry.status === 'error' && !resolvedCacheOptions.cacheErrors)
 
-        // Track version for manual refresh
-        const currentVersion = state!.version()
+        entry.lastArgs = args
+        entry.lastVersion = currentVersion
+        entry.lastReset = resetToken
 
-        // Skip refetch if args/version unchanged and we already have data
-        if (state!.hasValue && state!.lastArgs === args && state!.lastVersion === currentVersion) {
-          return
-        }
-        state!.lastArgs = args
-        state!.lastVersion = currentVersion
-
-        const controller = new AbortController()
-        state!.activeVersion = currentVersion
-        const versionAtStart = currentVersion
-
-        state!.loading(true)
-        state!.error(undefined)
-
-        state!.pendingToken = useSuspense ? createSuspenseToken() : null
-
-        onCleanup(() => {
-          if (!useSuspense) {
-            controller.abort()
-            cache.delete(key)
+        if (shouldRefetch) {
+          if (entry.inFlight && (argsChanged || versionChanged)) {
+            entry.controller?.abort()
+            entry.inFlight = undefined
           }
-        })
+          if (resetChanged) {
+            entry.hasValue = false
+            entry.expiresAt = Date.now() - 1
+          }
+          startFetch(entry, key, args as Args)
+        } else if (
+          entry.inFlight === undefined &&
+          resolvedCacheOptions.staleWhileRevalidate &&
+          expired &&
+          entry.hasValue
+        ) {
+          // stale-while-revalidate: return stale data but refresh.
+          startFetch(entry, key, args as Args)
+        }
 
-        fetcher({ signal: controller.signal }, args)
-          .then(res => {
-            if (controller.signal.aborted || state!.activeVersion !== versionAtStart) return
-            state!.data(res)
-            state!.loading(false)
-            state!.hasValue = true
-            if (state!.pendingToken) {
-              state!.pendingToken.resolve()
-              state!.pendingToken = null
-            }
-          })
-          .catch(err => {
-            if (controller.signal.aborted || state!.activeVersion !== versionAtStart) return
-            state!.error(err)
-            state!.loading(false)
-            if (state!.pendingToken) {
-              state!.pendingToken.reject(err)
-              state!.pendingToken = null
-            }
-          })
+        if (resolvedCacheOptions.staleWhileRevalidate && entry.hasValue && expired) {
+          entry.loading(true)
+        }
       })
 
       return {
         get data() {
-          if (useSuspense && state!.loading() && state!.pendingToken) {
-            throw state!.pendingToken.token
+          const entry = entryRef()
+          if (!entry) return undefined
+          if (useSuspense && entry.pendingToken) {
+            throw entry.pendingToken.token
           }
-          return state!.data()
+          return entry.data()
         },
         get loading() {
-          return state!.loading()
+          const entry = entryRef()
+          return entry ? entry.loading() : false
         },
         get error() {
-          return state!.error()
+          const entry = entryRef()
+          return entry ? entry.error() : undefined
         },
-        refresh: state!.refresh,
+        refresh: () => {
+          const entry = entryRef()
+          if (entry) entry.version(entry.version() + 1)
+        },
       }
     },
+    invalidate,
+    prefetch,
   }
 }

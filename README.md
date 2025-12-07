@@ -204,7 +204,8 @@ return <div>{doubled}</div>
 - `<Suspense fallback>` captures suspend tokens thrown during render (`createSuspenseToken()` or a compatible Promise), shows the placeholder UI, and restores the subtree once everything resolves; rejects are handled by the nearest ErrorBoundary.
 - Suspension can only be triggered from the render path (JSX/list/conditional/portal); events or `$effect` don't suspend automatically, so throw a token yourself if needed.
 - Resources and lazy:
-  - `resource({ fetch, suspense: true, key? })`'s `result.data` throws a token while loading; use `key` to keep the same resource instance across rerenders.
+  - `resource({ fetch, suspense: true, key?, cache?, reset? })`'s `result.data` throws a token while loading; use `key` to reuse instances, `cache` to control dedupe/TTL/SWR (memory cache by default), and when the `reset` token changes the cache is invalidated and reloaded.
+  - Helpers: `resource.invalidate(key?)` clears the cache and forces the next read to reload; `resource.prefetch(args, keyOverride?)` can warm data for later reads, and cache hits skip triggering Suspense again.
   - `lazy(() => import('./Foo'))` throws a token until the module loads, then renders the real component once resolved.
 
 ```tsx
