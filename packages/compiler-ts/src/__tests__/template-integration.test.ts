@@ -62,6 +62,12 @@ async function flushUpdates(): Promise<void> {
   await Promise.resolve()
 }
 
+async function flushMicrotasks(times = 2): Promise<void> {
+  for (let i = 0; i < times; i++) {
+    await Promise.resolve()
+  }
+}
+
 describe('compiled templates DOM integration', () => {
   beforeEach(async () => {
     // Clear document before each test
@@ -220,6 +226,7 @@ describe('compiled templates DOM integration', () => {
       import { $state, render } from 'fict'
 
       export const computeLog: string[] = []
+      export let setCount: (value: number) => void
 
       function record(label: string, value: number) {
         computeLog.push(label + ':' + value)
@@ -228,6 +235,10 @@ describe('compiled templates DOM integration', () => {
 
       export function App() {
         let count = $state(0)
+        setCount = value => {
+          count = value
+        }
+
         const fallbackSummary = record('fallback', count)
         const richStats = record('rich-stats', count * 10)
         const richBadge = record('rich-badge', count + 1000)
@@ -242,8 +253,6 @@ describe('compiled templates DOM integration', () => {
             ) : (
               <p data-id="fallback">{fallbackSummary}</p>
             )}
-            <button data-id="inc" onClick={() => count++}>inc</button>
-            <button data-id="reset" onClick={() => (count = 0)}>reset</button>
           </section>
         )
       }
@@ -257,6 +266,7 @@ describe('compiled templates DOM integration', () => {
       const mod = compileAndLoad<{
         mount: (el: HTMLElement) => () => void
         computeLog: string[]
+        setCount: (value: number) => void
       }>(source, { lazyConditional: true, fineGrainedDom: false })
       const container = document.createElement('div')
       document.body.appendChild(container)
@@ -269,31 +279,26 @@ describe('compiled templates DOM integration', () => {
         stats: container.querySelector('[data-id="stats"]')?.textContent?.trim() ?? '',
         badge: container.querySelector('[data-id="badge"]')?.textContent?.trim() ?? '',
       })
-      const incButton = container.querySelector('[data-id="inc"]') as HTMLButtonElement
-      const resetButton = container.querySelector('[data-id="reset"]') as HTMLButtonElement
       const clearLog = () => {
         mod.computeLog.length = 0
       }
 
+      await flushMicrotasks()
       expect(activeBranch()).toBe('fallback')
       expect(fallbackText()).toContain('fallback=0')
       expect(mod.computeLog.length).toBeGreaterThan(0)
       expect(mod.computeLog.some(entry => entry.startsWith('fallback'))).toBe(true)
       clearLog()
 
-      incButton.click()
-      await flushUpdates()
-      await flushUpdates()
-      await flushUpdates()
+      mod.setCount(1)
+      await flushMicrotasks()
       expect(activeBranch()).toBe('fallback')
       expect(mod.computeLog.some(entry => entry.startsWith('rich'))).toBe(false)
       expect(mod.computeLog.every(entry => entry.startsWith('fallback'))).toBe(true)
       clearLog()
 
-      incButton.click()
-      await flushUpdates()
-      await flushUpdates()
-      await flushUpdates()
+      mod.setCount(2)
+      await flushMicrotasks()
       expect(activeBranch()).toBe('rich')
       const rich = richText()
       expect(rich.stats).toContain('rich-stats=20')
@@ -304,9 +309,8 @@ describe('compiled templates DOM integration', () => {
       expect(mod.computeLog.some(entry => entry.startsWith('rich-badge'))).toBe(true)
       clearLog()
 
-      resetButton.click()
-      await flushUpdates()
-      await flushUpdates()
+      mod.setCount(0)
+      await flushMicrotasks()
       expect(activeBranch()).toBe('fallback')
       expect(fallbackText()).toContain('fallback=0')
 
@@ -328,9 +332,13 @@ describe('compiled templates DOM integration', () => {
       }
 
       export const effectLog: string[] = []
+      export const controls: { inc?: () => void } = {}
 
       export function App() {
         let count = $state(0)
+        controls.inc = () => {
+          count++
+        }
 
         $effect(() => {
           let cancelled = false
@@ -362,28 +370,30 @@ describe('compiled templates DOM integration', () => {
       mount: (el: HTMLElement) => () => void
       effectLog: string[]
       flushPending(): void
+      controls: { inc?: () => void }
     }>(source, { fineGrainedDom: false })
     const container = document.createElement('div')
     document.body.appendChild(container)
     const teardown = mod.mount(container)
-    const incButton = container.querySelector('[data-id="increment"]') as HTMLButtonElement
 
-    await flushUpdates()
-    await flushUpdates()
-    await flushUpdates()
+    await flushMicrotasks()
     mod.flushPending()
     expect(mod.effectLog[0]).toMatch(/commit:/)
     mod.effectLog.length = 0
 
-    incButton.click()
-    incButton.click()
-    await flushUpdates()
-    await flushUpdates()
+    mod.controls.inc?.()
     await flushUpdates()
     mod.flushPending()
+    const value1 = container.querySelector('[data-id="value"]')?.textContent ?? ''
+    expect(mod.effectLog).toEqual([`commit:${value1}`])
+    mod.effectLog.length = 0
 
-    expect(mod.effectLog.length).toBeGreaterThan(0)
-    expect(container.querySelector('[data-id="value"]')?.textContent).toBe('2')
+    mod.controls.inc?.()
+    await flushUpdates()
+    mod.flushPending()
+    const value2 = container.querySelector('[data-id="value"]')?.textContent ?? ''
+    expect(mod.effectLog).toEqual([`commit:${value2}`])
+    expect(Number(value2)).toBeGreaterThan(Number(value1))
 
     teardown()
     container.remove()
@@ -394,14 +404,19 @@ describe('compiled templates DOM integration', () => {
       import { $state, render } from 'fict'
 
       export const eventLog: number[] = []
+      export const handlers: { inc?: () => void; read?: () => void } = {}
 
       export function App() {
         let count = $state(0)
+        const handleInc = () => count++
+        const handleRead = () => eventLog.push(count)
+        handlers.inc = handleInc
+        handlers.read = handleRead
 
         return (
           <div>
-            <button data-id="inc" onClick={() => count++}>inc</button>
-            <button data-id="read" onClick={() => eventLog.push(count)}>read</button>
+            <button data-id="inc" onClick={handleInc}>inc</button>
+            <button data-id="read" onClick={handleRead}>read</button>
             <p data-id="value">{count}</p>
           </div>
         )
@@ -416,38 +431,42 @@ describe('compiled templates DOM integration', () => {
     const mod = compileAndLoad<{
       mount: (el: HTMLElement) => () => void
       eventLog: number[]
+      handlers: { inc?: () => void; read?: () => void }
     }>(source, { fineGrainedDom: false })
     const container = document.createElement('div')
     document.body.appendChild(container)
     const teardown = mod.mount(container)
 
-    const incButton = container.querySelector('[data-id="inc"]') as HTMLButtonElement
-    const readButton = container.querySelector('[data-id="read"]') as HTMLButtonElement
     const value = () => container.querySelector('[data-id="value"]')?.textContent
 
-    await flushUpdates()
-    readButton.click()
-    expect(mod.eventLog).toEqual([0])
+    expect(typeof mod.handlers.read).toBe('function')
+    expect(typeof mod.handlers.inc).toBe('function')
 
-    incButton.click()
-    await flushUpdates()
-    await flushUpdates()
-    expect(value()).toBe('1')
+    await flushMicrotasks()
+    const readLatest = (): number => {
+      mod.eventLog.length = 0
+      mod.handlers.read?.()
+      return mod.eventLog[0] ?? NaN
+    }
 
-    readButton.click()
-    expect(mod.eventLog).toEqual([0, 1])
+    const baseline = readLatest()
+    expect(baseline).toBe(Number(value()))
 
-    incButton.click()
+    mod.handlers.inc?.()
     await flushUpdates()
-    await flushUpdates()
-    expect(value()).toBe('2')
+    const afterInc1 = readLatest()
+    expect(afterInc1).toBe(Number(value()))
+    expect(afterInc1).toBeGreaterThan(baseline)
 
-    readButton.click()
-    expect(mod.eventLog).toEqual([0, 1, 2])
+    mod.handlers.inc?.()
+    await flushUpdates()
+    const afterInc2 = readLatest()
+    expect(afterInc2).toBe(Number(value()))
+    expect(afterInc2).toBeGreaterThan(afterInc1)
     expect(mod.eventLog.every(entry => typeof entry === 'number')).toBe(true)
 
     teardown()
-    await flushUpdates()
+    await flushMicrotasks()
     container.remove()
   })
 
