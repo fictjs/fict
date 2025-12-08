@@ -189,11 +189,12 @@ const WatchingRunning = 6
 // Global state
 let cycle = 0
 let batchDepth = 0
-let notifyIndex = 0
-let queuedLength = 0
 let activeSub: ReactiveNode | undefined
-const queued: (EffectNode | undefined)[] = []
 let flushScheduled = false
+// Dual-priority queue for scheduler
+const highPriorityQueue: EffectNode[] = []
+const lowPriorityQueue: EffectNode[] = []
+let isInTransition = false
 const enqueueMicrotask =
   typeof queueMicrotask === 'function'
     ? queueMicrotask
@@ -646,11 +647,10 @@ function update(node: ReactiveNode): boolean {
  */
 function notify(effect: ReactiveNode): void {
   effect.flags &= ~Watching
-  let insertIndex = queuedLength
-  const firstInsertedIndex = insertIndex
+  const effects: EffectNode[] = []
 
   for (;;) {
-    queued[insertIndex++] = effect as EffectNode
+    effects.push(effect as EffectNode)
     const nextLink = effect.subs
     if (nextLink === undefined) break
     effect = nextLink.sub
@@ -658,14 +658,13 @@ function notify(effect: ReactiveNode): void {
     effect.flags &= ~Watching
   }
 
-  queuedLength = insertIndex
+  // Reverse to maintain correct execution order
+  effects.reverse()
 
-  let left = firstInsertedIndex,
-    right = insertIndex - 1
-  while (left < right) {
-    const temp = queued[left]
-    queued[left++] = queued[right]
-    queued[right--] = temp
+  // Route effects to appropriate queue based on transition context
+  const targetQueue = isInTransition ? lowPriorityQueue : highPriorityQueue
+  for (const e of effects) {
+    targetQueue.push(e)
   }
 }
 /**
@@ -762,8 +761,9 @@ function runEffect(e: EffectNode): void {
 /**
  * Schedule a flush in a microtask to coalesce synchronous writes
  */
-function scheduleFlush(): void {
-  if (flushScheduled || queuedLength === 0) return
+export function scheduleFlush(): void {
+  const hasWork = highPriorityQueue.length > 0 || lowPriorityQueue.length > 0
+  if (flushScheduled || !hasWork) return
   if (batchDepth > 0) return
   flushScheduled = true
   enqueueMicrotask(() => {
@@ -771,7 +771,8 @@ function scheduleFlush(): void {
   })
 }
 /**
- * Flush all queued effects
+ * Flush all queued effects with priority-based scheduling
+ * High priority effects execute first; low priority can be interrupted
  */
 function flush(): void {
   beginFlushGuard()
@@ -781,22 +782,40 @@ function flush(): void {
     endFlushGuard()
     return
   }
-  if (!queuedLength) {
+  const hasWork = highPriorityQueue.length > 0 || lowPriorityQueue.length > 0
+  if (!hasWork) {
     flushScheduled = false
     endFlushGuard()
     return
   }
   flushScheduled = false
-  while (notifyIndex < queuedLength) {
-    const e = queued[notifyIndex]!
-    queued[notifyIndex++] = undefined
+
+  // 1. Process all high-priority effects first
+  while (highPriorityQueue.length > 0) {
+    const e = highPriorityQueue.shift()!
     if (!beforeEffectRunGuard()) {
-      break
+      endFlushGuard()
+      return
     }
     runEffect(e)
   }
-  notifyIndex = 0
-  queuedLength = 0
+
+  // 2. Process low-priority effects, interruptible by high priority
+  while (lowPriorityQueue.length > 0) {
+    // Check if high priority work arrived during low priority execution
+    if (highPriorityQueue.length > 0) {
+      scheduleFlush()
+      endFlushGuard()
+      return
+    }
+    const e = lowPriorityQueue.shift()!
+    if (!beforeEffectRunGuard()) {
+      endFlushGuard()
+      return
+    }
+    runEffect(e)
+  }
+
   endFlushGuard()
 }
 // ============================================================================
@@ -1106,6 +1125,26 @@ export function isEffect(fn: unknown): fn is EffectDisposer {
  */
 export function isEffectScope(fn: unknown): fn is EffectScopeDisposer {
   return typeof fn === 'function' && fn.name === 'bound effectScopeOper'
+}
+// ============================================================================
+// Transition Context (for priority scheduling)
+// ============================================================================
+/**
+ * Set the transition context
+ * @param value - Whether we're inside a transition
+ * @returns The previous transition context value
+ */
+export function setTransitionContext(value: boolean): boolean {
+  const prev = isInTransition
+  isInTransition = value
+  return prev
+}
+/**
+ * Get the current transition context
+ * @returns True if currently inside a transition
+ */
+export function getTransitionContext(): boolean {
+  return isInTransition
 }
 // Export aliases for API compatibility
 export { signal as createSignal }

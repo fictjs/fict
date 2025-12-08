@@ -7,3 +7,6 @@ export function batch<T>(fn: () => T): T {
 export function untrack<T>(fn: () => T): T {
   return baseUntrack(fn)
 }
+
+// Transition APIs for priority scheduling
+export { startTransition, useTransition, useDeferredValue } from './transition'

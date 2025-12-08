@@ -23,6 +23,9 @@ export { onMount, onDestroy, onCleanup, createRoot } from './lifecycle'
 
 export { batch, untrack } from './scheduler'
 
+// Transition API for priority scheduling
+export { startTransition, useTransition, useDeferredValue } from './scheduler'
+
 // ============================================================================
 // JSX Runtime
 // ============================================================================
