@@ -1,3 +1,4 @@
+import { beginFlushGuard, beforeEffectRunGuard, endFlushGuard } from './cycle-guard'
 import { getDevtoolsHook } from './devtools'
 
 // ============================================================================
@@ -773,23 +774,30 @@ function scheduleFlush(): void {
  * Flush all queued effects
  */
 function flush(): void {
+  beginFlushGuard()
   if (batchDepth > 0) {
     // If batching is active, defer until the batch completes
     scheduleFlush()
+    endFlushGuard()
     return
   }
   if (!queuedLength) {
     flushScheduled = false
+    endFlushGuard()
     return
   }
   flushScheduled = false
   while (notifyIndex < queuedLength) {
     const e = queued[notifyIndex]!
     queued[notifyIndex++] = undefined
+    if (!beforeEffectRunGuard()) {
+      break
+    }
     runEffect(e)
   }
   notifyIndex = 0
   queuedLength = 0
+  endFlushGuard()
 }
 // ============================================================================
 // Signal - Inline optimized version

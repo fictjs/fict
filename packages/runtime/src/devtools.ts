@@ -3,6 +3,7 @@ export interface FictDevtoolsHook {
   updateSignal: (id: number, value: unknown) => void
   registerEffect: (id: number) => void
   effectRun: (id: number) => void
+  cycleDetected?: (payload: { reason: string; detail?: Record<string, unknown> }) => void
 }
 
 function getGlobalHook(): FictDevtoolsHook | undefined {

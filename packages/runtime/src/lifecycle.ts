@@ -1,3 +1,4 @@
+import { enterRootGuard, exitRootGuard } from './cycle-guard'
 import type { Cleanup, ErrorInfo, SuspenseToken } from './types'
 
 type LifecycleFn = () => void | Cleanup
@@ -24,6 +25,9 @@ export function createRootContext(parent: RootContext | undefined = currentRoot)
 }
 
 export function pushRoot(root: RootContext): RootContext | undefined {
+  if (!enterRootGuard(root)) {
+    return currentRoot
+  }
   const prev = currentRoot
   currentRoot = root
   return prev
@@ -34,6 +38,9 @@ export function getCurrentRoot(): RootContext | undefined {
 }
 
 export function popRoot(prev: RootContext | undefined): void {
+  if (currentRoot) {
+    exitRootGuard(currentRoot)
+  }
   currentRoot = prev
 }
 
