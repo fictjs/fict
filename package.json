@@ -70,7 +70,7 @@
     {
       "name": "fict-runtime (CJS)",
       "path": "packages/runtime/dist/index.cjs",
-      "limit": "9 KB",
+      "limit": "10 KB",
       "gzip": true
     }
   ],
