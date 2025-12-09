@@ -17,6 +17,9 @@ export {
 
 export { onMount, onDestroy, onCleanup, createRoot } from './lifecycle'
 
+// Ref utilities
+export { createRef } from './ref'
+
 // ============================================================================
 // Scheduler / Utilities
 // ============================================================================

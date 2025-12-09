@@ -34,8 +34,10 @@ import {
   handleSuspend,
   pushRoot,
   popRoot,
+  registerRootCleanup,
+  getCurrentRoot,
 } from './lifecycle'
-import type { DOMElement, FictNode, FictVNode } from './types'
+import type { DOMElement, FictNode, FictVNode, RefObject } from './types'
 
 // ============================================================================
 // Main Render Function
@@ -214,6 +216,40 @@ function appendChildren(
 }
 
 // ============================================================================
+// Ref Handling
+// ============================================================================
+
+/**
+ * Apply a ref to an element, supporting both callback and object refs.
+ * Both types are automatically cleaned up on unmount.
+ */
+function applyRef(el: HTMLElement, value: unknown): void {
+  if (typeof value === 'function') {
+    // Callback ref
+    const refFn = value as (el: HTMLElement | null) => void
+    refFn(el)
+
+    // Match React behavior: call ref(null) on unmount
+    if (getCurrentRoot()) {
+      registerRootCleanup(() => {
+        refFn(null)
+      })
+    }
+  } else if (value && typeof value === 'object' && 'current' in value) {
+    // Object ref
+    const refObj = value as RefObject<HTMLElement>
+    refObj.current = el
+
+    // Auto-cleanup on unmount
+    if (getCurrentRoot()) {
+      registerRootCleanup(() => {
+        refObj.current = null
+      })
+    }
+  }
+}
+
+// ============================================================================
 // Props Handling
 // ============================================================================
 
@@ -226,9 +262,7 @@ function applyProps(el: HTMLElement, props: Record<string, unknown>): void {
 
     // Ref handling
     if (key === 'ref') {
-      if (typeof value === 'function') {
-        ;(value as (el: HTMLElement) => void)(el)
-      }
+      applyRef(el, value)
       continue
     }
 

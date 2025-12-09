@@ -60,7 +60,7 @@ interface HTMLAttributes<T> {
   onKeyUp?: (e: KeyboardEvent) => void
   onFocus?: (e: FocusEvent) => void
   onBlur?: (e: FocusEvent) => void
-  ref?: (el: T) => void
+  ref?: ((el: T | null) => void) | { current: T | null }
 }
 
 interface AnchorHTMLAttributes<T> extends HTMLAttributes<T> {
