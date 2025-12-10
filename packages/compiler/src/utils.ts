@@ -281,11 +281,27 @@ export function getRootIdentifier(
   if (t.isIdentifier(expr)) {
     return expr
   }
-  if (t.isMemberExpression(expr) && t.isExpression(expr.object)) {
+  if (
+    t.isMemberExpression(expr) &&
+    t.isExpression(expr.object) &&
+    !t.isOptionalMemberExpression(expr)
+  ) {
+    return getRootIdentifier(expr.object, t)
+  }
+  if (t.isOptionalMemberExpression(expr) && t.isExpression(expr.object)) {
     return getRootIdentifier(expr.object, t)
   }
   if (t.isCallExpression(expr) && t.isExpression(expr.callee)) {
     return getRootIdentifier(expr.callee, t)
+  }
+  if (t.isOptionalCallExpression(expr) && t.isExpression(expr.callee)) {
+    return getRootIdentifier(expr.callee, t)
+  }
+  if (t.isTSAsExpression(expr) && t.isExpression(expr.expression)) {
+    return getRootIdentifier(expr.expression, t)
+  }
+  if (t.isTSNonNullExpression(expr) && t.isExpression(expr.expression)) {
+    return getRootIdentifier(expr.expression, t)
   }
   return null
 }
@@ -313,9 +329,9 @@ export function isDynamicElementAccess(
 ): boolean {
   if (!node.computed) return false
   const property = node.property
-  return !(
-    t.isStringLiteral(property) ||
-    t.isNumericLiteral(property) ||
-    t.isTemplateLiteral(property)
-  )
+  if (t.isTemplateLiteral(property)) {
+    // Treat template literals with expressions as dynamic; bare template literals act like strings
+    return property.expressions.length > 0
+  }
+  return !(t.isStringLiteral(property) || t.isNumericLiteral(property))
 }

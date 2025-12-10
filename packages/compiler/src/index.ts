@@ -8,6 +8,25 @@ import {
   NON_REACTIVE_ATTRS,
   SAFE_FUNCTIONS,
 } from './constants'
+import {
+  normalizeAttributeName,
+  getIntrinsicTagName,
+  createConstDeclaration,
+  createAppendStatement,
+  createElementCall,
+  createTextNodeCall,
+  createBindTextCall,
+  createBindAttributeCall,
+  createBindClassCall,
+  createBindStyleCall,
+  createBindEventCall,
+} from './fine-grained-dom'
+import {
+  collectDerivedOutputsFromStatements,
+  findNextRegion,
+  collectOutputsInOrder,
+  generateRegionMemo,
+} from './rule-d'
 import type { TransformContext, FictCompilerOptions, HelperUsage } from './types'
 import { createHelperUsage } from './types'
 import {
@@ -88,6 +107,8 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
           exit(path, state) {
             const ctx = (state as any).__fictCtx as TransformContext
             if (!ctx) return
+
+            applyRegionTransform(path, ctx, t)
 
             // Detect derived cycles before finishing
             detectDerivedCycles(ctx, t)
@@ -339,6 +360,25 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
           path.skip()
         },
 
+        BlockStatement: {
+          exit(path, state) {
+            const ctx = (state as any).__fictCtx as TransformContext
+            if (!ctx) return
+            applyRegionTransform(path, ctx, t)
+          },
+        },
+
+        JSXElement(path, state) {
+          const ctx = (state as any).__fictCtx as TransformContext
+          if (!ctx) return
+
+          const lowered = transformFineGrainedJsx(path.node, ctx, t)
+          if (lowered) {
+            path.replaceWith(lowered)
+            path.skip()
+          }
+        },
+
         // Handle JSX expressions
         JSXExpressionContainer(path, state) {
           const ctx = (state as any).__fictCtx as TransformContext
@@ -484,49 +524,51 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
           }
         },
 
-        // Handle function declarations/expressions for Props destructuring (Rule E)
-        'FunctionDeclaration|FunctionExpression|ArrowFunctionExpression'(
-          path: BabelCore.NodePath<
-            | BabelCore.types.FunctionDeclaration
-            | BabelCore.types.FunctionExpression
-            | BabelCore.types.ArrowFunctionExpression
-          >,
-          state,
-        ) {
-          const ctx = (state as any).__fictCtx as TransformContext
-          if (!ctx) return
+        // Handle function declarations/expressions (Rule E + optional getter caching)
+        Function: {
+          enter(path: BabelCore.NodePath<BabelCore.types.Function>, state) {
+            const ctx = (state as any).__fictCtx as TransformContext
+            if (!ctx) return
 
-          // Only apply props destructuring if function contains JSX
-          if (!functionContainsJsx(path.node, t)) return
+            if (
+              !(
+                path.isFunctionDeclaration() ||
+                path.isFunctionExpression() ||
+                path.isArrowFunctionExpression()
+              )
+            ) {
+              return
+            }
 
-          const params = path.node.params
-          if (params.length === 0) return
-
-          // Check if first parameter is destructuring pattern
-          const firstParam = params[0]
-          if (!t.isObjectPattern(firstParam) && !t.isArrayPattern(firstParam)) return
-
-          // Build props destructure plan
-          const plan = buildPropsDestructurePlan(firstParam, ctx, t)
-          if (!plan) return
-
-          // Replace parameter with alias
-          params[0] = plan.aliasParam
-
-          // Add prologue statements to function body
-          const body = path.node.body
-          if (t.isBlockStatement(body)) {
-            body.body.unshift(...plan.prologue)
-          } else {
-            // Arrow function with expression body - convert to block
-            path.node.body = t.blockStatement([...plan.prologue, t.returnStatement(body)])
-          }
-
-          // Register tracked names
-          plan.trackedNames.forEach(name => {
-            ctx.memoVars.add(name)
-            ctx.getterOnlyVars.add(name)
-          })
+            const containsJsx = functionContainsJsx(path.node, t)
+            if (containsJsx) {
+              const params = path.node.params
+              if (params.length > 0) {
+                const firstParam = params[0]
+                if (t.isObjectPattern(firstParam) || t.isArrayPattern(firstParam)) {
+                  const plan = buildPropsDestructurePlan(firstParam, ctx, t)
+                  if (plan) {
+                    params[0] = plan.aliasParam
+                    const body = path.node.body
+                    if (t.isBlockStatement(body)) {
+                      body.body.unshift(...plan.prologue)
+                    } else {
+                      path.node.body = t.blockStatement([...plan.prologue, t.returnStatement(body)])
+                    }
+                    plan.trackedNames.forEach(name => {
+                      ctx.memoVars.add(name)
+                      ctx.getterOnlyVars.add(name)
+                    })
+                  }
+                }
+              }
+            }
+          },
+          exit(path: BabelCore.NodePath<BabelCore.types.Function>, state) {
+            const ctx = (state as any).__fictCtx as TransformContext
+            if (!ctx) return
+            maybeApplyGetterCaching(path, ctx, t)
+          },
         },
       },
     }
@@ -573,6 +615,82 @@ function collectStateVariables(
       if (t.isIdentifier(declPath.node.id)) {
         stateVars.add(declPath.node.id.name)
       }
+    },
+  })
+}
+
+function maybeApplyGetterCaching(
+  path: BabelCore.NodePath<BabelCore.types.Function>,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): void {
+  if (!ctx.options.getterCache) return
+  if (
+    !(
+      path.isFunctionDeclaration() ||
+      path.isFunctionExpression() ||
+      path.isArrowFunctionExpression()
+    )
+  ) {
+    return
+  }
+  const bodyPath = path.get('body') as
+    | BabelCore.NodePath<BabelCore.types.BlockStatement | BabelCore.types.Expression>
+    | BabelCore.NodePath[]
+  if (Array.isArray(bodyPath)) return
+
+  const tracked = new Set<string>([...ctx.getterOnlyVars, ...ctx.stateVars, ...ctx.memoVars])
+
+  const ensureBlock = (): BabelCore.NodePath<BabelCore.types.BlockStatement> => {
+    if (bodyPath.isBlockStatement()) return bodyPath
+    const expr = bodyPath.node as BabelCore.types.Expression
+    const transformedExpr = transformExpression(expr, ctx, t)
+    const block = t.blockStatement([t.returnStatement(transformedExpr)])
+    bodyPath.replaceWith(block)
+    return bodyPath as BabelCore.NodePath<BabelCore.types.BlockStatement>
+  }
+
+  const blockPath = ensureBlock()
+  const counts = new Map<string, number>()
+
+  blockPath.traverse({
+    Function(inner) {
+      inner.skip()
+    },
+    CallExpression(callPath) {
+      const callee = callPath.get('callee')
+      if (!callee.isIdentifier()) return
+      if (callPath.node.arguments.length > 0) return
+      if (!tracked.has(callee.node.name)) return
+      counts.set(callee.node.name, (counts.get(callee.node.name) ?? 0) + 1)
+    },
+  })
+
+  const toCache = Array.from(counts.entries()).filter(([, count]) => count > 1)
+  if (!toCache.length) return
+
+  const cacheDecls = toCache.map(([name]) =>
+    t.variableDeclaration('const', [
+      t.variableDeclarator(
+        t.identifier(`__cached_${name}`),
+        t.callExpression(t.identifier(name), []),
+      ),
+    ]),
+  )
+
+  blockPath.unshiftContainer('body', cacheDecls)
+
+  blockPath.traverse({
+    Function(inner) {
+      inner.skip()
+    },
+    CallExpression(callPath) {
+      const callee = callPath.get('callee')
+      if (!callee.isIdentifier()) return
+      if (callPath.node.arguments.length > 0) return
+      const name = callee.node.name
+      if (!tracked.has(name)) return
+      callPath.replaceWith(t.identifier(`__cached_${name}`))
     },
   })
 }
@@ -709,12 +827,34 @@ function transformExpression(
     return t.memberExpression(transformedObject, transformedProperty, expr.computed)
   }
 
+  if (t.isOptionalMemberExpression(expr)) {
+    const transformedObject = transformExpression(expr.object as BabelCore.types.Expression, ctx, t)
+    const transformedProperty =
+      expr.computed && t.isExpression(expr.property)
+        ? transformExpression(expr.property, ctx, t)
+        : expr.property
+    return t.optionalMemberExpression(
+      transformedObject,
+      transformedProperty,
+      expr.computed,
+      expr.optional,
+    )
+  }
+
   if (t.isCallExpression(expr)) {
     return t.callExpression(
       t.isExpression(expr.callee) ? transformExpression(expr.callee, ctx, t) : expr.callee,
       expr.arguments.map(arg =>
         t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg,
       ) as BabelCore.types.Expression[],
+    )
+  }
+
+  if (t.isOptionalCallExpression(expr)) {
+    return t.optionalCallExpression(
+      t.isExpression(expr.callee) ? transformExpression(expr.callee, ctx, t) : expr.callee,
+      expr.arguments.map(arg => (t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg)),
+      expr.optional,
     )
   }
 
@@ -745,6 +885,18 @@ function transformExpression(
       expr.quasis,
       expr.expressions.map(e => (t.isExpression(e) ? transformExpression(e, ctx, t) : e)),
     )
+  }
+
+  if (t.isTSAsExpression(expr) && t.isExpression(expr.expression)) {
+    return t.tsAsExpression(transformExpression(expr.expression, ctx, t), expr.typeAnnotation)
+  }
+
+  if (t.isTSTypeAssertion(expr) && t.isExpression(expr.expression)) {
+    return t.tsTypeAssertion(expr.typeAnnotation, transformExpression(expr.expression, ctx, t))
+  }
+
+  if (t.isTSNonNullExpression(expr) && t.isExpression(expr.expression)) {
+    return t.tsNonNullExpression(transformExpression(expr.expression, ctx, t))
   }
 
   if (t.isArrowFunctionExpression(expr)) {
@@ -1310,6 +1462,26 @@ function recordDerivedDependencies(
   const deps = new Set<string>()
 
   const visit = (node: BabelCore.types.Node, locals: Set<string>): void => {
+    // Special-case __fictMemo callbacks to capture dependencies
+    if (
+      t.isCallExpression(node) &&
+      t.isIdentifier(node.callee) &&
+      node.callee.name === RUNTIME_ALIASES.memo
+    ) {
+      const fn = node.arguments[0]
+      if (fn && (t.isArrowFunctionExpression(fn) || t.isFunctionExpression(fn))) {
+        if (t.isBlockStatement(fn.body)) {
+          for (const stmt of fn.body.body) {
+            if (t.isReturnStatement(stmt) && stmt.argument) {
+              visit(stmt.argument, locals)
+            }
+          }
+        } else {
+          visit(fn.body, locals)
+        }
+      }
+    }
+
     if (t.isIdentifier(node)) {
       if (!locals.has(node.name) && !ctx.shadowedVars.has(node.name)) {
         if (isTracked(node.name, ctx.stateVars, ctx.memoVars)) {
@@ -1479,6 +1651,300 @@ function stripMacroImports(
       }
     },
   })
+}
+
+// ============================================================================
+// Fine-grained DOM Lowering (Rule L)
+// ============================================================================
+
+type IdentifierOverrideMap = Record<string, () => BabelCore.types.Expression>
+
+interface TemplateBuilderState {
+  ctx: TransformContext
+  statements: BabelCore.types.Statement[]
+  namePrefix: string
+  nameCounters: Record<string, number>
+  identifierOverrides?: IdentifierOverrideMap
+}
+
+function createTemplateNamePrefix(ctx: TransformContext): string {
+  const id = ctx.fineGrainedTemplateId++
+  return `__fg${id}`
+}
+
+function allocateTemplateIdentifier(
+  state: TemplateBuilderState,
+  t: typeof BabelCore.types,
+  kind: string,
+): BabelCore.types.Identifier {
+  const index = state.nameCounters[kind] ?? 0
+  state.nameCounters[kind] = index + 1
+  return t.identifier(`${state.namePrefix}_${kind}${index}`)
+}
+
+function transformExpressionForFineGrained(
+  expr: BabelCore.types.Expression,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+  _overrides?: IdentifierOverrideMap,
+): BabelCore.types.Expression {
+  // Reuse standard transform logic; override support can be added if needed
+  return transformExpression(expr, ctx, t)
+}
+
+function emitBindingChild(
+  parentId: BabelCore.types.Identifier,
+  bindingExpr: BabelCore.types.Expression,
+  state: TemplateBuilderState,
+  t: typeof BabelCore.types,
+): void {
+  const markerId = allocateTemplateIdentifier(state, t, 'frag')
+  state.statements.push(createConstDeclaration(t, markerId, bindingExpr))
+  state.statements.push(createAppendStatement(t, parentId, markerId))
+}
+
+function emitDynamicTextChild(
+  parentId: BabelCore.types.Identifier,
+  expr: BabelCore.types.Expression,
+  state: TemplateBuilderState,
+  t: typeof BabelCore.types,
+): void {
+  const textId = allocateTemplateIdentifier(state, t, 'txt')
+  const textNode = createTextNodeCall(t, '')
+  state.statements.push(createConstDeclaration(t, textId, textNode))
+  state.statements.push(createAppendStatement(t, parentId, textId))
+  state.statements.push(createBindTextCall(t, textId, expr, state.ctx))
+}
+
+function emitAttributes(
+  elementId: BabelCore.types.Identifier,
+  attributes: (BabelCore.types.JSXAttribute | BabelCore.types.JSXSpreadAttribute)[],
+  state: TemplateBuilderState,
+  t: typeof BabelCore.types,
+): boolean {
+  for (const attr of attributes) {
+    if (!t.isJSXAttribute(attr) || !t.isJSXIdentifier(attr.name)) {
+      return false
+    }
+
+    const normalized = normalizeAttributeName(attr.name.name)
+    if (!normalized) {
+      return false
+    }
+
+    if (normalized.kind === 'skip') {
+      continue
+    }
+
+    if (normalized.kind === 'event') {
+      if (!attr.value || !t.isJSXExpressionContainer(attr.value) || !attr.value.expression) {
+        return false
+      }
+      const expr = transformExpressionForFineGrained(
+        attr.value.expression as BabelCore.types.Expression,
+        state.ctx,
+        t,
+        state.identifierOverrides,
+      )
+      state.statements.push(
+        createBindEventCall(t, elementId, normalized.eventName!, expr, normalized, state.ctx),
+      )
+      continue
+    }
+
+    if (!attr.value) {
+      state.statements.push(
+        createBindAttributeCall(t, elementId, normalized.name, t.stringLiteral(''), state.ctx),
+      )
+      continue
+    }
+
+    if (t.isStringLiteral(attr.value)) {
+      // Static attribute
+      if (normalized.kind === 'class') {
+        state.statements.push(
+          t.expressionStatement(
+            t.assignmentExpression(
+              '=',
+              t.memberExpression(elementId, t.identifier('className')),
+              attr.value,
+            ),
+          ),
+        )
+      } else {
+        state.statements.push(
+          t.expressionStatement(
+            t.callExpression(t.memberExpression(elementId, t.identifier('setAttribute')), [
+              t.stringLiteral(normalized.name),
+              attr.value,
+            ]),
+          ),
+        )
+      }
+      continue
+    }
+
+    if (t.isJSXExpressionContainer(attr.value) && attr.value.expression) {
+      const expr = transformExpressionForFineGrained(
+        attr.value.expression as BabelCore.types.Expression,
+        state.ctx,
+        t,
+        state.identifierOverrides,
+      )
+
+      if (normalized.kind === 'class') {
+        state.statements.push(createBindClassCall(t, elementId, expr, state.ctx))
+        continue
+      }
+      if (normalized.kind === 'style') {
+        state.statements.push(createBindStyleCall(t, elementId, expr, state.ctx))
+        continue
+      }
+
+      state.statements.push(createBindAttributeCall(t, elementId, normalized.name, expr, state.ctx))
+      continue
+    }
+
+    return false
+  }
+
+  return true
+}
+
+function emitChildren(
+  parentId: BabelCore.types.Identifier,
+  children: (
+    | BabelCore.types.JSXElement
+    | BabelCore.types.JSXFragment
+    | BabelCore.types.JSXText
+    | BabelCore.types.JSXExpressionContainer
+    | BabelCore.types.JSXSpreadChild
+  )[],
+  state: TemplateBuilderState,
+  t: typeof BabelCore.types,
+): boolean {
+  for (const child of children) {
+    if (t.isJSXSpreadChild(child)) {
+      // Spread children are not supported in fine-grained mode
+      return false
+    }
+
+    if (t.isJSXFragment(child)) {
+      if (!emitChildren(parentId, child.children, state, t)) return false
+      continue
+    }
+
+    if (t.isJSXText(child)) {
+      const text = child.value
+      if (!text.trim()) continue
+      const textId = allocateTemplateIdentifier(state, t, 'txt')
+      const textNode = createTextNodeCall(t, text)
+      state.statements.push(createConstDeclaration(t, textId, textNode))
+      state.statements.push(createAppendStatement(t, parentId, textId))
+      continue
+    }
+
+    if (t.isJSXExpressionContainer(child)) {
+      if (!child.expression || t.isJSXEmptyExpression(child.expression)) continue
+
+      if (t.isJSXElement(child.expression)) {
+        return false
+      }
+
+      if (t.isJSXFragment(child.expression)) {
+        if (!emitChildren(parentId, child.expression.children, state, t)) return false
+        continue
+      }
+
+      const transformedExpr = transformExpressionForFineGrained(
+        child.expression as BabelCore.types.Expression,
+        state.ctx,
+        t,
+        state.identifierOverrides,
+      )
+
+      const conditionalBinding = createConditionalBinding(transformedExpr, state.ctx, t)
+      if (conditionalBinding) {
+        emitBindingChild(parentId, conditionalBinding, state, t)
+        continue
+      }
+
+      if (t.isCallExpression(child.expression) && t.isMemberExpression(child.expression.callee)) {
+        const prop = child.expression.callee.property
+        if (t.isIdentifier(prop) && prop.name === 'map') {
+          const listBinding = createListBinding(transformedExpr, child.expression, state.ctx, t)
+          if (listBinding) {
+            emitBindingChild(parentId, listBinding, state, t)
+            continue
+          }
+        }
+      }
+
+      emitDynamicTextChild(parentId, transformedExpr, state, t)
+      continue
+    }
+
+    if (t.isJSXElement(child)) {
+      const tagName = getIntrinsicTagName(child, t)
+      if (!tagName) return false
+      const childId = emitJsxElementToTemplate(child, tagName, state, t)
+      if (!childId) return false
+      state.statements.push(createAppendStatement(t, parentId, childId))
+      continue
+    }
+
+    return false
+  }
+
+  return true
+}
+
+function emitJsxElementToTemplate(
+  node: BabelCore.types.JSXElement,
+  tagName: string,
+  state: TemplateBuilderState,
+  t: typeof BabelCore.types,
+): BabelCore.types.Identifier | null {
+  const elementId = allocateTemplateIdentifier(state, t, 'el')
+  const createEl = createElementCall(t, tagName)
+  state.statements.push(createConstDeclaration(t, elementId, createEl))
+
+  const attributes = node.openingElement.attributes
+
+  if (!emitAttributes(elementId, attributes, state, t)) {
+    return null
+  }
+
+  if (!emitChildren(elementId, node.children, state, t)) {
+    return null
+  }
+
+  return elementId
+}
+
+function transformFineGrainedJsx(
+  node: BabelCore.types.JSXElement,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): BabelCore.types.Expression | null {
+  if (!ctx.options.fineGrainedDom) return null
+
+  const tagName = getIntrinsicTagName(node, t)
+  if (!tagName) return null
+
+  const state: TemplateBuilderState = {
+    ctx,
+    statements: [],
+    namePrefix: createTemplateNamePrefix(ctx),
+    nameCounters: Object.create(null),
+  }
+
+  const rootId = emitJsxElementToTemplate(node, tagName, state, t)
+  if (!rootId) return null
+
+  state.statements.push(t.returnStatement(rootId))
+
+  return t.callExpression(t.arrowFunctionExpression([], t.blockStatement(state.statements)), [])
 }
 
 // ============================================================================
@@ -1700,6 +2166,67 @@ function buildPropsDestructurePlan(
     aliasParam,
     prologue,
     trackedNames,
+  }
+}
+
+function applyRegionTransform(
+  path:
+    | BabelCore.NodePath<BabelCore.types.Program>
+    | BabelCore.NodePath<BabelCore.types.BlockStatement>,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): void {
+  const statements = (path.node as BabelCore.types.Program | BabelCore.types.BlockStatement).body
+  if (!Array.isArray(statements) || statements.length === 0) return
+
+  const derivedOutputs = collectDerivedOutputsFromStatements(
+    statements as BabelCore.types.Statement[],
+    ctx,
+    t,
+  )
+  if (derivedOutputs.size < 2) return
+
+  const result: BabelCore.types.Statement[] = []
+  let index = 0
+  let changed = false
+
+  while (index < statements.length) {
+    const region = findNextRegion(
+      statements as BabelCore.types.Statement[],
+      derivedOutputs,
+      ctx,
+      t,
+      index,
+    )
+
+    if (!region) {
+      result.push(statements[index] as BabelCore.types.Statement)
+      index++
+      continue
+    }
+
+    const { start, end, outputs } = region
+    for (let i = index; i < start; i++) {
+      result.push(statements[i] as BabelCore.types.Statement)
+    }
+
+    const regionStatements = (statements as BabelCore.types.Statement[]).slice(start, end + 1)
+    const orderedOutputs = collectOutputsInOrder(regionStatements, outputs, t)
+    const { memoDecl, getterDecls } = generateRegionMemo(
+      regionStatements,
+      orderedOutputs.length ? orderedOutputs : Array.from(outputs),
+      ctx,
+      t,
+      regionStatements,
+    )
+
+    result.push(memoDecl, ...getterDecls)
+    index = end + 1
+    changed = true
+  }
+
+  if (changed) {
+    ;(path.node as any).body = result
   }
 }
 

@@ -7,6 +7,7 @@
 
 import type * as BabelCore from '@babel/core'
 
+import { RUNTIME_ALIASES } from './constants'
 import type { TransformContext } from './types'
 
 // ============================================================================
@@ -56,6 +57,24 @@ export function analyzeConditionalUsage(
     skipNode?: BabelCore.types.Node,
   ): void => {
     if (node === skipNode) return
+
+    // Traverse memo callbacks
+    if (
+      t.isCallExpression(node) &&
+      t.isIdentifier(node.callee) &&
+      node.callee.name === RUNTIME_ALIASES.memo
+    ) {
+      const fn = node.arguments[0]
+      if (fn && (t.isArrowFunctionExpression(fn) || t.isFunctionExpression(fn))) {
+        if (t.isBlockStatement(fn.body)) {
+          for (const stmt of fn.body.body) {
+            if (stmt) collectUsedDerived(stmt, target, skipNode)
+          }
+        } else {
+          collectUsedDerived(fn.body, target, skipNode)
+        }
+      }
+    }
 
     // Skip function bodies
     if (
@@ -114,6 +133,24 @@ export function analyzeConditionalUsage(
       t.isArrowFunctionExpression(node)
     ) {
       return
+    }
+
+    // Traverse memo callbacks
+    if (
+      t.isCallExpression(node) &&
+      t.isIdentifier(node.callee) &&
+      node.callee.name === RUNTIME_ALIASES.memo
+    ) {
+      const fn = node.arguments[0]
+      if (fn && (t.isArrowFunctionExpression(fn) || t.isFunctionExpression(fn))) {
+        if (t.isBlockStatement(fn.body)) {
+          for (const stmt of fn.body.body) {
+            if (stmt) findConditional(stmt)
+          }
+        } else {
+          findConditional(fn.body)
+        }
+      }
     }
 
     if (t.isIfStatement(node)) {

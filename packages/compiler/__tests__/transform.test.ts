@@ -259,6 +259,17 @@ describe('createFictPlugin', () => {
       expect(output).toContain('count()')
     })
 
+    it('handles optional chaining and TS assertions', () => {
+      const output = transform(`
+        let user = $state<{ profile?: { name?: string } }>({ profile: {} })
+        const view = () => <div>{user?.profile?.name}</div>
+        const foo = (user as any)?.profile!.name
+      `)
+
+      expect(output).toContain('user()?.profile?.name')
+      expect(output).toContain('user()?.profile')
+    })
+
     it('handles conditional rendering with &&', () => {
       const output = transform(`
         let show = $state(true)
@@ -600,6 +611,19 @@ describe('createFictPlugin', () => {
         ),
       ).toBe(true)
     })
+
+    it('warns on template literal dynamic property access', () => {
+      const warnings: { code: string; message: string }[] = []
+      transform(
+        `
+        let obj = $state({ a: 1 })
+        const key = 'a'
+        const val = obj[\`\${key}\`]
+      `,
+        { onWarn: w => warnings.push(w) },
+      )
+      expect(warnings.some(w => w.code === 'FICT-H')).toBe(true)
+    })
   })
 
   describe('Derived cycle detection', () => {
@@ -701,6 +725,85 @@ describe('createFictPlugin', () => {
       `)
       // Should not contain __props since no JSX
       expect(output).not.toContain('__props')
+    })
+  })
+
+  describe('Rule D / Rule J', () => {
+    it('groups multiple derived values into a region memo (Rule D)', () => {
+      const output = transform(`
+        function View() {
+          let count = $state(0)
+          const doubled = count * 2
+          const tripled = count * 3
+          if (count > 0) {
+            console.log(doubled, tripled)
+          }
+          return <div>{doubled}{tripled}</div>
+        }
+      `)
+
+      expect(output).toMatch(/__fictRegion_/)
+      expect(output).toContain('__fictMemo')
+      expect(output).toMatch(/const doubled = \(\) => __fictRegion_/)
+      expect(output).toMatch(/const tripled = \(\) => __fictRegion_/)
+    })
+
+    it('lazily evaluates branch-only derived values when enabled (Rule J)', () => {
+      const output = transform(
+        `
+        function View() {
+          let count = $state(0)
+          const pos = count + 1
+          const neg = count - 1
+          const value = count > 0 ? pos : neg
+          return value
+        }
+      `,
+        { lazyConditional: true },
+      )
+
+      expect(output).toContain('__fictCond')
+    })
+
+    it('caches getter calls when getterCache is enabled', () => {
+      const output = transform(
+        `
+        function View() {
+          let count = $state(0)
+          const view = () => count + count
+          return view()
+        }
+      `,
+        { getterCache: true },
+      )
+
+      expect(output).toContain('__cached_count')
+      expect(output).toMatch(/__cached_count/)
+    })
+  })
+
+  describe('Fine-grained DOM lowering', () => {
+    it('lowers intrinsic JSX to DOM binds when enabled', () => {
+      const output = transform(
+        `
+        import { $state } from 'fict'
+        function View() {
+          let count = $state(1)
+          return (
+            <section class={count > 1 ? 'large' : 'small'} style={{ opacity: count / 10 }}>
+              <p data-id="value">{count}</p>
+            </section>
+          )
+        }
+      `,
+        { fineGrainedDom: true },
+      )
+
+      expect(output).toContain('document.createElement')
+      expect(output).toContain('__fictBindClass')
+      expect(output).toContain('__fictBindStyle')
+      expect(output).toContain('__fictBindText')
+      expect(output).not.toContain('__fictInsert')
     })
   })
 })

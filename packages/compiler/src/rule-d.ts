@@ -9,6 +9,7 @@
 import type * as BabelCore from '@babel/core'
 
 import { RUNTIME_ALIASES } from './constants'
+import { analyzeConditionalUsage } from './rule-j'
 import type { TransformContext } from './types'
 import { isStateCall } from './utils'
 
@@ -104,19 +105,46 @@ function collectOutputsFromStatement(
     for (const decl of stmt.declarations) {
       if (!t.isIdentifier(decl.id) || !decl.init) continue
 
+      const init = decl.init
+
       // Skip $state calls
-      if (isStateCall(decl.init, t)) {
+      if (isStateCall(init, t)) {
         tracked.add(decl.id.name)
         continue
       }
 
-      // Skip function initializers
-      if (t.isArrowFunctionExpression(decl.init) || t.isFunctionExpression(decl.init)) {
+      // Handle memo calls produced earlier (__fictMemo(() => ...))
+      if (t.isCallExpression(init)) {
+        const callExpr = init as BabelCore.types.CallExpression
+        if (t.isIdentifier(callExpr.callee) && callExpr.callee.name === RUNTIME_ALIASES.memo) {
+          const firstArg = callExpr.arguments[0]
+          if (
+            firstArg &&
+            (t.isArrowFunctionExpression(firstArg) || t.isFunctionExpression(firstArg))
+          ) {
+            const fnBody = firstArg.body
+            const returnExpr = t.isBlockStatement(fnBody)
+              ? (fnBody.body.find(
+                  (inner): inner is BabelCore.types.ReturnStatement =>
+                    t.isReturnStatement(inner) && inner.argument != null,
+                )?.argument ?? null)
+              : fnBody
+            if (returnExpr && dependsOnTrackedSet(returnExpr, tracked, ctx.shadowedVars, t)) {
+              if (!outputs.has(decl.id.name)) {
+                outputs.add(decl.id.name)
+                changed = true
+              }
+              continue
+            }
+          }
+        }
+      } else if (t.isArrowFunctionExpression(init) || t.isFunctionExpression(init)) {
+        // Skip other function initializers
         continue
       }
 
       // Check if depends on tracked
-      if (dependsOnTrackedSet(decl.init, tracked, ctx.shadowedVars, t)) {
+      if (dependsOnTrackedSet(init, tracked, ctx.shadowedVars, t)) {
         if (!outputs.has(decl.id.name)) {
           outputs.add(decl.id.name)
           changed = true
@@ -422,7 +450,28 @@ export function generateRegionMemo(
   orderedOutputs: string[],
   ctx: TransformContext,
   t: typeof BabelCore.types,
+  analysisStatements?: BabelCore.types.Statement[],
 ): RegionMemoResult {
+  // Rule J: lazy conditional optimization
+  if (ctx.options.lazyConditional) {
+    const conditionalInfo = analyzeConditionalUsage(
+      analysisStatements ?? regionStatements,
+      new Set(orderedOutputs),
+      ctx,
+      t,
+    )
+    if (conditionalInfo) {
+      const lazy = generateLazyConditionalRegionMemo(
+        regionStatements,
+        orderedOutputs,
+        conditionalInfo,
+        ctx,
+        t,
+      )
+      if (lazy) return lazy
+    }
+  }
+
   ctx.helpersUsed.memo = true
 
   const regionId = t.identifier(`__fictRegion_${++ctx.fineGrainedTemplateId}`)
@@ -471,6 +520,130 @@ export function generateRegionMemo(
   )
 
   // Register outputs as memo vars / getters
+  orderedOutputs.forEach(out => {
+    ctx.memoVars.add(out)
+    ctx.getterOnlyVars.add(out)
+  })
+
+  return { memoDecl, getterDecls, regionId }
+}
+
+function generateLazyConditionalRegionMemo(
+  regionStatements: BabelCore.types.Statement[],
+  orderedOutputs: string[],
+  conditionalInfo: {
+    condition: BabelCore.types.Expression
+    trueBranchOnlyDerived: Set<string>
+    falseBranchOnlyDerived: Set<string>
+  },
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): RegionMemoResult | null {
+  const conditionId = t.identifier(`__fictCond_${ctx.fineGrainedTemplateId}`)
+  const conditionDecl = t.variableDeclaration('const', [
+    t.variableDeclarator(conditionId, conditionalInfo.condition),
+  ])
+
+  interface TaggedStatement {
+    stmt: BabelCore.types.Statement
+    index: number
+    kind: 'always' | 'lazyTrue' | 'lazyFalse'
+  }
+
+  const taggedStatements: TaggedStatement[] = regionStatements.map((stmt, index) => {
+    if (t.isVariableDeclaration(stmt) && stmt.declarations.length === 1) {
+      const decl = stmt.declarations[0]
+      if (t.isIdentifier(decl.id)) {
+        if (conditionalInfo.trueBranchOnlyDerived.has(decl.id.name)) {
+          return { stmt, index, kind: 'lazyTrue' }
+        }
+        if (conditionalInfo.falseBranchOnlyDerived.has(decl.id.name)) {
+          return { stmt, index, kind: 'lazyFalse' }
+        }
+      }
+    }
+    return { stmt, index, kind: 'always' }
+  })
+
+  const lazyTrueStatements = taggedStatements
+    .filter(tg => tg.kind === 'lazyTrue')
+    .map(tg => tg.stmt)
+  const lazyFalseStatements = taggedStatements
+    .filter(tg => tg.kind === 'lazyFalse')
+    .map(tg => tg.stmt)
+
+  const firstLazyIndex = taggedStatements.findIndex(tg => tg.kind !== 'always')
+  const alwaysBeforeLazy: BabelCore.types.Statement[] = []
+  const alwaysAfterLazy: BabelCore.types.Statement[] = []
+  for (const tg of taggedStatements) {
+    if (tg.kind === 'always') {
+      if (firstLazyIndex === -1 || tg.index < firstLazyIndex) {
+        alwaysBeforeLazy.push(tg.stmt)
+      } else {
+        alwaysAfterLazy.push(tg.stmt)
+      }
+    }
+  }
+
+  const createReturnWithNulls = (nullFields: Set<string>): BabelCore.types.ReturnStatement => {
+    return t.returnStatement(
+      t.objectExpression(
+        orderedOutputs.map(name => {
+          if (nullFields.has(name)) {
+            return t.objectProperty(t.identifier(name), t.nullLiteral())
+          }
+          return t.objectProperty(t.identifier(name), t.identifier(name))
+        }),
+      ),
+    )
+  }
+
+  const memoBody: BabelCore.types.Statement[] = [...alwaysBeforeLazy]
+  memoBody.unshift(conditionDecl)
+
+  if (
+    lazyTrueStatements.length > 0 ||
+    lazyFalseStatements.length > 0 ||
+    alwaysAfterLazy.length > 0
+  ) {
+    const trueBlock = [
+      ...lazyTrueStatements,
+      ...alwaysAfterLazy,
+      createReturnWithNulls(conditionalInfo.falseBranchOnlyDerived),
+    ]
+    const falseBlock = [
+      ...lazyFalseStatements,
+      ...alwaysAfterLazy,
+      createReturnWithNulls(conditionalInfo.trueBranchOnlyDerived),
+    ]
+    memoBody.push(
+      t.ifStatement(conditionId, t.blockStatement(trueBlock), t.blockStatement(falseBlock)),
+    )
+  }
+
+  ctx.helpersUsed.memo = true
+  const regionId = t.identifier(`__fictRegion_${++ctx.fineGrainedTemplateId}`)
+
+  const memoArrow = t.arrowFunctionExpression([], t.blockStatement(memoBody))
+  const memoDecl = t.variableDeclaration('const', [
+    t.variableDeclarator(
+      regionId,
+      t.callExpression(t.identifier(RUNTIME_ALIASES.memo), [memoArrow]),
+    ),
+  ])
+
+  const getterDecls = orderedOutputs.map(name =>
+    t.variableDeclaration('const', [
+      t.variableDeclarator(
+        t.identifier(name),
+        t.arrowFunctionExpression(
+          [],
+          t.memberExpression(t.callExpression(regionId, []), t.identifier(name)),
+        ),
+      ),
+    ]),
+  )
+
   orderedOutputs.forEach(out => {
     ctx.memoVars.add(out)
     ctx.getterOnlyVars.add(out)
