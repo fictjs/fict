@@ -1,7 +1,7 @@
 {
-  "name": "fict-compiler",
+  "name": "@fictjs/compiler",
   "version": "0.0.1",
-  "description": "Fict Babel compiler",
+  "description": "Babel plugin for Fict Compiler",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",

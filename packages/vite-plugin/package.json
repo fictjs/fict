@@ -1,5 +1,5 @@
 {
-  "name": "fict-vite-plugin",
+  "name": "@fictjs/vite-plugin",
   "version": "0.0.1",
   "description": "Vite plugin for Fict",
   "type": "module",

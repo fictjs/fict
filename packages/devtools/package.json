@@ -1,5 +1,5 @@
 {
-  "name": "fict-devtools",
+  "name": "@fictjs/devtools",
   "version": "0.0.1",
   "private": true,
   "description": "Fict DevTools browser extension",
