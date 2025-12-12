@@ -35,11 +35,6 @@
       "import": "./dist/jsx-dev-runtime.js",
       "require": "./dist/jsx-dev-runtime.cjs"
     },
-    "./vite": {
-      "types": "./dist/vite.d.ts",
-      "import": "./dist/vite.js",
-      "require": "./dist/vite.cjs"
-    },
     "./plus": {
       "types": "./dist/plus.d.ts",
       "import": "./dist/plus.js",
@@ -60,8 +55,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "fict-runtime": "workspace:*",
-    "fict-vite-plugin": "workspace:*"
+    "@fictjs/runtime": "workspace:*",
+    "@fictjs/vite-plugin": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.5.1"

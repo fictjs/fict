@@ -11,8 +11,8 @@
     "clean": "rm -rf docs/.vitepress/dist"
   },
   "devDependencies": {
-    "fict-runtime": "workspace:*",
-    "fict-vite-plugin": "workspace:*",
+    "@fictjs/runtime": "workspace:*",
+    "@fictjs/vite-plugin": "workspace:*",
     "vitepress": "^1.3.0"
   }
 }

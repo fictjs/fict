@@ -39,7 +39,7 @@ import {
   moveNodesBefore,
   removeNodes,
   getFirstNodeAfter,
-} from 'fict-runtime'
+} from '@fictjs/runtime'
 
 let [items, setItems] = __fictSignal([
   { id: 1, name: 'Alice' },
@@ -199,7 +199,7 @@ import {
   createSignal as __fictSignal,
   createEffect as __fictEffect,
   createKeyedList,
-} from 'fict-runtime'
+} from '@fictjs/runtime'
 
 let [items, setItems] = __fictSignal([
   { id: 1, name: 'Alice' },

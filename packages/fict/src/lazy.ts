@@ -1,5 +1,5 @@
-import { createSuspenseToken } from 'fict-runtime'
-import type { Component } from 'fict-runtime'
+import { createSuspenseToken } from '@fictjs/runtime'
+import type { Component } from '@fictjs/runtime'
 
 export interface LazyModule<TProps extends Record<string, unknown>> {
   default: Component<TProps>

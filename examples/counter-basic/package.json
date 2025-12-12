@@ -10,11 +10,11 @@
   },
   "dependencies": {
     "fict": "workspace:*",
-    "fict-runtime": "workspace:*",
-    "fict-vite-plugin": "workspace:*"
+    "@fictjs/runtime": "workspace:*",
+    "@fictjs/vite-plugin": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.3",
-    "vite": "^7.2.4"
+    "vite": "^7.2.7"
   }
 }

@@ -26,7 +26,7 @@ const tick = () =>
       : Promise.resolve().then(resolve),
   )
 
-describe('fict-runtime', () => {
+describe('fict runtime', () => {
   it('runs effects when signals change', async () => {
     const count = createSignal(0)
     const doubled = createMemo(() => count() * 2)

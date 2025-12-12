@@ -1,4 +1,4 @@
-import { createEffect } from 'fict-runtime'
+import { createEffect } from '@fictjs/runtime'
 import { describe, it, expect, vi } from 'vitest'
 
 import { $store } from '../store'

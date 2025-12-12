@@ -3,7 +3,18 @@
   "changelog": "@changesets/cli/changelog",
   "commit": false,
   "fixed": [],
-  "linked": [["fict-runtime", "fict-compiler-ts", "fict-compiler-swc", "fict-vite-plugin"]],
+  "linked": [
+    [
+      "fict",
+      "runtime",
+      "compiler",
+      "vite-plugin",
+      "eslint-plugin",
+      "devtools",
+      "ssr",
+      "testing-library"
+    ]
+  ],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",

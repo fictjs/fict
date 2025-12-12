@@ -1,4 +1,4 @@
-import { Suspense, render } from 'fict-runtime'
+import { Suspense, render } from '@fictjs/runtime'
 import { describe, it, expect, vi } from 'vitest'
 
 import { lazy } from '../lazy'

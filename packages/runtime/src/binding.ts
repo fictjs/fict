@@ -697,56 +697,35 @@ export function createChildBinding(
 export function bindEvent(
   el: HTMLElement,
   eventName: string,
-  value: MaybeReactive<EventListenerOrEventListenerObject | null | undefined>,
+  handler: EventListenerOrEventListenerObject | null | undefined,
   options?: boolean | AddEventListenerOptions,
 ): Cleanup {
-  const wrapHandler = (
-    handler: EventListenerOrEventListenerObject,
-    rootRef: RootContext | undefined,
-  ): EventListener => {
-    return event => {
-      try {
-        if (typeof handler === 'function') {
-          ;(handler as EventListener)(event)
-        } else if (handler && typeof (handler as EventListenerObject).handleEvent === 'function') {
-          ;(handler as EventListenerObject).handleEvent(event)
-        }
-      } catch (err) {
-        if (handleError(err, { source: 'event', eventName }, rootRef)) {
-          return
-        }
-        throw err
+  // Skip if handler is null/undefined
+  if (handler == null) {
+    return () => {}
+  }
+
+  const rootRef = getCurrentRoot()
+
+  const wrappedHandler: EventListener = event => {
+    try {
+      if (typeof handler === 'function') {
+        ;(handler as EventListener)(event)
+      } else if (handler && typeof (handler as EventListenerObject).handleEvent === 'function') {
+        ;(handler as EventListenerObject).handleEvent(event)
       }
+    } catch (err) {
+      if (handleError(err, { source: 'event', eventName }, rootRef)) {
+        return
+      }
+      throw err
     }
   }
 
-  if (isReactive(value)) {
-    // Reactive: create effect to update listener when handler changes
-    return createEffect(() => {
-      const handler = (value as () => EventListenerOrEventListenerObject | null | undefined)()
-      // Skip if handler is null/undefined
-      if (handler == null) {
-        return
-      }
-      const rootRef = getCurrentRoot()
-      const wrapped = wrapHandler(handler, rootRef)
-      el.addEventListener(eventName, wrapped, options)
-      return () => el.removeEventListener(eventName, wrapped, options)
-    })
-  } else {
-    // Static: attach once
-    const handler = value as EventListenerOrEventListenerObject | null | undefined
-    // Skip if handler is null/undefined
-    if (handler == null) {
-      return () => {}
-    }
-    const rootRef = getCurrentRoot()
-    const wrapped = wrapHandler(handler, rootRef)
-    el.addEventListener(eventName, wrapped, options)
-    const cleanup = () => el.removeEventListener(eventName, wrapped, options)
-    registerRootCleanup(cleanup)
-    return cleanup
-  }
+  el.addEventListener(eventName, wrappedHandler, options)
+  const cleanup = () => el.removeEventListener(eventName, wrappedHandler, options)
+  registerRootCleanup(cleanup)
+  return cleanup
 }
 
 // ============================================================================

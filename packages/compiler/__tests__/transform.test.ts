@@ -31,7 +31,7 @@ describe('createFictPlugin', () => {
         let count = $state(0)
       `)
 
-      expect(output).toContain(`import { createSignal as __fictSignal } from "fict-runtime"`)
+      expect(output).toContain(`import { createSignal as __fictSignal } from "@fictjs/runtime"`)
       expect(output).toContain(`let count = __fictSignal(0)`)
       expect(output).not.toContain('$state')
     })
@@ -130,6 +130,32 @@ describe('createFictPlugin', () => {
       expect(output).toContain(`count(count() - 2)`)
       expect(output).toContain(`count(count() * 3)`)
       expect(output).toContain(`count(count() / 4)`)
+    })
+
+    it('transforms self-referential assignments like count = count + 1', () => {
+      const output = transform(`
+        let count = $state(0)
+        count = count + 1
+        count = count - 1
+        count = count * 2
+      `)
+
+      expect(output).toContain(`count(count() + 1)`)
+      expect(output).toContain(`count(count() - 1)`)
+      expect(output).toContain(`count(count() * 2)`)
+    })
+
+    it('transforms assignments inside arrow function block bodies', () => {
+      const output = transform(`
+        let count = $state(0)
+        const handler = () => {
+          count = 5
+          count = count + 1
+        }
+      `)
+
+      expect(output).toContain(`count(5)`)
+      expect(output).toContain(`count(count() + 1)`)
     })
 
     it('transforms increment/decrement operators', () => {

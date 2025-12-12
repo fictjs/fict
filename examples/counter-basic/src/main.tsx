@@ -29,7 +29,9 @@ function Counter() {
           Decrement
         </button>
         <button
-          onClick={() => count++}
+          onClick={() => {
+            count = count + 1
+          }}
           style={{
             padding: '0.5rem 1rem',
             fontSize: '1rem',

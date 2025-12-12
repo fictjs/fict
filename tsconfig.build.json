@@ -3,8 +3,11 @@
   "references": [
     { "path": "./packages/fict" },
     { "path": "./packages/runtime" },
-    { "path": "./packages/compiler-ts" },
+    { "path": "./packages/compiler" },
     { "path": "./packages/vite-plugin" },
-    { "path": "./packages/eslint-plugin" }
+    { "path": "./packages/eslint-plugin" },
+    { "path": "./packages/devtools" },
+    { "path": "./packages/testing-library" },
+    { "path": "./packages/ssr" }
   ]
 }

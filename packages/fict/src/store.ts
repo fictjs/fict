@@ -1,4 +1,4 @@
-import { createSignal, type Signal } from 'fict-runtime'
+import { createSignal, type Signal } from '@fictjs/runtime'
 
 type AnyFn = (...args: unknown[]) => unknown
 interface BoundMethodEntry {

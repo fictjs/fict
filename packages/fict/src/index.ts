@@ -1,1 +1,1 @@
-export * from 'fict-runtime'
+export * from '@fictjs/runtime'

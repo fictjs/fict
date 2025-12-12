@@ -1,7 +1,7 @@
 {
-  "name": "@fictjs/vite-plugin",
+  "name": "@fictjs/testing-library",
   "version": "0.0.1",
-  "description": "Vite plugin for Fict",
+  "description": "Fict testing library",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -25,19 +25,7 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
-  "peerDependencies": {
-    "vite": ">=7.0.0"
-  },
-  "dependencies": {
-    "@babel/core": "^7.26.0",
-    "@babel/plugin-syntax-jsx": "^7.27.1",
-    "@babel/plugin-transform-react-jsx": "^7.25.9",
-    "@babel/preset-typescript": "^7.26.0",
-    "@fictjs/compiler": "workspace:*"
-  },
   "devDependencies": {
-    "@types/babel__core": "^7.20.5",
-    "tsup": "^8.5.1",
-    "vite": "^7.2.7"
+    "tsup": "^8.5.1"
   }
 }

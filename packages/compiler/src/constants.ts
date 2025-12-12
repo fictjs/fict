@@ -2,7 +2,7 @@
 // Runtime Constants
 // ============================================================================
 
-export const RUNTIME_MODULE = 'fict-runtime'
+export const RUNTIME_MODULE = '@fictjs/runtime'
 
 export const RUNTIME_HELPERS = {
   signal: 'createSignal',

@@ -1,4 +1,4 @@
-import { createSignal, createEffect, onCleanup, createSuspenseToken } from 'fict-runtime'
+import { createSignal, createEffect, onCleanup, createSuspenseToken } from '@fictjs/runtime'
 
 export interface ResourceResult<T> {
   data: T | undefined

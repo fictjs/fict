@@ -68,14 +68,14 @@
   },
   "size-limit": [
     {
-      "name": "fict-runtime (ESM)",
-      "path": "packages/runtime/dist/index.js",
+      "name": "Fict (ESM)",
+      "path": "packages/fict/dist/index.js",
       "limit": "9 KB",
       "gzip": true
     },
     {
-      "name": "fict-runtime (CJS)",
-      "path": "packages/runtime/dist/index.cjs",
+      "name": "Fict (CJS)",
+      "path": "packages/fict/dist/index.cjs",
       "limit": "10 KB",
       "gzip": true
     }

@@ -38,6 +38,6 @@
     "@babel/types": "^7.26.0",
     "@types/babel__core": "^7.20.5",
     "@types/babel__helper-plugin-utils": "^7.10.3",
-    "tsup": "^8.0.0"
+    "tsup": "^8.5.1"
   }
 }

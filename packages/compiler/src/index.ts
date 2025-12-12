@@ -298,10 +298,12 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
           }
 
           const operator = path.node.operator
+          // Transform the right-hand side to convert any state variable references
+          const transformedRight = transformExpression(path.node.right, ctx, t)
 
           if (operator === '=') {
-            // count = 5 -> count(5)
-            path.replaceWith(t.callExpression(t.identifier(name), [path.node.right]))
+            // count = count + 1 -> count(count() + 1)
+            path.replaceWith(t.callExpression(t.identifier(name), [transformedRight]))
             path.skip()
           } else {
             // count += 1 -> count(count() + 1)
@@ -309,7 +311,7 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
             if (binaryOp) {
               path.replaceWith(
                 t.callExpression(t.identifier(name), [
-                  t.binaryExpression(binaryOp, createGetterCall(t, name), path.node.right),
+                  t.binaryExpression(binaryOp, createGetterCall(t, name), transformedRight),
                 ]),
               )
               path.skip()
@@ -773,6 +775,64 @@ function collectDerivedOutputs(
   return derived
 }
 
+/**
+ * Transform statements inside a block body (for arrow functions with block bodies)
+ */
+function transformBlockStatement(
+  block: BabelCore.types.BlockStatement,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): BabelCore.types.BlockStatement {
+  const newBody = block.body.map(stmt => transformStatement(stmt, ctx, t))
+  return t.blockStatement(newBody)
+}
+
+/**
+ * Transform a single statement, handling ExpressionStatements and other common patterns
+ */
+function transformStatement(
+  stmt: BabelCore.types.Statement,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): BabelCore.types.Statement {
+  if (t.isExpressionStatement(stmt)) {
+    return t.expressionStatement(transformExpression(stmt.expression, ctx, t))
+  }
+
+  if (t.isReturnStatement(stmt) && stmt.argument) {
+    return t.returnStatement(transformExpression(stmt.argument, ctx, t))
+  }
+
+  if (t.isIfStatement(stmt)) {
+    return t.ifStatement(
+      transformExpression(stmt.test, ctx, t),
+      t.isBlockStatement(stmt.consequent)
+        ? transformBlockStatement(stmt.consequent, ctx, t)
+        : transformStatement(stmt.consequent, ctx, t),
+      stmt.alternate
+        ? t.isBlockStatement(stmt.alternate)
+          ? transformBlockStatement(stmt.alternate, ctx, t)
+          : transformStatement(stmt.alternate, ctx, t)
+        : null,
+    )
+  }
+
+  if (t.isVariableDeclaration(stmt)) {
+    return t.variableDeclaration(
+      stmt.kind,
+      stmt.declarations.map(decl => {
+        if (decl.init) {
+          return t.variableDeclarator(decl.id, transformExpression(decl.init, ctx, t))
+        }
+        return decl
+      }),
+    )
+  }
+
+  // For other statements, return as-is (could be extended as needed)
+  return stmt
+}
+
 function transformExpression(
   expr: BabelCore.types.Expression,
   ctx: TransformContext,
@@ -913,13 +973,64 @@ function transformExpression(
     if (t.isExpression(expr.body)) {
       newBody = transformExpression(expr.body, ctx, t)
     } else {
-      // Block body - would need full statement transformation
-      newBody = expr.body
+      // Block body - transform statements inside the block
+      newBody = transformBlockStatement(expr.body, ctx, t)
     }
 
     ctx.shadowedVars = originalShadowed as Set<string>
 
     return t.arrowFunctionExpression(expr.params, newBody, expr.async)
+  }
+
+  // Handle UpdateExpression (count++, count--)
+  if (t.isUpdateExpression(expr)) {
+    if (t.isIdentifier(expr.argument)) {
+      const name = expr.argument.name
+      if (isTrackedAndNotShadowed(name, ctx.stateVars, ctx.memoVars, ctx.shadowedVars)) {
+        // Only state vars can be updated
+        if (ctx.stateVars.has(name)) {
+          // count++ -> count(count() + 1)
+          // count-- -> count(count() - 1)
+          const delta = expr.operator === '++' ? 1 : -1
+          return t.callExpression(t.identifier(name), [
+            t.binaryExpression(
+              delta > 0 ? '+' : '-',
+              createGetterCall(t, name),
+              t.numericLiteral(1),
+            ),
+          ])
+        }
+      }
+    }
+    return expr
+  }
+
+  // Handle AssignmentExpression (count = value, count += value)
+  if (t.isAssignmentExpression(expr)) {
+    if (t.isIdentifier(expr.left)) {
+      const name = expr.left.name
+      if (isTrackedAndNotShadowed(name, ctx.stateVars, ctx.memoVars, ctx.shadowedVars)) {
+        // Only state vars can be assigned
+        if (ctx.stateVars.has(name)) {
+          const operator = expr.operator
+          const transformedRight = transformExpression(expr.right, ctx, t)
+
+          if (operator === '=') {
+            // count = 5 -> count(5)
+            return t.callExpression(t.identifier(name), [transformedRight])
+          } else {
+            // count += 1 -> count(count() + 1)
+            const binaryOp = toBinaryOperator(operator)
+            if (binaryOp) {
+              return t.callExpression(t.identifier(name), [
+                t.binaryExpression(binaryOp, createGetterCall(t, name), transformedRight),
+              ])
+            }
+          }
+        }
+      }
+    }
+    return expr
   }
 
   return expr
