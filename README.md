@@ -392,17 +392,48 @@ Fict’s compiler keeps props reactive under the hood.
 
 ---
 
-### 5. Components run once, but your intuition still holds
+### 5. On-demand component execution with fine-grained fallback
 
-Fict’s component functions run **once** (like Solid / Svelte / Vue’s `setup()`), not on every render like React. This enables fine-grained updates without a virtual DOM.
+Fict uses an **on-demand execution model**: components run when needed, not on every state change like React. This enables fine-grained updates without a virtual DOM.
 
-However, that often creates a nasty gotcha in other frameworks:
+**The key insight**: Whether a component re-executes depends on whether reactive values are **read at runtime** in control flow:
 
-- you define a **derived value** at module / component scope
-- you read it later inside an **event handler**
-- you accidentally capture a stale snapshot
+```tsx
+// Example 1: Component RE-EXECUTES on count change
+let count = $state(0)
+const doubled = count * 2 // just defines a derived memo
 
-Fict bakes in a hard rule to match your intuition:
+if (doubled) {
+  // `doubled` is READ at runtime in control flow → triggers re-execution
+}
+
+return <>{count}</>
+```
+
+When `count` changes, the entire component re-executes because `doubled` is **read at runtime** in the `if` statement. Note: simply defining `const doubled = count * 2` doesn't trigger re-execution—it's the runtime read in control flow that matters.
+
+```tsx
+// Example 2: Only FINE-GRAINED DOM update
+let count = $state(0)
+const doubled = count * 2 // defined but never read in control flow
+
+return <>{count}</>
+```
+
+When `count` changes, only the DOM text node updates. The component body doesn't re-execute because no reactive value is **read at runtime** in control flow—`doubled` is defined but never read.
+
+**The rule**:
+
+- Signal/derived **read at runtime** in **control flow** (`if`, `for`, `while`, `switch`, ternary in statements) → Component re-executes + re-renders
+- Signal/derived **read only in JSX** → Fine-grained DOM updates only
+- Simply defining a derived value (`const x = signal * 2`) does NOT trigger re-execution
+
+This hybrid model gives you the best of both worlds:
+
+- Intuitive behavior when conditional logic depends on state
+- Maximum performance when only rendering values
+
+Additionally, Fict bakes in a rule for event handlers:
 
 > If a derived expression is **only used in events / plain functions**, it is compiled into an **on-demand getter**, so it always sees the latest state.
 
@@ -416,14 +447,7 @@ const click = () => {
 }
 ```
 
-The compiler turns this into something conceptually like:
-
-```ts
-const $doubled = () => $count() * 2
-const click = () => console.log('now', $doubled())
-```
-
-You don’t write getters. You just get the "always current" behavior you expect.
+You don't write getters. You just get the "always current" behavior you expect.
 
 ---
 
@@ -638,16 +662,24 @@ onMount(() => {
 })
 ```
 
-### Components as single-execution functions
+### Components as on-demand execution functions
 
 A Fict component:
 
 - is a plain function
-- runs once
+- runs on-demand based on control flow dependencies
 - returns JSX
 - registers its bindings (`$state`, derived expressions, `$effect`, event handlers) with the runtime
 
-Fine-grained updates are driven by the dependency graph, not by calling the component again.
+**Execution rules:**
+
+1. **Control flow triggers re-execution**: If a signal or derived value is **read at runtime** in control flow (`if`, `for`, `while`, etc.), the component re-executes when that value changes.
+
+2. **JSX-only usage triggers fine-grained updates**: If signals are only read in JSX expressions, only the specific DOM nodes update—the component body doesn't re-run.
+
+3. **Defining derived values is not reading**: `const doubled = count * 2` just creates a memo—it doesn't trigger re-execution unless `doubled` is read in control flow.
+
+This hybrid approach matches developer intuition: conditional logic naturally re-evaluates when its dependencies change, while pure rendering stays optimally efficient.
 
 ---
 

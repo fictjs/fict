@@ -112,29 +112,63 @@ The compiler needs to:
 
 ---
 
-## 3. Rule C: Select memo / getter based on usage type
+## 3. Rule C: Select memo / getter / re-execution based on usage type
 
 Each `DerivedNode` will be used several times in the source code. Usage types include:
 
-- `JSXBinding`: Used in JSX attributes/children
+- `ControlFlowUsage`: **Read at runtime** in control flow statements (`if`, `for`, `while`, `switch`, ternary in statements)
+- `JSXBinding`: Read in JSX attributes/children
 - `EffectUsage`: Read in `$effect` function body
-- `EventUsage`: Used in JSX event handlers (e.g., `onClick` closure)
-- `PlainUsage`: Used in other plain functions / plain closures
+- `EventUsage`: Read in JSX event handlers (e.g., `onClick` closure)
+- `PlainUsage`: Read in other plain functions / plain closures
+
+**Important distinction**: Defining a derived value (`const doubled = count * 2`) does NOT count as reading—it creates a memo. The usage types above refer to where the derived value is **read at runtime**.
 
 ### Decision Logic
 
 For each `DerivedNode`:
 
-1. If `JSXBinding` or `EffectUsage` exists:
-   → Compile as **memo node** (`MemoNode`), cache maintained by runtime.
+1. If `ControlFlowUsage` exists (derived is **read at runtime** in control flow):
+   → **Triggers component re-execution** when value changes. The entire component body re-runs and re-renders.
 
-2. Otherwise (no JSX / Effect usage):
+2. If `JSXBinding` or `EffectUsage` exists (but no `ControlFlowUsage`):
+   → Compile as **memo node** (`MemoNode`), cache maintained by runtime. Only fine-grained DOM updates occur.
+
+3. Otherwise (no JSX / Effect / ControlFlow usage):
    → Compile as **on-demand getter**.
 
 **Special: When both memo usage and event usage exist**
 
 - Still compile as memo.
 - Reads in events become "read current memo value".
+
+**Special: Control Flow Re-execution**
+
+When a signal or derived memo is **read at runtime** in control flow:
+
+```ts
+let count = $state(0)
+const doubled = count * 2  // just defines a memo, not a runtime read
+
+if (doubled) {
+  // ControlFlowUsage: `doubled` is READ at runtime here
+}
+
+return <>{count}</>
+```
+
+The compiler marks the component for re-execution when `count` changes, because `doubled` is **read at runtime** in the `if` statement.
+
+**Contrast with JSX-only usage**:
+
+```ts
+let count = $state(0)
+const doubled = count * 2  // just defines a memo
+
+return <>{count}</>  // only JSX reads, no control flow read
+```
+
+Here `doubled` is defined but never read. Only `count` is read in JSX, so only fine-grained DOM updates occur.
 
 ### Example 1: Bind only to JSX
 
@@ -579,19 +613,20 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
     - `x = v` where `x` is a `$state` variable compiles to `x(v)` (write).
     - `x` appearing in an expression compiles to `x()` (read).
     - **Aliasing**: `const y = x` creates a **reactive getter** `() => x()`.
-      - Components run once; this keeps `y` live.
+      - The on-demand execution model keeps `y` live across re-executions.
       - To create a **snapshot**, use an explicit escape such as `untrack(() => x)` (or future helper).
     - **Destructuring**: `const { x } = $state(...)` is **illegal**. The compiler errors rather than emitting a silent snapshot.
 
 ### 15.2 Derived Value Semantics
 
-1.  **Implicit Derivation**: `const y = x * 2` is automatically a memo _if_ `y` is used in a reactive sink (Effect/JSX).
+1.  **Implicit Derivation**: `const y = x * 2` is automatically a memo _if_ `y` is used in a reactive sink (Effect/JSX) without control flow usage.
 2.  **Snapshotting**: If `const y = x * 2` is never used in a reactive sink, it remains a one-time calculation (standard JS behavior).
 3.  **Closures & Events**:
     - **Rule**: A closure created in the component body that reads `$state` (e.g., `const onClick = () => console.log(count)`) always reads the **live** value.
     - **Implementation**: The compiler ensures `count` inside the closure becomes `count()` (getter), not a captured variable.
     - **Snapshot**: `const snap = count; const fn = () => snap` reads the definition-time value by design.
-4.  **Control Flow Regions**: Derived values defined across `if`/`switch`/early-return paths are grouped into a single region memo that returns the outward-facing values, ensuring consistent dependency tracking and avoiding duplicated condition evaluation.
+4.  **Control Flow Re-execution**: When a signal or derived value is **read at runtime** in control flow statements (`if`, `for`, `while`, `switch`, ternary in statements), the component re-executes and re-renders when that value changes. Note: simply defining a derived (`const x = signal * 2`) doesn't trigger re-execution—only reading in control flow does. This matches developer intuition: conditional logic naturally re-evaluates when its dependencies change.
+5.  **Control Flow Regions**: Derived values defined across `if`/`switch`/early-return paths are grouped into a single region memo that returns the outward-facing values, ensuring consistent dependency tracking and avoiding duplicated condition evaluation.
 
 ### 15.3 Effect Semantics
 

@@ -58,9 +58,9 @@ From a toolchain perspective, it goes through several stages:
 
 ## 2. Component Execution Model
 
-### 2.1 Single Execution
+### 2.1 On-Demand Execution
 
-In Fict, each component function executes **once** when mounted:
+Fict uses an **on-demand execution model**: components execute when needed, not on every state change like React, but also not strictly "run once" like Solid.
 
 ```ts
 function Component(props) {
@@ -69,29 +69,69 @@ function Component(props) {
 }
 ```
 
-During execution, the compiled code will:
+**The key insight**: Whether a component re-executes depends on whether reactive values are **read at runtime** in control flow.
+
+#### Control Flow Triggers Re-Execution
+
+When a signal or derived memo is **read at runtime** in **control flow statements** (`if`, `for`, `while`, `switch`, ternary in statements), the entire component re-executes when that value changes:
+
+```tsx
+// Component RE-EXECUTES on count change
+let count = $state(0)
+const doubled = count * 2 // just defines a derived memo
+
+if (doubled) {
+  // `doubled` is READ at runtime in control flow → triggers re-execution
+}
+
+return <>{count}</>
+```
+
+When `count` changes, the component body re-runs because `doubled` is **read at runtime** in the `if` statement. Note: simply defining `const doubled = count * 2` doesn't trigger re-execution—it's the runtime read in control flow that matters.
+
+#### JSX-Only Usage Triggers Fine-Grained Updates
+
+When signals are only read in JSX expressions (not read at runtime in control flow), only the specific DOM nodes update:
+
+```tsx
+// Only FINE-GRAINED DOM update
+let count = $state(0)
+const doubled = count * 2 // defined but never read in control flow
+
+return <>{count}</>
+```
+
+When `count` changes, only the text node updates. The component body doesn't re-execute because `doubled` is defined but never read at runtime in control flow.
+
+During initial execution, the compiled code will:
 
 - Assign a "Source Node" (signal) for each `$state`
 - Assign "Derived Nodes" (memo) for each required derived expression
 - Register a "Side Effect Node" for each `$effect`
 - Create "Binding Nodes" (update functions) for dynamic parts in JSX
+- Track which signals/memos are **read at runtime** in control flow for re-execution triggers
 
 Eventually forming a graph:
 
 ```text
 $state ──▶ memo ──▶ binding
        └──▶ effect
+       └──▶ control flow (triggers re-execution)
 ```
 
 ### 2.2 Comparison with React / Solid
 
-| Framework | Component Execution Count                                    | Update Granularity       |
-| :-------- | :----------------------------------------------------------- | :----------------------- |
-| React     | Re-executes entire component on every state change           | Component-level + VDOM   |
-| Solid     | Component executes once, internal signal graph               | DOM-level                |
-| Fict      | Component executes once, internal signal graph + compilation | DOM-level (Fine-grained) |
+| Framework | Component Execution Count                                           | Update Granularity       |
+| :-------- | :------------------------------------------------------------------ | :----------------------- |
+| React     | Re-executes entire component on every state change                  | Component-level + VDOM   |
+| Solid     | Component executes once, internal signal graph                      | DOM-level                |
+| Fict      | On-demand: re-executes when control flow depends on changed signals | DOM-level (Fine-grained) |
 
-Fict is closer to Solid's execution model but uses a **TSX + Compiler Automatic Inference** style.
+Fict is a **hybrid model**:
+
+- Like Solid: Fine-grained DOM updates when signals are only used in JSX
+- More intuitive than Solid: Re-executes when control flow depends on state (matching developer expectations)
+- Unlike React: No unnecessary re-renders when state doesn't affect control flow
 
 ---
 
@@ -416,26 +456,28 @@ This way:
 
 ## 9. Events and Closures: Snapshot vs Live
 
-If components execute only once, it's easy to fall into this trap:
+With Fict's on-demand execution model, event handlers always see the latest values. However, the compilation strategy differs based on usage:
 
 ```ts
 let count = $state(0)
 const doubled = count * 2
 
 const click = () => {
-  alert(doubled) // In many frameworks, this is actually the "value at definition time"
+  alert(doubled) // Always sees current value
 }
 ```
 
-Fict prevents this via the hard rule "**Event Scenario Derivation → getter**".
+Fict ensures this via the hard rule "**Event Scenario Derivation → getter**".
 
 To summarize:
 
-- Derived used only in JSX / `$effect` → memo (reactive binding)
-- Derived used only in events / plain functions → getter (calculated at call time)
-- Used in both → memo, event reads current memo value
+- Derived **read at runtime** in **control flow** → triggers component re-execution
+- Derived read only in **JSX / `$effect`** (not in control flow) → memo (reactive binding, fine-grained updates)
+- Derived read only in **events / plain functions** → getter (calculated at call time)
+- Used in both JSX and events → memo, event reads current memo value
+- Simply defining a derived (`const x = signal * 2`) does NOT trigger re-execution
 
-This matches developer intuition while avoiding component re-execution.
+This matches developer intuition while optimizing for performance.
 
 ---
 
@@ -808,8 +850,11 @@ If you are interested in these low-level details, welcome to participate directl
   - To hand over complex reactive wiring and performance optimization to the compiler and runtime;
   - To retain the engineering advantages brought by TSX and existing toolchains.
 
+- **On-demand execution model**: Components re-execute when signals/derived values are **read at runtime** in control flow; otherwise, only fine-grained DOM updates occur. Simply defining a derived value (`const x = signal * 2`) doesn't trigger re-execution. This hybrid approach combines the intuitive behavior of React's mental model with the performance of Solid's fine-grained reactivity.
+
 - From an architectural perspective, it stands on the shoulders of several predecessors:
   - React Compiler's automatic derivation idea
   - Solid's fine-grained reactive graph
   - Svelte 5 / Vue's intuitive mutable syntax
+  - A hybrid execution model that matches developer intuition
   - Plus a little bit of **"UI is fiction over real state"** paranoia.
