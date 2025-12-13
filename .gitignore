@@ -148,3 +148,7 @@ Thumbs.db
 packages/devtools/build/
 esbuild-why-*
 benchmark-results.txt
+
+test-results
+playwright-report
+e2e-dist

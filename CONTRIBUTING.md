@@ -27,11 +27,13 @@ pnpm dev
 ## Project Structure
 
 - `packages/runtime` - Core reactive runtime
-- `packages/compiler-ts` - TypeScript compiler
+- `packages/compiler` - Babel compiler
 - `packages/vite-plugin` - Vite integration
 - `packages/eslint-plugin` - ESLint rules
 - `packages/devtools` - Browser DevTools
 - `packages/docs-site` - Documentation website
+- `packages/testing-library` - Testing library
+- `packages/ssr` - Server-side rendering
 - `examples/` - Example applications
 
 ## Development Workflow
@@ -61,24 +63,14 @@ pnpm format        # Prettier
 
 ```bash
 pnpm build                    # Build all packages
-pnpm build --filter fict-runtime  # Build specific package
+pnpm build --filter @fictjs/runtime  # Build specific package
 ```
 
 ## Commit Convention
 
-We use [Conventional Commits](https://www.conventionalcommits.org/):
-
+```bash
+pnpm commit
 ```
-<type>(<scope>): <description>
-
-[optional body]
-
-[optional footer]
-```
-
-Types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`
-
-Scopes: `runtime`, `compiler`, `compiler-ts`, `compiler-swc`, `vite-plugin`, `eslint-plugin`, `devtools`, `docs`, `examples`, `deps`, `release`
 
 Examples:
 

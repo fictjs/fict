@@ -849,6 +849,15 @@ function transformExpression(
     return expr
   }
 
+  if (t.isSequenceExpression(expr)) {
+    return t.sequenceExpression(expr.expressions.map(e => transformExpression(e, ctx, t)))
+  }
+
+  // Preserve parentheses when parser emits them (prevents traversal gaps for inserted nodes)
+  if (t.isParenthesizedExpression(expr)) {
+    return t.parenthesizedExpression(transformExpression(expr.expression, ctx, t))
+  }
+
   if (t.isBinaryExpression(expr)) {
     const left = t.isPrivateName(expr.left) ? expr.left : transformExpression(expr.left, ctx, t)
     return t.binaryExpression(
@@ -902,38 +911,92 @@ function transformExpression(
   }
 
   if (t.isCallExpression(expr)) {
+    const shouldSkipCalleeTransform =
+      t.isIdentifier(expr.callee) &&
+      (isTrackedAndNotShadowed(expr.callee.name, ctx.stateVars, ctx.memoVars, ctx.shadowedVars) ||
+        (ctx.getterOnlyVars.has(expr.callee.name) && !ctx.shadowedVars.has(expr.callee.name)))
+
     return t.callExpression(
-      t.isExpression(expr.callee) ? transformExpression(expr.callee, ctx, t) : expr.callee,
-      expr.arguments.map(arg =>
-        t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg,
-      ) as BabelCore.types.Expression[],
+      t.isExpression(expr.callee) && !shouldSkipCalleeTransform
+        ? transformExpression(expr.callee, ctx, t)
+        : expr.callee,
+      expr.arguments.map(arg => {
+        if (t.isSpreadElement(arg)) {
+          return t.spreadElement(transformExpression(arg.argument, ctx, t))
+        }
+        return t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg
+      }) as any,
     )
   }
 
   if (t.isOptionalCallExpression(expr)) {
+    const shouldSkipCalleeTransform =
+      t.isIdentifier(expr.callee) &&
+      (isTrackedAndNotShadowed(expr.callee.name, ctx.stateVars, ctx.memoVars, ctx.shadowedVars) ||
+        (ctx.getterOnlyVars.has(expr.callee.name) && !ctx.shadowedVars.has(expr.callee.name)))
+
     return t.optionalCallExpression(
-      t.isExpression(expr.callee) ? transformExpression(expr.callee, ctx, t) : expr.callee,
-      expr.arguments.map(arg => (t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg)),
+      t.isExpression(expr.callee) && !shouldSkipCalleeTransform
+        ? transformExpression(expr.callee, ctx, t)
+        : expr.callee,
+      expr.arguments.map(arg => {
+        if (t.isSpreadElement(arg)) {
+          return t.spreadElement(transformExpression(arg.argument, ctx, t))
+        }
+        return t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg
+      }) as any,
       expr.optional,
+    )
+  }
+
+  if (t.isNewExpression(expr)) {
+    const shouldSkipCalleeTransform =
+      t.isIdentifier(expr.callee) &&
+      (isTrackedAndNotShadowed(expr.callee.name, ctx.stateVars, ctx.memoVars, ctx.shadowedVars) ||
+        (ctx.getterOnlyVars.has(expr.callee.name) && !ctx.shadowedVars.has(expr.callee.name)))
+
+    return t.newExpression(
+      t.isExpression(expr.callee) && !shouldSkipCalleeTransform
+        ? transformExpression(expr.callee, ctx, t)
+        : expr.callee,
+      expr.arguments?.map(arg => {
+        if (t.isSpreadElement(arg)) {
+          return t.spreadElement(transformExpression(arg.argument, ctx, t))
+        }
+        return t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg
+      }) as any,
     )
   }
 
   if (t.isArrayExpression(expr)) {
     return t.arrayExpression(
-      expr.elements.map(el => (el && t.isExpression(el) ? transformExpression(el, ctx, t) : el)),
+      expr.elements.map(el => {
+        if (!el) return el
+        if (t.isSpreadElement(el)) {
+          return t.spreadElement(transformExpression(el.argument, ctx, t))
+        }
+        return t.isExpression(el) ? transformExpression(el, ctx, t) : el
+      }),
     )
   }
 
   if (t.isObjectExpression(expr)) {
     return t.objectExpression(
       expr.properties.map(prop => {
+        if (t.isSpreadElement(prop)) {
+          return t.spreadElement(transformExpression(prop.argument, ctx, t))
+        }
+
         if (t.isObjectProperty(prop) && t.isExpression(prop.value)) {
-          return t.objectProperty(
-            prop.key,
-            transformExpression(prop.value, ctx, t),
-            prop.computed,
-            prop.shorthand,
-          )
+          const transformedKey =
+            prop.computed && t.isExpression(prop.key)
+              ? transformExpression(prop.key, ctx, t)
+              : prop.key
+          const transformedValue = transformExpression(prop.value, ctx, t)
+          const shorthand =
+            prop.shorthand && t.isIdentifier(transformedValue) ? prop.shorthand : false
+
+          return t.objectProperty(transformedKey, transformedValue, prop.computed, shorthand)
         }
         return prop
       }),
@@ -1001,8 +1064,17 @@ function transformExpression(
           ])
         }
       }
+      return expr
     }
-    return expr
+
+    // Still transform nested reads like arr[index]++ where index is tracked.
+    return t.updateExpression(
+      expr.operator,
+      (t.isExpression(expr.argument)
+        ? (transformExpression(expr.argument, ctx, t) as any)
+        : expr.argument) as any,
+      expr.prefix,
+    )
   }
 
   // Handle AssignmentExpression (count = value, count += value)
@@ -1029,8 +1101,21 @@ function transformExpression(
           }
         }
       }
+      // Not a state assignment target; keep LHS as-is.
+      return t.assignmentExpression(
+        expr.operator,
+        expr.left,
+        transformExpression(expr.right, ctx, t),
+      )
     }
-    return expr
+
+    const transformedRight = transformExpression(expr.right, ctx, t)
+    const transformedLeft =
+      !t.isIdentifier(expr.left) && t.isExpression(expr.left)
+        ? (transformExpression(expr.left, ctx, t) as any)
+        : expr.left
+
+    return t.assignmentExpression(expr.operator, transformedLeft as any, transformedRight)
   }
 
   return expr

@@ -553,7 +553,7 @@ function generateLazyConditionalRegionMemo(
   const taggedStatements: TaggedStatement[] = regionStatements.map((stmt, index) => {
     if (t.isVariableDeclaration(stmt) && stmt.declarations.length === 1) {
       const decl = stmt.declarations[0]
-      if (t.isIdentifier(decl.id)) {
+      if (decl && t.isIdentifier(decl.id)) {
         if (conditionalInfo.trueBranchOnlyDerived.has(decl.id.name)) {
           return { stmt, index, kind: 'lazyTrue' }
         }

@@ -831,5 +831,25 @@ describe('createFictPlugin', () => {
       expect(output).toContain('__fictBindText')
       expect(output).not.toContain('__fictInsert')
     })
+
+    it('rewrites tracked reads inside bindings and effects', () => {
+      const output = transform(
+        `
+        import { $state, $effect } from 'fict'
+        function View() {
+          let count = $state(0)
+          $effect(() => {
+            document.title = \`Count: \${count}\`
+          })
+          return <div>{(console.log('bb'), count)}</div>
+        }
+      `,
+        { fineGrainedDom: true },
+      )
+
+      expect(output).toContain('document.title = `Count: ${count()}`')
+      expect(output).toContain("console.log('bb'), count()")
+      expect(output).not.toContain("console.log('bb'), count)")
+    })
   })
 })

@@ -1,3 +1,5 @@
+const { scopes } = require('./scripts/scopes')
+
 module.exports = {
   types: [
     { value: 'feat', name: 'feat:     A new feature' },
@@ -31,21 +33,7 @@ module.exports = {
     { value: 'revert', name: 'revert:   Reverts a previous commit' },
   ],
 
-  scopes: [
-    { name: 'runtime' },
-    { name: 'compiler' },
-    { name: 'compiler-ts' },
-    { name: 'compiler-swc' },
-    { name: 'vite-plugin' },
-    { name: 'eslint-plugin' },
-    { name: 'devtools' },
-    { name: 'docs' },
-    { name: 'examples' },
-    { name: 'deps' },
-    { name: 'release' },
-    { name: 'all' },
-    { name: 'others' },
-  ],
+  scopes: [...scopes.map(name => ({ name }))],
 
   allowTicketNumber: false,
   isTicketNumberRequired: false,
