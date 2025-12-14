@@ -2,10 +2,11 @@
 
 import { createRequire } from 'module'
 
+import * as runtime from '@fictjs/runtime'
 import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 
-import * as runtime from '@fictjs/runtime'
-import { type FictCompilerOptions } from '../index'
+import { type FictCompilerOptions } from '../src/index'
+
 import { transformCommonJS } from './test-utils'
 
 const { addEventListener: originalAdd, removeEventListener: originalRemove } = HTMLElement.prototype

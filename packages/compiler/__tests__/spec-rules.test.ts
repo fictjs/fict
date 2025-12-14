@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import type { CompilerWarning, FictCompilerOptions } from '../index'
+import type { CompilerWarning, FictCompilerOptions } from '../src/index'
+
 import { transformLegacyDom } from './test-utils'
 
 function transform(source: string, options?: FictCompilerOptions): string {

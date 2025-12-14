@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { type FictCompilerOptions } from '../index'
+import { type FictCompilerOptions } from '../src/index'
+
 import { transformFineGrained } from './test-utils'
 
 const transform = (source: string, options?: FictCompilerOptions) => {

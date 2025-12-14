@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { type FictCompilerOptions } from '../index'
+import { type FictCompilerOptions } from '../src/index'
 
 import { transformFineGrained as transform } from './test-utils'
 

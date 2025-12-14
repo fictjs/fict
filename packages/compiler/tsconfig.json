@@ -18,6 +18,25 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/**/*"],
+  "include": [
+    "src/**/*",
+    "__tests__/alias-reactivity.test.ts",
+    "__tests__/conditions-hoist-scope.test.ts",
+    "__tests__/control-flow.test.ts",
+    "__tests__/cross-module.test.ts",
+    "__tests__/cycles.test.ts",
+    "__tests__/fragments.test.ts",
+    "__tests__/index.test.ts",
+    "__tests__/repro-event-swap.test.ts",
+    "__tests__/rule-d-verify.test.ts",
+    "__tests__/scope-handling.test.ts",
+    "__tests__/semantic-validation.test.ts",
+    "__tests__/spec-advanced.test.ts",
+    "__tests__/spec-complete.test.ts",
+    "__tests__/spec-rules.test.ts",
+    "__tests__/template-integration.test.ts",
+    "__tests__/test-utils.ts",
+    "__tests__/transform.test.ts"
+  ],
   "exclude": ["node_modules", "dist", "__tests__"]
 }

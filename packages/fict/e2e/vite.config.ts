@@ -1,6 +1,7 @@
-import { defineConfig } from 'vite'
-import fict from '@fictjs/vite-plugin'
 import path from 'path'
+
+import fict from '@fictjs/vite-plugin'
+import { defineConfig } from 'vite'
 
 export default defineConfig({
   plugins: [fict()],

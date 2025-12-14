@@ -6,7 +6,7 @@ import pluginTransformReactJsx from '@babel/plugin-transform-react-jsx'
 // @ts-expect-error - CommonJS module without proper types
 import presetTypescript from '@babel/preset-typescript'
 
-import createFictPlugin, { type FictCompilerOptions } from '../index'
+import createFictPlugin, { type FictCompilerOptions } from '../src/index'
 
 function runTransform(
   source: string,

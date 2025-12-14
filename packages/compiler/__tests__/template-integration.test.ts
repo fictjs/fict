@@ -2,11 +2,12 @@
 
 import { createRequire } from 'module'
 
-import { describe, expect, it, beforeEach, afterEach } from 'vitest'
-
 import * as runtime from '@fictjs/runtime'
 import * as runtimeJsx from '@fictjs/runtime/jsx-runtime'
-import { type FictCompilerOptions } from '../index'
+import { describe, expect, it, beforeEach, afterEach } from 'vitest'
+
+import { type FictCompilerOptions } from '../src/index'
+
 import { transformCommonJS } from './test-utils'
 
 function compileAndLoad<TModule extends Record<string, any>>(

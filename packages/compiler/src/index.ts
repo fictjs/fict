@@ -1868,7 +1868,7 @@ function isShadowedByEnclosingScope(
         if (current.isFunction()) {
           const funcParams = (current.node as BabelCore.types.Function).params
           // Check if any ancestor is in the function's params
-          let patternNode = bindingPath.node
+          const patternNode = bindingPath.node
           let patternPath: BabelCore.NodePath | null = bindingPath
           while (patternPath && !funcParams.includes(patternPath.node as any)) {
             patternPath = patternPath.parentPath
