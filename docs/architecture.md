@@ -371,9 +371,14 @@ Implementation uses microtasks (`queueMicrotask`) to collect changes in the same
 
 ### 7.2 Scheduling Priority (fict/plus)
 
-- `transition(fn)`: Low priority, interruptible, suitable for page transitions
-- `task(fn, { timing: 'layout' })`: Execute before browser layout
-- `task(fn, { timing: 'idle' })`: Execute when browser is idle
+```ts
+import { startTransition, useTransition, useDeferredValue } from 'fict/plus'
+```
+
+- `startTransition(fn)`: Low priority, interruptible work suitable for page transitions
+- `useTransition()`: React-style tuple `[isPending, start]` to coordinate pending UI state
+- `useDeferredValue(fn)`: Accessor that lags behind the source during rapid updates
+- Planned: `task(fn, { timing: 'layout' | 'idle' })` for finer scheduling (not implemented yet)
 
 ## 8. Control Flow Grouping: From "Per-Value Memo" to "Story Block"
 
