@@ -17,6 +17,7 @@ import {
   bindAttribute,
   bindProperty,
   insert,
+  setCycleProtectionOptions,
 } from '../src/index'
 
 const tick = () =>
@@ -218,5 +219,9 @@ describe('fict runtime', () => {
     expect(calls).toEqual(['root-mount', 'child-mount'])
     dispose()
     expect(calls).toEqual(['root-mount', 'child-mount', 'child-destroy', 'root-destroy'])
+  })
+
+  it('exposes cycle protection configuration', () => {
+    expect(typeof setCycleProtectionOptions).toBe('function')
   })
 })

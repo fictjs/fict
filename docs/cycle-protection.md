@@ -21,6 +21,21 @@ This document describes how to add a framework-level cycle protection layer on t
 
 Rationale: Defaults are warn-only to avoid behavior changes; enable devMode or tighten budgets via `setCycleProtectionOptions` when debugging cycles. Higher defaults avoid false positives in heavy but valid bursts. A 5-microtask window catches oscillations without impacting bursts. Depth 10 is well above normal usage.
 
+## How to configure (public API)
+
+```ts
+import { setCycleProtectionOptions } from 'fict'
+// or: import { setCycleProtectionOptions } from '@fictjs/runtime'
+
+setCycleProtectionOptions({
+  devMode: true,
+  maxFlushCyclesPerMicrotask: 5_000,
+  enableWindowWarning: false,
+})
+```
+
+Call this once at app startup to adjust thresholds or turn on strict devMode behavior.
+
 ## Integration Points
 
 1. **Cycle guard module** (`packages/runtime/src/cycle-guard.ts` or similar)

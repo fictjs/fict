@@ -25,6 +25,7 @@ export { createRef } from './ref'
 // ============================================================================
 
 export { batch, untrack } from './scheduler'
+export { setCycleProtectionOptions } from './cycle-guard'
 
 // Transition API for priority scheduling
 export { startTransition, useTransition, useDeferredValue } from './scheduler'
