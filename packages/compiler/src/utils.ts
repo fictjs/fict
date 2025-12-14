@@ -182,6 +182,16 @@ export function dependsOnTracked(
       return
     }
 
+    // Handle member expressions - skip property names (unless computed)
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      visit(node.object, locals)
+      // Only visit property if it's computed (e.g., obj[key] vs obj.key)
+      if (node.computed && node.property) {
+        visit(node.property, locals)
+      }
+      return
+    }
+
     // Recurse into children
     for (const key of Object.keys(node) as (keyof typeof node)[]) {
       const child = node[key]

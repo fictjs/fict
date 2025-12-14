@@ -700,19 +700,18 @@ export function bindEvent(
   handler: EventListenerOrEventListenerObject | null | undefined,
   options?: boolean | AddEventListenerOptions,
 ): Cleanup {
-  // Skip if handler is null/undefined
-  if (handler == null) {
-    return () => {}
-  }
+  if (handler == null) return () => {}
 
   const rootRef = getCurrentRoot()
+  const getHandler = isReactive(handler) ? (handler as () => unknown) : () => handler
 
-  const wrappedHandler: EventListener = event => {
+  const wrapped: EventListener = event => {
     try {
-      if (typeof handler === 'function') {
-        ;(handler as EventListener)(event)
-      } else if (handler && typeof (handler as EventListenerObject).handleEvent === 'function') {
-        ;(handler as EventListenerObject).handleEvent(event)
+      const resolved = getHandler()
+      if (typeof resolved === 'function') {
+        ;(resolved as EventListener)(event)
+      } else if (resolved && typeof (resolved as EventListenerObject).handleEvent === 'function') {
+        ;(resolved as EventListenerObject).handleEvent(event)
       }
     } catch (err) {
       if (handleError(err, { source: 'event', eventName }, rootRef)) {
@@ -722,8 +721,8 @@ export function bindEvent(
     }
   }
 
-  el.addEventListener(eventName, wrappedHandler, options)
-  const cleanup = () => el.removeEventListener(eventName, wrappedHandler, options)
+  el.addEventListener(eventName, wrapped, options)
+  const cleanup = () => el.removeEventListener(eventName, wrapped, options)
   registerRootCleanup(cleanup)
   return cleanup
 }
@@ -986,6 +985,10 @@ export function createPortal(
   render: () => FictNode,
   createElementFn: CreateElementFn,
 ): BindingHandle {
+  // Capture the parent root BEFORE any effects run
+  // This is needed because createEffect will push/pop its own root context
+  const parentRoot = getCurrentRoot()
+
   const marker = document.createComment('fict:portal')
   container.appendChild(marker)
 
@@ -1042,18 +1045,29 @@ export function createPortal(
     }
   })
 
+  // The portal's dispose function must be named so we can register it for cleanup
+  const portalDispose = () => {
+    dispose()
+    if (currentRoot) {
+      destroyRoot(currentRoot)
+    }
+    if (currentNodes.length > 0) {
+      removeNodes(currentNodes)
+    }
+    marker.parentNode?.removeChild(marker)
+  }
+
+  // Register the portal's cleanup with the parent component's root context
+  // This ensures the portal is cleaned up when the parent unmounts
+  // We use parentRoot (captured before createEffect) to avoid registering
+  // with the portal's internal root which would be destroyed separately
+  if (parentRoot) {
+    parentRoot.destroyCallbacks.push(portalDispose)
+  }
+
   return {
     marker,
-    dispose: () => {
-      dispose()
-      if (currentRoot) {
-        destroyRoot(currentRoot)
-      }
-      if (currentNodes.length > 0) {
-        removeNodes(currentNodes)
-      }
-      marker.parentNode?.removeChild(marker)
-    },
+    dispose: portalDispose,
   }
 }
 

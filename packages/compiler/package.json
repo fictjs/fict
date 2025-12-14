@@ -29,15 +29,20 @@
     "@babel/core": ">=7.0.0"
   },
   "dependencies": {
-    "@babel/helper-plugin-utils": "^7.25.9"
+    "@babel/helper-plugin-utils": "^7.25.9",
+    "@babel/traverse": "^7.26.0"
   },
   "devDependencies": {
     "@babel/core": "^7.26.0",
     "@babel/plugin-syntax-jsx": "^7.27.1",
+    "@babel/plugin-transform-modules-commonjs": "^7.27.1",
+    "@babel/plugin-transform-react-jsx": "^7.25.9",
     "@babel/preset-typescript": "^7.26.0",
     "@babel/types": "^7.26.0",
+    "@fictjs/runtime": "workspace:*",
     "@types/babel__core": "^7.20.5",
     "@types/babel__helper-plugin-utils": "^7.10.3",
+    "@types/babel__traverse": "^7.28.0",
     "tsup": "^8.5.1"
   }
 }

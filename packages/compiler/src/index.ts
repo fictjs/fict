@@ -1,5 +1,6 @@
 import type * as BabelCore from '@babel/core'
 import { declare } from '@babel/helper-plugin-utils'
+import traverse, { type NodePath as TraverseNodePath } from '@babel/traverse'
 
 import {
   RUNTIME_MODULE,
@@ -26,6 +27,7 @@ import {
   findNextRegion,
   collectOutputsInOrder,
   generateRegionMemo,
+  statementTouchesOutputs,
 } from './rule-d'
 import type { TransformContext, FictCompilerOptions, HelperUsage } from './types'
 import { createHelperUsage } from './types'
@@ -51,15 +53,15 @@ export type { FictCompilerOptions, CompilerWarning } from './types'
 // Main Plugin
 // ============================================================================
 
-export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.PluginObj {
-  const mergedOptions: FictCompilerOptions = {
-    fineGrainedDom: true,
-    ...options,
-  }
-
-  return declare(api => {
+export const createFictPlugin = declare(
+  (api, options: FictCompilerOptions = {}): BabelCore.PluginObj => {
     api.assertVersion(7)
     const t = api.types as typeof BabelCore.types
+
+    const mergedOptions: FictCompilerOptions = {
+      fineGrainedDom: true,
+      ...options,
+    }
 
     return {
       name: 'fict-compiler',
@@ -148,6 +150,7 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
               )
             }
             // Check for alias of state variable
+            // Skip alias transformation inside $effect callbacks - they should capture values
             else if (
               t.isIdentifier(declarator.id) &&
               t.isIdentifier(declarator.init) &&
@@ -159,13 +162,19 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
               const aliasName = declarator.id.name
               const stateName = declarator.init.name
 
-              // Transform: const alias = count -> const alias = () => count()
-              declarator.init = t.arrowFunctionExpression([], createGetterCall(t, stateName))
+              // Inside $effect - skip memoization, just transform to getter call
+              if (isInsideEffectCallback(path, t)) {
+                declarator.init = createGetterCall(t, stateName)
+              } else {
+                // Transform: const alias = count -> const alias = () => count()
+                declarator.init = t.arrowFunctionExpression([], createGetterCall(t, stateName))
 
-              ctx.getterOnlyVars.add(aliasName)
-              ctx.aliasVars.add(aliasName)
+                ctx.getterOnlyVars.add(aliasName)
+                ctx.aliasVars.add(aliasName)
+              }
             }
             // Check for derived value (depends on state)
+            // Skip memoization inside $effect callbacks - they should capture values, not create getters
             else if (
               t.isIdentifier(declarator.id) &&
               path.node.kind === 'const' &&
@@ -174,21 +183,41 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
               dependsOnTracked(declarator.init, ctx, t)
             ) {
               const name = declarator.id.name
+              // Check if inside effect callback
+              const isInEffect = isInsideEffectCallback(path, t)
 
-              ctx.memoVars.add(name)
-              ctx.guardedDerived.add(name)
-              ctx.helpersUsed.memo = true
+              if (isInEffect) {
+                // Inside $effect - skip memoization, just transform the initializer to capture value
+                declarator.init = transformExpression(declarator.init, ctx, t)
+              } else {
+                // Outside $effect - memoize as usual
+                ctx.memoVars.add(name)
+                ctx.guardedDerived.add(name)
+                const transformedInit = transformExpression(declarator.init, ctx, t)
 
-              // Transform: const x = expr -> const x = __fictMemo(() => expr)
-              const transformedInit = transformExpression(declarator.init, ctx, t)
-              declarator.init = t.callExpression(t.identifier(RUNTIME_ALIASES.memo), [
-                t.arrowFunctionExpression([], transformedInit),
-              ])
+                const isModuleScope = path.parentPath?.isProgram?.() ?? false
+                const isExported = ctx.exportedNames.has(name)
+                const useGetterOnly =
+                  !ctx.options.lazyConditional &&
+                  !isModuleScope &&
+                  !isExported &&
+                  shouldEmitGetter(name, ctx, t)
+
+                if (useGetterOnly) {
+                  ctx.getterOnlyVars.add(name)
+                  declarator.init = t.arrowFunctionExpression([], transformedInit)
+                } else {
+                  ctx.helpersUsed.memo = true
+                  declarator.init = t.callExpression(t.identifier(RUNTIME_ALIASES.memo), [
+                    t.arrowFunctionExpression([], transformedInit),
+                  ])
+                }
+              }
             }
           }
         },
 
-        // Handle $effect calls
+        // Handle $effect and $state calls
         CallExpression(path, state) {
           const ctx = (state as any).__fictCtx as TransformContext
           if (!ctx) return
@@ -196,21 +225,27 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
           // Rule H: Check for black-box function calls
           checkBlackBoxFunctionCall(path.node, ctx, t)
 
+          // Validate $state() placement when used in assignments like: x = $state(0)
+          // This catches cases where $state is called but not in a variable declaration
+          if (isStateCall(path.node, t)) {
+            // Check if this is NOT inside a variable declaration (already handled there)
+            const variableDeclarator = path.findParent(p => p.isVariableDeclarator())
+            if (!variableDeclarator) {
+              // This is a $state() call in an assignment expression or other context
+              ensureValidStatePlacement(path, ctx, t)
+            }
+          }
+
           if (isEffectCall(path.node, t)) {
             ensureValidEffectPlacement(path, ctx, t)
             ctx.helpersUsed.effect = true
 
             // Transform: $effect(fn) -> __fictEffect(fn)
-            const transformedArgs = path.node.arguments.map(arg =>
-              t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg,
-            )
-
-            path.replaceWith(
-              t.callExpression(
-                t.identifier(RUNTIME_ALIASES.effect),
-                transformedArgs as BabelCore.types.Expression[],
-              ),
-            )
+            // Note: We don't call transformExpression on the callback here.
+            // The callback's variable declarations will be processed by the VariableDeclaration visitor,
+            // which skips memoization for declarations inside $effect (isInsideEffectCallback check).
+            // The normal Babel visitor traversal will handle identifier transformations.
+            path.node.callee = t.identifier(RUNTIME_ALIASES.effect)
           }
         },
 
@@ -222,7 +257,7 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
           const name = path.node.name
 
           // Check if identifier is shadowed by enclosing function parameters or local variables
-          if (isShadowedByEnclosingScope(path, name, t)) {
+          if (isShadowedByEnclosingScope(path, name, ctx)) {
             return
           }
 
@@ -239,6 +274,15 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
 
           // Skip if shouldn't be transformed
           if (!shouldTransformIdentifier(path, t)) {
+            return
+          }
+
+          if (
+            isGetterOnly &&
+            isInsideNestedFunction(path) &&
+            !ctx.options.getterCache &&
+            !ctx.aliasVars.has(name)
+          ) {
             return
           }
 
@@ -366,6 +410,20 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
           exit(path, state) {
             const ctx = (state as any).__fictCtx as TransformContext
             if (!ctx) return
+            const parent = path.parentPath
+            if (
+              parent &&
+              (parent.isIfStatement() ||
+                parent.isForStatement() ||
+                parent.isForInStatement() ||
+                parent.isForOfStatement() ||
+                parent.isWhileStatement() ||
+                parent.isDoWhileStatement() ||
+                parent.isSwitchStatement() ||
+                parent.isSwitchCase())
+            ) {
+              return
+            }
             applyRegionTransform(path, ctx, t)
           },
         },
@@ -455,6 +513,12 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
 
           if (!path.node.shorthand) return
           if (!t.isIdentifier(path.node.key)) return
+
+          // Skip destructuring patterns - only transform object literal shorthand
+          const parent = path.parent
+          if (t.isObjectPattern(parent)) {
+            return
+          }
 
           const name = path.node.key.name
 
@@ -574,12 +638,38 @@ export function createFictPlugin(options: FictCompilerOptions = {}): BabelCore.P
         },
       },
     }
-  }) as unknown as BabelCore.PluginObj
-}
+  },
+) as unknown as BabelCore.PluginObj
 
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/**
+ * Check if a path is inside a $effect callback.
+ * Variable declarations inside $effect should NOT be memoized - they should capture values.
+ */
+function isInsideEffectCallback(path: BabelCore.NodePath, t: typeof BabelCore.types): boolean {
+  let current = path.parentPath
+  while (current) {
+    // Check if we're inside a function that is an argument to $effect/__fictEffect
+    if (
+      (current.isArrowFunctionExpression() || current.isFunctionExpression()) &&
+      current.parentPath?.isCallExpression()
+    ) {
+      const callNode = current.parentPath.node
+      // Check for both original $effect and transformed __fictEffect names
+      if (t.isCallExpression(callNode) && t.isIdentifier(callNode.callee)) {
+        const calleeName = callNode.callee.name
+        if (calleeName === '$effect' || calleeName === RUNTIME_ALIASES.effect) {
+          return true
+        }
+      }
+    }
+    current = current.parentPath
+  }
+  return false
+}
 
 function analyzeMacroImports(
   path: BabelCore.NodePath<BabelCore.types.Program>,
@@ -641,7 +731,8 @@ function maybeApplyGetterCaching(
     | BabelCore.NodePath[]
   if (Array.isArray(bodyPath)) return
 
-  const tracked = new Set<string>([...ctx.getterOnlyVars, ...ctx.stateVars, ...ctx.memoVars])
+  const getterNames = new Set<string>([...ctx.getterOnlyVars, ...ctx.stateVars])
+  if (!getterNames.size) return
 
   const ensureBlock = (): BabelCore.NodePath<BabelCore.types.BlockStatement> => {
     if (bodyPath.isBlockStatement()) return bodyPath
@@ -663,24 +754,23 @@ function maybeApplyGetterCaching(
       const callee = callPath.get('callee')
       if (!callee.isIdentifier()) return
       if (callPath.node.arguments.length > 0) return
-      if (!tracked.has(callee.node.name)) return
-      counts.set(callee.node.name, (counts.get(callee.node.name) ?? 0) + 1)
+      const name = callee.node.name
+      if (!getterNames.has(name)) return
+      const targetBinding = blockPath.scope.getBinding(name)
+      const binding = callPath.scope.getBinding(name)
+      if (!targetBinding || binding !== targetBinding) return
+      counts.set(name, (counts.get(name) ?? 0) + 1)
     },
   })
 
-  const toCache = Array.from(counts.entries()).filter(([, count]) => count > 1)
-  if (!toCache.length) return
+  const cacheIds = new Map<string, BabelCore.types.Identifier>()
+  counts.forEach((count, name) => {
+    if (count > 1) {
+      cacheIds.set(name, t.identifier(`__cached_${name}`))
+    }
+  })
 
-  const cacheDecls = toCache.map(([name]) =>
-    t.variableDeclaration('const', [
-      t.variableDeclarator(
-        t.identifier(`__cached_${name}`),
-        t.callExpression(t.identifier(name), []),
-      ),
-    ]),
-  )
-
-  blockPath.unshiftContainer('body', cacheDecls)
+  if (!cacheIds.size) return
 
   blockPath.traverse({
     Function(inner) {
@@ -691,10 +781,22 @@ function maybeApplyGetterCaching(
       if (!callee.isIdentifier()) return
       if (callPath.node.arguments.length > 0) return
       const name = callee.node.name
-      if (!tracked.has(name)) return
-      callPath.replaceWith(t.identifier(`__cached_${name}`))
+      const cacheId = cacheIds.get(name)
+      if (!cacheId) return
+      const targetBinding = blockPath.scope.getBinding(name)
+      const binding = callPath.scope.getBinding(name)
+      if (!targetBinding || binding !== targetBinding) return
+      callPath.replaceWith(t.identifier(cacheId.name))
     },
   })
+
+  const cacheDecls = Array.from(cacheIds.entries()).map(([name, cacheId]) =>
+    t.variableDeclaration('const', [
+      t.variableDeclarator(cacheId, t.callExpression(t.identifier(name), [])),
+    ]),
+  )
+
+  blockPath.unshiftContainer('body', cacheDecls)
 }
 
 function collectExportedNames(
@@ -746,6 +848,11 @@ function collectDerivedOutputs(
         t.isArrowFunctionExpression(declPath.node.init) ||
         t.isFunctionExpression(declPath.node.init)
       ) {
+        return
+      }
+
+      // Skip declarations inside $effect callbacks - they should capture values, not become getters
+      if (isInsideEffectCallback(declPath, t)) {
         return
       }
 
@@ -1035,6 +1142,9 @@ function transformExpression(
     let newBody: BabelCore.types.BlockStatement | BabelCore.types.Expression
     if (t.isExpression(expr.body)) {
       newBody = transformExpression(expr.body, ctx, t)
+      if (t.isConditionalExpression(newBody) || t.isLogicalExpression(newBody)) {
+        newBody = t.parenthesizedExpression(newBody)
+      }
     } else {
       // Block body - transform statements inside the block
       newBody = transformBlockStatement(expr.body, ctx, t)
@@ -1147,6 +1257,21 @@ function createConditionalBinding(
     return null
   }
 
+  // Transform JSX branches if in fine-grained mode
+  // This handles intrinsic elements (like <p>, <div>) by lowering them to DOM API calls
+  if (ctx.options.fineGrainedDom && t.isJSXElement(trueBranch)) {
+    const lowered = transformFineGrainedJsx(trueBranch, ctx, t)
+    if (lowered) {
+      trueBranch = lowered
+    }
+  }
+  if (ctx.options.fineGrainedDom && falseBranch && t.isJSXElement(falseBranch)) {
+    const lowered = transformFineGrainedJsx(falseBranch, ctx, t)
+    if (lowered) {
+      falseBranch = lowered
+    }
+  }
+
   // Build: __fictConditional(() => cond, () => trueBranch, __fictCreateElement, () => falseBranch?)
   const args: BabelCore.types.Expression[] = [
     t.arrowFunctionExpression([], conditionExpr),
@@ -1241,8 +1366,28 @@ function createListBinding(
   const indexSignalId = t.identifier('__fictIndexSig')
 
   // Get the callback's body (transformed)
+  const itemParam = mapCallback.params[0]
+  const indexParam = mapCallback.params[1]
+  const fineGrainedRenderer =
+    isKeyed &&
+    t.isArrowFunctionExpression(mapCallback) &&
+    itemParam &&
+    t.isIdentifier(itemParam) &&
+    (!indexParam || t.isIdentifier(indexParam))
+      ? maybeCreateFineGrainedKeyedRenderer(
+          mapCallback,
+          mapCallback,
+          itemParam,
+          t.isIdentifier(indexParam) ? indexParam : undefined,
+          ctx,
+          t,
+        )
+      : null
+
   let renderedBody: BabelCore.types.Expression | BabelCore.types.BlockStatement
-  if (t.isCallExpression(transformedExpr)) {
+  if (fineGrainedRenderer) {
+    renderedBody = fineGrainedRenderer
+  } else if (t.isCallExpression(transformedExpr)) {
     const transformedCallback = transformedExpr.arguments[0]
     if (
       t.isArrowFunctionExpression(transformedCallback) ||
@@ -1262,22 +1407,33 @@ function createListBinding(
       : mapCallback.body
   }
 
-  const renderer = t.arrowFunctionExpression(
-    [itemSignalId, indexSignalId],
-    t.blockStatement([
-      t.returnStatement(
-        t.callExpression(t.identifier(RUNTIME_ALIASES.toNodeArray), [
-          t.callExpression(t.identifier(RUNTIME_ALIASES.createElement), [
-            t.arrowFunctionExpression(
-              mapCallback.params,
-              t.isExpression(renderedBody) ? renderedBody : t.blockStatement([]),
-            ),
-            t.callExpression(itemSignalId, []),
-          ]),
+  // Build the call arguments for invoking the render arrow with signal values
+  const callArgs: BabelCore.types.Expression[] = []
+  if (mapCallback.params.length > 0) {
+    callArgs.push(t.callExpression(itemSignalId, [])) // __fictItemSig()
+    if (mapCallback.params.length > 1) {
+      callArgs.push(t.callExpression(indexSignalId, [])) // __fictIndexSig()
+    }
+  }
+
+  // Get the original render arrow (not transformed) for invocation
+  const originalRenderArrow = mapCallback
+
+  const renderer = fineGrainedRenderer
+    ? fineGrainedRenderer
+    : t.arrowFunctionExpression(
+        [itemSignalId, indexSignalId],
+        t.blockStatement([
+          t.returnStatement(
+            t.callExpression(t.identifier(RUNTIME_ALIASES.toNodeArray), [
+              t.callExpression(t.identifier(RUNTIME_ALIASES.createElement), [
+                // Call the original render arrow with signal values: renderArrow(__fictItemSig(), __fictIndexSig())
+                t.callExpression(originalRenderArrow, callArgs),
+              ]),
+            ]),
+          ),
         ]),
-      ),
-    ]),
-  )
+      )
 
   // Build list call
   const listArgs: BabelCore.types.Expression[] = [t.arrowFunctionExpression([], transformedArray)]
@@ -1325,6 +1481,50 @@ function extractKeyAttribute(
   return null
 }
 
+function getSupportedJsxElementFromExpression(
+  expr: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): BabelCore.types.JSXElement | null {
+  if (t.isJSXElement(expr)) return expr
+  if (t.isParenthesizedExpression(expr)) {
+    return getSupportedJsxElementFromExpression(expr.expression, t)
+  }
+  return null
+}
+
+function maybeCreateFineGrainedKeyedRenderer(
+  renderArrow: BabelCore.types.ArrowFunctionExpression,
+  originalArrow: BabelCore.types.ArrowFunctionExpression | null,
+  itemParam: BabelCore.types.Identifier,
+  indexParam: BabelCore.types.Identifier | undefined,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): BabelCore.types.ArrowFunctionExpression | null {
+  if (!ctx.options.fineGrainedDom) return null
+  const analysisArrow = originalArrow ?? renderArrow
+  if (!t.isArrowFunctionExpression(analysisArrow)) return null
+  if (t.isBlockStatement(analysisArrow.body)) return null
+  if (!itemParam || !t.isIdentifier(itemParam)) return null
+
+  const jsxExpr = getSupportedJsxElementFromExpression(analysisArrow.body, t)
+  if (!jsxExpr) return null
+
+  const valueParam = t.identifier('__fgValueSig')
+  const indexParamId = t.identifier('__fgIndexSig')
+
+  const overrides: IdentifierOverrideMap = Object.create(null)
+  overrides[itemParam.name] = () => t.callExpression(valueParam, [])
+  if (indexParam) overrides[indexParam.name] = () => t.callExpression(indexParamId, [])
+
+  const templateExpr = transformFineGrainedJsx(jsxExpr, ctx, t, overrides)
+  if (!templateExpr) return null
+
+  return t.arrowFunctionExpression(
+    [valueParam, indexParamId],
+    t.blockStatement([t.returnStatement(t.arrayExpression([templateExpr]))]),
+  )
+}
+
 function createInsertBinding(
   expr: BabelCore.types.Expression,
   ctx: TransformContext,
@@ -1332,27 +1532,43 @@ function createInsertBinding(
 ): BabelCore.types.Expression {
   ctx.helpersUsed.insert = true
   ctx.helpersUsed.onDestroy = true
+  ctx.helpersUsed.createElement = true
 
-  const bindingId = t.identifier(`__fictBinding_${++ctx.fineGrainedTemplateId}`)
+  const fragId = t.identifier(`__fictFrag_${++ctx.fineGrainedTemplateId}`)
+  const disposeId = t.identifier(`__fictDispose_${ctx.fineGrainedTemplateId}`)
 
-  // Build: __fictInsert(() => expr)
-  const insertCall = t.callExpression(t.identifier(RUNTIME_ALIASES.insert), [
-    t.arrowFunctionExpression([], expr),
+  const createFrag = t.variableDeclaration('const', [
+    t.variableDeclarator(
+      fragId,
+      t.callExpression(
+        t.memberExpression(t.identifier('document'), t.identifier('createDocumentFragment')),
+        [],
+      ),
+    ),
   ])
+
+  const disposeDecl = t.variableDeclaration('const', [
+    t.variableDeclarator(
+      disposeId,
+      t.callExpression(t.identifier(RUNTIME_ALIASES.insert), [
+        fragId,
+        t.arrowFunctionExpression([], expr),
+        t.identifier(RUNTIME_ALIASES.createElement),
+      ]),
+    ),
+  ])
+
+  const onDestroyCall = t.expressionStatement(
+    t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [disposeId]),
+  )
+
+  const returnFrag = t.returnStatement(fragId)
 
   // Wrap in IIFE
   return t.callExpression(
     t.arrowFunctionExpression(
       [],
-      t.blockStatement([
-        t.variableDeclaration('const', [t.variableDeclarator(bindingId, insertCall)]),
-        t.expressionStatement(
-          t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [
-            t.memberExpression(bindingId, t.identifier('dispose')),
-          ]),
-        ),
-        t.returnStatement(t.memberExpression(bindingId, t.identifier('marker'))),
-      ]),
+      t.blockStatement([createFrag, disposeDecl, onDestroyCall, returnFrag]),
     ),
     [],
   )
@@ -1379,6 +1595,16 @@ function ensureValidStatePlacement(
     }
     parent = parent.parentPath
   }
+
+  if (!ctx.hasStateImport) {
+    throw path.buildCodeFrameError('$state() must be imported from "fict" before use')
+  }
+
+  if (getFunctionDepth(path) > 1) {
+    throw path.buildCodeFrameError(
+      '$state() must be declared at module or component top-level (no nested functions)',
+    )
+  }
 }
 
 function ensureValidEffectPlacement(
@@ -1401,6 +1627,155 @@ function ensureValidEffectPlacement(
     }
     parent = parent.parentPath
   }
+
+  if (!ctx.hasEffectImport) {
+    throw path.buildCodeFrameError('$effect() must be imported from "fict" before use')
+  }
+
+  if (getFunctionDepth(path) > 1) {
+    throw path.buildCodeFrameError(
+      '$effect() must be called at module or component top-level (no nested functions)',
+    )
+  }
+}
+
+function getFunctionDepth(path: BabelCore.NodePath): number {
+  let depth = 0
+  let current: BabelCore.NodePath | null = path.parentPath
+  while (current) {
+    if (
+      current.isFunctionDeclaration() ||
+      current.isFunctionExpression() ||
+      current.isArrowFunctionExpression()
+    ) {
+      depth++
+    }
+    if (current.isProgram()) break
+    current = current.parentPath
+  }
+  return depth
+}
+
+function shouldEmitGetter(name: string, ctx: TransformContext, t: typeof BabelCore.types): boolean {
+  const program = ctx.file?.ast?.program as BabelCore.types.Program | undefined
+  if (!program) return false
+
+  let reactive = false
+  let eventUsage = false
+  let otherUsage = false
+
+  const visit = (
+    node: BabelCore.types.Node,
+    shadow: Set<string>,
+    ancestors: BabelCore.types.Node[],
+    inFunction: boolean,
+  ): void => {
+    if (reactive) return
+
+    // Track function params and shadowing
+    if (
+      t.isFunctionDeclaration(node) ||
+      t.isFunctionExpression(node) ||
+      t.isArrowFunctionExpression(node)
+    ) {
+      const nextShadow = new Set(shadow)
+      for (const param of node.params) {
+        collectBindingNames(param as any, nextShadow, t)
+      }
+      for (const childKey of Object.keys(node) as (keyof typeof node)[]) {
+        const child = (node as any)[childKey]
+        if (Array.isArray(child)) {
+          for (const c of child) {
+            if (c && typeof c === 'object' && 'type' in c && typeof (c as any).type === 'string') {
+              visit(c as BabelCore.types.Node, nextShadow, ancestors.concat(node), true)
+            }
+          }
+        } else if (
+          child &&
+          typeof child === 'object' &&
+          'type' in child &&
+          typeof (child as any).type === 'string'
+        ) {
+          visit(child as BabelCore.types.Node, nextShadow, ancestors.concat(node), true)
+        }
+      }
+      return
+    }
+
+    if (t.isVariableDeclarator(node) && t.isIdentifier(node.id)) {
+      const nextShadow = new Set(shadow)
+      nextShadow.add(node.id.name)
+      if (node.init) {
+        visit(node.init, nextShadow, ancestors.concat(node), inFunction)
+      }
+      return
+    }
+
+    if (t.isIdentifier(node) && node.name === name && !shadow.has(name)) {
+      const parent = ancestors[ancestors.length - 1]
+
+      const inEffect = ancestors.some(
+        anc =>
+          t.isCallExpression(anc) && t.isIdentifier(anc.callee) && anc.callee.name === '$effect',
+      )
+
+      // JSX attribute detection
+      const jsxAttrAncestor = ancestors.find(anc => t.isJSXAttribute(anc)) as
+        | BabelCore.types.JSXAttribute
+        | undefined
+      if (jsxAttrAncestor && t.isJSXIdentifier(jsxAttrAncestor.name)) {
+        const attrName = jsxAttrAncestor.name.name
+        if (isEventHandler(attrName) || NON_REACTIVE_ATTRS.has(attrName)) {
+          eventUsage = true
+        } else {
+          reactive = true
+        }
+        return
+      }
+
+      const inJsxExpression = ancestors.some(anc => t.isJSXExpressionContainer(anc))
+
+      if (inEffect || inJsxExpression) {
+        reactive = true
+        return
+      }
+
+      if (inFunction) {
+        eventUsage = true
+        return
+      }
+
+      otherUsage = true
+      return
+    }
+
+    const nextShadow = new Set(shadow)
+    if (t.isVariableDeclarator(node) && t.isIdentifier(node.id)) {
+      nextShadow.add(node.id.name)
+    }
+
+    for (const key of Object.keys(node) as (keyof typeof node)[]) {
+      const child = (node as any)[key]
+      if (Array.isArray(child)) {
+        for (const c of child) {
+          if (c && typeof c === 'object' && 'type' in c && typeof (c as any).type === 'string') {
+            visit(c as BabelCore.types.Node, nextShadow, ancestors.concat(node), inFunction)
+          }
+        }
+      } else if (
+        child &&
+        typeof child === 'object' &&
+        'type' in child &&
+        typeof (child as any).type === 'string'
+      ) {
+        visit(child as BabelCore.types.Node, nextShadow, ancestors.concat(node), inFunction)
+      }
+    }
+  }
+
+  visit(program, new Set<string>(), [], false)
+  if (reactive || otherUsage) return false
+  return eventUsage
 }
 
 /**
@@ -1459,55 +1834,56 @@ function shouldTransformIdentifier(
 function isShadowedByEnclosingScope(
   path: BabelCore.NodePath<BabelCore.types.Identifier>,
   name: string,
-  t: typeof BabelCore.types,
+  ctx: TransformContext,
 ): boolean {
-  let current: BabelCore.NodePath | null = path.parentPath
-  let insideFunction = false
+  const binding = path.scope.getBinding(name)
+  if (!binding) return false
 
-  while (current) {
-    // Check function parameters
-    if (
-      current.isArrowFunctionExpression() ||
-      current.isFunctionExpression() ||
-      current.isFunctionDeclaration()
-    ) {
-      const funcNode = current.node as
-        | BabelCore.types.ArrowFunctionExpression
-        | BabelCore.types.FunctionExpression
-        | BabelCore.types.FunctionDeclaration
-      const paramNames = new Set<string>()
-      for (const param of funcNode.params) {
-        collectBindingNames(param, paramNames, t)
-      }
-      if (paramNames.has(name)) {
-        return true
-      }
-      insideFunction = true
-    }
-
-    // Only check block-scoped variable declarations inside functions
-    // (not at program level, those are handled by stateVars/memoVars tracking)
-    if (insideFunction && current.isBlockStatement()) {
-      const bodyNode = current.node as BabelCore.types.BlockStatement
-      for (const stmt of bodyNode.body) {
-        if (t.isVariableDeclaration(stmt)) {
-          for (const decl of stmt.declarations) {
-            const bindingNames = new Set<string>()
-            collectBindingNames(decl.id, bindingNames, t)
-            if (bindingNames.has(name)) {
-              return true
-            }
-          }
-        }
-      }
-    }
-
-    // Stop at program level
-    if (current.isProgram()) break
-
-    current = current.parentPath
+  // If this is a function parameter, it shadows the outer state/memo variable
+  if (binding.kind === 'param') {
+    return true
   }
 
+  // Check if this is a tracked variable (stateVars, memoVars, or getterOnlyVars)
+  const isTracked =
+    ctx.stateVars.has(name) || ctx.memoVars.has(name) || ctx.getterOnlyVars.has(name)
+
+  if (!isTracked) {
+    // Not a tracked variable - it's a local shadowing binding
+    return true
+  }
+
+  // For tracked variables, check if the binding is a destructuring parameter pattern
+  const bindingPath = binding.path
+
+  // Handle destructuring patterns in function parameters
+  if (bindingPath.isIdentifier()) {
+    const parent = bindingPath.parentPath
+    if (parent?.isArrayPattern() || parent?.isObjectProperty() || parent?.isRestElement()) {
+      // Walk up to find if this pattern is a function parameter
+      let current: BabelCore.NodePath | null = parent
+      while (current) {
+        const node = current.node
+        // Check if we've reached a function and this pattern is one of its params
+        if (current.isFunction()) {
+          const funcParams = (current.node as BabelCore.types.Function).params
+          // Check if any ancestor is in the function's params
+          let patternNode = bindingPath.node
+          let patternPath: BabelCore.NodePath | null = bindingPath
+          while (patternPath && !funcParams.includes(patternPath.node as any)) {
+            patternPath = patternPath.parentPath
+          }
+          if (patternPath && funcParams.includes(patternPath.node as any)) {
+            return true
+          }
+          break
+        }
+        current = current.parentPath
+      }
+    }
+  }
+
+  // Not shadowed - this is the original tracked variable
   return false
 }
 
@@ -1550,6 +1926,16 @@ function isInsideConditional(path: BabelCore.NodePath): boolean {
   return false
 }
 
+function isInsideNestedFunction(path: BabelCore.NodePath<BabelCore.types.Identifier>): boolean {
+  const name = path.node.name
+  const binding = path.scope.getBinding(name)
+  if (!binding) return false
+
+  const declarationFuncScope = binding.scope.getFunctionParent()
+  const usageFuncScope = path.scope.getFunctionParent()
+  return declarationFuncScope !== usageFuncScope
+}
+
 /**
  * Rule H: Check for black-box function calls that receive state objects
  */
@@ -1587,6 +1973,17 @@ function checkBlackBoxFunctionCall(
           'Consider passing only the specific properties needed.',
       )
     }
+
+    const stateRoot = getStateRootFromExpression(arg, ctx, t)
+    if (stateRoot && !t.isIdentifier(arg)) {
+      emitWarning(
+        ctx,
+        node,
+        'FICT-H',
+        `Expression derived from state "${stateRoot}" passed to function "${funcName || '<anonymous>'}" ` +
+          'may be mutated. Consider using immutable patterns or explicit dependency tracking.',
+      )
+    }
   }
 }
 
@@ -1606,6 +2003,37 @@ function getCallExpressionName(
     t.isIdentifier(callee.property)
   ) {
     return `${callee.object.name}.${callee.property.name}`
+  }
+  return null
+}
+
+function getStateRootFromExpression(
+  expr: BabelCore.types.Expression,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): string | null {
+  const { stateVars, shadowedVars } = ctx
+  if (t.isIdentifier(expr)) {
+    if (stateVars.has(expr.name) && !shadowedVars.has(expr.name)) {
+      return expr.name
+    }
+    return null
+  }
+  if (
+    t.isMemberExpression(expr) &&
+    t.isExpression(expr.object) &&
+    !t.isOptionalMemberExpression(expr)
+  ) {
+    return getStateRootFromExpression(expr.object, ctx, t)
+  }
+  if (t.isOptionalMemberExpression(expr) && t.isExpression(expr.object)) {
+    return getStateRootFromExpression(expr.object, ctx, t)
+  }
+  if (t.isCallExpression(expr) && t.isExpression(expr.callee)) {
+    return getStateRootFromExpression(expr.callee, ctx, t)
+  }
+  if (t.isOptionalCallExpression(expr) && t.isExpression(expr.callee)) {
+    return getStateRootFromExpression(expr.callee, ctx, t)
   }
   return null
 }
@@ -1708,6 +2136,16 @@ function recordDerivedDependencies(
         if (decl.init) {
           visit(decl.init, newLocals)
         }
+      }
+      return
+    }
+
+    // Handle member expressions - skip property names (unless computed)
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      visit(node.object, locals)
+      // Only visit property if it's computed (e.g., obj[key] vs obj.key)
+      if (node.computed && node.property) {
+        visit(node.property, locals)
       }
       return
     }
@@ -1882,10 +2320,24 @@ function transformExpressionForFineGrained(
   expr: BabelCore.types.Expression,
   ctx: TransformContext,
   t: typeof BabelCore.types,
-  _overrides?: IdentifierOverrideMap,
+  overrides?: IdentifierOverrideMap,
 ): BabelCore.types.Expression {
-  // Reuse standard transform logic; override support can be added if needed
-  return transformExpression(expr, ctx, t)
+  let transformed = transformExpression(expr, ctx, t)
+
+  if (overrides && Object.keys(overrides).length) {
+    transformed = t.cloneNode(transformed, true) as BabelCore.types.Expression
+    traverse(transformed, {
+      noScope: true,
+      Identifier(path: TraverseNodePath<BabelCore.types.Identifier>) {
+        const factoryFn = overrides[path.node.name]
+        if (factoryFn) {
+          path.replaceWith(factoryFn())
+        }
+      },
+    })
+  }
+
+  return transformed
 }
 
 function emitBindingChild(
@@ -1943,7 +2395,7 @@ function emitAttributes(
         state.identifierOverrides,
       )
       state.statements.push(
-        createBindEventCall(t, elementId, normalized.eventName!, expr, normalized, state.ctx),
+        ...createBindEventCall(t, elementId, normalized.eventName!, expr, normalized, state.ctx),
       )
       continue
     }
@@ -2122,6 +2574,7 @@ function transformFineGrainedJsx(
   node: BabelCore.types.JSXElement,
   ctx: TransformContext,
   t: typeof BabelCore.types,
+  overrides?: IdentifierOverrideMap,
 ): BabelCore.types.Expression | null {
   if (!ctx.options.fineGrainedDom) return null
 
@@ -2133,6 +2586,7 @@ function transformFineGrainedJsx(
     statements: [],
     namePrefix: createTemplateNamePrefix(ctx),
     nameCounters: Object.create(null),
+    identifierOverrides: overrides,
   }
 
   const rootId = emitJsxElementToTemplate(node, tagName, state, t)
@@ -2380,11 +2834,19 @@ function applyRegionTransform(
     ctx,
     t,
   )
+  if (
+    t.isBlockStatement(path.node) &&
+    path.parentPath &&
+    path.parentPath.isFunctionDeclaration() &&
+    path.parentPath.node.id?.name === 'view'
+  ) {
+    console.log('debug region outputs for view', Array.from(derivedOutputs))
+  }
   if (derivedOutputs.size < 2) return
 
   const result: BabelCore.types.Statement[] = []
   let index = 0
-  let changed = false
+  let regionCreated = false
 
   while (index < statements.length) {
     const region = findNextRegion(
@@ -2402,28 +2864,380 @@ function applyRegionTransform(
     }
 
     const { start, end, outputs } = region
-    for (let i = index; i < start; i++) {
-      result.push(statements[i] as BabelCore.types.Statement)
+
+    // Exclude trailing return statements from the region
+    let regionEnd = end
+    while (regionEnd >= start && t.isReturnStatement(statements[regionEnd]!)) {
+      regionEnd--
+    }
+    if (regionEnd < start) {
+      index = end + 1
+      continue
     }
 
-    const regionStatements = (statements as BabelCore.types.Statement[]).slice(start, end + 1)
-    const orderedOutputs = collectOutputsInOrder(regionStatements, outputs, t)
-    const { memoDecl, getterDecls } = generateRegionMemo(
-      regionStatements,
-      orderedOutputs.length ? orderedOutputs : Array.from(outputs),
+    // Emit statements before the region untouched
+    if (start > index) {
+      for (let i = index; i < start; i++) {
+        result.push(statements[i] as BabelCore.types.Statement)
+      }
+    }
+
+    const startAfterRegion = regionEnd + 1
+    const referencedOutside = collectReferencedOutputs(
+      statements as BabelCore.types.Statement[],
+      outputs,
+      startAfterRegion,
       ctx,
       t,
+    )
+    const activeOutputs = ctx.options.lazyConditional
+      ? outputs
+      : referencedOutside.size
+        ? referencedOutside
+        : outputs
+
+    const reassignedLater = hasAssignmentsOutside(
+      statements as BabelCore.types.Statement[],
+      activeOutputs,
+      startAfterRegion,
+      t,
+    )
+    if (reassignedLater || activeOutputs.size < 2) {
+      for (let i = start; i <= end; i++) {
+        result.push(statements[i] as BabelCore.types.Statement)
+      }
+      index = end + 1
+      continue
+    }
+
+    const analysisStatements = cloneRegionStatements(
+      statements as BabelCore.types.Statement[],
+      start,
+      end,
+      t,
+    )
+    const regionStatements = cloneRegionStatements(
+      statements as BabelCore.types.Statement[],
+      start,
+      regionEnd,
+      t,
+    )
+
+    let orderedOutputs = collectOutputsInOrder(regionStatements, activeOutputs, t)
+    if (!orderedOutputs.length) {
+      orderedOutputs = Array.from(activeOutputs)
+    }
+
+    const { memoDecl, getterDecls } = generateRegionMemo(
       regionStatements,
+      orderedOutputs,
+      ctx,
+      t,
+      analysisStatements,
     )
 
     result.push(memoDecl, ...getterDecls)
+    regionCreated = true
+
+    // Re-emit trailing statements (e.g., return) that were excluded from the region
+    for (let i = regionEnd + 1; i <= end; i++) {
+      result.push(statements[i] as BabelCore.types.Statement)
+    }
     index = end + 1
-    changed = true
   }
 
-  if (changed) {
+  if (regionCreated) {
     ;(path.node as any).body = result
+    if (
+      t.isBlockStatement(path.node) &&
+      path.parentPath &&
+      path.parentPath.isFunctionDeclaration() &&
+      path.parentPath.node.id?.name === 'view'
+    ) {
+      console.log('region created for view (primary)')
+    }
+    return
   }
+
+  // Fallback: if no regions were formed but multiple derived outputs exist, group the first span
+  const firstTouched = (statements as BabelCore.types.Statement[]).findIndex(stmt =>
+    statementTouchesOutputs(stmt, derivedOutputs, ctx, t),
+  )
+  const lastTouched = (() => {
+    for (let i = statements.length - 1; i >= 0; i--) {
+      const stmt = statements[i] as BabelCore.types.Statement | undefined
+      if (stmt && statementTouchesOutputs(stmt, derivedOutputs, ctx, t)) return i
+    }
+    return -1
+  })()
+
+  if (firstTouched === -1 || lastTouched === -1 || firstTouched > lastTouched) {
+    if (
+      t.isBlockStatement(path.node) &&
+      path.parentPath &&
+      path.parentPath.isFunctionDeclaration() &&
+      path.parentPath.node.id?.name === 'view'
+    ) {
+      console.log('no fallback region for view')
+    }
+    return
+  }
+
+  let regionEnd = lastTouched
+  while (regionEnd >= firstTouched && t.isReturnStatement(statements[regionEnd]!)) {
+    regionEnd--
+  }
+  if (regionEnd < firstTouched) return
+
+  const startAfterRegion = regionEnd + 1
+  const referencedOutside = collectReferencedOutputs(
+    statements as BabelCore.types.Statement[],
+    derivedOutputs,
+    startAfterRegion,
+    ctx,
+    t,
+  )
+  const activeOutputs = ctx.options.lazyConditional
+    ? derivedOutputs
+    : referencedOutside.size
+      ? referencedOutside
+      : derivedOutputs
+  if (activeOutputs.size < 2) return
+
+  const before = (statements as BabelCore.types.Statement[]).slice(0, firstTouched)
+  const analysisStatements = cloneRegionStatements(
+    statements as BabelCore.types.Statement[],
+    firstTouched,
+    lastTouched,
+    t,
+  )
+  const regionStatements = cloneRegionStatements(
+    statements as BabelCore.types.Statement[],
+    firstTouched,
+    regionEnd,
+    t,
+  )
+
+  const orderedOutputs = collectOutputsInOrder(regionStatements, activeOutputs, t)
+  if (!orderedOutputs.length) return
+
+  const { memoDecl, getterDecls } = generateRegionMemo(
+    regionStatements,
+    orderedOutputs,
+    ctx,
+    t,
+    analysisStatements,
+  )
+
+  const after = (statements as BabelCore.types.Statement[]).slice(regionEnd + 1)
+  ;(path.node as any).body = [...before, memoDecl, ...getterDecls, ...after]
+}
+
+function cloneRegionStatements(
+  statements: BabelCore.types.Statement[],
+  start: number,
+  end: number,
+  t: typeof BabelCore.types,
+): BabelCore.types.Statement[] {
+  const slice = statements
+    .slice(start, end + 1)
+    .map(stmt => t.cloneNode(stmt, true)) as BabelCore.types.Statement[]
+  return slice.map(stmt => stripMemoFromStatement(stmt, t))
+}
+
+function stripMemoFromStatement(
+  stmt: BabelCore.types.Statement,
+  t: typeof BabelCore.types,
+): BabelCore.types.Statement {
+  // Use manual recursion instead of traverse to work with detached nodes
+  const visitNode = (node: BabelCore.types.Node): void => {
+    if (!node || typeof node !== 'object') return
+
+    // Check if this is a CallExpression that can be unwrapped
+    if (t.isCallExpression(node)) {
+      const replacement = unwrapMemoInitializer(node, t)
+      if (replacement) {
+        // Replace the node in place for the arguments array inside memo calls
+        // This handles nested memo calls
+        Object.assign(node, replacement)
+      }
+    }
+
+    // Recursively visit all child nodes
+    for (const key of Object.keys(node) as (keyof typeof node)[]) {
+      const child = node[key]
+      if (Array.isArray(child)) {
+        for (const c of child) {
+          if (c && typeof c === 'object' && 'type' in c && typeof c.type === 'string') {
+            visitNode(c as unknown as BabelCore.types.Node)
+          }
+        }
+      } else if (
+        child &&
+        typeof child === 'object' &&
+        'type' in child &&
+        typeof (child as { type?: unknown }).type === 'string'
+      ) {
+        visitNode(child as unknown as BabelCore.types.Node)
+      }
+    }
+  }
+
+  visitNode(stmt)
+  return stmt
+}
+
+function unwrapMemoInitializer(
+  init: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): BabelCore.types.Expression | null {
+  if (
+    t.isCallExpression(init) &&
+    t.isIdentifier(init.callee) &&
+    init.callee.name === RUNTIME_ALIASES.memo
+  ) {
+    const arg = init.arguments[0]
+    if (arg && (t.isArrowFunctionExpression(arg) || t.isFunctionExpression(arg))) {
+      const body = arg.body
+      if (t.isBlockStatement(body)) {
+        const ret = body.body.find(
+          (stmt): stmt is BabelCore.types.ReturnStatement =>
+            t.isReturnStatement(stmt) && !!stmt.argument,
+        )
+        if (ret && ret.argument && t.isExpression(ret.argument)) {
+          return ret.argument
+        }
+        return t.identifier('undefined')
+      }
+      if (t.isExpression(body)) {
+        return body
+      }
+    }
+  }
+  return null
+}
+
+function collectReferencedOutputs(
+  statements: BabelCore.types.Statement[],
+  outputs: Set<string>,
+  startIndex: number,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): Set<string> {
+  const referenced = new Set<string>()
+  const visit = (node: BabelCore.types.Node, shadow: Set<string>): void => {
+    if (
+      t.isFunctionDeclaration(node) ||
+      t.isFunctionExpression(node) ||
+      t.isArrowFunctionExpression(node)
+    ) {
+      const nextShadow = new Set(shadow)
+      node.params.forEach(param => collectBindingNames(param as any, nextShadow, t))
+      return
+    }
+    if (t.isIdentifier(node) && outputs.has(node.name) && !shadow.has(node.name)) {
+      referenced.add(node.name)
+      return
+    }
+    const nextShadow = new Set(shadow)
+    if (t.isVariableDeclarator(node) && t.isIdentifier(node.id)) {
+      nextShadow.add(node.id.name)
+    }
+    for (const key of Object.keys(node) as (keyof typeof node)[]) {
+      const child = (node as any)[key]
+      if (Array.isArray(child)) {
+        for (const c of child) {
+          if (c && typeof c === 'object' && 'type' in c && typeof (c as any).type === 'string') {
+            visit(c as BabelCore.types.Node, nextShadow)
+          }
+        }
+      } else if (
+        child &&
+        typeof child === 'object' &&
+        'type' in child &&
+        typeof (child as any).type === 'string'
+      ) {
+        visit(child as BabelCore.types.Node, nextShadow)
+      }
+    }
+  }
+
+  for (let i = startIndex; i < statements.length; i++) {
+    const stmt = statements[i]
+    if (stmt) visit(stmt, new Set(ctx.shadowedVars))
+  }
+  return referenced
+}
+
+function hasAssignmentsOutside(
+  statements: BabelCore.types.Statement[],
+  outputs: Set<string>,
+  startIndex: number,
+  t: typeof BabelCore.types,
+): boolean {
+  for (let i = startIndex; i < statements.length; i++) {
+    const stmt = statements[i]
+    if (stmt && statementAssignsOutputs(stmt, outputs, t)) {
+      return true
+    }
+  }
+  return false
+}
+
+function statementAssignsOutputs(
+  stmt: BabelCore.types.Statement,
+  outputs: Set<string>,
+  t: typeof BabelCore.types,
+): boolean {
+  let assigns = false
+  const visit = (node: BabelCore.types.Node, shadow: Set<string>): void => {
+    if (assigns) return
+    if (
+      t.isFunctionDeclaration(node) ||
+      t.isFunctionExpression(node) ||
+      t.isArrowFunctionExpression(node)
+    ) {
+      const nextShadow = new Set(shadow)
+      node.params.forEach(param => collectBindingNames(param as any, nextShadow, t))
+      return
+    }
+
+    if (
+      t.isAssignmentExpression(node) &&
+      t.isIdentifier(node.left) &&
+      outputs.has(node.left.name) &&
+      !shadow.has(node.left.name)
+    ) {
+      assigns = true
+      return
+    }
+
+    const nextShadow = new Set(shadow)
+    if (t.isVariableDeclarator(node) && t.isIdentifier(node.id)) {
+      nextShadow.add(node.id.name)
+    }
+
+    for (const key of Object.keys(node) as (keyof typeof node)[]) {
+      const child = (node as any)[key]
+      if (Array.isArray(child)) {
+        for (const c of child) {
+          if (c && typeof c === 'object' && 'type' in c && typeof (c as any).type === 'string') {
+            visit(c as BabelCore.types.Node, nextShadow)
+          }
+        }
+      } else if (
+        child &&
+        typeof child === 'object' &&
+        'type' in child &&
+        typeof (child as any).type === 'string'
+      ) {
+        visit(child as BabelCore.types.Node, nextShadow)
+      }
+    }
+  }
+
+  visit(stmt, new Set())
+  return assigns
 }
 
 // ============================================================================

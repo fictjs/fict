@@ -253,6 +253,12 @@ export function createBindStyleCall(
 
 /**
  * Create bindEvent call: __fictBindEvent($element, $eventName, $handler, $options?)
+ *
+ * For event handlers, we need to:
+ * - If handler is already an arrow function (e.g., `() => doSomething()`),
+ *   pass it directly as it already returns the latest value
+ * - If handler is a static reference (e.g., `handleClick`),
+ *   wrap it in an arrow function to allow reactive swapping
  */
 export function createBindEventCall(
   t: typeof BabelCore.types,
@@ -261,12 +267,18 @@ export function createBindEventCall(
   handler: BabelCore.types.Expression,
   options: { capture?: boolean; passive?: boolean; once?: boolean },
   ctx: TransformContext,
-): BabelCore.types.ExpressionStatement {
+): BabelCore.types.Statement[] {
   ctx.helpersUsed.bindEvent = true
+  ctx.helpersUsed.onDestroy = true
 
-  const args: BabelCore.types.Expression[] = [elementId, t.stringLiteral(eventName), handler]
+  // Don't wrap if handler is already an arrow function or function expression
+  // This prevents double-wrapping like `() => () => handler()`
+  const isAlreadyFunction = t.isArrowFunctionExpression(handler) || t.isFunctionExpression(handler)
 
-  // Add options object if any modifiers are set
+  const handlerArg = isAlreadyFunction ? handler : createGetterArrow(t, handler)
+
+  const args: BabelCore.types.Expression[] = [elementId, t.stringLiteral(eventName), handlerArg]
+
   if (options.capture || options.passive || options.once) {
     const optionProps: BabelCore.types.ObjectProperty[] = []
     if (options.capture) {
@@ -281,5 +293,11 @@ export function createBindEventCall(
     args.push(t.objectExpression(optionProps))
   }
 
-  return t.expressionStatement(t.callExpression(t.identifier(RUNTIME_ALIASES.bindEvent), args))
+  const cleanupId = t.identifier(`__fictEvt_${++ctx.fineGrainedTemplateId}`)
+  const bindCall = t.callExpression(t.identifier(RUNTIME_ALIASES.bindEvent), args)
+
+  return [
+    createConstDeclaration(t, cleanupId, bindCall),
+    t.expressionStatement(t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [cleanupId])),
+  ]
 }

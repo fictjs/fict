@@ -1,4 +1,5 @@
 import * as babel from '@babel/core'
+import presetTypescript from '@babel/preset-typescript'
 import { describe, expect, it } from 'vitest'
 
 import { createFictPlugin, type FictCompilerOptions } from '../src'
@@ -15,9 +16,17 @@ function transform(code: string, options?: FictCompilerOptions): string {
   }
 
   const result = babel.transformSync(normalized, {
-    plugins: [['@babel/plugin-syntax-jsx'], [createFictPlugin(mergedOptions)]],
-    presets: ['@babel/preset-typescript'],
     filename: 'test.tsx',
+    configFile: false,
+    babelrc: false,
+    sourceType: 'module',
+    parserOpts: {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx'],
+      allowReturnOutsideFunction: true,
+    },
+    plugins: [[createFictPlugin, mergedOptions]],
+    presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
   })
 
   return result?.code?.trim() || ''

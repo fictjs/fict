@@ -14,6 +14,9 @@ importers:
       '@babel/plugin-syntax-jsx':
         specifier: ^7.27.1
         version: 7.27.1(@babel/core@7.28.5)
+      '@babel/plugin-transform-react-jsx':
+        specifier: ^7.25.9
+        version: 7.27.1(@babel/core@7.28.5)
       '@babel/preset-typescript':
         specifier: ^7.26.0
         version: 7.28.5(@babel/core@7.28.5)
@@ -123,6 +126,9 @@ importers:
       '@babel/helper-plugin-utils':
         specifier: ^7.25.9
         version: 7.27.1
+      '@babel/traverse':
+        specifier: ^7.26.0
+        version: 7.28.5
     devDependencies:
       '@babel/core':
         specifier: ^7.26.0
@@ -130,20 +136,42 @@ importers:
       '@babel/plugin-syntax-jsx':
         specifier: ^7.27.1
         version: 7.27.1(@babel/core@7.28.5)
+      '@babel/plugin-transform-modules-commonjs':
+        specifier: ^7.27.1
+        version: 7.27.1(@babel/core@7.28.5)
+      '@babel/plugin-transform-react-jsx':
+        specifier: ^7.25.9
+        version: 7.27.1(@babel/core@7.28.5)
       '@babel/preset-typescript':
         specifier: ^7.26.0
         version: 7.28.5(@babel/core@7.28.5)
       '@babel/types':
         specifier: ^7.26.0
         version: 7.28.5
+      '@fictjs/runtime':
+        specifier: workspace:*
+        version: link:../runtime
       '@types/babel__core':
         specifier: ^7.20.5
         version: 7.20.5
       '@types/babel__helper-plugin-utils':
         specifier: ^7.10.3
         version: 7.10.3
+      '@types/babel__traverse':
+        specifier: ^7.28.0
+        version: 7.28.0
       tsup:
         specifier: ^8.5.1
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(typescript@5.9.3)(yaml@2.8.1)
+
+  packages/compiler-ts:
+    dependencies:
+      typescript:
+        specifier: '>=5.0.0'
+        version: 5.9.3
+    devDependencies:
+      tsup:
+        specifier: ^8.0.0
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(typescript@5.9.3)(yaml@2.8.1)
 
   packages/devtools:
