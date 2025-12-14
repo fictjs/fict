@@ -1483,7 +1483,6 @@ function createListBinding(
     const disposedId = t.identifier(`${bindingId.name}_disposed`)
     const destroyBlockId = t.identifier(`${bindingId.name}_destroyBlock`)
     const diffId = t.identifier(`${bindingId.name}_diff`)
-    const effectDisposeId = t.identifier(`${bindingId.name}_effectDispose`)
     const disposeId = t.identifier(`${bindingId.name}_dispose`)
 
     const getItemsDecl = t.variableDeclaration('const', [
@@ -2009,12 +2008,12 @@ function createListBinding(
       ),
     ])
 
-    const effectDisposeDecl = t.variableDeclaration('const', [
-      t.variableDeclarator(
-        effectDisposeId,
-        t.callExpression(t.identifier(RUNTIME_ALIASES.effect), [diffId]),
-      ),
-    ])
+    // Start the diffing effect. We don't need to retain the disposer here because
+    // `createEffect` already registers cleanup with the current root, and our
+    // onDestroy handler below handles the remaining list-specific disposal work.
+    const startDiffEffect = t.expressionStatement(
+      t.callExpression(t.identifier(RUNTIME_ALIASES.effect), [diffId]),
+    )
 
     const disposeDecl = t.variableDeclaration('const', [
       t.variableDeclarator(
@@ -2023,10 +2022,6 @@ function createListBinding(
           [],
           t.blockStatement([
             t.expressionStatement(t.assignmentExpression('=', disposedId, t.booleanLiteral(true))),
-            t.ifStatement(
-              effectDisposeId,
-              t.expressionStatement(t.callExpression(effectDisposeId, [])),
-            ),
             t.forOfStatement(
               t.variableDeclaration('const', [t.variableDeclarator(t.identifier('block'))]),
               t.callExpression(
@@ -2067,7 +2062,7 @@ function createListBinding(
           disposedDecl,
           destroyBlockDecl,
           diffDecl,
-          effectDisposeDecl,
+          startDiffEffect,
           disposeDecl,
           onDestroyCall,
           t.returnStatement(markerId),

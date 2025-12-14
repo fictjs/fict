@@ -189,6 +189,25 @@ describe('fict runtime', () => {
     expect(el.checked).toBe(true)
   })
 
+  it('bindProperty clears nullish values with sensible defaults', async () => {
+    const el = document.createElement('input')
+    const value = createSignal<string | undefined>('a')
+    const checked = createSignal<boolean | undefined>(true)
+
+    bindProperty(el, 'value', () => value())
+    bindProperty(el, 'checked', () => checked())
+
+    expect(el.value).toBe('a')
+    expect(el.checked).toBe(true)
+
+    value(undefined)
+    checked(undefined)
+    await tick()
+
+    expect(el.value).toBe('')
+    expect(el.checked).toBe(false)
+  })
+
   it('insert swaps child nodes reactively', async () => {
     const parent = document.createElement('div')
     const toggle = createSignal(true)

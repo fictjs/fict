@@ -333,8 +333,27 @@ export function bindAttribute(el: HTMLElement, key: string, getValue: () => unkn
  * Bind a reactive value to an element's property.
  */
 export function bindProperty(el: HTMLElement, key: string, getValue: () => unknown): Cleanup {
+  // Keep behavior aligned with the legacy createElement+applyProps path in `dom.ts`,
+  // where certain keys must behave like DOM properties and nullish clears should
+  // reset to sensible defaults (e.g. value -> '', checked -> false).
+  const PROPERTY_BINDING_KEYS = new Set([
+    'value',
+    'checked',
+    'selected',
+    'disabled',
+    'readOnly',
+    'multiple',
+    'muted',
+  ])
+
   return createEffect(() => {
-    ;(el as unknown as Record<string, unknown>)[key] = getValue()
+    const next = getValue()
+    if (PROPERTY_BINDING_KEYS.has(key) && (next === undefined || next === null)) {
+      const fallback = key === 'checked' || key === 'selected' ? false : ''
+      ;(el as unknown as Record<string, unknown>)[key] = fallback
+      return
+    }
+    ;(el as unknown as Record<string, unknown>)[key] = next
   })
 }
 
