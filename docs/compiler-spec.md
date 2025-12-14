@@ -573,7 +573,7 @@ Compiler should:
    - Similar to: `createState`, `createMemo`, `createEffect`, `createBinding`, etc.
 
 9. **IR → JS Output**:
-   - Generate final code according to target runtime API (`fict-runtime`)
+   - Generate final code according to target runtime API (`@fictjs/runtime`)
 
 ---
 

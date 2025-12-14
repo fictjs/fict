@@ -351,7 +351,7 @@ export function useDeferredValue<T>(getValue: () => T): () => T {
 ### Running Tests
 
 ```bash
-pnpm --filter fict-runtime test
+pnpm --filter @fictjs/runtime test
 ```
 
 Expected output:
