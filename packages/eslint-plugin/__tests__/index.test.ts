@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import plugin from '..'
+import plugin from '../src/index'
 
 describe('eslint-plugin-fict', () => {
   it('exposes renamed rules', () => {
