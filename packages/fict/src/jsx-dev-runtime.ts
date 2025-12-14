@@ -1,1 +1,1 @@
-export * from '@fictjs/runtime/jsx-runtime'
+export * from '@fictjs/runtime/jsx-dev-runtime'

@@ -19,6 +19,15 @@ export default defineConfig([
     sourcemap: true,
   },
   {
+    entry: ['src/jsx-dev-runtime.ts'],
+    format: ['cjs', 'esm'],
+    dts: true,
+    sourcemap: true,
+    define: {
+      __DEV__: 'true',
+    },
+  },
+  {
     entry: { 'index.dev': 'src/index.ts' },
     format: ['esm'],
     sourcemap: true,

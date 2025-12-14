@@ -224,4 +224,10 @@ describe('fict runtime', () => {
   it('exposes cycle protection configuration', () => {
     expect(typeof setCycleProtectionOptions).toBe('function')
   })
+
+  it('exposes jsx-dev-runtime entrypoint', async () => {
+    const mod = await import('../src/jsx-dev-runtime')
+    expect(mod.jsxDEV).toBeTypeOf('function')
+    expect(mod.Fragment).toBeDefined()
+  })
 })
