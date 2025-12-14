@@ -1,3 +1,5 @@
+import { $state } from 'fict'
+
 export function App() {
   let count = $state(0)
   const doubled = count * 2

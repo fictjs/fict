@@ -1,0 +1,14 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "include": ["src"],
+  "compilerOptions": {
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "fict": ["../src/index.ts"],
+      "fict/*": ["../src/*"],
+      "@fictjs/runtime": ["../../runtime/src/index.ts"],
+      "@fictjs/runtime/*": ["../../runtime/src/*"]
+    }
+  }
+}
