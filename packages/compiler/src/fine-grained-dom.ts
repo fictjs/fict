@@ -16,7 +16,7 @@ import type { TransformContext } from './types'
 
 interface NormalizedAttribute {
   name: string
-  kind: 'attr' | 'class' | 'style' | 'event' | 'ref' | 'skip'
+  kind: 'attr' | 'class' | 'style' | 'event' | 'ref' | 'property' | 'skip'
   eventName?: string
   capture?: boolean
   passive?: boolean
@@ -74,6 +74,14 @@ export function normalizeAttributeName(name: string): NormalizedAttribute | null
       return { name, kind: 'skip' }
     case 'ref':
       return { name, kind: 'ref' }
+    case 'value':
+    case 'checked':
+    case 'selected':
+    case 'disabled':
+    case 'readOnly':
+    case 'multiple':
+    case 'muted':
+      return { name, kind: 'property' }
     case 'class':
     case 'className':
       return { name: 'class', kind: 'class' }
@@ -211,6 +219,26 @@ export function createBindAttributeCall(
     t.callExpression(t.identifier(RUNTIME_ALIASES.bindAttribute), [
       elementId,
       t.stringLiteral(attrName),
+      createGetterArrow(t, expr),
+    ]),
+  )
+}
+
+/**
+ * Create bindProperty call: __fictBindProperty($element, $propName, () => $expr)
+ */
+export function createBindPropertyCall(
+  t: typeof BabelCore.types,
+  elementId: BabelCore.types.Identifier,
+  propName: string,
+  expr: BabelCore.types.Expression,
+  ctx: TransformContext,
+): BabelCore.types.ExpressionStatement {
+  ctx.helpersUsed.bindProperty = true
+  return t.expressionStatement(
+    t.callExpression(t.identifier(RUNTIME_ALIASES.bindProperty), [
+      elementId,
+      t.stringLiteral(propName),
       createGetterArrow(t, expr),
     ]),
   )

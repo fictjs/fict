@@ -18,6 +18,7 @@ import {
   createTextNodeCall,
   createBindTextCall,
   createBindAttributeCall,
+  createBindPropertyCall,
   createBindClassCall,
   createBindStyleCall,
   createBindEventCall,
@@ -2252,6 +2253,7 @@ function addRuntimeImports(
   addHelper('onDestroy')
   addHelper('bindText')
   addHelper('bindAttribute')
+  addHelper('bindProperty')
   addHelper('bindClass')
   addHelper('bindStyle')
   addHelper('bindEvent')
@@ -2413,6 +2415,49 @@ function emitAttributes(
       )
       state.statements.push(...createApplyRefStatements(t, elementId, expr, state.ctx))
       continue
+    }
+
+    if (normalized.kind === 'property') {
+      if (!attr.value) {
+        state.statements.push(
+          t.expressionStatement(
+            t.assignmentExpression(
+              '=',
+              t.memberExpression(elementId, t.identifier(normalized.name)),
+              t.booleanLiteral(true),
+            ),
+          ),
+        )
+        continue
+      }
+
+      if (t.isStringLiteral(attr.value)) {
+        state.statements.push(
+          t.expressionStatement(
+            t.assignmentExpression(
+              '=',
+              t.memberExpression(elementId, t.identifier(normalized.name)),
+              attr.value,
+            ),
+          ),
+        )
+        continue
+      }
+
+      if (t.isJSXExpressionContainer(attr.value) && attr.value.expression) {
+        const expr = transformExpressionForFineGrained(
+          attr.value.expression as BabelCore.types.Expression,
+          state.ctx,
+          t,
+          state.identifierOverrides,
+        )
+        state.statements.push(
+          createBindPropertyCall(t, elementId, normalized.name, expr, state.ctx),
+        )
+        continue
+      }
+
+      return false
     }
 
     if (!attr.value) {

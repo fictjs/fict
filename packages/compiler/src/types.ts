@@ -34,6 +34,7 @@ export interface HelperUsage {
   onDestroy: boolean
   bindText: boolean
   bindAttribute: boolean
+  bindProperty: boolean
   bindClass: boolean
   bindStyle: boolean
   bindEvent: boolean
@@ -79,6 +80,7 @@ export function createHelperUsage(): HelperUsage {
     onDestroy: false,
     bindText: false,
     bindAttribute: false,
+    bindProperty: false,
     bindClass: false,
     bindStyle: false,
     bindEvent: false,

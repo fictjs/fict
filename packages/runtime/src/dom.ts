@@ -15,6 +15,7 @@
 import {
   createTextBinding,
   createAttributeBinding,
+  bindProperty,
   createStyleBinding,
   createClassBinding,
   createChildBinding,
@@ -176,6 +177,16 @@ export function createElement(node: FictNode): DOMElement {
 // Child Node Handling
 // ============================================================================
 
+const PROPERTY_BINDING_KEYS = new Set([
+  'value',
+  'checked',
+  'selected',
+  'disabled',
+  'readOnly',
+  'multiple',
+  'muted',
+])
+
 /**
  * Append a child node to a parent, handling all node types including reactive values.
  */
@@ -291,6 +302,12 @@ function applyProps(el: HTMLElement, props: Record<string, unknown>): void {
       continue
     }
 
+    // Properties that must update via DOM property semantics
+    if (PROPERTY_BINDING_KEYS.has(key)) {
+      createAttributeBinding(el, key, value as MaybeReactive<unknown>, setProperty)
+      continue
+    }
+
     // dangerouslySetInnerHTML
     if (key === 'dangerouslySetInnerHTML' && value && typeof value === 'object') {
       const htmlValue = (value as { __html?: string }).__html
@@ -348,6 +365,18 @@ const setAttribute: AttributeSetter = (el: HTMLElement, key: string, value: unkn
 
   // Fallback: set as attribute
   el.setAttribute(key, String(value))
+}
+
+/**
+ * Set a property on an element, ensuring nullish values clear sensibly.
+ */
+const setProperty: AttributeSetter = (el: HTMLElement, key: string, value: unknown): void => {
+  if (value === undefined || value === null) {
+    const fallback = key === 'checked' || key === 'selected' ? false : ''
+    ;(el as unknown as Record<string, unknown>)[key] = fallback
+    return
+  }
+  ;(el as unknown as Record<string, unknown>)[key] = value as unknown
 }
 
 /**

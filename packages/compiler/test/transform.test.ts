@@ -317,6 +317,20 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('document.createElement("div")')
       expect(output).toContain('__fictBindText')
     })
+
+    it('lowers value/checked to property bindings', () => {
+      const input = `
+        import { $state } from 'fict'
+        function View() {
+          const val = $state('')
+          const on = $state(false)
+          return <input value={val} checked={on} />
+        }
+      `
+      const output = transformWithOptions(input)
+      expect(output).toContain('__fictBindProperty')
+      expect(output).not.toContain('__fictBindAttribute(__fg')
+    })
   })
 
   describe('Shorthand properties', () => {
