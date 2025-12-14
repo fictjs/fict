@@ -551,15 +551,15 @@ userResource.invalidate(['user', '42']) // drop cached entry
 - Works with Suspense / ErrorBoundary: pending states throw suspend tokens, and once they resolve the cached data is reused without re-entering the fallback UI.
 - `invalidate(key?)` clears the cache so the next read refetches; `prefetch` can warm data ahead of navigation.
 
-### 9.3 Escape Hatches: noTrack / "use no memo"
+### 9.3 Escape Hatches: untrack / "use no memo"
 
 For areas that cannot be statically analyzed or where dependency collection is not desired, tracking can be explicitly turned off:
 
 ```ts
-import { noTrack } from 'fict/plus'
+import { untrack } from 'fict/plus'
 
 $effect(() => {
-  noTrack(() => {
+  untrack(() => {
     thirdPartyMutableApi.doSomethingDangerous()
   })
 })

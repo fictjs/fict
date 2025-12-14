@@ -765,8 +765,7 @@ Planned areas (subject to change):
   - [ ] `$store` for deep/path-level tracking (complex forms, editors)
   - [ ] `resource` for declarative async data (cache, de-dupe, cancellation)
   - [ ] `transition` / `task` for scheduling and low-priority updates
-  - [ ] `noTrack` escape hatch for black-box libraries
-
+  - [ ] `untrack` escape hatch for black-box libraries
 - **Tooling**
   - [ ] Vite plugin
   - [ ] ESLint rules for common footguns

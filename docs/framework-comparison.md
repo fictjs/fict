@@ -158,7 +158,7 @@ watchEffect(() => console.log(count.value))
 Fict is unique in that there is **no** `$derived` or `computed` primitive in the user API.
 
 - **Pros**: Smaller API surface area. "It just works."
-- **Cons**: Implicit magic. If the compiler fails to detect dependencies (e.g., inside a black-box function), reactivity breaks. Fict mitigates this with `noTrack` and warnings.
+- **Cons**: Implicit magic. If the compiler fails to detect dependencies (e.g., inside a black-box function), reactivity breaks. Fict mitigates this with `untrack` and warnings.
 
 ### 4.2 On-Demand Execution Model
 

@@ -410,7 +410,7 @@ Strategy:
    - "Dependency scope widened due to dynamic path access here"
    - "This function call is treated as a black box, may cause over-recomputation"
 
-Developers can locally turn off Fict's smart behavior via escape hatches like `noTrack` / `"use no memo"`.
+Developers can locally turn off Fict's smart behavior via escape hatches like `untrack` / `"use no memo"`.
 
 ---
 
@@ -592,7 +592,7 @@ Therefore:
   - Tell you via warning "I can only be crude here"
 
 - If you want to completely turn off analysis for a file/function:
-  - You can use escape hatches like `// "use no memo"` or `noTrack`.
+  - You can use escape hatches like `// "use no memo"` or `untrack`.
 
 This Spec itself will be constantly corrected with implementation:
 **The final criterion is the balance of "User Intuition + Implementability + Performance".**
