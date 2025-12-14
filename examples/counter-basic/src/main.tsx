@@ -3,6 +3,8 @@ import { $state, $effect, render } from 'fict'
 function Counter() {
   let count = $state(0)
   const doubled = count * 2
+  const fourfold = doubled * 2
+  console.log('fourfold', fourfold)
 
   $effect(() => {
     document.title = `Count: ${count}`
@@ -12,7 +14,7 @@ function Counter() {
     <div style={{ padding: '2rem', fontFamily: 'system-ui, sans-serif' }}>
       <h1>Fict Counter Example</h1>
       <p style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>
-        Count: <strong>{count}</strong>
+        Count: <strong>{fourfold}</strong>
       </p>
       <p style={{ fontSize: '1.2rem', marginBottom: '2rem' }}>
         Doubled: <strong>{doubled}</strong>

@@ -213,7 +213,7 @@ export const createFictPlugin = declare(
                   !ctx.options.lazyConditional &&
                   !isModuleScope &&
                   !isExported &&
-                  shouldEmitGetter(name, ctx, t)
+                  shouldEmitGetter(path, name, ctx, t)
 
                 if (useGetterOnly) {
                   ctx.getterOnlyVars.add(name)
@@ -2293,124 +2293,76 @@ function getFunctionDepth(path: BabelCore.NodePath): number {
   return depth
 }
 
-function shouldEmitGetter(name: string, ctx: TransformContext, t: typeof BabelCore.types): boolean {
-  const program = ctx.file?.ast?.program as BabelCore.types.Program | undefined
-  if (!program) return false
+function shouldEmitGetter(
+  declPath: BabelCore.NodePath<BabelCore.types.Node>,
+  name: string,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): boolean {
+  // Use Babel's binding resolution so we only consider references to THIS binding,
+  // and we can accurately tell whether a reference occurs in a nested function.
+  const binding = declPath.scope.getBinding(name)
+  if (!binding) return false
 
   let reactive = false
   let eventUsage = false
   let otherUsage = false
 
-  const visit = (
-    node: BabelCore.types.Node,
-    shadow: Set<string>,
-    ancestors: BabelCore.types.Node[],
-    inFunction: boolean,
-  ): void => {
-    if (reactive) return
+  const declarationFuncScope = binding.scope.getFunctionParent()
 
-    // Track function params and shadowing
-    if (
-      t.isFunctionDeclaration(node) ||
-      t.isFunctionExpression(node) ||
-      t.isArrowFunctionExpression(node)
-    ) {
-      const nextShadow = new Set(shadow)
-      for (const param of node.params) {
-        collectBindingNames(param as any, nextShadow, t)
-      }
-      for (const childKey of Object.keys(node) as (keyof typeof node)[]) {
-        const child = (node as any)[childKey]
-        if (Array.isArray(child)) {
-          for (const c of child) {
-            if (c && typeof c === 'object' && 'type' in c && typeof (c as any).type === 'string') {
-              visit(c as BabelCore.types.Node, nextShadow, ancestors.concat(node), true)
-            }
-          }
-        } else if (
-          child &&
-          typeof child === 'object' &&
-          'type' in child &&
-          typeof (child as any).type === 'string'
-        ) {
-          visit(child as BabelCore.types.Node, nextShadow, ancestors.concat(node), true)
-        }
-      }
-      return
+  for (const refPath of binding.referencePaths) {
+    if (reactive) break
+
+    // Ignore non-runtime/type-only positions
+    if (typeof (refPath as any).isReferencedIdentifier === 'function') {
+      if (!(refPath as any).isReferencedIdentifier()) continue
     }
 
-    if (t.isVariableDeclarator(node) && t.isIdentifier(node.id)) {
-      const nextShadow = new Set(shadow)
-      nextShadow.add(node.id.name)
-      if (node.init) {
-        visit(node.init, nextShadow, ancestors.concat(node), inFunction)
-      }
-      return
-    }
-
-    if (t.isIdentifier(node) && node.name === name && !shadow.has(name)) {
-      // const parent = ancestors[ancestors.length - 1]
-
-      const inEffect = ancestors.some(
-        anc =>
-          t.isCallExpression(anc) && t.isIdentifier(anc.callee) && anc.callee.name === '$effect',
-      )
-
-      // JSX attribute detection
-      const jsxAttrAncestor = ancestors.find(anc => t.isJSXAttribute(anc)) as
-        | BabelCore.types.JSXAttribute
-        | undefined
-      if (jsxAttrAncestor && t.isJSXIdentifier(jsxAttrAncestor.name)) {
-        const attrName = jsxAttrAncestor.name.name
+    // JSX attribute detection (onClick/non-reactive attrs are treated as event-only usage)
+    const jsxAttrPath = refPath.findParent(p => p.isJSXAttribute())
+    if (jsxAttrPath && jsxAttrPath.isJSXAttribute()) {
+      const attrNameNode = jsxAttrPath.node.name
+      if (t.isJSXIdentifier(attrNameNode)) {
+        const attrName = attrNameNode.name
         if (isEventHandler(attrName) || NON_REACTIVE_ATTRS.has(attrName)) {
           eventUsage = true
-        } else {
-          reactive = true
+          continue
         }
-        return
       }
+      reactive = true
+      break
+    }
 
-      const inJsxExpression = ancestors.some(anc => t.isJSXExpressionContainer(anc))
+    // JSX expression containers are reactive sinks
+    const inJsxExpression = !!refPath.findParent(p => p.isJSXExpressionContainer())
+    if (inJsxExpression) {
+      reactive = true
+      break
+    }
 
-      if (inEffect || inJsxExpression) {
-        reactive = true
-        return
-      }
+    // $effect callback is a reactive sink
+    const inEffect = !!refPath.findParent(p => {
+      if (!p.isCallExpression()) return false
+      const callee = (p.node as BabelCore.types.CallExpression).callee
+      return t.isIdentifier(callee) && callee.name === '$effect'
+    })
+    if (inEffect) {
+      reactive = true
+      break
+    }
 
-      if (inFunction) {
-        eventUsage = true
-        return
-      }
-
+    // If a reference occurs in a nested function (relative to the declaration's function),
+    // we treat it as event-only usage. Otherwise it's "other" usage (component/module body).
+    const usageFuncScope = refPath.scope.getFunctionParent()
+    if (usageFuncScope !== declarationFuncScope) {
+      eventUsage = true
+    } else {
       otherUsage = true
-      return
-    }
-
-    const nextShadow = new Set(shadow)
-    if (t.isVariableDeclarator(node) && t.isIdentifier(node.id)) {
-      nextShadow.add(node.id.name)
-    }
-
-    for (const key of Object.keys(node) as (keyof typeof node)[]) {
-      const child = (node as any)[key]
-      if (Array.isArray(child)) {
-        for (const c of child) {
-          if (c && typeof c === 'object' && 'type' in c && typeof (c as any).type === 'string') {
-            visit(c as BabelCore.types.Node, nextShadow, ancestors.concat(node), inFunction)
-          }
-        }
-      } else if (
-        child &&
-        typeof child === 'object' &&
-        'type' in child &&
-        typeof (child as any).type === 'string'
-      ) {
-        visit(child as BabelCore.types.Node, nextShadow, ancestors.concat(node), inFunction)
-      }
+      // No need to keep scanning: any non-nested usage forces memo.
+      break
     }
   }
 
-  visit(program, new Set<string>(), [], false)
   if (reactive || otherUsage) return false
   return eventUsage
 }
@@ -3592,11 +3544,12 @@ function applyRegionTransform(
       ctx,
       t,
     )
-    const activeOutputs = ctx.options.lazyConditional
+    const baseActiveOutputs = ctx.options.lazyConditional
       ? outputs
       : referencedOutside.size
         ? referencedOutside
         : outputs
+    const activeOutputs = expandActiveOutputsWithDependencies(baseActiveOutputs, outputs, ctx)
 
     const reassignedLater = hasAssignmentsOutside(
       statements as BabelCore.types.Statement[],
@@ -3604,7 +3557,14 @@ function applyRegionTransform(
       startAfterRegion,
       t,
     )
-    if (reassignedLater || activeOutputs.size < 2) {
+    const hasControlFlow = regionHasControlFlow(
+      statements as BabelCore.types.Statement[],
+      start,
+      regionEnd,
+      t,
+    )
+    const hasInternalDeps = outputsHaveInternalDependencies(activeOutputs, ctx)
+    if (reassignedLater || activeOutputs.size < 2 || (hasInternalDeps && !hasControlFlow)) {
       for (let i = start; i <= end; i++) {
         result.push(statements[i] as BabelCore.types.Statement)
       }
@@ -3617,12 +3577,14 @@ function applyRegionTransform(
       start,
       end,
       t,
+      outputs,
     )
     const regionStatements = cloneRegionStatements(
       statements as BabelCore.types.Statement[],
       start,
       regionEnd,
       t,
+      outputs,
     )
 
     let orderedOutputs = collectOutputsInOrder(regionStatements, activeOutputs, t)
@@ -3699,12 +3661,20 @@ function applyRegionTransform(
     ctx,
     t,
   )
-  const activeOutputs = ctx.options.lazyConditional
+  const baseActiveOutputs = ctx.options.lazyConditional
     ? derivedOutputs
     : referencedOutside.size
       ? referencedOutside
       : derivedOutputs
-  if (activeOutputs.size < 2) return
+  const activeOutputs = expandActiveOutputsWithDependencies(baseActiveOutputs, derivedOutputs, ctx)
+  const hasControlFlow = regionHasControlFlow(
+    statements as BabelCore.types.Statement[],
+    firstTouched,
+    regionEnd,
+    t,
+  )
+  const hasInternalDeps = outputsHaveInternalDependencies(activeOutputs, ctx)
+  if (activeOutputs.size < 2 || (hasInternalDeps && !hasControlFlow)) return
 
   const before = (statements as BabelCore.types.Statement[]).slice(0, firstTouched)
   const analysisStatements = cloneRegionStatements(
@@ -3712,12 +3682,14 @@ function applyRegionTransform(
     firstTouched,
     lastTouched,
     t,
+    activeOutputs,
   )
   const regionStatements = cloneRegionStatements(
     statements as BabelCore.types.Statement[],
     firstTouched,
     regionEnd,
     t,
+    activeOutputs,
   )
 
   const orderedOutputs = collectOutputsInOrder(regionStatements, activeOutputs, t)
@@ -3740,11 +3712,76 @@ function cloneRegionStatements(
   start: number,
   end: number,
   t: typeof BabelCore.types,
+  outputsToUncall?: Set<string>,
 ): BabelCore.types.Statement[] {
   const slice = statements
     .slice(start, end + 1)
     .map(stmt => t.cloneNode(stmt, true)) as BabelCore.types.Statement[]
-  return slice.map(stmt => stripMemoFromStatement(stmt, t))
+  return slice.map(stmt => {
+    const stripped = stripMemoFromStatement(stmt, t)
+    if (outputsToUncall && outputsToUncall.size) {
+      stripGetterCallsFromStatement(stripped, outputsToUncall, t)
+    }
+    return stripped
+  })
+}
+
+/**
+ * When a derived output is promoted into a region memo callback, the output becomes a local
+ * value within that callback. However, earlier compilation phases may have already rewritten
+ * output reads to accessor calls (e.g. `doubled()`).
+ *
+ * This pass rewrites `outputName()` -> `outputName` for region-local outputs so the region
+ * callback remains valid JS (and preserves semantics).
+ */
+function stripGetterCallsFromStatement(
+  stmt: BabelCore.types.Statement,
+  outputs: Set<string>,
+  t: typeof BabelCore.types,
+): void {
+  const visitNode = (node: BabelCore.types.Node): BabelCore.types.Node => {
+    // Replace `output()` with `output`
+    if (
+      t.isCallExpression(node) &&
+      t.isIdentifier(node.callee) &&
+      outputs.has(node.callee.name) &&
+      node.arguments.length === 0
+    ) {
+      return t.identifier(node.callee.name)
+    }
+
+    // Skip function bodies
+    if (
+      t.isFunctionDeclaration(node) ||
+      t.isFunctionExpression(node) ||
+      t.isArrowFunctionExpression(node)
+    ) {
+      return node
+    }
+
+    for (const key of Object.keys(node) as (keyof typeof node)[]) {
+      const child = node[key]
+      if (Array.isArray(child)) {
+        for (let i = 0; i < child.length; i++) {
+          const c = child[i]
+          if (c && typeof c === 'object' && 'type' in c && typeof (c as any).type === 'string') {
+            child[i] = visitNode(c as unknown as BabelCore.types.Node) as any
+          }
+        }
+      } else if (
+        child &&
+        typeof child === 'object' &&
+        'type' in child &&
+        typeof (child as any).type === 'string'
+      ) {
+        ;(node as any)[key] = visitNode(child as unknown as BabelCore.types.Node) as any
+      }
+    }
+
+    return node
+  }
+
+  visitNode(stmt)
 }
 
 function stripMemoFromStatement(
@@ -3817,6 +3854,103 @@ function unwrapMemoInitializer(
     }
   }
   return null
+}
+
+/**
+ * When only a subset of region outputs are referenced outside the region, we still need to
+ * include any *internal derived dependencies* among outputs (e.g. fourfold depends on doubled).
+ *
+ * Otherwise the primary region pass may skip region creation (activeOutputs.size < 2), causing
+ * the fallback to group a larger span and potentially pull consumers/side effects into the memo.
+ */
+function expandActiveOutputsWithDependencies(
+  initial: Set<string>,
+  regionOutputs: Set<string>,
+  ctx: TransformContext,
+): Set<string> {
+  const expanded = new Set<string>(initial)
+
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const out of Array.from(expanded)) {
+      const deps = ctx.dependencyGraph.get(out)
+      if (!deps) continue
+      for (const dep of deps) {
+        if (regionOutputs.has(dep) && !expanded.has(dep)) {
+          expanded.add(dep)
+          changed = true
+        }
+      }
+    }
+  }
+
+  return expanded
+}
+
+/**
+ * If any output depends on another output within the same set, we should not group them into a
+ * region memo; otherwise dependent outputs lose their own memo wrappers (e.g. derived-of-derived).
+ */
+function outputsHaveInternalDependencies(outputs: Set<string>, ctx: TransformContext): boolean {
+  for (const out of outputs) {
+    const deps = ctx.dependencyGraph.get(out)
+    if (!deps) continue
+    for (const dep of deps) {
+      if (outputs.has(dep)) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+function regionHasControlFlow(
+  statements: BabelCore.types.Statement[],
+  start: number,
+  end: number,
+  t: typeof BabelCore.types,
+): boolean {
+  const visit = (node: BabelCore.types.Node): boolean => {
+    if (
+      t.isIfStatement(node) ||
+      t.isSwitchStatement(node) ||
+      t.isWhileStatement(node) ||
+      t.isDoWhileStatement(node) ||
+      t.isForStatement(node) ||
+      t.isForOfStatement(node) ||
+      t.isForInStatement(node) ||
+      t.isConditionalExpression(node) ||
+      t.isLogicalExpression(node)
+    ) {
+      return true
+    }
+
+    for (const key of Object.keys(node) as (keyof typeof node)[]) {
+      const child = (node as any)[key]
+      if (Array.isArray(child)) {
+        for (const c of child) {
+          if (c && typeof c === 'object' && 'type' in c && typeof c.type === 'string') {
+            if (visit(c as BabelCore.types.Node)) return true
+          }
+        }
+      } else if (
+        child &&
+        typeof child === 'object' &&
+        'type' in child &&
+        typeof child.type === 'string'
+      ) {
+        if (visit(child as BabelCore.types.Node)) return true
+      }
+    }
+    return false
+  }
+
+  for (let i = start; i <= end; i++) {
+    const stmt = statements[i]
+    if (stmt && visit(stmt)) return true
+  }
+  return false
 }
 
 function collectReferencedOutputs(

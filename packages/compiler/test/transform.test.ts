@@ -83,6 +83,45 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('__fictMemo(() => count() * 2)')
     })
 
+    it('creates memo for chained derived values (derived-from-derived) in component body', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          const doubled = count * 2
+          const fourfold = doubled * 2
+          console.log('fourfold', fourfold)
+          return null
+    }
+  `
+      const output = transform(input)
+      // Dependent derived values should each get their own memo to preserve memoized chains.
+      expect(output).toContain('__fictMemo(() => count() * 2)')
+      expect(output).toContain('__fictMemo(() => doubled() * 2)')
+      expect(output).toContain("console.log('fourfold', fourfold())")
+      expect(output).not.toContain('__fictRegion_')
+    })
+
+    it('groups independent derived values into a region memo', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          const doubled = count * 2
+          const squared = count * count
+          console.log(doubled, squared)
+          return null
+        }
+      `
+      const output = transform(input)
+      expect(output).toContain('__fictRegion_')
+      expect(output).toContain('__fictMemo(() => {')
+      expect(output).toContain('const doubled = count() * 2')
+      expect(output).toContain('const squared = count() * count()')
+      expect(output).toContain('const doubled = () => __fictRegion_')
+      expect(output).toContain('const squared = () => __fictRegion_')
+    })
+
     it('does not memo function expressions', () => {
       const input = `
         import { $state } from 'fict'

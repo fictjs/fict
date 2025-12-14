@@ -609,6 +609,80 @@ export function statementTouchesOutputs(
 }
 
 /**
+ * Check if a statement DEFINES (declares/assigns) any outputs.
+ * This is used to avoid pulling pure "consumer" statements (e.g. console.log(output))
+ * into a region memo, which would change evaluation order and (with lazy memos) can
+ * drop side effects entirely.
+ */
+function statementDefinesOutputs(
+  stmt: BabelCore.types.Statement,
+  outputs: Set<string>,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): boolean {
+  let defines = false
+
+  const visit = (node: BabelCore.types.Node, shadow: Set<string>): void => {
+    if (defines) return
+
+    // Skip function bodies
+    if (
+      t.isFunctionDeclaration(node) ||
+      t.isFunctionExpression(node) ||
+      t.isArrowFunctionExpression(node)
+    ) {
+      return
+    }
+
+    if (t.isVariableDeclarator(node) && t.isIdentifier(node.id) && outputs.has(node.id.name)) {
+      defines = true
+      return
+    }
+
+    if (
+      t.isAssignmentExpression(node) &&
+      t.isIdentifier(node.left) &&
+      outputs.has(node.left.name) &&
+      !shadow.has(node.left.name)
+    ) {
+      defines = true
+      return
+    }
+
+    const nextShadow = new Set(shadow)
+    if (t.isVariableDeclarator(node) && t.isIdentifier(node.id)) {
+      nextShadow.add(node.id.name)
+    }
+
+    for (const key of Object.keys(node) as (keyof typeof node)[]) {
+      const child = node[key]
+      if (Array.isArray(child)) {
+        for (const c of child) {
+          if (
+            c &&
+            typeof c === 'object' &&
+            'type' in c &&
+            typeof (c as unknown as { type: unknown }).type === 'string'
+          ) {
+            visit(c as unknown as BabelCore.types.Node, nextShadow)
+          }
+        }
+      } else if (
+        child &&
+        typeof child === 'object' &&
+        'type' in child &&
+        typeof (child as unknown as { type: unknown }).type === 'string'
+      ) {
+        visit(child as unknown as BabelCore.types.Node, nextShadow)
+      }
+    }
+  }
+
+  visit(stmt, new Set(ctx.shadowedVars))
+  return defines
+}
+
+/**
  * Collect outputs in declaration order
  */
 export function collectOutputsInOrder(
@@ -698,15 +772,28 @@ export function findNextRegion(
     if (!stmt) continue
 
     const touched = statementTouchesOutputs(stmt, derivedOutputs, ctx, t)
+    const defines = touched ? statementDefinesOutputs(stmt, derivedOutputs, ctx, t) : false
 
     if (touched) {
-      if (start === -1) start = i
-      if (!containsEarlyReturn(stmt, t)) {
+      // Ignore pure reads until we hit the first defining statement. This prevents
+      // accidental regions starting at consumer-only statements.
+      if (start === -1) {
+        if (!defines) continue
+        start = i
+      }
+
+      // If we've started a region, stop BEFORE consumer-only statements so side effects
+      // remain in original order (outside the lazy memo callback).
+      if (start !== -1 && !defines && !containsEarlyReturn(stmt, t)) {
+        break
+      }
+
+      if (defines && !containsEarlyReturn(stmt, t)) {
         end = i
         lastNonEarlyReturnTouched = i
       }
 
-      if (t.isVariableDeclaration(stmt)) {
+      if (defines && t.isVariableDeclaration(stmt)) {
         for (const decl of stmt.declarations) {
           if (t.isIdentifier(decl.id) && derivedOutputs.has(decl.id.name)) {
             outputs.add(decl.id.name)
