@@ -2,6 +2,50 @@ import type * as BabelCore from '@babel/core'
 
 import type { TransformContext } from './types'
 
+const NO_MEMO_DIRECTIVE_TEXT = 'use no memo'
+
+export function detectNoMemoDirective(
+  path: BabelCore.NodePath<BabelCore.types.Program | BabelCore.types.BlockStatement>,
+  t: typeof BabelCore.types,
+): boolean {
+  let found = false
+
+  if (Array.isArray(path.node.directives)) {
+    const filtered = path.node.directives.filter(d => {
+      if (d.value.value === NO_MEMO_DIRECTIVE_TEXT) {
+        found = true
+        return false
+      }
+      return true
+    })
+    if (filtered.length !== path.node.directives.length) {
+      path.node.directives = filtered
+    }
+  }
+
+  const body = (path.node as BabelCore.types.Program | BabelCore.types.BlockStatement).body
+  if (Array.isArray(body) && body.length > 0) {
+    const first = body[0]
+    if (
+      t.isExpressionStatement(first) &&
+      t.isStringLiteral(first.expression) &&
+      first.expression.value === NO_MEMO_DIRECTIVE_TEXT
+    ) {
+      found = true
+      body.shift()
+    }
+  }
+
+  if (Array.isArray(body) && body.length > 0) {
+    const comments = (body[0].leadingComments ?? []).map(c => c.value.trim())
+    if (comments.some(c => c.includes(NO_MEMO_DIRECTIVE_TEXT))) {
+      found = true
+    }
+  }
+
+  return found
+}
+
 // ============================================================================
 // Utility Functions
 // ============================================================================
@@ -344,4 +388,14 @@ export function isDynamicElementAccess(
     return property.expressions.length > 0
   }
   return !(t.isStringLiteral(property) || t.isNumericLiteral(property))
+}
+
+export function isInNoMemoScope(path: BabelCore.NodePath, ctx: TransformContext): boolean {
+  if (ctx.noMemo) return true
+  let fn = path.getFunctionParent()
+  while (fn) {
+    if (ctx.noMemoFunctions.has(fn.node as BabelCore.types.Function)) return true
+    fn = fn.getFunctionParent()
+  }
+  return false
 }

@@ -592,7 +592,8 @@ Therefore:
   - Tell you via warning "I can only be crude here"
 
 - If you want to completely turn off analysis for a file/function:
-  - You can use escape hatches like `// "use no memo"` or `untrack`.
+  - Use the directive `"use no memo"` (file-level or at the top of a function block) to disable memo/region grouping and fine-grained lowering while still rewriting `$state` reads/writes.
+  - Or use `untrack` for smaller untracked sections.
 
 This Spec itself will be constantly corrected with implementation:
 **The final criterion is the balance of "User Intuition + Implementability + Performance".**

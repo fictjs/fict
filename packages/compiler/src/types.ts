@@ -20,6 +20,8 @@ export interface TransformContext {
   exportedNames: Set<string>
   fineGrainedTemplateId: number
   file: BabelCore.BabelFile
+  noMemo: boolean
+  noMemoFunctions: WeakSet<BabelCore.types.Function>
 }
 
 export interface HelperUsage {

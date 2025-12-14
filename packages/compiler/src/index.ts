@@ -47,6 +47,8 @@ import {
   getRootIdentifier,
   isTrackedRoot,
   isDynamicElementAccess,
+  detectNoMemoDirective,
+  isInNoMemoScope,
 } from './utils'
 
 export type { FictCompilerOptions, CompilerWarning } from './types'
@@ -96,6 +98,13 @@ export const createFictPlugin = declare(
               exportedNames: collectExportedNames(path, t),
               fineGrainedTemplateId: 0,
               file,
+              noMemo: false,
+              noMemoFunctions: new WeakSet(),
+            }
+
+            if (detectNoMemoDirective(path, t)) {
+              ctx.noMemo = true
+              ctx.options = { ...ctx.options, fineGrainedDom: false }
             }
 
             // Phase 4: Pre-analysis - collect derived variables
@@ -129,6 +138,7 @@ export const createFictPlugin = declare(
         VariableDeclaration(path, state) {
           const ctx = (state as any).__fictCtx as TransformContext
           if (!ctx) return
+          const inNoMemo = isInNoMemoScope(path, ctx)
 
           for (const declarator of path.node.declarations) {
             if (!declarator.init) continue
@@ -191,7 +201,7 @@ export const createFictPlugin = declare(
               if (isInEffect) {
                 // Inside $effect - skip memoization, just transform the initializer to capture value
                 declarator.init = transformExpression(declarator.init, ctx, t)
-              } else {
+              } else if (!inNoMemo) {
                 // Outside $effect - memoize as usual
                 ctx.memoVars.add(name)
                 ctx.guardedDerived.add(name)
@@ -214,6 +224,9 @@ export const createFictPlugin = declare(
                     t.arrowFunctionExpression([], transformedInit),
                   ])
                 }
+              } else {
+                // No-memo scope: still transform expressions ($state reads/writes) but don't memoize
+                declarator.init = transformExpression(declarator.init, ctx, t)
               }
             }
           }
@@ -433,6 +446,7 @@ export const createFictPlugin = declare(
         JSXElement(path, state) {
           const ctx = (state as any).__fictCtx as TransformContext
           if (!ctx) return
+          if (isInNoMemoScope(path, ctx)) return
 
           const lowered = transformFineGrainedJsx(path.node, ctx, t)
           if (lowered) {
@@ -606,6 +620,19 @@ export const createFictPlugin = declare(
               )
             ) {
               return
+            }
+
+            if (t.isBlockStatement(path.node.body)) {
+              const bodyPath = path.get('body')
+              if (
+                !Array.isArray(bodyPath) &&
+                detectNoMemoDirective(
+                  bodyPath as BabelCore.NodePath<BabelCore.types.BlockStatement>,
+                  t,
+                )
+              ) {
+                ctx.noMemoFunctions.add(path.node as BabelCore.types.Function)
+              }
             }
 
             const containsJsx = functionContainsJsx(path.node, t)
@@ -830,6 +857,7 @@ function collectDerivedOutputs(
   ctx: TransformContext,
   t: typeof BabelCore.types,
 ): Set<string> {
+  if (ctx.noMemo) return new Set()
   const derived = new Set<string>()
 
   // Collect all const declarations with their initializers
@@ -2886,6 +2914,8 @@ function applyRegionTransform(
   ctx: TransformContext,
   t: typeof BabelCore.types,
 ): void {
+  if (ctx.noMemo) return
+  if (path.isBlockStatement() && isInNoMemoScope(path, ctx)) return
   const statements = (path.node as BabelCore.types.Program | BabelCore.types.BlockStatement).body
   if (!Array.isArray(statements) || statements.length === 0) return
 

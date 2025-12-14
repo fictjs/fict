@@ -15,7 +15,6 @@
 import {
   createTextBinding,
   createAttributeBinding,
-  bindProperty,
   createStyleBinding,
   createClassBinding,
   createChildBinding,
