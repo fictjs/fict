@@ -105,12 +105,10 @@ describe('Spec rule coverage', () => {
       onWarn: warning => warnings.push(warning),
     })
 
-    // Note: Warning codes may vary between implementations
-    // Check if any warnings were emitted for mutation/dynamic access
-    const hasRelevantWarning =
-      warnings.length > 0 || warnings.some(w => w.code === 'FICT-M' || w.code === 'FICT-H')
-    // This test may pass even without warnings in Babel version
-    expect(true).toBe(true)
+    // Should emit FICT-M (mutation) and/or FICT-H (dynamic access) warnings
+    const hasMutationWarning = warnings.some(w => w.code === 'FICT-M')
+    const hasDynamicAccessWarning = warnings.some(w => w.code === 'FICT-H')
+    expect(hasMutationWarning || hasDynamicAccessWarning).toBe(true)
   })
 
   it('detects cyclic derived dependencies', () => {

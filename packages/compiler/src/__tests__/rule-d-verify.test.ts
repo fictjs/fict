@@ -26,7 +26,6 @@ describe('Rule D Verification', () => {
       }
     `
     const output = transform(input)
-    console.log(output)
 
     // Should contain the region marker
     expect(output).toContain('__fictRegion')
