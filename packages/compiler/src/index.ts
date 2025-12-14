@@ -1384,25 +1384,25 @@ function createListBinding(
         )
       : null
 
-  let renderedBody: BabelCore.types.Expression | BabelCore.types.BlockStatement
+  let _renderedBody: BabelCore.types.Expression | BabelCore.types.BlockStatement
   if (fineGrainedRenderer) {
-    renderedBody = fineGrainedRenderer
+    _renderedBody = fineGrainedRenderer
   } else if (t.isCallExpression(transformedExpr)) {
     const transformedCallback = transformedExpr.arguments[0]
     if (
       t.isArrowFunctionExpression(transformedCallback) ||
       t.isFunctionExpression(transformedCallback)
     ) {
-      renderedBody = t.isExpression(transformedCallback.body)
+      _renderedBody = t.isExpression(transformedCallback.body)
         ? transformedCallback.body
         : transformedCallback.body
     } else {
-      renderedBody = t.isExpression(mapCallback.body)
+      _renderedBody = t.isExpression(mapCallback.body)
         ? transformExpression(mapCallback.body, ctx, t)
         : mapCallback.body
     }
   } else {
-    renderedBody = t.isExpression(mapCallback.body)
+    _renderedBody = t.isExpression(mapCallback.body)
       ? transformExpression(mapCallback.body, ctx, t)
       : mapCallback.body
   }
@@ -1712,7 +1712,7 @@ function shouldEmitGetter(name: string, ctx: TransformContext, t: typeof BabelCo
     }
 
     if (t.isIdentifier(node) && node.name === name && !shadow.has(name)) {
-      const parent = ancestors[ancestors.length - 1]
+      // const parent = ancestors[ancestors.length - 1]
 
       const inEffect = ancestors.some(
         anc =>
@@ -1863,12 +1863,12 @@ function isShadowedByEnclosingScope(
       // Walk up to find if this pattern is a function parameter
       let current: BabelCore.NodePath | null = parent
       while (current) {
-        const node = current.node
+        // const node = current.node
         // Check if we've reached a function and this pattern is one of its params
         if (current.isFunction()) {
           const funcParams = (current.node as BabelCore.types.Function).params
           // Check if any ancestor is in the function's params
-          const patternNode = bindingPath.node
+          // const patternNode = bindingPath.node
           let patternPath: BabelCore.NodePath | null = bindingPath
           while (patternPath && !funcParams.includes(patternPath.node as any)) {
             patternPath = patternPath.parentPath
