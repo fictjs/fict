@@ -259,7 +259,8 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transformWithOptions(input)
-      expect(output).toContain('__fictKeyedList')
+      expect(output).toContain('__fictCreateKeyedListContainer')
+      expect(output).toContain('__fictMoveMarkerBlock')
       expect(output).toContain('document.createElement("li")')
       expect(output).toContain('__fictBindText')
       expect(output).toContain('__fgValueSig().label')

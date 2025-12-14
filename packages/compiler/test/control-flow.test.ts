@@ -54,8 +54,8 @@ describe('Fict Compiler - Control Flow', () => {
         const el = <ul>{items.map(item => <li key={item}>{item}</li>)}</ul>
       `
       const output = transform(input)
-      // Should use createKeyedList
-      expect(output).toContain('__fictKeyedList')
+      // Should use keyed list container helpers
+      expect(output).toContain('__fictCreateKeyedListContainer')
       // Should have getItems arrow function
       expect(output).toContain('() => items()')
       // Should have keyFn
@@ -69,8 +69,8 @@ describe('Fict Compiler - Control Flow', () => {
         const el = <ul>{users.map(user => <li key={user.id}>{user.name}</li>)}</ul>
       `
       const output = transform(input)
-      // Should use createKeyedList
-      expect(output).toContain('__fictKeyedList')
+      // Should use keyed list container helpers
+      expect(output).toContain('__fictCreateKeyedListContainer')
       // Should extract user.id as key
       expect(output).toContain('user.id')
     })
@@ -84,8 +84,8 @@ describe('Fict Compiler - Control Flow', () => {
       const output = transform(input)
       // Should use old createList (not keyed)
       expect(output).toContain('__fictList')
-      // Should NOT use createKeyedList
-      expect(output).not.toContain('__fictKeyedList')
+      // Should NOT use keyed list helpers
+      expect(output).not.toContain('__fictCreateKeyedListContainer')
     })
 
     it('handles array map with index', () => {

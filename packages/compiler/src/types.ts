@@ -41,6 +41,11 @@ export interface HelperUsage {
   bindStyle: boolean
   bindEvent: boolean
   toNodeArray: boolean
+  createKeyedListContainer: boolean
+  createKeyedBlock: boolean
+  moveMarkerBlock: boolean
+  destroyMarkerBlock: boolean
+  getFirstNodeAfter: boolean
 }
 
 export interface CompilerWarning {
@@ -87,5 +92,10 @@ export function createHelperUsage(): HelperUsage {
     bindStyle: false,
     bindEvent: false,
     toNodeArray: false,
+    createKeyedListContainer: false,
+    createKeyedBlock: false,
+    moveMarkerBlock: false,
+    destroyMarkerBlock: false,
+    getFirstNodeAfter: false,
   }
 }

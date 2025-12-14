@@ -21,6 +21,11 @@ export const RUNTIME_HELPERS = {
   bindStyle: 'bindStyle',
   bindEvent: 'bindEvent',
   toNodeArray: 'toNodeArray',
+  createKeyedListContainer: 'createKeyedListContainer',
+  createKeyedBlock: 'createKeyedBlock',
+  moveMarkerBlock: 'moveMarkerBlock',
+  destroyMarkerBlock: 'destroyMarkerBlock',
+  getFirstNodeAfter: 'getFirstNodeAfter',
 } as const
 
 export const RUNTIME_ALIASES = {
@@ -40,6 +45,11 @@ export const RUNTIME_ALIASES = {
   bindStyle: '__fictBindStyle',
   bindEvent: '__fictBindEvent',
   toNodeArray: '__fictToNodeArray',
+  createKeyedListContainer: '__fictCreateKeyedListContainer',
+  createKeyedBlock: '__fictCreateKeyedBlock',
+  moveMarkerBlock: '__fictMoveMarkerBlock',
+  destroyMarkerBlock: '__fictDestroyMarkerBlock',
+  getFirstNodeAfter: '__fictGetFirstNodeAfter',
 } as const
 
 // Attributes that should NOT be wrapped in reactive functions

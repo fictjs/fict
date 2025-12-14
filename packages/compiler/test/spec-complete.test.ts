@@ -460,7 +460,7 @@ describe('R016: Loop semantics', () => {
       let items = $state([{ id: 1, name: 'A' }])
       return <ul>{items.map(item => <li key={item.id}>{item.name}</li>)}</ul>
     `)
-    expect(output).toContain('__fictKeyedList')
+    expect(output).toContain('__fictCreateKeyedListContainer')
   })
 })
 
@@ -590,7 +590,7 @@ describe('Fine-grained DOM generation', () => {
     expect(output).toContain('__fictBindAttribute')
   })
 
-  it('generates createKeyedList for keyed map', () => {
+  it('generates keyed list container for keyed map', () => {
     const output = transform(
       `
       import { $state } from 'fict'
@@ -599,7 +599,7 @@ describe('Fine-grained DOM generation', () => {
     `,
       { fineGrainedDom: true },
     )
-    expect(output).toContain('__fictKeyedList')
+    expect(output).toContain('__fictCreateKeyedListContainer')
   })
 
   it('generates conditional for ternary', () => {
@@ -755,7 +755,7 @@ describe('Integration scenarios', () => {
     `)
 
     expect(output).toContain('__fictSignal')
-    expect(output).toContain('__fictKeyedList')
+    expect(output).toContain('__fictCreateKeyedListContainer')
   })
 
   it('component with props and state transforms correctly', () => {

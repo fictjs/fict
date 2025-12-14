@@ -1369,11 +1369,20 @@ function createListBinding(
   }
 
   const isKeyed = keyExpr !== null
-  const helperName = isKeyed ? 'keyedList' : 'list'
-  ctx.helpersUsed[helperName] = true
+  if (!isKeyed) {
+    ctx.helpersUsed.list = true
+  }
   ctx.helpersUsed.onDestroy = true
   ctx.helpersUsed.toNodeArray = true
   ctx.helpersUsed.createElement = true
+  if (isKeyed) {
+    ctx.helpersUsed.createKeyedListContainer = true
+    ctx.helpersUsed.createKeyedBlock = true
+    ctx.helpersUsed.moveMarkerBlock = true
+    ctx.helpersUsed.destroyMarkerBlock = true
+    ctx.helpersUsed.getFirstNodeAfter = true
+    ctx.helpersUsed.effect = true
+  }
 
   const bindingId = t.identifier(`__fictBinding_${++ctx.fineGrainedTemplateId}`)
 
@@ -1464,6 +1473,609 @@ function createListBinding(
           ),
         ]),
       )
+
+  if (isKeyed) {
+    const getItemsId = t.identifier(`${bindingId.name}_items`)
+    const keyFnId = t.identifier(`${bindingId.name}_key`)
+    const containerId = t.identifier(`${bindingId.name}_container`)
+    const markerId = t.identifier(`${bindingId.name}_marker`)
+    const pendingId = t.identifier(`${bindingId.name}_pending`)
+    const disposedId = t.identifier(`${bindingId.name}_disposed`)
+    const destroyBlockId = t.identifier(`${bindingId.name}_destroyBlock`)
+    const diffId = t.identifier(`${bindingId.name}_diff`)
+    const effectDisposeId = t.identifier(`${bindingId.name}_effectDispose`)
+    const disposeId = t.identifier(`${bindingId.name}_dispose`)
+
+    const getItemsDecl = t.variableDeclaration('const', [
+      t.variableDeclarator(getItemsId, t.arrowFunctionExpression([], transformedArray)),
+    ])
+
+    const keyFnDecl = t.variableDeclaration('const', [
+      t.variableDeclarator(keyFnId, keyExtractor ?? t.arrowFunctionExpression([], t.nullLiteral())),
+    ])
+
+    const containerDecl = t.variableDeclaration('const', [
+      t.variableDeclarator(
+        containerId,
+        t.callExpression(t.identifier(RUNTIME_ALIASES.createKeyedListContainer), []),
+      ),
+    ])
+
+    const markerDecl = t.variableDeclaration('const', [
+      t.variableDeclarator(
+        markerId,
+        t.callExpression(
+          t.memberExpression(t.identifier('document'), t.identifier('createDocumentFragment')),
+          [],
+        ),
+      ),
+    ])
+
+    const appendStartMarker = t.expressionStatement(
+      t.callExpression(t.memberExpression(markerId, t.identifier('appendChild')), [
+        t.memberExpression(containerId, t.identifier('startMarker')),
+      ]),
+    )
+
+    const appendEndMarker = t.expressionStatement(
+      t.callExpression(t.memberExpression(markerId, t.identifier('appendChild')), [
+        t.memberExpression(containerId, t.identifier('endMarker')),
+      ]),
+    )
+
+    const renderDecl = t.variableDeclaration('const', [
+      t.variableDeclarator(t.identifier(`${bindingId.name}_render`), renderer),
+    ])
+
+    const pendingDecl = t.variableDeclaration('let', [
+      t.variableDeclarator(pendingId, t.nullLiteral()),
+    ])
+    const disposedDecl = t.variableDeclaration('let', [
+      t.variableDeclarator(disposedId, t.booleanLiteral(false)),
+    ])
+
+    const destroyBlockDecl = t.variableDeclaration('const', [
+      t.variableDeclarator(
+        destroyBlockId,
+        t.arrowFunctionExpression(
+          [t.identifier('block')],
+          t.blockStatement([
+            t.variableDeclaration('const', [
+              t.variableDeclarator(
+                t.identifier('start'),
+                t.logicalExpression(
+                  '||',
+                  t.memberExpression(t.identifier('block'), t.identifier('start')),
+                  t.memberExpression(
+                    t.memberExpression(t.identifier('block'), t.identifier('nodes')),
+                    t.numericLiteral(0),
+                    true,
+                  ),
+                ),
+              ),
+            ]),
+            t.variableDeclaration('const', [
+              t.variableDeclarator(
+                t.identifier('end'),
+                t.logicalExpression(
+                  '||',
+                  t.memberExpression(t.identifier('block'), t.identifier('end')),
+                  t.memberExpression(
+                    t.memberExpression(t.identifier('block'), t.identifier('nodes')),
+                    t.binaryExpression(
+                      '-',
+                      t.memberExpression(
+                        t.memberExpression(t.identifier('block'), t.identifier('nodes')),
+                        t.identifier('length'),
+                      ),
+                      t.numericLiteral(1),
+                    ),
+                    true,
+                  ),
+                ),
+              ),
+            ]),
+            t.ifStatement(
+              t.logicalExpression(
+                '||',
+                t.unaryExpression('!', t.identifier('start')),
+                t.unaryExpression('!', t.identifier('end')),
+              ),
+              t.returnStatement(),
+            ),
+            t.expressionStatement(
+              t.callExpression(t.identifier(RUNTIME_ALIASES.destroyMarkerBlock), [
+                t.objectExpression([
+                  t.objectProperty(t.identifier('start'), t.identifier('start')),
+                  t.objectProperty(t.identifier('end'), t.identifier('end')),
+                  t.objectProperty(
+                    t.identifier('root'),
+                    t.memberExpression(t.identifier('block'), t.identifier('root')),
+                  ),
+                ]),
+              ]),
+            ),
+          ]),
+        ),
+      ),
+    ])
+
+    const diffBodyStatements: BabelCore.types.Statement[] = []
+    diffBodyStatements.push(
+      t.ifStatement(disposedId, t.returnStatement()),
+      t.variableDeclaration('const', [
+        t.variableDeclarator(
+          t.identifier('newItems'),
+          t.logicalExpression('||', pendingId, t.callExpression(getItemsId, [])),
+        ),
+      ]),
+      t.expressionStatement(t.assignmentExpression('=', pendingId, t.nullLiteral())),
+      t.variableDeclaration('const', [
+        t.variableDeclarator(
+          t.identifier('oldBlocks'),
+          t.memberExpression(containerId, t.identifier('blocks')),
+        ),
+      ]),
+      t.variableDeclaration('const', [
+        t.variableDeclarator(t.identifier('newBlocks'), t.newExpression(t.identifier('Map'), [])),
+      ]),
+      t.variableDeclaration('const', [
+        t.variableDeclarator(
+          t.identifier('parent'),
+          t.memberExpression(
+            t.memberExpression(containerId, t.identifier('endMarker')),
+            t.identifier('parentNode'),
+          ),
+        ),
+      ]),
+      t.ifStatement(
+        t.unaryExpression('!', t.identifier('parent')),
+        t.blockStatement([
+          t.expressionStatement(t.assignmentExpression('=', pendingId, t.identifier('newItems'))),
+          t.expressionStatement(t.callExpression(t.identifier('queueMicrotask'), [diffId])),
+          t.returnStatement(),
+        ]),
+      ),
+    )
+
+    const forLoop = t.forStatement(
+      t.variableDeclaration('let', [t.variableDeclarator(t.identifier('i'), t.numericLiteral(0))]),
+      t.binaryExpression(
+        '<',
+        t.identifier('i'),
+        t.memberExpression(t.identifier('newItems'), t.identifier('length')),
+      ),
+      t.updateExpression('++', t.identifier('i')),
+      t.blockStatement([
+        t.variableDeclaration('const', [
+          t.variableDeclarator(
+            t.identifier('item'),
+            t.memberExpression(t.identifier('newItems'), t.identifier('i'), true),
+          ),
+        ]),
+        t.variableDeclaration('const', [
+          t.variableDeclarator(
+            t.identifier('key'),
+            t.callExpression(keyFnId, [t.identifier('item'), t.identifier('i')]),
+          ),
+        ]),
+        t.variableDeclaration('let', [
+          t.variableDeclarator(
+            t.identifier('block'),
+            t.callExpression(t.memberExpression(t.identifier('oldBlocks'), t.identifier('get')), [
+              t.identifier('key'),
+            ]),
+          ),
+        ]),
+        t.ifStatement(
+          t.identifier('block'),
+          t.blockStatement([
+            t.expressionStatement(
+              t.callExpression(t.memberExpression(t.identifier('block'), t.identifier('item')), [
+                t.identifier('item'),
+              ]),
+            ),
+            t.expressionStatement(
+              t.callExpression(t.memberExpression(t.identifier('block'), t.identifier('index')), [
+                t.identifier('i'),
+              ]),
+            ),
+            t.ifStatement(
+              t.callExpression(t.memberExpression(t.identifier('newBlocks'), t.identifier('has')), [
+                t.identifier('key'),
+              ]),
+              t.expressionStatement(
+                t.callExpression(destroyBlockId, [
+                  t.callExpression(
+                    t.memberExpression(t.identifier('newBlocks'), t.identifier('get')),
+                    [t.identifier('key')],
+                  ),
+                ]),
+              ),
+            ),
+            t.ifStatement(
+              t.logicalExpression(
+                '||',
+                t.unaryExpression(
+                  '!',
+                  t.memberExpression(t.identifier('block'), t.identifier('start')),
+                ),
+                t.unaryExpression(
+                  '!',
+                  t.memberExpression(t.identifier('block'), t.identifier('end')),
+                ),
+              ),
+              t.blockStatement([
+                t.variableDeclaration('const', [
+                  t.variableDeclarator(
+                    t.identifier('start'),
+                    t.callExpression(
+                      t.memberExpression(t.identifier('document'), t.identifier('createComment')),
+                      [t.stringLiteral('fict:list:block')],
+                    ),
+                  ),
+                ]),
+                t.variableDeclaration('const', [
+                  t.variableDeclarator(
+                    t.identifier('end'),
+                    t.callExpression(
+                      t.memberExpression(t.identifier('document'), t.identifier('createComment')),
+                      [t.stringLiteral('fict:list:block')],
+                    ),
+                  ),
+                ]),
+                t.expressionStatement(
+                  t.assignmentExpression(
+                    '=',
+                    t.memberExpression(t.identifier('block'), t.identifier('start')),
+                    t.identifier('start'),
+                  ),
+                ),
+                t.expressionStatement(
+                  t.assignmentExpression(
+                    '=',
+                    t.memberExpression(t.identifier('block'), t.identifier('end')),
+                    t.identifier('end'),
+                  ),
+                ),
+              ]),
+            ),
+            t.expressionStatement(
+              t.callExpression(t.memberExpression(t.identifier('newBlocks'), t.identifier('set')), [
+                t.identifier('key'),
+                t.identifier('block'),
+              ]),
+            ),
+            t.expressionStatement(
+              t.callExpression(
+                t.memberExpression(t.identifier('oldBlocks'), t.identifier('delete')),
+                [t.identifier('key')],
+              ),
+            ),
+          ]),
+          t.blockStatement([
+            t.expressionStatement(
+              t.assignmentExpression(
+                '=',
+                t.identifier('block'),
+                t.callExpression(t.identifier(RUNTIME_ALIASES.createKeyedBlock), [
+                  t.identifier('key'),
+                  t.identifier('item'),
+                  t.identifier('i'),
+                  t.identifier(`${bindingId.name}_render`),
+                ]),
+              ),
+            ),
+            t.variableDeclaration('const', [
+              t.variableDeclarator(
+                t.identifier('start'),
+                t.callExpression(
+                  t.memberExpression(t.identifier('document'), t.identifier('createComment')),
+                  [t.stringLiteral('fict:list:block')],
+                ),
+              ),
+            ]),
+            t.variableDeclaration('const', [
+              t.variableDeclarator(
+                t.identifier('end'),
+                t.callExpression(
+                  t.memberExpression(t.identifier('document'), t.identifier('createComment')),
+                  [t.stringLiteral('fict:list:block')],
+                ),
+              ),
+            ]),
+            t.expressionStatement(
+              t.assignmentExpression(
+                '=',
+                t.memberExpression(t.identifier('block'), t.identifier('start')),
+                t.identifier('start'),
+              ),
+            ),
+            t.expressionStatement(
+              t.assignmentExpression(
+                '=',
+                t.memberExpression(t.identifier('block'), t.identifier('end')),
+                t.identifier('end'),
+              ),
+            ),
+            t.expressionStatement(
+              t.callExpression(t.memberExpression(t.identifier('newBlocks'), t.identifier('set')), [
+                t.identifier('key'),
+                t.identifier('block'),
+              ]),
+            ),
+          ]),
+        ),
+      ]),
+    )
+
+    diffBodyStatements.push(forLoop)
+
+    diffBodyStatements.push(
+      t.forOfStatement(
+        t.variableDeclaration('const', [t.variableDeclarator(t.identifier('block'))]),
+        t.callExpression(t.memberExpression(t.identifier('oldBlocks'), t.identifier('values')), []),
+        t.blockStatement([
+          t.expressionStatement(t.callExpression(destroyBlockId, [t.identifier('block')])),
+        ]),
+      ),
+    )
+
+    diffBodyStatements.push(
+      t.variableDeclaration('let', [
+        t.variableDeclarator(
+          t.identifier('anchor'),
+          t.callExpression(t.identifier(RUNTIME_ALIASES.getFirstNodeAfter), [
+            t.memberExpression(containerId, t.identifier('startMarker')),
+          ]),
+        ),
+      ]),
+      t.ifStatement(
+        t.unaryExpression('!', t.identifier('anchor')),
+        t.expressionStatement(
+          t.assignmentExpression(
+            '=',
+            t.identifier('anchor'),
+            t.memberExpression(containerId, t.identifier('endMarker')),
+          ),
+        ),
+      ),
+      t.forOfStatement(
+        t.variableDeclaration('const', [t.variableDeclarator(t.identifier('key'))]),
+        t.callExpression(t.memberExpression(t.identifier('newBlocks'), t.identifier('keys')), []),
+        t.blockStatement([
+          t.variableDeclaration('const', [
+            t.variableDeclarator(
+              t.identifier('block'),
+              t.callExpression(t.memberExpression(t.identifier('newBlocks'), t.identifier('get')), [
+                t.identifier('key'),
+              ]),
+            ),
+          ]),
+          t.variableDeclaration('const', [
+            t.variableDeclarator(
+              t.identifier('start'),
+              t.logicalExpression(
+                '||',
+                t.memberExpression(t.identifier('block'), t.identifier('start')),
+                t.memberExpression(
+                  t.memberExpression(t.identifier('block'), t.identifier('nodes')),
+                  t.numericLiteral(0),
+                  true,
+                ),
+              ),
+            ),
+          ]),
+          t.variableDeclaration('const', [
+            t.variableDeclarator(
+              t.identifier('end'),
+              t.logicalExpression(
+                '||',
+                t.memberExpression(t.identifier('block'), t.identifier('end')),
+                t.memberExpression(
+                  t.memberExpression(t.identifier('block'), t.identifier('nodes')),
+                  t.binaryExpression(
+                    '-',
+                    t.memberExpression(
+                      t.memberExpression(t.identifier('block'), t.identifier('nodes')),
+                      t.identifier('length'),
+                    ),
+                    t.numericLiteral(1),
+                  ),
+                  true,
+                ),
+              ),
+            ),
+          ]),
+          t.ifStatement(
+            t.logicalExpression(
+              '||',
+              t.unaryExpression('!', t.identifier('start')),
+              t.unaryExpression('!', t.identifier('end')),
+            ),
+            t.continueStatement(),
+          ),
+          t.ifStatement(
+            t.unaryExpression(
+              '!',
+              t.memberExpression(t.identifier('start'), t.identifier('parentNode')),
+            ),
+            t.blockStatement([
+              t.variableDeclaration('const', [
+                t.variableDeclarator(
+                  t.identifier('frag'),
+                  t.callExpression(
+                    t.memberExpression(
+                      t.identifier('document'),
+                      t.identifier('createDocumentFragment'),
+                    ),
+                    [],
+                  ),
+                ),
+              ]),
+              t.expressionStatement(
+                t.callExpression(
+                  t.memberExpression(t.identifier('frag'), t.identifier('appendChild')),
+                  [t.identifier('start')],
+                ),
+              ),
+              t.forOfStatement(
+                t.variableDeclaration('const', [t.variableDeclarator(t.identifier('node'))]),
+                t.memberExpression(t.identifier('block'), t.identifier('nodes')),
+                t.blockStatement([
+                  t.expressionStatement(
+                    t.callExpression(
+                      t.memberExpression(t.identifier('frag'), t.identifier('appendChild')),
+                      [t.identifier('node')],
+                    ),
+                  ),
+                ]),
+              ),
+              t.expressionStatement(
+                t.callExpression(
+                  t.memberExpression(t.identifier('frag'), t.identifier('appendChild')),
+                  [t.identifier('end')],
+                ),
+              ),
+              t.expressionStatement(
+                t.callExpression(
+                  t.memberExpression(t.identifier('parent'), t.identifier('insertBefore')),
+                  [t.identifier('frag'), t.identifier('anchor')],
+                ),
+              ),
+            ]),
+            t.ifStatement(
+              t.binaryExpression('!==', t.identifier('start'), t.identifier('anchor')),
+              t.expressionStatement(
+                t.callExpression(t.identifier(RUNTIME_ALIASES.moveMarkerBlock), [
+                  t.identifier('parent'),
+                  t.objectExpression([
+                    t.objectProperty(t.identifier('start'), t.identifier('start')),
+                    t.objectProperty(t.identifier('end'), t.identifier('end')),
+                    t.objectProperty(
+                      t.identifier('root'),
+                      t.memberExpression(t.identifier('block'), t.identifier('root')),
+                    ),
+                  ]),
+                  t.identifier('anchor'),
+                ]),
+              ),
+            ),
+          ),
+          t.expressionStatement(
+            t.assignmentExpression(
+              '=',
+              t.identifier('anchor'),
+              t.memberExpression(t.identifier('end'), t.identifier('nextSibling')),
+            ),
+          ),
+        ]),
+      ),
+      t.expressionStatement(
+        t.callExpression(
+          t.memberExpression(
+            t.memberExpression(containerId, t.identifier('blocks')),
+            t.identifier('clear'),
+          ),
+          [],
+        ),
+      ),
+      t.forOfStatement(
+        t.variableDeclaration('const', [
+          t.variableDeclarator(t.arrayPattern([t.identifier('k'), t.identifier('b')]), null),
+        ]),
+        t.callExpression(
+          t.memberExpression(t.identifier('newBlocks'), t.identifier('entries')),
+          [],
+        ),
+        t.blockStatement([
+          t.expressionStatement(
+            t.callExpression(
+              t.memberExpression(
+                t.memberExpression(containerId, t.identifier('blocks')),
+                t.identifier('set'),
+              ),
+              [t.identifier('k'), t.identifier('b')],
+            ),
+          ),
+        ]),
+      ),
+    )
+
+    const diffDecl = t.variableDeclaration('const', [
+      t.variableDeclarator(
+        diffId,
+        t.arrowFunctionExpression([], t.blockStatement(diffBodyStatements)),
+      ),
+    ])
+
+    const effectDisposeDecl = t.variableDeclaration('const', [
+      t.variableDeclarator(
+        effectDisposeId,
+        t.callExpression(t.identifier(RUNTIME_ALIASES.effect), [diffId]),
+      ),
+    ])
+
+    const disposeDecl = t.variableDeclaration('const', [
+      t.variableDeclarator(
+        disposeId,
+        t.arrowFunctionExpression(
+          [],
+          t.blockStatement([
+            t.expressionStatement(t.assignmentExpression('=', disposedId, t.booleanLiteral(true))),
+            t.ifStatement(
+              effectDisposeId,
+              t.expressionStatement(t.callExpression(effectDisposeId, [])),
+            ),
+            t.forOfStatement(
+              t.variableDeclaration('const', [t.variableDeclarator(t.identifier('block'))]),
+              t.callExpression(
+                t.memberExpression(
+                  t.memberExpression(containerId, t.identifier('blocks')),
+                  t.identifier('values'),
+                ),
+                [],
+              ),
+              t.blockStatement([
+                t.expressionStatement(t.callExpression(destroyBlockId, [t.identifier('block')])),
+              ]),
+            ),
+            t.expressionStatement(
+              t.callExpression(t.memberExpression(containerId, t.identifier('dispose')), []),
+            ),
+          ]),
+        ),
+      ),
+    ])
+
+    const onDestroyCall = t.expressionStatement(
+      t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [disposeId]),
+    )
+
+    return t.callExpression(
+      t.arrowFunctionExpression(
+        [],
+        t.blockStatement([
+          getItemsDecl,
+          keyFnDecl,
+          containerDecl,
+          markerDecl,
+          appendStartMarker,
+          appendEndMarker,
+          renderDecl,
+          pendingDecl,
+          disposedDecl,
+          destroyBlockDecl,
+          diffDecl,
+          effectDisposeDecl,
+          disposeDecl,
+          onDestroyCall,
+          t.returnStatement(markerId),
+        ]),
+      ),
+      [],
+    )
+  }
 
   // Build list call
   const listArgs: BabelCore.types.Expression[] = [t.arrowFunctionExpression([], transformedArray)]
@@ -2286,6 +2898,11 @@ function addRuntimeImports(
   addHelper('bindStyle')
   addHelper('bindEvent')
   addHelper('toNodeArray')
+  addHelper('createKeyedListContainer')
+  addHelper('createKeyedBlock')
+  addHelper('moveMarkerBlock')
+  addHelper('destroyMarkerBlock')
+  addHelper('getFirstNodeAfter')
 
   if (specifiers.length === 0) return
 
