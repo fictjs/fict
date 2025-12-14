@@ -6,6 +6,13 @@ export { createSignal, type Signal, $state } from './signal'
 export { createMemo, type Memo, $memo } from './memo'
 export { createEffect, type Effect, $effect } from './effect'
 export {
+  __fictUseContext,
+  __fictUseSignal,
+  __fictUseMemo,
+  __fictUseEffect,
+  __fictRender,
+} from './hooks'
+export {
   createVersionedSignal,
   type VersionedSignal,
   type VersionedSignalOptions,

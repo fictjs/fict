@@ -52,7 +52,7 @@ describe('Alias-Safe Reactive Lowering', () => {
         export const count = $state(0)
       `
       const output = transform(source)
-      expect(output).toContain('export const count = __fictSignal(0)')
+      expect(output).toContain('export const count = __fictUseSignal(__fictCtx, 0, 0)')
     })
 
     it('exports let state variable as-is', () => {
@@ -61,7 +61,7 @@ describe('Alias-Safe Reactive Lowering', () => {
         export let count = $state(0)
       `
       const output = transform(source)
-      expect(output).toContain('export let count = __fictSignal(0)')
+      expect(output).toContain('export let count = __fictUseSignal(__fictCtx, 0, 0)')
     })
 
     it('exports derived value as getter', () => {
@@ -71,7 +71,7 @@ describe('Alias-Safe Reactive Lowering', () => {
         export const double = count * 2
       `
       const output = transform(source)
-      expect(output).toContain('export const double = __fictMemo(() => count() * 2)')
+      expect(output).toContain('export const double = __fictUseMemo(__fictCtx, () => count() * 2')
     })
 
     it('exports alias as reactive getter', () => {

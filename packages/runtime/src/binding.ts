@@ -642,19 +642,18 @@ export function createChildBinding(
   parent.appendChild(marker)
 
   const dispose = createEffect(() => {
-    const value = getValue()
-
-    // Skip if value is null/undefined/false
-    if (value == null || value === false) {
-      return
-    }
-
-    // Create new content within a root context
     const root = createRootContext()
     const prev = pushRoot(root)
     let nodes: Node[] = []
     let handledError = false
     try {
+      const value = getValue()
+
+      // Skip if value is null/undefined/false
+      if (value == null || value === false) {
+        return
+      }
+
       const output = createElementFn(value)
       nodes = toNodeArray(output)
       const parentNode = marker.parentNode as (ParentNode & Node) | null

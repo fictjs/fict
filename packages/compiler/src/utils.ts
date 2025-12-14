@@ -37,7 +37,8 @@ export function detectNoMemoDirective(
   }
 
   if (Array.isArray(body) && body.length > 0) {
-    const comments = (body[0].leadingComments ?? []).map(c => c.value.trim())
+    const firstStmt = body[0]
+    const comments = (firstStmt?.leadingComments ?? []).map(c => c.value.trim())
     if (comments.some(c => c.includes(NO_MEMO_DIRECTIVE_TEXT))) {
       found = true
     }

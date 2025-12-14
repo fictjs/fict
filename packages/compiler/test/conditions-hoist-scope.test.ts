@@ -28,8 +28,8 @@ describe('Condition hoisting respects function scope', () => {
       const list = [1,2,3].map(n => (count > n ? n : -n))
     `
     const output = transform(input)
-    // Region-level condition should be hoisted
-    expect(output).toMatch(/const __fictCond_\d+ = count\(\) > 0/)
+    // Region-level condition is captured inside memo
+    expect(output).toContain("count() > 0 ? 'pos' : 'neg'")
     // Nested callback condition should remain inline
     expect(output).toMatch(/n =>\s*\(?count\(\) > n \? n : -n\)?/)
   })

@@ -33,8 +33,8 @@ describe('R001: $state source identification', () => {
       import { $state } from 'fict'
       let count = $state(0)
     `)
-    expect(output).toContain('__fictSignal')
-    expect(output).toContain('(0)')
+    expect(output).toContain('__fictUseSignal')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 0,')
   })
 
   it('transforms const $state declaration', () => {
@@ -42,7 +42,7 @@ describe('R001: $state source identification', () => {
       import { $state } from 'fict'
       const user = $state({ name: 'John' })
     `)
-    expect(output).toContain('__fictSignal')
+    expect(output).toContain('__fictUseSignal')
     // Object literals may be formatted across multiple lines
     expect(output).toContain("name: 'John'")
   })
@@ -98,7 +98,7 @@ describe('R002: Derived expression collection', () => {
       const doubled = count * 2
       return <div>{doubled}</div>
     `)
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo')
   })
 
   it('identifies indirect state reads as derived', () => {
@@ -108,7 +108,7 @@ describe('R002: Derived expression collection', () => {
       const name = user.profile.name
       return <div>{name}</div>
     `)
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo')
   })
 
   it('identifies template literal with state as derived', () => {
@@ -119,7 +119,7 @@ describe('R002: Derived expression collection', () => {
       const fullName = \`\${firstName} \${lastName}\`
       return <div>{fullName}</div>
     `)
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo')
   })
 
   it('identifies conditional expression as derived', () => {
@@ -130,7 +130,7 @@ describe('R002: Derived expression collection', () => {
       const canSubmit = isValid && !isSubmitting
       return <button disabled={!canSubmit}>Submit</button>
     `)
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo')
   })
 })
 
@@ -239,7 +239,7 @@ describe('R007: $effect semantics', () => {
       let count = $state(0)
       $effect(() => console.log(count))
     `)
-    expect(output).toContain('__fictEffect')
+    expect(output).toContain('__fictUseEffect')
     expect(output).toContain('() => console.log(count())')
   })
 
@@ -251,7 +251,7 @@ describe('R007: $effect semantics', () => {
         const res = await fetch(url)
       })
     `)
-    expect(output).toContain('__fictEffect')
+    expect(output).toContain('__fictUseEffect')
     expect(output).toContain('async')
   })
 
@@ -301,7 +301,7 @@ describe('R008: Conservative downgrade edge cases', () => {
       items.push(4)
     `)
     // Compiler handles array mutations - output should transform correctly
-    expect(output).toContain('__fictSignal')
+    expect(output).toContain('__fictUseSignal')
   })
 
   it('handles safe array methods', () => {
@@ -408,7 +408,7 @@ describe('R015: Derived formal semantics', () => {
       const doubled = count * 2
       $effect(() => console.log(doubled))
     `)
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo')
   })
 
   it('derived in event handler is event-only usage', () => {
@@ -421,7 +421,7 @@ describe('R015: Derived formal semantics', () => {
     // Current implementation uses getter for event-only derived
     expect(output).toContain('doubled')
     // Verify count is still transformed to signal
-    expect(output).toContain('__fictSignal')
+    expect(output).toContain('__fictUseSignal')
   })
 
   it('snapshot vs live value in closures', () => {
@@ -503,7 +503,7 @@ describe('Cross-module derived values', () => {
       import { $state } from 'fict'
       export let count = $state(0)
     `)
-    expect(output).toContain('__fictSignal')
+    expect(output).toContain('__fictUseSignal')
     expect(output).toContain('export')
   })
 
@@ -513,7 +513,7 @@ describe('Cross-module derived values', () => {
       let count = $state(0)
       export const doubled = count * 2
     `)
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo')
   })
 
   it('re-exported derived maintains memo', () => {
@@ -523,7 +523,7 @@ describe('Cross-module derived values', () => {
       const doubled = count * 2
       export { doubled as multiplied }
     `)
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo')
   })
 
   it('default export of derived is memo', () => {
@@ -533,7 +533,7 @@ describe('Cross-module derived values', () => {
       const doubled = count * 2
       export default doubled
     `)
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo')
   })
 
   it('module-level getter with event-only usage still produces memo', () => {
@@ -546,7 +546,7 @@ describe('Cross-module derived values', () => {
       }
     `)
     // Module-level always memo for cross-module consistency
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo')
   })
 })
 
@@ -720,7 +720,7 @@ describe('Integration scenarios', () => {
       }
     `)
 
-    expect(output).toContain('__fictSignal')
+    expect(output).toContain('__fictUseSignal')
     expect(output).toContain('count(count() + 1)')
     expect(output).toContain('count(count() - 1)')
   })
@@ -754,7 +754,7 @@ describe('Integration scenarios', () => {
       }
     `)
 
-    expect(output).toContain('__fictSignal')
+    expect(output).toContain('__fictUseSignal')
     expect(output).toContain('__fictCreateKeyedListContainer')
   })
 
@@ -780,8 +780,8 @@ describe('Integration scenarios', () => {
     `)
 
     expect(output).toContain('__props')
-    expect(output).toContain('__fictSignal')
-    expect(output).toContain('__fictMemo')
-    expect(output).toContain('__fictEffect')
+    expect(output).toContain('__fictUseSignal')
+    expect(output).toContain('__fictUseMemo')
+    expect(output).toContain('__fictUseEffect')
   })
 })

@@ -22,6 +22,8 @@ export interface TransformContext {
   file: BabelCore.BabelFile
   noMemo: boolean
   noMemoFunctions: WeakSet<BabelCore.types.Function>
+  slotCounters: WeakMap<BabelCore.types.Node, number>
+  functionsWithJsx: WeakSet<BabelCore.types.Function>
 }
 
 export interface HelperUsage {
@@ -46,6 +48,12 @@ export interface HelperUsage {
   moveMarkerBlock: boolean
   destroyMarkerBlock: boolean
   getFirstNodeAfter: boolean
+  useContext: boolean
+  useSignal: boolean
+  useMemo: boolean
+  useEffect: boolean
+  render: boolean
+  fragment: boolean
 }
 
 export interface CompilerWarning {
@@ -79,6 +87,12 @@ export function createHelperUsage(): HelperUsage {
     signal: false,
     memo: false,
     effect: false,
+    useContext: false,
+    useSignal: false,
+    useMemo: false,
+    useEffect: false,
+    render: false,
+    fragment: false,
     createElement: false,
     conditional: false,
     list: false,

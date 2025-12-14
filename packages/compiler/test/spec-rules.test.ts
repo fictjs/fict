@@ -46,7 +46,7 @@ describe('Spec rule coverage', () => {
     expect(output).toContain('function Greeting(__props')
     expect(output).toMatch(/__props\d+\.name/)
     expect(output).toMatch(/__props\d+\.age/)
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo')
     expect(output).toContain('label()')
   })
 
@@ -89,7 +89,7 @@ describe('Spec rule coverage', () => {
     `
     const output = transform(input)
     // Check that state is transformed and props are accessed
-    expect(output).toContain('__fictSignal')
+    expect(output).toContain('__fictUseSignal')
     expect(output).toMatch(/__props\d+\.count/)
     expect(output).toContain('__fictInsert')
   })
@@ -130,9 +130,9 @@ describe('Spec rule coverage', () => {
       export const click = () => console.log(doubled)
     `
     const output = transform(input)
-    // Module-level exported derived should be a memo or getter
-    expect(output).toContain('doubled')
-    expect(output).toMatch(/__fictMemo|const doubled = \(\)/)
+    // Module-level exported derived should be a memo accessor
+    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
+    expect(output).toContain('console.log(doubled')
   })
 
   it('keeps exported via export clause derived values as memos', () => {
@@ -143,7 +143,7 @@ describe('Spec rule coverage', () => {
       export { doubled }
     `
     const output = transform(input)
-    expect(output).toContain('__fictMemo(() => count() * 2)')
+    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
   })
 
   it('keeps default exported derived values as memos', () => {
@@ -154,7 +154,7 @@ describe('Spec rule coverage', () => {
       export default doubled
     `
     const output = transform(input)
-    expect(output).toContain('__fictMemo(() => count() * 2)')
+    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
   })
 
   it('keeps export-as derived values as memos', () => {
@@ -165,7 +165,7 @@ describe('Spec rule coverage', () => {
       export { doubled as renamed }
     `
     const output = transform(input)
-    expect(output).toContain('__fictMemo(() => count() * 2)')
+    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
   })
 
   it('aliasing state inside component creates a snapshot', () => {
@@ -181,7 +181,7 @@ describe('Spec rule coverage', () => {
     const output = transform(input)
     // Should be reactive getter in run-once component
     expect(output).toContain('const snap = () => count()')
-    expect(output).not.toContain('__fictMemo')
+    expect(output).not.toContain('__fictUseMemo')
     // usage rewrite
     expect(output).toContain('console.log(snap())')
   })
@@ -205,8 +205,8 @@ describe('Spec rule coverage', () => {
       const onClick = () => console.log(doubled)
     `
     const output = transform(input)
-    // Module-level derived uses memo or getter; handler reads current value
-    expect(output).toMatch(/__fictMemo|const doubled = \(\)/)
+    // Module-level derived uses memo accessor; handler reads current value
+    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
     expect(output).toContain('console.log(doubled')
   })
 })
@@ -312,8 +312,8 @@ describe('Rule I: Cross-module derivation', () => {
       export let count = $state(0)
       export const doubled = count * 2
     `)
-    // Cross-module derived must always be memo or getter for consistency
-    expect(output).toMatch(/__fictMemo|const doubled = \(\)/)
+    // Cross-module derived must always be memo accessor
+    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
   })
 
   it('event-only usage at module level still produces memo', () => {
@@ -323,9 +323,9 @@ describe('Rule I: Cross-module derivation', () => {
       export const doubled = count * 2
       export const handler = () => console.log(doubled)
     `)
-    // Even with event-only usage, module-level derived should be memo or getter
-    expect(output).toMatch(/__fictMemo|const doubled = \(\)/)
-    expect(output).toContain('doubled')
+    // Even with event-only usage, module-level derived should be memo accessor
+    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
+    expect(output).toContain('console.log(doubled')
   })
 
   it('non-exported function-scoped derived can be getter', () => {
@@ -337,9 +337,9 @@ describe('Rule I: Cross-module derivation', () => {
         return () => console.log(doubled)
       }
     `)
-    // Function-scoped event-only usage -> getter
-    expect(output).toContain('const doubled = () =>')
-    expect(output).not.toContain('__fictMemo')
+    // Function-scoped event-only usage uses memo accessor and reads it
+    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
+    expect(output).toContain('console.log(doubled()')
   })
 
   it('re-exports maintain memo status', () => {
@@ -349,7 +349,7 @@ describe('Rule I: Cross-module derivation', () => {
       const doubled = count * 2
       export { doubled }
     `)
-    expect(output).toContain('__fictMemo(() => count() * 2)')
+    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
   })
 })
 
@@ -585,7 +585,7 @@ describe('Rule J: Lazy evaluation of conditional derivation', () => {
     `)
     // When lazyConditional is enabled and we have multiple derived values in a region,
     // expensive computation that's only used in conditional should be handled
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo')
   })
 
   it('creates region memo with multiple derived values', () => {
@@ -699,7 +699,8 @@ describe('Rule L: Getter cache in same sync block', () => {
         return <div>{doubled}</div>
       }
     `)
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo(__fictCtx')
+    expect(output).toContain('count() * 2')
     expect(output).not.toContain('__cached_doubled')
   })
 
@@ -720,8 +721,10 @@ describe('Rule L: Getter cache in same sync block', () => {
         return click
       }
     `)
-    expect(output).toContain('__cached_doubled')
-    expect(output).toMatch(/const doubled = \(\) =>[\s\S]*['"]local['"]/)
+    // With memo accessors, no manual cache variable is emitted
+    expect(output).not.toContain('__cached_doubled')
+    expect(output).toContain('__fictUseMemo(__fictCtx')
+    expect(output).toContain('count() * 2')
     expect(output).toMatch(/console\.log\(doubled\(\)\)/)
   })
 })
@@ -736,7 +739,7 @@ describe('Rule C: memo vs getter selection', () => {
         return <div>{doubled}</div>
       }
     `)
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
   })
 
   it('$effect usage triggers memo', () => {
@@ -749,7 +752,7 @@ describe('Rule C: memo vs getter selection', () => {
         return null
       }
     `)
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
   })
 
   it('event-only usage produces getter', () => {
@@ -762,8 +765,8 @@ describe('Rule C: memo vs getter selection', () => {
         return onClick
       }
     `)
-    expect(output).toContain('const doubled = () =>')
-    expect(output).not.toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
+    expect(output).toContain('console.log(doubled())')
   })
 
   it('both JSX and event usage produces memo', () => {
@@ -772,13 +775,13 @@ describe('Rule C: memo vs getter selection', () => {
       function Component() {
         let count = $state(0)
         const doubled = count * 2
-        return <>
-          <div>{doubled}</div>
-          <button onClick={() => console.log(doubled)}>Log</button>
-        </>
-      }
-    `)
-    expect(output).toContain('__fictMemo')
+      return <>
+        <div>{doubled}</div>
+        <button onClick={() => console.log(doubled)}>Log</button>
+      </>
+    }
+  `)
+    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
     expect(output).toContain('doubled()')
   })
 })

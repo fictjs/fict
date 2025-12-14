@@ -23,8 +23,9 @@ describe('fict vite-plugin', () => {
 
     expect(result && typeof result === 'object').toBe(true)
     if (result && typeof result === 'object' && 'code' in result) {
-      // Check that $state is transformed to __fictSignal
-      expect(result.code).toContain('__fictSignal')
+      // Check that $state is transformed to __fictUseSignal with context
+      expect(result.code).toContain('__fictUseSignal')
+      expect(result.code).toContain('__fictUseContext')
       // Check that JSX is compiled with accessor calls
       expect(result.code.includes('count()')).toBe(true)
     }

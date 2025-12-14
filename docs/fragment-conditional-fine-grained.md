@@ -12,12 +12,12 @@ This document captures the proposed design to support **conditional rendering wi
 
 1. **Fragment wrapper + render driver**
    - Component returns `_Fragment` whose `children` is a render function driven by `__fictRender(ctx, fn)`.
-   - `__fictRender` tracks dependencies read inside `fn` and re-runs `fn` when they change, while reusing existing instances via the ctx.
+   - `__fictRender` (now implemented) pushes ctx, runs `fn`, and installs an effect to re-run on dependency changes while reusing slot instances.
 
 2. **Hooks-like slot reuse**
-   - Compiler rewrites `$state/$memo/$effect` (including Rule D region memos) to `__fictSignal/__fictMemo/__fictEffect` with a stable slot index (or key) per declaration.
+   - Compiler rewrites `$state/$memo/$effect` (including Rule D region memos) to `__fictUseSignal/__fictUseMemo/__fictUseEffect` with a stable slot index per declaration.
    - Runtime keeps per-instance context array; on re-run, instances are reused instead of recreated.
-   - ESLint rule: no adding/removing `$state/$effect/$memo` in dynamic control flow to avoid slot drift.
+   - ESLint rule (TODO): no adding/removing `$state/$effect/$memo` in dynamic control flow to avoid slot drift.
 
 3. **Runtime conditional helper**
    - Conditional DOM switching is handled by `__fictConditional(condFn, trueMount, createElementAlias, falseMount?)`.

@@ -900,11 +900,21 @@ export function generateRegionMemo(
   const returnStatement = t.returnStatement(
     t.objectExpression(
       orderedOutputs.map(name =>
+        // If the value is a function (e.g., memo accessor), call it; otherwise return as-is.
+        // Preserve undefined so callers can detect missing values.
         t.objectProperty(
           t.identifier(name),
           t.conditionalExpression(
             t.binaryExpression('!=', t.identifier(name), t.identifier('undefined')),
-            t.identifier(name),
+            t.conditionalExpression(
+              t.binaryExpression(
+                '===',
+                t.unaryExpression('typeof', t.identifier(name)),
+                t.stringLiteral('function'),
+              ),
+              t.callExpression(t.identifier(name), []),
+              t.identifier(name),
+            ),
             t.identifier('undefined'),
           ),
         ),

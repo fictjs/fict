@@ -37,6 +37,7 @@ import {
   registerRootCleanup,
   getCurrentRoot,
 } from './lifecycle'
+import { __fictPushContext, __fictPopContext } from './hooks'
 import type { DOMElement, FictNode, FictVNode, RefObject } from './types'
 
 // ============================================================================
@@ -146,9 +147,14 @@ export function createElement(node: FictNode): DOMElement {
   if (typeof vnode.type === 'function') {
     const props = { ...(vnode.props ?? {}), key: vnode.key }
     try {
+      // Create a fresh hook context for this component instance.
+      // This preserves slot state across re-renders driven by __fictRender.
+      const ctx = __fictPushContext()
       const rendered = vnode.type(props)
+      __fictPopContext()
       return createElement(rendered as FictNode)
     } catch (err) {
+      __fictPopContext()
       if (handleSuspend(err as any)) {
         return document.createComment('fict:suspend')
       }

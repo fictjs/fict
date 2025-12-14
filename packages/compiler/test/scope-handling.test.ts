@@ -24,7 +24,7 @@ describe('Scope Handling', () => {
       // temp should be memoized inside if block, not exposed outside
       expect(output).not.toContain('const temp = () =>')
       // temp is memoized as a standalone memo inside the if block
-      expect(output).toContain('const temp = __fictMemo')
+      expect(output).toContain('const temp = __fictUseMemo')
       // result is assigned but not in a region (only one output)
       expect(output).toContain('let result')
     })
@@ -68,8 +68,8 @@ describe('Scope Handling', () => {
       expect(output).not.toContain('const tempA = () =>')
       expect(output).not.toContain('const tempB = () =>')
       // Variables inside switch are memoized locally
-      expect(output).toContain('const tempA = __fictMemo')
-      expect(output).toContain('const tempB = __fictMemo')
+      expect(output).toContain('const tempA = __fictUseMemo')
+      expect(output).toContain('const tempB = __fictUseMemo')
     })
 
     it('should handle nested blocks correctly', () => {
@@ -91,7 +91,7 @@ describe('Scope Handling', () => {
       expect(output).not.toContain('const outer = () =>')
       expect(output).not.toContain('const inner = () =>')
       // Nested blocks variables are memoized locally
-      expect(output).toContain('const outer = __fictMemo')
+      expect(output).toContain('const outer = __fictUseMemo')
     })
   })
 
@@ -123,9 +123,8 @@ describe('Scope Handling', () => {
       `
       const output = transform(input)
 
-      expect(output).toMatch(
-        /return\s*\{\s*a: a != undefined \? a : undefined,\s*b: b != undefined \? b : undefined\s*\}/,
-      )
+      expect(output).toContain('a: a != undefined')
+      expect(output).toContain('b: b != undefined')
     })
   })
 

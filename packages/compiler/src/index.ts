@@ -51,6 +51,8 @@ import {
   isInNoMemoScope,
 } from './utils'
 
+const SLOT_COUNTER = new WeakMap<BabelCore.types.Node, number>()
+
 export type { FictCompilerOptions, CompilerWarning } from './types'
 
 // ============================================================================
@@ -100,6 +102,8 @@ export const createFictPlugin = declare(
               file,
               noMemo: false,
               noMemoFunctions: new WeakSet(),
+              slotCounters: new WeakMap(),
+              functionsWithJsx: new WeakSet(),
             }
 
             if (detectNoMemoDirective(path, t)) {
@@ -122,6 +126,7 @@ export const createFictPlugin = declare(
             if (!ctx) return
 
             applyRegionTransform(path, ctx, t)
+            wrapComponentsWithRender(path, ctx, t)
 
             // Detect derived cycles before finishing
             detectDerivedCycles(ctx, t)
@@ -153,13 +158,17 @@ export const createFictPlugin = declare(
 
               // Validate placement
               ensureValidStatePlacement(path, ctx, t)
+              const slot = nextSlot(path, ctx, t)
+              ensureContextDeclaration(path, ctx, t)
 
-              // Transform: let x = $state(init) -> let x = __fictSignal(init)
-              ctx.helpersUsed.signal = true
-              declarator.init = t.callExpression(
-                t.identifier(RUNTIME_ALIASES.signal),
-                declarator.init.arguments,
-              )
+              ctx.helpersUsed.useSignal = true
+              declarator.init = t.callExpression(t.identifier(RUNTIME_ALIASES.useSignal), [
+                t.identifier('__fictCtx'),
+                ...(declarator.init.arguments.length
+                  ? declarator.init.arguments
+                  : [t.identifier('undefined')]),
+                t.numericLiteral(slot),
+              ])
             }
             // Check for alias of state variable
             // Skip alias transformation inside $effect callbacks - they should capture values
@@ -206,24 +215,14 @@ export const createFictPlugin = declare(
                 ctx.memoVars.add(name)
                 ctx.guardedDerived.add(name)
                 const transformedInit = transformExpression(declarator.init, ctx, t)
-
-                const isModuleScope = path.parentPath?.isProgram?.() ?? false
-                const isExported = ctx.exportedNames.has(name)
-                const useGetterOnly =
-                  !ctx.options.lazyConditional &&
-                  !isModuleScope &&
-                  !isExported &&
-                  shouldEmitGetter(path, name, ctx, t)
-
-                if (useGetterOnly) {
-                  ctx.getterOnlyVars.add(name)
-                  declarator.init = t.arrowFunctionExpression([], transformedInit)
-                } else {
-                  ctx.helpersUsed.memo = true
-                  declarator.init = t.callExpression(t.identifier(RUNTIME_ALIASES.memo), [
-                    t.arrowFunctionExpression([], transformedInit),
-                  ])
-                }
+                const slot = nextSlot(path, ctx, t)
+                ensureContextDeclaration(path, ctx, t)
+                ctx.helpersUsed.useMemo = true
+                declarator.init = t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
+                  t.identifier('__fictCtx'),
+                  t.arrowFunctionExpression([], transformedInit),
+                  t.numericLiteral(slot),
+                ])
               } else {
                 // No-memo scope: still transform expressions ($state reads/writes) but don't memoize
                 declarator.init = transformExpression(declarator.init, ctx, t)
@@ -253,14 +252,27 @@ export const createFictPlugin = declare(
 
           if (isEffectCall(path.node, t)) {
             ensureValidEffectPlacement(path, ctx, t)
-            ctx.helpersUsed.effect = true
+            const slot = nextSlot(path, ctx, t)
+            ensureContextDeclaration(path, ctx, t)
+            ctx.helpersUsed.useEffect = true
+            ctx.helpersUsed.useContext = true
 
-            // Transform: $effect(fn) -> __fictEffect(fn)
-            // Note: We don't call transformExpression on the callback here.
-            // The callback's variable declarations will be processed by the VariableDeclaration visitor,
-            // which skips memoization for declarations inside $effect (isInsideEffectCallback check).
-            // The normal Babel visitor traversal will handle identifier transformations.
-            path.node.callee = t.identifier(RUNTIME_ALIASES.effect)
+            const arg = path.node.arguments[0]
+            const fn =
+              arg && (t.isFunctionExpression(arg) || t.isArrowFunctionExpression(arg))
+                ? arg
+                : t.arrowFunctionExpression(
+                    [],
+                    arg && t.isExpression(arg) ? arg : t.identifier('undefined'),
+                  )
+
+            path.replaceWith(
+              t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
+                t.identifier('__fictCtx'),
+                fn,
+                t.numericLiteral(slot),
+              ]),
+            )
           }
         },
 
@@ -447,11 +459,24 @@ export const createFictPlugin = declare(
           const ctx = (state as any).__fictCtx as TransformContext
           if (!ctx) return
           if (isInNoMemoScope(path, ctx)) return
+          const funcOwner = path.getFunctionParent()
+          if (funcOwner && funcOwner.isFunction()) {
+            ctx.functionsWithJsx.add(funcOwner.node)
+          }
 
           const lowered = transformFineGrainedJsx(path.node, ctx, t)
           if (lowered) {
             path.replaceWith(lowered)
             path.skip()
+          }
+        },
+
+        JSXFragment(path, state) {
+          const ctx = (state as any).__fictCtx as TransformContext
+          if (!ctx) return
+          const funcOwner = path.getFunctionParent()
+          if (funcOwner && funcOwner.isFunction()) {
+            ctx.functionsWithJsx.add(funcOwner.node)
           }
         },
 
@@ -663,6 +688,7 @@ export const createFictPlugin = declare(
             const ctx = (state as any).__fictCtx as TransformContext
             if (!ctx) return
             maybeApplyGetterCaching(path, ctx, t)
+            maybeRewriteTopLevelConditionalReturn(path, ctx, t)
           },
         },
       },
@@ -690,7 +716,11 @@ function isInsideEffectCallback(path: BabelCore.NodePath, t: typeof BabelCore.ty
       // Check for both original $effect and transformed __fictEffect names
       if (t.isCallExpression(callNode) && t.isIdentifier(callNode.callee)) {
         const calleeName = callNode.callee.name
-        if (calleeName === '$effect' || calleeName === RUNTIME_ALIASES.effect) {
+        if (
+          calleeName === '$effect' ||
+          calleeName === RUNTIME_ALIASES.effect ||
+          calleeName === RUNTIME_ALIASES.useEffect
+        ) {
           return true
         }
       }
@@ -828,6 +858,67 @@ function maybeApplyGetterCaching(
   blockPath.unshiftContainer('body', cacheDecls)
 }
 
+/**
+ * Transform simple top-level
+ *   if (cond) return A;
+ *   return B;
+ * into createConditional(() => cond, () => A, __fictCreateElement, () => B);
+ * to enable reactive branch switching without re-running the component body.
+ */
+function maybeRewriteTopLevelConditionalReturn(
+  path: BabelCore.NodePath<BabelCore.types.Function>,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): void {
+  if (!ctx.options.fineGrainedDom) return
+  const body = path.get('body')
+  if (!body.isBlockStatement()) return
+  const stmts = body.node.body
+  if (stmts.length < 2) return
+
+  const last = stmts[stmts.length - 1]
+  const prev = stmts[stmts.length - 2]
+
+  if (!t.isReturnStatement(last)) return
+  if (!t.isIfStatement(prev) || prev.alternate) return
+
+  const cond = prev.test
+
+  const trueReturn = (() => {
+    const cons = prev.consequent
+    if (t.isReturnStatement(cons)) return cons.argument
+    if (t.isBlockStatement(cons)) {
+      const ret = cons.body.find((s): s is BabelCore.types.ReturnStatement =>
+        t.isReturnStatement(s),
+      )
+      return ret ? ret.argument : null
+    }
+    return null
+  })()
+  if (!trueReturn) return
+
+  const falseReturn = last.argument ?? t.identifier('undefined')
+
+  const condFn = t.arrowFunctionExpression([], transformExpression(cond, ctx, t))
+  const trueFn = t.arrowFunctionExpression([], trueReturn)
+  const falseFn = t.arrowFunctionExpression([], falseReturn)
+
+  ctx.helpersUsed.conditional = true
+  ctx.helpersUsed.createElement = true
+
+  const call = t.callExpression(t.identifier(RUNTIME_ALIASES.conditional), [
+    condFn,
+    trueFn,
+    t.identifier(RUNTIME_ALIASES.createElement),
+    falseFn,
+  ])
+
+  const prefix = stmts.slice(0, -2).map(stmt => wrapReactiveExpressionStatement(stmt, ctx, t))
+
+  const newReturn = t.returnStatement(t.memberExpression(call, t.identifier('marker')))
+  body.node.body = [...prefix, newReturn]
+}
+
 function collectExportedNames(
   path: BabelCore.NodePath<BabelCore.types.Program>,
   t: typeof BabelCore.types,
@@ -850,6 +941,180 @@ function collectExportedNames(
   })
 
   return names
+}
+
+function wrapReactiveExpressionStatement(
+  stmt: BabelCore.types.Statement,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): BabelCore.types.Statement {
+  if (t.isExpressionStatement(stmt)) {
+    const expr = stmt.expression
+    if (dependsOnTracked(expr, ctx, t)) {
+      ctx.helpersUsed.effect = true
+      return t.expressionStatement(
+        t.callExpression(t.identifier(RUNTIME_ALIASES.effect), [
+          t.arrowFunctionExpression([], transformExpression(expr, ctx, t)),
+        ]),
+      )
+    }
+  }
+  return stmt
+}
+
+function findOwnerPath(path: BabelCore.NodePath): BabelCore.NodePath {
+  let current: BabelCore.NodePath | null = path
+  while (current) {
+    if (current.isFunction() || current.isProgram()) return current
+    current = current.parentPath
+  }
+  return path
+}
+
+function ensureContextDeclaration(
+  path: BabelCore.NodePath,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): void {
+  const owner = findOwnerPath(path)
+  const ownerNode = owner.node as any
+
+  const ensureBlockBody = (): BabelCore.types.BlockStatement | BabelCore.types.Program => {
+    if (t.isProgram(ownerNode)) return ownerNode as BabelCore.types.Program
+    if (owner.isFunction() && !t.isBlockStatement(ownerNode.body)) {
+      const ret = t.returnStatement(ownerNode.body as any)
+      ownerNode.body = t.blockStatement([ret])
+    }
+    return ownerNode.body as BabelCore.types.BlockStatement
+  }
+
+  const body = ensureBlockBody()
+  const hasCtxDecl = body.body.some(
+    stmt =>
+      t.isVariableDeclaration(stmt) &&
+      stmt.declarations.some(
+        d => t.isIdentifier(d.id) && d.id.name === '__fictCtx' && t.isCallExpression(d.init),
+      ),
+  )
+  if (hasCtxDecl) return
+
+  ctx.helpersUsed.useContext = true
+  const ctxDecl = t.variableDeclaration('const', [
+    t.variableDeclarator(
+      t.identifier('__fictCtx'),
+      t.callExpression(t.identifier(RUNTIME_ALIASES.useContext), []),
+    ),
+  ])
+  if (t.isProgram(ownerNode)) {
+    ;(owner as BabelCore.NodePath<BabelCore.types.Program>).unshiftContainer('body', ctxDecl)
+  } else if (owner.isFunction()) {
+    ;(owner.get('body') as BabelCore.NodePath<BabelCore.types.BlockStatement>).unshiftContainer(
+      'body',
+      ctxDecl,
+    )
+  }
+}
+
+function wrapComponentsWithRender(
+  path: BabelCore.NodePath<BabelCore.types.Program>,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): void {
+  if (!ctx.options.fineGrainedDom) return
+
+  const maybeWrap = (fnPath: BabelCore.NodePath<BabelCore.types.Function>) => {
+    const node = fnPath.node
+    if (!ctx.functionsWithJsx.has(node)) return
+
+    const bodyPath = fnPath.get('body') as BabelCore.NodePath<
+      BabelCore.types.BlockStatement | BabelCore.types.Expression
+    >
+    const bodyNode = bodyPath.node
+
+    const statements: BabelCore.types.Statement[] = t.isBlockStatement(bodyNode)
+      ? [...bodyNode.body]
+      : [t.returnStatement(bodyNode as BabelCore.types.Expression)]
+
+    const ctxIndex = statements.findIndex(
+      stmt =>
+        t.isVariableDeclaration(stmt) &&
+        stmt.declarations.some(
+          d => t.isIdentifier(d.id) && d.id.name === '__fictCtx' && t.isCallExpression(d.init),
+        ),
+    )
+    if (ctxIndex === -1) return
+
+    // Avoid double-wrapping if the function already returns a fragment with __fictRender
+    const alreadyWrapped = statements.some(stmt => {
+      if (!t.isReturnStatement(stmt) || !stmt.argument) return false
+      if (t.isCallExpression(stmt.argument)) {
+        return (
+          t.isIdentifier(stmt.argument.callee) &&
+          stmt.argument.callee.name === RUNTIME_ALIASES.render
+        )
+      }
+      if (!t.isJSXFragment(stmt.argument)) return false
+      const children = stmt.argument.children
+        .filter(ch => t.isJSXExpressionContainer(ch))
+        .map(ch => (ch as BabelCore.types.JSXExpressionContainer).expression)
+      return children.some(
+        expr =>
+          t.isCallExpression(expr) && t.isIdentifier(expr.callee, { name: RUNTIME_ALIASES.render }),
+      )
+    })
+    if (alreadyWrapped) return
+
+    const [ctxDecl] = statements.splice(ctxIndex, 1)
+    const renderBody = t.blockStatement(statements)
+    const renderFn = t.arrowFunctionExpression([], renderBody)
+
+    ctx.helpersUsed.render = true
+    ctx.helpersUsed.fragment = true
+
+    const fragment = t.objectExpression([
+      t.objectProperty(t.identifier('type'), t.identifier(RUNTIME_ALIASES.fragment)),
+      t.objectProperty(
+        t.identifier('props'),
+        t.objectExpression([
+          t.objectProperty(
+            t.identifier('children'),
+            t.callExpression(t.identifier(RUNTIME_ALIASES.render), [
+              t.identifier('__fictCtx'),
+              renderFn,
+            ]),
+          ),
+        ]),
+      ),
+    ])
+
+    if (fnPath.isArrowFunctionExpression()) {
+      fnPath.node.expression = false
+    }
+
+    const newBody = t.blockStatement([
+      ctxDecl as BabelCore.types.Statement,
+      t.returnStatement(fragment),
+    ])
+    bodyPath.replaceWith(newBody)
+  }
+
+  path.traverse({
+    FunctionDeclaration: maybeWrap,
+    FunctionExpression: maybeWrap,
+    ArrowFunctionExpression: maybeWrap,
+  })
+}
+
+function nextSlot(
+  path: BabelCore.NodePath,
+  ctx: TransformContext,
+  _t: typeof BabelCore.types,
+): number {
+  const owner = findOwnerPath(path).node
+  const current = SLOT_COUNTER.get(owner) ?? 0
+  SLOT_COUNTER.set(owner, current + 1)
+  ctx.slotCounters.set(owner, current + 1)
+  return current
 }
 
 function collectDerivedOutputs(
@@ -2850,6 +3115,12 @@ function addRuntimeImports(
   addHelper('moveMarkerBlock')
   addHelper('destroyMarkerBlock')
   addHelper('getFirstNodeAfter')
+  addHelper('useContext')
+  addHelper('useSignal')
+  addHelper('useMemo')
+  addHelper('useEffect')
+  addHelper('render')
+  addHelper('fragment')
 
   if (specifiers.length === 0) return
 

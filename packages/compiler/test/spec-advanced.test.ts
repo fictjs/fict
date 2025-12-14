@@ -205,7 +205,7 @@ describe('Async Effect Dependency Tracking Boundary', () => {
       })
     `)
     // The url signal should be tracked (read before await)
-    expect(output).toContain('__fictEffect')
+    expect(output).toContain('__fictUseEffect')
     expect(output).toContain('url()')
   })
 
@@ -228,7 +228,7 @@ describe('Async Effect Dependency Tracking Boundary', () => {
         return () => controller.abort()
       })
     `)
-    expect(output).toContain('__fictEffect')
+    expect(output).toContain('__fictUseEffect')
     expect(output).toContain('controller.abort()')
   })
 
@@ -271,7 +271,7 @@ describe('untrack Escape Hatch', () => {
     `)
     // untrack should be imported and used as-is
     expect(output).toContain('untrack')
-    expect(output).toContain('__fictEffect')
+    expect(output).toContain('__fictUseEffect')
   })
 
   it('transforms signal inside untrack callback', () => {

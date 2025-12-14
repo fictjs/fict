@@ -12,7 +12,7 @@ describe('Cross-Module Reactivity', () => {
         export let count = $state(0)
       `
       const output = transform(source)
-      expect(output).toContain('export let count = __fictSignal(0)')
+      expect(output).toContain('export let count = __fictUseSignal(__fictCtx, 0, 0)')
     })
 
     it('exports derived value as memo accessor', () => {
@@ -23,7 +23,7 @@ describe('Cross-Module Reactivity', () => {
       `
       const output = transform(source)
       // Expecting standard JS export of the variable holding the memo
-      expect(output).toContain('export const double = __fictMemo(() => count() * 2)')
+      expect(output).toContain('export const double = __fictUseMemo(__fictCtx, () => count() * 2')
     })
 
     it('re-exports state (valid JS)', () => {
@@ -44,8 +44,8 @@ describe('Cross-Module Reactivity', () => {
       const output = transform(source)
       expect(output).toContain('export const alias = count')
       expect(output).toContain('export { alias as total }')
-      // ensure no __fictSignal/__fictMemo is created for alias
-      expect(output).not.toMatch(/__fictSignal\(|__fictMemo\(/)
+      // ensure no signal/memo is created for alias
+      expect(output).not.toMatch(/__fictUseSignal\(|__fictUseMemo\(/)
     })
   })
 
@@ -84,7 +84,7 @@ describe('Cross-Module Reactivity', () => {
       `
       const output = transform(source)
       // Should compile effect correctly
-      expect(output).toContain('__fictEffect(() => {')
+      expect(output).toContain('__fictUseEffect(__fictCtx, () => {')
       expect(output).toContain('console.log(count())')
     })
   })

@@ -41,7 +41,7 @@ describe('Fict Compiler - Control Flow', () => {
       `
       const output = transform(input)
       // Ternary derived should be memoized
-      expect(output).toContain('__fictMemo')
+      expect(output).toContain('__fictUseMemo')
       expect(output).toContain('count() > 10')
     })
   })
@@ -128,7 +128,7 @@ describe('Fict Compiler - Control Flow', () => {
       // count should be transformed in conditional
       expect(output).toContain('count() > 10')
       // message is not derived, should not be wrapped
-      expect(output).not.toContain('__fictMemo')
+      expect(output).not.toContain('__fictUseMemo')
     })
 
     it('handles const derived in if block', () => {
@@ -217,7 +217,7 @@ describe('Fict Compiler - Control Flow', () => {
       const output = transform(input)
       expect(output).toContain('a()')
       expect(output).toContain('b()')
-      expect(output).toContain('__fictMemo')
+      expect(output).toContain('__fictUseMemo')
     })
 
     it('handles conditional in map', () => {
@@ -245,7 +245,7 @@ describe('Fict Compiler - Complex Scenarios', () => {
       `
       const output = transform(input)
       expect(output).toContain('count() + staticValue')
-      expect(output).toContain('__fictMemo')
+      expect(output).toContain('__fictUseMemo')
     })
 
     it('handles reactive in some branches, not others', () => {
@@ -271,7 +271,7 @@ describe('Fict Compiler - Complex Scenarios', () => {
       `
       const output = transform(input)
       expect(output).toContain('Math.max(x(), y())')
-      expect(output).toContain('__fictMemo')
+      expect(output).toContain('__fictUseMemo')
     })
 
     it('handles method calls on state', () => {
@@ -282,7 +282,7 @@ describe('Fict Compiler - Complex Scenarios', () => {
       `
       const output = transform(input)
       expect(output).toContain('text().toUpperCase()')
-      expect(output).toContain('__fictMemo')
+      expect(output).toContain('__fictUseMemo')
     })
 
     it('handles array methods on state array', () => {

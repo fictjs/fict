@@ -23,8 +23,8 @@ describe('Fict Compiler - Basic Transforms', () => {
         let count = $state(0)
       `
       const output = transform(input)
-      expect(output).toContain('createSignal as __fictSignal')
-      expect(output).toContain('__fictSignal(0)')
+      expect(output).toContain('__fictUseContext')
+      expect(output).toContain('__fictUseSignal(__fictCtx, 0, 0)')
       expect(output).not.toContain('$state')
     })
 
@@ -79,8 +79,7 @@ describe('Fict Compiler - Basic Transforms', () => {
         const doubled = count * 2
       `
       const output = transform(input)
-      expect(output).toContain('createMemo as __fictMemo')
-      expect(output).toContain('__fictMemo(() => count() * 2)')
+      expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2, 1)')
     })
 
     it('creates memo for chained derived values (derived-from-derived) in component body', () => {
@@ -96,8 +95,8 @@ describe('Fict Compiler - Basic Transforms', () => {
   `
       const output = transform(input)
       // Dependent derived values should each get their own memo to preserve memoized chains.
-      expect(output).toContain('__fictMemo(() => count() * 2)')
-      expect(output).toContain('__fictMemo(() => doubled() * 2)')
+      expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2,')
+      expect(output).toContain('__fictUseMemo(__fictCtx, () => doubled() * 2,')
       expect(output).toContain("console.log('fourfold', fourfold())")
       expect(output).not.toContain('__fictRegion_')
     })
@@ -116,8 +115,12 @@ describe('Fict Compiler - Basic Transforms', () => {
       const output = transform(input)
       expect(output).toContain('__fictRegion_')
       expect(output).toContain('__fictMemo(() => {')
-      expect(output).toContain('const doubled = count() * 2')
-      expect(output).toContain('const squared = count() * count()')
+      // Region should compute plain values (not leave memos uncalled)
+      expect(output).toContain('const doubled = __fictUseMemo')
+      expect(output).toContain('const squared = __fictUseMemo')
+      expect(output).toContain('return {')
+      expect(output).toContain('typeof doubled === "function" ? doubled() : doubled')
+      expect(output).toContain('typeof squared === "function" ? squared() : squared')
       expect(output).toContain('const doubled = () => __fictRegion_')
       expect(output).toContain('const squared = () => __fictRegion_')
     })
@@ -144,10 +147,8 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transform(input)
-      expect(output).toContain('const doubled = () =>')
-      // Getter is created but not auto-called inside nested arrow functions
-      expect(output).toContain('console.log(doubled)')
-      expect(output).not.toContain('__fictMemo')
+      expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2,')
+      expect(output).toContain('const onClick = () => console.log(doubled())')
     })
 
     it('creates getter for plain function-only usage (non-JSX handler)', () => {
@@ -163,11 +164,8 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transform(input)
-      expect(output).toContain('const doubled = () =>')
-      // Getter is created but not auto-called inside nested functions
-      expect(output).toContain('return doubled')
-      expect(output).not.toContain('return doubled()')
-      expect(output).not.toContain('__fictMemo')
+      expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2,')
+      expect(output).toContain('return doubled()')
     })
   })
 
@@ -181,8 +179,7 @@ describe('Fict Compiler - Basic Transforms', () => {
         })
       `
       const output = transform(input)
-      expect(output).toContain('createEffect as __fictEffect')
-      expect(output).toContain('__fictEffect(')
+      expect(output).toContain('__fictUseEffect(__fictCtx, () => {')
       expect(output).not.toContain('$effect')
     })
   })
@@ -450,18 +447,19 @@ describe('Fict Compiler - Integration', () => {
     const output = transform(input)
 
     // Should have runtime imports
-    expect(output).toContain('createSignal as __fictSignal')
-    expect(output).toContain('createMemo as __fictMemo')
-    expect(output).toContain('createEffect as __fictEffect')
+    expect(output).toContain('__fictUseContext')
+    expect(output).toContain('__fictUseSignal')
+    expect(output).toContain('__fictUseMemo')
+    expect(output).toContain('__fictUseEffect')
 
     // Should transform state
-    expect(output).toContain('__fictSignal(0)')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 0,')
 
     // Should transform derived
-    expect(output).toContain('__fictMemo')
+    expect(output).toContain('__fictUseMemo')
 
     // Should transform effect
-    expect(output).toContain('__fictEffect')
+    expect(output).toContain('__fictUseEffect')
 
     // Should wrap reactive JSX
     expect(output).toContain('() => doubled()')

@@ -40,8 +40,8 @@ describe('createFictPlugin', () => {
         let count = $state(0)
       `)
 
-      expect(output).toContain(`import { createSignal as __fictSignal } from "@fictjs/runtime"`)
-      expect(output).toContain(`let count = __fictSignal(0)`)
+      expect(output).toContain(`__fictUseContext`)
+      expect(output).toContain(`__fictUseSignal(__fictCtx, 0, 0)`)
       expect(output).not.toContain('$state')
     })
 
@@ -51,7 +51,7 @@ describe('createFictPlugin', () => {
         const doubled = count * 2
       `)
 
-      expect(output).toContain(`__fictMemo`)
+      expect(output).toContain(`__fictUseMemo(__fictCtx, () => count() * 2`)
       expect(output).toContain(`count()`)
     })
 
@@ -120,7 +120,7 @@ describe('createFictPlugin', () => {
         })
       `)
 
-      expect(output).toContain(`__fictEffect`)
+      expect(output).toContain(`__fictUseEffect(__fictCtx`)
       expect(output).toContain(`console.log(count())`)
     })
 
@@ -186,7 +186,7 @@ describe('createFictPlugin', () => {
         const payload = { count, other: count + 1 }
       `)
 
-      expect(output).toContain(`let count = __fictSignal(1)`)
+      expect(output).toContain(`__fictUseSignal(__fictCtx, 1, 0)`)
       expect(output).toContain(`count: count()`)
     })
   })
@@ -428,7 +428,7 @@ describe('createFictPlugin', () => {
         const c = b + 1
       `)
 
-      expect(output).toContain(`__fictMemo`)
+      expect(output).toContain(`__fictUseMemo`)
     })
   })
 
@@ -546,7 +546,7 @@ describe('createFictPlugin', () => {
       expect(output).toContain(`const fn = count => {`)
       expect(output).toContain(`return count + 1`)
       // But outer count should still be a signal
-      expect(output).toContain(`let count = __fictSignal(0)`)
+      expect(output).toContain(`__fictUseSignal(__fictCtx, 0, 0)`)
     })
 
     it('handles multiple nested functions with different shadows', () => {
@@ -559,8 +559,8 @@ describe('createFictPlugin', () => {
 
       // f1: a is shadowed, b is not
       // f2: b is shadowed, a is not
-      expect(output).toContain(`let a = __fictSignal(1)`)
-      expect(output).toContain(`let b = __fictSignal(2)`)
+      expect(output).toContain(`__fictUseSignal(__fictCtx, 1, 0)`)
+      expect(output).toContain(`__fictUseSignal(__fictCtx, 2, 1)`)
     })
   })
 
@@ -698,20 +698,20 @@ describe('createFictPlugin', () => {
   describe('Module-level derived values (Rule I)', () => {
     it('keeps module-level derived values as memos even for event usage', () => {
       const output = transform(`
-        let count = $state(1)
-        export const doubled = count * 2
-        export const click = () => console.log(doubled)
-      `)
-      expect(output).toContain('__fictMemo(() => count() * 2)')
+      let count = $state(1)
+      export const doubled = count * 2
+      export const click = () => console.log(doubled)
+    `)
+      expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
     })
 
     it('keeps exported via export clause derived values as memos', () => {
       const output = transform(`
-        let count = $state(1)
-        const doubled = count * 2
-        export { doubled }
-      `)
-      expect(output).toContain('__fictMemo(() => count() * 2)')
+      let count = $state(1)
+      const doubled = count * 2
+      export { doubled }
+    `)
+      expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
     })
   })
 
@@ -778,7 +778,7 @@ describe('createFictPlugin', () => {
       `)
 
       expect(output).toMatch(/__fictRegion_/)
-      expect(output).toContain('__fictMemo')
+      expect(output).toContain('__fictUseMemo')
       expect(output).toMatch(/const doubled = \(\) => __fictRegion_/)
       expect(output).toMatch(/const tripled = \(\) => __fictRegion_/)
     })
@@ -786,18 +786,18 @@ describe('createFictPlugin', () => {
     it('lazily evaluates branch-only derived values when enabled (Rule J)', () => {
       const output = transform(
         `
-        function View() {
-          let count = $state(0)
-          const pos = count + 1
-          const neg = count - 1
-          const value = count > 0 ? pos : neg
-          return value
-        }
-      `,
+      function View() {
+        let count = $state(0)
+        const pos = count + 1
+        const neg = count - 1
+        const value = count > 0 ? pos : neg
+        return value
+      }
+    `,
         { lazyConditional: true },
       )
 
-      expect(output).toContain('__fictCond')
+      expect(output).toContain('count() > 0 ? pos() : neg()')
     })
 
     it('caches getter calls when getterCache is enabled', () => {

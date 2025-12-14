@@ -26,7 +26,7 @@ function compileAndLoad<TModule extends Record<string, any>>(
   const module: { exports: any } = { exports: {} }
   const prelude =
     "const __fictRuntime = require('@fictjs/runtime');" +
-    'const { createSignal: __fictSignal, createMemo: __fictMemo, createEffect: __fictEffect, createConditional: __fictConditional, createList: __fictList, insert: __fictInsert, createElement: __fictCreateElement, onDestroy: __fictOnDestroy, bindText: __fictBindText, bindAttribute: __fictBindAttribute, bindClass: __fictBindClass, bindStyle: __fictBindStyle, bindEvent: __fictBindEvent, toNodeArray: __fictToNodeArray, createKeyedListContainer: __fictCreateKeyedListContainer, createKeyedBlock: __fictCreateKeyedBlock, moveMarkerBlock: __fictMoveMarkerBlock, destroyMarkerBlock: __fictDestroyMarkerBlock, getFirstNodeAfter: __fictGetFirstNodeAfter } = __fictRuntime;'
+    'const { __fictUseContext, __fictUseSignal, __fictUseMemo, __fictUseEffect, createSignal: __fictSignal, createMemo: __fictMemo, createEffect: __fictEffect, createConditional: __fictConditional, createList: __fictList, insert: __fictInsert, createElement: __fictCreateElement, onDestroy: __fictOnDestroy, bindText: __fictBindText, bindAttribute: __fictBindAttribute, bindClass: __fictBindClass, bindStyle: __fictBindStyle, bindEvent: __fictBindEvent, toNodeArray: __fictToNodeArray, createKeyedListContainer: __fictCreateKeyedListContainer, createKeyedBlock: __fictCreateKeyedBlock, moveMarkerBlock: __fictMoveMarkerBlock, destroyMarkerBlock: __fictDestroyMarkerBlock, getFirstNodeAfter: __fictGetFirstNodeAfter } = __fictRuntime;'
 
   const dynamicRequire = createRequire(import.meta.url)
 
@@ -145,7 +145,9 @@ describe('compiled templates DOM integration', () => {
           rotate() {
             if (todos.length < 2) return
             const [first, ...rest] = todos
+            console.log('rotate before', todos())
             todos = [...rest, first]
+            console.log('rotate after', todos())
           },
           prepend() {
             todos = [
@@ -590,7 +592,6 @@ describe('compiled templates DOM integration', () => {
             todos = todos.filter(todo => todo.id !== 2)
           },
         }
-
         return (
           <ul data-testid="todos">
             {todos.map(todo => (
