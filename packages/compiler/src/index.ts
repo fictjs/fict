@@ -2586,7 +2586,7 @@ function transformFineGrainedJsx(
     statements: [],
     namePrefix: createTemplateNamePrefix(ctx),
     nameCounters: Object.create(null),
-    identifierOverrides: overrides,
+    ...(overrides ? { identifierOverrides: overrides } : {}),
   }
 
   const rootId = emitJsxElementToTemplate(node, tagName, state, t)

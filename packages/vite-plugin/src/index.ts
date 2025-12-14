@@ -90,7 +90,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             : [],
           plugins: [
             ['@babel/plugin-syntax-jsx', {}],
-            createFictPlugin(fictOptions),
+            [createFictPlugin, fictOptions],
             [
               '@babel/plugin-transform-react-jsx',
               {
