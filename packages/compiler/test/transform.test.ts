@@ -281,6 +281,23 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('createElement("p")')
     })
 
+    it('lowers refs to assignment with cleanup in fine-grained mode', () => {
+      const input = `
+        import { createRef } from 'fict'
+        function View() {
+          const ref = createRef<HTMLInputElement>()
+          const cb = (el: HTMLElement | null) => { window.last = el }
+          return <div><input ref={ref} /><input ref={cb} /></div>
+        }
+      `
+      const output = transformWithOptions(input)
+      expect(output).toContain('.current = __fg0_el')
+      expect(output).toContain('__fictOnDestroy(() => __fictRef_')
+      expect(output).toContain('(__fg0_el')
+      expect(output).toContain('__fictOnDestroy(() => {')
+      expect(output).toContain('.current = null')
+    })
+
     it('wraps createPortal calls with dispose registration', () => {
       const input = `
         import { $state, createPortal, createElement } from 'fict'

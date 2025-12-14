@@ -13,6 +13,7 @@
 | Conditional expressions (`cond ? A : B`, `cond && A`) | ✅                   | Compile to `createConditional` wrappers with stable truthy/falsy closures. |
 | Array `.map` for keyed lists                          | ✅                   | Requires explicit `key` expression; codegen emits specialized updater.     |
 | Nested keyed lists / nested conditionals              | ✅                   | Allowed as long as each level owns its anchors.                            |
+| `ref` (callback/object)                               | ✅                   | Assigned after node creation; cleans up via root onDestroy callbacks.      |
 | Custom components                                     | 🚫 (v1 out of scope) | Will continue routing through existing runtime entry points.               |
 | Portals / slots / suspense                            | 🚫                   | Existing runtime helpers remain; no fine-grained lowering yet.             |
 

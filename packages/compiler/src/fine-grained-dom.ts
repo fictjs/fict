@@ -16,7 +16,7 @@ import type { TransformContext } from './types'
 
 interface NormalizedAttribute {
   name: string
-  kind: 'attr' | 'class' | 'style' | 'event' | 'skip'
+  kind: 'attr' | 'class' | 'style' | 'event' | 'ref' | 'skip'
   eventName?: string
   capture?: boolean
   passive?: boolean
@@ -71,8 +71,9 @@ export function normalizeAttributeName(name: string): NormalizedAttribute | null
 
   switch (name) {
     case 'key':
-    case 'ref':
       return { name, kind: 'skip' }
+    case 'ref':
+      return { name, kind: 'ref' }
     case 'class':
     case 'className':
       return { name: 'class', kind: 'class' }
@@ -300,4 +301,66 @@ export function createBindEventCall(
     createConstDeclaration(t, cleanupId, bindCall),
     t.expressionStatement(t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [cleanupId])),
   ]
+}
+
+/**
+ * Apply a ref in fine-grained DOM lowering, mirroring runtime applyRef behavior.
+ * Supports callback refs and object refs, and registers cleanup to clear on unmount.
+ */
+export function createApplyRefStatements(
+  t: typeof BabelCore.types,
+  elementId: BabelCore.types.Identifier,
+  refExpr: BabelCore.types.Expression,
+  ctx: TransformContext,
+): BabelCore.types.Statement[] {
+  ctx.helpersUsed.onDestroy = true
+
+  const refId = t.identifier(`__fictRef_${++ctx.fineGrainedTemplateId}`)
+
+  const assignCallbackRef = t.ifStatement(
+    t.binaryExpression('===', t.unaryExpression('typeof', refId), t.stringLiteral('function')),
+    t.blockStatement([
+      t.expressionStatement(t.callExpression(refId, [elementId])),
+      t.expressionStatement(
+        t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [
+          t.arrowFunctionExpression([], t.callExpression(refId, [t.nullLiteral()])),
+        ]),
+      ),
+    ]),
+  )
+
+  const assignObjectRef = t.ifStatement(
+    t.logicalExpression(
+      '&&',
+      t.logicalExpression(
+        '&&',
+        refId,
+        t.binaryExpression('===', t.unaryExpression('typeof', refId), t.stringLiteral('object')),
+      ),
+      t.binaryExpression('in', t.stringLiteral('current'), refId),
+    ),
+    t.blockStatement([
+      t.expressionStatement(
+        t.assignmentExpression('=', t.memberExpression(refId, t.identifier('current')), elementId),
+      ),
+      t.expressionStatement(
+        t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [
+          t.arrowFunctionExpression(
+            [],
+            t.blockStatement([
+              t.expressionStatement(
+                t.assignmentExpression(
+                  '=',
+                  t.memberExpression(refId, t.identifier('current')),
+                  t.nullLiteral(),
+                ),
+              ),
+            ]),
+          ),
+        ]),
+      ),
+    ]),
+  )
+
+  return [createConstDeclaration(t, refId, refExpr), assignCallbackRef, assignObjectRef]
 }

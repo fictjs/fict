@@ -21,6 +21,7 @@ import {
   createBindClassCall,
   createBindStyleCall,
   createBindEventCall,
+  createApplyRefStatements,
 } from './fine-grained-dom'
 import {
   collectDerivedOutputsFromStatements,
@@ -2397,6 +2398,20 @@ function emitAttributes(
       state.statements.push(
         ...createBindEventCall(t, elementId, normalized.eventName!, expr, normalized, state.ctx),
       )
+      continue
+    }
+
+    if (normalized.kind === 'ref') {
+      if (!attr.value || !t.isJSXExpressionContainer(attr.value) || !attr.value.expression) {
+        return false
+      }
+      const expr = transformExpressionForFineGrained(
+        attr.value.expression as BabelCore.types.Expression,
+        state.ctx,
+        t,
+        state.identifierOverrides,
+      )
+      state.statements.push(...createApplyRefStatements(t, elementId, expr, state.ctx))
       continue
     }
 
