@@ -6,37 +6,32 @@ This document captures the remaining compiler-ts work required to confidently sh
 
 ## Priority P0 — Must Land Before v1.0
 
-- [ ] **Fine-grained DOM codegen completeness**
-  - _Why_: Current lowering skips several JSX forms (fragments, nested conditionals, portals), forcing fallbacks to legacy paths.
-  - _What to do_: Extend the transformer to cover the full JSX subset defined in `compiler-spec.md`, emitting stable node references plus per-slot bindings. Ensure keyed lists, fragments, and conditional blocks all share the same lowering IR.
-  - _How to validate_: Add snapshot-oriented compiler tests per construct and integration tests exercising the generated helpers end-to-end.
+- [ ] **Diagnostic polish & traceability**
+  - _Why_: Error/warning codes (`FICT-*`) exist, but messages and anchors need a final pass before freeze.
+  - _What to do_: Audit wording, align with `compiler-spec.md`, and assert codes/messages in tests. Keep the spec↔test matrix current.
+  - _How to validate_: Negative cases cover each diagnostic anchor; matrix links stay green.
 
-- [ ] **Event prop handling under fine-grained mode**
-  - _Why_: Today on\* props are treated like generic attributes, so listeners never attach when `fineGrainedDom` is true.
-  - _What to do_: Detect event props during lowering, emit explicit `bindEvent` helpers (or inline `addEventListener`) with cleanup hooks, and cover bubbling/capture modifiers if applicable.
-  - _How to validate_: Integration test that a button compiled via fine-grained mode reacts to clicks and removes the handler on unmount.
+- [ ] **SWC / TS plugin parity**
+  - _Why_: The TS/Babel pipeline leads; SWC needs ref/property binding, ref cleanup, keyed block helpers, and "use no memo" parity.
+  - _What to do_: Port recent lowering changes to the SWC adapter and share fixtures.
+  - _How to validate_: Shared fixtures pass under both pipelines with approved diffs only.
 
-- [ ] **Spec-aligned semantic validation**
-  - _Why_: The 1.0 spec forbids `$state` / `$effect` inside loops/conditionals unless wrapped in `stable`, but the compiler does not error.
-  - _What to do_: Implement AST walkers enforcing each rule, surface actionable diagnostics, and document them in `compiler-spec.md`.
-  - _How to validate_: Add negative tests per rule and ensure the new "Formal Semantics" appendix stays in sync.
+- [ ] **Spec versioning**
+  - _Why_: We need a dated “v1.x semantics frozen” tag to unblock downstream integrations.
+  - _What to do_: Stamp the spec with version/date, add a changelog note, and define the bug/perf-only policy post-freeze.
+  - _How to validate_: Docs updated; CI references the frozen tag; release notes enumerate the frozen behaviors.
 
 ## Priority P1 — Should Land Shortly After P0
 
-- [ ] **Alias-safe reactive lowering**
-  - _Why_: Reactive identifiers imported/exported across modules can currently desugar into duplicated signals.
-  - _What to do_: Introduce an ownership map in the transformer so aliases reference the same slot, and emit hoisted declarations once.
-  - _How to validate_: Multi-module compiler tests showing shared state updates exactly once.
+- [ ] **Perf/coverage expansion**
+  - _Why_: Need post-freeze perf baselines and fuzzing around keyed block helpers.
+  - _What to do_: Broaden `list-fuzzing` scenarios, add microbenchmarks for keyed block moves, and record baselines.
+  - _How to validate_: Bench targets checked into CI; regressions flagged automatically.
 
-- [ ] **Comprehensive feature coverage in fine-grained integration tests**
-  - _Why_: CI currently runs almost all suites with `fineGrainedDom: false`.
-  - _What to do_: Enable true-mode variants for lists, portals, conditional visibility, and props-updates; wire them into `pnpm test`.
-  - _How to validate_: New tests fail if the fine-grained helpers regress.
-
-- [ ] **Fragment & nested list lowering**
-  - _Why_: Nested structures still emit placeholder comment sentinels and force rerender paths.
-  - _What to do_: Extend the IR to represent fragment anchors and produce deterministic child ordering without runtime diffing.
-  - _How to validate_: Golden compiler tests plus DOM-level assertions that nested keyed lists preserve nodes.
+- [ ] **DX tooling**
+  - _Why_: Developers need visibility into lowered output and fallbacks.
+  - _What to do_: Add a compiler flag to emit lowered IR for inspection and surface fallback-to-legacy notices as warnings.
+  - _How to validate_: Snapshot tests for the flag output; warning formatting tests.
 
 ## Priority P2 — Nice-to-have Before GA
 
