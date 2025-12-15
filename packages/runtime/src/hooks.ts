@@ -1,6 +1,6 @@
-import { createSignal, type SignalAccessor, type ComputedAccessor } from './signal'
-import { createMemo } from './memo'
 import { createEffect } from './effect'
+import { createMemo } from './memo'
+import { createSignal, type SignalAccessor, type ComputedAccessor } from './signal'
 
 interface HookContext {
   slots: unknown[]

@@ -40,7 +40,10 @@ export function analyzeConditionalUsage(
   t: typeof BabelCore.types,
 ): ConditionalDerivedInfo | null {
   interface ConditionalNode {
-    node: BabelCore.types.IfStatement | BabelCore.types.ConditionalExpression
+    node:
+      | BabelCore.types.IfStatement
+      | BabelCore.types.ConditionalExpression
+      | BabelCore.types.CallExpression
     condition: BabelCore.types.Expression
     trueBranch: BabelCore.types.Node
     falseBranch: BabelCore.types.Node | undefined
@@ -76,12 +79,8 @@ export function analyzeConditionalUsage(
       }
     }
 
-    // Skip function bodies
-    if (
-      t.isFunctionDeclaration(node) ||
-      t.isFunctionExpression(node) ||
-      t.isArrowFunctionExpression(node)
-    ) {
+    // Skip declaration bodies, but allow arrow functions/expressions (callbacks)
+    if (t.isFunctionDeclaration(node)) {
       return
     }
 
@@ -126,12 +125,8 @@ export function analyzeConditionalUsage(
   const conditionals: ConditionalNode[] = []
 
   const findConditional = (node: BabelCore.types.Node): void => {
-    // Skip function bodies
-    if (
-      t.isFunctionDeclaration(node) ||
-      t.isFunctionExpression(node) ||
-      t.isArrowFunctionExpression(node)
-    ) {
+    // Skip declaration bodies, but allow arrow functions/expressions (callbacks)
+    if (t.isFunctionDeclaration(node)) {
       return
     }
 
@@ -173,7 +168,51 @@ export function analyzeConditionalUsage(
       return
     }
 
-    // Recurse
+    // Handle createConditional calls
+    if (
+      t.isCallExpression(node) &&
+      t.isIdentifier(node.callee) &&
+      node.callee.name === RUNTIME_ALIASES.conditional
+    ) {
+      const conditionParam = node.arguments[0]
+      const trueParam = node.arguments[1]
+      // element factory is arg 2
+      const falseParam = node.arguments[3]
+
+      // Helper to extract body from () => expr or () => { return expr }
+      const unwrap = (
+        arg: BabelCore.types.Node | null | undefined,
+      ): BabelCore.types.Node | undefined => {
+        if (!arg) return undefined
+        if (t.isArrowFunctionExpression(arg) || t.isFunctionExpression(arg)) {
+          return arg.body
+        }
+        return arg
+      }
+
+      const unwrapCondition = (arg: BabelCore.types.Node): BabelCore.types.Expression => {
+        if (t.isArrowFunctionExpression(arg) || t.isFunctionExpression(arg)) {
+          if (t.isExpression(arg.body)) return arg.body
+          if (t.isBlockStatement(arg.body)) {
+            const ret = arg.body.body.find((s): s is BabelCore.types.ReturnStatement =>
+              t.isReturnStatement(s),
+            )
+            if (ret && ret.argument) return ret.argument
+          }
+        }
+        return arg as BabelCore.types.Expression
+      }
+
+      if (conditionParam && trueParam) {
+        conditionals.push({
+          node: node, // Treat the call as the conditional node
+          condition: unwrapCondition(conditionParam),
+          trueBranch: unwrap(trueParam)!,
+          falseBranch: unwrap(falseParam),
+        })
+      }
+    }
+
     for (const key of Object.keys(node) as (keyof typeof node)[]) {
       const child = node[key]
       if (Array.isArray(child)) {

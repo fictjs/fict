@@ -17,11 +17,11 @@ function compileAndLoad<TModule extends Record<string, any>>(
   const output = transformCommonJS(source, options)
 
   // Debug output - uncomment to see generated code
-  // if (source.includes('todo')) {
-  //   console.log('=== Generated Code ===')
-  //   console.log(output)
-  //   console.log('======================')
-  // }
+  if (source.includes('lazily evaluates') || source.includes('rich-stats')) {
+    console.log('=== Generated Code ===')
+    console.log(output)
+    console.log('======================')
+  }
 
   const module: { exports: any } = { exports: {} }
   const prelude =

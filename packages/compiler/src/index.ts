@@ -859,11 +859,46 @@ function maybeApplyGetterCaching(
 }
 
 /**
- * Transform simple top-level
- *   if (cond) return A;
+ * Helper to extract statements and return argument from a branch (consequent or alternate)
+ */
+function extractBranchContent(
+  branch: BabelCore.types.Statement | null | undefined,
+  t: typeof BabelCore.types,
+): { stmts: BabelCore.types.Statement[]; returnArg: BabelCore.types.Expression | null } {
+  if (!branch) return { stmts: [], returnArg: null }
+
+  if (t.isReturnStatement(branch)) {
+    return { stmts: [], returnArg: branch.argument ?? null }
+  }
+  if (t.isBlockStatement(branch)) {
+    const returnIdx = branch.body.findIndex((s): s is BabelCore.types.ReturnStatement =>
+      t.isReturnStatement(s),
+    )
+    if (returnIdx === -1) return { stmts: [], returnArg: null }
+    return {
+      stmts: branch.body.slice(0, returnIdx),
+      returnArg: (branch.body[returnIdx] as BabelCore.types.ReturnStatement).argument ?? null,
+    }
+  }
+  return { stmts: [], returnArg: null }
+}
+
+/**
+ * Transform top-level conditional return patterns:
+ *
+ * Pattern 1: if without else
+ *   if (cond) { ...stmts; return A; }
+ *   ...stmts;
  *   return B;
- * into createConditional(() => cond, () => A, __fictCreateElement, () => B);
- * to enable reactive branch switching without re-running the component body.
+ *
+ * Pattern 2: if-else
+ *   if (cond) { ...stmts; return A; }
+ *   else { ...stmts; return B; }
+ *
+ * Both are transformed to:
+ *   createConditional(() => cond, () => { ...stmts; return A }, __fictCreateElement, () => { ...stmts; return B });
+ *
+ * This enables reactive branch switching without re-running the component body.
  */
 function maybeRewriteTopLevelConditionalReturn(
   path: BabelCore.NodePath<BabelCore.types.Function>,
@@ -874,34 +909,118 @@ function maybeRewriteTopLevelConditionalReturn(
   const body = path.get('body')
   if (!body.isBlockStatement()) return
   const stmts = body.node.body
+  if (stmts.length < 1) return
+
+  const lastIdx = stmts.length - 1
+  const last = stmts[lastIdx]
+
+  // Pattern 2: if-else at the end (no trailing return needed)
+  if (t.isIfStatement(last) && last.alternate) {
+    const ifStmt = last
+    const trueContent = extractBranchContent(ifStmt.consequent, t)
+    const falseContent = extractBranchContent(ifStmt.alternate, t)
+
+    if (!trueContent.returnArg || !falseContent.returnArg) return
+
+    const condFn = t.arrowFunctionExpression([], transformExpression(ifStmt.test, ctx, t))
+
+    // Build true branch function
+    let trueFn: BabelCore.types.ArrowFunctionExpression
+    if (trueContent.stmts.length === 0) {
+      trueFn = t.arrowFunctionExpression([], trueContent.returnArg)
+    } else {
+      const transformedTrueStmts = trueContent.stmts.map(s =>
+        wrapReactiveExpressionStatement(s, ctx, t),
+      )
+      trueFn = t.arrowFunctionExpression(
+        [],
+        t.blockStatement([...transformedTrueStmts, t.returnStatement(trueContent.returnArg)]),
+      )
+    }
+
+    // Build false branch function
+    let falseFn: BabelCore.types.ArrowFunctionExpression
+    if (falseContent.stmts.length === 0) {
+      falseFn = t.arrowFunctionExpression([], falseContent.returnArg)
+    } else {
+      const transformedFalseStmts = falseContent.stmts.map(s =>
+        wrapReactiveExpressionStatement(s, ctx, t),
+      )
+      falseFn = t.arrowFunctionExpression(
+        [],
+        t.blockStatement([...transformedFalseStmts, t.returnStatement(falseContent.returnArg)]),
+      )
+    }
+
+    ctx.helpersUsed.conditional = true
+    ctx.helpersUsed.createElement = true
+
+    const call = t.callExpression(t.identifier(RUNTIME_ALIASES.conditional), [
+      condFn,
+      trueFn,
+      t.identifier(RUNTIME_ALIASES.createElement),
+      falseFn,
+    ])
+
+    const prefix = stmts
+      .slice(0, lastIdx)
+      .map(stmt => wrapReactiveExpressionStatement(stmt, ctx, t))
+    const newReturn = t.returnStatement(t.memberExpression(call, t.identifier('marker')))
+    body.node.body = [...prefix, newReturn]
+    return
+  }
+
+  // Pattern 1: if without else followed by statements and return
+  if (!t.isReturnStatement(last)) return
   if (stmts.length < 2) return
 
-  const last = stmts[stmts.length - 1]
-  const prev = stmts[stmts.length - 2]
-
-  if (!t.isReturnStatement(last)) return
-  if (!t.isIfStatement(prev) || prev.alternate) return
-
-  const cond = prev.test
-
-  const trueReturn = (() => {
-    const cons = prev.consequent
-    if (t.isReturnStatement(cons)) return cons.argument
-    if (t.isBlockStatement(cons)) {
-      const ret = cons.body.find((s): s is BabelCore.types.ReturnStatement =>
-        t.isReturnStatement(s),
-      )
-      return ret ? ret.argument : null
+  // Find the if statement by scanning backwards (skip statements between if and return)
+  let ifIdx = -1
+  for (let i = lastIdx - 1; i >= 0; i--) {
+    if (t.isIfStatement(stmts[i]) && !(stmts[i] as BabelCore.types.IfStatement).alternate) {
+      ifIdx = i
+      break
     }
-    return null
-  })()
-  if (!trueReturn) return
+  }
+  if (ifIdx === -1) return
 
-  const falseReturn = last.argument ?? t.identifier('undefined')
+  const ifStmt = stmts[ifIdx] as BabelCore.types.IfStatement
 
-  const condFn = t.arrowFunctionExpression([], transformExpression(cond, ctx, t))
-  const trueFn = t.arrowFunctionExpression([], trueReturn)
-  const falseFn = t.arrowFunctionExpression([], falseReturn)
+  // Extract statements and return from if consequent
+  const trueContent = extractBranchContent(ifStmt.consequent, t)
+  if (!trueContent.returnArg) return
+
+  // Statements between if and final return (for false branch)
+  const falseStmts = stmts.slice(ifIdx + 1, lastIdx)
+  const falseReturnArg = last.argument ?? t.identifier('undefined')
+
+  const condFn = t.arrowFunctionExpression([], transformExpression(ifStmt.test, ctx, t))
+
+  // Build true branch function (include pre-return statements if any)
+  let trueFn: BabelCore.types.ArrowFunctionExpression
+  if (trueContent.stmts.length === 0) {
+    trueFn = t.arrowFunctionExpression([], trueContent.returnArg)
+  } else {
+    const transformedTrueStmts = trueContent.stmts.map(s =>
+      wrapReactiveExpressionStatement(s, ctx, t),
+    )
+    trueFn = t.arrowFunctionExpression(
+      [],
+      t.blockStatement([...transformedTrueStmts, t.returnStatement(trueContent.returnArg)]),
+    )
+  }
+
+  // Build false branch function (include pre-return statements if any)
+  let falseFn: BabelCore.types.ArrowFunctionExpression
+  if (falseStmts.length === 0) {
+    falseFn = t.arrowFunctionExpression([], falseReturnArg)
+  } else {
+    const transformedFalseStmts = falseStmts.map(s => wrapReactiveExpressionStatement(s, ctx, t))
+    falseFn = t.arrowFunctionExpression(
+      [],
+      t.blockStatement([...transformedFalseStmts, t.returnStatement(falseReturnArg)]),
+    )
+  }
 
   ctx.helpersUsed.conditional = true
   ctx.helpersUsed.createElement = true
@@ -913,7 +1032,7 @@ function maybeRewriteTopLevelConditionalReturn(
     falseFn,
   ])
 
-  const prefix = stmts.slice(0, -2).map(stmt => wrapReactiveExpressionStatement(stmt, ctx, t))
+  const prefix = stmts.slice(0, ifIdx).map(stmt => wrapReactiveExpressionStatement(stmt, ctx, t))
 
   const newReturn = t.returnStatement(t.memberExpression(call, t.identifier('marker')))
   body.node.body = [...prefix, newReturn]
@@ -2558,80 +2677,6 @@ function getFunctionDepth(path: BabelCore.NodePath): number {
   return depth
 }
 
-function shouldEmitGetter(
-  declPath: BabelCore.NodePath<BabelCore.types.Node>,
-  name: string,
-  ctx: TransformContext,
-  t: typeof BabelCore.types,
-): boolean {
-  // Use Babel's binding resolution so we only consider references to THIS binding,
-  // and we can accurately tell whether a reference occurs in a nested function.
-  const binding = declPath.scope.getBinding(name)
-  if (!binding) return false
-
-  let reactive = false
-  let eventUsage = false
-  let otherUsage = false
-
-  const declarationFuncScope = binding.scope.getFunctionParent()
-
-  for (const refPath of binding.referencePaths) {
-    if (reactive) break
-
-    // Ignore non-runtime/type-only positions
-    if (typeof (refPath as any).isReferencedIdentifier === 'function') {
-      if (!(refPath as any).isReferencedIdentifier()) continue
-    }
-
-    // JSX attribute detection (onClick/non-reactive attrs are treated as event-only usage)
-    const jsxAttrPath = refPath.findParent(p => p.isJSXAttribute())
-    if (jsxAttrPath && jsxAttrPath.isJSXAttribute()) {
-      const attrNameNode = jsxAttrPath.node.name
-      if (t.isJSXIdentifier(attrNameNode)) {
-        const attrName = attrNameNode.name
-        if (isEventHandler(attrName) || NON_REACTIVE_ATTRS.has(attrName)) {
-          eventUsage = true
-          continue
-        }
-      }
-      reactive = true
-      break
-    }
-
-    // JSX expression containers are reactive sinks
-    const inJsxExpression = !!refPath.findParent(p => p.isJSXExpressionContainer())
-    if (inJsxExpression) {
-      reactive = true
-      break
-    }
-
-    // $effect callback is a reactive sink
-    const inEffect = !!refPath.findParent(p => {
-      if (!p.isCallExpression()) return false
-      const callee = (p.node as BabelCore.types.CallExpression).callee
-      return t.isIdentifier(callee) && callee.name === '$effect'
-    })
-    if (inEffect) {
-      reactive = true
-      break
-    }
-
-    // If a reference occurs in a nested function (relative to the declaration's function),
-    // we treat it as event-only usage. Otherwise it's "other" usage (component/module body).
-    const usageFuncScope = refPath.scope.getFunctionParent()
-    if (usageFuncScope !== declarationFuncScope) {
-      eventUsage = true
-    } else {
-      otherUsage = true
-      // No need to keep scanning: any non-nested usage forces memo.
-      break
-    }
-  }
-
-  if (reactive || otherUsage) return false
-  return eventUsage
-}
-
 /**
  * Check if an identifier should be transformed to a getter call
  * Returns false for declarations, property names, type references, etc.
@@ -3846,7 +3891,7 @@ function applyRegionTransform(
     const analysisStatements = cloneRegionStatements(
       statements as BabelCore.types.Statement[],
       start,
-      end,
+      statements.length - 1,
       t,
       outputs,
     )
@@ -3951,7 +3996,7 @@ function applyRegionTransform(
   const analysisStatements = cloneRegionStatements(
     statements as BabelCore.types.Statement[],
     firstTouched,
-    lastTouched,
+    statements.length - 1,
     t,
     activeOutputs,
   )

@@ -25,6 +25,7 @@ import {
   type AttributeSetter,
   type BindingHandle,
 } from './binding'
+import { __fictPushContext, __fictPopContext } from './hooks'
 import { Fragment } from './jsx'
 import {
   createRootContext,
@@ -37,7 +38,6 @@ import {
   registerRootCleanup,
   getCurrentRoot,
 } from './lifecycle'
-import { __fictPushContext, __fictPopContext } from './hooks'
 import type { DOMElement, FictNode, FictVNode, RefObject } from './types'
 
 // ============================================================================
@@ -149,7 +149,7 @@ export function createElement(node: FictNode): DOMElement {
     try {
       // Create a fresh hook context for this component instance.
       // This preserves slot state across re-renders driven by __fictRender.
-      const ctx = __fictPushContext()
+      __fictPushContext()
       const rendered = vnode.type(props)
       __fictPopContext()
       return createElement(rendered as FictNode)

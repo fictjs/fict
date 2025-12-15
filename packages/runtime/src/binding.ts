@@ -26,7 +26,7 @@ import {
   registerRootCleanup,
   type RootContext,
 } from './lifecycle'
-import { createSignal, type Signal } from './signal'
+import { computed, createSignal, untrack, type Signal } from './signal'
 import type { Cleanup, FictNode } from './types'
 
 // ============================================================================
@@ -783,8 +783,14 @@ export function createConditional(
   let currentRoot: RootContext | null = null
   let lastCondition: boolean | undefined = undefined
 
+  // Use computed to memoize condition value - this prevents the effect from
+  // re-running when condition dependencies change but the boolean result stays same.
+  // This is critical because re-running the effect would purge child effect deps
+  // (like bindText) even if we early-return, breaking fine-grained reactivity.
+  const conditionMemo = computed(condition)
+
   const dispose = createEffect(() => {
-    const cond = condition()
+    const cond = conditionMemo()
 
     if (lastCondition === cond && currentNodes.length > 0) {
       return
@@ -810,7 +816,11 @@ export function createConditional(
     const prev = pushRoot(root)
     let handledError = false
     try {
-      const output = render()
+      // Use untrack to prevent render function's signal accesses from being
+      // tracked by createConditional's effect. This ensures that signals used
+      // inside the render function (e.g., nested if conditions) don't cause
+      // createConditional to re-run, which would purge child effect deps.
+      const output = untrack(render)
       if (output == null || output === false) {
         return
       }

@@ -1089,7 +1089,22 @@ function generateLazyConditionalRegionMemo(
           if (nullFields.has(name)) {
             return t.objectProperty(t.identifier(name), t.nullLiteral())
           }
-          return t.objectProperty(t.identifier(name), t.identifier(name))
+          return t.objectProperty(
+            t.identifier(name),
+            t.conditionalExpression(
+              t.binaryExpression('!=', t.identifier(name), t.identifier('undefined')),
+              t.conditionalExpression(
+                t.binaryExpression(
+                  '===',
+                  t.unaryExpression('typeof', t.identifier(name)),
+                  t.stringLiteral('function'),
+                ),
+                t.callExpression(t.identifier(name), []),
+                t.identifier(name),
+              ),
+              t.identifier('undefined'),
+            ),
+          )
         }),
       ),
     )
