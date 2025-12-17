@@ -48,7 +48,7 @@ export { Fragment } from './jsx'
 // DOM Rendering
 // ============================================================================
 
-export { createElement, render } from './dom'
+export { createElement, render, template } from './dom'
 export { ErrorBoundary } from './error-boundary'
 export { Suspense, createSuspenseToken } from './suspense'
 

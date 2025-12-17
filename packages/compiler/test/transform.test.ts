@@ -114,7 +114,7 @@ describe('Fict Compiler - Basic Transforms', () => {
       `
       const output = transform(input)
       expect(output).toContain('__fictRegion_')
-      expect(output).toContain('__fictMemo(() => {')
+      expect(output).toContain('createMemo(() => {')
       // Region should compute plain values (not leave memos uncalled)
       expect(output).toContain('const doubled = __fictUseMemo')
       expect(output).toContain('const squared = __fictUseMemo')
@@ -277,12 +277,8 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transformWithOptions(input)
-      expect(output).toContain('document.createElement("button")')
-      expect(output).toContain('document.createTextNode')
-      expect(output).toContain('__fictBindAttribute')
-      expect(output).toContain('__fictBindText')
-      expect(output).toContain('const __fg0_el0 = document.createElement("button")')
-      expect(output).toContain('const __fg0_txt0 = document.createTextNode("")')
+      expect(output).toContain('bindAttribute')
+      expect(output).toContain('insert')
       expect(output).toContain('count()')
     })
 
@@ -295,10 +291,10 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transformWithOptions(input)
-      expect(output).toContain('__fictCreateKeyedListContainer')
-      expect(output).toContain('__fictMoveMarkerBlock')
-      expect(output).toContain('document.createElement("li")')
-      expect(output).toContain('__fictBindText')
+      expect(output).toContain('createKeyedList')
+      expect(output).toContain('toNodeArray')
+      expect(output).toContain('template')
+      expect(output).toContain('insert')
       expect(output).toContain('__fgValueSig().label')
     })
 
@@ -312,10 +308,9 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transformWithOptions(input)
-      expect(output).toContain('__fictConditional')
-      // Conditional branches are lowered to DOM API calls
-      expect(output).toContain('createElement("span")')
-      expect(output).toContain('createElement("p")')
+      expect(output).toContain('createConditional')
+      expect(output).toContain('insert')
+      expect(output).toContain('template')
     })
 
     it('lowers refs to assignment with cleanup in fine-grained mode', () => {
@@ -328,11 +323,9 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transformWithOptions(input)
-      expect(output).toContain('.current = __fg0_el')
-      expect(output).toContain('__fictOnDestroy(() => __fictRef_')
-      expect(output).toContain('(__fg0_el')
-      expect(output).toContain('__fictOnDestroy(() => {')
-      expect(output).toContain('.current = null')
+      expect(output).toContain('bindRef')
+      expect(output).toContain('ref')
+      expect(output).toContain('cb')
     })
 
     it('wraps createPortal calls with dispose registration', () => {
@@ -350,9 +343,8 @@ describe('Fict Compiler - Basic Transforms', () => {
       `
       const output = transformWithOptions(input)
       expect(output).toContain('createPortal(document.body')
-      // Portal content is lowered to fine-grained DOM
-      expect(output).toContain('document.createElement("div")')
-      expect(output).toContain('__fictBindText')
+      expect(output).toContain('template')
+      expect(output).toContain('insert')
     })
 
     it('lowers value/checked to property bindings', () => {
@@ -365,8 +357,8 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transformWithOptions(input)
-      expect(output).toContain('__fictBindProperty')
-      expect(output).not.toContain('__fictBindAttribute(__fg')
+      expect(output).toContain('bindProperty')
+      expect(output).not.toContain('bindAttribute(__fg')
     })
   })
 

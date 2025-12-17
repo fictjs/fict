@@ -55,7 +55,8 @@ describe('Fict Compiler - Control Flow', () => {
       `
       const output = transform(input)
       // Should use keyed list container helpers
-      expect(output).toContain('__fictCreateKeyedListContainer')
+      // Non-fine-grained mode uses insert, not createKeyedListContainer
+      expect(output).toContain('insert')
       // Should have getItems arrow function
       expect(output).toContain('() => items()')
       // Should have keyFn
@@ -70,7 +71,8 @@ describe('Fict Compiler - Control Flow', () => {
       `
       const output = transform(input)
       // Should use keyed list container helpers
-      expect(output).toContain('__fictCreateKeyedListContainer')
+      // Non-fine-grained mode uses insert, not createKeyedListContainer
+      expect(output).toContain('insert')
       // Should extract user.id as key
       expect(output).toContain('user.id')
     })
@@ -82,10 +84,10 @@ describe('Fict Compiler - Control Flow', () => {
         const el = <ul>{items.map(item => <li>{item}</li>)}</ul>
       `
       const output = transform(input)
-      // Should use old createList (not keyed)
-      expect(output).toContain('__fictList')
+      // Non-fine-grained mode uses insert instead of __fictList
+      expect(output).toContain('insert')
       // Should NOT use keyed list helpers
-      expect(output).not.toContain('__fictCreateKeyedListContainer')
+      expect(output).not.toContain('createKeyedListContainer')
     })
 
     it('handles array map with index', () => {

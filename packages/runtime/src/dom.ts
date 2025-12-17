@@ -113,6 +113,11 @@ export function createElement(node: FictNode): DOMElement {
 
   // Primitive proxy produced by keyed list binding
   if (typeof node === 'object' && node !== null && !(node instanceof Node)) {
+    // Handle BindingHandle (createList, createConditional, etc)
+    if ('marker' in node) {
+      return createElement((node as { marker: unknown }).marker as FictNode)
+    }
+
     const nodeRecord = node as unknown as Record<PropertyKey, unknown>
     if (nodeRecord[PRIMITIVE_PROXY]) {
       const primitiveGetter = nodeRecord[Symbol.toPrimitive]
@@ -178,6 +183,16 @@ export function createElement(node: FictNode): DOMElement {
   return el
 }
 
+/**
+ * Create a template cloning factory from an HTML string.
+ * Used by the compiler for efficient DOM generation.
+ */
+export function template(html: string): () => Node {
+  const t = document.createElement('template')
+  t.innerHTML = html
+  return () => t.content.firstChild!.cloneNode(true)
+}
+
 // ============================================================================
 // Child Node Handling
 // ============================================================================
@@ -193,6 +208,19 @@ const PROPERTY_BINDING_KEYS = new Set([
 ])
 
 /**
+ * Check if a value is a runtime binding handle
+ */
+function isBindingHandle(node: unknown): node is BindingHandle {
+  return (
+    node !== null &&
+    typeof node === 'object' &&
+    'marker' in node &&
+    'dispose' in node &&
+    typeof (node as BindingHandle).dispose === 'function'
+  )
+}
+
+/**
  * Append a child node to a parent, handling all node types including reactive values.
  */
 function appendChildNode(parent: HTMLElement | DocumentFragment, child: FictNode): void {
@@ -201,7 +229,15 @@ function appendChildNode(parent: HTMLElement | DocumentFragment, child: FictNode
     return
   }
 
-  // Reactive child - create binding
+  // Handle BindingHandle (recursive)
+  if (isBindingHandle(child)) {
+    appendChildNode(parent, child.marker)
+    // Flush pending nodes now that markers are in the DOM
+    child.flush?.()
+    return
+  }
+
+  // Handle getter function (recursive)
   if (typeof child === 'function' && (child as () => FictNode).length === 0) {
     const childGetter = child as () => FictNode
     createChildBinding(parent as HTMLElement | DocumentFragment, childGetter, createElement)
@@ -209,7 +245,44 @@ function appendChildNode(parent: HTMLElement | DocumentFragment, child: FictNode
   }
 
   // Static child - create element and append
-  parent.appendChild(createElement(child))
+  if (Array.isArray(child)) {
+    for (const item of child) {
+      appendChildNode(parent, item)
+    }
+    return
+  }
+
+  // Cast to Node for remaining logic
+  let domNode: Node
+  if (typeof child !== 'object' || child === null) {
+    domNode = document.createTextNode(String(child ?? ''))
+  } else {
+    domNode = createElement(child as any) as Node
+  }
+
+  // Handle DocumentFragment manually to avoid JSDOM issues
+  if (domNode.nodeType === 11) {
+    const children = Array.from(domNode.childNodes)
+    for (const node of children) {
+      appendChildNode(parent, node)
+    }
+    return
+  }
+
+  if (domNode.ownerDocument !== parent.ownerDocument && parent.ownerDocument) {
+    parent.ownerDocument.adoptNode(domNode)
+  }
+
+  try {
+    parent.appendChild(domNode)
+  } catch (e: any) {
+    if (parent.ownerDocument) {
+      const clone = parent.ownerDocument.importNode(domNode, true)
+      parent.appendChild(clone)
+      return
+    }
+    throw e
+  }
 }
 
 /**
@@ -381,6 +454,19 @@ const setProperty: AttributeSetter = (el: HTMLElement, key: string, value: unkno
     ;(el as unknown as Record<string, unknown>)[key] = fallback
     return
   }
+
+  // Handle style object binding style={{ color: 'red' }}
+  if (key === 'style' && typeof value === 'object' && value !== null) {
+    console.log('SETTING STYLE', value)
+    for (const k in value as Record<string, string>) {
+      const v = (value as Record<string, string>)[k]
+      if (v !== undefined) {
+        ;(el.style as unknown as Record<string, string>)[k] = String(v)
+      }
+    }
+    return
+  }
+
   ;(el as unknown as Record<string, unknown>)[key] = value as unknown
 }
 

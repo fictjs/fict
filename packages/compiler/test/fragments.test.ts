@@ -27,8 +27,8 @@ describe('Fragment Lowering', () => {
 
     // Should NOT fallback to VDOM (jsx/jsxs calls)
     // Should use fine-grained DOM operations
-    expect(output).toContain('document.createElement("span")')
-    expect(output).toContain('appendChild')
+    // Template cloning generates template() and uses node navigation
+    expect(output).toContain('template')
     expect(output).not.toContain('jsx(')
     expect(output).not.toContain('jsxs(')
   })
@@ -49,7 +49,8 @@ describe('Fragment Lowering', () => {
       }
     `
     const output = transform(source, { fineGrainedDom: true })
-    expect(output).toContain('document.createElement("span")')
+    // Template cloning generates template() instead of document.createElement
+    expect(output).toContain('template')
     expect(output).not.toContain('jsx(')
   })
 })

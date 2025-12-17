@@ -198,7 +198,7 @@ describe('createFictPlugin', () => {
         const view = () => <div>{count}</div>
       `)
 
-      expect(output).toContain('__fictInsert')
+      expect(output).toContain('insert')
       expect(output).toContain('count()')
     })
 
@@ -208,7 +208,7 @@ describe('createFictPlugin', () => {
       `)
 
       expect(output).toContain(`{"static"}`)
-      expect(output).not.toContain(`__fictInsert`)
+      expect(output).not.toContain(`insert`)
     })
 
     it('wraps complex expressions that depend on state', () => {
@@ -217,7 +217,7 @@ describe('createFictPlugin', () => {
         const view = () => <div>{count > 0 ? 'positive' : 'zero'}</div>
       `)
 
-      expect(output).toContain('__fictConditional')
+      expect(output).toContain('createConditional')
       expect(output).toContain(`count()`)
     })
 
@@ -227,7 +227,8 @@ describe('createFictPlugin', () => {
         const view = () => <ul>{items.map(item => <li>{item}</li>)}</ul>
       `)
 
-      expect(output).toContain('__fictList')
+      // Template cloning uses insert for dynamic lists
+      expect(output).toContain('insert')
       expect(output).toContain('items()')
     })
   })
@@ -272,7 +273,7 @@ describe('createFictPlugin', () => {
       `)
 
       expect(output).toContain(`{staticValue}`)
-      expect(output).not.toContain(`__fictInsert`)
+      expect(output).not.toContain(`insert`)
     })
 
     it('handles derived values in attributes', () => {
@@ -311,7 +312,7 @@ describe('createFictPlugin', () => {
         const view = () => <div>{show && <span>Visible</span>}</div>
       `)
 
-      expect(output).toContain(`__fictConditional`)
+      expect(output).toContain(`createConditional`)
     })
 
     it('handles ternary conditional rendering', () => {
@@ -320,7 +321,7 @@ describe('createFictPlugin', () => {
         const view = () => <div>{show ? <span>Yes</span> : <span>No</span>}</div>
       `)
 
-      expect(output).toContain(`__fictConditional`)
+      expect(output).toContain(`createConditional`)
     })
 
     it('handles nested components with reactive props', () => {
@@ -340,7 +341,7 @@ describe('createFictPlugin', () => {
         const view = () => <div>{a + b}</div>
       `)
 
-      expect(output).toContain(`__fictInsert`)
+      expect(output).toContain(`insert`)
       expect(output).toContain(`a()`)
       expect(output).toContain(`b()`)
     })
@@ -834,11 +835,12 @@ describe('createFictPlugin', () => {
         { fineGrainedDom: true },
       )
 
-      expect(output).toContain('document.createElement')
-      expect(output).toContain('__fictBindClass')
-      expect(output).toContain('__fictBindStyle')
-      expect(output).toContain('__fictBindText')
-      expect(output).not.toContain('__fictInsert')
+      // Template cloning generates template() instead of document.createElement
+      expect(output).toContain('template')
+      expect(output).toContain('bindClass')
+      expect(output).toContain('bindStyle')
+      // Template cloning uses insert instead of bindText
+      expect(output).toContain('insert')
     })
 
     it('rewrites tracked reads inside bindings and effects', () => {

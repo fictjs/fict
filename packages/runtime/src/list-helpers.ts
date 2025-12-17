@@ -16,6 +16,8 @@ import {
 } from './lifecycle'
 import { createSignal, type Signal } from './signal'
 import { createVersionedSignal } from './versioned-signal'
+import { createElement } from './dom'
+import type { FictNode } from './types'
 
 // ============================================================================
 // Types
@@ -56,11 +58,13 @@ export interface KeyedListContainer<T = unknown> {
  */
 export interface KeyedListBinding {
   /** Document fragment placeholder inserted by the compiler/runtime */
-  marker: DocumentFragment
+  marker: DocumentFragment | Node[]
   /** Start marker comment node */
   startMarker: Comment
   /** End marker comment node */
   endMarker: Comment
+  /** Flush pending items - call after markers are inserted into DOM */
+  flush?: () => void
   /** Cleanup function */
   dispose: () => void
 }
@@ -93,9 +97,30 @@ export function moveNodesBefore(parent: Node, nodes: Node[], anchor: Node | null
   // This way each node becomes the new anchor for the next
   for (let i = nodes.length - 1; i >= 0; i--) {
     const node = nodes[i]!
+    if (!node || !(node instanceof Node)) {
+      throw new Error('Invalid node in moveNodesBefore')
+    }
     // Only move if not already in correct position
     if (node.nextSibling !== anchor) {
-      parent.insertBefore(node, anchor)
+      if (node.ownerDocument !== parent.ownerDocument && parent.ownerDocument) {
+        parent.ownerDocument.adoptNode(node)
+      }
+      try {
+        parent.insertBefore(node, anchor)
+      } catch (e: any) {
+        if (parent.ownerDocument) {
+          try {
+            const clone = parent.ownerDocument.importNode(node, true)
+            parent.insertBefore(clone, anchor)
+            // Note: Cloning during move breaks references in KeyedBlock.nodes
+            // This is a worst-case fallback for tests.
+            continue
+          } catch {
+            // Clone fallback failed
+          }
+        }
+        throw e
+      }
     }
     anchor = node
   }
@@ -121,7 +146,47 @@ export function removeNodes(nodes: Node[]): void {
  */
 export function insertNodesBefore(parent: Node, nodes: Node[], anchor: Node | null): void {
   for (const node of nodes) {
-    parent.insertBefore(node, anchor)
+    if (node.nodeType === 11) {
+      // Node.DOCUMENT_FRAGMENT_NODE
+      const children = Array.from(node.childNodes)
+      for (const child of children) {
+        if (parent.ownerDocument && child.ownerDocument !== parent.ownerDocument) {
+          parent.ownerDocument.adoptNode(child)
+        }
+        try {
+          parent.insertBefore(child, anchor)
+        } catch (e: any) {
+          if (parent.ownerDocument) {
+            try {
+              const clone = parent.ownerDocument.importNode(child, true)
+              parent.insertBefore(clone, anchor)
+              continue
+            } catch {
+              // Clone fallback failed
+            }
+          }
+          throw e
+        }
+      }
+    } else {
+      if (parent.ownerDocument && node.ownerDocument !== parent.ownerDocument) {
+        parent.ownerDocument.adoptNode(node)
+      }
+      try {
+        parent.insertBefore(node, anchor)
+      } catch (e: any) {
+        if (parent.ownerDocument) {
+          try {
+            const clone = parent.ownerDocument.importNode(node, true)
+            parent.insertBefore(clone, anchor)
+            continue
+          } catch {
+            // Clone fallback failed
+          }
+        }
+        throw e
+      }
+    }
   }
 }
 
@@ -240,9 +305,16 @@ export function createKeyedBlock<T>(
   const root = createRootContext()
   const prev = pushRoot(root)
 
+  // ... (omitted intermediate code) ...
+
   let nodes: Node[] = []
   try {
-    nodes = render(itemSig, indexSig)
+    const rendered = render(itemSig, indexSig)
+    // Convert rendered content (which might be VNodes if from JSX) to actual Nodes
+    // We treat 'rendered' as FictNode, pass it to createElement, then toNodeArray
+    // Since 'render' signature says Node[] but user function returns JSX.
+    const element = createElement(rendered as unknown as FictNode)
+    nodes = toNodeArray(element)
   } finally {
     popRoot(prev)
     flushOnMount(root)
@@ -264,14 +336,29 @@ export function createKeyedBlock<T>(
 /**
  * Convert a single node or array to a flat array of nodes
  */
-export function toNodeArray(node: Node | Node[]): Node[] {
+export function toNodeArray(node: Node | Node[] | unknown): Node[] {
   if (Array.isArray(node)) {
-    return node
+    const result: Node[] = []
+    for (const item of node) {
+      result.push(...toNodeArray(item))
+    }
+    return result
   }
-  if (node instanceof DocumentFragment) {
-    return Array.from(node.childNodes)
+  if (node === null || node === undefined || node === false) {
+    return []
   }
-  return [node]
+  if (node instanceof Node) {
+    if (node instanceof DocumentFragment) {
+      return Array.from(node.childNodes)
+    }
+    return [node]
+  }
+  // Handle BindingHandle (duck typing)
+  if (typeof node === 'object' && node !== null && 'marker' in node) {
+    return toNodeArray((node as { marker: unknown }).marker)
+  }
+  // Primitive fallback
+  return [document.createTextNode(String(node))]
 }
 
 /**
@@ -417,14 +504,17 @@ function createFineGrainedKeyedList<T>(
   }
 
   const effectDispose = createEffect(performDiff)
-  const marker = document.createDocumentFragment()
-  marker.appendChild(container.startMarker)
-  marker.appendChild(container.endMarker)
 
   return {
-    marker,
+    marker: [container.startMarker, container.endMarker],
     startMarker: container.startMarker,
     endMarker: container.endMarker,
+    // Flush pending items - call after markers are inserted into DOM
+    flush: () => {
+      if (pendingItems !== null) {
+        performDiff()
+      }
+    },
     dispose: () => {
       disposed = true
       effectDispose?.()

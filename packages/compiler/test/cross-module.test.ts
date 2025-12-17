@@ -66,11 +66,9 @@ describe('Cross-Module Reactivity', () => {
       // OR standard handling if they return a value.
 
       // If 'count()' is an expression, 'emitDynamicTextChild' will wrap it in a getter?
-      // Yes: createGetterArrow(factory, expr) => () => count()
-      // Then bindText(node, () => count())
-
-      expect(output).toContain('__fictBindText')
-      expect(output).toMatch(/children: \[\s*count\(\)\s*\]|__fictBindText.*count\(\)/)
+      // Template cloning uses insert for dynamic content
+      expect(output).toContain('insert')
+      expect(output).toMatch(/children: \[\s*count\(\)\s*\]|insert.*count\(\)/)
     })
 
     it('compiles usage of imported symbol in effect', () => {
