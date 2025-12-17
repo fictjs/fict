@@ -25,6 +25,15 @@ import {
   type AttributeSetter,
   type BindingHandle,
 } from './binding'
+import {
+  Properties,
+  ChildProperties,
+  Aliases,
+  getPropAlias,
+  BooleanAttributes,
+  SVGElements,
+  SVGNamespace,
+} from './constants'
 import { __fictPushContext, __fictPopContext } from './hooks'
 import { Fragment } from './jsx'
 import {
@@ -38,6 +47,7 @@ import {
   registerRootCleanup,
   getCurrentRoot,
 } from './lifecycle'
+import { untrack } from './scheduler'
 import type { DOMElement, FictNode, FictVNode, RefObject } from './types'
 
 // ============================================================================
@@ -186,26 +196,53 @@ export function createElement(node: FictNode): DOMElement {
 /**
  * Create a template cloning factory from an HTML string.
  * Used by the compiler for efficient DOM generation.
+ *
+ * @param html - The HTML string to create a template from
+ * @param isImportNode - Use importNode for elements like img/iframe
+ * @param isSVG - Whether the template is SVG content
+ * @param isMathML - Whether the template is MathML content
  */
-export function template(html: string): () => Node {
-  const t = document.createElement('template')
-  t.innerHTML = html
-  return () => t.content.firstChild!.cloneNode(true)
+export function template(
+  html: string,
+  isImportNode?: boolean,
+  isSVG?: boolean,
+  isMathML?: boolean,
+): () => Node {
+  let node: Node | null = null
+
+  const create = (): Node => {
+    const t = isMathML
+      ? document.createElementNS('http://www.w3.org/1998/Math/MathML', 'template')
+      : document.createElement('template')
+    t.innerHTML = html
+
+    if (isSVG) {
+      // For SVG, get the nested content
+      return (t as HTMLTemplateElement).content.firstChild!.firstChild!
+    }
+    if (isMathML) {
+      return t.firstChild!
+    }
+    return (t as HTMLTemplateElement).content.firstChild!
+  }
+
+  // Create the cloning function
+  const fn = isImportNode
+    ? () => untrack(() => document.importNode(node || (node = create()), true))
+    : () => (node || (node = create())).cloneNode(true)
+
+  // Add cloneNode property for compatibility
+  ;(fn as { cloneNode?: typeof fn }).cloneNode = fn
+
+  return fn
 }
 
 // ============================================================================
 // Child Node Handling
 // ============================================================================
 
-const PROPERTY_BINDING_KEYS = new Set([
-  'value',
-  'checked',
-  'selected',
-  'disabled',
-  'readOnly',
-  'multiple',
-  'muted',
-])
+// Use the comprehensive Properties set from constants for property binding
+// These properties must update via DOM property semantics rather than attributes
 
 /**
  * Check if a value is a runtime binding handle
@@ -344,8 +381,14 @@ function applyRef(el: HTMLElement, value: unknown): void {
 
 /**
  * Apply props to an HTML element, setting up reactive bindings as needed.
+ * Uses comprehensive property constants for correct attribute/property handling.
  */
-function applyProps(el: HTMLElement, props: Record<string, unknown>): void {
+function applyProps(el: HTMLElement, props: Record<string, unknown>, isSVG: boolean = false): void {
+  const tagName = el.tagName
+
+  // Check if this is a custom element
+  const isCE = tagName.includes('-') || 'is' in props
+
   for (const [key, value] of Object.entries(props)) {
     if (key === 'children') continue
 
@@ -355,12 +398,34 @@ function applyProps(el: HTMLElement, props: Record<string, unknown>): void {
       continue
     }
 
-    // Event handling
+    // Event handling with delegation support
     if (isEventKey(key)) {
       bindEvent(
         el,
         eventNameFromProp(key),
         value as MaybeReactive<EventListenerOrEventListenerObject | null | undefined>,
+      )
+      continue
+    }
+
+    // Explicit on: namespace for non-delegated events
+    if (key.slice(0, 3) === 'on:') {
+      bindEvent(
+        el,
+        key.slice(3),
+        value as MaybeReactive<EventListenerOrEventListenerObject | null | undefined>,
+        false, // Non-delegated
+      )
+      continue
+    }
+
+    // Capture events
+    if (key.slice(0, 10) === 'oncapture:') {
+      bindEvent(
+        el,
+        key.slice(10),
+        value as MaybeReactive<EventListenerOrEventListenerObject | null | undefined>,
+        true, // Capture
       )
       continue
     }
@@ -371,18 +436,18 @@ function applyProps(el: HTMLElement, props: Record<string, unknown>): void {
       continue
     }
 
+    // classList for object-style class binding
+    if (key === 'classList') {
+      createClassBinding(el, value as MaybeReactive<Record<string, boolean> | null>)
+      continue
+    }
+
     // Style
     if (key === 'style') {
       createStyleBinding(
         el,
         value as MaybeReactive<string | Record<string, string | number> | null>,
       )
-      continue
-    }
-
-    // Properties that must update via DOM property semantics
-    if (PROPERTY_BINDING_KEYS.has(key)) {
-      createAttributeBinding(el, key, value as MaybeReactive<unknown>, setProperty)
       continue
     }
 
@@ -399,13 +464,78 @@ function applyProps(el: HTMLElement, props: Record<string, unknown>): void {
       continue
     }
 
+    // Child properties (innerHTML, textContent, etc.)
+    if (ChildProperties.has(key)) {
+      createAttributeBinding(el, key, value as MaybeReactive<unknown>, setProperty)
+      continue
+    }
+
+    // Forced attribute via attr: prefix
+    if (key.slice(0, 5) === 'attr:') {
+      createAttributeBinding(el, key.slice(5), value as MaybeReactive<unknown>, setAttribute)
+      continue
+    }
+
+    // Forced boolean attribute via bool: prefix
+    if (key.slice(0, 5) === 'bool:') {
+      createAttributeBinding(el, key.slice(5), value as MaybeReactive<unknown>, setBoolAttribute)
+      continue
+    }
+
+    // Forced property via prop: prefix
+    if (key.slice(0, 5) === 'prop:') {
+      createAttributeBinding(el, key.slice(5), value as MaybeReactive<unknown>, setProperty)
+      continue
+    }
+
+    // Check for property alias (element-specific mappings)
+    const propAlias = !isSVG ? getPropAlias(key, tagName) : undefined
+
+    // Handle properties and element-specific attributes
+    if (propAlias || (!isSVG && Properties.has(key)) || (isCE && !isSVG)) {
+      const propName = propAlias || key
+      // Custom elements use toPropertyName conversion
+      if (isCE && !Properties.has(key)) {
+        createAttributeBinding(
+          el,
+          toPropertyName(propName),
+          value as MaybeReactive<unknown>,
+          setProperty,
+        )
+      } else {
+        createAttributeBinding(el, propName, value as MaybeReactive<unknown>, setProperty)
+      }
+      continue
+    }
+
+    // SVG namespaced attributes (xlink:href, xml:lang, etc.)
+    if (isSVG && key.indexOf(':') > -1) {
+      const [prefix, name] = key.split(':')
+      const ns = SVGNamespace[prefix!]
+      if (ns) {
+        createAttributeBinding(el, key, value as MaybeReactive<unknown>, (el, _key, val) =>
+          setAttributeNS(el, ns, name!, val),
+        )
+        continue
+      }
+    }
+
     // Regular attributes (potentially reactive)
-    createAttributeBinding(el, key, value as MaybeReactive<unknown>, setAttribute)
+    // Apply alias mapping (className -> class, htmlFor -> for)
+    const attrName = Aliases[key] || key
+    createAttributeBinding(el, attrName, value as MaybeReactive<unknown>, setAttribute)
   }
 
   // Handle children
   const children = props.children as FictNode | FictNode[] | undefined
   appendChildren(el, children)
+}
+
+/**
+ * Convert kebab-case to camelCase for custom element properties
+ */
+function toPropertyName(name: string): string {
+  return name.toLowerCase().replace(/-([a-z])/g, (_, w) => w.toUpperCase())
 }
 
 // ============================================================================
@@ -475,6 +605,28 @@ const setProperty: AttributeSetter = (el: HTMLElement, key: string, value: unkno
  */
 const setInnerHTML: AttributeSetter = (el: HTMLElement, _key: string, value: unknown): void => {
   el.innerHTML = value == null ? '' : String(value)
+}
+
+/**
+ * Set a boolean attribute on an element (empty string when true, removed when false)
+ */
+const setBoolAttribute: AttributeSetter = (el: HTMLElement, key: string, value: unknown): void => {
+  if (value) {
+    el.setAttribute(key, '')
+  } else {
+    el.removeAttribute(key)
+  }
+}
+
+/**
+ * Set an attribute with a namespace (for SVG xlink:href, etc.)
+ */
+function setAttributeNS(el: HTMLElement, namespace: string, name: string, value: unknown): void {
+  if (value == null) {
+    el.removeAttributeNS(namespace, name)
+  } else {
+    el.setAttributeNS(namespace, name, String(value))
+  }
 }
 
 // ============================================================================

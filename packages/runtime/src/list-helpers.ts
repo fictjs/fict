@@ -17,6 +17,7 @@ import {
 import { createSignal, type Signal } from './signal'
 import { createVersionedSignal } from './versioned-signal'
 import { createElement } from './dom'
+import reconcileArrays from './reconcile'
 import type { FictNode } from './types'
 
 // ============================================================================
@@ -486,29 +487,33 @@ function createFineGrainedKeyedList<T>(
       removeNodes(block.nodes)
     }
 
-    // Phase 3: Insert and reorder DOM nodes to match new order
+    // Phase 3: Insert and reorder DOM nodes to match new order using efficient reconcile
     if (newBlocks.size > 0) {
-      let anchor: Node | null = getFirstNodeAfter(container.startMarker)
+      // Collect current DOM nodes (between markers)
+      const oldNodes: Node[] = []
+      let cursor: Node | null = container.startMarker.nextSibling
+      while (cursor && cursor !== container.endMarker) {
+        oldNodes.push(cursor)
+        cursor = cursor.nextSibling
+      }
 
+      // Collect new nodes in desired order
+      const newNodes: Node[] = []
       for (const key of Array.from(newBlocks.keys())) {
         const block = newBlocks.get(key)!
-        const firstNode = block.nodes[0]
-
-        // Skip blocks with no nodes
-        if (!firstNode) continue
-
-        // Check if block's nodes are in the DOM
-        if (!firstNode.parentNode) {
-          // New block - insert it
-          insertNodesBefore(parent, block.nodes, anchor)
-        } else if (firstNode !== anchor) {
-          // Existing block in wrong position - move it
-          moveNodesBefore(parent, block.nodes, anchor)
+        // Ensure nodes are in the DOM first
+        for (const node of block.nodes) {
+          if (!node.parentNode) {
+            // New node - insert before end marker
+            parent.insertBefore(node, container.endMarker)
+          }
         }
+        newNodes.push(...block.nodes)
+      }
 
-        // Move anchor to after this block's last node
-        const lastNode = block.nodes[block.nodes.length - 1]
-        anchor = lastNode ? lastNode.nextSibling : anchor
+      // Use efficient reconcile algorithm if we have nodes to diff
+      if (oldNodes.length > 0 || newNodes.length > 0) {
+        reconcileArrays(parent, oldNodes, newNodes)
       }
     }
 

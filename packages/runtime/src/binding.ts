@@ -28,6 +28,7 @@ import {
 } from './lifecycle'
 import { computed, createSignal, untrack, type Signal } from './signal'
 import type { Cleanup, FictNode } from './types'
+import { $$EVENTS, DelegatedEvents, UnitlessStyles } from './constants'
 
 // ============================================================================
 // Type Definitions
@@ -450,52 +451,8 @@ function applyStyle(el: HTMLElement, value: unknown, prev: unknown): void {
   }
 }
 
-const UNITLESS_STYLES = new Set([
-  'animationIterationCount',
-  'borderImageOutset',
-  'borderImageSlice',
-  'borderImageWidth',
-  'boxFlex',
-  'boxFlexGroup',
-  'boxOrdinalGroup',
-  'columnCount',
-  'columns',
-  'flex',
-  'flexGrow',
-  'flexPositive',
-  'flexShrink',
-  'flexNegative',
-  'flexOrder',
-  'gridRow',
-  'gridRowEnd',
-  'gridRowSpan',
-  'gridRowStart',
-  'gridColumn',
-  'gridColumnEnd',
-  'gridColumnSpan',
-  'gridColumnStart',
-  'fontWeight',
-  'lineClamp',
-  'lineHeight',
-  'opacity',
-  'order',
-  'orphans',
-  'tabSize',
-  'widows',
-  'zIndex',
-  'zoom',
-  'fillOpacity',
-  'floodOpacity',
-  'stopOpacity',
-  'strokeDasharray',
-  'strokeDashoffset',
-  'strokeMiterlimit',
-  'strokeOpacity',
-  'strokeWidth',
-])
-
 function isUnitlessStyleProperty(prop: string): boolean {
-  return UNITLESS_STYLES.has(prop)
+  return UnitlessStyles.has(prop)
 }
 
 // ============================================================================
@@ -510,14 +467,13 @@ export function createClassBinding(
   value: MaybeReactive<string | Record<string, boolean> | null | undefined>,
 ): void {
   if (isReactive(value)) {
-    let prev: unknown
+    let prev: Record<string, boolean> = {}
     createEffect(() => {
       const next = (value as () => unknown)()
-      applyClass(el, next, prev)
-      prev = next
+      prev = applyClass(el, next, prev)
     })
   } else {
-    applyClass(el, value, undefined)
+    applyClass(el, value, {})
   }
 }
 
@@ -528,39 +484,86 @@ export function bindClass(
   el: HTMLElement,
   getValue: () => string | Record<string, boolean> | null | undefined,
 ): Cleanup {
-  let prev: unknown
+  let prev: Record<string, boolean> = {}
   return createEffect(() => {
     const next = getValue()
-    applyClass(el, next, prev)
-    prev = next
+    prev = applyClass(el, next, prev)
   })
 }
 
 /**
- * Apply a class value to an element
+ * Toggle a class key (supports space-separated class names)
  */
-function applyClass(el: HTMLElement, value: unknown, _prev: unknown): void {
-  let staticClasses = STATIC_CLASS_MAP.get(el)
-  if (!staticClasses) {
-    staticClasses = el.className ? el.className.split(/\s+/).filter(Boolean) : []
-    STATIC_CLASS_MAP.set(el, staticClasses)
-  }
-
-  if (typeof value === 'string') {
-    el.className = value
-  } else if (value && typeof value === 'object') {
-    const classes = value as Record<string, boolean>
-    const enabled = Object.entries(classes)
-      .filter(([, on]) => !!on)
-      .map(([name]) => name)
-    const merged = [...enabled, ...staticClasses.filter(name => !classes[name])]
-    el.className = merged.join(' ')
-  } else {
-    el.className = staticClasses ? staticClasses.join(' ') : ''
+function toggleClassKey(node: HTMLElement, key: string, value: boolean): void {
+  const classNames = key.trim().split(/\s+/)
+  for (let i = 0, len = classNames.length; i < len; i++) {
+    node.classList.toggle(classNames[i]!, value)
   }
 }
 
-const STATIC_CLASS_MAP = new WeakMap<HTMLElement, string[]>()
+/**
+ * Apply a class value to an element using classList.toggle for efficient updates.
+ * Returns the new prev state for tracking.
+ */
+function applyClass(el: HTMLElement, value: unknown, prev: unknown): Record<string, boolean> {
+  const prevState = (prev && typeof prev === 'object' ? prev : {}) as Record<string, boolean>
+
+  // Handle string value - full replacement
+  if (typeof value === 'string') {
+    el.className = value
+    // Clear prev state since we're doing full replacement
+    return {}
+  }
+
+  // Handle object value - incremental updates
+  if (value && typeof value === 'object') {
+    const classes = value as Record<string, boolean>
+    const classKeys = Object.keys(classes)
+    const prevKeys = Object.keys(prevState)
+
+    // Remove classes that were true but are now false or missing
+    for (let i = 0, len = prevKeys.length; i < len; i++) {
+      const key = prevKeys[i]!
+      if (!key || key === 'undefined' || classes[key]) continue
+      toggleClassKey(el, key, false)
+      delete prevState[key]
+    }
+
+    // Add classes that are now true
+    for (let i = 0, len = classKeys.length; i < len; i++) {
+      const key = classKeys[i]!
+      const classValue = !!classes[key]
+      if (!key || key === 'undefined' || prevState[key] === classValue || !classValue) continue
+      toggleClassKey(el, key, true)
+      prevState[key] = classValue
+    }
+
+    return prevState
+  }
+
+  // Handle null/undefined - clear all tracked classes
+  if (!value) {
+    for (const key of Object.keys(prevState)) {
+      if (key && key !== 'undefined') {
+        toggleClassKey(el, key, false)
+      }
+    }
+    return {}
+  }
+
+  return prevState
+}
+
+/**
+ * Exported classList function for direct use (compatible with dom-expressions)
+ */
+export function classList(
+  node: HTMLElement,
+  value: Record<string, boolean> | null | undefined,
+  prev: Record<string, boolean> = {},
+): Record<string, boolean> {
+  return applyClass(node, value, prev)
+}
 
 // ============================================================================
 // Child/Insert Binding (Dynamic Children)
@@ -753,11 +756,198 @@ export function createChildBinding(
 }
 
 // ============================================================================
+// Event Delegation System
+// ============================================================================
+
+// Extend HTMLElement/Document type to support event delegation
+declare global {
+  interface HTMLElement {
+    _$host?: HTMLElement
+    [key: `$$${string}`]: EventListener | [EventListener, unknown] | undefined
+    [key: `$$${string}Data`]: unknown
+  }
+  interface Document {
+    [key: string]: unknown
+  }
+}
+
+/**
+ * Initialize event delegation for a set of event names.
+ * Events will be handled at the document level and dispatched to the appropriate handlers.
+ *
+ * @param eventNames - Array of event names to delegate
+ * @param doc - The document to attach handlers to (default: window.document)
+ *
+ * @example
+ * ```ts
+ * // Called automatically by the compiler for delegated events
+ * delegateEvents(['click', 'input', 'keydown'])
+ * ```
+ */
+export function delegateEvents(eventNames: string[], doc: Document = window.document): void {
+  const e = (doc[$$EVENTS] as Set<string>) || (doc[$$EVENTS] = new Set<string>())
+  for (let i = 0, l = eventNames.length; i < l; i++) {
+    const name = eventNames[i]!
+    if (!e.has(name)) {
+      e.add(name)
+      doc.addEventListener(name, globalEventHandler)
+    }
+  }
+}
+
+/**
+ * Clear all delegated event handlers from a document.
+ *
+ * @param doc - The document to clear handlers from (default: window.document)
+ */
+export function clearDelegatedEvents(doc: Document = window.document): void {
+  const e = doc[$$EVENTS] as Set<string> | undefined
+  if (e) {
+    for (const name of e.keys()) {
+      doc.removeEventListener(name, globalEventHandler)
+    }
+    delete doc[$$EVENTS]
+  }
+}
+
+/**
+ * Global event handler for delegated events.
+ * Walks up the DOM tree to find and call handlers stored as $$eventName properties.
+ */
+function globalEventHandler(e: Event): void {
+  let node = e.target as HTMLElement | null
+  const key = `$$${e.type}` as const
+  const oriTarget = e.target
+  const oriCurrentTarget = e.currentTarget
+
+  // Retarget helper for shadow DOM and portals
+  const retarget = (value: EventTarget) =>
+    Object.defineProperty(e, 'target', {
+      configurable: true,
+      value,
+    })
+
+  // Handler for each node in the bubble path
+  const handleNode = (): boolean => {
+    if (!node) return false
+    const handler = node[key]
+    if (handler && !(node as HTMLButtonElement).disabled) {
+      const data = node[`${key}Data` as `$$${string}Data`]
+      if (data !== undefined) {
+        if (typeof handler === 'function') {
+          // Handler with data: handler(data, event)
+          ;(handler as (data: unknown, e: Event) => void).call(node, data, e)
+        }
+      } else {
+        if (typeof handler === 'function') {
+          // Handler without data: handler(event)
+          ;(handler as EventListener).call(node, e)
+        } else if (Array.isArray(handler)) {
+          // Array syntax: [handler, data]
+          ;(handler[0] as (data: unknown, e: Event) => void).call(node, handler[1], e)
+        }
+      }
+      if (e.cancelBubble) return false
+    }
+    // Handle shadow DOM host retargeting
+    const shadowHost = (node as unknown as ShadowRoot).host
+    if (
+      shadowHost &&
+      typeof shadowHost !== 'string' &&
+      !(shadowHost as HTMLElement)._$host &&
+      node.contains(e.target as Node)
+    ) {
+      retarget(shadowHost as EventTarget)
+    }
+    return true
+  }
+
+  // Walk up tree helper
+  const walkUpTree = (): void => {
+    while (handleNode() && node) {
+      node = (node._$host ||
+        node.parentNode ||
+        (node as unknown as ShadowRoot).host) as HTMLElement | null
+    }
+  }
+
+  // Simulate currentTarget
+  Object.defineProperty(e, 'currentTarget', {
+    configurable: true,
+    get() {
+      return node || document
+    },
+  })
+
+  // Use composedPath for shadow DOM support
+  if (e.composedPath) {
+    const path = e.composedPath()
+    retarget(path[0] as EventTarget)
+    for (let i = 0; i < path.length - 2; i++) {
+      node = path[i] as HTMLElement
+      if (!handleNode()) break
+      // Handle portal event bubbling
+      if (node._$host) {
+        node = node._$host
+        walkUpTree()
+        break
+      }
+      // Don't bubble above root of event delegation
+      if (node.parentNode === oriCurrentTarget) {
+        break
+      }
+    }
+  } else {
+    // Fallback for browsers without composedPath
+    walkUpTree()
+  }
+
+  // Reset target
+  retarget(oriTarget as EventTarget)
+}
+
+/**
+ * Add an event listener to an element.
+ * If the event is in DelegatedEvents, it uses event delegation for better performance.
+ *
+ * @param node - The element to add the listener to
+ * @param name - The event name (lowercase)
+ * @param handler - The event handler or [handler, data] tuple
+ * @param delegate - Whether to use delegation (auto-detected based on event name)
+ */
+export function addEventListener(
+  node: HTMLElement,
+  name: string,
+  handler: EventListener | [EventListener, unknown] | null | undefined,
+  delegate?: boolean,
+): void {
+  if (handler == null) return
+
+  if (delegate) {
+    // Event delegation: store handler on element
+    if (Array.isArray(handler)) {
+      ;(node as unknown as Record<string, unknown>)[`$$${name}`] = handler[0]
+      ;(node as unknown as Record<string, unknown>)[`$$${name}Data`] = handler[1]
+    } else {
+      ;(node as unknown as Record<string, unknown>)[`$$${name}`] = handler
+    }
+  } else if (Array.isArray(handler)) {
+    // Non-delegated with data binding
+    const handlerFn = handler[0] as (data: unknown, e: Event) => void
+    node.addEventListener(name, (e: Event) => handlerFn.call(node, handler[1], e))
+  } else {
+    // Regular event listener
+    node.addEventListener(name, handler as EventListener)
+  }
+}
+
+// ============================================================================
 // Event Binding
 // ============================================================================
 
 /**
  * Bind an event listener to an element.
+ * Uses event delegation for better performance when applicable.
  *
  * @example
  * ```ts
@@ -780,8 +970,10 @@ export function bindEvent(
   if (handler == null) return () => {}
 
   const rootRef = getCurrentRoot()
+  const shouldDelegate = DelegatedEvents.has(eventName) && !options
   const getHandler = isReactive(handler) ? (handler as () => unknown) : () => handler
 
+  // Create wrapped handler that resolves reactive handlers
   const wrapped: EventListener = event => {
     try {
       const resolved = getHandler()
@@ -798,10 +990,256 @@ export function bindEvent(
     }
   }
 
-  el.addEventListener(eventName, wrapped, options)
-  const cleanup = () => el.removeEventListener(eventName, wrapped, options)
-  registerRootCleanup(cleanup)
-  return cleanup
+  if (shouldDelegate) {
+    // Use event delegation
+    addEventListener(el, eventName, wrapped, true)
+    delegateEvents([eventName])
+    const cleanup = () => {
+      delete el[`$$${eventName}` as `$$${string}`]
+      delete el[`$$${eventName}Data` as `$$${string}Data`]
+    }
+    registerRootCleanup(cleanup)
+    return cleanup
+  } else {
+    // Direct event listener (for events with options or non-delegated events)
+    el.addEventListener(eventName, wrapped, options)
+    const cleanup = () => el.removeEventListener(eventName, wrapped, options)
+    registerRootCleanup(cleanup)
+    return cleanup
+  }
+}
+
+// ============================================================================
+// Spread Props
+// ============================================================================
+
+/**
+ * Apply spread props to an element with reactive updates.
+ * This handles dynamic spread like `<div {...props}>`.
+ *
+ * @param node - The element to apply props to
+ * @param props - The props object (may have reactive getters)
+ * @param isSVG - Whether this is an SVG element
+ * @param skipChildren - Whether to skip children handling
+ * @returns The previous props for tracking changes
+ *
+ * @example
+ * ```ts
+ * // Compiler output for <div {...props} />
+ * spread(el, props, false, false)
+ * ```
+ */
+export function spread(
+  node: HTMLElement,
+  props: Record<string, unknown> = {},
+  isSVG: boolean = false,
+  skipChildren: boolean = false,
+): Record<string, unknown> {
+  const prevProps: Record<string, unknown> = {}
+
+  // Handle children if not skipped
+  if (!skipChildren && 'children' in props) {
+    createEffect(() => {
+      prevProps.children = props.children
+    })
+  }
+
+  // Handle ref
+  createEffect(() => {
+    if (typeof props.ref === 'function') {
+      ;(props.ref as (el: HTMLElement) => void)(node)
+    }
+  })
+
+  // Handle all other props
+  createEffect(() => {
+    assign(node, props, isSVG, true, prevProps, true)
+  })
+
+  return prevProps
+}
+
+/**
+ * Assign props to a node, tracking previous values for efficient updates.
+ * This is the core prop assignment logic used by spread.
+ *
+ * @param node - The element to assign props to
+ * @param props - New props object
+ * @param isSVG - Whether this is an SVG element
+ * @param skipChildren - Whether to skip children handling
+ * @param prevProps - Previous props for comparison
+ * @param skipRef - Whether to skip ref handling
+ */
+export function assign(
+  node: HTMLElement,
+  props: Record<string, unknown>,
+  isSVG: boolean = false,
+  skipChildren: boolean = false,
+  prevProps: Record<string, unknown> = {},
+  skipRef: boolean = false,
+): void {
+  props = props || {}
+
+  // Remove props that are no longer present
+  for (const prop in prevProps) {
+    if (!(prop in props)) {
+      if (prop === 'children') continue
+      prevProps[prop] = assignProp(node, prop, null, prevProps[prop], isSVG, skipRef, props)
+    }
+  }
+
+  // Set or update props
+  for (const prop in props) {
+    if (prop === 'children') {
+      if (!skipChildren) {
+        // Handle children insertion
+        prevProps.children = props.children
+      }
+      continue
+    }
+    const value = props[prop]
+    prevProps[prop] = assignProp(node, prop, value, prevProps[prop], isSVG, skipRef, props)
+  }
+}
+
+/**
+ * Assign a single prop to a node.
+ */
+function assignProp(
+  node: HTMLElement,
+  prop: string,
+  value: unknown,
+  prev: unknown,
+  isSVG: boolean,
+  skipRef: boolean,
+  props: Record<string, unknown>,
+): unknown {
+  // Style handling
+  if (prop === 'style') {
+    applyStyle(node, value, prev)
+    return value
+  }
+
+  // classList handling
+  if (prop === 'classList') {
+    return applyClass(node, value, prev)
+  }
+
+  // Skip if value unchanged
+  if (value === prev) return prev
+
+  // Ref handling
+  if (prop === 'ref') {
+    if (!skipRef && typeof value === 'function') {
+      ;(value as (el: HTMLElement) => void)(node)
+    }
+    return value
+  }
+
+  // Event handling: on:eventname
+  if (prop.slice(0, 3) === 'on:') {
+    const eventName = prop.slice(3)
+    if (prev) node.removeEventListener(eventName, prev as EventListener)
+    if (value) node.addEventListener(eventName, value as EventListener)
+    return value
+  }
+
+  // Capture event handling: oncapture:eventname
+  if (prop.slice(0, 10) === 'oncapture:') {
+    const eventName = prop.slice(10)
+    if (prev) node.removeEventListener(eventName, prev as EventListener, true)
+    if (value) node.addEventListener(eventName, value as EventListener, true)
+    return value
+  }
+
+  // Standard event handling: onClick, onInput, etc.
+  if (prop.slice(0, 2) === 'on') {
+    const eventName = prop.slice(2).toLowerCase()
+    const shouldDelegate = DelegatedEvents.has(eventName)
+    if (!shouldDelegate && prev) {
+      const handler = Array.isArray(prev) ? prev[0] : prev
+      node.removeEventListener(eventName, handler as EventListener)
+    }
+    if (shouldDelegate || value) {
+      addEventListener(node, eventName, value as EventListener, shouldDelegate)
+      if (shouldDelegate) delegateEvents([eventName])
+    }
+    return value
+  }
+
+  // Explicit attribute: attr:name
+  if (prop.slice(0, 5) === 'attr:') {
+    if (value == null) node.removeAttribute(prop.slice(5))
+    else node.setAttribute(prop.slice(5), String(value))
+    return value
+  }
+
+  // Explicit boolean attribute: bool:name
+  if (prop.slice(0, 5) === 'bool:') {
+    if (value) node.setAttribute(prop.slice(5), '')
+    else node.removeAttribute(prop.slice(5))
+    return value
+  }
+
+  // Explicit property: prop:name
+  if (prop.slice(0, 5) === 'prop:') {
+    ;(node as unknown as Record<string, unknown>)[prop.slice(5)] = value
+    return value
+  }
+
+  // Class/className handling
+  if (prop === 'class' || prop === 'className') {
+    if (value == null) node.removeAttribute('class')
+    else node.className = String(value)
+    return value
+  }
+
+  // Check if custom element
+  const isCE = node.nodeName.includes('-') || 'is' in props
+
+  // Property handling (for non-SVG elements)
+  if (!isSVG) {
+    const { Properties, ChildProperties, getPropAlias } = require('./constants')
+    const propAlias = getPropAlias(prop, node.tagName)
+    const isProperty = Properties.has(prop)
+    const isChildProp = ChildProperties.has(prop)
+
+    if (propAlias || isProperty || isChildProp || isCE) {
+      const propName = propAlias || prop
+      if (isCE && !isProperty && !isChildProp) {
+        ;(node as unknown as Record<string, unknown>)[toPropertyName(propName)] = value
+      } else {
+        ;(node as unknown as Record<string, unknown>)[propName] = value
+      }
+      return value
+    }
+  }
+
+  // SVG namespace handling
+  if (isSVG && prop.indexOf(':') > -1) {
+    const { SVGNamespace } = require('./constants')
+    const [prefix, name] = prop.split(':')
+    const ns = SVGNamespace[prefix!]
+    if (ns) {
+      if (value == null) node.removeAttributeNS(ns, name!)
+      else node.setAttributeNS(ns, name!, String(value))
+      return value
+    }
+  }
+
+  // Default: set as attribute
+  const { Aliases } = require('./constants')
+  const attrName = Aliases[prop] || prop
+  if (value == null) node.removeAttribute(attrName)
+  else node.setAttribute(attrName, String(value))
+  return value
+}
+
+/**
+ * Convert kebab-case to camelCase for property names
+ */
+function toPropertyName(name: string): string {
+  return name.toLowerCase().replace(/-([a-z])/g, (_, w) => w.toUpperCase())
 }
 
 // ============================================================================

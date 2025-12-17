@@ -77,6 +77,9 @@ describe('ErrorBoundary', () => {
 
   it('captures event errors', async () => {
     const container = document.createElement('div')
+    // Attach container to document.body for event delegation to work
+    document.body.appendChild(container)
+
     const btn = document.createElement('button')
     let captured: unknown = null
 
@@ -106,13 +109,16 @@ describe('ErrorBoundary', () => {
 
     expect(container.textContent).toBe('')
 
-    btn.dispatchEvent(new Event('click'))
+    // Use bubbles: true for proper event propagation with delegation
+    btn.dispatchEvent(new Event('click', { bubbles: true }))
     await nextTick()
 
     expect(captured).toBeInstanceOf(Error)
     expect(container.textContent).toBe('event-fallback')
 
     dispose()
+    // Clean up
+    document.body.removeChild(container)
   })
 
   it('resets on resetKeys change', async () => {

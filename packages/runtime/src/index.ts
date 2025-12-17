@@ -71,6 +71,14 @@ export {
   bindEvent,
   bindProperty,
   insert,
+  // Event delegation
+  delegateEvents,
+  clearDelegatedEvents,
+  addEventListener,
+  // Spread props
+  spread,
+  assign,
+  classList,
   // Reactive detection
   isReactive,
   // Advanced bindings
@@ -82,6 +90,22 @@ export {
   unwrap,
   unwrapPrimitive,
 } from './binding'
+
+// Constants for DOM handling
+export {
+  Properties,
+  ChildProperties,
+  Aliases,
+  getPropAlias,
+  BooleanAttributes,
+  SVGElements,
+  SVGNamespace,
+  DelegatedEvents,
+  UnitlessStyles,
+} from './constants'
+
+// Reconcile algorithm
+export { default as reconcileArrays } from './reconcile'
 
 // ============================================================================
 // Types

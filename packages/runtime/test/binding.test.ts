@@ -221,15 +221,18 @@ describe('Reactive DOM Binding', () => {
         createClassBinding(el, () => ({ active: active(), base: true }))
       })
 
-      expect(el.className).toBe('base')
+      expect(el.classList.contains('base')).toBe(true)
+      expect(el.classList.contains('active')).toBe(false)
 
       active(true)
       await tick()
-      expect(el.className).toBe('active base')
+      expect(el.classList.contains('active')).toBe(true)
+      expect(el.classList.contains('base')).toBe(true)
 
       active(false)
       await tick()
-      expect(el.className).toBe('base')
+      expect(el.classList.contains('active')).toBe(false)
+      expect(el.classList.contains('base')).toBe(true)
 
       dispose()
     })
