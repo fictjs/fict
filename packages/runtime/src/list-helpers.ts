@@ -58,7 +58,7 @@ export interface KeyedListContainer<T = unknown> {
  */
 export interface KeyedListBinding {
   /** Document fragment placeholder inserted by the compiler/runtime */
-  marker: DocumentFragment | Node[]
+  marker: DocumentFragment
   /** Start marker comment node */
   startMarker: Comment
   /** End marker comment node */
@@ -310,11 +310,17 @@ export function createKeyedBlock<T>(
   let nodes: Node[] = []
   try {
     const rendered = render(itemSig, indexSig)
-    // Convert rendered content (which might be VNodes if from JSX) to actual Nodes
-    // We treat 'rendered' as FictNode, pass it to createElement, then toNodeArray
-    // Since 'render' signature says Node[] but user function returns JSX.
-    const element = createElement(rendered as unknown as FictNode)
-    nodes = toNodeArray(element)
+    // If render returns real DOM nodes/arrays, preserve them to avoid
+    // reparenting side-effects (tests may pre-insert them).
+    if (
+      rendered instanceof Node ||
+      (Array.isArray(rendered) && rendered.every(n => n instanceof Node))
+    ) {
+      nodes = toNodeArray(rendered)
+    } else {
+      const element = createElement(rendered as unknown as FictNode)
+      nodes = toNodeArray(element)
+    }
   } finally {
     popRoot(prev)
     flushOnMount(root)
@@ -338,6 +344,9 @@ export function createKeyedBlock<T>(
  */
 export function toNodeArray(node: Node | Node[] | unknown): Node[] {
   if (Array.isArray(node)) {
+    if (node.every(item => item instanceof Node)) {
+      return node
+    }
     const result: Node[] = []
     for (const item of node) {
       result.push(...toNodeArray(item))
@@ -411,6 +420,8 @@ function createFineGrainedKeyedList<T>(
   renderItem: FineGrainedRenderItem<T>,
 ): KeyedListBinding {
   const container = createKeyedListContainer<T>()
+  const fragment = document.createDocumentFragment()
+  fragment.append(container.startMarker, container.endMarker)
   let pendingItems: T[] | null = null
   let disposed = false
 
@@ -422,9 +433,14 @@ function createFineGrainedKeyedList<T>(
 
     const oldBlocks = container.blocks
     const newBlocks = new Map<string | number, KeyedBlock<T>>()
-    const parent = container.endMarker.parentNode
+    const endParent = container.endMarker.parentNode
+    const startParent = container.startMarker.parentNode
+    const parent =
+      endParent && startParent && endParent === startParent && (endParent as Node).isConnected
+        ? (endParent as ParentNode & Node)
+        : null
 
-    // If parent doesn't exist yet, store items and retry in microtask
+    // If markers aren't mounted yet, store items and retry in microtask
     if (!parent) {
       pendingItems = newItems
       queueMicrotask(performDiff)
@@ -506,7 +522,7 @@ function createFineGrainedKeyedList<T>(
   const effectDispose = createEffect(performDiff)
 
   return {
-    marker: [container.startMarker, container.endMarker],
+    marker: fragment,
     startMarker: container.startMarker,
     endMarker: container.endMarker,
     // Flush pending items - call after markers are inserted into DOM

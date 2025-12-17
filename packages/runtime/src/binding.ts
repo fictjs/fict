@@ -42,7 +42,7 @@ export type CreateElementFn = (node: FictNode) => Node
 /** Handle returned by conditional/list bindings for cleanup */
 export interface BindingHandle {
   /** Marker node(s) used for positioning */
-  marker: Comment | DocumentFragment | Node[]
+  marker: Comment | DocumentFragment
   /** Flush pending content - call after markers are inserted into DOM */
   flush?: () => void
   /** Dispose function to clean up the binding */
@@ -834,28 +834,18 @@ export function createConditional(
 ): BindingHandle {
   const startMarker = document.createComment('fict:cond:start')
   const endMarker = document.createComment('fict:cond:end')
+  const fragment = document.createDocumentFragment()
+  fragment.append(startMarker, endMarker)
 
   let currentNodes: Node[] = []
   let currentRoot: RootContext | null = null
   let lastCondition: boolean | undefined = undefined
-  let pendingNodes: Node[] = [] // Nodes waiting to be inserted when markers are in DOM
 
   // Use computed to memoize condition value - this prevents the effect from
   // re-running when condition dependencies change but the boolean result stays same.
   // This is critical because re-running the effect would purge child effect deps
   // (like bindText) even if we early-return, breaking fine-grained reactivity.
   const conditionMemo = computed(condition)
-
-  // Function to insert pending nodes when markers become available in DOM
-  const insertPendingNodes = () => {
-    if (pendingNodes.length === 0) return
-    const parent = startMarker.parentNode as (ParentNode & Node) | null
-    if (parent) {
-      insertNodesBefore(parent, pendingNodes, endMarker)
-      currentNodes = pendingNodes
-      pendingNodes = []
-    }
-  }
 
   const dispose = createEffect(() => {
     const cond = conditionMemo()
@@ -874,7 +864,6 @@ export function createConditional(
     }
     removeNodes(currentNodes)
     currentNodes = []
-    pendingNodes = []
 
     const render = cond ? renderTrue : renderFalse
     if (!render) {
@@ -899,9 +888,6 @@ export function createConditional(
       if (parent) {
         insertNodesBefore(parent, nodes, endMarker)
         currentNodes = nodes
-      } else {
-        // Markers not in DOM yet - store nodes for later insertion
-        pendingNodes = nodes
       }
     } catch (err) {
       if (handleSuspend(err as any, root)) {
@@ -927,18 +913,16 @@ export function createConditional(
   })
 
   return {
-    marker: [startMarker, endMarker],
-    // Flush pending nodes - call this after markers are inserted into DOM
-    flush: insertPendingNodes,
+    marker: fragment,
+    // No-op flush kept for API compatibility
+    flush: () => {},
     dispose: () => {
       dispose()
       if (currentRoot) {
         destroyRoot(currentRoot)
       }
       removeNodes(currentNodes)
-      removeNodes(pendingNodes)
       currentNodes = []
-      pendingNodes = []
       startMarker.parentNode?.removeChild(startMarker)
       endMarker.parentNode?.removeChild(endMarker)
     },
@@ -963,30 +947,15 @@ export function createList<T>(
 ): BindingHandle {
   const startMarker = document.createComment('fict:list:start')
   const endMarker = document.createComment('fict:list:end')
+  const fragment = document.createDocumentFragment()
+  fragment.append(startMarker, endMarker)
 
   const nodeMap = new Map<string | number, ManagedBlock<T>>()
-  let pendingRender = false // Flag to schedule re-render when markers become available
-
-  // Function to re-trigger the effect when markers are available
-  const scheduleRender = () => {
-    if (!pendingRender) return
-    const parent = startMarker.parentNode as (ParentNode & Node) | null
-    if (parent) {
-      pendingRender = false
-      // Force effect to re-run by reading items again
-      runListUpdate()
-    }
-  }
 
   const runListUpdate = () => {
     const arr = items()
     const parent = startMarker.parentNode as (ParentNode & Node) | null
-    if (!parent) {
-      // Markers not in DOM yet - schedule re-render
-      pendingRender = true
-      queueMicrotask(scheduleRender)
-      return
-    }
+    if (!parent) return
 
     const newNodeMap = new Map<string | number, ManagedBlock<T>>()
     const blocks: ManagedBlock<T>[] = []
@@ -1048,14 +1017,8 @@ export function createList<T>(
   const dispose = createEffect(runListUpdate)
 
   return {
-    marker: [startMarker, endMarker],
-    // Flush pending render - call this after markers are inserted into DOM
-    flush: () => {
-      if (pendingRender) {
-        pendingRender = false
-        runListUpdate()
-      }
-    },
+    marker: fragment,
+    flush: () => {},
     dispose: () => {
       dispose()
       for (const [, managed] of nodeMap) {
