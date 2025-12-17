@@ -166,8 +166,8 @@ describe('Control Flow Re-Execution', () => {
           return <div>{count}</div>
         }
       `)
-      // Should have fine-grained text binding, not full re-execution
-      expect(output).toContain('__fictBindText')
+      // Template cloning uses insert for fine-grained updates
+      expect(output).toContain('insert')
       expect(output).toContain('count()')
     })
 

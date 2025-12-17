@@ -181,7 +181,7 @@ describe('Ref Support', () => {
       const ref = createRef<HTMLDivElement>()
       const show = createSignal(true)
 
-      const { marker, dispose } = createConditional(
+      const { marker, flush, dispose } = createConditional(
         () => show(),
         () =>
           createElement({
@@ -198,7 +198,13 @@ describe('Ref Support', () => {
           }),
       )
 
-      container.appendChild(marker)
+      // marker is an array [startMarker, endMarker]
+      const markers = Array.isArray(marker) ? marker : [marker]
+      for (const m of markers) {
+        container.appendChild(m)
+      }
+      // Flush pending content now that markers are in DOM
+      flush?.()
 
       await tick()
 

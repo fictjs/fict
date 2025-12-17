@@ -41,8 +41,9 @@ export interface HelperUsage {
   bindProperty: boolean
   bindClass: boolean
   bindStyle: boolean
-  bindEvent: boolean
-  toNodeArray: boolean
+  bindEvent?: boolean
+  bindRef?: boolean
+  toNodeArray?: boolean
   createKeyedListContainer: boolean
   createKeyedBlock: boolean
   moveMarkerBlock: boolean
@@ -54,6 +55,7 @@ export interface HelperUsage {
   useEffect: boolean
   render: boolean
   fragment: boolean
+  template: boolean
 }
 
 export interface CompilerWarning {
@@ -111,5 +113,6 @@ export function createHelperUsage(): HelperUsage {
     moveMarkerBlock: false,
     destroyMarkerBlock: false,
     getFirstNodeAfter: false,
+    template: false,
   }
 }

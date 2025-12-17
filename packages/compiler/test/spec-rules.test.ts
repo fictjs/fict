@@ -91,7 +91,7 @@ describe('Spec rule coverage', () => {
     // Check that state is transformed and props are accessed
     expect(output).toContain('__fictUseSignal')
     expect(output).toMatch(/__props\d+\.count/)
-    expect(output).toContain('__fictInsert')
+    expect(output).toContain('insert')
   })
 
   it('emits warnings for deep mutations and dynamic property access', () => {

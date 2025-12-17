@@ -16,13 +16,6 @@ function compileAndLoad<TModule extends Record<string, any>>(
 ): TModule {
   const output = transformCommonJS(source, options)
 
-  // Debug output - uncomment to see generated code
-  if (source.includes('lazily evaluates') || source.includes('rich-stats')) {
-    console.log('=== Generated Code ===')
-    console.log(output)
-    console.log('======================')
-  }
-
   const module: { exports: any } = { exports: {} }
   const prelude =
     "const __fictRuntime = require('@fictjs/runtime');" +

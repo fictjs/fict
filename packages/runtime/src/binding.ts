@@ -41,8 +41,10 @@ export type CreateElementFn = (node: FictNode) => Node
 
 /** Handle returned by conditional/list bindings for cleanup */
 export interface BindingHandle {
-  /** Marker node used for positioning (may be a fragment for complex bindings) */
+  /** Marker node(s) used for positioning */
   marker: Comment | DocumentFragment
+  /** Flush pending content - call after markers are inserted into DOM */
+  flush?: () => void
   /** Dispose function to clean up the binding */
   dispose: Cleanup
 }
@@ -564,17 +566,49 @@ const STATIC_CLASS_MAP = new WeakMap<HTMLElement, string[]>()
 // Child/Insert Binding (Dynamic Children)
 // ============================================================================
 
+/** Managed child node with its dispose function */
+interface ManagedBlock<T = unknown> {
+  nodes: Node[]
+  root: RootContext
+  value: Signal<T>
+  index: Signal<number>
+  version: Signal<number>
+  start: Comment
+  end: Comment
+  valueProxy: T
+  renderCurrent: () => FictNode
+}
+
 /**
  * Insert reactive content into a parent element.
  * This is a simpler API than createChildBinding for basic cases.
+ *
+ * @param parent - The parent element to insert into
+ * @param getValue - Function that returns the value to render
+ * @param markerOrCreateElement - Optional marker node to insert before, or createElementFn
+ * @param createElementFn - Optional function to create DOM elements (when marker is provided)
  */
 export function insert(
   parent: HTMLElement | DocumentFragment,
   getValue: () => FictNode,
+  markerOrCreateElement?: Node | CreateElementFn,
   createElementFn?: CreateElementFn,
 ): Cleanup {
-  const marker = document.createComment('fict:insert')
-  parent.appendChild(marker)
+  // Determine if third argument is a marker node or createElementFn
+  let marker: Comment
+  let createFn: CreateElementFn | undefined = createElementFn
+
+  if (markerOrCreateElement instanceof Node) {
+    // Third argument is a marker node - insert before it
+    marker = document.createComment('fict:insert')
+    parent.insertBefore(marker, markerOrCreateElement)
+    createFn = createElementFn
+  } else {
+    // Third argument is createElementFn (or undefined) - append marker at end
+    marker = document.createComment('fict:insert')
+    parent.appendChild(marker)
+    createFn = markerOrCreateElement as CreateElementFn | undefined
+  }
 
   const dispose = createEffect(() => {
     const value = getValue()
@@ -589,14 +623,39 @@ export function insert(
     const prev = pushRoot(root)
     let nodes: Node[] = []
     try {
-      const newNode =
-        value instanceof Node
-          ? value
-          : typeof value === 'string' || typeof value === 'number'
-            ? document.createTextNode(String(value))
-            : createElementFn
-              ? createElementFn(value)
-              : document.createTextNode(String(value))
+      let newNode: Node | Node[]
+
+      if (value instanceof Node) {
+        newNode = value
+      } else if (Array.isArray(value)) {
+        // Handle array of nodes (e.g. from createList) directly
+        // Filter to ensure we only have Nodes, or use createElement for mixed content if needed
+        // For now, assume if it's an array from a binding handle, it's nodes.
+        // If it's a mixed array from JSX, createElementFn should handle it if passed there?
+        // Actually, let's keep it simple: if array, pass to toNodeArray which handles recursion/arrays
+        newNode = [] as Node[]
+        // But wait, toNodeArray takes Node | Node[].
+        // We need to resolve the array items.
+        // If the array contains non-Nodes, we might need createElementFn?
+        // For the specific case of BindingHandle.marker returning Node[], this is fine.
+        // But insert is generic.
+        // Let's rely on toNodeArray but we need to pass something that toNodeArray accepts or handle the resolution here.
+        // Actually, if value is array, let's trust createElementFn or handle it if it contains pure Nodes.
+
+        // Revised strategy:
+        // If it's an array of Nodes, use it.
+        // If mixed, use createElementFn.
+        if (value.every(v => v instanceof Node)) {
+          newNode = value as Node[]
+        } else {
+          // Fallback to createFn which likely handles arrays (via Fragment logic) or standard text conv
+          newNode = createFn ? createFn(value) : document.createTextNode(String(value))
+        }
+      } else if (typeof value === 'string' || typeof value === 'number') {
+        newNode = document.createTextNode(String(value))
+      } else {
+        newNode = createFn ? createFn(value) : document.createTextNode(String(value))
+      }
 
       nodes = toNodeArray(newNode)
       const parentNode = marker.parentNode as (ParentNode & Node) | null
@@ -773,11 +832,10 @@ export function createConditional(
   createElementFn: CreateElementFn,
   renderFalse?: () => FictNode,
 ): BindingHandle {
-  const fragment = document.createDocumentFragment()
   const startMarker = document.createComment('fict:cond:start')
   const endMarker = document.createComment('fict:cond:end')
-  fragment.appendChild(startMarker)
-  fragment.appendChild(endMarker)
+  const fragment = document.createDocumentFragment()
+  fragment.append(startMarker, endMarker)
 
   let currentNodes: Node[] = []
   let currentRoot: RootContext | null = null
@@ -830,8 +888,6 @@ export function createConditional(
       if (parent) {
         insertNodesBefore(parent, nodes, endMarker)
         currentNodes = nodes
-      } else {
-        currentNodes = nodes
       }
     } catch (err) {
       if (handleSuspend(err as any, root)) {
@@ -858,6 +914,8 @@ export function createConditional(
 
   return {
     marker: fragment,
+    // No-op flush kept for API compatibility
+    flush: () => {},
     dispose: () => {
       dispose()
       if (currentRoot) {
@@ -887,15 +945,14 @@ export function createList<T>(
   createElementFn: CreateElementFn,
   getKey?: KeyFn<T>,
 ): BindingHandle {
-  const fragment = document.createDocumentFragment()
   const startMarker = document.createComment('fict:list:start')
   const endMarker = document.createComment('fict:list:end')
-  fragment.appendChild(startMarker)
-  fragment.appendChild(endMarker)
+  const fragment = document.createDocumentFragment()
+  fragment.append(startMarker, endMarker)
 
   const nodeMap = new Map<string | number, ManagedBlock<T>>()
 
-  const dispose = createEffect(() => {
+  const runListUpdate = () => {
     const arr = items()
     const parent = startMarker.parentNode as (ParentNode & Node) | null
     if (!parent) return
@@ -955,10 +1012,13 @@ export function createList<T>(
     for (const [k, v] of newNodeMap) {
       nodeMap.set(k, v)
     }
-  })
+  }
+
+  const dispose = createEffect(runListUpdate)
 
   return {
     marker: fragment,
+    flush: () => {},
     dispose: () => {
       dispose()
       for (const [, managed] of nodeMap) {
@@ -1405,14 +1465,83 @@ function bumpBlockVersion<T>(block: ManagedBlock<T>): void {
   block.version(block.version() + 1)
 }
 
-function toNodeArray(node: Node): Node[] {
-  return node instanceof DocumentFragment ? Array.from(node.childNodes) : [node]
+function toNodeArray(node: Node | Node[] | BindingHandle | unknown): Node[] {
+  try {
+    if (Array.isArray(node)) {
+      const result: Node[] = []
+      for (const item of node) {
+        result.push(...toNodeArray(item))
+      }
+      return result
+    }
+    if (node === null || node === undefined || node === false) {
+      return []
+    }
+  } catch {
+    return []
+  }
+
+  let isNode = false
+  try {
+    isNode = node instanceof Node
+  } catch {
+    // If safe check fails, treat as primitive string
+    isNode = false
+  }
+
+  if (isNode) {
+    try {
+      if (node instanceof DocumentFragment) {
+        return Array.from(node.childNodes)
+      }
+    } catch {
+      // Ignore fragment check error
+    }
+    return [node as Node]
+  }
+
+  try {
+    // Handle BindingHandle
+    // Accessing properties might throw on proxy
+    if (typeof node === 'object' && node !== null && 'marker' in node) {
+      return toNodeArray((node as BindingHandle).marker)
+    }
+  } catch {
+    // Ignore property check error
+  }
+
+  // Primitive fallback
+  try {
+    return [document.createTextNode(String(node))]
+  } catch {
+    return [document.createTextNode('')]
+  }
 }
 
 function insertNodesBefore(parent: ParentNode & Node, nodes: Node[], anchor: Node): void {
   for (let i = nodes.length - 1; i >= 0; i--) {
     const node = nodes[i]!
-    parent.insertBefore(node, anchor)
+    if (node === undefined || node === null) continue
+
+    // Handle DocumentFragment - insert children in reverse order
+    const isFrag = node.nodeType === 11
+    if (isFrag) {
+      const childrenArr = Array.from(node.childNodes)
+      for (let j = childrenArr.length - 1; j >= 0; j--) {
+        const child = childrenArr[j]!
+        if (child.ownerDocument !== parent.ownerDocument && parent.ownerDocument) {
+          parent.ownerDocument.adoptNode(child)
+        }
+        parent.insertBefore(child, anchor)
+        anchor = child
+      }
+    } else {
+      // Regular node
+      if (node.ownerDocument !== parent.ownerDocument && parent.ownerDocument) {
+        parent.ownerDocument.adoptNode(node)
+      }
+      parent.insertBefore(node, anchor)
+    }
     anchor = node
   }
 }

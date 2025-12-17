@@ -40,8 +40,8 @@ describe('Alias-Safe Reactive Lowering', () => {
         }
       `
       const output = transform(source)
-      // In fine-grained mode, it binds the alias getter function
-      expect(output).toContain('__fictBindText(__fg0_txt0, () => alias())')
+      // Template cloning uses insert for dynamic content
+      expect(output).toContain('insert(__fg0_el0.parentNode, () => alias(),')
     })
   })
 

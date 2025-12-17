@@ -16,7 +16,7 @@ describe('"use no memo" directive', () => {
 
     expect(output).not.toContain('__fictMemo')
     expect(output).not.toContain('__fictConditional')
-    expect(output).not.toContain('__fictBindText')
+    expect(output).not.toContain('bindText')
     expect(output).toContain('count()')
   })
 
