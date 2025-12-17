@@ -90,7 +90,8 @@ The `render` function automatically marks containers with `data-fict-fine-graine
 **Key features:**
 
 - 🎯 Surgical DOM updates - only changed nodes are touched
-- 🔑 Smart keyed lists - DOM nodes preserved across reorders
+- 🔖 Anchor-first helpers - conditionals/lists emit start/end markers inside a `DocumentFragment` so handles can be appended directly and hydrate-ready anchors stay stable
+- 🔑 Smart keyed lists - `createKeyedListContainer/createKeyedBlock` reuse DOM nodes across reorders and same-reference updates (with `createVersionedSignal`)
 - 📦 Primitive value proxies - numbers/strings work seamlessly in lists
 - ⚡ Zero-overhead effects - no unnecessary re-subscriptions
 

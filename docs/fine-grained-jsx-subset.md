@@ -20,25 +20,25 @@
 ### Structural rules
 
 1. **Static tree shape** – compiler must know the exact ordering of DOM nodes. All dynamic insertions happen via `createChildBinding`/`createKeyedList` derived helpers.
-2. **Deterministic anchors** – every dynamic child receives a stable anchor comment (`const marker0 = document.createComment('...')`).
+2. **Deterministic anchors** – every dynamic child receives a stable anchor comment (`const marker0 = document.createComment('...')`) wrapped in a `DocumentFragment` when returned as a binding handle, so callers can append `handle.marker` directly.
 3. **Event handlers** – attached once via direct property assignment. Compiler is responsible for capturing dependencies via `createEffect` if the handler identity must change.
 4. **Refs** – lowered to simple assignment after node creation; lifecycle coordination handled via root callbacks.
 
 ## 2. Runtime Helper API (frozen for Phase 0)
 
-| Helper                  | Signature                                                                     | Purpose                                                                              |
-| ----------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------------------- |
-| `bindText`              | `bindText(text: Text, getter: () => unknown): Cleanup`                        | Reactive text updates.                                                               |
-| `bindAttribute`         | `bindAttribute(el: HTMLElement, key: string, getter: () => unknown): Cleanup` | Handles attr removal/boolean cases.                                                  |
-| `bindStyle`             | `bindStyle(el: HTMLElement, getter: () => StyleValue): Cleanup`               | Applies string or object styles.                                                     |
-| `bindClass`             | `bindClass(el: HTMLElement, getter: () => ClassValue): Cleanup`               | Normalizes string/object inputs.                                                     |
-| `bindProperty`          | `bindProperty(el: HTMLElement, key: string, getter: () => unknown): Cleanup`  | Direct property wiring (e.g., value, checked).                                       |
-| `insert`                | `insert(parent: Node, value: MaybeReactive<FictNode>, anchor?: Node           | null): void`                                                                         | Legacy child insertion; compiler still uses for dynamic child slots. |
-| `createConditional`     | Existing                                                                      | Truthy/falsy branch management with marker anchors.                                  |
-| `createKeyedList`       | Existing high-level API                                                       | Remains for handwritten code; compiler will call lower-level pieces described below. |
-| `moveMarkerBlock`       | `moveMarkerBlock(parent: Node, block: MarkerBlock, anchor: Node               | null): void`                                                                         | Moves start/end markers and enclosed nodes.                          |
-| `destroyMarkerBlock`    | `destroyMarkerBlock(block: MarkerBlock): void`                                | Tears down a marker range and destroys its root.                                     |
-| `createVersionedSignal` | `createVersionedSignal<T>(value: T): VersionedSignal<T>`                      | Ensures same-reference writes still notify effects.                                  |
+| Helper                  | Signature                                                                      | Purpose                                                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `bindText`              | `bindText(text: Text, getter: () => unknown): Cleanup`                         | Reactive text updates.                                                                                                     |
+| `bindAttribute`         | `bindAttribute(el: HTMLElement, key: string, getter: () => unknown): Cleanup`  | Handles attr removal/boolean cases.                                                                                        |
+| `bindStyle`             | `bindStyle(el: HTMLElement, getter: () => StyleValue): Cleanup`                | Applies string or object styles.                                                                                           |
+| `bindClass`             | `bindClass(el: HTMLElement, getter: () => ClassValue): Cleanup`                | Normalizes string/object inputs.                                                                                           |
+| `bindProperty`          | `bindProperty(el: HTMLElement, key: string, getter: () => unknown): Cleanup`   | Direct property wiring (e.g., value, checked).                                                                             |
+| `insert`                | `insert(parent: Node, value: MaybeReactive<FictNode>, anchor?: Node            | null): void`                                                                                                               | Legacy child insertion; compiler still uses for dynamic child slots. |
+| `createConditional`     | Returns `{ marker: DocumentFragment, dispose, flush }`                         | Truthy/falsy branch management; markers live inside the fragment so callers append `handle.marker` directly.               |
+| `createKeyedList`       | Returns `{ marker: DocumentFragment, startMarker, endMarker, flush, dispose }` | High-level keyed list diffing; runtime defers diff until markers are mounted and reuses nodes via `createVersionedSignal`. |
+| `moveMarkerBlock`       | `moveMarkerBlock(parent: Node, block: MarkerBlock, anchor: Node                | null): void`                                                                                                               | Moves start/end markers and enclosed nodes.                          |
+| `destroyMarkerBlock`    | `destroyMarkerBlock(block: MarkerBlock): void`                                 | Tears down a marker range and destroys its root.                                                                           |
+| `createVersionedSignal` | `createVersionedSignal<T>(value: T): VersionedSignal<T>`                       | Ensures same-reference writes still notify effects.                                                                        |
 
 The above list is now frozen for Phase 2 implementation; compiler output may assume these helpers exist and remain backwards compatible.
 
@@ -92,6 +92,7 @@ const cond = createConditional(
   createElement,
   () => createElement(Fallback({})),
 )
+// cond.marker is a DocumentFragment containing start/end markers
 fragChildren.push(cond.marker)
 ```
 
@@ -115,6 +116,8 @@ fragChildren.push(cond.marker)
 ```ts
 const ul0 = document.createElement('ul')
 const list = createKeyedListContainer()
+// Compiler may append the high-level handle: createKeyedList(...).marker
+// For low-level containers, append explicit markers:
 ul0.append(list.startMarker, list.endMarker)
 
 function mountItem(value: VersionedSignal<Item>, index: Signal<number>) {
