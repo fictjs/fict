@@ -11,6 +11,8 @@ export interface TransformContext {
   aliasVars: Set<string>
   getterOnlyVars: Set<string>
   shadowedVars: Set<string>
+  shadowStack: Set<string>[]
+  trackedScopeStack: Set<string>[]
   helpersUsed: HelperUsage
   options: FictCompilerOptions
   dependencyGraph: Map<string, Set<string>>
@@ -24,6 +26,14 @@ export interface TransformContext {
   noMemoFunctions: WeakSet<BabelCore.types.Function>
   slotCounters: WeakMap<BabelCore.types.Node, number>
   functionsWithJsx: WeakSet<BabelCore.types.Function>
+  /**
+   * Variables that will become getters after region transform.
+   * Used by JSX shorthand property transformation to know which
+   * variables need to be called as getters (e.g. { color } -> { color: color() })
+   * before the region transform actually converts them to getters.
+   */
+  pendingRegionOutputs: WeakMap<BabelCore.types.Function, Set<string>>
+  pendingRegionStack: Set<string>[]
 }
 
 export interface HelperUsage {

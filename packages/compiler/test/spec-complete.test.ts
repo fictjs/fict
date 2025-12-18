@@ -357,6 +357,128 @@ describe('R010: Lazy conditional evaluation', () => {
     // Should handle the conditional region
     expect(output).toBeDefined()
   })
+
+  it('transforms shorthand properties for control flow region outputs', () => {
+    // This tests the fix for the visitor execution order bug where
+    // JSX shorthand properties like { color } weren't being transformed
+    // because region outputs weren't in getterOnlyVars yet
+    const output = transform(
+      `
+      import { $state } from 'fict'
+      function Counter() {
+        let count = $state(0)
+
+        let message = 'Keep going...'
+        let color = 'black'
+
+        if (count >= 3) {
+          message = 'Threshold Reached!'
+          color = 'red'
+        }
+
+        return <div style={{ color }}><p>{message}</p></div>
+      }
+    `,
+      { fineGrainedDom: true },
+    )
+    // The shorthand property { color } should be transformed to { color: color() }
+    // because color is a pending region output
+    expect(output).toContain('color: color()')
+    // message should also be transformed as a getter
+    expect(output).toContain('message()')
+  })
+
+  it('does not rewrite shorthand when no region is emitted (single derived output)', () => {
+    const output = transform(
+      `
+      import { $state } from 'fict'
+      function Single() {
+        let count = $state(0)
+        let message = 'Keep going...'
+        if (count) {
+          message = 'Threshold'
+        }
+        return <p>{message}</p>
+      }
+    `,
+      { fineGrainedDom: true },
+    )
+    // No region will be created (only one derived output), so no message()
+    expect(output).not.toContain('message()')
+  })
+
+  it('scopes pending region outputs per function', () => {
+    const output = transform(
+      `
+      import { $state } from 'fict'
+      function Counter() {
+        let count = $state(0)
+        let message = 'Keep going...'
+        let color = 'black'
+        if (count >= 3) {
+          message = 'Threshold'
+          color = 'red'
+        }
+        return <div style={{ color }}><p>{message}</p></div>
+      }
+
+      function Other() {
+        let message = 'local'
+        return <p>{message}</p>
+      }
+    `,
+      { fineGrainedDom: true },
+    )
+    // Counter should have getter calls
+    expect(output).toContain('color: color()')
+    expect(output).toContain('message()')
+    // Other should NOT inherit pending getters from Counter
+    expect(output).not.toMatch(/function Other[\s\S]*message\(\)/)
+  })
+
+  it('handles pending outputs used in event handlers and attributes', () => {
+    const output = transform(
+      `
+      import { $state } from 'fict'
+      function Component() {
+        let count = $state(0)
+        let cls = 'cold'
+        let label = 'Go'
+        if (count > 5) {
+          cls = 'hot'
+          label = 'Stop'
+        }
+        return <button class={cls} onClick={() => console.log(label)}>{label}</button>
+      }
+    `,
+      { fineGrainedDom: true },
+    )
+    expect(output).toContain('bindClass')
+    expect(output).toContain('() => cls()')
+    expect(output).toContain('() => console.log(label())')
+    expect(output).toContain('() => label()')
+  })
+
+  it('handles pending outputs captured in returned closures', () => {
+    const output = transform(
+      `
+      import { $state } from 'fict'
+      function Factory() {
+        let count = $state(0)
+        let status = 'low'
+        let title = 'Small'
+        if (count > 1) {
+          status = 'high'
+          title = 'Big'
+        }
+        return () => <span title={title}>{status}</span>
+      }
+    `,
+      { fineGrainedDom: true },
+    )
+    expect(output).toContain('status()')
+    expect(output).toContain('title()')
+  })
 })
 
 // ============================================================================

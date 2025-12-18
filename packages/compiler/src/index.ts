@@ -96,6 +96,10 @@ export const createFictPlugin = declare(
               noMemoFunctions: new WeakSet(),
               slotCounters: new WeakMap(),
               functionsWithJsx: new WeakSet(),
+              shadowStack: [],
+              trackedScopeStack: [],
+              pendingRegionOutputs: new WeakMap(),
+              pendingRegionStack: [],
             }
 
             if (detectNoMemoDirective(path, t)) {
@@ -109,6 +113,11 @@ export const createFictPlugin = declare(
 
             // Phase 5: Build dependency graph for cycle detection (after memoVars are collected)
             buildDependencyGraph(path, ctx, t)
+
+            // Phase 6: Pre-analyze control flow region outputs
+            // Populate pendingRegionOutputs per function - these will become getters after region transform
+            // JSX shorthand properties need to know about these for correct transformation
+            preAnalyzeRegionOutputs(path, ctx, t)
 
             // Store context in state for use by other visitors
             ;(state as any).__fictCtx = ctx
@@ -280,12 +289,19 @@ export const createFictPlugin = declare(
             return
           }
 
-          // Check for getterOnlyVars too
+          // Check for getterOnlyVars
           const isGetterOnly = ctx.getterOnlyVars.has(name) && !ctx.shadowedVars.has(name)
+          // Check for pending region outputs in the current function scope
+          const pendingScope =
+            ctx.pendingRegionStack.length > 0
+              ? ctx.pendingRegionStack[ctx.pendingRegionStack.length - 1]
+              : undefined
+          const isPendingGetter = pendingScope?.has(name) && !ctx.shadowedVars.has(name)
 
           // Skip if not tracked or shadowed
           if (
             !isGetterOnly &&
+            !isPendingGetter &&
             !isTrackedAndNotShadowed(name, ctx.stateVars, ctx.memoVars, ctx.shadowedVars)
           ) {
             return
@@ -297,7 +313,7 @@ export const createFictPlugin = declare(
           }
 
           if (
-            isGetterOnly &&
+            (isGetterOnly || isPendingGetter) &&
             isInsideNestedFunction(path) &&
             !ctx.options.getterCache &&
             !ctx.aliasVars.has(name)
@@ -555,11 +571,19 @@ export const createFictPlugin = declare(
 
           const name = path.node.key.name
 
-          // Check for getterOnlyVars too
+          // Check for getterOnlyVars
           const isGetterOnly = ctx.getterOnlyVars.has(name) && !ctx.shadowedVars.has(name)
+          // Also check pending region outputs for the current function scope.
+          // These are variables that WILL become getters after region transform.
+          const pendingScope =
+            ctx.pendingRegionStack.length > 0
+              ? ctx.pendingRegionStack[ctx.pendingRegionStack.length - 1]
+              : undefined
+          const isPendingGetter = pendingScope?.has(name) && !ctx.shadowedVars.has(name)
 
           if (
             !isGetterOnly &&
+            !isPendingGetter &&
             !isTrackedAndNotShadowed(name, ctx.stateVars, ctx.memoVars, ctx.shadowedVars)
           ) {
             return
@@ -639,6 +663,36 @@ export const createFictPlugin = declare(
               return
             }
 
+            // Push pending region outputs for this function scope (if any)
+            const pendingSet =
+              ctx.pendingRegionOutputs.get(path.node as BabelCore.types.Function) ??
+              new Set<string>()
+            ctx.pendingRegionStack.push(pendingSet)
+
+            // Compute tracked names for this function scope (state/derived/pending)
+            const trackedNames = new Set<string>()
+            const bindings = path.scope?.bindings ?? {}
+            Object.keys(bindings).forEach(name => {
+              const binding = bindings[name]
+              const node = binding?.path?.node
+              if (t.isVariableDeclarator(node) && t.isIdentifier(node.id) && node.init) {
+                if (isStateCall(node.init, t) || dependsOnTracked(node.init, ctx, t)) {
+                  trackedNames.add(name)
+                }
+              }
+            })
+            pendingSet.forEach(n => trackedNames.add(n))
+            ctx.trackedScopeStack.push(trackedNames)
+
+            // Track non-tracked local bindings for transformExpression scoping
+            const localShadow = new Set<string>()
+            Object.keys(bindings).forEach(name => {
+              if (!trackedNames.has(name)) {
+                localShadow.add(name)
+              }
+            })
+            ctx.shadowStack.push(localShadow)
+
             if (t.isBlockStatement(path.node.body)) {
               const bodyPath = path.get('body')
               if (
@@ -679,6 +733,9 @@ export const createFictPlugin = declare(
           exit(path: BabelCore.NodePath<BabelCore.types.Function>, state) {
             const ctx = (state as any).__fictCtx as TransformContext
             if (!ctx) return
+            ctx.pendingRegionStack.pop()
+            ctx.trackedScopeStack.pop()
+            ctx.shadowStack.pop()
             maybeApplyGetterCaching(path, ctx, t)
             maybeRewriteTopLevelConditionalReturn(path, ctx, t)
           },
@@ -1289,6 +1346,182 @@ function collectDerivedOutputs(
   return derived
 }
 
+/**
+ * Compute which outputs would actually be regionized for a set of statements.
+ * Mirrors applyRegionTransform's gating (size >= 2, region candidates or fallback).
+ */
+function computeRegionizableOutputs(
+  statements: BabelCore.types.Statement[],
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): Set<string> {
+  const derivedOutputs = collectDerivedOutputsFromStatements(statements, ctx, t)
+  if (derivedOutputs.size < 2) return new Set()
+
+  const outputs = new Set<string>()
+
+  // Primary region detection (same as applyRegionTransform main loop)
+  let index = 0
+  while (index < statements.length) {
+    const region = findNextRegion(statements, derivedOutputs, ctx, t, index)
+
+    if (!region) {
+      index++
+      continue
+    }
+
+    const { start, end, outputs: regionOutputs } = region
+    const regionHasReturn = regionContainsEarlyReturn(statements, start, end, t)
+    if (regionHasReturn) {
+      index = end + 1
+      continue
+    }
+
+    // Match applyRegionTransform's handling of trailing returns
+    let regionEnd = end
+    while (regionEnd >= start && t.isReturnStatement(statements[regionEnd]!)) {
+      regionEnd--
+    }
+    if (regionEnd < start) {
+      index = end + 1
+      continue
+    }
+
+    const startAfterRegion = regionEnd + 1
+    const referencedOutside = collectReferencedOutputs(
+      statements,
+      regionOutputs,
+      startAfterRegion,
+      ctx,
+      t,
+    )
+    const baseActiveOutputs = ctx.options.lazyConditional
+      ? regionOutputs
+      : referencedOutside.size
+        ? referencedOutside
+        : regionOutputs
+    const activeOutputs = expandActiveOutputsWithDependencies(baseActiveOutputs, regionOutputs, ctx)
+    const reassignedLater = hasAssignmentsOutside(statements, activeOutputs, startAfterRegion, t)
+    const hasControlFlow = regionHasControlFlow(statements, start, regionEnd, t)
+    const hasInternalDeps = outputsHaveInternalDependencies(activeOutputs, ctx)
+    if (!reassignedLater && activeOutputs.size >= 2 && (!hasInternalDeps || hasControlFlow)) {
+      activeOutputs.forEach(o => outputs.add(o))
+    }
+    index = end + 1
+  }
+
+  if (outputs.size > 0) return outputs
+
+  // Fallback detection (mirrors applyRegionTransform fallback)
+  const firstTouched = statements.findIndex(stmt =>
+    statementTouchesOutputs(stmt as BabelCore.types.Statement, derivedOutputs, ctx, t),
+  )
+  const lastTouched = (() => {
+    for (let i = statements.length - 1; i >= 0; i--) {
+      const stmt = statements[i] as BabelCore.types.Statement | undefined
+      if (stmt && statementTouchesOutputs(stmt, derivedOutputs, ctx, t)) return i
+    }
+    return -1
+  })()
+
+  if (firstTouched === -1 || lastTouched === -1 || firstTouched > lastTouched) {
+    return new Set()
+  }
+
+  if (regionContainsEarlyReturn(statements, firstTouched, lastTouched, t)) {
+    return new Set()
+  }
+
+  let regionEnd = lastTouched
+  while (regionEnd >= firstTouched && t.isReturnStatement(statements[regionEnd]!)) {
+    regionEnd--
+  }
+  if (regionEnd < firstTouched) return new Set()
+
+  const startAfterRegion = regionEnd + 1
+  const referencedOutside = collectReferencedOutputs(
+    statements,
+    derivedOutputs,
+    startAfterRegion,
+    ctx,
+    t,
+  )
+  const baseActiveOutputs = ctx.options.lazyConditional
+    ? derivedOutputs
+    : referencedOutside.size
+      ? referencedOutside
+      : derivedOutputs
+  const activeOutputs = expandActiveOutputsWithDependencies(baseActiveOutputs, derivedOutputs, ctx)
+  const hasControlFlow = regionHasControlFlow(statements, firstTouched, regionEnd, t)
+  const hasInternalDeps = outputsHaveInternalDependencies(activeOutputs, ctx)
+  if (activeOutputs.size < 2 || (hasInternalDeps && !hasControlFlow)) return new Set()
+
+  return activeOutputs
+}
+
+/**
+ * Pre-analyze control flow region outputs BEFORE JSX transformation.
+ *
+ * This fixes a timing bug where JSX is transformed before region outputs
+ * are added to getterOnlyVars. By analyzing all function bodies upfront,
+ * we can populate getterOnlyVars so that shorthand properties like { color }
+ * are correctly transformed to { color: color() }.
+ */
+function preAnalyzeRegionOutputs(
+  path: BabelCore.NodePath<BabelCore.types.Program>,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): void {
+  if (ctx.noMemo) return
+
+  const analyzeFunction = (fnPath: BabelCore.NodePath<BabelCore.types.Function>) => {
+    // Respect no-memo scopes (including early directive detection)
+    if (ctx.noMemoFunctions.has(fnPath.node as BabelCore.types.Function)) return
+    const bodyPath = fnPath.get('body')
+    if (
+      !Array.isArray(bodyPath) &&
+      bodyPath.isBlockStatement() &&
+      detectNoMemoDirective(bodyPath as BabelCore.NodePath<BabelCore.types.BlockStatement>, t)
+    ) {
+      return
+    }
+
+    const bodyNode = fnPath.node.body
+    if (!t.isBlockStatement(bodyNode)) return
+
+    const statements = bodyNode.body as BabelCore.types.Statement[]
+    if (statements.length === 0) return
+
+    const pending = computeRegionizableOutputs(statements, ctx, t)
+    if (pending.size === 0) {
+      ctx.pendingRegionOutputs.set(fnPath.node as BabelCore.types.Function, new Set())
+      return
+    }
+
+    // Filter out variables already handled by other mechanisms
+    const filtered = new Set<string>()
+    pending.forEach(name => {
+      if (!ctx.memoVars.has(name) && !ctx.stateVars.has(name) && !ctx.getterOnlyVars.has(name)) {
+        filtered.add(name)
+      }
+    })
+    ctx.pendingRegionOutputs.set(fnPath.node as BabelCore.types.Function, filtered)
+  }
+
+  // Traverse all function bodies to find control flow region outputs
+  path.traverse({
+    FunctionDeclaration(fnPath) {
+      analyzeFunction(fnPath)
+    },
+    FunctionExpression(fnPath) {
+      analyzeFunction(fnPath)
+    },
+    ArrowFunctionExpression(fnPath) {
+      analyzeFunction(fnPath)
+    },
+  })
+}
+
 function ensureValidStatePlacement(
   path: BabelCore.NodePath,
   ctx: TransformContext,
@@ -1400,6 +1633,10 @@ function shouldTransformIdentifier(
   ) {
     return false
   }
+
+  // Don't transform left-hand side of assignments
+  // This is important for pendingRegionOutputs like `color = 'red'`
+  if (t.isAssignmentExpression(parent) && parent.left === path.node) return false
 
   // Don't transform imports/exports
   if (t.isImportSpecifier(parent) || t.isImportDefaultSpecifier(parent)) return false
@@ -2164,6 +2401,15 @@ function applyRegionTransform(
 
     const { start, end, outputs } = region
 
+    // Skip regions that contain early returns - region memo would capture return values/JSX
+    if (regionContainsEarlyReturn(statements as BabelCore.types.Statement[], start, end, t)) {
+      for (let i = start; i <= end; i++) {
+        result.push(statements[i] as BabelCore.types.Statement)
+      }
+      index = end + 1
+      continue
+    }
+
     // Exclude trailing return statements from the region
     let regionEnd = end
     while (regionEnd >= start && t.isReturnStatement(statements[regionEnd]!)) {
@@ -2289,6 +2535,17 @@ function applyRegionTransform(
     ) {
       console.log('no fallback region for view')
     }
+    return
+  }
+
+  if (
+    regionContainsEarlyReturn(
+      statements as BabelCore.types.Statement[],
+      firstTouched,
+      lastTouched,
+      t,
+    )
+  ) {
     return
   }
 
@@ -2596,6 +2853,59 @@ function regionHasControlFlow(
     if (stmt && visit(stmt)) return true
   }
   return false
+}
+
+function regionContainsEarlyReturn(
+  statements: BabelCore.types.Statement[],
+  start: number,
+  end: number,
+  t: typeof BabelCore.types,
+): boolean {
+  for (let i = start; i <= end; i++) {
+    const stmt = statements[i]
+    if (stmt && statementHasEarlyReturn(stmt, t)) return true
+  }
+  return false
+}
+
+function statementHasEarlyReturn(
+  stmt: BabelCore.types.Statement,
+  t: typeof BabelCore.types,
+): boolean {
+  let hasReturn = false
+  const visit = (node: BabelCore.types.Node): void => {
+    if (hasReturn) return
+    if (t.isReturnStatement(node) || t.isThrowStatement(node)) {
+      hasReturn = true
+      return
+    }
+    if (
+      t.isFunctionDeclaration(node) ||
+      t.isFunctionExpression(node) ||
+      t.isArrowFunctionExpression(node)
+    ) {
+      return
+    }
+    for (const key of Object.keys(node) as (keyof typeof node)[]) {
+      const child = (node as any)[key]
+      if (Array.isArray(child)) {
+        for (const c of child) {
+          if (c && typeof c === 'object' && 'type' in c && typeof c.type === 'string') {
+            visit(c as BabelCore.types.Node)
+          }
+        }
+      } else if (
+        child &&
+        typeof child === 'object' &&
+        'type' in child &&
+        typeof (child as { type: unknown }).type === 'string'
+      ) {
+        visit(child as BabelCore.types.Node)
+      }
+    }
+  }
+  visit(stmt)
+  return hasReturn
 }
 
 function collectReferencedOutputs(

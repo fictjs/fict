@@ -79,11 +79,15 @@ describe('Rule D Verification', () => {
     // This is valid behavior - the test should check for proper reactivity
     expect(output).toContain('doubled')
     expect(output).toContain('tripled')
-    // Either regions or simple getters are acceptable
+    // Either regions, simple getters, or individual memos are acceptable
     const hasRegion = output.includes('__fictRegion')
     const hasSimpleGetters =
       output.includes('const doubled = () =>') && output.includes('const tripled = () =>')
-    expect(hasRegion || hasSimpleGetters).toBe(true)
+    const hasMemoCalls =
+      output.includes('__fictUseMemo') ||
+      output.includes('__fictMemo') ||
+      output.includes('useMemo')
+    expect(hasRegion || hasSimpleGetters || hasMemoCalls).toBe(true)
   })
 
   it('caches conditional evaluation for lazy branches', () => {

@@ -2,35 +2,31 @@ import { $state, $effect, render } from 'fict'
 
 function Counter() {
   let count = $state(0)
-  let count1 = $state(0)
-  const doubled = count * 2
-  console.log('doubled', doubled)
-  $effect(() => {
-    document.title = `Count: ${count}`
-  })
-  if (!(count % 2)) {
-    console.log('test')
+  const double = count * 2
+  let message = 'Keep going...'
+  let color = 'black'
+  if (count >= 3) {
+    message = 'Threshold Reached!'
+    color = 'red'
+    if (count === 3) {
+      console.log('Just hit 3!')
+    }
     return (
-      <>
-        <button onClick={() => count++} data-testid="count">
-          Count: {count} is divisible by 2, doubled: {doubled}
-        </button>
-        <button onClick={() => count1++} data-testid="count1">
-          Count1: {count1}
-        </button>
-      </>
+      <div style={{ color }}>
+        <h1>Count1: {count}</h1>
+        <h2>Double1: {double}</h2>
+        <p>{message}</p>
+        <button onClick={() => count++}>Increment1</button>
+      </div>
     )
   }
-  console.log('test1')
   return (
-    <>
-      <button onClick={() => count++} data-testid="count">
-        Count: {count} is not divisible by 2, count1: {doubled}
-      </button>
-      <button onClick={() => count1++} data-testid="count1">
-        Count1: {count1}
-      </button>
-    </>
+    <div style={{ color }}>
+      <h1>Count: {count}</h1>
+      <h2>Double: {double}</h2>
+      <p>{message}</p>
+      <button onClick={() => count++}>Increment</button>
+    </div>
   )
 }
 

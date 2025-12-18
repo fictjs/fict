@@ -71,12 +71,31 @@ export function transformExpression(
   ctx: TransformContext,
   t: typeof BabelCore.types,
 ): BabelCore.types.Expression {
+  const shadowed =
+    ctx.shadowStack.length > 0
+      ? new Set<string>([...ctx.shadowedVars, ...ctx.shadowStack[ctx.shadowStack.length - 1]!])
+      : ctx.shadowedVars
+  const trackedInScope = ctx.trackedScopeStack[ctx.trackedScopeStack.length - 1] ?? undefined
+
   // Simple recursive transformation of identifiers to getter calls
   if (t.isIdentifier(expr)) {
-    if (
-      isTrackedAndNotShadowed(expr.name, ctx.stateVars, ctx.memoVars, ctx.shadowedVars) ||
-      (ctx.getterOnlyVars.has(expr.name) && !ctx.shadowedVars.has(expr.name))
-    ) {
+    const pending =
+      ctx.pendingRegionStack[ctx.pendingRegionStack.length - 1]?.has(expr.name) ?? false
+
+    if (pending) {
+      return createGetterCall(t, expr.name)
+    }
+
+    const isTrackedLocal = trackedInScope ? trackedInScope.has(expr.name) : false
+    const shouldTransform =
+      isTrackedLocal ||
+      isTrackedAndNotShadowed(expr.name, ctx.stateVars, ctx.memoVars, shadowed) ||
+      (ctx.getterOnlyVars.has(expr.name) && !shadowed.has(expr.name)) ||
+      // Also check pendingRegionOutputs for the current function scope.
+      // These are variables that WILL become getters after region transform.
+      (pending && !shadowed.has(expr.name))
+
+    if (shouldTransform) {
       return createGetterCall(t, expr.name)
     }
     return expr
@@ -146,8 +165,9 @@ export function transformExpression(
   if (t.isCallExpression(expr)) {
     const shouldSkipCalleeTransform =
       t.isIdentifier(expr.callee) &&
-      (isTrackedAndNotShadowed(expr.callee.name, ctx.stateVars, ctx.memoVars, ctx.shadowedVars) ||
-        (ctx.getterOnlyVars.has(expr.callee.name) && !ctx.shadowedVars.has(expr.callee.name)))
+      ((trackedInScope?.has(expr.callee.name) ?? false) ||
+        isTrackedAndNotShadowed(expr.callee.name, ctx.stateVars, ctx.memoVars, shadowed) ||
+        (ctx.getterOnlyVars.has(expr.callee.name) && !shadowed.has(expr.callee.name)))
 
     return t.callExpression(
       t.isExpression(expr.callee) && !shouldSkipCalleeTransform
@@ -165,8 +185,9 @@ export function transformExpression(
   if (t.isOptionalCallExpression(expr)) {
     const shouldSkipCalleeTransform =
       t.isIdentifier(expr.callee) &&
-      (isTrackedAndNotShadowed(expr.callee.name, ctx.stateVars, ctx.memoVars, ctx.shadowedVars) ||
-        (ctx.getterOnlyVars.has(expr.callee.name) && !ctx.shadowedVars.has(expr.callee.name)))
+      ((trackedInScope?.has(expr.callee.name) ?? false) ||
+        isTrackedAndNotShadowed(expr.callee.name, ctx.stateVars, ctx.memoVars, shadowed) ||
+        (ctx.getterOnlyVars.has(expr.callee.name) && !shadowed.has(expr.callee.name)))
 
     return t.optionalCallExpression(
       t.isExpression(expr.callee) && !shouldSkipCalleeTransform
@@ -185,8 +206,9 @@ export function transformExpression(
   if (t.isNewExpression(expr)) {
     const shouldSkipCalleeTransform =
       t.isIdentifier(expr.callee) &&
-      (isTrackedAndNotShadowed(expr.callee.name, ctx.stateVars, ctx.memoVars, ctx.shadowedVars) ||
-        (ctx.getterOnlyVars.has(expr.callee.name) && !ctx.shadowedVars.has(expr.callee.name)))
+      ((trackedInScope?.has(expr.callee.name) ?? false) ||
+        isTrackedAndNotShadowed(expr.callee.name, ctx.stateVars, ctx.memoVars, shadowed) ||
+        (ctx.getterOnlyVars.has(expr.callee.name) && !shadowed.has(expr.callee.name)))
 
     return t.newExpression(
       t.isExpression(expr.callee) && !shouldSkipCalleeTransform
@@ -285,7 +307,8 @@ export function transformExpression(
   if (t.isUpdateExpression(expr)) {
     if (t.isIdentifier(expr.argument)) {
       const name = expr.argument.name
-      if (isTrackedAndNotShadowed(name, ctx.stateVars, ctx.memoVars, ctx.shadowedVars)) {
+      const isTrackedLocal = trackedInScope ? trackedInScope.has(name) : false
+      if (isTrackedLocal || isTrackedAndNotShadowed(name, ctx.stateVars, ctx.memoVars, shadowed)) {
         // Only state vars can be updated
         if (ctx.stateVars.has(name)) {
           // count++ -> count(count() + 1)
@@ -317,7 +340,8 @@ export function transformExpression(
   if (t.isAssignmentExpression(expr)) {
     if (t.isIdentifier(expr.left)) {
       const name = expr.left.name
-      if (isTrackedAndNotShadowed(name, ctx.stateVars, ctx.memoVars, ctx.shadowedVars)) {
+      const isTrackedLocal = trackedInScope ? trackedInScope.has(name) : false
+      if (isTrackedLocal || isTrackedAndNotShadowed(name, ctx.stateVars, ctx.memoVars, shadowed)) {
         // Only state vars can be assigned
         if (ctx.stateVars.has(name)) {
           const operator = expr.operator
