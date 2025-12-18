@@ -462,8 +462,7 @@ function replaceIdentifiers(
   // Recursively process all child nodes
   for (const key of Object.keys(node)) {
     if (key === 'type' || key === 'loc' || key === 'start' || key === 'end') continue
-    // @ts-ignore
-    const value = (node as Record<string, unknown>)[key]
+    const value = (node as unknown as Record<string, unknown>)[key]
     if (Array.isArray(value)) {
       for (const item of value) {
         if (item && typeof item === 'object') {
@@ -1138,7 +1137,7 @@ export function extractStaticHtml(
       hasDynamic = true
       bindings.push({
         type: 'child',
-        node: child,
+        node: child as BabelCore.types.Node,
         path: [...parentPath, childIndex],
       })
       childIndex++
