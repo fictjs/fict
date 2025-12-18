@@ -1,6 +1,5 @@
 import type * as BabelCore from '@babel/core'
 import { declare } from '@babel/helper-plugin-utils'
-import traverse, { type NodePath as TraverseNodePath } from '@babel/traverse'
 
 import {
   RUNTIME_MODULE,
@@ -15,7 +14,6 @@ import {
   createListBinding,
   createInsertBinding,
 } from './fine-grained-dom'
-import { transformExpression } from './transform-expression'
 import {
   collectDerivedOutputsFromStatements,
   findNextRegion,
@@ -23,6 +21,7 @@ import {
   generateRegionMemo,
   statementTouchesOutputs,
 } from './rule-d'
+import { transformExpression } from './transform-expression'
 import type { TransformContext, FictCompilerOptions, HelperUsage } from './types'
 import { createHelperUsage } from './types'
 import {

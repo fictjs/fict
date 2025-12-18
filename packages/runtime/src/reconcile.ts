@@ -29,7 +29,7 @@
  * ```
  */
 export default function reconcileArrays(parentNode: ParentNode, a: Node[], b: Node[]): void {
-  let bLength = b.length
+  const bLength = b.length
   let aEnd = a.length
   let bEnd = bLength
   let aStart = 0

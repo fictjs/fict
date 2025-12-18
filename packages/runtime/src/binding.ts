@@ -28,7 +28,16 @@ import {
 } from './lifecycle'
 import { computed, createSignal, untrack, type Signal } from './signal'
 import type { Cleanup, FictNode } from './types'
-import { $$EVENTS, DelegatedEvents, UnitlessStyles } from './constants'
+import {
+  $$EVENTS,
+  DelegatedEvents,
+  UnitlessStyles,
+  Properties,
+  ChildProperties,
+  getPropAlias,
+  SVGNamespace,
+  Aliases,
+} from './constants'
 
 // ============================================================================
 // Type Definitions
@@ -766,9 +775,8 @@ declare global {
     [key: `$$${string}`]: EventListener | [EventListener, unknown] | undefined
     [key: `$$${string}Data`]: unknown
   }
-  interface Document {
-    [key: string]: unknown
-  }
+  // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+  interface Document extends Record<string, unknown> {}
 }
 
 /**
@@ -1032,8 +1040,8 @@ export function bindEvent(
 export function spread(
   node: HTMLElement,
   props: Record<string, unknown> = {},
-  isSVG: boolean = false,
-  skipChildren: boolean = false,
+  isSVG = false,
+  skipChildren = false,
 ): Record<string, unknown> {
   const prevProps: Record<string, unknown> = {}
 
@@ -1073,10 +1081,10 @@ export function spread(
 export function assign(
   node: HTMLElement,
   props: Record<string, unknown>,
-  isSVG: boolean = false,
-  skipChildren: boolean = false,
+  isSVG = false,
+  skipChildren = false,
   prevProps: Record<string, unknown> = {},
-  skipRef: boolean = false,
+  skipRef = false,
 ): void {
   props = props || {}
 
@@ -1199,7 +1207,6 @@ function assignProp(
 
   // Property handling (for non-SVG elements)
   if (!isSVG) {
-    const { Properties, ChildProperties, getPropAlias } = require('./constants')
     const propAlias = getPropAlias(prop, node.tagName)
     const isProperty = Properties.has(prop)
     const isChildProp = ChildProperties.has(prop)
@@ -1217,7 +1224,6 @@ function assignProp(
 
   // SVG namespace handling
   if (isSVG && prop.indexOf(':') > -1) {
-    const { SVGNamespace } = require('./constants')
     const [prefix, name] = prop.split(':')
     const ns = SVGNamespace[prefix!]
     if (ns) {
@@ -1228,7 +1234,6 @@ function assignProp(
   }
 
   // Default: set as attribute
-  const { Aliases } = require('./constants')
   const attrName = Aliases[prop] || prop
   if (value == null) node.removeAttribute(attrName)
   else node.setAttribute(attrName, String(value))

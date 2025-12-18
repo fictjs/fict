@@ -1036,7 +1036,7 @@ export function createInsertBinding(
 // Template Cloning Logic
 // ============================================================================
 
-export type TemplateBinding = {
+export interface TemplateBinding {
   type: 'attr' | 'child' | 'spread'
   node: BabelCore.types.Node
   // Path is array of child indices from root
@@ -1045,7 +1045,7 @@ export type TemplateBinding = {
   name?: string // for attributes
 }
 
-export type TemplateExtractionResult = {
+export interface TemplateExtractionResult {
   html: string
   hasDynamic: boolean
   bindings: TemplateBinding[]
@@ -1194,7 +1194,7 @@ export function emitTemplate(
   state: TemplateBuilderState,
   t: typeof BabelCore.types,
 ): BabelCore.types.Identifier | null {
-  const { html, hasDynamic, bindings } = extractStaticHtml(node, t)
+  const { html, hasDynamic: _hasDynamic, bindings } = extractStaticHtml(node, t)
 
   // If mostly static, use template.
   // Note: If NO dynamic parts, it is fully static HTML.
@@ -1310,7 +1310,7 @@ function resolveNode(
   if (cache.has(key)) return cache.get(key)!
 
   // Find closest ancestor in cache
-  let ancestorPath = [...path]
+  const ancestorPath = [...path]
   let ancestorId: BabelCore.types.Identifier | undefined
   let relativePath: number[] = []
 

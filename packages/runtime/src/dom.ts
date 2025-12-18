@@ -25,15 +25,7 @@ import {
   type AttributeSetter,
   type BindingHandle,
 } from './binding'
-import {
-  Properties,
-  ChildProperties,
-  Aliases,
-  getPropAlias,
-  BooleanAttributes,
-  SVGElements,
-  SVGNamespace,
-} from './constants'
+import { Properties, ChildProperties, Aliases, getPropAlias, SVGNamespace } from './constants'
 import { __fictPushContext, __fictPopContext } from './hooks'
 import { Fragment } from './jsx'
 import {
@@ -383,7 +375,7 @@ function applyRef(el: HTMLElement, value: unknown): void {
  * Apply props to an HTML element, setting up reactive bindings as needed.
  * Uses comprehensive property constants for correct attribute/property handling.
  */
-function applyProps(el: HTMLElement, props: Record<string, unknown>, isSVG: boolean = false): void {
+function applyProps(el: HTMLElement, props: Record<string, unknown>, isSVG = false): void {
   const tagName = el.tagName
 
   // Check if this is a custom element

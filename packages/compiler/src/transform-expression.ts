@@ -1,5 +1,5 @@
 import type * as BabelCore from '@babel/core'
-import { RUNTIME_ALIASES } from './constants'
+
 import type { TransformContext } from './types'
 import {
   createGetterCall,
