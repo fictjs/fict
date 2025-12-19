@@ -40,6 +40,7 @@ import {
   isDynamicElementAccess,
   detectNoMemoDirective,
   isInNoMemoScope,
+  isComponentElement,
 } from './utils'
 
 const SLOT_COUNTER = new WeakMap<BabelCore.types.Node, number>()
@@ -97,6 +98,7 @@ export const createFictPlugin = declare(
               functionsWithJsx: new WeakSet(),
               shadowStack: [],
               trackedScopeStack: [],
+              propsStack: [],
               pendingRegionOutputs: new WeakMap(),
               pendingRegionStack: [],
             }
@@ -203,6 +205,39 @@ export const createFictPlugin = declare(
               !t.isFunctionExpression(declarator.init) &&
               dependsOnTracked(declarator.init, ctx, t)
             ) {
+              // Special-case: object literal used in JSX spread - keep as reactive getters instead of memo snapshot
+              const binding = path.scope.getBinding(declarator.id.name)
+              const usedInJsxSpread =
+                binding?.referencePaths.some(ref => {
+                  let p: BabelCore.NodePath | null = ref.parentPath
+                  while (p) {
+                    if (p.isJSXSpreadAttribute()) return true
+                    p = p.parentPath
+                  }
+                  return false
+                }) ?? false
+              if (usedInJsxSpread && t.isObjectExpression(declarator.init)) {
+                for (const prop of declarator.init.properties) {
+                  if (!t.isObjectProperty(prop) || prop.computed) continue
+                  if (prop.shorthand && t.isIdentifier(prop.key)) {
+                    prop.value = t.identifier(prop.key.name)
+                    prop.shorthand = false
+                  }
+                  if (!t.isExpression(prop.value)) continue
+                  if (dependsOnTracked(prop.value, ctx, t)) {
+                    const transformed = transformExpression(prop.value, ctx, t)
+                    const getter = t.arrowFunctionExpression([], transformed)
+                    prop.value = t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
+                      getter,
+                    ])
+                    ctx.helpersUsed.propGetter = true
+                  } else {
+                    prop.value = transformExpression(prop.value, ctx, t)
+                  }
+                }
+                continue
+              }
+
               const name = declarator.id.name
               // Check if inside effect callback
               const isInEffect = isInsideEffectCallback(path, t)
@@ -487,6 +522,220 @@ export const createFictPlugin = declare(
           }
         },
 
+        JSXSpreadAttribute(path, state) {
+          const ctx = (state as any).__fictCtx as TransformContext
+          if (!ctx) return
+
+          const extractObjectFromMemo = (
+            expr: BabelCore.types.Expression,
+          ): BabelCore.types.ObjectExpression | null => {
+            const resolveBinding = (id: BabelCore.types.Identifier) => {
+              const binding = path.scope.getBinding(id.name)
+              const init = binding?.path?.node
+              if (!binding?.constant || !init || !t.isVariableDeclarator(init) || !init.init) {
+                return null
+              }
+              const initExpr = init.init
+              if (
+                t.isCallExpression(initExpr) &&
+                t.isIdentifier(initExpr.callee) &&
+                initExpr.callee.name === RUNTIME_ALIASES.useMemo &&
+                initExpr.arguments.length >= 2
+              ) {
+                const factory = initExpr.arguments[1]
+                if (t.isArrowFunctionExpression(factory) && t.isObjectExpression(factory.body)) {
+                  return t.cloneNode(factory.body, true) as BabelCore.types.ObjectExpression
+                }
+                if (
+                  t.isArrowFunctionExpression(factory) &&
+                  t.isBlockStatement(factory.body) &&
+                  factory.body.body.length === 1 &&
+                  t.isReturnStatement(factory.body.body[0]) &&
+                  factory.body.body[0].argument &&
+                  t.isObjectExpression(factory.body.body[0].argument)
+                ) {
+                  return t.cloneNode(
+                    factory.body.body[0].argument,
+                    true,
+                  ) as BabelCore.types.ObjectExpression
+                }
+              }
+              return null
+            }
+
+            if (t.isIdentifier(expr)) {
+              return resolveBinding(expr)
+            }
+            if (t.isCallExpression(expr) && t.isIdentifier(expr.callee)) {
+              return resolveBinding(expr.callee)
+            }
+            return null
+          }
+
+          const wrapObjectProps = (obj: BabelCore.types.ObjectExpression): void => {
+            for (const prop of obj.properties) {
+              if (!t.isObjectProperty(prop) || prop.computed) continue
+              const value = prop.value
+
+              // Skip methods/getters/setters
+              if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value)) continue
+
+              let propValue: BabelCore.types.Expression | null = null
+              if (prop.shorthand && t.isIdentifier(prop.key)) {
+                propValue = t.identifier(prop.key.name)
+              } else if (t.isExpression(value)) {
+                propValue = value
+              }
+
+              if (!propValue) continue
+
+              if (dependsOnTracked(propValue, ctx, t)) {
+                const transformed = transformExpression(propValue, ctx, t)
+                const getter = t.arrowFunctionExpression([], transformed)
+                prop.value = t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [getter])
+                ctx.helpersUsed.propGetter = true
+                prop.shorthand = false
+              } else {
+                prop.value = transformExpression(propValue, ctx, t)
+              }
+            }
+
+            // Process nested spreads pointing to object expressions
+            for (const prop of obj.properties) {
+              if (!t.isSpreadElement(prop)) continue
+              const arg = prop.argument
+              if (t.isObjectExpression(arg)) {
+                wrapObjectProps(arg)
+              } else if (t.isIdentifier(arg)) {
+                const binding = path.scope.getBinding(arg.name)
+                const init = binding?.path?.node
+                if (binding?.constant && init && t.isVariableDeclarator(init) && init.init) {
+                  if (t.isObjectExpression(init.init)) {
+                    const cloned = t.cloneNode(init.init, true) as BabelCore.types.ObjectExpression
+                    wrapObjectProps(cloned)
+                    prop.argument = cloned
+                  } else if (
+                    t.isCallExpression(init.init) &&
+                    t.isIdentifier(init.init.callee) &&
+                    init.init.callee.name === RUNTIME_ALIASES.useMemo &&
+                    init.init.arguments.length >= 2
+                  ) {
+                    const factory = init.init.arguments[1]
+                    let objExpr: BabelCore.types.ObjectExpression | null = null
+                    if (
+                      t.isArrowFunctionExpression(factory) &&
+                      t.isObjectExpression(factory.body)
+                    ) {
+                      objExpr = factory.body
+                    } else if (
+                      t.isArrowFunctionExpression(factory) &&
+                      t.isBlockStatement(factory.body) &&
+                      factory.body.body.length === 1 &&
+                      t.isReturnStatement(factory.body.body[0]) &&
+                      factory.body.body[0].argument &&
+                      t.isObjectExpression(factory.body.body[0].argument)
+                    ) {
+                      objExpr = factory.body.body[0].argument
+                    }
+                    if (objExpr) {
+                      const cloned = t.cloneNode(objExpr, true) as BabelCore.types.ObjectExpression
+                      wrapObjectProps(cloned)
+                      prop.argument = cloned
+                    }
+                  }
+                }
+              } else if (t.isCallExpression(arg) && t.isIdentifier(arg.callee)) {
+                const binding = path.scope.getBinding(arg.callee.name)
+                const init = binding?.path?.node
+                if (binding?.constant && init && t.isVariableDeclarator(init) && init.init) {
+                  if (
+                    t.isCallExpression(init.init) &&
+                    t.isIdentifier(init.init.callee) &&
+                    init.init.callee.name === RUNTIME_ALIASES.useMemo &&
+                    init.init.arguments.length >= 2
+                  ) {
+                    const factory = init.init.arguments[1]
+                    let objExpr: BabelCore.types.ObjectExpression | null = null
+                    if (
+                      t.isArrowFunctionExpression(factory) &&
+                      t.isObjectExpression(factory.body)
+                    ) {
+                      objExpr = factory.body
+                    } else if (
+                      t.isArrowFunctionExpression(factory) &&
+                      t.isBlockStatement(factory.body) &&
+                      factory.body.body.length === 1 &&
+                      t.isReturnStatement(factory.body.body[0]) &&
+                      factory.body.body[0].argument &&
+                      t.isObjectExpression(factory.body.body[0].argument)
+                    ) {
+                      objExpr = factory.body.body[0].argument
+                    }
+                    if (objExpr) {
+                      const cloned = t.cloneNode(objExpr, true) as BabelCore.types.ObjectExpression
+                      wrapObjectProps(cloned)
+                      prop.argument = cloned
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          const expr = path.node.argument
+
+          const extracted = extractObjectFromMemo(expr as BabelCore.types.Expression)
+          if (extracted) {
+            wrapObjectProps(extracted)
+            path.node.argument = extracted
+            return
+          }
+
+          if (t.isObjectExpression(expr)) {
+            wrapObjectProps(expr)
+            return
+          }
+
+          if (t.isIdentifier(expr)) {
+            const binding = path.scope.getBinding(expr.name)
+            const init = binding?.path?.node
+            if (binding?.constant && init && t.isVariableDeclarator(init) && init.init) {
+              const initExpr = init.init
+              if (t.isObjectExpression(initExpr)) {
+                const cloned = t.cloneNode(initExpr, true) as BabelCore.types.ObjectExpression
+                wrapObjectProps(cloned)
+                path.node.argument = cloned
+                return
+              }
+              if (
+                t.isCallExpression(initExpr) &&
+                t.isIdentifier(initExpr.callee) &&
+                initExpr.callee.name === RUNTIME_ALIASES.useMemo &&
+                initExpr.arguments.length >= 2
+              ) {
+                const factory = initExpr.arguments[1]
+                if (t.isArrowFunctionExpression(factory) && t.isObjectExpression(factory.body)) {
+                  const cloned = t.cloneNode(factory.body, true) as BabelCore.types.ObjectExpression
+                  wrapObjectProps(cloned)
+                  path.node.argument = cloned
+                } else if (
+                  t.isArrowFunctionExpression(factory) &&
+                  t.isBlockStatement(factory.body) &&
+                  factory.body.body.length === 1 &&
+                  t.isReturnStatement(factory.body.body[0]) &&
+                  factory.body.body[0].argument &&
+                  t.isObjectExpression(factory.body.body[0].argument)
+                ) {
+                  const obj = factory.body.body[0].argument
+                  const cloned = t.cloneNode(obj, true) as BabelCore.types.ObjectExpression
+                  wrapObjectProps(cloned)
+                  path.node.argument = cloned
+                }
+              }
+            }
+          }
+        },
+
         // Handle JSX expressions
         JSXExpressionContainer(path, state) {
           const ctx = (state as any).__fictCtx as TransformContext
@@ -514,10 +763,26 @@ export const createFictPlugin = declare(
 
             // Wrap reactive attribute value in arrow function
             if (dependsOnTracked(expr, ctx, t)) {
-              path.node.expression = t.arrowFunctionExpression(
-                [],
-                transformExpression(expr, ctx, t),
-              )
+              const getter = t.arrowFunctionExpression([], transformExpression(expr, ctx, t))
+              ctx.helpersUsed.propGetter = true
+              path.node.expression = t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
+                getter,
+              ])
+            }
+            return
+          }
+
+          // Component children: keep as reactive props instead of DOM bindings
+          const componentAncestor = path.findParent(
+            p => p.isJSXElement() && isComponentElement(p.node as BabelCore.types.JSXElement, t),
+          )
+          if (componentAncestor) {
+            if (dependsOnTracked(expr, ctx, t)) {
+              const getter = t.arrowFunctionExpression([], transformExpression(expr, ctx, t))
+              ctx.helpersUsed.propGetter = true
+              path.node.expression = t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
+                getter,
+              ])
             }
             return
           }
@@ -706,6 +971,7 @@ export const createFictPlugin = declare(
             }
 
             const containsJsx = functionContainsJsx(path.node, t)
+            let propsLikeNames: string[] = []
             if (containsJsx) {
               const params = path.node.params
               if (params.length > 0) {
@@ -723,11 +989,26 @@ export const createFictPlugin = declare(
                     plan.trackedNames.forEach(name => {
                       ctx.memoVars.add(name)
                       ctx.getterOnlyVars.add(name)
+                      const currentTracked = ctx.trackedScopeStack[ctx.trackedScopeStack.length - 1]
+                      currentTracked?.add(name)
+                      const currentShadow = ctx.shadowStack[ctx.shadowStack.length - 1]
+                      currentShadow?.delete(name)
                     })
+                    propsLikeNames = plan.propsLikeNames
                   }
                 }
               }
             }
+
+            const propsNames = new Set<string>()
+            if (containsJsx) {
+              const params = path.node.params
+              if (params.length > 0 && t.isIdentifier(params[0])) {
+                propsNames.add(params[0].name)
+              }
+              propsLikeNames.forEach(n => propsNames.add(n))
+            }
+            ctx.propsStack.push(propsNames)
           },
           exit(path: BabelCore.NodePath<BabelCore.types.Function>, state) {
             const ctx = (state as any).__fictCtx as TransformContext
@@ -735,6 +1016,7 @@ export const createFictPlugin = declare(
             ctx.pendingRegionStack.pop()
             ctx.trackedScopeStack.pop()
             ctx.shadowStack.pop()
+            ctx.propsStack.pop()
             maybeApplyGetterCaching(path, ctx, t)
             maybeRewriteTopLevelConditionalReturn(path, ctx, t)
           },
@@ -2098,6 +2380,7 @@ function addRuntimeImports(
   addHelper('render')
   addHelper('fragment')
   addHelper('template')
+  addHelper('propGetter')
 
   if (specifiers.length === 0) return
 
@@ -2138,6 +2421,7 @@ interface PropsDestructurePlan {
   aliasParam: BabelCore.types.Identifier
   prologue: BabelCore.types.Statement[]
   trackedNames: string[]
+  propsLikeNames: string[]
 }
 
 /**
@@ -2205,6 +2489,7 @@ function buildPropsDestructurePlan(
   const aliasParam = t.identifier(`__props${ctx.fineGrainedTemplateId++}`)
   const prologue: BabelCore.types.Statement[] = []
   const trackedNames: string[] = []
+  const propsLikeNames: string[] = []
 
   const emitGetter = (
     id: BabelCore.types.Identifier,
@@ -2212,23 +2497,23 @@ function buildPropsDestructurePlan(
     defaultValue?: BabelCore.types.Expression,
   ) => {
     const tmpId = t.identifier(`__fictProp${ctx.fineGrainedTemplateId++}`)
+    const access = t.cloneNode(accessExpr, true) as BabelCore.types.Expression
 
-    let returnExpr: BabelCore.types.Expression = tmpId
-    if (defaultValue) {
-      returnExpr = t.conditionalExpression(
-        t.binaryExpression('===', tmpId, t.identifier('undefined')),
-        defaultValue,
-        tmpId,
-      )
-    }
+    const bodyStatements: BabelCore.types.Statement[] = [
+      t.variableDeclaration('const', [t.variableDeclarator(tmpId, access)]),
+    ]
 
-    const getter = t.arrowFunctionExpression(
-      [],
-      t.blockStatement([
-        t.variableDeclaration('const', [t.variableDeclarator(tmpId, accessExpr)]),
-        t.returnStatement(returnExpr),
-      ]),
-    )
+    const valueExpr = defaultValue
+      ? t.conditionalExpression(
+          t.binaryExpression('===', tmpId, t.identifier('undefined')),
+          t.cloneNode(defaultValue, true) as BabelCore.types.Expression,
+          tmpId,
+        )
+      : tmpId
+
+    bodyStatements.push(t.returnStatement(valueExpr))
+
+    const getter = t.arrowFunctionExpression([], t.blockStatement(bodyStatements))
 
     prologue.push(t.variableDeclaration('const', [t.variableDeclarator(id, getter)]))
     trackedNames.push(id.name)
@@ -2244,20 +2529,37 @@ function buildPropsDestructurePlan(
     }
 
     if (t.isObjectPattern(pattern)) {
+      const excludedKeys: (string | number)[] = []
+
+      for (const prop of pattern.properties) {
+        if (!t.isObjectProperty(prop)) continue
+        const key = prop.key
+        if (t.isIdentifier(key)) {
+          excludedKeys.push(key.name)
+        } else if (t.isStringLiteral(key)) {
+          excludedKeys.push(key.value)
+        } else if (t.isNumericLiteral(key)) {
+          excludedKeys.push(key.value)
+        }
+      }
+
       for (const prop of pattern.properties) {
         if (t.isRestElement(prop)) {
-          // Rest element - emit warning and fallback to non-reactive
-          emitWarning(
-            ctx,
-            prop,
-            'FICT-E',
-            'Object rest in props destructuring falls back to non-reactive binding.',
+          if (!t.isIdentifier(prop.argument)) {
+            continue
+          }
+          const keys = excludedKeys.map(k =>
+            typeof k === 'number' ? t.numericLiteral(k) : t.stringLiteral(String(k)),
           )
+          const restInit = t.callExpression(t.identifier(RUNTIME_ALIASES.propsRest), [
+            baseExpr,
+            t.arrayExpression(keys),
+          ])
           prologue.push(
-            t.variableDeclaration('const', [
-              t.variableDeclarator(t.objectPattern([prop]), baseExpr),
-            ]),
+            t.variableDeclaration('const', [t.variableDeclarator(prop.argument, restInit)]),
           )
+          ctx.helpersUsed.propsRest = true
+          propsLikeNames.push(prop.argument.name)
           continue
         }
 
@@ -2349,6 +2651,7 @@ function buildPropsDestructurePlan(
     aliasParam,
     prologue,
     trackedNames,
+    propsLikeNames,
   }
 }
 

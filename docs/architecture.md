@@ -11,6 +11,7 @@ This document outlines the high-level engineering architecture. from an engineer
 - Why components "run only once" but still feel intuitive
 - How edge semantics (events, async, side effects) are guaranteed to be consistent
 - How runtime errors are caught and isolated
+- How props stay reactive (even through destructuring/spread) without re-rendering components
 
 ---
 
@@ -118,6 +119,16 @@ $state ──▶ memo ──▶ binding
        └──▶ effect
        └──▶ control flow (triggers re-execution)
 ```
+
+### 2.5 Props Stay Reactive Outside Render
+
+Fict keeps props reactive even when they are reshaped before reaching JSX:
+
+- **Destructuring**: Compiler rewrites `({ value })` (and nested/default patterns) into lazy getters backed by the original props source. Derived values built from these getters become memos or getters—no stale snapshots.
+- **Spread into components**: Object literals, const objects (even nested spreads or `useMemo` factories) are scanned and reactive entries are wrapped with `prop(() => ...)` before spreading into child components. This keeps props lazy without forcing DOM insert bindings.
+- **Manual merge**: `mergeProps(a, b, { c })` merges props while preserving `prop` getters; later sources override earlier ones.
+- **Known limit**: If a spread argument is a runtime-dynamic object whose shape is unknown (e.g., function return with dynamic keys), the compiler cannot rewrite its fields. In such cases, wrap reactive fields with `prop(() => ...)` or use `mergeProps` explicitly.
+- **Public helper**: Use `prop(() => value)` for rare manual wrapping needs (e.g., truly dynamic objects). Prefer `mergeProps`/rest helpers first; the compiler injects the internal alias automatically for generated code.
 
 ### 2.2 Comparison with React / Solid
 

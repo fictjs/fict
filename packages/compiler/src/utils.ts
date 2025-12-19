@@ -183,7 +183,8 @@ export function dependsOnTracked(
   t: typeof BabelCore.types,
   additionalTracked?: Set<string>,
 ): boolean {
-  const { stateVars, memoVars, shadowedVars } = ctx
+  const { stateVars, memoVars, shadowedVars, getterOnlyVars } = ctx
+  const propsInScope = ctx.propsStack[ctx.propsStack.length - 1]
   let depends = false
 
   const visit = (node: BabelCore.types.Node, locals: Set<string>): void => {
@@ -192,7 +193,7 @@ export function dependsOnTracked(
     if (t.isIdentifier(node)) {
       const name = node.name
       if (!locals.has(name) && !shadowedVars.has(name)) {
-        if (isTracked(name, stateVars, memoVars, additionalTracked)) {
+        if (isTracked(name, stateVars, memoVars, additionalTracked) || getterOnlyVars.has(name)) {
           depends = true
         }
       }
@@ -229,6 +230,13 @@ export function dependsOnTracked(
 
     // Handle member expressions - skip property names (unless computed)
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      if (t.isIdentifier(node.object)) {
+        const name = node.object.name
+        if (!locals.has(name) && !shadowedVars.has(name) && propsInScope?.has(name)) {
+          depends = true
+          return
+        }
+      }
       visit(node.object, locals)
       // Only visit property if it's computed (e.g., obj[key] vs obj.key)
       if (node.computed && node.property) {
@@ -389,6 +397,29 @@ export function isDynamicElementAccess(
     return property.expressions.length > 0
   }
   return !(t.isStringLiteral(property) || t.isNumericLiteral(property))
+}
+
+/**
+ * Check if a JSX element refers to a component (uppercase tag or member expression).
+ */
+export function isComponentElement(
+  element: BabelCore.types.JSXElement,
+  t: typeof BabelCore.types,
+): boolean {
+  const tag = element.openingElement.name
+
+  if (t.isJSXMemberExpression(tag)) {
+    return true
+  }
+
+  if (t.isJSXIdentifier(tag)) {
+    const name = tag.name
+    if (!name) return false
+    const first = name[0]
+    return first !== undefined && first === first.toUpperCase()
+  }
+
+  return false
 }
 
 export function isInNoMemoScope(path: BabelCore.NodePath, ctx: TransformContext): boolean {

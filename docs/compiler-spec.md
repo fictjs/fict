@@ -290,6 +290,8 @@ export function Greeting({ name, age = 18, onClick }: Props) {
 
 - For the user, this is normal TS destructuring;
 - For Fict, it needs to maintain tracking of the original `props` source.
+- **Rest destructuring** is lowered to a runtime helper so that lazy prop getters stay intact.
+- **Spread into components** preserves reactivity by wrapping reactive entries as getters.
 
 ### Processing Steps
 
@@ -310,6 +312,24 @@ export function Greeting({ name, age = 18, onClick }: Props) {
    - If props change at the runtime layer (e.g., parent component state change), memo / effect / binding can track the latest value.
 
 3. Do not expose `__props` at the type level, keeping the IDE experience natural.
+
+4. Component spreads keep reactive props:
+
+   ```tsx
+   const payload = { value: count } // count is $state
+   return <Child {...payload} /> // value is wrapped as getter
+
+   const obj = { ...payload } // nested spread supported
+   return <Child {...obj} />
+
+   // Factory objects wrapped in useMemo are also unwrapped:
+   const obj = useMemo(() => ({ value: count }))
+   return <Child {...obj()} />
+   ```
+
+5. Rest/merge helpers (runtime) to keep reactivity:
+   - `mergeProps(...sources)` merges multiple props objects, preserving `prop` getters and override order (later wins).
+   - `prop` is the public helper for rare manual wrapping (e.g., dynamic runtime objects). The compiler internally emits its alias automatically; userland should prefer `mergeProps` / rest first.
 
 ---
 

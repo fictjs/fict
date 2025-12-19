@@ -240,7 +240,7 @@ describe('createFictPlugin', () => {
         const view = () => <button disabled={!isValid}>Click</button>
       `)
 
-      expect(output).toContain(`disabled={() => !isValid()}`)
+      expect(output).toContain(`disabled={__fictProp(() => !isValid())}`)
     })
 
     it('does not wrap event handlers', () => {
@@ -283,7 +283,7 @@ describe('createFictPlugin', () => {
         const view = () => <button disabled={isEmpty}>Click</button>
       `)
 
-      expect(output).toContain(`disabled={() => isEmpty()}`)
+      expect(output).toContain(`disabled={__fictProp(() => isEmpty())}`)
     })
 
     it('handles template literals with state', () => {
@@ -331,7 +331,151 @@ describe('createFictPlugin', () => {
         const Parent = () => <Child value={count} />
       `)
 
-      expect(output).toContain(`value={() => count()}`)
+      expect(output).toContain(`value={__fictProp(() => count())}`)
+    })
+
+    it('treats props member access as reactive in JSX', () => {
+      const output = transform(`
+        function Component(props) {
+          return <div>{props.count}</div>
+        }
+      `)
+      expect(output).toContain('insert')
+      expect(output).toContain('props.count')
+    })
+
+    it('memoizes derived values from props member access', () => {
+      const output = transform(`
+        function Component(props) {
+          const doubled = props.count * 2
+          return <div>{doubled}</div>
+        }
+      `)
+      expect(output).toContain('__fictUseMemo')
+      expect(output).toContain('props.count')
+    })
+
+    it('makes destructured props reactive in JSX', () => {
+      const output = transform(`
+        function Component({ value }) {
+          return <div>{value}</div>
+        }
+      `)
+      expect(output).toContain('__props')
+      expect(output).toContain('value()')
+    })
+
+    it('supports nested destructured props reactively', () => {
+      const output = transform(`
+        function Component({ user: { name } }) {
+          return <div>{name}</div>
+        }
+      `)
+      expect(output).toContain('__props')
+      expect(output).toContain('name()')
+    })
+
+    it('keeps defaults in destructured props while remaining reactive', () => {
+      const output = transform(`
+        function Component({ value = 10 }) {
+          return <div>{value}</div>
+        }
+      `)
+      expect(output).toContain('__props')
+      expect(output).toContain('value()')
+      expect(output).toContain('=== undefined')
+    })
+
+    it('supports rest props destructuring while preserving reactivity', () => {
+      const output = transform(`
+        function Component({ count, ...rest }) {
+          const doubled = rest.count * 2
+          return <div>{doubled}</div>
+        }
+      `)
+      expect(output).toContain('__fictPropsRest')
+      expect(output).toContain('__fictUseMemo')
+      expect(output).toContain('rest.count')
+    })
+
+    it('spreads rest props to child components without losing getters', () => {
+      const output = transform(`
+        const Child = (props) => <span>{props.label}</span>
+        function Component({ label, ...rest }) {
+          return <Child {...rest} />
+        }
+      `)
+      expect(output).toContain('__fictPropsRest')
+      expect(output).toContain('...rest')
+    })
+
+    it('handles only rest destructuring as props alias', () => {
+      const output = transform(`
+        function Component({ ...props }) {
+          const doubled = props.count * 2
+          return <div>{doubled}</div>
+        }
+      `)
+      expect(output).toContain('__fictPropsRest')
+      expect(output).toContain('__fictUseMemo')
+      expect(output).toContain('props.count')
+    })
+
+    it('wraps reactive values inside spread object literals for components', () => {
+      const output = transform(`
+        let count = $state(0)
+        const Child = (props) => <span>{props.value}</span>
+        const Parent = () => <Child {...{ value: count }} />
+      `)
+      expect(output).toContain('__fictProp(() => count())')
+    })
+
+    it('wraps shorthand reactive entries inside spread object literals', () => {
+      const output = transform(`
+        let count = $state(0)
+        const Child = (props) => <span>{props.count}</span>
+        const Parent = () => {
+          const obj = { count }
+          return <Child {...obj} />
+        }
+      `)
+      expect(output).toContain('__fictProp(() => count())')
+    })
+
+    it('preserves reactivity through layered object spreads before JSX', () => {
+      const output = transform(`
+        let count = $state(0)
+        const base = { count }
+        const obj = { ...base }
+        const Parent = () => <Child {...obj} />
+      `)
+      expect(output).toContain('__fictProp(() => count())')
+    })
+
+    it('passes reactive children to components as getters', () => {
+      const output = transform(`
+        let count = $state(0)
+        const Child = (props) => <div>{props.children}</div>
+        const Parent = () => <Child>{count}</Child>
+      `)
+
+      expect(output).toContain(`{__fictProp(() => count())}`)
+      expect(output).not.toContain(`createInsertBinding`)
+    })
+
+    it('keeps reactive expressions inside component child trees as props', () => {
+      const output = transform(`
+        let count = $state(0)
+        const Child = (props) => <section>{props.children}</section>
+        const Parent = () => (
+          <Child>
+            <span>{count}</span>
+          </Child>
+        )
+      `)
+
+      expect(output).toContain(`{__fictProp(() => count())}`)
+      expect(output).not.toContain(`createInsertBinding`)
     })
 
     it('handles multiple reactive values in one expression', () => {
@@ -352,7 +496,7 @@ describe('createFictPlugin', () => {
         const view = () => <div class={active ? 'active' : ''}>test</div>
       `)
 
-      expect(output).toContain(`class={() => active()`)
+      expect(output).toContain(`class={__fictProp(() => active()`)
     })
 
     it('handles style binding with reactive value', () => {
@@ -361,7 +505,7 @@ describe('createFictPlugin', () => {
         const view = () => <div style={{ color: color }}>test</div>
       `)
 
-      expect(output).toContain(`style={() => ({`)
+      expect(output).toContain(`style={__fictProp(() => ({`)
       expect(output).toContain(`color()`)
     })
 
@@ -761,6 +905,27 @@ describe('createFictPlugin', () => {
       `)
       // Should not contain __props since no JSX
       expect(output).not.toContain('__props')
+    })
+
+    it('treats props member access as reactive in JSX', () => {
+      const output = transform(`
+        function Component(props) {
+          return <div>{props.count}</div>
+        }
+      `)
+      expect(output).toContain('insert')
+      expect(output).toContain('props.count')
+    })
+
+    it('memoizes derived values from props member access', () => {
+      const output = transform(`
+        function Component(props) {
+          const doubled = props.count * 2
+          return <div>{doubled}</div>
+        }
+      `)
+      expect(output).toContain('__fictUseMemo')
+      expect(output).toContain('props.count')
     })
   })
 
