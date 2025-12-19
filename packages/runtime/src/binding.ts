@@ -38,6 +38,7 @@ import {
   SVGNamespace,
   Aliases,
 } from './constants'
+import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 
 // ============================================================================
 // Type Definitions
@@ -1933,89 +1934,4 @@ function bumpBlockVersion<T>(block: ManagedBlock<T>): void {
   block.version(block.version() + 1)
 }
 
-function toNodeArray(node: Node | Node[] | BindingHandle | unknown): Node[] {
-  try {
-    if (Array.isArray(node)) {
-      const result: Node[] = []
-      for (const item of node) {
-        result.push(...toNodeArray(item))
-      }
-      return result
-    }
-    if (node === null || node === undefined || node === false) {
-      return []
-    }
-  } catch {
-    return []
-  }
-
-  let isNode = false
-  try {
-    isNode = node instanceof Node
-  } catch {
-    // If safe check fails, treat as primitive string
-    isNode = false
-  }
-
-  if (isNode) {
-    try {
-      if (node instanceof DocumentFragment) {
-        return Array.from(node.childNodes)
-      }
-    } catch {
-      // Ignore fragment check error
-    }
-    return [node as Node]
-  }
-
-  try {
-    // Handle BindingHandle
-    // Accessing properties might throw on proxy
-    if (typeof node === 'object' && node !== null && 'marker' in node) {
-      return toNodeArray((node as BindingHandle).marker)
-    }
-  } catch {
-    // Ignore property check error
-  }
-
-  // Primitive fallback
-  try {
-    return [document.createTextNode(String(node))]
-  } catch {
-    return [document.createTextNode('')]
-  }
-}
-
-function insertNodesBefore(parent: ParentNode & Node, nodes: Node[], anchor: Node): void {
-  for (let i = nodes.length - 1; i >= 0; i--) {
-    const node = nodes[i]!
-    if (node === undefined || node === null) continue
-
-    // Handle DocumentFragment - insert children in reverse order
-    const isFrag = node.nodeType === 11
-    if (isFrag) {
-      const childrenArr = Array.from(node.childNodes)
-      for (let j = childrenArr.length - 1; j >= 0; j--) {
-        const child = childrenArr[j]!
-        if (child.ownerDocument !== parent.ownerDocument && parent.ownerDocument) {
-          parent.ownerDocument.adoptNode(child)
-        }
-        parent.insertBefore(child, anchor)
-        anchor = child
-      }
-    } else {
-      // Regular node
-      if (node.ownerDocument !== parent.ownerDocument && parent.ownerDocument) {
-        parent.ownerDocument.adoptNode(node)
-      }
-      parent.insertBefore(node, anchor)
-    }
-    anchor = node
-  }
-}
-
-function removeNodes(nodes: Node[]): void {
-  for (const node of nodes) {
-    node.parentNode?.removeChild(node)
-  }
-}
+// DOM utility functions are imported from './node-ops' to avoid duplication

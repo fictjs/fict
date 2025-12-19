@@ -10,7 +10,7 @@ import {
   popRoot,
   registerSuspenseHandler,
 } from './lifecycle'
-import { insertNodesBefore, removeNodes, toNodeArray } from './list-helpers'
+import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import { createSignal } from './signal'
 import type { BaseProps, FictNode, SuspenseToken } from './types'
 

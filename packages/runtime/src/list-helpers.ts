@@ -19,6 +19,10 @@ import { createVersionedSignal } from './versioned-signal'
 import { createElement } from './dom'
 import reconcileArrays from './reconcile'
 import type { FictNode } from './types'
+import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
+
+// Re-export shared DOM helpers for compiler-generated code
+export { insertNodesBefore, removeNodes, toNodeArray }
 
 // ============================================================================
 // Types
@@ -132,65 +136,6 @@ export function moveNodesBefore(parent: Node, nodes: Node[], anchor: Node | null
  *
  * @param nodes - Array of nodes to remove
  */
-export function removeNodes(nodes: Node[]): void {
-  for (const node of nodes) {
-    node.parentNode?.removeChild(node)
-  }
-}
-
-/**
- * Insert nodes before an anchor node
- *
- * @param parent - Parent node
- * @param nodes - Nodes to insert
- * @param anchor - Node to insert before
- */
-export function insertNodesBefore(parent: Node, nodes: Node[], anchor: Node | null): void {
-  for (const node of nodes) {
-    if (node.nodeType === 11) {
-      // Node.DOCUMENT_FRAGMENT_NODE
-      const children = Array.from(node.childNodes)
-      for (const child of children) {
-        if (parent.ownerDocument && child.ownerDocument !== parent.ownerDocument) {
-          parent.ownerDocument.adoptNode(child)
-        }
-        try {
-          parent.insertBefore(child, anchor)
-        } catch (e: any) {
-          if (parent.ownerDocument) {
-            try {
-              const clone = parent.ownerDocument.importNode(child, true)
-              parent.insertBefore(clone, anchor)
-              continue
-            } catch {
-              // Clone fallback failed
-            }
-          }
-          throw e
-        }
-      }
-    } else {
-      if (parent.ownerDocument && node.ownerDocument !== parent.ownerDocument) {
-        parent.ownerDocument.adoptNode(node)
-      }
-      try {
-        parent.insertBefore(node, anchor)
-      } catch (e: any) {
-        if (parent.ownerDocument) {
-          try {
-            const clone = parent.ownerDocument.importNode(node, true)
-            parent.insertBefore(clone, anchor)
-            continue
-          } catch {
-            // Clone fallback failed
-          }
-        }
-        throw e
-      }
-    }
-  }
-}
-
 /**
  * Move an entire marker-delimited block (including markers) before the anchor.
  */
@@ -339,37 +284,6 @@ export function createKeyedBlock<T>(
 // ============================================================================
 // Utilities
 // ============================================================================
-
-/**
- * Convert a single node or array to a flat array of nodes
- */
-export function toNodeArray(node: Node | Node[] | unknown): Node[] {
-  if (Array.isArray(node)) {
-    if (node.every(item => item instanceof Node)) {
-      return node
-    }
-    const result: Node[] = []
-    for (const item of node) {
-      result.push(...toNodeArray(item))
-    }
-    return result
-  }
-  if (node === null || node === undefined || node === false) {
-    return []
-  }
-  if (node instanceof Node) {
-    if (node instanceof DocumentFragment) {
-      return Array.from(node.childNodes)
-    }
-    return [node]
-  }
-  // Handle BindingHandle (duck typing)
-  if (typeof node === 'object' && node !== null && 'marker' in node) {
-    return toNodeArray((node as { marker: unknown }).marker)
-  }
-  // Primitive fallback
-  return [document.createTextNode(String(node))]
-}
 
 /**
  * Find the first node after the start marker (for getting current anchor)
