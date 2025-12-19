@@ -172,7 +172,7 @@ describe('compiled templates DOM integration', () => {
     const mod = compileAndLoad<{
       mount: (el: HTMLElement) => () => void
       api: { rotate(): void; prepend(): void; dropSecond(): void }
-    }>(source, { fineGrainedDom: false })
+    }>(source, { fineGrainedDom: true })
     const container = document.createElement('div')
     document.body.appendChild(container)
     const teardown = mod.mount(container)

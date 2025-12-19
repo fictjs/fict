@@ -1,7 +1,12 @@
-const propGetters = new WeakSet<Function>()
+const propGetters = new WeakSet<(...args: unknown[]) => unknown>()
 const rawToProxy = new WeakMap<object, object>()
 const proxyToRaw = new WeakMap<object, object>()
 
+/**
+ * @internal
+ * Marks a zero-arg getter so props proxy can lazily evaluate it.
+ * Users normally never call this directly; the compiler injects it.
+ */
 export function __fictProp<T>(getter: () => T): () => T {
   if (typeof getter === 'function' && getter.length === 0) {
     propGetters.add(getter)
@@ -10,7 +15,7 @@ export function __fictProp<T>(getter: () => T): () => T {
 }
 
 function isPropGetter(value: unknown): value is () => unknown {
-  return typeof value === 'function' && propGetters.has(value)
+  return typeof value === 'function' && propGetters.has(value as (...args: unknown[]) => unknown)
 }
 
 export function createPropsProxy<T extends Record<string, unknown>>(props: T): T {
@@ -60,4 +65,45 @@ export function unwrapProps<T extends Record<string, unknown>>(props: T): T {
     return props
   }
   return (proxyToRaw.get(props) as T | undefined) ?? props
+}
+
+/**
+ * Create a rest-like props object while preserving prop getters.
+ * Excludes the specified keys from the returned object.
+ */
+export function __fictPropsRest<T extends Record<string, unknown>>(
+  props: T,
+  exclude: (string | number | symbol)[],
+): Record<string, unknown> {
+  const raw = unwrapProps(props)
+  const out: Record<string, unknown> = {}
+  const excludeSet = new Set(exclude)
+
+  for (const key of Reflect.ownKeys(raw)) {
+    if (excludeSet.has(key)) continue
+    out[key as string] = (raw as Record<string | symbol, unknown>)[key]
+  }
+
+  // Wrap in props proxy so getters remain lazy when accessed via rest
+  return createPropsProxy(out)
+}
+
+/**
+ * Merge multiple props-like objects while preserving lazy getters.
+ * Later sources override earlier ones.
+ */
+export function mergeProps<T extends Record<string, unknown>>(
+  ...sources: (T | null | undefined)[]
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+
+  for (const src of sources) {
+    if (!src || typeof src !== 'object') continue
+    const raw = unwrapProps(src as Record<string, unknown>)
+    for (const key of Reflect.ownKeys(raw)) {
+      out[key as string] = (raw as Record<string | symbol, unknown>)[key]
+    }
+  }
+
+  return createPropsProxy(out)
 }

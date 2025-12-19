@@ -623,18 +623,20 @@ export function insert(
   }
 
   const dispose = createEffect(() => {
-    const value = getValue()
-
-    // Skip if value is null/undefined/false
-    if (value == null || value === false) {
-      return
-    }
-
     // Create new content
     const root = createRootContext()
     const prev = pushRoot(root)
     let nodes: Node[] = []
     try {
+      const value = getValue()
+
+      // Skip if value is null/undefined/false
+      if (value == null || value === false) {
+        return () => {
+          destroyRoot(root)
+        }
+      }
+
       let newNode: Node | Node[]
 
       if (value instanceof Node) {
@@ -1755,6 +1757,33 @@ function patchElement(el: Element, output: FictNode): boolean {
     const vnode = output as { type?: unknown; props?: Record<string, unknown> }
     if (typeof vnode.type === 'string' && vnode.type.toLowerCase() === el.tagName.toLowerCase()) {
       const children = vnode.props?.children
+      const props = vnode.props ?? {}
+
+      // Update props (except children and key)
+      for (const [key, value] of Object.entries(props)) {
+        if (key === 'children' || key === 'key') continue
+        if (
+          typeof value === 'string' ||
+          typeof value === 'number' ||
+          typeof value === 'boolean' ||
+          value === null ||
+          value === undefined
+        ) {
+          if (key === 'class' || key === 'className') {
+            el.setAttribute('class', value === false || value === null ? '' : String(value))
+          } else if (key === 'style' && typeof value === 'string') {
+            ;(el as HTMLElement).style.cssText = value
+          } else if (value === false || value === null || value === undefined) {
+            el.removeAttribute(key)
+          } else if (value === true) {
+            el.setAttribute(key, '')
+          } else {
+            el.setAttribute(key, String(value))
+          }
+        }
+      }
+
+      // Handle primitive children
       if (
         typeof children === 'string' ||
         typeof children === 'number' ||
@@ -1764,31 +1793,27 @@ function patchElement(el: Element, output: FictNode): boolean {
       ) {
         el.textContent =
           children === null || children === undefined || children === false ? '' : String(children)
-        const props = vnode.props ?? {}
-        for (const [key, value] of Object.entries(props)) {
-          if (key === 'children' || key === 'key') continue
-          if (
-            typeof value === 'string' ||
-            typeof value === 'number' ||
-            typeof value === 'boolean' ||
-            value === null ||
-            value === undefined
-          ) {
-            if (key === 'class' || key === 'className') {
-              el.setAttribute('class', value === false || value === null ? '' : String(value))
-            } else if (key === 'style' && typeof value === 'string') {
-              ;(el as HTMLElement).style.cssText = value
-            } else if (value === false || value === null || value === undefined) {
-              el.removeAttribute(key)
-            } else if (value === true) {
-              el.setAttribute(key, '')
-            } else {
-              el.setAttribute(key, String(value))
-            }
-          }
-        }
         return true
       }
+
+      // Handle single nested VNode child - recursively patch
+      if (
+        children &&
+        typeof children === 'object' &&
+        !Array.isArray(children) &&
+        !(children instanceof Node)
+      ) {
+        const childVNode = children as { type?: unknown; props?: Record<string, unknown> }
+        if (typeof childVNode.type === 'string') {
+          // Find matching child element in the DOM
+          const childEl = el.querySelector(childVNode.type)
+          if (childEl && patchElement(childEl, children as FictNode)) {
+            return true
+          }
+        }
+      }
+
+      return false
     }
   }
 

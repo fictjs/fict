@@ -1,6 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
-import { __fictProp, bindText, createElement, createSignal, render, spread } from '../src/index'
+import {
+  __fictProp,
+  __fictPropsRest,
+  prop,
+  bindText,
+  createElement,
+  createSignal,
+  mergeProps,
+  render,
+  spread,
+} from '../src/index'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -108,5 +118,43 @@ describe('Props proxy', () => {
 
     expect(div.getAttribute('title')).toBe('Count: 1')
     dispose()
+  })
+
+  it('preserves reactivity through props rest helper', () => {
+    const count = createSignal(0)
+    const base = { count: __fictProp(() => count()) }
+
+    const proxied = __fictPropsRest(base, [])
+    expect(proxied.count).toBe(0)
+
+    count(count() + 1)
+    expect(proxied.count).toBe(1)
+  })
+
+  it('merges props while preserving getters and override order', () => {
+    const a = createSignal(0)
+    const b = createSignal(10)
+
+    const merged = mergeProps(
+      { foo: __fictProp(() => a()) },
+      { bar: 1 },
+      { foo: __fictProp(() => b()) },
+    )
+
+    expect(merged.foo).toBe(10) // last wins
+    expect(merged.bar).toBe(1)
+
+    b(b() + 5)
+    expect(merged.foo).toBe(15)
+  })
+
+  it('allows manual wrapping via public prop alias for dynamic objects', () => {
+    let count = createSignal(1)
+    const dyn = () => ({ value: prop(() => count()) })
+    const merged = mergeProps(dyn())
+
+    expect(merged.value).toBe(1)
+    count(count() + 1)
+    expect(merged.value).toBe(2)
   })
 })

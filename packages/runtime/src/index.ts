@@ -19,7 +19,7 @@ export {
 } from './versioned-signal'
 
 // Props helpers
-export { __fictProp } from './props'
+export { __fictProp, __fictProp as prop, __fictPropsRest, mergeProps } from './props'
 
 // ============================================================================
 // Lifecycle

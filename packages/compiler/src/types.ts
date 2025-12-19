@@ -68,6 +68,7 @@ export interface HelperUsage {
   fragment: boolean
   template: boolean
   propGetter: boolean
+  propsRest: boolean
 }
 
 export interface CompilerWarning {
@@ -127,5 +128,6 @@ export function createHelperUsage(): HelperUsage {
     getFirstNodeAfter: false,
     template: false,
     propGetter: false,
+    propsRest: false,
   }
 }
