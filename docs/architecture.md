@@ -128,7 +128,57 @@ Fict keeps props reactive even when they are reshaped before reaching JSX:
 - **Spread into components**: Object literals, const objects (even nested spreads or `useMemo` factories) are scanned and reactive entries are wrapped with `prop(() => ...)` before spreading into child components. This keeps props lazy without forcing DOM insert bindings.
 - **Manual merge**: `mergeProps(a, b, { c })` merges props while preserving `prop` getters; later sources override earlier ones.
 - **Known limit**: If a spread argument is a runtime-dynamic object whose shape is unknown (e.g., function return with dynamic keys), the compiler cannot rewrite its fields. In such cases, wrap reactive fields with `prop(() => ...)` or use `mergeProps` explicitly.
-- **Public helper**: Use `prop(() => value)` for rare manual wrapping needs (e.g., truly dynamic objects). Prefer `mergeProps`/rest helpers first; the compiler injects the internal alias automatically for generated code.
+- **Public helpers**:
+  - `prop(() => value)` for rare manual wrapping needs (e.g., truly dynamic objects). Prefer `mergeProps`/rest helpers first; the compiler injects the internal alias automatically for generated code.
+  - `useProp(() => expensive())` when you control a heavy computation and want a memoized, auto-unwrapped getter to pass as a prop.
+
+### 2.5.1 When to use prop / mergeProps / useProp (pre-compiled code)
+
+The compiler already wraps destructuring/rest/spread/children for you. You only need manual helpers in corner cases:
+
+- **Runtime-built objects with reactive fields** (compiler can’t see inside):
+  - Naive (may snapshot):
+    ```ts
+    const userId = $state(1)
+    const userName = $state('Alicia')
+    function getPayload() {
+      return { id: userId, label: userName } // built at runtime
+    }
+    return <Row {...getPayload()} /> // could be a stale snapshot
+    ```
+  - Preferred (keep reactive):
+    ```ts
+    function getPayload() {
+      return { id: prop(() => userId), label: prop(() => userName) }
+    }
+    return <Row {...mergeProps(getPayload())} /> // auto-unwrapped in child
+    ```
+
+- **Merging multiple sources with reactive fields**:
+
+  ```ts
+  const count = $state(0)
+  const dynamic = { count: prop(() => count) }
+  return <Counter {...mergeProps(defaults, dynamic, externalConfig)} />
+  ```
+
+- **Heavy computations passed as props** (compiler won’t auto-memo here):
+
+  ```ts
+  const list = $state([])
+  const filter = $state('all')
+  const data = useProp(() => expensiveFilter(list, filter))
+  return <Table data={data} /> // auto-unwrapped in child
+  ```
+
+- **Unknown shape from a factory, only mark reactive fields**:
+  ```ts
+  const currentUser = $state({ name: 'Alicia' })
+  function getSettings() {
+    return { theme, user: prop(() => currentUser), staticFlag: true }
+  }
+  return <Dashboard {...mergeProps(getSettings())} />
+  ```
 
 ### 2.2 Comparison with React / Solid
 

@@ -157,4 +157,128 @@ describe('Props proxy', () => {
     count(count() + 1)
     expect(merged.value).toBe(2)
   })
+
+  it('mergeProps uses lazy lookup - only accessed props are evaluated', () => {
+    let aCallCount = 0
+    let bCallCount = 0
+
+    const merged = mergeProps(
+      {
+        a: __fictProp(() => {
+          aCallCount++
+          return 'a'
+        }),
+      },
+      {
+        b: __fictProp(() => {
+          bCallCount++
+          return 'b'
+        }),
+      },
+    )
+
+    // Neither getter has been called yet
+    expect(aCallCount).toBe(0)
+    expect(bCallCount).toBe(0)
+
+    // Access only 'a'
+    expect(merged.a).toBe('a')
+    expect(aCallCount).toBe(1)
+    expect(bCallCount).toBe(0)
+
+    // Access 'b'
+    expect(merged.b).toBe('b')
+    expect(aCallCount).toBe(1)
+    expect(bCallCount).toBe(1)
+  })
+
+  it('mergeProps handles has() check correctly', () => {
+    const merged = mergeProps({ a: 1 }, { b: 2 })
+
+    expect('a' in merged).toBe(true)
+    expect('b' in merged).toBe(true)
+    expect('c' in merged).toBe(false)
+  })
+
+  it('mergeProps handles ownKeys() correctly', () => {
+    const merged = mergeProps({ a: 1, b: 2 }, { c: 3 })
+
+    const keys = Object.keys(merged)
+    expect(keys).toContain('a')
+    expect(keys).toContain('b')
+    expect(keys).toContain('c')
+    expect(keys.length).toBe(3)
+  })
+})
+
+describe('useProp', () => {
+  let container: HTMLElement
+
+  beforeEach(() => {
+    container = document.createElement('div')
+    document.body.appendChild(container)
+  })
+
+  afterEach(() => {
+    container.remove()
+  })
+
+  it('memoizes expensive computations', async () => {
+    const { useProp } = await import('../src/index')
+
+    let computeCount = 0
+    const base = createSignal(10)
+
+    const memoized = useProp(() => {
+      computeCount++
+      return base() * 2
+    })
+
+    // First access - computes
+    expect(memoized()).toBe(20)
+    expect(computeCount).toBe(1)
+
+    // Second access - uses cached value
+    expect(memoized()).toBe(20)
+    expect(computeCount).toBe(1)
+
+    // Update dependency - recomputes on next access
+    base(20)
+    expect(memoized()).toBe(40)
+    expect(computeCount).toBe(2)
+
+    // Access again - uses cached value
+    expect(memoized()).toBe(40)
+    expect(computeCount).toBe(2)
+  })
+
+  it('auto-unwraps useProp when passed through props', async () => {
+    const { useProp } = await import('../src/index')
+
+    const Child = (props: Record<string, unknown>) => {
+      const span = document.createElement('span')
+      const text = document.createTextNode('')
+      span.appendChild(text)
+      bindText(text, () => String(props.data))
+      return span
+    }
+
+    const Parent = () => {
+      const base = createSignal(1)
+      const memoized = useProp(() => base() * 10)
+      return {
+        type: Child,
+        props: { data: memoized },
+        key: undefined,
+      }
+    }
+
+    const dispose = render(
+      () => createElement({ type: Parent, props: null, key: undefined }),
+      container,
+    )
+
+    expect(container.textContent).toBe('10')
+    dispose()
+  })
 })

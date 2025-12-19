@@ -13,6 +13,7 @@ Fict is a tiny UI library where you write plain JavaScript and the compiler figu
 - Everything else is automatic
 - Props stay reactive even through destructuring/rest/spread—no memo wrappers needed.
 - A public helper `prop` exists for rare manual wrapping (e.g. dynamic runtime objects the compiler can't see); prefer `mergeProps` / rest helpers for shaping props.
+- For heavy calculations you control, `useProp(() => expensive())` gives you a memoized, auto-unwrapped getter you can pass as a prop.
 
 No `useMemo`. No dependency arrays. No `.value`. Just JavaScript.
 

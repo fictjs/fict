@@ -246,10 +246,10 @@ export const createFictPlugin = declare(
                 // Inside $effect - skip memoization, just transform the initializer to capture value
                 declarator.init = transformExpression(declarator.init, ctx, t)
               } else if (!inNoMemo) {
-                // Outside $effect - memoize as usual
+                const transformedInit = transformExpression(declarator.init, ctx, t)
+
                 ctx.memoVars.add(name)
                 ctx.guardedDerived.add(name)
-                const transformedInit = transformExpression(declarator.init, ctx, t)
                 const slot = nextSlot(path, ctx, t)
                 ensureContextDeclaration(path, ctx, t)
                 ctx.helpersUsed.useMemo = true

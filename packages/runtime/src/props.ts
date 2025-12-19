@@ -1,3 +1,5 @@
+import { createMemo } from './memo'
+
 const propGetters = new WeakSet<(...args: unknown[]) => unknown>()
 const rawToProxy = new WeakMap<object, object>()
 const proxyToRaw = new WeakMap<object, object>()
@@ -91,19 +93,97 @@ export function __fictPropsRest<T extends Record<string, unknown>>(
 /**
  * Merge multiple props-like objects while preserving lazy getters.
  * Later sources override earlier ones.
+ *
+ * Uses lazy lookup strategy - properties are only accessed when read,
+ * avoiding upfront iteration of all keys.
  */
 export function mergeProps<T extends Record<string, unknown>>(
   ...sources: (T | null | undefined)[]
 ): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
+  // Filter out null/undefined sources upfront and store as concrete type
+  const validSources: T[] = sources.filter((s): s is T => s != null && typeof s === 'object')
 
-  for (const src of sources) {
-    if (!src || typeof src !== 'object') continue
-    const raw = unwrapProps(src as Record<string, unknown>)
-    for (const key of Reflect.ownKeys(raw)) {
-      out[key as string] = (raw as Record<string | symbol, unknown>)[key]
-    }
+  if (validSources.length === 0) {
+    return {}
   }
 
-  return createPropsProxy(out)
+  if (validSources.length === 1) {
+    return createPropsProxy(validSources[0]!)
+  }
+
+  return new Proxy({} as Record<string, unknown>, {
+    get(_, prop) {
+      // Symbol properties (like Symbol.iterator) should return undefined
+      if (typeof prop === 'symbol') {
+        return undefined
+      }
+      // Search sources in reverse order (last wins)
+      for (let i = validSources.length - 1; i >= 0; i--) {
+        const raw = unwrapProps(validSources[i]!)
+        if (prop in raw) {
+          const value = (raw as Record<string | symbol, unknown>)[prop]
+          return isPropGetter(value) ? value() : value
+        }
+      }
+      return undefined
+    },
+
+    has(_, prop) {
+      for (const src of validSources) {
+        const raw = unwrapProps(src)
+        if (prop in raw) {
+          return true
+        }
+      }
+      return false
+    },
+
+    ownKeys() {
+      const keys = new Set<string | symbol>()
+      for (const src of validSources) {
+        const raw = unwrapProps(src)
+        for (const key of Reflect.ownKeys(raw)) {
+          keys.add(key)
+        }
+      }
+      return Array.from(keys)
+    },
+
+    getOwnPropertyDescriptor(_, prop) {
+      for (let i = validSources.length - 1; i >= 0; i--) {
+        const raw = unwrapProps(validSources[i]!)
+        if (prop in raw) {
+          return {
+            enumerable: true,
+            configurable: true,
+            get: () => {
+              const value = (raw as Record<string | symbol, unknown>)[prop]
+              return isPropGetter(value) ? value() : value
+            },
+          }
+        }
+      }
+      return undefined
+    },
+  })
+}
+
+export type PropGetter<T> = (() => T) & { __fictProp: true }
+/**
+ * Memoize a prop getter to cache expensive computations.
+ * Use when prop expressions involve heavy calculations.
+ *
+ * @example
+ * ```tsx
+ * // Without useProp - recomputes on every access
+ * <Child data={expensiveComputation(list, filter)} />
+ *
+ * // With useProp - cached until dependencies change, auto-unwrapped by props proxy
+ * const memoizedData = useProp(() => expensiveComputation(list, filter))
+ * <Child data={memoizedData} />
+ * ```
+ */
+export function useProp<T>(getter: () => T): PropGetter<T> {
+  // Wrap in prop so component props proxy auto-unwraps when passed down.
+  return __fictProp(createMemo(getter)) as PropGetter<T>
 }
