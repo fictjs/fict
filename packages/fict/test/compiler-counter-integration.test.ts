@@ -119,6 +119,8 @@ describe('compiler + fict integration', () => {
   let container: HTMLElement
 
   beforeEach(() => {
+    // Reset hook context to avoid slot reuse across compiled modules
+    ;(runtime as any).__fictResetContext?.()
     container = document.createElement('div')
     document.body.appendChild(container)
   })
@@ -936,5 +938,339 @@ describe('compiler + fict integration', () => {
 
     dispose()
     logSpy.mockRestore()
+  })
+
+  it('props: runtime-built spread vs reactive marked spread', async () => {
+    const naiveSource = `
+      import { $state, render } from 'fict'
+
+      export let bump: () => void
+
+      function Row(props: any) {
+        return (
+          <div>
+            <span className="id">{props.id}</span>
+            <span className="name">{props.label}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        let userId = $state(1)
+        let userName = $state('Alicia')
+        bump = () => {
+          userId = 3
+          userName = 'Charlie'
+        }
+
+        // Built once outside the render effect (compiler can't see inside the IIFE body)
+        const payload = (() => ({ id: userId(), label: userName() }))()
+        return render(() => <Row {...payload} />, el)
+      }
+    `
+
+    const wrappedSource = `
+      import { $state, render, prop, mergeProps } from 'fict'
+
+      export let bump: () => void
+
+      function Row(props: any) {
+        return (
+          <div>
+            <span className="id">{props.id}</span>
+            <span className="name">{props.label}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        let userId = $state(1)
+        let userName = $state('Alicia')
+        bump = () => {
+          userId = 3
+          userName = 'Charlie'
+        }
+
+        // Built once but fields are reactive getters, so they stay live
+        const payload = mergeProps({
+          id: prop(() => userId()),
+          label: prop(() => userName()),
+        })
+        return render(() => <Row {...payload} />, el)
+      }
+    `
+
+    // Naive: snapshot
+    {
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void; bump: () => void }>(
+        naiveSource,
+      )
+      const dispose = mod.mount(container)
+      await tick()
+      const read = () => ({
+        id: container.querySelector('.id')?.textContent,
+        name: container.querySelector('.name')?.textContent,
+      })
+      const initial = read()
+      mod.bump()
+      await tick()
+      // Stale because payload was built at runtime without prop markers
+      expect(read()).toEqual(initial)
+      dispose()
+    }
+
+    // Wrapped: stays reactive
+    {
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void; bump: () => void }>(
+        wrappedSource,
+      )
+      const dispose = mod.mount(container)
+      await tick()
+      const read = () => ({
+        id: container.querySelector('.id')?.textContent,
+        name: container.querySelector('.name')?.textContent,
+      })
+      mod.bump()
+      await tick()
+      expect(read()).toEqual({ id: '3', name: 'Charlie' })
+      dispose()
+    }
+  })
+
+  it('props: prop helper keeps child reactive without parent rerender', async () => {
+    const source = `
+      import { $state, render, prop } from 'fict'
+      export let bump: () => void
+
+      function Child(props: any) {
+        return <span className="value">{props.value}</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        let count = $state(0)
+        bump = () => { count = count + 1 }
+
+        // Parent view does not read count directly; prop getter should keep child reactive
+        return render(() => <Child value={prop(() => count())} />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void; bump: () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const read = () => container.querySelector('.value')?.textContent
+    expect(read()).toBe('0')
+
+    mod.bump()
+    await tick()
+    expect(read()).toBe('1')
+
+    dispose()
+  })
+
+  it('props: merged sources keep reactive fields with prop/mergeProps', async () => {
+    const source = `
+      import { $state, render, prop, mergeProps } from 'fict'
+      export let bump: () => void
+
+      function Counter(props: any) {
+        return (
+          <div data-testid={props['data-testid']}>
+            <span className="count">{props.count}</span>
+            <span className="extra">{props.extra}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        let count = $state(0)
+        const defaults = { extra: 'x' }
+        bump = () => { count = count + 1 }
+
+        // Built once outside render, so the plain value is a snapshot
+        const snapshot = { count: count() }
+        // Built once but with reactive getter
+        const reactive = { count: prop(() => count()) }
+
+        return render(
+          () => (
+            <>
+              <Counter data-testid="naive" {...mergeProps(defaults, snapshot)} />
+              <Counter data-testid="wrapped" {...mergeProps(defaults, reactive)} />
+            </>
+          ),
+          el,
+        )
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void; bump: () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const read = (testId: string) => ({
+      count: container.querySelector(`[data-testid="${testId}"] .count`)?.textContent,
+      extra: container.querySelector(`[data-testid="${testId}"] .extra`)?.textContent,
+    })
+
+    expect(read('naive')).toEqual({ count: '0', extra: 'x' })
+    expect(read('wrapped')).toEqual({ count: '0', extra: 'x' })
+
+    mod.bump()
+    await tick()
+
+    // Both update because JSX spread inside render() triggers re-evaluation
+    // The mergeProps result is passed to child component which reads props reactively
+    expect(read('naive')).toEqual({ count: '1', extra: 'x' })
+    expect(read('wrapped')).toEqual({ count: '1', extra: 'x' })
+
+    dispose()
+  })
+
+  it('props: heavy computation memoized with useProp vs raw', async () => {
+    const source = `
+      import { $state, render, useProp } from 'fict'
+      export let bump: () => void
+      export let rawCalls = 0
+      export let memoCalls = 0
+
+      const heavy = (n: number) => {
+        rawCalls++ // incremented when raw path is used
+        let acc = 0
+        for (let i = 0; i < 2000; i++) acc += n + i
+        return acc
+      }
+
+      function Pair(props: any) {
+        return (
+          <div>
+            <span className="raw">{props.raw}</span>
+            <span className="memo">{props.memo}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        let count = $state(1)
+        bump = () => { count = count + 1 }
+
+        const memo = useProp(() => {
+          memoCalls++
+          let acc = 0
+          for (let i = 0; i < 2000; i++) acc += count + i
+          return acc
+        })
+
+        return render(
+          () => <Pair raw={heavy(count)} memo={memo} />,
+          el,
+        )
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      bump: () => void
+      rawCalls: number
+      memoCalls: number
+    }>(source)
+
+    const dispose = mod.mount(container)
+    await tick()
+
+    const read = () => ({
+      raw: container.querySelector('.raw')?.textContent,
+      memo: container.querySelector('.memo')?.textContent,
+    })
+
+    const initial = read()
+    expect(initial.raw).toBe(initial.memo)
+    expect(initial.raw).toBeDefined()
+    expect(mod.rawCalls).toBeGreaterThanOrEqual(1)
+    expect(mod.memoCalls).toBeGreaterThanOrEqual(1)
+
+    const initialCalls = { raw: mod.rawCalls, memo: mod.memoCalls }
+
+    mod.bump()
+    await tick()
+
+    const after = read()
+    expect(after.raw).toBe(after.memo)
+    expect(after.raw).not.toEqual(initial.raw)
+    expect(mod.rawCalls).toBeGreaterThanOrEqual(mod.memoCalls)
+    expect(mod.rawCalls).toBeGreaterThanOrEqual(initialCalls.raw)
+    expect(mod.memoCalls).toBeGreaterThanOrEqual(initialCalls.memo)
+
+    dispose()
+  })
+
+  it('props: unknown shape factory, mark reactive fields explicitly', async () => {
+    const source = `
+      import { $state, render, prop, mergeProps } from 'fict'
+      export let bump: () => void
+
+      function Dashboard(props: any) {
+        return (
+          <div data-testid={props['data-testid']}>
+            <span className="theme">{props.theme}</span>
+            <span className="user">{props.user}</span>
+            <span className="flag">{String(props.staticFlag)}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        let theme = $state('light')
+        let userName = $state('Alicia')
+        bump = () => {
+          theme = 'midnight'
+          userName = 'Charlie'
+        }
+
+        return render(
+          () => (
+            <>
+              <Dashboard
+                data-testid="naive"
+                {...{
+                  theme: theme(),
+                  user: userName(),
+                  staticFlag: true,
+                }}
+              />
+              <Dashboard
+                data-testid="wrapped"
+                theme={prop(() => theme())}
+                user={prop(() => userName())}
+                staticFlag={true}
+              />
+            </>
+          ),
+          el,
+        )
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void; bump: () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const read = (testId: string) => ({
+      theme: container.querySelector(`[data-testid="${testId}"] .theme`)?.textContent,
+      user: container.querySelector(`[data-testid="${testId}"] .user`)?.textContent,
+      flag: container.querySelector(`[data-testid="${testId}"] .flag`)?.textContent,
+    })
+
+    expect(read('naive')).toEqual({ theme: 'light', user: 'Alicia', flag: 'true' })
+    expect(read('wrapped')).toEqual({ theme: 'light', user: 'Alicia', flag: 'true' })
+
+    mod.bump()
+    await tick()
+
+    expect(read('naive')).toEqual({ theme: 'midnight', user: 'Charlie', flag: 'true' })
+    expect(read('wrapped')).toEqual({ theme: 'midnight', user: 'Charlie', flag: 'true' })
+
+    dispose()
   })
 })

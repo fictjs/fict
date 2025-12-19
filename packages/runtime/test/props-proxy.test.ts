@@ -10,6 +10,7 @@ import {
   mergeProps,
   render,
   spread,
+  createPropsProxy,
 } from '../src/index'
 
 const tick = () =>
@@ -135,13 +136,12 @@ describe('Props proxy', () => {
     const a = createSignal(0)
     const b = createSignal(10)
 
-    const merged = mergeProps(
-      { foo: __fictProp(() => a()) },
-      { bar: 1 },
-      { foo: __fictProp(() => b()) },
+    // mergeProps preserves getters - wrap in createPropsProxy to auto-unwrap
+    const merged = createPropsProxy(
+      mergeProps({ foo: __fictProp(() => a()) }, { bar: 1 }, { foo: __fictProp(() => b()) }),
     )
 
-    expect(merged.foo).toBe(10) // last wins
+    expect(merged.foo).toBe(10) // last wins, createPropsProxy unwraps getter
     expect(merged.bar).toBe(1)
 
     b(b() + 5)
@@ -151,7 +151,8 @@ describe('Props proxy', () => {
   it('allows manual wrapping via public prop alias for dynamic objects', () => {
     let count = createSignal(1)
     const dyn = () => ({ value: prop(() => count()) })
-    const merged = mergeProps(dyn())
+    // mergeProps preserves getters - wrap in createPropsProxy to auto-unwrap
+    const merged = createPropsProxy(mergeProps(dyn()))
 
     expect(merged.value).toBe(1)
     count(count() + 1)
@@ -162,26 +163,28 @@ describe('Props proxy', () => {
     let aCallCount = 0
     let bCallCount = 0
 
-    const merged = mergeProps(
-      {
-        a: __fictProp(() => {
-          aCallCount++
-          return 'a'
-        }),
-      },
-      {
-        b: __fictProp(() => {
-          bCallCount++
-          return 'b'
-        }),
-      },
+    const merged = createPropsProxy(
+      mergeProps(
+        {
+          a: __fictProp(() => {
+            aCallCount++
+            return 'a'
+          }),
+        },
+        {
+          b: __fictProp(() => {
+            bCallCount++
+            return 'b'
+          }),
+        },
+      ),
     )
 
-    // Neither getter has been called yet
+    // Neither getter has been called yet (lazy)
     expect(aCallCount).toBe(0)
     expect(bCallCount).toBe(0)
 
-    // Access only 'a'
+    // Access only 'a' - createPropsProxy unwraps and calls getter
     expect(merged.a).toBe('a')
     expect(aCallCount).toBe(1)
     expect(bCallCount).toBe(0)

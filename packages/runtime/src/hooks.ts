@@ -27,6 +27,10 @@ export function __fictPopContext(): void {
   ctxStack.pop()
 }
 
+export function __fictResetContext(): void {
+  ctxStack.length = 0
+}
+
 export function __fictUseSignal<T>(ctx: HookContext, initial: T, slot: number): SignalAccessor<T> {
   if (!ctx.slots[slot]) {
     const base = createSignal(initial)

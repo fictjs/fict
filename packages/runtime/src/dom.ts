@@ -153,8 +153,32 @@ export function createElement(node: FictNode): DOMElement {
 
   // Function component
   if (typeof vnode.type === 'function') {
-    const rawProps = unwrapProps(vnode.props ?? {})
-    const baseProps = { ...rawProps, key: vnode.key }
+    const rawProps = unwrapProps(vnode.props ?? {}) as Record<string, unknown>
+    const baseProps =
+      vnode.key === undefined
+        ? rawProps
+        : new Proxy(rawProps, {
+            get(target, prop, receiver) {
+              if (prop === 'key') return vnode.key
+              return Reflect.get(target, prop, receiver)
+            },
+            has(target, prop) {
+              if (prop === 'key') return true
+              return prop in target
+            },
+            ownKeys(target) {
+              const keys = new Set(Reflect.ownKeys(target))
+              keys.add('key')
+              return Array.from(keys)
+            },
+            getOwnPropertyDescriptor(target, prop) {
+              if (prop === 'key') {
+                return { enumerable: true, configurable: true, value: vnode.key }
+              }
+              return Object.getOwnPropertyDescriptor(target, prop)
+            },
+          })
+
     const props = createPropsProxy(baseProps)
     try {
       // Create a fresh hook context for this component instance.

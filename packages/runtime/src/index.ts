@@ -11,6 +11,7 @@ export {
   __fictUseMemo,
   __fictUseEffect,
   __fictRender,
+  __fictResetContext,
 } from './hooks'
 export {
   createVersionedSignal,
@@ -19,7 +20,14 @@ export {
 } from './versioned-signal'
 
 // Props helpers
-export { __fictProp, __fictProp as prop, __fictPropsRest, mergeProps, useProp } from './props'
+export {
+  __fictProp,
+  __fictProp as prop,
+  __fictPropsRest,
+  mergeProps,
+  useProp,
+  createPropsProxy,
+} from './props'
 
 // ============================================================================
 // Lifecycle

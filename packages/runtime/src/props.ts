@@ -108,7 +108,8 @@ export function mergeProps<T extends Record<string, unknown>>(
   }
 
   if (validSources.length === 1) {
-    return createPropsProxy(validSources[0]!)
+    // Return source directly to preserve getter behavior (consistent with multi-source)
+    return validSources[0]!
   }
 
   return new Proxy({} as Record<string, unknown>, {
@@ -122,7 +123,8 @@ export function mergeProps<T extends Record<string, unknown>>(
         const raw = unwrapProps(validSources[i]!)
         if (prop in raw) {
           const value = (raw as Record<string | symbol, unknown>)[prop]
-          return isPropGetter(value) ? value() : value
+          // Preserve prop getters - let child component's createPropsProxy unwrap lazily
+          return value
         }
       }
       return undefined
@@ -158,7 +160,8 @@ export function mergeProps<T extends Record<string, unknown>>(
             configurable: true,
             get: () => {
               const value = (raw as Record<string | symbol, unknown>)[prop]
-              return isPropGetter(value) ? value() : value
+              // Preserve prop getters - let child component's createPropsProxy unwrap lazily
+              return value
             },
           }
         }
