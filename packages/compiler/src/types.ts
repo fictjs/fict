@@ -13,6 +13,7 @@ export interface TransformContext {
   shadowedVars: Set<string>
   shadowStack: Set<string>[]
   trackedScopeStack: Set<string>[]
+  propsStack: Set<string>[]
   helpersUsed: HelperUsage
   options: FictCompilerOptions
   dependencyGraph: Map<string, Set<string>>
@@ -66,6 +67,7 @@ export interface HelperUsage {
   render: boolean
   fragment: boolean
   template: boolean
+  propGetter: boolean
 }
 
 export interface CompilerWarning {
@@ -124,5 +126,6 @@ export function createHelperUsage(): HelperUsage {
     destroyMarkerBlock: false,
     getFirstNodeAfter: false,
     template: false,
+    propGetter: false,
   }
 }

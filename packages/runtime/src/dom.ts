@@ -25,6 +25,7 @@ import {
   type AttributeSetter,
   type BindingHandle,
 } from './binding'
+import { createPropsProxy, unwrapProps } from './props'
 import { Properties, ChildProperties, Aliases, getPropAlias, SVGNamespace } from './constants'
 import { __fictPushContext, __fictPopContext } from './hooks'
 import { Fragment } from './jsx'
@@ -152,7 +153,9 @@ export function createElement(node: FictNode): DOMElement {
 
   // Function component
   if (typeof vnode.type === 'function') {
-    const props = { ...(vnode.props ?? {}), key: vnode.key }
+    const rawProps = unwrapProps(vnode.props ?? {})
+    const baseProps = { ...rawProps, key: vnode.key }
+    const props = createPropsProxy(baseProps)
     try {
       // Create a fresh hook context for this component instance.
       // This preserves slot state across re-renders driven by __fictRender.
@@ -376,6 +379,7 @@ function applyRef(el: HTMLElement, value: unknown): void {
  * Uses comprehensive property constants for correct attribute/property handling.
  */
 function applyProps(el: HTMLElement, props: Record<string, unknown>, isSVG = false): void {
+  props = unwrapProps(props)
   const tagName = el.tagName
 
   // Check if this is a custom element

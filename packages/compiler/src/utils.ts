@@ -184,6 +184,7 @@ export function dependsOnTracked(
   additionalTracked?: Set<string>,
 ): boolean {
   const { stateVars, memoVars, shadowedVars } = ctx
+  const propsInScope = ctx.propsStack[ctx.propsStack.length - 1]
   let depends = false
 
   const visit = (node: BabelCore.types.Node, locals: Set<string>): void => {
@@ -229,6 +230,13 @@ export function dependsOnTracked(
 
     // Handle member expressions - skip property names (unless computed)
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      if (t.isIdentifier(node.object)) {
+        const name = node.object.name
+        if (!locals.has(name) && !shadowedVars.has(name) && propsInScope?.has(name)) {
+          depends = true
+          return
+        }
+      }
       visit(node.object, locals)
       // Only visit property if it's computed (e.g., obj[key] vs obj.key)
       if (node.computed && node.property) {

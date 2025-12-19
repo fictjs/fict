@@ -240,7 +240,7 @@ describe('createFictPlugin', () => {
         const view = () => <button disabled={!isValid}>Click</button>
       `)
 
-      expect(output).toContain(`disabled={() => !isValid()}`)
+      expect(output).toContain(`disabled={__fictProp(() => !isValid())}`)
     })
 
     it('does not wrap event handlers', () => {
@@ -283,7 +283,7 @@ describe('createFictPlugin', () => {
         const view = () => <button disabled={isEmpty}>Click</button>
       `)
 
-      expect(output).toContain(`disabled={() => isEmpty()}`)
+      expect(output).toContain(`disabled={__fictProp(() => isEmpty())}`)
     })
 
     it('handles template literals with state', () => {
@@ -331,7 +331,7 @@ describe('createFictPlugin', () => {
         const Parent = () => <Child value={count} />
       `)
 
-      expect(output).toContain(`value={() => count()}`)
+      expect(output).toContain(`value={__fictProp(() => count())}`)
     })
 
     it('handles multiple reactive values in one expression', () => {
@@ -352,7 +352,7 @@ describe('createFictPlugin', () => {
         const view = () => <div class={active ? 'active' : ''}>test</div>
       `)
 
-      expect(output).toContain(`class={() => active()`)
+      expect(output).toContain(`class={__fictProp(() => active()`)
     })
 
     it('handles style binding with reactive value', () => {
@@ -361,7 +361,7 @@ describe('createFictPlugin', () => {
         const view = () => <div style={{ color: color }}>test</div>
       `)
 
-      expect(output).toContain(`style={() => ({`)
+      expect(output).toContain(`style={__fictProp(() => ({`)
       expect(output).toContain(`color()`)
     })
 
@@ -761,6 +761,27 @@ describe('createFictPlugin', () => {
       `)
       // Should not contain __props since no JSX
       expect(output).not.toContain('__props')
+    })
+
+    it('treats props member access as reactive in JSX', () => {
+      const output = transform(`
+        function Component(props) {
+          return <div>{props.count}</div>
+        }
+      `)
+      expect(output).toContain('insert')
+      expect(output).toContain('props.count')
+    })
+
+    it('memoizes derived values from props member access', () => {
+      const output = transform(`
+        function Component(props) {
+          const doubled = props.count * 2
+          return <div>{doubled}</div>
+        }
+      `)
+      expect(output).toContain('__fictUseMemo')
+      expect(output).toContain('props.count')
     })
   })
 

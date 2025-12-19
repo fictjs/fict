@@ -97,6 +97,7 @@ export const createFictPlugin = declare(
               functionsWithJsx: new WeakSet(),
               shadowStack: [],
               trackedScopeStack: [],
+              propsStack: [],
               pendingRegionOutputs: new WeakMap(),
               pendingRegionStack: [],
             }
@@ -514,10 +515,11 @@ export const createFictPlugin = declare(
 
             // Wrap reactive attribute value in arrow function
             if (dependsOnTracked(expr, ctx, t)) {
-              path.node.expression = t.arrowFunctionExpression(
-                [],
-                transformExpression(expr, ctx, t),
-              )
+              const getter = t.arrowFunctionExpression([], transformExpression(expr, ctx, t))
+              ctx.helpersUsed.propGetter = true
+              path.node.expression = t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
+                getter,
+              ])
             }
             return
           }
@@ -728,6 +730,15 @@ export const createFictPlugin = declare(
                 }
               }
             }
+
+            const propsNames = new Set<string>()
+            if (containsJsx) {
+              const params = path.node.params
+              if (params.length > 0 && t.isIdentifier(params[0])) {
+                propsNames.add(params[0].name)
+              }
+            }
+            ctx.propsStack.push(propsNames)
           },
           exit(path: BabelCore.NodePath<BabelCore.types.Function>, state) {
             const ctx = (state as any).__fictCtx as TransformContext
@@ -735,6 +746,7 @@ export const createFictPlugin = declare(
             ctx.pendingRegionStack.pop()
             ctx.trackedScopeStack.pop()
             ctx.shadowStack.pop()
+            ctx.propsStack.pop()
             maybeApplyGetterCaching(path, ctx, t)
             maybeRewriteTopLevelConditionalReturn(path, ctx, t)
           },
@@ -2098,6 +2110,7 @@ function addRuntimeImports(
   addHelper('render')
   addHelper('fragment')
   addHelper('template')
+  addHelper('propGetter')
 
   if (specifiers.length === 0) return
 

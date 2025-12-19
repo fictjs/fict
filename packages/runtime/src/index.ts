@@ -18,6 +18,9 @@ export {
   type VersionedSignalOptions,
 } from './versioned-signal'
 
+// Props helpers
+export { __fictProp } from './props'
+
 // ============================================================================
 // Lifecycle
 // ============================================================================
