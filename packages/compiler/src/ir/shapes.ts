@@ -288,9 +288,24 @@ function analyzeExpression(
       for (const arg of expr.arguments) {
         markEscaping(arg, shapes)
       }
-      // Analyze callee
-      analyzeExpression(expr.callee, shapes, propertyReads)
-      return null
+
+      // Special-case $state initializer to propagate object shape
+      let returnedShape: ObjectShape | null = null
+      if (expr.callee.kind === 'Identifier' && expr.callee.name === '$state' && expr.arguments[0]) {
+        returnedShape = analyzeExpression(expr.arguments[0] as Expression, shapes, propertyReads)
+      }
+
+      // Analyze callee unless it's a macro we purposefully skip
+      if (!(expr.callee.kind === 'Identifier' && expr.callee.name === '$state')) {
+        analyzeExpression(expr.callee, shapes, propertyReads)
+      }
+
+      // Analyze remaining arguments (first arg already handled for shape if present)
+      expr.arguments
+        .slice(returnedShape ? 1 : 0)
+        .forEach(arg => analyzeExpression(arg, shapes, propertyReads))
+
+      return returnedShape
     }
 
     case 'SpreadElement': {

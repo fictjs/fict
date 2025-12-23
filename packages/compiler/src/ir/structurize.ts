@@ -22,7 +22,11 @@ export class StructurizationError extends Error {
   constructor(
     message: string,
     public readonly blockId?: BlockId,
-    public readonly reason?: 'depth_exceeded' | 'irreducible' | 'unreachable_blocks',
+    public readonly reason?:
+      | 'depth_exceeded'
+      | 'irreducible'
+      | 'unreachable_blocks'
+      | 'shared_block',
   ) {
     super(message)
     this.name = 'StructurizationError'
@@ -121,6 +125,8 @@ interface StructurizeContext {
   joinPoints: Set<BlockId>
   /** Track which emitted blocks had side effects (instructions) */
   blocksWithSideEffects: Set<BlockId>
+  /** Blocks that were seen multiple times with side effects (unsafe to skip) */
+  sharedSideEffectBlocks: Set<BlockId>
 }
 
 /**
@@ -185,6 +191,7 @@ export function structurizeCFG(
     warnOnIssues: options?.warnOnIssues ?? false,
     joinPoints,
     blocksWithSideEffects,
+    sharedSideEffectBlocks: new Set(),
   }
 
   const entryBlock = fn.blocks[0]
@@ -205,6 +212,14 @@ export function structurizeCFG(
 
   // Handle issues based on options
   if (throwOnIssues) {
+    if (ctx.sharedSideEffectBlocks.size > 0) {
+      const firstBlock = Array.from(ctx.sharedSideEffectBlocks)[0]
+      throw new StructurizationError(
+        `Cannot structurize CFG: shared block ${firstBlock} with side effects would be skipped`,
+        firstBlock,
+        'shared_block',
+      )
+    }
     if (ctx.problematicBlocks.size > 0) {
       const firstBlock = Array.from(ctx.problematicBlocks)[0]
       throw new StructurizationError(
@@ -230,6 +245,13 @@ export function structurizeCFG(
       console.warn(
         `[structurizeCFG] ${ctx.problematicBlocks.size} blocks had structurization issues`,
       )
+    }
+    if (ctx.sharedSideEffectBlocks.size > 0) {
+      for (const blockId of ctx.sharedSideEffectBlocks) {
+        console.warn(
+          `[structurizeCFG] Shared block ${blockId} with side effects was encountered multiple times`,
+        )
+      }
     }
   }
 
@@ -292,6 +314,7 @@ function structurizeBlock(ctx: StructurizeContext, blockId: BlockId): Structured
     // Already emitted - check if this is a problematic shared block
     // A shared block with side effects being skipped could cause issues
     if (ctx.blocksWithSideEffects.has(blockId) && ctx.joinPoints.has(blockId)) {
+      ctx.sharedSideEffectBlocks.add(blockId)
       if (ctx.warnOnIssues) {
         console.warn(
           `[structurizeCFG] Shared block ${blockId} with side effects was skipped - CFG may be irreducible`,

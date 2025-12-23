@@ -75,6 +75,10 @@ export interface CodegenContext {
   currentRegion?: RegionInfo
   /** All regions for the current function */
   regions?: RegionInfo[]
+  /** Alias variables that point to tracked signals (for reassignment guards) */
+  aliasVars?: Set<string>
+  /** Tracked bindings that exist outside the current lowering scope (e.g., captured signals) */
+  externalTracked?: Set<string>
 }
 
 /**
@@ -88,6 +92,8 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     trackedVars: new Set(),
     needsForOfHelper: false,
     needsForInHelper: false,
+    aliasVars: new Set(),
+    externalTracked: new Set(),
   }
 }
 
@@ -209,7 +215,26 @@ export function lowerHIRToBabel(
     const funcStmt = lowerFunction(fn, ctx)
     if (funcStmt) body.push(funcStmt)
   }
-  return t.file(t.program(attachHelperImports(ctx, body, t)))
+  const filteredBody = body.filter(stmt => {
+    if (t.isVariableDeclaration(stmt)) {
+      return !stmt.declarations.some(
+        decl => t.isIdentifier(decl.id) && emittedFunctionNames.has(decl.id.name),
+      )
+    }
+    if (t.isExportNamedDeclaration(stmt) && stmt.declaration) {
+      if (
+        t.isVariableDeclaration(stmt.declaration) &&
+        stmt.declaration.declarations.some(
+          decl => t.isIdentifier(decl.id) && emittedFunctionNames.has(decl.id.name),
+        )
+      ) {
+        return false
+      }
+    }
+    return true
+  })
+
+  return t.file(t.program(attachHelperImports(ctx, filteredBody, t)))
 }
 
 function lowerFunction(
@@ -571,15 +596,44 @@ export function lowerExpression(expr: Expression, ctx: CodegenContext): BabelCor
           expr.params.map(p => t.identifier(deSSAVarName(p.name))),
           lowerExpression(expr.body, ctx),
         )
-      } else {
-        // Block body - simplified
+      }
+      if (Array.isArray(expr.body)) {
+        const stmts: BabelCore.types.Statement[] = []
+        for (const block of expr.body) {
+          stmts.push(
+            ...(block.instructions
+              .map(instr => lowerInstruction(instr, ctx))
+              .filter(Boolean) as BabelCore.types.Statement[]),
+          )
+          stmts.push(...lowerTerminator(block, ctx))
+        }
         return t.arrowFunctionExpression(
           expr.params.map(p => t.identifier(deSSAVarName(p.name))),
-          t.blockStatement([]),
+          t.blockStatement(stmts),
         )
       }
+      return t.arrowFunctionExpression(
+        expr.params.map(p => t.identifier(deSSAVarName(p.name))),
+        t.blockStatement([]),
+      )
 
     case 'FunctionExpression':
+      if (Array.isArray(expr.body)) {
+        const stmts: BabelCore.types.Statement[] = []
+        for (const block of expr.body) {
+          stmts.push(
+            ...(block.instructions
+              .map(instr => lowerInstruction(instr, ctx))
+              .filter(Boolean) as BabelCore.types.Statement[]),
+          )
+          stmts.push(...lowerTerminator(block, ctx))
+        }
+        return t.functionExpression(
+          expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
+          expr.params.map(p => t.identifier(deSSAVarName(p.name))),
+          t.blockStatement(stmts),
+        )
+      }
       return t.functionExpression(
         expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
         expr.params.map(p => t.identifier(deSSAVarName(p.name))),
@@ -587,6 +641,36 @@ export function lowerExpression(expr: Expression, ctx: CodegenContext): BabelCor
       )
 
     case 'AssignmentExpression':
+      if (expr.left.kind === 'Identifier') {
+        const baseName = deSSAVarName(expr.left.name)
+        if (ctx.trackedVars.has(baseName)) {
+          const id = t.identifier(baseName)
+          const current = t.callExpression(t.identifier(baseName), [])
+          const right = lowerExpression(expr.right, ctx)
+          let next: BabelCore.types.Expression
+          switch (expr.operator) {
+            case '=':
+              next = right
+              break
+            case '+=':
+              next = t.binaryExpression('+', current, right)
+              break
+            case '-=':
+              next = t.binaryExpression('-', current, right)
+              break
+            case '*=':
+              next = t.binaryExpression('*', current, right)
+              break
+            case '/=':
+              next = t.binaryExpression('/', current, right)
+              break
+            default:
+              next = right
+          }
+          return t.callExpression(id, [next])
+        }
+      }
+
       return t.assignmentExpression(
         expr.operator as any,
         lowerExpression(expr.left, ctx) as any,
@@ -594,6 +678,20 @@ export function lowerExpression(expr: Expression, ctx: CodegenContext): BabelCor
       )
 
     case 'UpdateExpression':
+      if (expr.argument.kind === 'Identifier') {
+        const baseName = deSSAVarName(expr.argument.name)
+        if (ctx.trackedVars.has(baseName)) {
+          const id = t.identifier(baseName)
+          const current = t.callExpression(t.identifier(baseName), [])
+          const delta = t.numericLiteral(1)
+          const next =
+            expr.operator === '++'
+              ? t.binaryExpression('+', current, delta)
+              : t.binaryExpression('-', current, delta)
+          return t.callExpression(id, [next])
+        }
+      }
+
       return t.updateExpression(
         expr.operator,
         lowerExpression(expr.argument, ctx) as any,
@@ -744,12 +842,49 @@ function collectExpressionDependencies(expr: Expression, deps: Set<string>): voi
 
 type RegionOverrideMap = Record<string, () => BabelCore.types.Expression>
 
+function normalizeDependencyKey(name: string): string {
+  return name
+    .split('.')
+    .map(part => part.replace(/_\d+$/, ''))
+    .join('.')
+}
+
+function getDependencyPathFromNode(
+  node: BabelCore.types.Node,
+  t: typeof BabelCore.types,
+): string | null {
+  if (t.isIdentifier(node)) {
+    return normalizeDependencyKey(node.name)
+  }
+
+  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node as any)) {
+    const object = (node as any).object as BabelCore.types.Node
+    const property = (node as any).property as BabelCore.types.Node
+    const objectPath = getDependencyPathFromNode(object, t)
+    if (!objectPath) return null
+
+    let propName: string | null = null
+    if ((node as any).computed) {
+      if (t.isStringLiteral(property) || t.isNumericLiteral(property)) {
+        propName = String((property as any).value)
+      }
+    } else if (t.isIdentifier(property)) {
+      propName = property.name
+    }
+
+    if (!propName) return objectPath
+    return `${objectPath}.${propName}`
+  }
+
+  return null
+}
+
 /**
  * Apply RegionMetadata dependency overrides to a lowered expression.
  * This mirrors fine-grained-dom's applyRegionMetadata, but guards against
  * double-invoking callees by skipping overrides on call targets.
  */
-function applyRegionMetadataToExpression(
+export function applyRegionMetadataToExpression(
   expr: BabelCore.types.Expression,
   ctx: CodegenContext,
   regionOverride?: RegionInfo | null,
@@ -765,13 +900,24 @@ function applyRegionMetadataToExpression(
     dependencyGetter: name => buildDependencyGetter(name, ctx),
   })
 
-  const overrides = state.identifierOverrides
-  if (!overrides || Object.keys(overrides).length === 0) {
+  const overrides = state.identifierOverrides ?? {}
+  state.identifierOverrides = overrides
+
+  // Ensure tracked variables are also covered even if region metadata missed them
+  for (const dep of ctx.trackedVars) {
+    const key = normalizeDependencyKey(dep)
+    if (!overrides[key]) {
+      overrides[key] = () => buildDependencyGetter(dep, ctx)
+    }
+  }
+
+  if (Object.keys(overrides).length === 0) {
     return expr
   }
 
   if (ctx.t.isIdentifier(expr)) {
-    const direct = overrides[expr.name]
+    const key = normalizeDependencyKey(expr.name)
+    const direct = overrides[key] ?? overrides[expr.name]
     if (direct) {
       return direct()
     }
@@ -793,16 +939,29 @@ function replaceIdentifiersWithOverrides(
   parentKind?: string,
   parentKey?: string,
 ): void {
-  if (t.isIdentifier(node)) {
-    const override = overrides[node.name]
-    const isCallTarget =
-      parentKey === 'callee' &&
-      (parentKind === 'CallExpression' || parentKind === 'OptionalCallExpression')
+  const isCallTarget =
+    parentKey === 'callee' &&
+    (parentKind === 'CallExpression' || parentKind === 'OptionalCallExpression')
+
+  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node as any)) {
+    const path = getDependencyPathFromNode(node, t)
+    const normalized = path ? normalizeDependencyKey(path) : null
+    const override = (normalized && overrides[normalized]) || (path ? overrides[path] : undefined)
     if (override && !isCallTarget) {
       const replacement = override()
       Object.assign(node, replacement)
+      return
     }
-    return
+  }
+
+  if (t.isIdentifier(node)) {
+    const key = normalizeDependencyKey(node.name)
+    const override = overrides[key] ?? overrides[node.name]
+    if (override && !isCallTarget) {
+      const replacement = override()
+      Object.assign(node, replacement)
+      return
+    }
   }
 
   if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
@@ -817,6 +976,9 @@ function replaceIdentifiersWithOverrides(
 
   for (const key of Object.keys(node)) {
     if (key === 'type' || key === 'loc' || key === 'start' || key === 'end') continue
+    if (t.isObjectProperty(node as any) && key === 'key' && !(node as any).computed) {
+      continue
+    }
     const value = (node as unknown as Record<string, unknown>)[key]
     if (Array.isArray(value)) {
       for (const item of value) {
@@ -870,22 +1032,44 @@ function regionInfoToMetadata(region: RegionInfo): RegionMetadata {
 function findContainingRegion(deps: Set<string>, ctx: CodegenContext): RegionInfo | null {
   if (!ctx.regions || ctx.regions.length === 0 || deps.size === 0) return null
 
+  const depList = Array.from(deps).map(d => normalizeDependencyKey(d))
+
   // Find a region whose declarations cover all the dependencies
   for (const region of ctx.regions) {
     let allCovered = true
-    for (const dep of deps) {
-      // Check if this dep is either a region declaration or a region dependency
-      if (!region.declarations.has(dep) && !region.dependencies.has(dep)) {
-        // Also check if it's a tracked var (signal) - those are fine
-        if (!ctx.trackedVars.has(dep)) {
-          allCovered = false
-          break
-        }
+    for (const dep of depList) {
+      const coveredByRegion =
+        dependencyCoveredByRegion(dep, region) ||
+        dependencyCoveredByDeclarations(dep, region) ||
+        ctx.trackedVars.has(dep)
+      if (!coveredByRegion) {
+        allCovered = false
+        break
       }
     }
     if (allCovered) return region
   }
   return null
+}
+
+function dependencyCoveredByRegion(dep: string, region: RegionInfo): boolean {
+  for (const rDep of region.dependencies) {
+    const normalized = normalizeDependencyKey(rDep)
+    if (dep === normalized) return true
+    if (dep.startsWith(`${normalized}.`)) return true
+    if (normalized.startsWith(`${dep}.`)) return true
+  }
+  return false
+}
+
+function dependencyCoveredByDeclarations(dep: string, region: RegionInfo): boolean {
+  for (const decl of region.declarations) {
+    const normalized = normalizeDependencyKey(decl)
+    if (dep === normalized) return true
+    if (dep.startsWith(`${normalized}.`)) return true
+    if (normalized.startsWith(`${dep}.`)) return true
+  }
+  return false
 }
 
 /**
@@ -1635,6 +1819,7 @@ function lowerInstructionWithScopes(
 // Region-Based Codegen (P0 Integration)
 // ============================================================================
 
+import { convertStatementsToHIRFunction } from './build-hir'
 import { analyzeReactiveScopesWithSSA } from './scopes'
 import { generateRegions, generateRegionCode, regionToMetadata } from './regions'
 
@@ -1653,6 +1838,40 @@ export function lowerHIRWithRegions(
 ): BabelCore.types.File {
   const ctx = createCodegenContext(t)
   const body: BabelCore.types.Statement[] = []
+  const topLevelAliases = new Set<string>()
+  let topLevelCtxInjected = false
+  const emittedFunctionNames = new Set<string>()
+  const originalBody = (program.originalBody ?? []) as BabelCore.types.Statement[]
+
+  // Pre-mark top-level tracked variables so nested functions can treat captured signals as reactive
+  for (const stmt of originalBody) {
+    if (t.isVariableDeclaration(stmt)) {
+      for (const decl of stmt.declarations) {
+        if (
+          t.isIdentifier(decl.id) &&
+          decl.init &&
+          t.isCallExpression(decl.init) &&
+          t.isIdentifier(decl.init.callee) &&
+          decl.init.callee.name === '$state'
+        ) {
+          ctx.trackedVars.add(decl.id.name)
+        }
+      }
+    }
+  }
+  const ensureTopLevelCtx = () => {
+    if (topLevelCtxInjected) return
+    ctx.helpersUsed.add('useContext')
+    body.push(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(
+          t.identifier('__fictCtx'),
+          t.callExpression(t.identifier(RUNTIME_ALIASES.useContext), []),
+        ),
+      ]),
+    )
+    topLevelCtxInjected = true
+  }
 
   // Map generated functions by name for replacement when walking original body
   const generatedFunctions = new Map<string, BabelCore.types.FunctionDeclaration>()
@@ -1666,58 +1885,242 @@ export function lowerHIRWithRegions(
     }
   }
 
-  const originalBody = program.originalBody ?? []
+  const lowerableBuffer: BabelCore.types.Statement[] = []
+  let segmentCounter = 0
+
+  const flushLowerableBuffer = () => {
+    if (lowerableBuffer.length === 0) return
+    const { statements, aliases } = lowerTopLevelStatementBlock(
+      lowerableBuffer,
+      ctx,
+      t,
+      `__module_segment_${segmentCounter++}`,
+      topLevelAliases,
+    )
+    topLevelAliases.clear()
+    aliases.forEach(a => topLevelAliases.add(a))
+    if (statements.length > 0 && ctx.needsCtx && !topLevelCtxInjected) {
+      ensureTopLevelCtx()
+    }
+    body.push(...statements)
+    lowerableBuffer.length = 0
+  }
 
   // Rebuild program body preserving original order
   for (const stmt of originalBody as BabelCore.types.Statement[]) {
     if (t.isImportDeclaration(stmt)) {
+      flushLowerableBuffer()
       body.push(stmt)
       continue
     }
 
     // Function declarations
     if (t.isFunctionDeclaration(stmt) && stmt.id?.name) {
+      flushLowerableBuffer()
       const generated = generatedFunctions.get(stmt.id.name)
       if (generated) {
         body.push(generated)
         generatedFunctions.delete(stmt.id.name)
+        emittedFunctionNames.add(stmt.id.name)
         continue
       }
+      body.push(stmt)
+      emittedFunctionNames.add(stmt.id.name)
+      continue
     }
 
     // Export named with function declaration
     if (t.isExportNamedDeclaration(stmt) && stmt.declaration) {
+      flushLowerableBuffer()
       if (t.isFunctionDeclaration(stmt.declaration) && stmt.declaration.id?.name) {
         const name = stmt.declaration.id.name
         const generated = generatedFunctions.get(name)
         if (generated) {
           body.push(t.exportNamedDeclaration(generated, []))
           generatedFunctions.delete(name)
+          emittedFunctionNames.add(name)
           continue
         }
       }
+      if (t.isVariableDeclaration(stmt.declaration)) {
+        // Split generated function declarations from remaining declarators
+        const remainingDeclarators: typeof stmt.declaration.declarations = []
+        const generated: BabelCore.types.FunctionDeclaration[] = []
+
+        for (const decl of stmt.declaration.declarations) {
+          if (t.isIdentifier(decl.id)) {
+            const found = generatedFunctions.get(decl.id.name)
+            if (found) {
+              generated.push(found)
+              generatedFunctions.delete(decl.id.name)
+              continue
+            }
+          }
+          remainingDeclarators.push(decl)
+        }
+
+        if (generated.length > 0) {
+          flushLowerableBuffer()
+          for (const fn of generated) {
+            body.push(t.exportNamedDeclaration(fn, []))
+            if (fn.id?.name) emittedFunctionNames.add(fn.id.name)
+          }
+          if (remainingDeclarators.length > 0) {
+            body.push(
+              t.exportNamedDeclaration(
+                t.variableDeclaration(stmt.declaration.kind, remainingDeclarators),
+                [],
+              ),
+            )
+          }
+          continue
+        }
+
+        const { statements, aliases } = lowerTopLevelStatementBlock(
+          [stmt.declaration],
+          ctx,
+          t,
+          `__export_segment_${segmentCounter++}`,
+          topLevelAliases,
+        )
+        topLevelAliases.clear()
+        aliases.forEach(a => topLevelAliases.add(a))
+        if (statements.length > 0) {
+          if (ctx.needsCtx && !topLevelCtxInjected) {
+            ensureTopLevelCtx()
+          }
+          statements.forEach(d => body.push(t.exportNamedDeclaration(d, [])))
+          continue
+        }
+      }
+      body.push(stmt)
+      continue
+    }
+
+    if (t.isExportNamedDeclaration(stmt)) {
+      flushLowerableBuffer()
+      body.push(stmt)
+      continue
     }
 
     // Export default function declaration
     if (t.isExportDefaultDeclaration(stmt) && t.isFunctionDeclaration(stmt.declaration)) {
+      flushLowerableBuffer()
       const name = stmt.declaration.id?.name ?? '__default'
       const generated = generatedFunctions.get(name)
       if (generated) {
         body.push(t.exportDefaultDeclaration(generated))
         generatedFunctions.delete(name)
+        emittedFunctionNames.add(name)
+        continue
+      }
+      body.push(stmt)
+      if (stmt.declaration.id?.name) emittedFunctionNames.add(stmt.declaration.id.name)
+      continue
+    }
+
+    if (t.isExportDefaultDeclaration(stmt) || t.isExportAllDeclaration(stmt)) {
+      flushLowerableBuffer()
+      body.push(stmt)
+      continue
+    }
+
+    // Variable declarations that were converted to generated functions
+    if (t.isVariableDeclaration(stmt)) {
+      const remainingDeclarators: typeof stmt.declarations = []
+      const generated: BabelCore.types.FunctionDeclaration[] = []
+
+      for (const decl of stmt.declarations) {
+        if (t.isIdentifier(decl.id)) {
+          const found = generatedFunctions.get(decl.id.name)
+          if (found) {
+            generated.push(found)
+            generatedFunctions.delete(decl.id.name)
+            continue
+          }
+        }
+        remainingDeclarators.push(decl)
+      }
+
+      if (generated.length > 0) {
+        flushLowerableBuffer()
+        for (const fn of generated) {
+          body.push(fn)
+          if (fn.id?.name) emittedFunctionNames.add(fn.id.name)
+        }
+        if (remainingDeclarators.length > 0) {
+          lowerableBuffer.push(t.variableDeclaration(stmt.kind, remainingDeclarators))
+        }
         continue
       }
     }
 
-    body.push(stmt)
+    lowerableBuffer.push(stmt)
   }
+
+  flushLowerableBuffer()
 
   // Emit any remaining generated functions (not present in original order)
   for (const func of generatedFunctions.values()) {
     body.push(func)
+    if (func.id?.name) emittedFunctionNames.add(func.id.name)
   }
 
   return t.file(t.program(attachHelperImports(ctx, body, t)))
+}
+
+/**
+ * Lower a sequence of top-level statements (non-import/export) using the HIR region path.
+ */
+function lowerTopLevelStatementBlock(
+  statements: BabelCore.types.Statement[],
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+  name = '__module_segment',
+  existingAliases?: Set<string>,
+): { statements: BabelCore.types.Statement[]; aliases: Set<string> } {
+  if (statements.length === 0) return { statements: [], aliases: new Set() }
+
+  const fn = convertStatementsToHIRFunction(name, statements)
+  const scopeResult = analyzeReactiveScopesWithSSA(fn)
+  ctx.scopes = scopeResult
+
+  const regionResult = generateRegions(fn, scopeResult)
+  ctx.regions = flattenRegions(regionResult.topLevelRegions)
+  const aliasVars = existingAliases ? new Set(existingAliases) : new Set<string>()
+  ctx.aliasVars = aliasVars
+
+  // Track region dependencies/declarations for reactive lookups
+  if (ctx.regions) {
+    for (const region of ctx.regions) {
+      region.dependencies.forEach(dep => ctx.trackedVars.add(dep))
+      region.declarations.forEach(decl => ctx.trackedVars.add(decl))
+    }
+  }
+
+  // Mark tracked variables from scope analysis
+  for (const scope of scopeResult.scopes) {
+    if (scope.dependencies.size > 0) {
+      for (const decl of scope.declarations) {
+        ctx.trackedVars.add(deSSAVarName(decl))
+      }
+    }
+  }
+
+  // Track $state variables not captured in scopes
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' && instr.value.kind === 'CallExpression') {
+        const call = instr.value
+        if (call.callee.kind === 'Identifier' && call.callee.name === '$state') {
+          ctx.trackedVars.add(deSSAVarName(instr.target.name))
+        }
+      }
+    }
+  }
+
+  const lowered = generateRegionCode(fn, scopeResult, t, ctx)
+  return { statements: lowered, aliases: aliasVars }
 }
 
 /**
@@ -1728,7 +2131,11 @@ function lowerFunctionWithRegions(
   ctx: CodegenContext,
 ): BabelCore.types.FunctionDeclaration | null {
   const { t } = ctx
+  const prevExternalTracked = ctx.externalTracked
+  const inheritedTracked = new Set(ctx.trackedVars)
+  ctx.externalTracked = inheritedTracked
   // Always ensure context exists to support memo/region wrappers
+  ctx.aliasVars = new Set()
   ctx.needsCtx = true
 
   // Analyze reactive scopes with SSA/CFG awareness
@@ -1748,8 +2155,10 @@ function lowerFunctionWithRegions(
 
   // Mark tracked variables (de-versioned for consistent lookups)
   for (const scope of scopeResult.scopes) {
-    for (const decl of scope.declarations) {
-      ctx.trackedVars.add(deSSAVarName(decl))
+    if (scope.dependencies.size > 0) {
+      for (const decl of scope.declarations) {
+        ctx.trackedVars.add(deSSAVarName(decl))
+      }
     }
   }
 
@@ -1780,12 +2189,17 @@ function lowerFunctionWithRegions(
     ]),
   )
 
-  // Regions rely on memo
-  ctx.helpersUsed.add('useMemo')
+  // Region memo helpers are added on-demand when needed
 
   // De-version param names for clean output
   const params = fn.params.map(p => t.identifier(deSSAVarName(p.name)))
-  return t.functionDeclaration(t.identifier(fn.name ?? 'fn'), params, t.blockStatement(statements))
+  const funcDecl = t.functionDeclaration(
+    t.identifier(fn.name ?? 'fn'),
+    params,
+    t.blockStatement(statements),
+  )
+  ctx.externalTracked = prevExternalTracked
+  return funcDecl
 }
 
 /**

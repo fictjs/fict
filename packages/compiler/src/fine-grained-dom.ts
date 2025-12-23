@@ -79,6 +79,33 @@ export interface RegionCodegenOptions {
 }
 
 /**
+ * Normalize dependency keys by stripping SSA suffixes and keeping dotted paths intact.
+ */
+function normalizeDependencyKey(name: string): string {
+  return name
+    .split('.')
+    .map(part => part.replace(/_\d+$/, ''))
+    .join('.')
+}
+
+/**
+ * Build a dependency getter expression that supports dotted property paths.
+ */
+function buildRegionDependencyGetter(
+  name: string,
+  t: typeof BabelCore.types,
+): BabelCore.types.Expression {
+  const parts = name.split('.')
+  const base = parts.shift()!
+  const baseCall = t.callExpression(t.identifier(base), [])
+
+  return parts.reduce<BabelCore.types.Expression>((acc, prop) => {
+    const key = /^[a-zA-Z_$][\w$]*$/.test(prop) ? t.identifier(prop) : t.stringLiteral(prop)
+    return t.memberExpression(acc, key, t.isStringLiteral(key))
+  }, baseCall)
+}
+
+/**
  * Apply region metadata to influence code generation.
  * This is the integration point between HIR reactive scopes and fine-grained DOM.
  *
@@ -95,11 +122,22 @@ export function applyRegionMetadata(
   state.regionMetadata = region
 
   // If region has dependencies, set up identifier overrides to call getters
-  if (region.dependencies.size > 0 && options.dependencyGetter) {
+  if (region.dependencies.size > 0) {
     state.identifierOverrides = state.identifierOverrides ?? {}
+    const dependencyGetter = options.dependencyGetter ?? null
+    if (!dependencyGetter) {
+      return
+    }
+
     for (const dep of region.dependencies) {
-      const getter = options.dependencyGetter
-      state.identifierOverrides[dep] = () => getter(dep)
+      const key = normalizeDependencyKey(dep)
+      state.identifierOverrides[key] = () => dependencyGetter(dep)
+
+      // Also register the root identifier for dotted paths so member expressions resolve
+      const base = key.split('.')[0]
+      if (base && !state.identifierOverrides[base]) {
+        state.identifierOverrides[base] = () => dependencyGetter(base)
+      }
     }
   }
 }
@@ -609,12 +647,32 @@ function replaceIdentifiers(
   node: BabelCore.types.Node,
   overrides: IdentifierOverrideMap,
   t: typeof BabelCore.types,
+  parentKind?: string,
+  parentKey?: string,
 ): void {
   if (!node || typeof node !== 'object') return
 
+  const isCallTarget =
+    parentKey === 'callee' &&
+    (parentKind === 'CallExpression' || parentKind === 'OptionalCallExpression')
+
+  // Replace member expressions when the full path matches (property-level deps)
+  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node as any)) {
+    const path = getMemberPath(node as any, t)
+    if (path) {
+      const factoryFn = overrides[path] ?? overrides[normalizeDependencyKey(path)]
+      if (factoryFn && !isCallTarget) {
+        const replacement = factoryFn()
+        Object.assign(node, replacement)
+        return
+      }
+    }
+  }
+
   // For identifiers, replace if we have an override
   if (t.isIdentifier(node)) {
-    const factoryFn = overrides[node.name]
+    const normalized = normalizeDependencyKey(node.name)
+    const factoryFn = overrides[node.name] ?? overrides[normalized]
     if (factoryFn) {
       const replacement = factoryFn()
       // Copy properties from replacement to node
@@ -626,17 +684,48 @@ function replaceIdentifiers(
   // Recursively process all child nodes
   for (const key of Object.keys(node)) {
     if (key === 'type' || key === 'loc' || key === 'start' || key === 'end') continue
+    if (t.isObjectProperty(node as any) && key === 'key' && !(node as any).computed) {
+      continue
+    }
     const value = (node as unknown as Record<string, unknown>)[key]
     if (Array.isArray(value)) {
       for (const item of value) {
         if (item && typeof item === 'object') {
-          replaceIdentifiers(item as BabelCore.types.Node, overrides, t)
+          replaceIdentifiers(item as BabelCore.types.Node, overrides, t, node.type, key)
         }
       }
     } else if (value && typeof value === 'object') {
-      replaceIdentifiers(value as BabelCore.types.Node, overrides, t)
+      replaceIdentifiers(value as BabelCore.types.Node, overrides, t, node.type, key)
     }
   }
+}
+
+function getMemberPath(
+  node: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
+  t: typeof BabelCore.types,
+): string | null {
+  const object = (node as any).object
+  const property = (node as any).property
+
+  const objectPath = t.isIdentifier(object)
+    ? normalizeDependencyKey(object.name)
+    : t.isMemberExpression(object) || t.isOptionalMemberExpression(object)
+      ? getMemberPath(object, t)
+      : null
+
+  if (!objectPath) return null
+
+  let propName: string | null = null
+  if ((node as any).computed) {
+    if (t.isStringLiteral(property) || t.isNumericLiteral(property)) {
+      propName = String((property as any).value)
+    }
+  } else if (t.isIdentifier(property)) {
+    propName = property.name
+  }
+
+  if (!propName) return objectPath
+  return `${objectPath}.${propName}`
 }
 
 export function transformFineGrainedJsx(
@@ -660,10 +749,11 @@ export function transformFineGrainedJsx(
   }
 
   if (regionOptions?.region) {
+    const dependencyGetter =
+      regionOptions.dependencyGetter ?? (name => buildRegionDependencyGetter(name, t))
     applyRegionMetadata(state, {
       region: regionOptions.region,
-      dependencyGetter:
-        regionOptions.dependencyGetter ?? (name => t.callExpression(t.identifier(name), [])),
+      dependencyGetter,
       emitMemo: regionOptions.emitMemo,
       emitDestructuring: regionOptions.emitDestructuring,
     })

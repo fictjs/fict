@@ -17,6 +17,7 @@ function runTransform(
   const mergedOptions: FictCompilerOptions = {
     experimentalHIR: true,
     hirCodegen: true,
+    hirEntrypoint: options.hirEntrypoint ?? true,
     ...options,
   }
 
@@ -24,9 +25,9 @@ function runTransform(
   // 1. Non-fine-grained mode: all JSX
   // 2. Fine-grained mode: component JSX (<App />) and fragments (<></>)
   //    since the Fict compiler only handles intrinsic elements
-  const jsxPlugins: PluginItem[] = [
-    [pluginTransformReactJsx, { runtime: 'automatic', importSource: '@fictjs/runtime' }],
-  ]
+  const jsxPlugins: PluginItem[] = mergedOptions.hirEntrypoint
+    ? []
+    : [[pluginTransformReactJsx, { runtime: 'automatic', importSource: '@fictjs/runtime' }]]
 
   const result = transformSync(source, {
     filename,
@@ -69,7 +70,26 @@ export function transformHIR(
   options: FictCompilerOptions = {},
   filename = 'module.tsx',
 ): string {
-  return runTransform(source, { experimentalHIR: true, hirCodegen: true, ...options }, filename)
+  return runTransform(
+    source,
+    { experimentalHIR: true, hirCodegen: true, hirEntrypoint: true, ...options },
+    filename,
+  )
+}
+
+/**
+ * Legacy transform function - opt back into legacy visitor for specific tests.
+ */
+export function transformLegacy(
+  source: string,
+  options: FictCompilerOptions = {},
+  filename = 'module.tsx',
+): string {
+  return runTransform(
+    source,
+    { experimentalHIR: true, hirCodegen: true, hirEntrypoint: false, ...options },
+    filename,
+  )
 }
 
 /**

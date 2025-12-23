@@ -115,7 +115,7 @@ function buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Bas
         block.instructions.push({
           kind: 'Assign',
           target: { kind: 'Identifier', name: stmt.expression.left.name },
-          value: convertExpression(stmt.expression.right as BabelCore.types.Expression),
+          value: convertAssignmentValue(stmt.expression),
         })
       } else {
         block.instructions.push({
@@ -339,7 +339,7 @@ function convertFunction(
         current.block.instructions.push({
           kind: 'Assign',
           target: { kind: 'Identifier', name: stmt.expression.left.name },
-          value: convertExpression(stmt.expression.right as BabelCore.types.Expression),
+          value: convertAssignmentValue(stmt.expression),
         })
       } else {
         current.block.instructions.push({
@@ -747,6 +747,42 @@ function convertFunction(
 }
 
 /**
+ * Build an HIR function from a list of statements.
+ * Useful for lowering top-level (non-export) statement sequences with the same codegen path as functions.
+ */
+export function convertStatementsToHIRFunction(
+  name: string,
+  statements: BabelCore.types.Statement[],
+): HIRFunction {
+  return convertFunction(name, [], statements)
+}
+
+function convertAssignmentValue(expr: BabelCore.types.AssignmentExpression): Expression {
+  const right = convertExpression(expr.right as BabelCore.types.Expression)
+  if (expr.operator === '=') return right
+
+  const operatorMap: Record<string, string> = {
+    '+=': '+',
+    '-=': '-',
+    '*=': '*',
+    '/=': '/',
+    '%=': '%',
+    '**=': '**',
+  }
+  const mapped = operatorMap[expr.operator]
+  if (mapped && t.isIdentifier(expr.left)) {
+    return {
+      kind: 'BinaryExpression',
+      operator: mapped,
+      left: { kind: 'Identifier', name: expr.left.name },
+      right,
+    }
+  }
+
+  return right
+}
+
+/**
  * Context for building nested control flow structures.
  * This enables recursive handling of if/for/while inside branches.
  */
@@ -825,7 +861,7 @@ function processStatement(
       push({
         kind: 'Assign',
         target: { kind: 'Identifier', name: stmt.expression.left.name },
-        value: convertExpression(stmt.expression.right as BabelCore.types.Expression),
+        value: convertAssignmentValue(stmt.expression),
       })
     } else {
       push({ kind: 'Expression', value: convertExpression(stmt.expression) })

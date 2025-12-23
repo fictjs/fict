@@ -99,6 +99,11 @@ export interface FictCompilerOptions {
    * Requires experimentalHIR to be true. Default: true
    */
   hirCodegen?: boolean
+  /**
+   * Enable the HIR-only entrypoint that skips legacy visitors and emits code
+   * directly from the HIR → SSA → Region pipeline. Default: true.
+   */
+  hirEntrypoint?: boolean
 }
 
 export interface VisitorOptions {

@@ -7,10 +7,11 @@
 
 import type * as BabelCore from '@babel/core'
 
+import { RUNTIME_ALIASES } from '../constants'
 import type { RegionMetadata } from '../fine-grained-dom'
 
-import type { CodegenContext } from './codegen'
-import { lowerExpression } from './codegen'
+import type { CodegenContext, RegionInfo } from './codegen'
+import { applyRegionToContext, applyRegionMetadataToExpression, lowerExpression } from './codegen'
 import type { BasicBlock, BlockId, HIRFunction, HIRProgram, Expression, Instruction } from './hir'
 import type { ReactiveScope, ReactiveScopeResult } from './scopes'
 import { getScopeDependencies } from './scopes'
@@ -133,6 +134,10 @@ function createRegionFromScope(
   const baseDeps = getScopeDependencies(scope)
   const dependencies = new Set<string>()
   for (const dep of baseDeps) {
+    const baseName = dep.split('.')[0]
+    if (scope.dependencies.size > 0 && !scope.dependencies.has(baseName)) {
+      continue
+    }
     const props = getPropertySubscription(dep, shapeResult)
     if (props && props.size > 0 && !shouldUseWholeObjectSubscription(dep, shapeResult)) {
       props.forEach(p => dependencies.add(`${dep}.${p}`))
@@ -200,6 +205,47 @@ function containsJSXExpr(expr: any): boolean {
       return containsJSXExpr(expr.consequent) || containsJSXExpr(expr.alternate)
     case 'ArrowFunction':
       return containsJSXExpr(expr.body)
+    default:
+      return false
+  }
+
+  return false
+}
+
+function expressionUsesTracked(expr: Expression, ctx: CodegenContext): boolean {
+  switch (expr.kind) {
+    case 'Identifier':
+      return ctx.trackedVars.has(deSSAVarName(expr.name))
+    case 'MemberExpression':
+      return expressionUsesTracked(expr.object as Expression, ctx)
+    case 'CallExpression':
+      if (expressionUsesTracked(expr.callee as Expression, ctx)) return true
+      return expr.arguments.some(arg => expressionUsesTracked(arg as Expression, ctx))
+    case 'LogicalExpression':
+      return (
+        expressionUsesTracked(expr.left as Expression, ctx) ||
+        expressionUsesTracked(expr.right as Expression, ctx)
+      )
+    case 'BinaryExpression':
+      return (
+        expressionUsesTracked(expr.left as Expression, ctx) ||
+        expressionUsesTracked(expr.right as Expression, ctx)
+      )
+    case 'ConditionalExpression':
+      return (
+        expressionUsesTracked(expr.test as Expression, ctx) ||
+        expressionUsesTracked(expr.consequent as Expression, ctx) ||
+        expressionUsesTracked(expr.alternate as Expression, ctx)
+      )
+    case 'ArrayExpression':
+      return expr.elements.some(el => el && expressionUsesTracked(el as Expression, ctx))
+    case 'ObjectExpression':
+      return expr.properties.some(p => {
+        if (p.kind === 'SpreadElement') return expressionUsesTracked(p.argument as Expression, ctx)
+        return expressionUsesTracked(p.value as Expression, ctx)
+      })
+    case 'TemplateLiteral':
+      return expr.expressions.some(e => expressionUsesTracked(e as Expression, ctx))
     default:
       return false
   }
@@ -709,6 +755,14 @@ function generateRegionStatements(
   ctx: CodegenContext,
 ): BabelCore.types.Statement[] {
   const statements: BabelCore.types.Statement[] = []
+  const regionInfo = {
+    id: region.id,
+    dependencies: new Set(Array.from(region.dependencies).map(d => deSSAVarName(d))),
+    declarations: new Set(Array.from(region.declarations).map(d => deSSAVarName(d))),
+    hasControlFlow: region.hasControlFlow,
+    hasReactiveWrites: region.declarations.size > 0,
+  }
+  const prevRegion = applyRegionToContext(ctx, regionInfo)
 
   if (!region.shouldMemoize || region.dependencies.size === 0) {
     // No memoization needed - just emit instructions directly
@@ -722,6 +776,7 @@ function generateRegionStatements(
     statements.push(...memoStatements)
   }
 
+  applyRegionToContext(ctx, prevRegion ?? null)
   return statements
 }
 
@@ -737,6 +792,7 @@ function wrapInMemo(
   const statements: BabelCore.types.Statement[] = []
   const bodyStatements: BabelCore.types.Statement[] = []
   const localDeclared = new Set<string>()
+  ctx.helpersUsed.add('useMemo')
 
   // Convert instructions to statements
   for (const instr of region.instructions) {
@@ -814,9 +870,53 @@ function instructionToStatement(
   if (instr.kind === 'Assign') {
     const ssaName = instr.target.name
     const baseName = deSSAVarName(ssaName)
+    const isTracked = ctx.trackedVars.has(baseName)
+    const aliasVars = ctx.aliasVars ?? (ctx.aliasVars = new Set())
+    const dependsOnTracked = expressionUsesTracked(instr.value, ctx)
+    const capturedTracked =
+      ctx.externalTracked && ctx.externalTracked.has(baseName) && !declaredVars.has(baseName)
+
+    if (aliasVars.has(baseName) && declaredVars.has(baseName)) {
+      throw new Error(`Alias reassignment is not supported for "${baseName}"`)
+    }
+
+    if (capturedTracked && isTracked) {
+      // Captured tracked binding from an outer scope - treat as setter call
+      return t.expressionStatement(
+        t.callExpression(t.identifier(baseName), [lowerExpressionWithDeSSA(instr.value, ctx)]),
+      )
+    }
+
+    // Alias of a tracked variable: const alias = count -> const alias = () => count()
+    if (instr.value.kind === 'Identifier') {
+      const source = deSSAVarName(instr.value.name)
+      if (ctx.trackedVars.has(source) && !declaredVars.has(baseName)) {
+        aliasVars.add(baseName)
+        ctx.trackedVars.add(baseName)
+        return t.variableDeclaration('const', [
+          t.variableDeclarator(
+            t.identifier(baseName),
+            t.arrowFunctionExpression([], t.callExpression(t.identifier(source), [])),
+          ),
+        ])
+      }
+    }
+
+    if (aliasVars.has(baseName) && !declaredVars.has(baseName)) {
+      throw new Error(`Alias reassignment is not supported for "${baseName}"`)
+    }
 
     if (declaredVars.has(baseName)) {
+      if (aliasVars.has(baseName)) {
+        throw new Error(`Alias reassignment is not supported for "${baseName}"`)
+      }
+
       // Already declared - use assignment expression
+      if (isTracked) {
+        return t.expressionStatement(
+          t.callExpression(t.identifier(baseName), [lowerExpressionWithDeSSA(instr.value, ctx)]),
+        )
+      }
       return t.expressionStatement(
         t.assignmentExpression(
           '=',
@@ -824,13 +924,58 @@ function instructionToStatement(
           lowerExpressionWithDeSSA(instr.value, ctx),
         ),
       )
-    } else {
-      // First declaration - use let (allows reassignment)
-      declaredVars.add(baseName)
+    }
+
+    // First declaration - use let (allows reassignment)
+    declaredVars.add(baseName)
+    if (isTracked) {
+      // $state calls remain signals; other tracked values become memos
+      if (
+        instr.value.kind === 'CallExpression' &&
+        instr.value.callee.kind === 'Identifier' &&
+        instr.value.callee.name === '$state'
+      ) {
+        return t.variableDeclaration('const', [
+          t.variableDeclarator(t.identifier(baseName), lowerExpressionWithDeSSA(instr.value, ctx)),
+        ])
+      }
+
+      if (dependsOnTracked) {
+        ctx.helpersUsed.add('useMemo')
+        ctx.needsCtx = true
+        return t.variableDeclaration('const', [
+          t.variableDeclarator(
+            t.identifier(baseName),
+            t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
+              t.identifier('__fictCtx'),
+              t.arrowFunctionExpression([], lowerExpressionWithDeSSA(instr.value, ctx)),
+            ]),
+          ),
+        ])
+      }
+
       return t.variableDeclaration('let', [
         t.variableDeclarator(t.identifier(baseName), lowerExpressionWithDeSSA(instr.value, ctx)),
       ])
     }
+
+    if (dependsOnTracked) {
+      ctx.helpersUsed.add('useMemo')
+      ctx.needsCtx = true
+      return t.variableDeclaration('const', [
+        t.variableDeclarator(
+          t.identifier(baseName),
+          t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
+            t.identifier('__fictCtx'),
+            t.arrowFunctionExpression([], lowerExpressionWithDeSSA(instr.value, ctx)),
+          ]),
+        ),
+      ])
+    }
+
+    return t.variableDeclaration('let', [
+      t.variableDeclarator(t.identifier(baseName), lowerExpressionWithDeSSA(instr.value, ctx)),
+    ])
   }
   if (instr.kind === 'Expression') {
     return t.expressionStatement(lowerExpressionWithDeSSA(instr.value, ctx))
@@ -846,8 +991,25 @@ function lowerExpressionWithDeSSA(
   expr: Expression,
   ctx: CodegenContext,
 ): BabelCore.types.Expression {
+  const regionOverride =
+    ctx.currentRegion ??
+    (ctx.trackedVars.size
+      ? {
+          id: -1,
+          dependencies: new Set(ctx.trackedVars),
+          declarations: new Set<string>(),
+          hasControlFlow: false,
+          hasReactiveWrites: false,
+        }
+      : null)
+
   const result = lowerExpression(expr, ctx)
-  return deSSAExpression(result, ctx.t)
+  const regionApplied = applyRegionMetadataToExpression(
+    result,
+    ctx,
+    (regionOverride as RegionInfo | null) ?? undefined,
+  )
+  return deSSAExpression(regionApplied, ctx.t)
 }
 
 /**

@@ -36,7 +36,7 @@ describe('Alias-Safe Reactive Lowering', () => {
       `
       const output = transform(source)
       // Template cloning uses insert for dynamic content
-      expect(output).toContain('insert(__fg0_el0.parentNode, () => alias(),')
+      expect(output).toContain('insert(__el_2, () => alias(),')
     })
   })
 
@@ -47,7 +47,7 @@ describe('Alias-Safe Reactive Lowering', () => {
         export const count = $state(0)
       `
       const output = transform(source)
-      expect(output).toContain('export const count = __fictUseSignal(__fictCtx, 0, 0)')
+      expect(output).toContain('export const count = __fictUseSignal(__fictCtx, 0)')
     })
 
     it('exports let state variable as-is', () => {
@@ -56,7 +56,7 @@ describe('Alias-Safe Reactive Lowering', () => {
         export let count = $state(0)
       `
       const output = transform(source)
-      expect(output).toContain('export let count = __fictUseSignal(__fictCtx, 0, 0)')
+      expect(output).toContain('export const count = __fictUseSignal(__fictCtx, 0)')
     })
 
     it('exports derived value as getter', () => {

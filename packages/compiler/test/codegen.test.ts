@@ -132,4 +132,40 @@ describe('region metadata → DOM', () => {
     expect(code).toMatch(/color\(\)/)
     expect(code).toMatch(/props(?:\(\))?\.label/)
   })
+
+  it('applies dependency getters for property-level JSX reads', () => {
+    const ast = parseFile(`
+      function View() {
+        const state = $state({ user: { name: 'Ada' } })
+        return <div className={state.user.name}>{state.user.name}</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/state\(\)\.user\.name/)
+    expect(code).toContain('bindClass')
+  })
+})
+
+describe('tracked reads/writes in HIR codegen', () => {
+  it('lowers tracked identifier reads and writes to signal calls', () => {
+    const ast = parseFile(`
+      function Counter() {
+        let count = $state(0)
+        count = count + 1
+        count++
+        return count
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('__fictUseSignal')
+    expect(code).toContain('count(count() + 1)')
+    expect(code).toContain('count() + 1')
+    expect(code).toMatch(/return count\(\)/)
+  })
 })

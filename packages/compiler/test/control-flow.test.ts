@@ -59,7 +59,7 @@ describe('Fict Compiler - Control Flow', () => {
       // Should have getItems arrow function
       expect(output).toContain('() => items()')
       // Should have keyFn
-      expect(output).toContain('(item')
+      expect(output).toContain('item =>')
     })
 
     it('handles keyed list with object property as key', () => {
@@ -73,7 +73,7 @@ describe('Fict Compiler - Control Flow', () => {
       // Non-fine-grained mode uses insert, not createKeyedListContainer
       expect(output).toContain('insert')
       // Should extract user.id as key
-      expect(output).toContain('user.id')
+      expect(output).toContain('user().id')
     })
 
     it('handles list without key (fallback to old createList)', () => {

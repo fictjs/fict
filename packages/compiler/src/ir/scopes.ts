@@ -407,10 +407,18 @@ function collectExprReads(expr: any, into: Set<string>, paths?: Map<string, Depe
         addPath(paths, expr.name, path)
       }
       return
-    case 'CallExpression':
-      collectExprReads(expr.callee, into, paths)
+    case 'CallExpression': {
+      const isMacroCallee =
+        expr.callee.kind === 'Identifier' &&
+        (expr.callee.name === '$state' || expr.callee.name === '$effect')
+
+      if (!isMacroCallee) {
+        collectExprReads(expr.callee, into, paths)
+      }
+
       expr.arguments?.forEach((a: any) => collectExprReads(a, into, paths))
       return
+    }
     case 'MemberExpression':
       // Extract full dependency path for optional chain analysis
       const depPath = extractDependencyPath(expr)
@@ -445,7 +453,16 @@ function collectExprReads(expr: any, into: Set<string>, paths?: Map<string, Depe
       return
     case 'ObjectExpression':
       expr.properties?.forEach((p: any) => {
-        collectExprReads(p.key, into, paths)
+        if (p.kind === 'SpreadElement') {
+          collectExprReads(p.argument, into, paths)
+          return
+        }
+
+        // Only collect computed keys; static keys are not dependencies
+        if (p.computed) {
+          collectExprReads(p.key, into, paths)
+        }
+
         collectExprReads(p.value, into, paths)
       })
       return
