@@ -1,12 +1,11 @@
 import { describe, it, expect } from 'vitest'
-
-import { transformLegacyDom } from './test-utils'
+import { transform } from './test-utils'
 
 /**
  * Helper to transform source code and return the result
  */
-function transform(source: string): string {
-  return transformLegacyDom(source)
+function runTransform(source: string): string {
+  return transform(source)
 }
 
 describe('Fict Compiler - Control Flow', () => {
@@ -17,7 +16,7 @@ describe('Fict Compiler - Control Flow', () => {
         let show = $state(true)
         const el = <div>{show && <Modal />}</div>
       `
-      const output = transform(input)
+      const output = runTransform(input)
       // Should wrap the conditional in an arrow function
       expect(output).toContain('() => show()')
     })
@@ -28,7 +27,7 @@ describe('Fict Compiler - Control Flow', () => {
         let condition = $state(true)
         const el = <div>{condition ? <A /> : <B />}</div>
       `
-      const output = transform(input)
+      const output = runTransform(input)
       // Should wrap the ternary in an arrow function
       expect(output).toContain('() => condition()')
     })
@@ -39,7 +38,7 @@ describe('Fict Compiler - Control Flow', () => {
         let count = $state(0)
         const status = count > 10 ? 'high' : 'low'
       `
-      const output = transform(input)
+      const output = runTransform(input)
       // Ternary derived should be memoized
       expect(output).toContain('__fictUseMemo')
       expect(output).toContain('count() > 10')
@@ -53,7 +52,7 @@ describe('Fict Compiler - Control Flow', () => {
         let items = $state([1, 2, 3])
         const el = <ul>{items.map(item => <li key={item}>{item}</li>)}</ul>
       `
-      const output = transform(input)
+      const output = runTransform(input)
       // Should use keyed list container helpers
       // Non-fine-grained mode uses insert, not createKeyedListContainer
       expect(output).toContain('insert')
@@ -69,7 +68,7 @@ describe('Fict Compiler - Control Flow', () => {
         let users = $state([{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }])
         const el = <ul>{users.map(user => <li key={user.id}>{user.name}</li>)}</ul>
       `
-      const output = transform(input)
+      const output = runTransform(input)
       // Should use keyed list container helpers
       // Non-fine-grained mode uses insert, not createKeyedListContainer
       expect(output).toContain('insert')
@@ -83,7 +82,7 @@ describe('Fict Compiler - Control Flow', () => {
         let items = $state([1, 2, 3])
         const el = <ul>{items.map(item => <li>{item}</li>)}</ul>
       `
-      const output = transform(input)
+      const output = runTransform(input)
       // Non-fine-grained mode uses insert instead of __fictList
       expect(output).toContain('insert')
       // Should NOT use keyed list helpers
@@ -96,7 +95,7 @@ describe('Fict Compiler - Control Flow', () => {
         let items = $state(['a', 'b', 'c'])
         const list = items.map((item, i) => \`\${i}: \${item}\`)
       `
-      const output = transform(input)
+      const output = runTransform(input)
       expect(output).toContain('items().map')
     })
 
@@ -107,7 +106,7 @@ describe('Fict Compiler - Control Flow', () => {
         let numbers = $state([1, 2, 3])
         const doubled = numbers.map(n => n * multiplier)
       `
-      const output = transform(input)
+      const output = runTransform(input)
       // Both state variables should be transformed
       expect(output).toContain('multiplier()')
       expect(output).toContain('numbers()')
@@ -126,7 +125,7 @@ describe('Fict Compiler - Control Flow', () => {
           message = 'Low'
         }
       `
-      const output = transform(input)
+      const output = runTransform(input)
       // count should be transformed in conditional
       expect(output).toContain('count() > 10')
       // message is not derived, should not be wrapped
@@ -141,7 +140,7 @@ describe('Fict Compiler - Control Flow', () => {
           const message = \`Count: \${count}\`
         }
       `
-      const output = transform(input)
+      const output = runTransform(input)
       // const in if block referencing state should be memoized
       expect(output).toContain('count()')
     })
@@ -164,7 +163,7 @@ describe('Fict Compiler - Control Flow', () => {
             color = 'black'
         }
       `
-      const output = transform(input)
+      const output = runTransform(input)
       expect(output).toContain('status()')
     })
   })
@@ -179,7 +178,7 @@ describe('Fict Compiler - Control Flow', () => {
           sum += i
         }
       `
-      const output = transform(input)
+      const output = runTransform(input)
       // max should be read with getter in condition
       expect(output).toContain('max()')
     })
@@ -193,7 +192,7 @@ describe('Fict Compiler - Control Flow', () => {
           sum += item
         }
       `
-      const output = transform(input)
+      const output = runTransform(input)
       expect(output).toContain('items()')
     })
 
@@ -204,7 +203,7 @@ describe('Fict Compiler - Control Flow', () => {
           let count = $state(0)
         }
       `
-      expect(() => transform(input)).toThrow('cannot be declared inside loops')
+      expect(() => runTransform(input)).toThrow('cannot be declared inside loops')
     })
   })
 
@@ -216,7 +215,7 @@ describe('Fict Compiler - Control Flow', () => {
         let b = $state(2)
         const result = a > 0 ? (b > 0 ? 'both positive' : 'a positive') : 'a not positive'
       `
-      const output = transform(input)
+      const output = runTransform(input)
       expect(output).toContain('a()')
       expect(output).toContain('b()')
       expect(output).toContain('__fictUseMemo')
@@ -229,7 +228,7 @@ describe('Fict Compiler - Control Flow', () => {
         let threshold = $state(3)
         const filtered = items.map(x => x > threshold ? 'high' : 'low')
       `
-      const output = transform(input)
+      const output = runTransform(input)
       expect(output).toContain('items()')
       expect(output).toContain('threshold()')
     })
@@ -245,7 +244,7 @@ describe('Fict Compiler - Complex Scenarios', () => {
         const staticValue = 42
         const combined = count + staticValue
       `
-      const output = transform(input)
+      const output = runTransform(input)
       expect(output).toContain('count() + staticValue')
       expect(output).toContain('__fictUseMemo')
     })
@@ -257,7 +256,7 @@ describe('Fict Compiler - Complex Scenarios', () => {
         let reactiveValue = $state(10)
         const result = useReactive ? reactiveValue : 5
       `
-      const output = transform(input)
+      const output = runTransform(input)
       expect(output).toContain('useReactive()')
       expect(output).toContain('reactiveValue()')
     })
@@ -271,7 +270,7 @@ describe('Fict Compiler - Complex Scenarios', () => {
         let y = $state(2)
         const sum = Math.max(x, y)
       `
-      const output = transform(input)
+      const output = runTransform(input)
       expect(output).toContain('Math.max(x(), y())')
       expect(output).toContain('__fictUseMemo')
     })
@@ -282,7 +281,7 @@ describe('Fict Compiler - Complex Scenarios', () => {
         let text = $state('hello')
         const upper = text.toUpperCase()
       `
-      const output = transform(input)
+      const output = runTransform(input)
       expect(output).toContain('text().toUpperCase()')
       expect(output).toContain('__fictUseMemo')
     })
@@ -295,7 +294,7 @@ describe('Fict Compiler - Complex Scenarios', () => {
         const filtered = items.filter(x => x > 1)
         const first = items[0]
       `
-      const output = transform(input)
+      const output = runTransform(input)
       expect(output).toContain('items().map')
       expect(output).toContain('items().filter')
       expect(output).toContain('items()[0]')

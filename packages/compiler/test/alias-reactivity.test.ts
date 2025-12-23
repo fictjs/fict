@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest'
-
-import { transformFineGrained } from './test-utils'
-
-const transform = (source: string) => {
-  return transformFineGrained(source)
-}
+import { transform } from './test-utils'
 
 describe('Alias-Safe Reactive Lowering', () => {
   describe('Local Aliasing', () => {

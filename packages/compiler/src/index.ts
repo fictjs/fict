@@ -56,8 +56,14 @@ export const createFictPlugin = declare(
     api.assertVersion(7)
     const t = api.types as typeof BabelCore.types
 
+    if (options.experimentalHIR === false || options.hirCodegen === false) {
+      throw new Error('HIR-only compiler: experimentalHIR/hirCodegen cannot be disabled')
+    }
+
     const mergedOptions: FictCompilerOptions = {
       fineGrainedDom: true,
+      experimentalHIR: true,
+      hirCodegen: true,
       ...options,
     }
 

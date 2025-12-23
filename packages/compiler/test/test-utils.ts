@@ -14,6 +14,12 @@ function runTransform(
   filename = 'module.tsx',
   extraPlugins: PluginItem[] = [],
 ): string {
+  const mergedOptions: FictCompilerOptions = {
+    experimentalHIR: true,
+    hirCodegen: true,
+    ...options,
+  }
+
   // Always use @babel/plugin-transform-react-jsx to handle:
   // 1. Non-fine-grained mode: all JSX
   // 2. Fine-grained mode: component JSX (<App />) and fragments (<></>)
@@ -35,7 +41,7 @@ function runTransform(
     // JSX plugin runs AFTER Fict plugin (Babel runs plugins left to right, but visitors run bottom-up)
     // However, for conditional bindings, we need the JSX inside arrow functions to be transformed
     // The Fict plugin should handle transforming JSX inside these generated constructs
-    plugins: [[createFictPlugin, options], ...jsxPlugins, ...extraPlugins],
+    plugins: [[createFictPlugin, mergedOptions], ...jsxPlugins, ...extraPlugins],
     presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
     generatorOpts: {
       compact: false,
@@ -53,14 +59,22 @@ export function transformFineGrained(
   return runTransform(source, options, filename)
 }
 
-export function transformLegacyDom(
+export const transform = transformFineGrained
+
+/**
+ * HIR transform function - uses HIR codegen path (for function-based code only)
+ */
+export function transformHIR(
   source: string,
   options: FictCompilerOptions = {},
   filename = 'module.tsx',
 ): string {
-  return runTransform(source, { fineGrainedDom: false, ...options }, filename)
+  return runTransform(source, { experimentalHIR: true, hirCodegen: true, ...options }, filename)
 }
 
+/**
+ * Transform with CommonJS output - for runtime integration tests that use require()
+ */
 export function transformCommonJS(
   source: string,
   options: FictCompilerOptions = {},

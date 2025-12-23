@@ -2,7 +2,118 @@ import type * as BabelCore from '@babel/core'
 
 import type { TransformContext } from './types'
 
-const NO_MEMO_DIRECTIVE_TEXT = 'use no memo'
+// ============================================================================
+// Compiler Directives
+// ============================================================================
+
+/**
+ * Directive types recognized by the Fict compiler
+ */
+export enum DirectiveType {
+  /** Enable Fict compiler for this scope */
+  FictCompiler = 'use fict-compiler',
+  /** Disable Fict compiler for this scope */
+  FictCompilerDisable = 'use fict-compiler-disable',
+  /** Disable memo optimization for this scope */
+  NoMemo = 'use no memo',
+}
+
+/**
+ * Result of parsing directives
+ */
+export interface DirectiveResult {
+  type: DirectiveType
+  found: boolean
+}
+
+const NO_MEMO_DIRECTIVE_TEXT = DirectiveType.NoMemo
+
+/**
+ * Parse all directives from a program or block statement
+ */
+export function parseDirectives(
+  path: BabelCore.NodePath<BabelCore.types.Program | BabelCore.types.BlockStatement>,
+  t: typeof BabelCore.types,
+): DirectiveResult[] {
+  const results: DirectiveResult[] = []
+  const directiveTexts = Object.values(DirectiveType) as string[]
+
+  // Check formal directives
+  if (Array.isArray(path.node.directives)) {
+    for (const d of path.node.directives) {
+      const value = d.value.value
+      if (directiveTexts.includes(value)) {
+        results.push({ type: value as DirectiveType, found: true })
+      }
+    }
+  }
+
+  // Check string literal at start of body
+  const body = (path.node as BabelCore.types.Program | BabelCore.types.BlockStatement).body
+  if (Array.isArray(body) && body.length > 0) {
+    const first = body[0]
+    if (t.isExpressionStatement(first) && t.isStringLiteral(first.expression)) {
+      const value = first.expression.value
+      if (directiveTexts.includes(value)) {
+        results.push({ type: value as DirectiveType, found: true })
+      }
+    }
+  }
+
+  // Check leading comments
+  if (Array.isArray(body) && body.length > 0) {
+    const firstStmt = body[0]
+    const comments = (firstStmt?.leadingComments ?? []).map(c => c.value.trim())
+    for (const comment of comments) {
+      for (const directive of directiveTexts) {
+        if (comment.includes(directive)) {
+          results.push({ type: directive as DirectiveType, found: true })
+        }
+      }
+    }
+  }
+
+  return results
+}
+
+/**
+ * Check if a specific directive is present
+ */
+export function hasDirective(
+  path: BabelCore.NodePath<BabelCore.types.Program | BabelCore.types.BlockStatement>,
+  directive: DirectiveType,
+  t: typeof BabelCore.types,
+): boolean {
+  const results = parseDirectives(path, t)
+  return results.some(r => r.type === directive)
+}
+
+/**
+ * Remove a directive from the AST
+ */
+export function removeDirective(
+  path: BabelCore.NodePath<BabelCore.types.Program | BabelCore.types.BlockStatement>,
+  directive: DirectiveType,
+  t: typeof BabelCore.types,
+): void {
+  // Remove from formal directives
+  if (Array.isArray(path.node.directives)) {
+    path.node.directives = path.node.directives.filter(d => d.value.value !== directive)
+  }
+
+  // Remove from body
+  const body = (path.node as BabelCore.types.Program | BabelCore.types.BlockStatement).body
+  if (Array.isArray(body) && body.length > 0) {
+    const first = body[0]
+    if (
+      t.isExpressionStatement(first) &&
+      t.isStringLiteral(first.expression) &&
+      first.expression.value === directive
+    ) {
+      body.shift()
+    }
+  }
+}
 
 export function detectNoMemoDirective(
   path: BabelCore.NodePath<BabelCore.types.Program | BabelCore.types.BlockStatement>,

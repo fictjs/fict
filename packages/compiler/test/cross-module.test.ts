@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { type FictCompilerOptions } from '../src/index'
-
-import { transformFineGrained as transform } from './test-utils'
+import { transform } from './test-utils'
 
 describe('Cross-Module Reactivity', () => {
   describe('Store Module (Exports)', () => {

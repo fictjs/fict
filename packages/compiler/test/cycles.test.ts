@@ -1,11 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import { type FictCompilerOptions } from '../src/index'
+import { transform } from './test-utils'
 
-import { transformFineGrained } from './test-utils'
-
-const transform = (source: string, options?: FictCompilerOptions) => {
-  return transformFineGrained(source, options)
+const run = (source: string, options?: FictCompilerOptions) => {
+  return transform(source, options)
 }
 
 describe('Error/Cycle Protection', () => {
@@ -17,7 +16,7 @@ describe('Error/Cycle Protection', () => {
       const b = count + a
     `
     // Should throw compiler error
-    expect(() => transform(source)).toThrow(/Detected cyclic derived dependency/)
+    expect(() => run(source)).toThrow(/Detected cyclic derived dependency/)
   })
 
   it('detects self-reference: a -> a', () => {
@@ -26,7 +25,7 @@ describe('Error/Cycle Protection', () => {
       const count = $state(0)
       const a = count + a
     `
-    expect(() => transform(source)).toThrow(/Detected cyclic derived dependency/)
+    expect(() => run(source)).toThrow(/Detected cyclic derived dependency/)
   })
 
   it('detects long cycle: a -> b -> c -> a', () => {
@@ -37,7 +36,7 @@ describe('Error/Cycle Protection', () => {
       const b = c + 1
       const c = a + 1
     `
-    expect(() => transform(source)).toThrow(/Detected cyclic derived dependency/)
+    expect(() => run(source)).toThrow(/Detected cyclic derived dependency/)
   })
 
   it('allows linear dependencies: a -> b -> c', () => {
@@ -49,7 +48,7 @@ describe('Error/Cycle Protection', () => {
       const c = b + 1
       console.log(c)
     `
-    const output = transform(source)
+    const output = run(source)
     expect(output).toContain('const c =')
     expect(output).not.toContain('const c = c')
   })

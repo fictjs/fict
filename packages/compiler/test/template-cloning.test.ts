@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { transformFineGrained } from './test-utils'
+import { transform } from './test-utils'
 
 describe('Template Cloning Strategy', () => {
   const compile = (code: string) => {
-    return transformFineGrained(code, { fineGrainedDom: true })
+    return transform(code, { fineGrainedDom: true })
   }
 
   it('compiles specific static JSX to template cloning', () => {

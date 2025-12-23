@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest'
-
-import { transformFineGrained } from './test-utils'
-
-const transform = (source: string): string => {
-  return transformFineGrained(source)
-}
+import { transform } from './test-utils'
 
 describe('Condition hoisting respects function scope', () => {
   it('does not hoist conditions inside arrow function bodies', () => {

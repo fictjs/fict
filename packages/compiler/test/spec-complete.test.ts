@@ -3,16 +3,13 @@
  *
  * Ensures all semantic rules in compiler-spec.md have corresponding test coverage.
  * This file complements spec-rules.test.ts with additional edge cases and behaviors.
+ *
  */
 import { describe, expect, it } from 'vitest'
 
 import type { CompilerWarning, FictCompilerOptions } from '../src/index'
 
-import { transformLegacyDom } from './test-utils'
-
-function transform(source: string, options?: FictCompilerOptions): string {
-  return transformLegacyDom(source, options)
-}
+import { transform } from './test-utils'
 
 function transformWithWarnings(
   source: string,
@@ -213,7 +210,8 @@ describe('R006: JSX dynamic binding', () => {
       let count = $state(0)
       return <button onClick={() => count++}>+</button>
     `)
-    expect(output).toContain('onClick')
+    // Fine-grained DOM converts onClick to bindEvent
+    expect(output).toMatch(/bindEvent.*click|onClick/)
   })
 
   it('handles multiple dynamic props', () => {

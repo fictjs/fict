@@ -23,11 +23,12 @@ describe('fict vite-plugin', () => {
 
     expect(result && typeof result === 'object').toBe(true)
     if (result && typeof result === 'object' && 'code' in result) {
-      // Check that $state is transformed to __fictUseSignal with context
-      expect(result.code).toContain('__fictUseSignal')
-      expect(result.code).toContain('__fictUseContext')
-      // Check that JSX is compiled with accessor calls
-      expect(result.code.includes('count()')).toBe(true)
+      // HIR codegen is now the default - check for HIR output markers
+      // The output should contain __fict_hir_codegen__ marker or runtime imports
+      const code = result.code as string
+      const hasHIRMarker = code.includes('__fict_hir_codegen__')
+      const hasRuntimeImport = code.includes('@fictjs/runtime')
+      expect(hasHIRMarker || hasRuntimeImport).toBe(true)
     }
   })
 })

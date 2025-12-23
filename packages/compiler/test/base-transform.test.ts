@@ -12,6 +12,8 @@ function transform(code: string, options?: FictCompilerOptions): string {
 
   const mergedOptions: FictCompilerOptions = {
     fineGrainedDom: false,
+    experimentalHIR: false,
+    hirCodegen: false,
     ...options,
   }
 

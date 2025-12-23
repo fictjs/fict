@@ -7,16 +7,13 @@
  * - untrack escape hatch
  * - ErrorBoundary integration
  * - "use no memo" directive (when implemented)
+ *
  */
 import { describe, expect, it } from 'vitest'
 
 import type { CompilerWarning, FictCompilerOptions } from '../src/index'
 
-import { transformLegacyDom, transformFineGrained } from './test-utils'
-
-function transform(source: string, options?: FictCompilerOptions): string {
-  return transformLegacyDom(source, options)
-}
+import { transform } from './test-utils'
 
 function transformWithWarnings(
   source: string,
@@ -158,7 +155,7 @@ describe('Control Flow Re-Execution', () => {
 
   describe('JSX-only usage does not trigger re-execution', () => {
     it('JSX-only signal reads create fine-grained bindings', () => {
-      const output = transformFineGrained(`
+      const output = transform(`
         import { $state } from 'fict'
         function Component() {
           let count = $state(0)
@@ -300,7 +297,7 @@ describe('untrack Escape Hatch', () => {
 
 describe('ErrorBoundary Integration', () => {
   it('compiles component with ErrorBoundary', () => {
-    const output = transformFineGrained(`
+    const output = transform(`
       import { $state, ErrorBoundary } from 'fict'
 
       function RiskyWidget() {
@@ -323,7 +320,7 @@ describe('ErrorBoundary Integration', () => {
   })
 
   it('passes resetKeys prop through ErrorBoundary', () => {
-    const output = transformFineGrained(`
+    const output = transform(`
       import { $state, ErrorBoundary } from 'fict'
 
       function App() {

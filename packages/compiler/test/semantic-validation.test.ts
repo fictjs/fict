@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-
-import { transformFineGrained as transform } from './test-utils'
+import { transform } from './test-utils'
 
 describe('semantic validation', () => {
   it('throws when $state is declared inside a loop', () => {

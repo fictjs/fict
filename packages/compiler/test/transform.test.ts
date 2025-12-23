@@ -1,18 +1,17 @@
 import { describe, it, expect } from 'vitest'
 
 import { type FictCompilerOptions } from '../src/index'
-
-import { transformFineGrained, transformLegacyDom } from './test-utils'
+import { transform as transformHIR } from './test-utils'
 
 /**
- * Helper to transform source code with the legacy DOM lowering (fine-grained disabled).
+ * Helper to transform source code with the HIR DOM lowering (fine-grained disabled).
  */
 function transform(source: string): string {
   return transformWithOptions(source, { fineGrainedDom: false })
 }
 
 function transformWithOptions(source: string, options?: FictCompilerOptions): string {
-  return transformFineGrained(source, options)
+  return transformHIR(source, options)
 }
 
 describe('Fict Compiler - Basic Transforms', () => {

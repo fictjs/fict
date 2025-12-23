@@ -1,15 +1,10 @@
 import { describe, it, expect } from 'vitest'
 
 import { type FictCompilerOptions } from '../src/index'
-
-import { transformFineGrained } from './test-utils'
-
-function transform(source: string): string {
-  return transformFineGrained(source)
-}
+import { transform } from './test-utils'
 
 function transformWithOptions(source: string, options: FictCompilerOptions) {
-  return transformFineGrained(source, options)
+  return transform(source, options)
 }
 
 describe('Rule D Verification', () => {

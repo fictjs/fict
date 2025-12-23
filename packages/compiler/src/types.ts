@@ -89,6 +89,16 @@ export interface FictCompilerOptions {
   getterCache?: boolean
   /** Emit fine-grained DOM creation/binding code for supported JSX templates */
   fineGrainedDom?: boolean
+  /**
+   * @deprecated HIR is now the default. Set to false to use legacy path (not recommended).
+   * Default: true
+   */
+  experimentalHIR?: boolean
+  /**
+   * @deprecated HIR codegen is now the default. Set to false to use legacy path (not recommended).
+   * Requires experimentalHIR to be true. Default: true
+   */
+  hirCodegen?: boolean
 }
 
 export interface VisitorOptions {

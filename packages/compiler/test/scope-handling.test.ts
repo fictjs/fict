@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest'
-
-import { transformFineGrained } from './test-utils'
-
-function transform(source: string): string {
-  return transformFineGrained(source)
-}
+import { transform } from './test-utils'
 
 describe('Scope Handling', () => {
   describe('Block-scoped variables should not leak', () => {

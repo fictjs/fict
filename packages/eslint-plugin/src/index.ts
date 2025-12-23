@@ -2,6 +2,7 @@ import type { ESLint } from 'eslint'
 
 import noDirectMutation from './rules/no-direct-mutation'
 import noEmptyEffect from './rules/no-empty-effect'
+import noInlineFunctions from './rules/no-inline-functions'
 import noStateInLoop from './rules/no-state-in-loop'
 
 const plugin: ESLint.Plugin = {
@@ -13,6 +14,7 @@ const plugin: ESLint.Plugin = {
     'no-state-in-loop': noStateInLoop,
     'no-direct-mutation': noDirectMutation,
     'no-empty-effect': noEmptyEffect,
+    'no-inline-functions': noInlineFunctions,
   },
   configs: {
     recommended: {
@@ -21,10 +23,11 @@ const plugin: ESLint.Plugin = {
         'fict/no-state-in-loop': 'error',
         'fict/no-direct-mutation': 'warn',
         'fict/no-empty-effect': 'warn',
+        'fict/no-inline-functions': 'warn',
       },
     },
   },
 }
 
 export default plugin
-export { noStateInLoop, noDirectMutation, noEmptyEffect }
+export { noStateInLoop, noDirectMutation, noEmptyEffect, noInlineFunctions }

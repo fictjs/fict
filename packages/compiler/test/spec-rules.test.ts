@@ -2,11 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { CompilerWarning, FictCompilerOptions } from '../src/index'
 
-import { transformLegacyDom } from './test-utils'
-
-function transform(source: string, options?: FictCompilerOptions): string {
-  return transformLegacyDom(source, options)
-}
+import { transform } from './test-utils'
 
 function transformWithWarnings(source: string): { output: string; warnings: CompilerWarning[] } {
   const warnings: CompilerWarning[] = []
@@ -47,7 +43,8 @@ describe('Spec rule coverage', () => {
     expect(output).toMatch(/__props\d+\.name/)
     expect(output).toMatch(/__props\d+\.age/)
     expect(output).toContain('__fictUseMemo')
-    expect(output).toContain('label()')
+    // Insert uses arrow function pattern for reactive content
+    expect(output).toMatch(/label\(\)|\(\) => label/)
   })
 
   it('does not leak prop getter tracking outside the function', () => {
@@ -565,7 +562,7 @@ describe('Rule A: $state placement constraints', () => {
 
 describe('Rule J: Lazy evaluation of conditional derivation', () => {
   function transformWithLazy(source: string): string {
-    return transformLegacyDom(source, { lazyConditional: true })
+    return transform(source, { lazyConditional: true })
   }
 
   it('generates lazy evaluation when derived is only used in true branch', () => {
@@ -617,7 +614,7 @@ describe('Rule J: Lazy evaluation of conditional derivation', () => {
 
 describe('Rule L: Getter cache in same sync block', () => {
   function transformWithGetterCache(source: string): string {
-    return transformLegacyDom(source, { getterCache: true })
+    return transform(source, { getterCache: true })
   }
 
   it('caches getter when used multiple times in same function', () => {

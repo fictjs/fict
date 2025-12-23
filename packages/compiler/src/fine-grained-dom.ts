@@ -32,6 +32,170 @@ interface TemplateBuilderState {
   namePrefix: string
   nameCounters: Record<string, number>
   identifierOverrides?: IdentifierOverrideMap
+  /** Optional region metadata from HIR reactive scope analysis */
+  regionMetadata?: RegionMetadata
+}
+
+// ============================================================================
+// Region Metadata (for HIR Reactive Scope integration)
+// ============================================================================
+
+/**
+ * Metadata for a reactive region from HIR analysis.
+ * This allows fine-grained-dom to generate optimized code based on
+ * reactive scope analysis.
+ */
+export interface RegionMetadata {
+  /** Unique identifier for this region */
+  id: number
+  /** Variables that trigger re-execution of this region */
+  dependencies: Set<string>
+  /** Variables declared/output by this region */
+  declarations: Set<string>
+  /** Whether this region contains control flow (if/for/while) */
+  hasControlFlow: boolean
+  /** Whether this region contains reactive writes */
+  hasReactiveWrites: boolean
+  /** Child regions nested within this one */
+  children?: RegionMetadata[]
+  /** Start position in source for debugging */
+  start?: { line: number; column: number }
+  /** End position in source for debugging */
+  end?: { line: number; column: number }
+}
+
+/**
+ * Options for region-aware code generation
+ */
+export interface RegionCodegenOptions {
+  /** The region metadata from HIR analysis */
+  region?: RegionMetadata
+  /** Whether to emit memo wrappers for this region */
+  emitMemo?: boolean
+  /** Whether to emit destructuring for region outputs */
+  emitDestructuring?: boolean
+  /** Custom dependency getter expression factory */
+  dependencyGetter?: (name: string) => BabelCore.types.Expression
+}
+
+/**
+ * Apply region metadata to influence code generation.
+ * This is the integration point between HIR reactive scopes and fine-grained DOM.
+ *
+ * @param state - The current template builder state
+ * @param options - Region codegen options from HIR analysis
+ */
+export function applyRegionMetadata(
+  state: TemplateBuilderState,
+  options: RegionCodegenOptions,
+): void {
+  if (!options.region) return
+
+  const region = options.region
+  state.regionMetadata = region
+
+  // If region has dependencies, set up identifier overrides to call getters
+  if (region.dependencies.size > 0 && options.dependencyGetter) {
+    state.identifierOverrides = state.identifierOverrides ?? {}
+    for (const dep of region.dependencies) {
+      const getter = options.dependencyGetter
+      state.identifierOverrides[dep] = () => getter(dep)
+    }
+  }
+}
+
+/**
+ * Create a memoized region wrapper based on HIR reactive scope.
+ * This generates the "region memo + destructuring" pattern from the upgrade plan.
+ *
+ * @param regionId - Unique region identifier
+ * @param dependencies - Set of dependency variable names
+ * @param declarations - Set of output variable names
+ * @param bodyStatements - Statements inside the region
+ * @param ctx - Transform context
+ * @param t - Babel types
+ */
+export function createRegionMemoWrapper(
+  regionId: number,
+  dependencies: Set<string>,
+  declarations: Set<string>,
+  bodyStatements: BabelCore.types.Statement[],
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): BabelCore.types.Statement[] {
+  const statements: BabelCore.types.Statement[] = []
+
+  // If no dependencies, just emit the body directly
+  if (dependencies.size === 0) {
+    return bodyStatements
+  }
+
+  ctx.helpersUsed.useMemo = true
+
+  // Create memo wrapper: const __region_N = __fictUseMemo(__fictCtx, () => { ...body; return { outputs } }, slot)
+  const regionVarName = `__region_${regionId}`
+  const outputNames = Array.from(declarations)
+
+  // Build return object with all declared outputs
+  const returnObj = t.objectExpression(
+    outputNames.map(name => t.objectProperty(t.identifier(name), t.identifier(name), false, true)),
+  )
+
+  // Clone body statements and add return
+  const memoBody = t.blockStatement([...bodyStatements, t.returnStatement(returnObj)])
+
+  // Create the memo call
+  const memoCall = t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
+    t.identifier('__fictCtx'),
+    t.arrowFunctionExpression([], memoBody),
+    t.numericLiteral(regionId), // Use regionId as slot for now
+  ])
+
+  // Declare the region variable
+  statements.push(
+    t.variableDeclaration('const', [t.variableDeclarator(t.identifier(regionVarName), memoCall)]),
+  )
+
+  // Add destructuring for outputs: const { a, b, c } = __region_N
+  if (outputNames.length > 0) {
+    statements.push(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(
+          t.objectPattern(
+            outputNames.map(name =>
+              t.objectProperty(t.identifier(name), t.identifier(name), false, true),
+            ),
+          ),
+          t.identifier(regionVarName),
+        ),
+      ]),
+    )
+  }
+
+  return statements
+}
+
+/**
+ * Determine if a region should use memo wrapper based on its characteristics.
+ * Regions with control flow or multiple reactive dependencies benefit from memoization.
+ */
+export function shouldMemoizeRegion(region: RegionMetadata): boolean {
+  // Always memoize if there are dependencies
+  if (region.dependencies.size > 0) {
+    return true
+  }
+
+  // Memoize if there's control flow to avoid re-evaluating conditions
+  if (region.hasControlFlow) {
+    return true
+  }
+
+  // Memoize if there are reactive writes (effects)
+  if (region.hasReactiveWrites) {
+    return true
+  }
+
+  return false
 }
 
 // ============================================================================
@@ -480,6 +644,7 @@ export function transformFineGrainedJsx(
   ctx: TransformContext,
   t: typeof BabelCore.types,
   overrides?: IdentifierOverrideMap,
+  regionOptions?: RegionCodegenOptions,
 ): BabelCore.types.Expression | null {
   if (!ctx.options.fineGrainedDom) return null
 
@@ -494,6 +659,16 @@ export function transformFineGrainedJsx(
     ...(overrides ? { identifierOverrides: overrides } : {}),
   }
 
+  if (regionOptions?.region) {
+    applyRegionMetadata(state, {
+      region: regionOptions.region,
+      dependencyGetter:
+        regionOptions.dependencyGetter ?? (name => t.callExpression(t.identifier(name), [])),
+      emitMemo: regionOptions.emitMemo,
+      emitDestructuring: regionOptions.emitDestructuring,
+    })
+  }
+
   // Determine root element logic
   const rootId = emitTemplate(node, state, t)
   // const rootId = emitJsxElementToTemplate(node, state, t)
@@ -501,6 +676,21 @@ export function transformFineGrainedJsx(
   if (!rootId) return null
 
   state.statements.push(t.returnStatement(rootId))
+
+  const shouldMemo =
+    regionOptions?.emitMemo ??
+    (regionOptions?.region ? shouldMemoizeRegion(regionOptions.region) : false)
+
+  if (shouldMemo && regionOptions?.region) {
+    ctx.helpersUsed.useMemo = true
+    ctx.helpersUsed.useContext = true
+    const memoBody = t.blockStatement(state.statements)
+    return t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
+      t.identifier('__fictCtx'),
+      t.arrowFunctionExpression([], memoBody),
+      t.numericLiteral(regionOptions.region.id),
+    ])
+  }
 
   return t.callExpression(t.arrowFunctionExpression([], t.blockStatement(state.statements)), [])
 }
