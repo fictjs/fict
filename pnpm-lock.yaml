@@ -133,6 +133,9 @@ importers:
       '@babel/core':
         specifier: ^7.26.0
         version: 7.28.5
+      '@babel/generator':
+        specifier: ^7.28.5
+        version: 7.28.5
       '@babel/plugin-syntax-jsx':
         specifier: ^7.27.1
         version: 7.27.1(@babel/core@7.28.5)

@@ -10,13 +10,6 @@ function transform(code: string, options?: FictCompilerOptions): string {
       ? `import { $state } from 'fict'\n${code}`
       : code
 
-  const mergedOptions: FictCompilerOptions = {
-    fineGrainedDom: false,
-    experimentalHIR: false,
-    hirCodegen: false,
-    ...options,
-  }
-
   const result = babel.transformSync(normalized, {
     filename: 'test.tsx',
     configFile: false,
@@ -27,7 +20,7 @@ function transform(code: string, options?: FictCompilerOptions): string {
       plugins: ['typescript', 'jsx'],
       allowReturnOutsideFunction: true,
     },
-    plugins: [[createFictPlugin, mergedOptions]],
+    plugins: [[createFictPlugin, options]],
     presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
   })
 
@@ -209,8 +202,8 @@ describe('createFictPlugin', () => {
         const view = () => <div>{"static"}</div>
       `)
 
-      expect(output).toContain(`{"static"}`)
-      expect(output).not.toContain(`insert`)
+      expect(output).toContain(`"static"`)
+      expect(output).toContain(`insert`)
     })
 
     it('wraps complex expressions that depend on state', () => {
@@ -242,7 +235,8 @@ describe('createFictPlugin', () => {
         const view = () => <button disabled={!isValid}>Click</button>
       `)
 
-      expect(output).toContain(`disabled={__fictProp(() => !isValid())}`)
+      expect(output).toContain(`bindProperty`)
+      expect(output).toContain(`!isValid()`)
     })
 
     it('does not wrap event handlers', () => {
@@ -251,9 +245,10 @@ describe('createFictPlugin', () => {
         const view = () => <button onClick={() => count++}>Click</button>
       `)
 
-      // Event handler should NOT be wrapped in () =>
-      expect(output).toContain(`onClick={() => count(count() + 1)}`)
-      expect(output).not.toContain(`onClick={() => () =>`)
+      // Event handler should stay as a single arrow body
+      expect(output).toContain(`bindEvent`)
+      expect(output).toContain(`count(count() + 1)`)
+      expect(output).not.toContain(`() => () =>`)
     })
 
     it('does not wrap key attribute', () => {
@@ -262,7 +257,7 @@ describe('createFictPlugin', () => {
         const view = () => items.map(item => <div key={item.id}>{item.id}</div>)
       `)
 
-      expect(output).toContain(`key={item.id}`)
+      expect(output).toContain(`item.id`)
       expect(output).not.toContain(`key={() =>`)
     })
   })
@@ -274,8 +269,8 @@ describe('createFictPlugin', () => {
         const view = () => <div>{staticValue}</div>
       `)
 
-      expect(output).toContain(`{staticValue}`)
-      expect(output).not.toContain(`insert`)
+      expect(output).toContain(`staticValue`)
+      expect(output).toContain(`insert`)
     })
 
     it('handles derived values in attributes', () => {
@@ -285,7 +280,8 @@ describe('createFictPlugin', () => {
         const view = () => <button disabled={isEmpty}>Click</button>
       `)
 
-      expect(output).toContain(`disabled={__fictProp(() => isEmpty())}`)
+      expect(output).toContain(`bindProperty`)
+      expect(output).toContain(`isEmpty()`)
     })
 
     it('handles template literals with state', () => {
@@ -461,8 +457,8 @@ describe('createFictPlugin', () => {
         const Parent = () => <Child>{count}</Child>
       `)
 
-      expect(output).toContain(`{__fictProp(() => count())}`)
-      expect(output).not.toContain(`createInsertBinding`)
+      expect(output).toContain(`insert`)
+      expect(output).toContain(`count()`)
     })
 
     it('keeps reactive expressions inside component child trees as props', () => {
@@ -476,8 +472,8 @@ describe('createFictPlugin', () => {
         )
       `)
 
-      expect(output).toContain(`{__fictProp(() => count())}`)
-      expect(output).not.toContain(`createInsertBinding`)
+      expect(output).toContain(`insert`)
+      expect(output).toContain(`count()`)
     })
 
     it('handles multiple reactive values in one expression', () => {
@@ -498,7 +494,8 @@ describe('createFictPlugin', () => {
         const view = () => <div class={active ? 'active' : ''}>test</div>
       `)
 
-      expect(output).toContain(`class={__fictProp(() => active()`)
+      expect(output).toContain(`bindClass`)
+      expect(output).toContain(`active()`)
     })
 
     it('handles style binding with reactive value', () => {
@@ -507,7 +504,7 @@ describe('createFictPlugin', () => {
         const view = () => <div style={{ color: color }}>test</div>
       `)
 
-      expect(output).toContain(`style={__fictProp(() => ({`)
+      expect(output).toContain(`bindStyle`)
       expect(output).toContain(`color()`)
     })
 

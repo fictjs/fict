@@ -1,3 +1,4 @@
+import generate from '@babel/generator'
 import { describe, expect, it } from 'vitest'
 import { parseSync } from '@babel/core'
 import * as t from '@babel/types'
@@ -112,5 +113,23 @@ describe('hasReactiveRegions', () => {
     const hasReactive = hasReactiveRegions(hir.functions[0])
 
     expect(typeof hasReactive).toBe('boolean')
+  })
+})
+
+describe('region metadata → DOM', () => {
+  it('applies dependency getters and memoization for DOM bindings', () => {
+    const ast = parseFile(`
+      function View(props) {
+        let color = $state('red')
+        return <div className={color}>{props.label}</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('__fictUseMemo(__fictCtx')
+    expect(code).toMatch(/color\(\)/)
+    expect(code).toMatch(/props(?:\(\))?\.label/)
   })
 })

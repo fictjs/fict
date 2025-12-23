@@ -666,12 +666,36 @@ function lowerJSXElement(
 /**
  * Collect all dependency variable names from an expression (de-versioned).
  */
+function getMemberDependencyPath(expr: any): string | undefined {
+  if (expr.kind === 'MemberExpression') {
+    const prop = expr.property
+    let propName: string | undefined
+    if (!expr.computed && prop.kind === 'Identifier') {
+      propName = prop.name
+    } else if (prop.kind === 'Literal' && typeof prop.value === 'string') {
+      propName = prop.value
+    }
+    if (!propName) return undefined
+    const object = expr.object
+    if (object.kind === 'Identifier') {
+      return `${deSSAVarName(object.name)}.${propName}`
+    }
+    if (object.kind === 'MemberExpression') {
+      const parent = getMemberDependencyPath(object)
+      return parent ? `${parent}.${propName}` : undefined
+    }
+  }
+  return undefined
+}
+
 function collectExpressionDependencies(expr: Expression, deps: Set<string>): void {
   if (expr.kind === 'Identifier') {
     deps.add(deSSAVarName(expr.name))
     return
   }
   if (expr.kind === 'MemberExpression') {
+    const path = getMemberDependencyPath(expr)
+    if (path) deps.add(path)
     collectExpressionDependencies(expr.object, deps)
     if (expr.computed && expr.property.kind !== 'Literal') {
       collectExpressionDependencies(expr.property, deps)
@@ -744,6 +768,13 @@ function applyRegionMetadataToExpression(
   const overrides = state.identifierOverrides
   if (!overrides || Object.keys(overrides).length === 0) {
     return expr
+  }
+
+  if (ctx.t.isIdentifier(expr)) {
+    const direct = overrides[expr.name]
+    if (direct) {
+      return direct()
+    }
   }
 
   const cloned = ctx.t.cloneNode(expr, true) as BabelCore.types.Expression
@@ -940,7 +971,17 @@ function lowerIntrinsicElement(
 
   // Find the containing region and apply it to the context
   // This is the HIR equivalent of calling applyRegionMetadata
-  const containingRegion = findContainingRegion(allDeps, ctx)
+  let containingRegion = findContainingRegion(allDeps, ctx)
+  if (!containingRegion && allDeps.size > 0) {
+    // Fallback synthetic region to ensure dependency overrides/memo are applied
+    containingRegion = {
+      id: (ctx.regions?.length ?? 0) + 1000,
+      dependencies: new Set(Array.from(allDeps).map(d => deSSAVarName(d))),
+      declarations: new Set<string>(),
+      hasControlFlow: false,
+      hasReactiveWrites: false,
+    }
+  }
   const prevRegion = applyRegionToContext(ctx, containingRegion)
   const regionMeta = containingRegion ? regionInfoToMetadata(containingRegion) : null
   const shouldMemo = regionMeta ? shouldMemoizeRegion(regionMeta) : false
@@ -994,6 +1035,12 @@ function lowerIntrinsicElement(
     const valueExpr = attr.value
       ? lowerDomExpression(attr.value, ctx, containingRegion)
       : t.booleanLiteral(true)
+    const valueIdentifier = ctx.t.isIdentifier(valueExpr) ? deSSAVarName(valueExpr.name) : undefined
+    const valueWithRegion =
+      valueIdentifier &&
+      (regionMeta?.dependencies.has(valueIdentifier) || ctx.trackedVars.has(valueIdentifier))
+        ? buildDependencyGetter(valueIdentifier, ctx)
+        : valueExpr
     // Check if value is static (literal) or needs reactive binding
     // Use region-aware tracking for more precise reactivity detection
     const isStatic = attr.value
@@ -1028,7 +1075,7 @@ function lowerIntrinsicElement(
         t.expressionStatement(
           t.callExpression(t.identifier(RUNTIME_ALIASES.bindClass), [
             elId,
-            t.arrowFunctionExpression([], valueExpr),
+            t.arrowFunctionExpression([], valueWithRegion),
           ]),
         ),
       )
@@ -1057,7 +1104,7 @@ function lowerIntrinsicElement(
           t.expressionStatement(
             t.callExpression(t.identifier(RUNTIME_ALIASES.bindStyle), [
               elId,
-              t.arrowFunctionExpression([], valueExpr),
+              t.arrowFunctionExpression([], valueWithRegion),
             ]),
           ),
         )
@@ -1077,7 +1124,7 @@ function lowerIntrinsicElement(
             t.assignmentExpression(
               '=',
               t.memberExpression(elId, t.identifier(attrName)),
-              valueExpr,
+              valueWithRegion,
             ),
           ),
         )
@@ -1088,7 +1135,7 @@ function lowerIntrinsicElement(
             t.callExpression(t.identifier(RUNTIME_ALIASES.bindProperty), [
               elId,
               t.stringLiteral(attrName),
-              t.arrowFunctionExpression([], valueExpr),
+              t.arrowFunctionExpression([], valueWithRegion),
             ]),
           ),
         )
@@ -1100,7 +1147,7 @@ function lowerIntrinsicElement(
           t.expressionStatement(
             t.callExpression(t.memberExpression(elId, t.identifier('setAttribute')), [
               t.stringLiteral(attrName),
-              valueExpr,
+              valueWithRegion,
             ]),
           ),
         )
@@ -1111,7 +1158,7 @@ function lowerIntrinsicElement(
             t.callExpression(t.identifier(RUNTIME_ALIASES.bindAttribute), [
               elId,
               t.stringLiteral(attrName),
-              t.arrowFunctionExpression([], valueExpr),
+              t.arrowFunctionExpression([], valueWithRegion),
             ]),
           ),
         )
