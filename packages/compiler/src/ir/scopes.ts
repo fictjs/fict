@@ -6,12 +6,14 @@ import type {
   Expression,
   DependencyPath,
 } from './hir'
-import { extractDependencyPath, pathToString } from './hir'
+import { extractDependencyPath, pathToString, getSSABaseName } from './hir'
 
+/**
+ * Get the base name of a variable, stripping any SSA version suffix.
+ * Uses the centralized SSA naming utilities from hir.ts.
+ */
 function baseName(name: string): string {
-  if (name.startsWith('__')) return name
-  const match = name.match(/^(.+?)_\d+$/)
-  return match ? match[1] : name
+  return getSSABaseName(name)
 }
 
 /**
@@ -703,9 +705,17 @@ export function analyzeControlFlowReads(
       collectExprReads(term.test, controlFlowReads)
     } else if (term.kind === 'Switch' && term.discriminant) {
       collectExprReads(term.discriminant, controlFlowReads)
+    } else if (term.kind === 'ForOf' && term.iterable) {
+      // ForOf iterable is a control flow read - changes to iterable affect loop execution
+      collectExprReads(term.iterable, controlFlowReads)
+    } else if (term.kind === 'ForIn' && term.object) {
+      // ForIn object is a control flow read - changes to object affect loop execution
+      collectExprReads(term.object, controlFlowReads)
     }
-    // Return arguments are expression reads
+    // Return/Throw arguments are expression reads
     if (term.kind === 'Return' && term.argument) {
+      collectExprReads(term.argument, expressionReads)
+    } else if (term.kind === 'Throw' && term.argument) {
       collectExprReads(term.argument, expressionReads)
     }
   }

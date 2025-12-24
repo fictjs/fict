@@ -21,6 +21,7 @@ import type {
   Instruction,
   Identifier,
 } from './hir'
+import { getSSABaseName } from './hir'
 import type { ReactiveScope, ReactiveScopeResult } from './scopes'
 import { getScopeDependencies } from './scopes'
 import { structurizeCFG, type StructuredNode } from './structurize'
@@ -127,9 +128,15 @@ function createRegionFromScope(
       }
     }
 
-    // Check terminator for control flow
+    // Check terminator for control flow and JSX
     if (block.terminator.kind === 'Branch' || block.terminator.kind === 'Switch') {
       hasControlFlow = true
+    }
+    // Check if terminator contains JSX (e.g., return <div>...</div>)
+    if (block.terminator.kind === 'Return' && block.terminator.argument) {
+      if (containsJSXExpr(block.terminator.argument)) {
+        hasJSX = true
+      }
     }
   }
 
@@ -749,12 +756,10 @@ function lowerInstructionsToUpdateExpr(
 /**
  * Remove SSA version suffix from variable name.
  * Exported for use in codegen.ts and other modules that need SSA de-versioning.
+ * Uses the centralized SSA naming utilities from hir.ts.
  */
 export function deSSAVarName(name: string): string {
-  // Skip internal names that start with __ (these are compiler-generated)
-  if (name.startsWith('__')) return name
-  const match = name.match(/^(.+?)_\d+$/)
-  return match ? match[1] : name
+  return getSSABaseName(name)
 }
 
 /**
@@ -826,6 +831,22 @@ function wrapInMemo(
     ])
     statements.push(t.expressionStatement(effectCall))
   } else {
+    // Check for lazy conditional optimization
+    const lazyInfo = analyzeHIRConditionalUsage(region, ctx)
+
+    if (lazyInfo) {
+      // Generate lazy conditional memo
+      return generateLazyConditionalMemo(
+        region,
+        uniqueOutputNames,
+        bodyStatements,
+        lazyInfo,
+        t,
+        declaredVars,
+        ctx,
+      )
+    }
+
     // Has outputs - memo with destructuring
     const returnObj = t.objectExpression(
       uniqueOutputNames.map(name =>
@@ -865,6 +886,328 @@ function wrapInMemo(
       ]),
     )
   }
+
+  return statements
+}
+
+/**
+ * HIR-based lazy conditional analysis result
+ */
+interface HIRConditionalInfo {
+  /** The condition expression (HIR) */
+  condition: Expression
+  /** Derived values only used in true branch */
+  trueBranchOnlyDerived: Set<string>
+  /** Derived values only used in false branch */
+  falseBranchOnlyDerived: Set<string>
+}
+
+/**
+ * Analyze a region to detect conditional patterns where derived values
+ * are only used in specific branches. This enables lazy evaluation.
+ */
+function analyzeHIRConditionalUsage(
+  region: Region,
+  ctx: CodegenContext,
+): HIRConditionalInfo | null {
+  const declarations = new Set(Array.from(region.declarations).map(d => deSSAVarName(d)))
+  if (declarations.size < 2) {
+    // Need at least 2 derived values for lazy optimization to matter
+    return null
+  }
+
+  // Find conditional patterns in the region's instructions
+  for (const instr of region.instructions) {
+    if (instr.kind !== 'Assign') continue
+    const expr = instr.value
+
+    // Check for if-like patterns (ternary or logical &&)
+    if (expr.kind === 'ConditionalExpression') {
+      const trueBranchDeps = collectExprDependencies(expr.consequent)
+      const falseBranchDeps = collectExprDependencies(expr.alternate)
+
+      const trueBranchOnlyDerived = new Set<string>()
+      const falseBranchOnlyDerived = new Set<string>()
+
+      for (const dep of trueBranchDeps) {
+        if (declarations.has(dep) && !falseBranchDeps.has(dep)) {
+          trueBranchOnlyDerived.add(dep)
+        }
+      }
+
+      for (const dep of falseBranchDeps) {
+        if (declarations.has(dep) && !trueBranchDeps.has(dep)) {
+          falseBranchOnlyDerived.add(dep)
+        }
+      }
+
+      if (trueBranchOnlyDerived.size > 0 || falseBranchOnlyDerived.size > 0) {
+        return {
+          condition: expr.test,
+          trueBranchOnlyDerived,
+          falseBranchOnlyDerived,
+        }
+      }
+    }
+
+    // Check for logical && patterns
+    if (expr.kind === 'LogicalExpression' && expr.operator === '&&') {
+      const rightDeps = collectExprDependencies(expr.right)
+      const trueBranchOnlyDerived = new Set<string>()
+
+      for (const dep of rightDeps) {
+        if (declarations.has(dep)) {
+          trueBranchOnlyDerived.add(dep)
+        }
+      }
+
+      if (trueBranchOnlyDerived.size > 0) {
+        return {
+          condition: expr.left,
+          trueBranchOnlyDerived,
+          falseBranchOnlyDerived: new Set(),
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Collect all identifier dependencies from an HIR expression
+ */
+function collectExprDependencies(expr: Expression): Set<string> {
+  const deps = new Set<string>()
+
+  const visit = (e: Expression): void => {
+    if (!e || typeof e !== 'object') return
+
+    switch (e.kind) {
+      case 'Identifier':
+        deps.add(deSSAVarName(e.name))
+        break
+      case 'MemberExpression':
+        visit(e.object)
+        if (e.computed && e.property.kind !== 'Literal') {
+          visit(e.property)
+        }
+        break
+      case 'CallExpression':
+        visit(e.callee)
+        e.arguments.forEach(a => visit(a))
+        break
+      case 'BinaryExpression':
+      case 'LogicalExpression':
+        visit(e.left)
+        visit(e.right)
+        break
+      case 'ConditionalExpression':
+        visit(e.test)
+        visit(e.consequent)
+        visit(e.alternate)
+        break
+      case 'UnaryExpression':
+        visit(e.argument)
+        break
+      case 'ArrayExpression':
+        e.elements.forEach(el => el && visit(el))
+        break
+      case 'ObjectExpression':
+        e.properties.forEach(p => {
+          if (p.kind === 'SpreadElement') {
+            visit(p.argument)
+          } else {
+            visit(p.value)
+          }
+        })
+        break
+      case 'TemplateLiteral':
+        e.expressions.forEach(ex => visit(ex))
+        break
+      case 'ArrowFunction':
+      case 'FunctionExpression':
+        // Don't traverse into function bodies - they create new scopes
+        break
+      // Handle newly added expression types
+      case 'AwaitExpression':
+        visit(e.argument)
+        break
+      case 'NewExpression':
+        visit(e.callee)
+        e.arguments.forEach(a => visit(a))
+        break
+      case 'SequenceExpression':
+        e.expressions.forEach(ex => visit(ex))
+        break
+      case 'YieldExpression':
+        if (e.argument) visit(e.argument)
+        break
+      case 'OptionalCallExpression':
+        visit(e.callee)
+        e.arguments.forEach(a => visit(a))
+        break
+      case 'TaggedTemplateExpression':
+        visit(e.tag)
+        if (e.quasi && e.quasi.expressions) {
+          e.quasi.expressions.forEach(ex => visit(ex))
+        }
+        break
+      case 'OptionalMemberExpression':
+        visit(e.object)
+        if (e.computed && e.property.kind !== 'Literal') {
+          visit(e.property)
+        }
+        break
+      case 'UpdateExpression':
+        visit(e.argument)
+        break
+      case 'AssignmentExpression':
+        visit(e.left)
+        visit(e.right)
+        break
+      case 'SpreadElement':
+        visit(e.argument)
+        break
+    }
+  }
+
+  visit(expr)
+  return deps
+}
+
+/**
+ * Generate a lazy conditional memo that defers evaluation of branch-specific derived values
+ */
+function generateLazyConditionalMemo(
+  region: Region,
+  orderedOutputs: string[],
+  bodyStatements: BabelCore.types.Statement[],
+  conditionalInfo: HIRConditionalInfo,
+  t: typeof BabelCore.types,
+  declaredVars: Set<string>,
+  ctx: CodegenContext,
+): BabelCore.types.Statement[] {
+  const statements: BabelCore.types.Statement[] = []
+
+  // Tag statements by their branch requirement
+  interface TaggedStatement {
+    stmt: BabelCore.types.Statement
+    kind: 'always' | 'lazyTrue' | 'lazyFalse'
+  }
+
+  const taggedStatements: TaggedStatement[] = bodyStatements.map(stmt => {
+    if (t.isVariableDeclaration(stmt) && stmt.declarations.length === 1) {
+      const decl = stmt.declarations[0]
+      if (decl && t.isIdentifier(decl.id)) {
+        if (conditionalInfo.trueBranchOnlyDerived.has(decl.id.name)) {
+          return { stmt, kind: 'lazyTrue' }
+        }
+        if (conditionalInfo.falseBranchOnlyDerived.has(decl.id.name)) {
+          return { stmt, kind: 'lazyFalse' }
+        }
+      }
+    }
+    return { stmt, kind: 'always' }
+  })
+
+  const lazyTrueStatements = taggedStatements
+    .filter(tg => tg.kind === 'lazyTrue')
+    .map(tg => tg.stmt)
+  const lazyFalseStatements = taggedStatements
+    .filter(tg => tg.kind === 'lazyFalse')
+    .map(tg => tg.stmt)
+
+  // Find first lazy index to split always statements
+  const firstLazyIndex = taggedStatements.findIndex(tg => tg.kind !== 'always')
+  const alwaysBeforeLazy: BabelCore.types.Statement[] = []
+  const alwaysAfterLazy: BabelCore.types.Statement[] = []
+
+  taggedStatements.forEach((tg, idx) => {
+    if (tg.kind === 'always') {
+      if (firstLazyIndex === -1 || idx < firstLazyIndex) {
+        alwaysBeforeLazy.push(tg.stmt)
+      } else {
+        alwaysAfterLazy.push(tg.stmt)
+      }
+    }
+  })
+
+  // Create condition variable
+  const conditionStmt = lowerExpressionWithDeSSA(conditionalInfo.condition, ctx)
+  const conditionId = t.identifier(`__cond_${region.id}`)
+  const conditionDecl = t.variableDeclaration('const', [
+    t.variableDeclarator(conditionId, conditionStmt),
+  ])
+
+  // Create return statement helper
+  const createReturnWithNulls = (nullFields: Set<string>): BabelCore.types.ReturnStatement => {
+    return t.returnStatement(
+      t.objectExpression(
+        orderedOutputs.map(name => {
+          if (nullFields.has(name)) {
+            return t.objectProperty(t.identifier(name), t.nullLiteral())
+          }
+          return t.objectProperty(t.identifier(name), t.identifier(name), false, true)
+        }),
+      ),
+    )
+  }
+
+  // Build memo body with conditional evaluation
+  const memoBody: BabelCore.types.Statement[] = [conditionDecl, ...alwaysBeforeLazy]
+
+  if (
+    lazyTrueStatements.length > 0 ||
+    lazyFalseStatements.length > 0 ||
+    alwaysAfterLazy.length > 0
+  ) {
+    const trueBlock = [
+      ...lazyTrueStatements,
+      ...alwaysAfterLazy,
+      createReturnWithNulls(conditionalInfo.falseBranchOnlyDerived),
+    ]
+    const falseBlock = [
+      ...lazyFalseStatements,
+      ...alwaysAfterLazy,
+      createReturnWithNulls(conditionalInfo.trueBranchOnlyDerived),
+    ]
+    memoBody.push(
+      t.ifStatement(conditionId, t.blockStatement(trueBlock), t.blockStatement(falseBlock)),
+    )
+  }
+
+  ctx.helpersUsed.add('useMemo')
+  ctx.needsCtx = true
+
+  const regionVarName = `__region_${region.id}`
+
+  const memoCall = t.callExpression(t.identifier('__fictUseMemo'), [
+    t.identifier('__fictCtx'),
+    t.arrowFunctionExpression([], t.blockStatement(memoBody)),
+    t.numericLiteral(region.id),
+  ])
+
+  statements.push(
+    t.variableDeclaration('const', [t.variableDeclarator(t.identifier(regionVarName), memoCall)]),
+  )
+
+  // Destructure outputs
+  for (const name of orderedOutputs) {
+    declaredVars.add(name)
+  }
+  statements.push(
+    t.variableDeclaration('const', [
+      t.variableDeclarator(
+        t.objectPattern(
+          orderedOutputs.map(name =>
+            t.objectProperty(t.identifier(name), t.identifier(name), false, true),
+          ),
+        ),
+        t.identifier(regionVarName),
+      ),
+    ]),
+  )
 
   return statements
 }

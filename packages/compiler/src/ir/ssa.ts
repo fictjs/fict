@@ -1,4 +1,5 @@
 import type { BasicBlock, BlockId, HIRFunction, HIRProgram, Identifier, Instruction } from './hir'
+import { makeSSAName, getSSABaseName } from './hir'
 
 /**
  * SSA conversion with optimizations:
@@ -329,21 +330,25 @@ function toSSA(fn: HIRFunction): HIRFunction {
   >()
 
   const renameVar = (name: string) => {
-    const next = (counters.get(name) ?? 0) + 1
-    counters.set(name, next)
-    const full = `${name}_${next}`
-    const stack = stacks.get(name) ?? []
+    // Get the base name without any existing SSA suffix
+    const baseName = getSSABaseName(name)
+    const next = (counters.get(baseName) ?? 0) + 1
+    counters.set(baseName, next)
+    const full = makeSSAName(baseName, next)
+    const stack = stacks.get(baseName) ?? []
     stack.push(full)
-    stacks.set(name, stack)
+    stacks.set(baseName, stack)
     return full
   }
   const currentName = (name: string) => {
-    const stack = stacks.get(name)
+    const baseName = getSSABaseName(name)
+    const stack = stacks.get(baseName)
     if (!stack || stack.length === 0) return name
     return stack[stack.length - 1]
   }
   const popName = (name: string) => {
-    const stack = stacks.get(name)
+    const baseName = getSSABaseName(name)
+    const stack = stacks.get(baseName)
     if (stack) stack.pop()
   }
 
@@ -412,7 +417,7 @@ function toSSA(fn: HIRFunction): HIRFunction {
       }
       if (instr.kind === 'Assign') {
         const renamedValue = renameExpr(instr.value)
-        const newName = renameVar(instr.target.name.split('_')[0] ?? instr.target.name)
+        const newName = renameVar(getSSABaseName(instr.target.name))
         newInstr.push({
           kind: 'Assign',
           target: { ...instr.target, name: newName },
@@ -455,8 +460,7 @@ function toSSA(fn: HIRFunction): HIRFunction {
       if (instr.kind === 'Phi') {
         popName(instr.variable)
       } else if (instr.kind === 'Assign') {
-        const base = instr.target.name.split('_')[0] ?? instr.target.name
-        popName(base)
+        popName(getSSABaseName(instr.target.name))
       }
     }
   }

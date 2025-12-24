@@ -91,70 +91,139 @@ function extractIdentifiersFromPattern(pattern: BabelCore.types.Pattern): HIdent
  * This is a simplified version for arrow function block bodies.
  * Does not handle complex control flow (use convertFunction for that).
  */
+/**
+ * Build basic blocks from a list of statements (simplified version for nested functions).
+ * This version handles common control flow structures to properly capture arrow function bodies.
+ */
 function buildBlocksFromStatements(statements: BabelCore.types.Statement[]): BasicBlock[] {
   const blocks: BasicBlock[] = []
   let nextBlockId = 0
 
-  const block: BasicBlock = {
+  const createBlock = (): BasicBlock => ({
     id: nextBlockId++,
     instructions: [],
     terminator: { kind: 'Unreachable' },
+  })
+
+  const currentBlock = createBlock()
+  blocks.push(currentBlock)
+
+  // Simple recursive processor for nested statements
+  const processStmts = (stmts: BabelCore.types.Statement[], target: BasicBlock): void => {
+    for (const stmt of stmts) {
+      if (t.isReturnStatement(stmt)) {
+        target.terminator = {
+          kind: 'Return',
+          argument: stmt.argument ? convertExpression(stmt.argument) : undefined,
+        }
+        return // Stop processing after return
+      }
+      if (t.isThrowStatement(stmt)) {
+        target.terminator = {
+          kind: 'Throw',
+          argument: convertExpression(stmt.argument as BabelCore.types.Expression),
+        }
+        return // Stop processing after throw
+      }
+      if (t.isExpressionStatement(stmt)) {
+        if (t.isAssignmentExpression(stmt.expression) && t.isIdentifier(stmt.expression.left)) {
+          target.instructions.push({
+            kind: 'Assign',
+            target: { kind: 'Identifier', name: stmt.expression.left.name },
+            value: convertAssignmentValue(stmt.expression),
+          })
+        } else {
+          target.instructions.push({
+            kind: 'Expression',
+            value: convertExpression(stmt.expression),
+          })
+        }
+        continue
+      }
+      if (t.isVariableDeclaration(stmt)) {
+        for (const decl of stmt.declarations) {
+          if (!t.isIdentifier(decl.id)) continue
+          target.instructions.push({
+            kind: 'Assign',
+            target: { kind: 'Identifier', name: decl.id.name },
+            value: decl.init
+              ? convertExpression(decl.init)
+              : ({ kind: 'Literal', value: undefined } as HLiteral),
+            declarationKind: normalizeVarKind(stmt.kind),
+          })
+        }
+        continue
+      }
+      if (t.isFunctionDeclaration(stmt) && stmt.id) {
+        target.instructions.push({
+          kind: 'Assign',
+          target: { kind: 'Identifier', name: stmt.id.name },
+          value: convertExpression(
+            t.functionExpression(
+              stmt.id,
+              stmt.params as any,
+              stmt.body,
+              stmt.generator,
+              stmt.async,
+            ),
+          ),
+        })
+        continue
+      }
+      if (t.isBlockStatement(stmt)) {
+        // Process nested block statements
+        processStmts(stmt.body, target)
+        continue
+      }
+      if (t.isIfStatement(stmt)) {
+        // For if statements in nested functions, create proper branch structure
+        const consequentBlock = createBlock()
+        const alternateBlock = createBlock()
+        const joinBlock = createBlock()
+
+        blocks.push(consequentBlock, alternateBlock, joinBlock)
+
+        target.terminator = {
+          kind: 'Branch',
+          test: convertExpression(stmt.test as BabelCore.types.Expression),
+          consequent: consequentBlock.id,
+          alternate: alternateBlock.id,
+        }
+
+        // Process consequent
+        if (t.isBlockStatement(stmt.consequent)) {
+          processStmts(stmt.consequent.body, consequentBlock)
+        } else {
+          processStmts([stmt.consequent], consequentBlock)
+        }
+        if (consequentBlock.terminator.kind === 'Unreachable') {
+          consequentBlock.terminator = { kind: 'Jump', target: joinBlock.id }
+        }
+
+        // Process alternate
+        if (stmt.alternate) {
+          if (t.isBlockStatement(stmt.alternate)) {
+            processStmts(stmt.alternate.body, alternateBlock)
+          } else {
+            processStmts([stmt.alternate], alternateBlock)
+          }
+          if (alternateBlock.terminator.kind === 'Unreachable') {
+            alternateBlock.terminator = { kind: 'Jump', target: joinBlock.id }
+          }
+        } else {
+          alternateBlock.terminator = { kind: 'Jump', target: joinBlock.id }
+        }
+
+        // Continue processing in join block - but we can't continue using target
+        // For simplicity, mark target as having branched and return
+        return
+      }
+      // For other statement types (for, while, etc.), convert to expression if possible
+      // or skip to keep the builder total
+    }
   }
 
-  for (const stmt of statements) {
-    if (t.isReturnStatement(stmt)) {
-      block.terminator = {
-        kind: 'Return',
-        argument: stmt.argument ? convertExpression(stmt.argument) : undefined,
-      }
-      break
-    }
-    if (t.isThrowStatement(stmt)) {
-      block.terminator = {
-        kind: 'Throw',
-        argument: convertExpression(stmt.argument as BabelCore.types.Expression),
-      }
-      break
-    }
-    if (t.isExpressionStatement(stmt)) {
-      if (t.isAssignmentExpression(stmt.expression) && t.isIdentifier(stmt.expression.left)) {
-        block.instructions.push({
-          kind: 'Assign',
-          target: { kind: 'Identifier', name: stmt.expression.left.name },
-          value: convertAssignmentValue(stmt.expression),
-        })
-      } else {
-        block.instructions.push({
-          kind: 'Expression',
-          value: convertExpression(stmt.expression),
-        })
-      }
-    }
-    if (t.isVariableDeclaration(stmt)) {
-      for (const decl of stmt.declarations) {
-        if (!t.isIdentifier(decl.id)) continue
-        block.instructions.push({
-          kind: 'Assign',
-          target: { kind: 'Identifier', name: decl.id.name },
-          value: decl.init
-            ? convertExpression(decl.init)
-            : ({ kind: 'Literal', value: undefined } as HLiteral),
-          declarationKind: normalizeVarKind(stmt.kind),
-        })
-      }
-    }
-    if (t.isFunctionDeclaration(stmt) && stmt.id) {
-      block.instructions.push({
-        kind: 'Assign',
-        target: { kind: 'Identifier', name: stmt.id.name },
-        value: convertExpression(
-          t.functionExpression(stmt.id, stmt.params as any, stmt.body, stmt.generator, stmt.async),
-        ),
-      })
-    }
-  }
-
-  blocks.push(block)
+  processStmts(statements, currentBlock)
   return blocks
 }
 
@@ -1599,6 +1668,89 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       expressions: node.expressions.map(e => convertExpression(e as BabelCore.types.Expression)),
     }
     return template
+  }
+
+  // Await Expression
+  if (t.isAwaitExpression(node)) {
+    return {
+      kind: 'AwaitExpression',
+      argument: convertExpression(node.argument as BabelCore.types.Expression),
+    }
+  }
+
+  // New Expression
+  if (t.isNewExpression(node)) {
+    return {
+      kind: 'NewExpression',
+      callee: convertExpression(node.callee as BabelCore.types.Expression),
+      arguments: node.arguments
+        .map(arg => (t.isExpression(arg) ? convertExpression(arg) : undefined))
+        .filter(Boolean) as Expression[],
+    }
+  }
+
+  // Sequence Expression
+  if (t.isSequenceExpression(node)) {
+    return {
+      kind: 'SequenceExpression',
+      expressions: node.expressions.map(e => convertExpression(e)),
+    }
+  }
+
+  // Yield Expression
+  if (t.isYieldExpression(node)) {
+    return {
+      kind: 'YieldExpression',
+      argument: node.argument ? convertExpression(node.argument) : null,
+      delegate: node.delegate,
+    }
+  }
+
+  // Optional Call Expression
+  if (t.isOptionalCallExpression(node)) {
+    return {
+      kind: 'OptionalCallExpression',
+      callee: convertExpression(node.callee as BabelCore.types.Expression),
+      arguments: node.arguments
+        .map(arg => (t.isExpression(arg) ? convertExpression(arg) : undefined))
+        .filter(Boolean) as Expression[],
+      optional: node.optional,
+    }
+  }
+
+  // Tagged Template Expression
+  if (t.isTaggedTemplateExpression(node)) {
+    return {
+      kind: 'TaggedTemplateExpression',
+      tag: convertExpression(node.tag),
+      quasi: {
+        kind: 'TemplateLiteral',
+        quasis: node.quasi.quasis.map(q => q.value.cooked ?? q.value.raw),
+        expressions: node.quasi.expressions.map(e =>
+          convertExpression(e as BabelCore.types.Expression),
+        ),
+      },
+    }
+  }
+
+  // Class Expression
+  if (t.isClassExpression(node)) {
+    return {
+      kind: 'ClassExpression',
+      name: node.id?.name,
+      superClass: node.superClass ? convertExpression(node.superClass) : undefined,
+      body: node.body.body, // Store as Babel AST for now
+    }
+  }
+
+  // This Expression
+  if (t.isThisExpression(node)) {
+    return { kind: 'ThisExpression' }
+  }
+
+  // Super Expression
+  if (t.isSuper(node)) {
+    return { kind: 'SuperExpression' }
   }
 
   // Fallback for unsupported expressions

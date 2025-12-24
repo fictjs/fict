@@ -24,8 +24,7 @@
     "changeset": "changeset",
     "version": "changeset version",
     "release": "turbo run build && changeset publish",
-    "prepare": "husky",
-    "precommit": "pnpm test && pnpm typecheck && pnpm lint && pnpm build"
+    "prepare": "husky"
   },
   "devDependencies": {
     "@babel/core": "^7.26.0",

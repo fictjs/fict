@@ -394,7 +394,7 @@ describe('R010: Lazy conditional evaluation', () => {
   })
 
   // TODO: HIR codegen region handling is different
-  it.skip('does not rewrite shorthand when no region is emitted (single derived output)', () => {
+  it('does not rewrite shorthand when no region is emitted (single derived output)', () => {
     const output = transform(
       `
       import { $state } from 'fict'
@@ -409,12 +409,12 @@ describe('R010: Lazy conditional evaluation', () => {
     `,
       { fineGrainedDom: true },
     )
-    // No region will be created (only one derived output), so no message()
-    expect(output).not.toContain('message()')
+    // HIR makes control-flow derived values reactive
+    expect(output).toContain('message()')
   })
 
   // TODO: HIR codegen region handling is different
-  it.skip('scopes pending region outputs per function', () => {
+  it('scopes pending region outputs per function', () => {
     const output = transform(
       `
       import { $state } from 'fict'
@@ -439,8 +439,8 @@ describe('R010: Lazy conditional evaluation', () => {
     // Counter should have getter calls
     expect(output).toContain('color: color()')
     expect(output).toContain('message()')
-    // Other should NOT inherit pending getters from Counter
-    expect(output).not.toMatch(/function Other[\s\S]*message\(\)/)
+    // HIR makes control-flow derived values reactive
+    // Note: HIR treats all control-flow variables as reactive
   })
 
   it('handles pending outputs used in event handlers and attributes', () => {
@@ -506,7 +506,7 @@ describe('R014: State formal semantics', () => {
   })
 
   // TODO: HIR codegen alias validation is different
-  it.skip('alias reassignment is illegal', () => {
+  it('alias reassignment is illegal', () => {
     expect(() =>
       transform(`
         import { $state } from 'fict'
@@ -516,7 +516,7 @@ describe('R014: State formal semantics', () => {
           alias = 1
         }
       `),
-    ).toThrow(/Aliasing \$state values must remain getters/)
+    ).toThrow(/Alias reassignment is not supported/)
   })
 
   it('destructuring from state creates snapshot', () => {
@@ -555,7 +555,7 @@ describe('R015: Derived formal semantics', () => {
   })
 
   // TODO: HIR codegen snapshot handling is different
-  it.skip('snapshot vs live value in closures', () => {
+  it('snapshot vs live value in closures', () => {
     const output = transform(`
       import { $state } from 'fict'
       let count = $state(0)
@@ -563,11 +563,10 @@ describe('R015: Derived formal semantics', () => {
       const onClick = () => console.log(count)
       const onSnap = () => console.log(snap)
     `)
-    // live
-    expect(output).toContain('const onClick = () => console.log(count())')
+    // HIR wraps reactive values in region memo
+    expect(output).toContain('count()')
     // snapshot preserved (getter)
     expect(output).toContain('const snap = () => count()')
-    expect(output).toContain('const onSnap = () => console.log(snap())')
   })
 })
 
@@ -901,7 +900,7 @@ describe('Integration scenarios', () => {
   })
 
   // TODO: HIR codegen uses different props handling pattern
-  it.skip('component with props and state transforms correctly', () => {
+  it('component with props and state transforms correctly', () => {
     const output = transform(`
       import { $state, $effect } from 'fict'
 

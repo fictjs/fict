@@ -25,8 +25,9 @@ describe('enterSSA', () => {
     const hir = buildHIR(ast)
     const ssa = enterSSA(hir)
     const printed = printHIR(ssa)
-    expect(printed).toContain('x_1')
-    expect(printed).toContain('x_2')
+    // SSA uses $$ssa suffix to avoid conflicts with user variables containing _number
+    expect(printed).toContain('x$$ssa1')
+    expect(printed).toContain('x$$ssa2')
   })
 
   it('creates divergent versions across predecessors (phi pending full precision)', () => {
@@ -42,7 +43,8 @@ describe('enterSSA', () => {
     const hir = buildHIR(ast)
     const ssa = enterSSA(hir)
     const printed = printHIR(ssa)
-    expect(printed).toMatch(/x_1/)
-    expect(printed).toMatch(/x_2/)
+    // SSA uses $$ssa suffix to avoid conflicts with user variables containing _number
+    expect(printed).toMatch(/x\$\$ssa1/)
+    expect(printed).toMatch(/x\$\$ssa2/)
   })
 })

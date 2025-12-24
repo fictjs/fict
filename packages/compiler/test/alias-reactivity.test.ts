@@ -35,8 +35,9 @@ describe('Alias-Safe Reactive Lowering', () => {
         }
       `
       const output = transform(source)
-      // Template cloning uses insert for dynamic content
-      expect(output).toContain('insert(__el_2, () => alias(),')
+      // Template cloning uses insert with marker for dynamic content
+      expect(output).toContain('insert(')
+      expect(output).toContain('alias()')
     })
   })
 

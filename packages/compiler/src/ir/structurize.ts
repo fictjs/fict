@@ -34,6 +34,30 @@ export class StructurizationError extends Error {
 }
 
 /**
+ * Diagnostic information about structurization issues
+ */
+export interface StructurizationDiagnostics {
+  /** Blocks that couldn't be properly structured */
+  problematicBlocks: BlockId[]
+  /** Reachable blocks that were not emitted */
+  unemittedBlocks: BlockId[]
+  /** Shared blocks with side effects that were skipped */
+  sharedSideEffectBlocks: BlockId[]
+  /** Whether the result is complete and safe to use */
+  isComplete: boolean
+}
+
+/**
+ * Result of CFG structurization with diagnostics
+ */
+export interface StructurizationResult {
+  /** The structured node (may be incomplete if issues occurred) */
+  node: StructuredNode
+  /** Diagnostic information about any issues encountered */
+  diagnostics: StructurizationDiagnostics
+}
+
+/**
  * Structured representation of a control flow node
  */
 export type StructuredNode =
@@ -256,6 +280,109 @@ export function structurizeCFG(
   }
 
   return result
+}
+
+/**
+ * Structurize a CFG and return detailed diagnostics.
+ * This version always returns the result along with diagnostic information,
+ * allowing callers to decide how to handle incomplete structurization.
+ */
+export function structurizeCFGWithDiagnostics(fn: HIRFunction): StructurizationResult {
+  if (fn.blocks.length === 0) {
+    return {
+      node: { kind: 'sequence', nodes: [] },
+      diagnostics: {
+        problematicBlocks: [],
+        unemittedBlocks: [],
+        sharedSideEffectBlocks: [],
+        isComplete: true,
+      },
+    }
+  }
+
+  const cfg = analyzeCFG(fn.blocks)
+  const blockMap = new Map<BlockId, BasicBlock>()
+  for (const block of fn.blocks) {
+    blockMap.set(block.id, block)
+  }
+
+  // Identify join points
+  const joinPoints = new Set<BlockId>()
+  for (const [blockId, preds] of cfg.predecessors) {
+    if (preds.length > 1) {
+      joinPoints.add(blockId)
+    }
+  }
+
+  // Identify blocks with side effects
+  const blocksWithSideEffects = new Set<BlockId>()
+  for (const block of fn.blocks) {
+    if (block.instructions.length > 0) {
+      blocksWithSideEffects.add(block.id)
+    }
+    if (block.terminator.kind === 'Throw') {
+      blocksWithSideEffects.add(block.id)
+    }
+  }
+
+  const ctx: StructurizeContext = {
+    fn,
+    blockMap,
+    predecessors: cfg.predecessors,
+    successors: cfg.successors,
+    idom: cfg.dominatorTree.idom,
+    loopHeaders: cfg.loopHeaders,
+    backEdges: cfg.backEdges,
+    visited: new Set(),
+    emitted: new Set(),
+    processing: new Set(),
+    depth: 0,
+    maxDepth: fn.blocks.length * 3,
+    problematicBlocks: new Set(),
+    warnOnIssues: false, // We collect diagnostics instead
+    joinPoints,
+    blocksWithSideEffects,
+    sharedSideEffectBlocks: new Set(),
+  }
+
+  const entryBlock = fn.blocks[0]
+  if (!entryBlock) {
+    return {
+      node: { kind: 'sequence', nodes: [] },
+      diagnostics: {
+        problematicBlocks: [],
+        unemittedBlocks: [],
+        sharedSideEffectBlocks: [],
+        isComplete: true,
+      },
+    }
+  }
+
+  const result = structurizeBlock(ctx, entryBlock.id)
+
+  // Compute diagnostics
+  const reachableBlocks = computeReachableBlocks(fn.blocks, cfg.successors)
+  const unemittedBlocks: BlockId[] = []
+  for (const blockId of reachableBlocks) {
+    if (!ctx.emitted.has(blockId) && !ctx.problematicBlocks.has(blockId)) {
+      unemittedBlocks.push(blockId)
+    }
+  }
+
+  const isComplete =
+    ctx.problematicBlocks.size === 0 &&
+    unemittedBlocks.length === 0 &&
+    ctx.sharedSideEffectBlocks.size === 0
+
+  return {
+    node: result,
+    diagnostics: {
+      problematicBlocks: Array.from(ctx.problematicBlocks),
+      unemittedBlocks,
+      sharedSideEffectBlocks: Array.from(ctx.sharedSideEffectBlocks),
+      isComplete,
+    },
+  }
 }
 
 /**

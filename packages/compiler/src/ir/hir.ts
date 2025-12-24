@@ -8,6 +8,43 @@
 
 export type BlockId = number
 
+/**
+ * SSA naming constants and utilities.
+ * Using a unique separator '$$ssa' to avoid conflicts with user variable names.
+ * Format: {originalName}$$ssa{version}
+ * Example: count -> count$$ssa1, count$$ssa2
+ */
+export const SSA_SEPARATOR = '$$ssa'
+export const SSA_PATTERN = /\$\$ssa\d+$/
+
+/**
+ * Create an SSA-versioned variable name.
+ * @param baseName - The original variable name
+ * @param version - The SSA version number
+ */
+export function makeSSAName(baseName: string, version: number): string {
+  return `${baseName}${SSA_SEPARATOR}${version}`
+}
+
+/**
+ * Extract the base name from an SSA-versioned variable name.
+ * Returns the original name if no SSA suffix is present.
+ * @param name - The potentially SSA-versioned variable name
+ */
+export function getSSABaseName(name: string): string {
+  // Skip internal names that start with __ (these are compiler-generated)
+  if (name.startsWith('__')) return name
+  return name.replace(SSA_PATTERN, '')
+}
+
+/**
+ * Check if a variable name is SSA-versioned.
+ * @param name - The variable name to check
+ */
+export function isSSAName(name: string): boolean {
+  return SSA_PATTERN.test(name)
+}
+
 /** Terminator of a basic block */
 export type Terminator =
   | { kind: 'Return'; argument?: Expression }
@@ -88,6 +125,16 @@ export type Expression =
   | UpdateExpression
   | TemplateLiteral
   | SpreadElement
+  | AwaitExpression
+  | NewExpression
+  | SequenceExpression
+  | YieldExpression
+  | OptionalCallExpression
+  | TaggedTemplateExpression
+  | ClassExpression
+  | ThisExpression
+  | SuperExpression
+  | OptionalMemberExpression
 
 export interface Identifier {
   kind: 'Identifier'
@@ -322,6 +369,64 @@ export interface TemplateLiteral {
 export interface SpreadElement {
   kind: 'SpreadElement'
   argument: Expression
+}
+
+export interface AwaitExpression {
+  kind: 'AwaitExpression'
+  argument: Expression
+}
+
+export interface NewExpression {
+  kind: 'NewExpression'
+  callee: Expression
+  arguments: Expression[]
+}
+
+export interface SequenceExpression {
+  kind: 'SequenceExpression'
+  expressions: Expression[]
+}
+
+export interface YieldExpression {
+  kind: 'YieldExpression'
+  argument: Expression | null
+  delegate: boolean
+}
+
+export interface OptionalCallExpression {
+  kind: 'OptionalCallExpression'
+  callee: Expression
+  arguments: Expression[]
+  optional: boolean
+}
+
+export interface TaggedTemplateExpression {
+  kind: 'TaggedTemplateExpression'
+  tag: Expression
+  quasi: TemplateLiteral
+}
+
+export interface ClassExpression {
+  kind: 'ClassExpression'
+  name?: string
+  superClass?: Expression
+  body: any[] // ClassBody methods - stored as Babel AST for now
+}
+
+export interface ThisExpression {
+  kind: 'ThisExpression'
+}
+
+export interface SuperExpression {
+  kind: 'SuperExpression'
+}
+
+export interface OptionalMemberExpression {
+  kind: 'OptionalMemberExpression'
+  object: Expression
+  property: Expression
+  computed: boolean
+  optional: boolean
 }
 
 export interface BasicBlock {

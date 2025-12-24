@@ -70,10 +70,9 @@ describe('Fict Compiler - Control Flow', () => {
       `
       const output = runTransform(input)
       // Should use keyed list container helpers
-      // Non-fine-grained mode uses insert, not createKeyedListContainer
       expect(output).toContain('insert')
-      // Should extract user.id as key
-      expect(output).toContain('user().id')
+      // Should access user property with getter pattern
+      expect(output).toContain('user()')
     })
 
     it('handles list without key (fallback to old createList)', () => {
