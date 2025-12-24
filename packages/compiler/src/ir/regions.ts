@@ -12,7 +12,15 @@ import type { RegionMetadata } from '../fine-grained-dom'
 
 import type { CodegenContext, RegionInfo } from './codegen'
 import { applyRegionToContext, applyRegionMetadataToExpression, lowerExpression } from './codegen'
-import type { BasicBlock, BlockId, HIRFunction, HIRProgram, Expression, Instruction } from './hir'
+import type {
+  BasicBlock,
+  BlockId,
+  HIRFunction,
+  HIRProgram,
+  Expression,
+  Instruction,
+  Identifier,
+} from './hir'
 import type { ReactiveScope, ReactiveScopeResult } from './scopes'
 import { getScopeDependencies } from './scopes'
 import { structurizeCFG, type StructuredNode } from './structurize'
@@ -431,10 +439,14 @@ function lowerNodeWithRegionContext(
 
     case 'block': {
       const stmts: BabelCore.types.Statement[] = []
+      const scopedDeclared = new Set(declaredVars)
+      const prevTracked = ctx.trackedVars
+      ctx.trackedVars = new Set(ctx.trackedVars)
       for (const child of node.statements) {
-        stmts.push(...lowerNodeWithRegionContext(child, t, ctx, declaredVars, regionCtx))
+        stmts.push(...lowerNodeWithRegionContext(child, t, ctx, scopedDeclared, regionCtx))
       }
-      return stmts
+      ctx.trackedVars = prevTracked
+      return [t.blockStatement(stmts)]
     }
 
     case 'instruction': {
@@ -870,11 +882,97 @@ function instructionToStatement(
   if (instr.kind === 'Assign') {
     const ssaName = instr.target.name
     const baseName = deSSAVarName(ssaName)
+    const declKind = instr.declarationKind
     const isTracked = ctx.trackedVars.has(baseName)
     const aliasVars = ctx.aliasVars ?? (ctx.aliasVars = new Set())
     const dependsOnTracked = expressionUsesTracked(instr.value, ctx)
     const capturedTracked =
       ctx.externalTracked && ctx.externalTracked.has(baseName) && !declaredVars.has(baseName)
+    const isShadowDeclaration = !!declKind && declaredVars.has(baseName)
+    const treatAsTracked = !isShadowDeclaration && isTracked
+    const isStateCall =
+      instr.value.kind === 'CallExpression' &&
+      instr.value.callee.kind === 'Identifier' &&
+      instr.value.callee.name === '$state'
+
+    if (isShadowDeclaration && declKind) {
+      ctx.trackedVars.delete(baseName)
+    }
+
+    if (declKind) {
+      const normalizedDecl: typeof declKind = isStateCall || dependsOnTracked ? 'const' : declKind
+      const fallbackDecl: typeof declKind =
+        !treatAsTracked && !dependsOnTracked
+          ? declKind === 'const'
+            ? 'let'
+            : declKind
+          : normalizedDecl
+      const isAliasOfTracked =
+        !isShadowDeclaration &&
+        instr.value.kind === 'Identifier' &&
+        ctx.trackedVars.has(deSSAVarName(instr.value.name))
+
+      if (isAliasOfTracked) {
+        declaredVars.add(baseName)
+        aliasVars.add(baseName)
+        ctx.trackedVars.add(baseName)
+        const sourceIdent = instr.value as Identifier
+        return t.variableDeclaration(normalizedDecl, [
+          t.variableDeclarator(
+            t.identifier(baseName),
+            t.arrowFunctionExpression(
+              [],
+              t.callExpression(t.identifier(deSSAVarName(sourceIdent.name)), []),
+            ),
+          ),
+        ])
+      }
+
+      declaredVars.add(baseName)
+
+      if (treatAsTracked) {
+        if (isStateCall) {
+          return t.variableDeclaration(normalizedDecl, [
+            t.variableDeclarator(
+              t.identifier(baseName),
+              lowerExpressionWithDeSSA(instr.value, ctx),
+            ),
+          ])
+        }
+
+        if (dependsOnTracked) {
+          ctx.helpersUsed.add('useMemo')
+          ctx.needsCtx = true
+          return t.variableDeclaration(normalizedDecl, [
+            t.variableDeclarator(
+              t.identifier(baseName),
+              t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
+                t.identifier('__fictCtx'),
+                t.arrowFunctionExpression([], lowerExpressionWithDeSSA(instr.value, ctx)),
+              ]),
+            ),
+          ])
+        }
+      }
+
+      if (dependsOnTracked) {
+        ctx.helpersUsed.add('useMemo')
+        ctx.needsCtx = true
+        return t.variableDeclaration(normalizedDecl, [
+          t.variableDeclarator(
+            t.identifier(baseName),
+            t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
+              t.identifier('__fictCtx'),
+              t.arrowFunctionExpression([], lowerExpressionWithDeSSA(instr.value, ctx)),
+            ]),
+          ),
+        ])
+      }
+
+      return t.variableDeclaration(fallbackDecl, [
+        t.variableDeclarator(t.identifier(baseName), lowerExpressionWithDeSSA(instr.value, ctx)),
+      ])
+    }
 
     if (aliasVars.has(baseName) && declaredVars.has(baseName)) {
       throw new Error(`Alias reassignment is not supported for "${baseName}"`)
@@ -1003,12 +1101,30 @@ function lowerExpressionWithDeSSA(
         }
       : null)
 
-  const result = lowerExpression(expr, ctx)
-  const regionApplied = applyRegionMetadataToExpression(
-    result,
-    ctx,
-    (regionOverride as RegionInfo | null) ?? undefined,
-  )
+  const lowered = lowerExpression(expr, ctx)
+  let regionApplied: BabelCore.types.Expression
+
+  if (ctx.t.isAssignmentExpression(lowered)) {
+    const right = applyRegionMetadataToExpression(
+      lowered.right,
+      ctx,
+      (regionOverride as RegionInfo | null) ?? undefined,
+    )
+    regionApplied = ctx.t.assignmentExpression(lowered.operator, lowered.left, right)
+  } else if (ctx.t.isUpdateExpression(lowered)) {
+    const arg = applyRegionMetadataToExpression(
+      lowered.argument as BabelCore.types.Expression,
+      ctx,
+      (regionOverride as RegionInfo | null) ?? undefined,
+    )
+    regionApplied = ctx.t.updateExpression(lowered.operator, arg as any, lowered.prefix)
+  } else {
+    regionApplied = applyRegionMetadataToExpression(
+      lowered,
+      ctx,
+      (regionOverride as RegionInfo | null) ?? undefined,
+    )
+  }
   return deSSAExpression(regionApplied, ctx.t)
 }
 
@@ -1025,11 +1141,20 @@ function deSSAExpression(
   }
 
   if (t.isMemberExpression(expr)) {
+    const property = expr.property
+    // If the property has been transformed to a CallExpression (e.g., reactive access),
+    // we need to preserve it and mark as computed since CallExpression is not valid for non-computed access
+    if (!expr.computed && t.isCallExpression(property)) {
+      return t.memberExpression(
+        deSSAExpression(expr.object as BabelCore.types.Expression, t),
+        deSSAExpression(property, t),
+        true, // Must be computed when property is a CallExpression
+        expr.optional,
+      )
+    }
     return t.memberExpression(
       deSSAExpression(expr.object as BabelCore.types.Expression, t),
-      expr.computed
-        ? deSSAExpression(expr.property as BabelCore.types.Expression, t)
-        : expr.property,
+      expr.computed ? deSSAExpression(property as BabelCore.types.Expression, t) : property,
       expr.computed,
       expr.optional,
     )

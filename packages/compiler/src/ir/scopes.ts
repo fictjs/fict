@@ -8,6 +8,12 @@ import type {
 } from './hir'
 import { extractDependencyPath, pathToString } from './hir'
 
+function baseName(name: string): string {
+  if (name.startsWith('__')) return name
+  const match = name.match(/^(.+?)_\d+$/)
+  return match ? match[1] : name
+}
+
 /**
  * Analysis result for control flow reads.
  * Distinguishes reads in condition positions (if/while tests) from pure expression reads.
@@ -381,11 +387,12 @@ function collectReads(
   instr: Instruction,
   into: Set<string>,
   paths?: Map<string, DependencyPath[]>,
+  bound?: Set<string>,
 ) {
   if (instr.kind === 'Assign') {
-    collectExprReads(instr.value as any, into, paths)
+    collectExprReads(instr.value as any, into, paths, bound)
   } else if (instr.kind === 'Expression') {
-    collectExprReads(instr.value as any, into, paths)
+    collectExprReads(instr.value as any, into, paths, bound)
   }
 }
 
@@ -397,13 +404,23 @@ function accumulateAllReads(byName: Map<string, ReactiveScope>): Set<string> {
   return set
 }
 
-function collectExprReads(expr: any, into: Set<string>, paths?: Map<string, DependencyPath[]>) {
+function collectExprReads(
+  expr: any,
+  into: Set<string>,
+  paths?: Map<string, DependencyPath[]>,
+  bound: Set<string> = new Set(),
+) {
   if (!expr || typeof expr !== 'object') return
   switch (expr.kind) {
     case 'Identifier':
+      if (bound.has(baseName(expr.name))) return
       into.add(expr.name)
       if (paths) {
-        const path: DependencyPath = { base: expr.name, segments: [], hasOptional: false }
+        const path: DependencyPath = {
+          base: expr.name,
+          segments: [],
+          hasOptional: false,
+        }
         addPath(paths, expr.name, path)
       }
       return
@@ -413,74 +430,123 @@ function collectExprReads(expr: any, into: Set<string>, paths?: Map<string, Depe
         (expr.callee.name === '$state' || expr.callee.name === '$effect')
 
       if (!isMacroCallee) {
-        collectExprReads(expr.callee, into, paths)
+        collectExprReads(expr.callee, into, paths, bound)
       }
 
-      expr.arguments?.forEach((a: any) => collectExprReads(a, into, paths))
+      expr.arguments?.forEach((a: any) => collectExprReads(a, into, paths, bound))
       return
     }
     case 'MemberExpression':
       // Extract full dependency path for optional chain analysis
       const depPath = extractDependencyPath(expr)
       if (depPath) {
+        if (bound.has(baseName(depPath.base))) return
         into.add(depPath.base)
         if (paths) {
           addPath(paths, depPath.base, depPath)
         }
       } else {
         // Fallback to simple collection
-        collectExprReads(expr.object, into, paths)
+        collectExprReads(expr.object, into, paths, bound)
         if (expr.computed) {
-          collectExprReads(expr.property, into, paths)
+          collectExprReads(expr.property, into, paths, bound)
         }
       }
       return
     case 'BinaryExpression':
     case 'LogicalExpression':
-      collectExprReads(expr.left, into, paths)
-      collectExprReads(expr.right, into, paths)
+      collectExprReads(expr.left, into, paths, bound)
+      collectExprReads(expr.right, into, paths, bound)
       return
     case 'UnaryExpression':
-      collectExprReads(expr.argument, into, paths)
+      collectExprReads(expr.argument, into, paths, bound)
       return
     case 'ConditionalExpression':
-      collectExprReads(expr.test, into, paths)
-      collectExprReads(expr.consequent, into, paths)
-      collectExprReads(expr.alternate, into, paths)
+      collectExprReads(expr.test, into, paths, bound)
+      collectExprReads(expr.consequent, into, paths, bound)
+      collectExprReads(expr.alternate, into, paths, bound)
       return
     case 'ArrayExpression':
-      expr.elements?.forEach((el: any) => collectExprReads(el, into, paths))
+      expr.elements?.forEach((el: any) => collectExprReads(el, into, paths, bound))
       return
     case 'ObjectExpression':
       expr.properties?.forEach((p: any) => {
         if (p.kind === 'SpreadElement') {
-          collectExprReads(p.argument, into, paths)
+          collectExprReads(p.argument, into, paths, bound)
           return
         }
 
         // Only collect computed keys; static keys are not dependencies
         if (p.computed) {
-          collectExprReads(p.key, into, paths)
+          collectExprReads(p.key, into, paths, bound)
         }
 
-        collectExprReads(p.value, into, paths)
+        collectExprReads(p.value, into, paths, bound)
       })
       return
-    case 'ArrowFunction':
-      // Collect from arrow function body
+    case 'ArrowFunction': {
+      const nextBound = new Set(bound)
+      expr.params?.forEach((p: any) => {
+        if (p?.name) nextBound.add(baseName(p.name))
+      })
       if (expr.isExpression && expr.body) {
-        collectExprReads(expr.body, into, paths)
+        collectExprReads(expr.body, into, paths, nextBound)
+      } else if (Array.isArray(expr.body)) {
+        expr.body.forEach((block: BasicBlock) => {
+          block.instructions.forEach((instr: Instruction) =>
+            collectReads(instr, into, paths, nextBound),
+          )
+          const term = block.terminator
+          if (term.kind === 'Return' && term.argument) {
+            collectExprReads(term.argument, into, paths, nextBound)
+          } else if (term.kind === 'Throw') {
+            collectExprReads(term.argument, into, paths, nextBound)
+          } else if (term.kind === 'Branch') {
+            collectExprReads(term.test, into, paths, nextBound)
+          } else if (term.kind === 'Switch') {
+            collectExprReads(term.discriminant, into, paths, nextBound)
+            term.cases.forEach(c => {
+              if (c.test) collectExprReads(c.test, into, paths, nextBound)
+            })
+          }
+        })
       }
       return
+    }
+    case 'FunctionExpression': {
+      const nextBound = new Set(bound)
+      expr.params?.forEach((p: any) => {
+        if (p?.name) nextBound.add(baseName(p.name))
+      })
+      expr.body?.forEach((block: BasicBlock) => {
+        block.instructions.forEach((instr: Instruction) =>
+          collectReads(instr, into, paths, nextBound),
+        )
+        const term = block.terminator
+        if (term.kind === 'Return' && term.argument) {
+          collectExprReads(term.argument, into, paths, nextBound)
+        } else if (term.kind === 'Throw') {
+          collectExprReads(term.argument, into, paths, nextBound)
+        } else if (term.kind === 'Branch') {
+          collectExprReads(term.test, into, paths, nextBound)
+        } else if (term.kind === 'Switch') {
+          collectExprReads(term.discriminant, into, paths, nextBound)
+          term.cases.forEach(c => {
+            if (c.test) collectExprReads(c.test, into, paths, nextBound)
+          })
+        }
+      })
+      return
+    }
     case 'JSXElement':
       // Collect from JSX attributes and children
       expr.attributes?.forEach((attr: any) => {
-        if (attr.value) collectExprReads(attr.value, into, paths)
-        if (attr.spreadExpr) collectExprReads(attr.spreadExpr, into, paths)
+        if (attr.value) collectExprReads(attr.value, into, paths, bound)
+        if (attr.spreadExpr) collectExprReads(attr.spreadExpr, into, paths, bound)
       })
       expr.children?.forEach((child: any) => {
-        if (child.kind === 'expression') collectExprReads(child.value, into, paths)
-        if (child.kind === 'element') collectExprReads(child.value, into, paths)
+        if (child.kind === 'expression') collectExprReads(child.value, into, paths, bound)
+        if (child.kind === 'element') collectExprReads(child.value, into, paths, bound)
       })
       return
     default:

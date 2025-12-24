@@ -17,6 +17,7 @@ describe('createFictPlugin (HIR)', () => {
 
     it('rewrites derived const to useMemo', () => {
       const output = transform(`
+        import { $state } from 'fict'
         let count = $state(0)
         const doubled = count * 2
       `)
@@ -28,6 +29,7 @@ describe('createFictPlugin (HIR)', () => {
     it('throws on non-identifier $state targets', () => {
       expect(() =>
         transform(`
+          import { $state } from 'fict'
           const [a] = $state(0)
         `),
       ).toThrow(/Destructuring \$state is not supported/)
@@ -36,6 +38,7 @@ describe('createFictPlugin (HIR)', () => {
     it('throws on $state inside loops', () => {
       expect(() =>
         transform(`
+          import { $state } from 'fict'
           for (let i = 0; i < 3; i++) {
             let x = $state(i)
           }
@@ -44,6 +47,7 @@ describe('createFictPlugin (HIR)', () => {
 
       expect(() =>
         transform(`
+          import { $state } from 'fict'
           let i = 0
           while (i < 3) {
             let x = $state(i)
@@ -56,6 +60,7 @@ describe('createFictPlugin (HIR)', () => {
     it('throws on $state inside conditionals', () => {
       expect(() =>
         transform(`
+          import { $state } from 'fict'
           if (true) {
             let x = $state(1)
           }
@@ -66,6 +71,7 @@ describe('createFictPlugin (HIR)', () => {
     it('throws on $effect inside loops or conditionals', () => {
       expect(() =>
         transform(`
+          import { $effect } from 'fict'
           if (true) {
             $effect(() => {})
           }
@@ -74,6 +80,7 @@ describe('createFictPlugin (HIR)', () => {
 
       expect(() =>
         transform(`
+          import { $effect } from 'fict'
           for (let i=0; i<3; i++) {
             $effect(() => {})
           }
@@ -98,6 +105,7 @@ describe('createFictPlugin (HIR)', () => {
   describe('Assignments', () => {
     it('transforms assignment operators', () => {
       const output = transform(`
+        import { $state } from 'fict'
         let count = $state(0)
         count = 5
         count += 1
@@ -115,6 +123,7 @@ describe('createFictPlugin (HIR)', () => {
 
     it('transforms self-referential assignments like count = count + 1', () => {
       const output = transform(`
+        import { $state } from 'fict'
         let count = $state(0)
         count = count + 1
         count = count - 1
@@ -128,6 +137,7 @@ describe('createFictPlugin (HIR)', () => {
 
     it('transforms assignments inside arrow function block bodies', () => {
       const output = transform(`
+        import { $state } from 'fict'
         let count = $state(0)
         const handler = () => {
           count = 5
@@ -142,6 +152,7 @@ describe('createFictPlugin (HIR)', () => {
 
     it('transforms increment/decrement operators', () => {
       const output = transform(`
+        import { $state } from 'fict'
         let count = $state(0)
         count++
         count--
@@ -157,6 +168,7 @@ describe('createFictPlugin (HIR)', () => {
   describe('JSX', () => {
     it('wraps reactive values in JSX children', () => {
       const output = transform(`
+        import { $state } from 'fict'
         let count = $state(0)
         const view = () => <div>{count}</div>
       `)
@@ -167,6 +179,7 @@ describe('createFictPlugin (HIR)', () => {
 
     it('does not wrap static values in JSX children', () => {
       const output = transform(`
+        import { $state } from 'fict'
         const view = () => <div>{"static"}</div>
       `)
 
@@ -176,6 +189,7 @@ describe('createFictPlugin (HIR)', () => {
 
     it('wraps complex expressions that depend on state', () => {
       const output = transform(`
+        import { $state } from 'fict'
         let count = $state(0)
         const view = () => <div>{count > 0 ? 'positive' : 'zero'}</div>
       `)
@@ -188,6 +202,7 @@ describe('createFictPlugin (HIR)', () => {
   describe('Regions and memos', () => {
     it('groups derived values into a region memo', () => {
       const output = transform(`
+        import { $state } from 'fict'
         function View() {
           let count = $state(0)
           const doubled = count * 2
@@ -209,6 +224,7 @@ describe('createFictPlugin (HIR)', () => {
     it('throws on alias reassignment of tracked values', () => {
       expect(() =>
         transform(`
+          import { $state } from 'fict'
           let count = $state(0)
           const alias = count
           alias = 1
@@ -220,6 +236,7 @@ describe('createFictPlugin (HIR)', () => {
   describe('Fine-grained DOM', () => {
     it('rewrites tracked reads inside bindings and effects', () => {
       const output = transform(`
+        import { $state, $effect } from 'fict'
         let count = $state(0)
         $effect(() => {
           document.title = \`Count: \${count}\`

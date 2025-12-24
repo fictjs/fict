@@ -55,7 +55,12 @@ export type Terminator =
 
 /** A single HIR instruction, kept coarse for now */
 export type Instruction =
-  | { kind: 'Assign'; target: Identifier; value: Expression }
+  | {
+      kind: 'Assign'
+      target: Identifier
+      value: Expression
+      declarationKind?: 'const' | 'let' | 'var'
+    }
   | { kind: 'Expression'; value: Expression }
   | {
       kind: 'Phi'
@@ -283,6 +288,7 @@ export interface ArrowFunctionExpression {
   params: Identifier[]
   body: Expression | BasicBlock[]
   isExpression: boolean // true if body is Expression, false if block
+  isAsync?: boolean
 }
 
 export interface FunctionExpression {
@@ -290,6 +296,7 @@ export interface FunctionExpression {
   name?: string
   params: Identifier[]
   body: BasicBlock[]
+  isAsync?: boolean
 }
 
 export interface AssignmentExpression {
@@ -327,8 +334,16 @@ export interface HIRFunction {
   name?: string
   params: Identifier[]
   blocks: BasicBlock[]
+  /** Original Babel param AST nodes for proper props pattern lowering */
+  rawParams?: any[]
   /** Optional SSA version map for consumers */
   ssaMap?: Map<string, number>
+  /** Optional metadata about the origin of this function */
+  meta?: {
+    fromExpression?: boolean
+    isArrow?: boolean
+    hasExpressionBody?: boolean
+  }
 }
 
 export interface HIRProgram {

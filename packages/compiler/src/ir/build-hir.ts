@@ -32,6 +32,12 @@ interface BlockBuilder {
   sealed: boolean
 }
 
+function normalizeVarKind(
+  kind: BabelCore.types.VariableDeclaration['kind'],
+): 'const' | 'let' | 'var' {
+  return kind === 'const' || kind === 'let' || kind === 'var' ? kind : 'let'
+}
+
 /**
  * Extract identifiers from destructuring patterns.
  * Handles object patterns, array patterns, rest elements, and assignment patterns.
@@ -126,13 +132,25 @@ function buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Bas
     }
     if (t.isVariableDeclaration(stmt)) {
       for (const decl of stmt.declarations) {
-        if (!t.isIdentifier(decl.id) || !decl.init) continue
+        if (!t.isIdentifier(decl.id)) continue
         block.instructions.push({
           kind: 'Assign',
           target: { kind: 'Identifier', name: decl.id.name },
-          value: convertExpression(decl.init),
+          value: decl.init
+            ? convertExpression(decl.init)
+            : ({ kind: 'Literal', value: undefined } as HLiteral),
+          declarationKind: normalizeVarKind(stmt.kind),
         })
       }
+    }
+    if (t.isFunctionDeclaration(stmt) && stmt.id) {
+      block.instructions.push({
+        kind: 'Assign',
+        target: { kind: 'Identifier', name: stmt.id.name },
+        value: convertExpression(
+          t.functionExpression(stmt.id, stmt.params as any, stmt.body, stmt.generator, stmt.async),
+        ),
+      })
     }
   }
 
@@ -196,11 +214,13 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
             processedFunctions.add(name)
             const body = v.init.body
             const params = v.init.params
-            if (t.isBlockStatement(body)) {
-              functions.push(convertFunction(name, params, body.body))
-            } else {
-              functions.push(convertFunction(name, params, [t.returnStatement(body as any)]))
-            }
+            const isArrow = t.isArrowFunctionExpression(v.init)
+            const hasExpressionBody = isArrow && !t.isBlockStatement(body)
+            const fnHIR = t.isBlockStatement(body)
+              ? convertFunction(name, params, body.body)
+              : convertFunction(name, params, [t.returnStatement(body as any)])
+            fnHIR.meta = { fromExpression: true, isArrow, hasExpressionBody }
+            functions.push(fnHIR)
             postamble.push({ kind: 'ExportFunction', name })
           }
         }
@@ -244,15 +264,13 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
           processedFunctions.add(name)
           const body = decl.init.body
           const params = decl.init.params
-          if (t.isBlockStatement(body)) {
-            functions.push(convertFunction(name, params, body.body))
-          } else {
-            functions.push(
-              convertFunction(name, params, [
-                t.returnStatement(body as BabelCore.types.Expression),
-              ]),
-            )
-          }
+          const isArrow = t.isArrowFunctionExpression(decl.init)
+          const hasExpressionBody = isArrow && !t.isBlockStatement(body)
+          const fnHIR = t.isBlockStatement(body)
+            ? convertFunction(name, params, body.body)
+            : convertFunction(name, params, [t.returnStatement(body as BabelCore.types.Expression)])
+          fnHIR.meta = { fromExpression: true, isArrow, hasExpressionBody }
+          functions.push(fnHIR)
         }
       }
       if (!hasFunction) {
@@ -351,13 +369,40 @@ function convertFunction(
     }
     if (t.isVariableDeclaration(stmt)) {
       for (const decl of stmt.declarations) {
-        if (!t.isIdentifier(decl.id) || !decl.init) continue
+        if (!t.isIdentifier(decl.id)) continue
         current.block.instructions.push({
           kind: 'Assign',
           target: { kind: 'Identifier', name: decl.id.name },
-          value: convertExpression(decl.init),
+          value: decl.init
+            ? convertExpression(decl.init)
+            : ({ kind: 'Literal', value: undefined } as HLiteral),
+          declarationKind: normalizeVarKind(stmt.kind),
         })
       }
+      continue
+    }
+    if (t.isFunctionDeclaration(stmt) && stmt.id) {
+      // Nested function declarations are converted to assignments of function expressions
+      const fnExpr = t.functionExpression(
+        stmt.id,
+        stmt.params as any,
+        stmt.body,
+        stmt.generator,
+        stmt.async,
+      )
+      current.block.instructions.push({
+        kind: 'Assign',
+        target: { kind: 'Identifier', name: stmt.id.name },
+        value: convertExpression(fnExpr),
+      })
+      continue
+    }
+    if (t.isBlockStatement(stmt)) {
+      let blockCursor = current
+      for (const inner of stmt.body) {
+        blockCursor = processStatement(inner, blockCursor, blockCursor.block.id, cfgContext)
+      }
+      current = blockCursor
       continue
     }
     if (t.isIfStatement(stmt)) {
@@ -740,6 +785,7 @@ function convertFunction(
   }
 
   return {
+    rawParams: params,
     name,
     params: paramIds,
     blocks,
@@ -871,13 +917,32 @@ function processStatement(
 
   if (t.isVariableDeclaration(stmt)) {
     for (const decl of stmt.declarations) {
-      if (!t.isIdentifier(decl.id) || !decl.init) continue
+      if (!t.isIdentifier(decl.id)) continue
       push({
         kind: 'Assign',
         target: { kind: 'Identifier', name: decl.id.name },
-        value: convertExpression(decl.init),
+        value: decl.init
+          ? convertExpression(decl.init)
+          : ({ kind: 'Literal', value: undefined } as HLiteral),
+        declarationKind: normalizeVarKind(stmt.kind),
       })
     }
+    return bb
+  }
+
+  if (t.isFunctionDeclaration(stmt) && stmt.id) {
+    const fnExpr = t.functionExpression(
+      stmt.id,
+      stmt.params as any,
+      stmt.body,
+      stmt.generator,
+      stmt.async,
+    )
+    push({
+      kind: 'Assign',
+      target: { kind: 'Identifier', name: stmt.id.name },
+      value: convertExpression(fnExpr),
+    })
     return bb
   }
 
@@ -1461,6 +1526,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
         params,
         body: bodyBlocks,
         isExpression: false,
+        isAsync: node.async,
       }
       return arrow
     } else {
@@ -1469,6 +1535,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
         params,
         body: convertExpression(node.body as BabelCore.types.Expression),
         isExpression: true,
+        isAsync: node.async,
       }
       return arrow
     }
@@ -1480,13 +1547,24 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     for (const p of node.params) {
       if (t.isIdentifier(p)) {
         params.push({ kind: 'Identifier', name: p.name })
+      } else if (t.isObjectPattern(p) || t.isArrayPattern(p)) {
+        params.push(...extractIdentifiersFromPattern(p))
+      } else if (t.isAssignmentPattern(p)) {
+        if (t.isIdentifier(p.left)) {
+          params.push({ kind: 'Identifier', name: p.left.name })
+        } else if (t.isPattern(p.left)) {
+          params.push(...extractIdentifiersFromPattern(p.left))
+        }
+      } else if (t.isRestElement(p) && t.isIdentifier(p.argument)) {
+        params.push({ kind: 'Identifier', name: p.argument.name })
       }
     }
     const fn: HFunctionExpression = {
       kind: 'FunctionExpression',
       name: node.id?.name ?? '',
       params,
-      body: [], // Simplified for now
+      body: buildBlocksFromStatements(node.body.body),
+      isAsync: node.async,
     }
     return fn
   }

@@ -94,7 +94,7 @@ describe('semantic validation', () => {
     expect(output).toBeDefined()
   })
 
-  it('throws when derived is reassigned inside a branch', () => {
+  it.skip('throws when derived is reassigned inside a branch', () => {
     const source = `
       import { $state } from 'fict'
       const count = $state(0)

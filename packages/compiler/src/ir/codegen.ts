@@ -63,6 +63,8 @@ export interface CodegenContext {
   tempCounter: number
   /** Set of tracked/reactive variable names (de-versioned) */
   trackedVars: Set<string>
+  /** Identifiers shadowed in the current lowering scope (params/locals) */
+  shadowedNames?: Set<string>
   /** Reactive scope analysis results */
   scopes?: ReactiveScopeResult | undefined
   /** Whether a context object (__fictCtx) is needed */
@@ -90,10 +92,90 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     helpersUsed: new Set(),
     tempCounter: 0,
     trackedVars: new Set(),
+    shadowedNames: new Set(),
     needsForOfHelper: false,
     needsForInHelper: false,
     aliasVars: new Set(),
     externalTracked: new Set(),
+  }
+}
+
+function detectDerivedCycles(fn: HIRFunction, scopeResult: ReactiveScopeResult): void {
+  if (process.env.DEBUG_CYCLES_THROW) {
+    throw new Error('cycle check invoked')
+  }
+  const declared = new Map<string, { isState: boolean; declaredHere: boolean; count: number }>()
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind !== 'Assign') continue
+      const target = deSSAVarName(instr.target.name)
+      const isStateCall =
+        instr.value.kind === 'CallExpression' &&
+        instr.value.callee.kind === 'Identifier' &&
+        instr.value.callee.name === '$state'
+      const prev = declared.get(target)
+      declared.set(target, {
+        isState: (prev?.isState ?? false) || isStateCall,
+        declaredHere: prev?.declaredHere || !!instr.declarationKind,
+        count: (prev?.count ?? 0) + 1,
+      })
+    }
+  }
+
+  const graph = new Map<string, Set<string>>()
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind !== 'Assign') continue
+      const target = deSSAVarName(instr.target.name)
+      const declInfo = declared.get(target)
+      if (declInfo?.isState || !declInfo?.declaredHere) continue
+      if ((declInfo.count ?? 0) !== 1) continue
+      const deps = graph.get(target) ?? new Set<string>()
+      const rawDeps = new Set<string>()
+      collectExpressionDependencies(instr.value, rawDeps)
+      for (const dep of rawDeps) {
+        const base = deSSAVarName(dep.split('.')[0] ?? dep)
+        const depInfo = declared.get(base)
+        if (depInfo && depInfo.declaredHere && !depInfo.isState && (depInfo.count ?? 0) === 1) {
+          deps.add(base)
+        }
+      }
+      graph.set(target, deps)
+    }
+  }
+  if (graph.size === 0) return
+
+  const visiting = new Set<string>()
+  const visited = new Set<string>()
+  const stack: string[] = []
+
+  const visit = (node: string) => {
+    if (visiting.has(node)) {
+      const idx = stack.indexOf(node)
+      const cycle = idx >= 0 ? [...stack.slice(idx), node] : [...stack, node]
+      throw new Error(`Detected cyclic derived dependency: ${cycle.join(' -> ')}`)
+    }
+    if (visited.has(node)) return
+    visiting.add(node)
+    stack.push(node)
+    for (const dep of graph.get(node) ?? []) {
+      visit(dep)
+    }
+    stack.pop()
+    visiting.delete(node)
+    visited.add(node)
+  }
+
+  for (const node of graph.keys()) {
+    visit(node)
+  }
+
+  if (process.env.DEBUG_CYCLES) {
+    // eslint-disable-next-line no-console
+    console.error(
+      'cycle graph',
+      Array.from(graph.entries()).map(([k, v]) => [k, Array.from(v)]),
+    )
   }
 }
 
@@ -211,9 +293,13 @@ export function lowerHIRToBabel(
 ): BabelCore.types.File {
   const ctx = createCodegenContext(t)
   const body: BabelCore.types.Statement[] = []
+  const emittedFunctionNames = new Set<string>()
   for (const fn of program.functions) {
     const funcStmt = lowerFunction(fn, ctx)
-    if (funcStmt) body.push(funcStmt)
+    if (funcStmt) {
+      body.push(funcStmt)
+      if (fn.name) emittedFunctionNames.add(fn.name)
+    }
   }
   const filteredBody = body.filter(stmt => {
     if (t.isVariableDeclaration(stmt)) {
@@ -242,6 +328,10 @@ function lowerFunction(
   ctx: CodegenContext,
 ): BabelCore.types.FunctionDeclaration | null {
   const { t } = ctx
+  const prevTracked = ctx.trackedVars
+  const scopedTracked = new Set(ctx.trackedVars)
+  fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
+  ctx.trackedVars = scopedTracked
   ctx.needsCtx = false
   const params = fn.params.map(p => t.identifier(p.name))
   const statements: BabelCore.types.Statement[] = []
@@ -268,7 +358,29 @@ function lowerFunction(
     )
   }
 
-  return t.functionDeclaration(t.identifier(fn.name ?? 'fn'), params, t.blockStatement(statements))
+  const result = t.functionDeclaration(
+    t.identifier(fn.name ?? 'fn'),
+    params,
+    t.blockStatement(statements),
+  )
+  ctx.trackedVars = prevTracked
+  return result
+}
+
+function lowerTrackedExpression(expr: Expression, ctx: CodegenContext): BabelCore.types.Expression {
+  const regionOverride =
+    ctx.currentRegion ??
+    (ctx.trackedVars.size
+      ? {
+          id: -1,
+          dependencies: new Set(ctx.trackedVars),
+          declarations: new Set<string>(),
+          hasControlFlow: false,
+          hasReactiveWrites: false,
+        }
+      : null)
+  const lowered = lowerExpression(expr, ctx)
+  return applyRegionMetadataToExpression(lowered, ctx, regionOverride ?? undefined)
 }
 
 function lowerInstruction(
@@ -281,12 +393,12 @@ function lowerInstruction(
       t.assignmentExpression(
         '=',
         t.identifier(instr.target.name),
-        lowerExpression(instr.value, ctx),
+        lowerTrackedExpression(instr.value, ctx),
       ),
     )
   }
   if (instr.kind === 'Expression') {
-    return t.expressionStatement(lowerExpression(instr.value, ctx))
+    return t.expressionStatement(lowerTrackedExpression(instr.value, ctx))
   }
   if (instr.kind === 'Phi') {
     // Phi nodes are typically eliminated in SSA-out pass; emit comment for debugging
@@ -301,17 +413,17 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
     case 'Return':
       return [
         t.returnStatement(
-          block.terminator.argument ? lowerExpression(block.terminator.argument, ctx) : null,
+          block.terminator.argument ? lowerTrackedExpression(block.terminator.argument, ctx) : null,
         ),
       ]
     case 'Throw':
-      return [t.throwStatement(lowerExpression(block.terminator.argument, ctx))]
+      return [t.throwStatement(lowerTrackedExpression(block.terminator.argument, ctx))]
     case 'Jump':
       return [t.expressionStatement(t.stringLiteral(`jump ${block.terminator.target}`))]
     case 'Branch':
       return [
         t.ifStatement(
-          lowerExpression(block.terminator.test, ctx),
+          lowerTrackedExpression(block.terminator.test, ctx),
           t.blockStatement([
             t.expressionStatement(t.stringLiteral(`goto ${block.terminator.consequent}`)),
           ]),
@@ -323,9 +435,9 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
     case 'Switch':
       return [
         t.switchStatement(
-          lowerExpression(block.terminator.discriminant, ctx),
+          lowerTrackedExpression(block.terminator.discriminant, ctx),
           block.terminator.cases.map(({ test, target }) =>
-            t.switchCase(test ? lowerExpression(test, ctx) : null, [
+            t.switchCase(test ? lowerTrackedExpression(test, ctx) : null, [
               t.expressionStatement(t.stringLiteral(`goto ${target}`)),
             ]),
           ),
@@ -463,6 +575,40 @@ function attachHelperImports(
  */
 export function lowerExpression(expr: Expression, ctx: CodegenContext): BabelCore.types.Expression {
   const { t } = ctx
+  const mapParams = (params: { name: string }[]) =>
+    params.map(p => t.identifier(deSSAVarName(p.name)))
+  const withFunctionScope = <T>(paramNames: Set<string>, fn: () => T): T => {
+    const prevTracked = ctx.trackedVars
+    const prevAlias = ctx.aliasVars
+    const prevExternal = ctx.externalTracked
+    const prevShadowed = ctx.shadowedNames
+    const scoped = new Set(ctx.trackedVars)
+    paramNames.forEach(n => scoped.delete(deSSAVarName(n)))
+    ctx.trackedVars = scoped
+    ctx.aliasVars = new Set(ctx.aliasVars)
+    ctx.externalTracked = new Set(prevTracked)
+    const shadowed = new Set(prevShadowed ?? [])
+    paramNames.forEach(n => shadowed.add(deSSAVarName(n)))
+    ctx.shadowedNames = shadowed
+    const result = fn()
+    ctx.trackedVars = prevTracked
+    ctx.aliasVars = prevAlias
+    ctx.externalTracked = prevExternal
+    ctx.shadowedNames = prevShadowed
+    return result
+  }
+  const lowerBlocksToStatements = (blocks: BasicBlock[]): BabelCore.types.Statement[] => {
+    const stmts: BabelCore.types.Statement[] = []
+    for (const block of blocks) {
+      stmts.push(
+        ...(block.instructions
+          .map(instr => lowerInstruction(instr, ctx))
+          .filter(Boolean) as BabelCore.types.Statement[]),
+      )
+      stmts.push(...lowerTerminator(block, ctx))
+    }
+    return stmts
+  }
 
   switch (expr.kind) {
     case 'Identifier':
@@ -590,55 +736,47 @@ export function lowerExpression(expr: Expression, ctx: CodegenContext): BabelCor
     case 'JSXElement':
       return lowerJSXElement(expr, ctx)
 
-    case 'ArrowFunction':
-      if (expr.isExpression && !Array.isArray(expr.body)) {
-        return t.arrowFunctionExpression(
-          expr.params.map(p => t.identifier(deSSAVarName(p.name))),
-          lowerExpression(expr.body, ctx),
-        )
-      }
-      if (Array.isArray(expr.body)) {
-        const stmts: BabelCore.types.Statement[] = []
-        for (const block of expr.body) {
-          stmts.push(
-            ...(block.instructions
-              .map(instr => lowerInstruction(instr, ctx))
-              .filter(Boolean) as BabelCore.types.Statement[]),
-          )
-          stmts.push(...lowerTerminator(block, ctx))
+    case 'ArrowFunction': {
+      const paramIds = mapParams(expr.params)
+      const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
+      return withFunctionScope(shadowed, () => {
+        let fn: BabelCore.types.ArrowFunctionExpression
+        if (expr.isExpression && !Array.isArray(expr.body)) {
+          fn = t.arrowFunctionExpression(paramIds, lowerTrackedExpression(expr.body, ctx))
+        } else if (Array.isArray(expr.body)) {
+          const stmts = lowerBlocksToStatements(expr.body)
+          fn = t.arrowFunctionExpression(paramIds, t.blockStatement(stmts))
+        } else {
+          fn = t.arrowFunctionExpression(paramIds, t.blockStatement([]))
         }
-        return t.arrowFunctionExpression(
-          expr.params.map(p => t.identifier(deSSAVarName(p.name))),
-          t.blockStatement(stmts),
-        )
-      }
-      return t.arrowFunctionExpression(
-        expr.params.map(p => t.identifier(deSSAVarName(p.name))),
-        t.blockStatement([]),
-      )
+        fn.async = expr.isAsync ?? false
+        return fn
+      })
+    }
 
-    case 'FunctionExpression':
-      if (Array.isArray(expr.body)) {
-        const stmts: BabelCore.types.Statement[] = []
-        for (const block of expr.body) {
-          stmts.push(
-            ...(block.instructions
-              .map(instr => lowerInstruction(instr, ctx))
-              .filter(Boolean) as BabelCore.types.Statement[]),
+    case 'FunctionExpression': {
+      const paramIds = mapParams(expr.params)
+      const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
+      return withFunctionScope(shadowed, () => {
+        let fn: BabelCore.types.FunctionExpression
+        if (Array.isArray(expr.body)) {
+          const stmts = lowerBlocksToStatements(expr.body)
+          fn = t.functionExpression(
+            expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
+            paramIds,
+            t.blockStatement(stmts),
           )
-          stmts.push(...lowerTerminator(block, ctx))
+        } else {
+          fn = t.functionExpression(
+            expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
+            paramIds,
+            t.blockStatement([]),
+          )
         }
-        return t.functionExpression(
-          expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
-          expr.params.map(p => t.identifier(deSSAVarName(p.name))),
-          t.blockStatement(stmts),
-        )
-      }
-      return t.functionExpression(
-        expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
-        expr.params.map(p => t.identifier(deSSAVarName(p.name))),
-        t.blockStatement([]),
-      )
+        fn.async = expr.isAsync ?? false
+        return fn
+      })
+    }
 
     case 'AssignmentExpression':
       if (expr.left.kind === 'Identifier') {
@@ -903,9 +1041,22 @@ export function applyRegionMetadataToExpression(
   const overrides = state.identifierOverrides ?? {}
   state.identifierOverrides = overrides
 
+  const shadowed = ctx.shadowedNames
+
+  if (shadowed && Object.keys(overrides).length > 0) {
+    for (const key of Object.keys(overrides)) {
+      const base = normalizeDependencyKey(key).split('.')[0] ?? key
+      if (shadowed.has(base)) {
+        delete overrides[key]
+      }
+    }
+  }
+
   // Ensure tracked variables are also covered even if region metadata missed them
   for (const dep of ctx.trackedVars) {
     const key = normalizeDependencyKey(dep)
+    const base = key.split('.')[0] ?? key
+    if (shadowed && shadowed.has(base)) continue
     if (!overrides[key]) {
       overrides[key] = () => buildDependencyGetter(dep, ctx)
     }
@@ -943,6 +1094,41 @@ function replaceIdentifiersWithOverrides(
     parentKey === 'callee' &&
     (parentKind === 'CallExpression' || parentKind === 'OptionalCallExpression')
 
+  const collectParamNames = (params: BabelCore.types.Function['params']): Set<string> => {
+    const names = new Set<string>()
+    const addName = (n: string | undefined) => {
+      if (n) names.add(normalizeDependencyKey(n).split('.')[0] ?? n)
+    }
+    const visitPattern = (p: BabelCore.types.LVal | BabelCore.types.PatternLike) => {
+      if (t.isIdentifier(p)) {
+        addName(p.name)
+      } else if (t.isTSParameterProperty(p)) {
+        visitPattern(p.parameter as any)
+      } else if (t.isRestElement(p) && t.isIdentifier(p.argument)) {
+        addName(p.argument.name)
+      } else if (t.isAssignmentPattern(p)) {
+        visitPattern(p.left)
+      } else if (t.isObjectPattern(p)) {
+        p.properties.forEach(prop => {
+          if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) {
+            addName(prop.argument.name)
+          } else if (t.isObjectProperty(prop) && t.isIdentifier(prop.value)) {
+            addName(prop.value.name)
+          } else if (t.isObjectProperty(prop) && t.isPatternLike(prop.value)) {
+            visitPattern(prop.value as BabelCore.types.PatternLike)
+          }
+        })
+      } else if (t.isArrayPattern(p)) {
+        p.elements.forEach(el => {
+          if (t.isIdentifier(el)) addName(el.name)
+          else if (el && t.isPatternLike(el)) visitPattern(el as any)
+        })
+      }
+    }
+    params.forEach(p => visitPattern(p))
+    return names
+  }
+
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node as any)) {
     const path = getDependencyPathFromNode(node, t)
     const normalized = path ? normalizeDependencyKey(path) : null
@@ -965,11 +1151,22 @@ function replaceIdentifiersWithOverrides(
   }
 
   if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
+    const paramNames = collectParamNames(node.params)
+    let scopedOverrides = overrides
+    if (paramNames.size > 0) {
+      scopedOverrides = {}
+      for (const key of Object.keys(overrides)) {
+        const base = normalizeDependencyKey(key).split('.')[0] ?? key
+        if (!paramNames.has(base)) {
+          scopedOverrides[key] = overrides[key]
+        }
+      }
+    }
     // Avoid replacing parameter identifiers; only walk the body
     if (t.isBlockStatement(node.body)) {
-      replaceIdentifiersWithOverrides(node.body, overrides, t, node.type, 'body')
+      replaceIdentifiersWithOverrides(node.body, scopedOverrides, t, node.type, 'body')
     } else {
-      replaceIdentifiersWithOverrides(node.body, overrides, t, node.type, 'body')
+      replaceIdentifiersWithOverrides(node.body, scopedOverrides, t, node.type, 'body')
     }
     return
   }
@@ -1148,8 +1345,8 @@ function lowerIntrinsicElement(
     if (attr.value) collectExpressionDependencies(attr.value, allDeps)
   }
   for (const child of jsx.children) {
-    if (child.kind === 'JSXExpressionChild' && child.expression) {
-      collectExpressionDependencies(child.expression, allDeps)
+    if (child.kind === 'expression' && child.value) {
+      collectExpressionDependencies(child.value, allDeps)
     }
   }
 
@@ -1566,7 +1763,23 @@ function emitListChild(
   if (!mapCallback) {
     throw new Error('map callback is required')
   }
-  const callbackExpr = applyRegionMetadataToExpression(lowerExpression(mapCallback, ctx), ctx)
+  let callbackExpr = applyRegionMetadataToExpression(lowerExpression(mapCallback, ctx), ctx)
+
+  if (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) {
+    const firstParam = callbackExpr.params[0]
+    if (t.isIdentifier(firstParam)) {
+      const overrides: RegionOverrideMap = {
+        [firstParam.name]: () => t.callExpression(t.identifier(firstParam.name), []),
+      }
+      if (t.isBlockStatement(callbackExpr.body)) {
+        replaceIdentifiersWithOverrides(callbackExpr.body, overrides, t, callbackExpr.type, 'body')
+      } else {
+        const newBody = t.cloneNode(callbackExpr.body, true) as BabelCore.types.Expression
+        replaceIdentifiersWithOverrides(newBody, overrides, t, callbackExpr.type, 'body')
+        callbackExpr = t.arrowFunctionExpression(callbackExpr.params, newBody)
+      }
+    }
+  }
 
   const listId = genTemp(ctx, 'list')
   statements.push(
@@ -1874,11 +2087,14 @@ export function lowerHIRWithRegions(
   }
 
   // Map generated functions by name for replacement when walking original body
-  const generatedFunctions = new Map<string, BabelCore.types.FunctionDeclaration>()
+  const generatedFunctions = new Map<
+    string,
+    { fn: HIRFunction; stmt: BabelCore.types.FunctionDeclaration }
+  >()
   for (const fn of program.functions) {
     const funcStmt = lowerFunctionWithRegions(fn, ctx)
     if (funcStmt && fn.name) {
-      generatedFunctions.set(fn.name, funcStmt)
+      generatedFunctions.set(fn.name, { fn, stmt: funcStmt })
     } else if (funcStmt && !fn.name) {
       // Anonymous function - emit immediately
       body.push(funcStmt)
@@ -1914,12 +2130,27 @@ export function lowerHIRWithRegions(
       continue
     }
 
+    if (t.isBlockStatement(stmt)) {
+      flushLowerableBuffer()
+      const { statements, aliases } = lowerTopLevelStatementBlock(
+        stmt.body as BabelCore.types.Statement[],
+        ctx,
+        t,
+        `__block_segment_${segmentCounter++}`,
+        topLevelAliases,
+      )
+      topLevelAliases.clear()
+      aliases.forEach(a => topLevelAliases.add(a))
+      body.push(t.blockStatement(statements))
+      continue
+    }
+
     // Function declarations
     if (t.isFunctionDeclaration(stmt) && stmt.id?.name) {
       flushLowerableBuffer()
       const generated = generatedFunctions.get(stmt.id.name)
       if (generated) {
-        body.push(generated)
+        body.push(generated.stmt)
         generatedFunctions.delete(stmt.id.name)
         emittedFunctionNames.add(stmt.id.name)
         continue
@@ -1936,7 +2167,7 @@ export function lowerHIRWithRegions(
         const name = stmt.declaration.id.name
         const generated = generatedFunctions.get(name)
         if (generated) {
-          body.push(t.exportNamedDeclaration(generated, []))
+          body.push(t.exportNamedDeclaration(generated.stmt, []))
           generatedFunctions.delete(name)
           emittedFunctionNames.add(name)
           continue
@@ -1945,7 +2176,7 @@ export function lowerHIRWithRegions(
       if (t.isVariableDeclaration(stmt.declaration)) {
         // Split generated function declarations from remaining declarators
         const remainingDeclarators: typeof stmt.declaration.declarations = []
-        const generated: BabelCore.types.FunctionDeclaration[] = []
+        const generated: { fn: HIRFunction; stmt: BabelCore.types.FunctionDeclaration }[] = []
 
         for (const decl of stmt.declaration.declarations) {
           if (t.isIdentifier(decl.id)) {
@@ -1961,9 +2192,9 @@ export function lowerHIRWithRegions(
 
         if (generated.length > 0) {
           flushLowerableBuffer()
-          for (const fn of generated) {
-            body.push(t.exportNamedDeclaration(fn, []))
-            if (fn.id?.name) emittedFunctionNames.add(fn.id.name)
+          for (const entry of generated) {
+            body.push(t.exportNamedDeclaration(entry.stmt, []))
+            if (entry.stmt.id?.name) emittedFunctionNames.add(entry.stmt.id.name)
           }
           if (remainingDeclarators.length > 0) {
             body.push(
@@ -1989,7 +2220,9 @@ export function lowerHIRWithRegions(
           if (ctx.needsCtx && !topLevelCtxInjected) {
             ensureTopLevelCtx()
           }
-          statements.forEach(d => body.push(t.exportNamedDeclaration(d, [])))
+          statements
+            .filter(s => t.isDeclaration(s))
+            .forEach(d => body.push(t.exportNamedDeclaration(d as BabelCore.types.Declaration, [])))
           continue
         }
       }
@@ -2009,7 +2242,7 @@ export function lowerHIRWithRegions(
       const name = stmt.declaration.id?.name ?? '__default'
       const generated = generatedFunctions.get(name)
       if (generated) {
-        body.push(t.exportDefaultDeclaration(generated))
+        body.push(t.exportDefaultDeclaration(generated.stmt))
         generatedFunctions.delete(name)
         emittedFunctionNames.add(name)
         continue
@@ -2028,27 +2261,58 @@ export function lowerHIRWithRegions(
     // Variable declarations that were converted to generated functions
     if (t.isVariableDeclaration(stmt)) {
       const remainingDeclarators: typeof stmt.declarations = []
-      const generated: BabelCore.types.FunctionDeclaration[] = []
+      let rebuilt = false
+      const rebuiltDeclarators: typeof stmt.declarations = []
 
       for (const decl of stmt.declarations) {
         if (t.isIdentifier(decl.id)) {
           const found = generatedFunctions.get(decl.id.name)
           if (found) {
-            generated.push(found)
+            rebuilt = true
+            let arrowBody: BabelCore.types.BlockStatement | BabelCore.types.Expression =
+              found.stmt.body
+            if (found.fn.meta?.isArrow && t.isBlockStatement(found.stmt.body)) {
+              const bodyStatements = found.stmt.body.body
+              if (
+                bodyStatements.length === 1 &&
+                t.isReturnStatement(bodyStatements[0]) &&
+                bodyStatements[0].argument
+              ) {
+                arrowBody = bodyStatements[0].argument
+              }
+            }
+            const shouldUseArrow = !!(found.fn.meta?.isArrow && found.fn.meta?.hasExpressionBody)
+            const funcExpr = found.fn.meta?.fromExpression
+              ? found.fn.meta.isArrow
+                ? shouldUseArrow
+                  ? t.arrowFunctionExpression(found.stmt.params, arrowBody)
+                  : t.functionExpression(
+                      t.isIdentifier(decl.id) ? t.identifier(decl.id.name) : null,
+                      found.stmt.params,
+                      found.stmt.body,
+                    )
+                : t.functionExpression(null, found.stmt.params, found.stmt.body)
+              : t.functionExpression(
+                  found.stmt.id ? t.identifier(found.stmt.id.name) : null,
+                  found.stmt.params,
+                  found.stmt.body,
+                  found.stmt.generator,
+                  found.stmt.async,
+                )
+            rebuiltDeclarators.push(t.variableDeclarator(decl.id, funcExpr))
             generatedFunctions.delete(decl.id.name)
             continue
           }
         }
         remainingDeclarators.push(decl)
+        rebuiltDeclarators.push(decl)
       }
 
-      if (generated.length > 0) {
+      if (rebuilt) {
         flushLowerableBuffer()
-        for (const fn of generated) {
-          body.push(fn)
-          if (fn.id?.name) emittedFunctionNames.add(fn.id.name)
-        }
-        if (remainingDeclarators.length > 0) {
+        if (rebuiltDeclarators.length > 0) {
+          lowerableBuffer.push(t.variableDeclaration(stmt.kind, rebuiltDeclarators))
+        } else if (remainingDeclarators.length > 0) {
           lowerableBuffer.push(t.variableDeclaration(stmt.kind, remainingDeclarators))
         }
         continue
@@ -2062,8 +2326,8 @@ export function lowerHIRWithRegions(
 
   // Emit any remaining generated functions (not present in original order)
   for (const func of generatedFunctions.values()) {
-    body.push(func)
-    if (func.id?.name) emittedFunctionNames.add(func.id.name)
+    body.push(func.stmt)
+    if (func.stmt.id?.name) emittedFunctionNames.add(func.stmt.id.name)
   }
 
   return t.file(t.program(attachHelperImports(ctx, body, t)))
@@ -2083,6 +2347,7 @@ function lowerTopLevelStatementBlock(
 
   const fn = convertStatementsToHIRFunction(name, statements)
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
+  detectDerivedCycles(fn, scopeResult)
   ctx.scopes = scopeResult
 
   const regionResult = generateRegions(fn, scopeResult)
@@ -2131,15 +2396,26 @@ function lowerFunctionWithRegions(
   ctx: CodegenContext,
 ): BabelCore.types.FunctionDeclaration | null {
   const { t } = ctx
+  const prevTracked = ctx.trackedVars
+  const scopedTracked = new Set(ctx.trackedVars)
+  const shadowedParams = new Set(fn.params.map(p => deSSAVarName(p.name)))
+  fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
+  ctx.trackedVars = scopedTracked
+  const prevNeedsCtx = ctx.needsCtx
+  ctx.needsCtx = false
+  const prevShadowed = ctx.shadowedNames
+  const functionShadowed = new Set(prevShadowed ?? [])
+  shadowedParams.forEach(n => functionShadowed.add(n))
+  ctx.shadowedNames = functionShadowed
   const prevExternalTracked = ctx.externalTracked
   const inheritedTracked = new Set(ctx.trackedVars)
   ctx.externalTracked = inheritedTracked
   // Always ensure context exists to support memo/region wrappers
   ctx.aliasVars = new Set()
-  ctx.needsCtx = true
 
   // Analyze reactive scopes with SSA/CFG awareness
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
+  detectDerivedCycles(fn, scopeResult)
   ctx.scopes = scopeResult
 
   // Generate region result for metadata
@@ -2175,29 +2451,63 @@ function lowerFunctionWithRegions(
     }
   }
 
+  shadowedParams.forEach(n => ctx.trackedVars.delete(n))
+
   // Generate region-based statements
   const statements = generateRegionCode(fn, scopeResult, t, ctx)
 
   // Ensure context if signals/effects are used in experimental path
-  ctx.helpersUsed.add('useContext')
-  statements.unshift(
-    t.variableDeclaration('const', [
-      t.variableDeclarator(
-        t.identifier('__fictCtx'),
-        t.callExpression(t.identifier(RUNTIME_ALIASES.useContext), []),
-      ),
-    ]),
-  )
+  if (ctx.needsCtx) {
+    ctx.helpersUsed.add('useContext')
+    statements.unshift(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(
+          t.identifier('__fictCtx'),
+          t.callExpression(t.identifier(RUNTIME_ALIASES.useContext), []),
+        ),
+      ]),
+    )
+  }
 
-  // Region memo helpers are added on-demand when needed
+  // Handle props destructuring pattern for component functions
+  // If first rawParam is ObjectPattern, emit __props and add destructuring
+  let finalParams = fn.params.map(p => t.identifier(deSSAVarName(p.name)))
+  const propsDestructuring: BabelCore.types.Statement[] = []
+
+  const isComponent = fn.name && fn.name[0] === fn.name[0].toUpperCase()
+  if (isComponent && fn.rawParams && fn.rawParams.length === 1) {
+    const rawParam = fn.rawParams[0]
+    // Check if it's an ObjectPattern or AssignmentPattern with ObjectPattern
+    if (
+      rawParam &&
+      (rawParam.type === 'ObjectPattern' ||
+        (rawParam.type === 'AssignmentPattern' && rawParam.left?.type === 'ObjectPattern'))
+    ) {
+      // Replace params with __props
+      finalParams = [t.identifier('__props')]
+      // Add destructuring statement at start of function
+      const pattern = rawParam.type === 'AssignmentPattern' ? rawParam.left : rawParam
+      propsDestructuring.push(
+        t.variableDeclaration('const', [t.variableDeclarator(pattern, t.identifier('__props'))]),
+      )
+    }
+  }
+
+  // Add props destructuring before other statements
+  if (propsDestructuring.length > 0) {
+    statements.unshift(...propsDestructuring)
+  }
 
   // De-version param names for clean output
-  const params = fn.params.map(p => t.identifier(deSSAVarName(p.name)))
+  const params = finalParams
   const funcDecl = t.functionDeclaration(
     t.identifier(fn.name ?? 'fn'),
     params,
     t.blockStatement(statements),
   )
+  ctx.needsCtx = prevNeedsCtx
+  ctx.shadowedNames = prevShadowed
+  ctx.trackedVars = prevTracked
   ctx.externalTracked = prevExternalTracked
   return funcDecl
 }

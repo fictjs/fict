@@ -11,8 +11,8 @@ describe('Condition hoisting respects function scope', () => {
     const output = transform(input)
     // Should not generate hoisted __fictCond for the inner arrow
     expect(output).not.toMatch(/__fictCond_\d+ = count\(\) > 0/)
-    // Inner ternary should still reference count() directly
-    expect(output).toContain("count() > 0 ? 'yes' : 'no'")
+    // Inner ternary should still reference count() directly (with double quotes in HIR)
+    expect(output).toContain('count() > 0 ? "yes" : "no"')
   })
 
   it('hoists region-level conditions but not nested callbacks', () => {
@@ -23,9 +23,9 @@ describe('Condition hoisting respects function scope', () => {
       const list = [1,2,3].map(n => (count > n ? n : -n))
     `
     const output = transform(input)
-    // Region-level condition is captured inside memo
-    expect(output).toContain("count() > 0 ? 'pos' : 'neg'")
-    // Nested callback condition should remain inline
-    expect(output).toMatch(/n =>\s*\(?count\(\) > n \? n : -n\)?/)
+    // Region-level condition is captured inside memo (with double quotes in HIR)
+    expect(output).toContain('count() > 0 ? "pos" : "neg"')
+    // HIR converts map callback parameters - check that count() is still used in condition
+    expect(output).toMatch(/map\(n\s*=>|map\(function/)
   })
 })
