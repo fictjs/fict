@@ -54,7 +54,7 @@ describe('dynamic event handlers', () => {
   })
 
   // TODO: HIR codegen event handling is different
-  it.skip('swaps event handlers when state changes', async () => {
+  it('swaps event handlers when state changes', async () => {
     const source = `
       import { $state, render } from 'fict'
 
@@ -114,7 +114,7 @@ describe('dynamic event handlers', () => {
   })
 
   // TODO: HIR codegen event handling is different
-  it.skip('supports capture/passive options and cleans up on dispose', async () => {
+  it('supports capture/passive options and cleans up on dispose', async () => {
     const addCalls: any[] = []
     const removeCalls: any[] = []
     HTMLElement.prototype.addEventListener = function (type: any, handler: any, options: any) {
@@ -164,7 +164,7 @@ describe('dynamic event handlers', () => {
   })
 
   // TODO: HIR codegen event handling is different
-  it.skip('supports once modifier', async () => {
+  it('supports once modifier', async () => {
     const addCalls: any[] = []
     HTMLElement.prototype.addEventListener = function (type: any, handler: any, options: any) {
       addCalls.push({ type, handler, options })

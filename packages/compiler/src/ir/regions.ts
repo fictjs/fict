@@ -186,8 +186,12 @@ function isInstructionInScope(instr: Instruction, scope: ReactiveScope): boolean
     return scope.writes.has(instr.target.name) || scope.declarations.has(instr.target.name)
   }
   if (instr.kind === 'Expression') {
-    // Include all expression instructions (side effects, console.log, $effect calls, etc.)
-    return true
+    const deps = collectExprDependencies(instr.value)
+    if (deps.size === 0) return false
+    for (const decl of scope.declarations) {
+      if (deps.has(deSSAVarName(decl))) return true
+    }
+    return false
   }
   return false
 }
@@ -229,7 +233,12 @@ function containsJSXExpr(expr: any): boolean {
 function expressionUsesTracked(expr: Expression, ctx: CodegenContext): boolean {
   switch (expr.kind) {
     case 'Identifier':
-      return ctx.trackedVars.has(deSSAVarName(expr.name))
+      return (
+        ctx.trackedVars.has(deSSAVarName(expr.name)) ||
+        (ctx.externalTracked?.has(deSSAVarName(expr.name)) ?? false) ||
+        (ctx.memoVars?.has(deSSAVarName(expr.name)) ?? false) ||
+        (ctx.aliasVars?.has(deSSAVarName(expr.name)) ?? false)
+      )
     case 'MemberExpression':
       return expressionUsesTracked(expr.object as Expression, ctx)
     case 'CallExpression':
@@ -402,6 +411,15 @@ export function generateRegionCode(
   return lowerStructuredNodeWithRegions(structured, regionResult, t, ctx, declaredVars)
 }
 
+export function lowerStructuredNodeWithoutRegions(
+  node: StructuredNode,
+  t: typeof BabelCore.types,
+  ctx: CodegenContext,
+  declaredVars: Set<string>,
+): BabelCore.types.Statement[] {
+  return lowerStructuredNodeInternal(node, t, ctx, declaredVars)
+}
+
 /**
  * Lower structured node with region awareness
  * This combines CFG structurization with reactive region analysis
@@ -423,6 +441,7 @@ interface RegionEmitContext {
   regionResult: RegionResult
   emittedRegions: Set<number>
   pendingInstructions: Map<number, Instruction[]>
+  rootNode: StructuredNode
 }
 
 /**
@@ -442,6 +461,7 @@ function lowerStructuredNodeInternal(
         regionResult,
         emittedRegions: new Set<number>(),
         pendingInstructions: new Map<number, Instruction[]>(),
+        rootNode: node,
       }
     : undefined
 
@@ -498,7 +518,7 @@ function lowerNodeWithRegionContext(
       if (region && region.shouldMemoize && !regionCtx?.emittedRegions.has(region.id)) {
         // Emit the entire region with memo
         regionCtx?.emittedRegions.add(region.id)
-        return generateRegionStatements(region, t, declaredVars, ctx)
+        return generateRegionStatements(region, t, declaredVars, ctx, regionCtx)
       }
       // Not in a memoized region or region already emitted
       const stmt = instructionToStatement(node.instruction, t, declaredVars, ctx)
@@ -737,6 +757,264 @@ function lowerTerminatorForStateMachine(
   }
 }
 
+function lowerStructuredNodeForRegion(
+  node: StructuredNode,
+  region: Region,
+  t: typeof BabelCore.types,
+  ctx: CodegenContext,
+  declaredVars: Set<string>,
+  regionCtx?: RegionEmitContext,
+  skipInstructions?: Set<Instruction>,
+): BabelCore.types.Statement[] {
+  switch (node.kind) {
+    case 'sequence': {
+      const stmts: BabelCore.types.Statement[] = []
+      for (const child of node.nodes) {
+        stmts.push(
+          ...lowerStructuredNodeForRegion(
+            child,
+            region,
+            t,
+            ctx,
+            declaredVars,
+            regionCtx,
+            skipInstructions,
+          ),
+        )
+      }
+      return stmts
+    }
+
+    case 'block': {
+      const stmts: BabelCore.types.Statement[] = []
+      const scopedDeclared = new Set(declaredVars)
+      const prevTracked = ctx.trackedVars
+      ctx.trackedVars = new Set(ctx.trackedVars)
+      for (const child of node.statements) {
+        stmts.push(
+          ...lowerStructuredNodeForRegion(
+            child,
+            region,
+            t,
+            ctx,
+            scopedDeclared,
+            regionCtx,
+            skipInstructions,
+          ),
+        )
+      }
+      ctx.trackedVars = prevTracked
+      if (stmts.length === 0) return []
+      return [t.blockStatement(stmts)]
+    }
+
+    case 'instruction': {
+      if (skipInstructions?.has(node.instruction)) return []
+      const owner = findRegionForInstruction(node.instruction, regionCtx)
+      if (!owner || owner.id !== region.id) return []
+      const stmt = instructionToStatement(node.instruction, t, declaredVars, ctx)
+      return stmt ? [stmt] : []
+    }
+
+    case 'if': {
+      const consequent = lowerStructuredNodeForRegion(
+        node.consequent,
+        region,
+        t,
+        ctx,
+        declaredVars,
+        regionCtx,
+        skipInstructions,
+      )
+      const alternate = node.alternate
+        ? lowerStructuredNodeForRegion(
+            node.alternate,
+            region,
+            t,
+            ctx,
+            declaredVars,
+            regionCtx,
+            skipInstructions,
+          )
+        : []
+      if (consequent.length === 0 && alternate.length === 0) return []
+      return [
+        t.ifStatement(
+          lowerExpressionWithDeSSA(node.test, ctx),
+          t.blockStatement(consequent),
+          alternate.length > 0 ? t.blockStatement(alternate) : null,
+        ),
+      ]
+    }
+
+    case 'while': {
+      const body = lowerStructuredNodeForRegion(
+        node.body,
+        region,
+        t,
+        ctx,
+        declaredVars,
+        regionCtx,
+        skipInstructions,
+      )
+      if (body.length === 0) return []
+      return [t.whileStatement(lowerExpressionWithDeSSA(node.test, ctx), t.blockStatement(body))]
+    }
+
+    case 'doWhile': {
+      const body = lowerStructuredNodeForRegion(
+        node.body,
+        region,
+        t,
+        ctx,
+        declaredVars,
+        regionCtx,
+        skipInstructions,
+      )
+      if (body.length === 0) return []
+      return [t.doWhileStatement(lowerExpressionWithDeSSA(node.test, ctx), t.blockStatement(body))]
+    }
+
+    case 'for': {
+      const body = lowerStructuredNodeForRegion(
+        node.body,
+        region,
+        t,
+        ctx,
+        declaredVars,
+        regionCtx,
+        skipInstructions,
+      )
+      if (body.length === 0) return []
+      const init =
+        node.init && node.init.length > 0 ? lowerInstructionsToInitExpr(node.init, t, ctx) : null
+      const test = node.test ? lowerExpressionWithDeSSA(node.test, ctx) : null
+      const update =
+        node.update && node.update.length > 0
+          ? lowerInstructionsToUpdateExpr(node.update, t, ctx)
+          : null
+      return [t.forStatement(init, test, update, t.blockStatement(body))]
+    }
+
+    case 'forOf': {
+      const body = lowerStructuredNodeForRegion(
+        node.body,
+        region,
+        t,
+        ctx,
+        declaredVars,
+        regionCtx,
+        skipInstructions,
+      )
+      if (body.length === 0) return []
+      const varKind = node.variableKind ?? 'const'
+      const leftPattern = node.pattern
+        ? (node.pattern as BabelCore.types.LVal)
+        : t.identifier(deSSAVarName(node.variable))
+      const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
+      const right = lowerExpressionWithDeSSA(node.iterable, ctx)
+      return [t.forOfStatement(left, right, t.blockStatement(body))]
+    }
+
+    case 'forIn': {
+      const body = lowerStructuredNodeForRegion(
+        node.body,
+        region,
+        t,
+        ctx,
+        declaredVars,
+        regionCtx,
+        skipInstructions,
+      )
+      if (body.length === 0) return []
+      const varKind = node.variableKind ?? 'const'
+      const leftPattern = node.pattern
+        ? (node.pattern as BabelCore.types.LVal)
+        : t.identifier(deSSAVarName(node.variable))
+      const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
+      const right = lowerExpressionWithDeSSA(node.object, ctx)
+      return [t.forInStatement(left, right, t.blockStatement(body))]
+    }
+
+    case 'switch': {
+      const cases = node.cases
+        .map(c => {
+          const stmts = lowerStructuredNodeForRegion(
+            c.body,
+            region,
+            t,
+            ctx,
+            declaredVars,
+            regionCtx,
+            skipInstructions,
+          )
+          if (stmts.length === 0) return null
+          return t.switchCase(c.test ? lowerExpressionWithDeSSA(c.test, ctx) : null, stmts)
+        })
+        .filter((c): c is BabelCore.types.SwitchCase => !!c)
+      if (cases.length === 0) return []
+      return [t.switchStatement(lowerExpressionWithDeSSA(node.discriminant, ctx), cases)]
+    }
+
+    case 'try': {
+      const blockStmts = lowerStructuredNodeForRegion(
+        node.block,
+        region,
+        t,
+        ctx,
+        declaredVars,
+        regionCtx,
+        skipInstructions,
+      )
+      const handlerStmts = node.handler
+        ? lowerStructuredNodeForRegion(
+            node.handler.body,
+            region,
+            t,
+            ctx,
+            declaredVars,
+            regionCtx,
+            skipInstructions,
+          )
+        : []
+      const finalizerStmts = node.finalizer
+        ? lowerStructuredNodeForRegion(
+            node.finalizer,
+            region,
+            t,
+            ctx,
+            declaredVars,
+            regionCtx,
+            skipInstructions,
+          )
+        : []
+      if (blockStmts.length === 0 && handlerStmts.length === 0 && finalizerStmts.length === 0) {
+        return []
+      }
+      const handler = node.handler
+        ? t.catchClause(
+            node.handler.param ? t.identifier(deSSAVarName(node.handler.param)) : null,
+            t.blockStatement(handlerStmts),
+          )
+        : null
+      const finalizer = node.finalizer ? t.blockStatement(finalizerStmts) : null
+      return [t.tryStatement(t.blockStatement(blockStmts), handler, finalizer)]
+    }
+
+    case 'break':
+      return [t.breakStatement(node.label ? t.identifier(node.label) : null)]
+
+    case 'continue':
+      return [t.continueStatement(node.label ? t.identifier(node.label) : null)]
+
+    case 'return':
+    case 'throw':
+    case 'stateMachine':
+    default:
+      return []
+  }
+}
+
 /**
  * Find the region an instruction belongs to
  */
@@ -779,36 +1057,18 @@ function flushInstructionBuffer(
   regionCtx?: RegionEmitContext,
 ): BabelCore.types.Statement[] {
   const stmts: BabelCore.types.Statement[] = []
-  const regionGroups = new Map<number, { region: Region; instrs: Instruction[] }>()
-  const noRegionInstrs: Instruction[] = []
 
-  // Group instructions by region
   for (const item of buffer) {
     if (item.region) {
-      const existing = regionGroups.get(item.region.id)
-      if (existing) {
-        existing.instrs.push(item.instr)
-      } else {
-        regionGroups.set(item.region.id, { region: item.region, instrs: [item.instr] })
+      if (regionCtx?.emittedRegions.has(item.region.id)) {
+        continue
       }
-    } else {
-      noRegionInstrs.push(item.instr)
-    }
-  }
-
-  // Emit regions with memo if needed
-  for (const [regionId, { region }] of regionGroups) {
-    if (regionCtx?.emittedRegions.has(regionId)) {
-      // Region already emitted, skip
+      regionCtx?.emittedRegions.add(item.region.id)
+      stmts.push(...generateRegionStatements(item.region, t, declaredVars, ctx, regionCtx))
       continue
     }
-    regionCtx?.emittedRegions.add(regionId)
-    stmts.push(...generateRegionStatements(region, t, declaredVars, ctx))
-  }
 
-  // Emit non-region instructions directly
-  for (const instr of noRegionInstrs) {
-    const stmt = instructionToStatement(instr, t, declaredVars, ctx)
+    const stmt = instructionToStatement(item.instr, t, declaredVars, ctx)
     if (stmt) stmts.push(stmt)
   }
 
@@ -908,6 +1168,7 @@ function generateRegionStatements(
   t: typeof BabelCore.types,
   declaredVars: Set<string>,
   ctx: CodegenContext,
+  regionCtx?: RegionEmitContext,
 ): BabelCore.types.Statement[] {
   const statements: BabelCore.types.Statement[] = []
   const regionInfo = {
@@ -919,15 +1180,91 @@ function generateRegionStatements(
   }
   const prevRegion = applyRegionToContext(ctx, regionInfo)
 
-  if (!region.shouldMemoize || region.dependencies.size === 0) {
+  const hasTrackedOutputs =
+    region.hasControlFlow &&
+    Array.from(region.declarations).some(name => ctx.trackedVars.has(deSSAVarName(name)))
+  const shouldInline =
+    ctx.noMemo || !region.shouldMemoize || (region.dependencies.size === 0 && !hasTrackedOutputs)
+
+  const hoistedStatements: BabelCore.types.Statement[] = []
+  const memoInstructions: Instruction[] = []
+  const memoDeclarations = new Set(region.declarations)
+  const hoistedInstructionSet = new Set<Instruction>()
+
+  for (const instr of region.instructions) {
+    if (
+      instr.kind === 'Assign' &&
+      instr.declarationKind &&
+      instr.value.kind === 'CallExpression' &&
+      instr.value.callee.kind === 'Identifier' &&
+      (instr.value.callee.name === '$state' || instr.value.callee.name === '$store')
+    ) {
+      const stmt = instructionToStatement(instr, t, declaredVars, ctx)
+      if (stmt) hoistedStatements.push(stmt)
+      hoistedInstructionSet.add(instr)
+      memoDeclarations.delete(instr.target.name)
+      continue
+    }
+    memoInstructions.push(instr)
+  }
+
+  if (region.hasControlFlow && regionCtx?.rootNode) {
+    const localDeclared = new Set<string>()
+    const prevInRegionMemo = ctx.inRegionMemo
+    if (!shouldInline) {
+      ctx.inRegionMemo = true
+    }
+    const bodyStatements = lowerStructuredNodeForRegion(
+      regionCtx.rootNode,
+      region,
+      t,
+      ctx,
+      localDeclared,
+      regionCtx,
+      hoistedInstructionSet.size > 0 ? hoistedInstructionSet : undefined,
+    )
+    ctx.inRegionMemo = prevInRegionMemo
+    if (shouldInline) {
+      statements.push(...hoistedStatements)
+      statements.push(...bodyStatements)
+    } else {
+      const outputNamesOverride = Array.from(memoDeclarations).map(name => deSSAVarName(name))
+      statements.push(...hoistedStatements)
+      statements.push(
+        ...wrapInMemo(region, t, declaredVars, ctx, bodyStatements, outputNamesOverride),
+      )
+    }
+  } else if (shouldInline) {
     // No memoization needed - just emit instructions directly
-    for (const instr of region.instructions) {
+    statements.push(...hoistedStatements)
+    for (const instr of memoInstructions) {
       const stmt = instructionToStatement(instr, t, declaredVars, ctx)
       if (stmt) statements.push(stmt)
     }
   } else {
     // Wrap in memo
-    const memoStatements = wrapInMemo(region, t, declaredVars, ctx)
+    const outputNamesOverride = Array.from(memoDeclarations).map(name => deSSAVarName(name))
+    let bodyStatementsOverride: BabelCore.types.Statement[] | undefined
+    if (memoInstructions.length !== region.instructions.length) {
+      const localDeclared = new Set<string>()
+      bodyStatementsOverride = []
+      const prevInRegionMemo = ctx.inRegionMemo
+      ctx.inRegionMemo = true
+      for (const instr of memoInstructions) {
+        const stmt = instructionToStatement(instr, t, localDeclared, ctx)
+        if (stmt) bodyStatementsOverride.push(stmt)
+      }
+      ctx.inRegionMemo = prevInRegionMemo
+    }
+    statements.push(...hoistedStatements)
+    const memoStatements = wrapInMemo(
+      region,
+      t,
+      declaredVars,
+      ctx,
+      bodyStatementsOverride,
+      outputNamesOverride,
+    )
     statements.push(...memoStatements)
   }
 
@@ -943,61 +1280,82 @@ function wrapInMemo(
   t: typeof BabelCore.types,
   declaredVars: Set<string>,
   ctx: CodegenContext,
+  bodyStatementsOverride?: BabelCore.types.Statement[],
+  outputNamesOverride?: string[],
 ): BabelCore.types.Statement[] {
   const statements: BabelCore.types.Statement[] = []
   const bodyStatements: BabelCore.types.Statement[] = []
-  const localDeclared = new Set<string>()
-  ctx.helpersUsed.add('useMemo')
-
-  // Convert instructions to statements
-  for (const instr of region.instructions) {
-    const stmt = instructionToStatement(instr, t, localDeclared, ctx)
-    if (stmt) bodyStatements.push(stmt)
+  if (bodyStatementsOverride) {
+    bodyStatements.push(...bodyStatementsOverride)
+  } else {
+    const localDeclared = new Set<string>()
+    // Convert instructions to statements
+    const prevInRegionMemo = ctx.inRegionMemo
+    ctx.inRegionMemo = true
+    for (const instr of region.instructions) {
+      const stmt = instructionToStatement(instr, t, localDeclared, ctx)
+      if (stmt) bodyStatements.push(stmt)
+    }
+    ctx.inRegionMemo = prevInRegionMemo
   }
 
   // Build return object with declarations - de-version SSA names
-  const outputNames = Array.from(region.declarations).map(name => deSSAVarName(name))
+  const outputNames =
+    outputNamesOverride ?? Array.from(region.declarations).map(name => deSSAVarName(name))
   // Remove duplicates that may result from de-versioning (e.g., count_1 and count_2 both become count)
   const uniqueOutputNames = [...new Set(outputNames)]
 
   if (uniqueOutputNames.length === 0) {
     // No outputs - just execute for side effects
-    const effectCall = t.callExpression(t.identifier('__fictUseMemo'), [
+    ctx.helpersUsed.add('useEffect')
+    ctx.needsCtx = true
+    const effectCall = t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
       t.identifier('__fictCtx'),
       t.arrowFunctionExpression([], t.blockStatement(bodyStatements)),
-      t.numericLiteral(region.id),
+      t.numericLiteral(reserveHookSlot(ctx)),
     ])
     statements.push(t.expressionStatement(effectCall))
   } else {
-    // Check for lazy conditional optimization
-    const lazyInfo = analyzeHIRConditionalUsage(region, ctx)
-
-    if (lazyInfo) {
-      // Generate lazy conditional memo
-      return generateLazyConditionalMemo(
-        region,
-        uniqueOutputNames,
-        bodyStatements,
-        lazyInfo,
-        t,
-        declaredVars,
-        ctx,
-      )
+    ctx.helpersUsed.add('useMemo')
+    ctx.needsCtx = true
+    // Check for lazy conditional optimization (instruction-based only)
+    if (!bodyStatementsOverride) {
+      const lazyInfo = analyzeHIRConditionalUsage(region, ctx)
+      if (lazyInfo) {
+        // Generate lazy conditional memo
+        return generateLazyConditionalMemo(
+          region,
+          uniqueOutputNames,
+          bodyStatements,
+          lazyInfo,
+          t,
+          declaredVars,
+          ctx,
+        )
+      }
     }
 
     // Has outputs - memo with destructuring
-    const returnObj = t.objectExpression(
-      uniqueOutputNames.map(name =>
-        t.objectProperty(t.identifier(name), t.identifier(name), false, true),
-      ),
-    )
+    const buildOutputProperty = (name: string): BabelCore.types.ObjectProperty => {
+      if (!region.hasControlFlow) {
+        return t.objectProperty(t.identifier(name), t.identifier(name), false, true)
+      }
+      const guard = t.binaryExpression('!=', t.identifier(name), t.identifier('undefined'))
+      const valueExpr = t.conditionalExpression(
+        guard,
+        t.identifier(name),
+        t.identifier('undefined'),
+      )
+      return t.objectProperty(t.identifier(name), valueExpr)
+    }
+    const returnObj = t.objectExpression(uniqueOutputNames.map(name => buildOutputProperty(name)))
 
     const memoBody = t.blockStatement([...bodyStatements, t.returnStatement(returnObj)])
 
-    const memoCall = t.callExpression(t.identifier('__fictUseMemo'), [
+    const memoCall = t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
       t.identifier('__fictCtx'),
       t.arrowFunctionExpression([], memoBody),
-      t.numericLiteral(region.id),
+      t.numericLiteral(reserveHookSlot(ctx)),
     ])
 
     const regionVarName = `__region_${region.id}`
@@ -1007,23 +1365,52 @@ function wrapInMemo(
       t.variableDeclaration('const', [t.variableDeclarator(t.identifier(regionVarName), memoCall)]),
     )
 
-    // Destructure outputs - mark them as declared
-    for (const name of uniqueOutputNames) {
-      declaredVars.add(name)
+    const isAccessorOutput = (name: string) =>
+      ctx.signalVars?.has(name) ||
+      ctx.memoVars?.has(name) ||
+      ctx.aliasVars?.has(name) ||
+      ctx.storeVars?.has(name)
+
+    const getterOutputs = uniqueOutputNames.filter(
+      name => ctx.trackedVars.has(name) && !isAccessorOutput(name),
+    )
+    const directOutputs = uniqueOutputNames.filter(name => !getterOutputs.includes(name))
+
+    // Destructure outputs that are already accessors or non-reactive values.
+    if (directOutputs.length > 0) {
+      directOutputs.forEach(name => declaredVars.add(name))
+      statements.push(
+        t.variableDeclaration('const', [
+          t.variableDeclarator(
+            t.objectPattern(
+              directOutputs.map(name =>
+                t.objectProperty(t.identifier(name), t.identifier(name), false, true),
+              ),
+            ),
+            t.callExpression(t.identifier(regionVarName), []),
+          ),
+        ]),
+      )
     }
-    statements.push(
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          t.objectPattern(
-            uniqueOutputNames.map(name =>
-              t.objectProperty(t.identifier(name), t.identifier(name), false, true),
+
+    // Wrap pending outputs in getters that call the region accessor lazily.
+    for (const name of getterOutputs) {
+      declaredVars.add(name)
+      statements.push(
+        t.variableDeclaration('const', [
+          t.variableDeclarator(
+            t.identifier(name),
+            t.arrowFunctionExpression(
+              [],
+              t.memberExpression(
+                t.callExpression(t.identifier(regionVarName), []),
+                t.identifier(name),
+              ),
             ),
           ),
-          // Invoke the memo accessor to get the actual object for destructuring
-          t.callExpression(t.identifier(regionVarName), []),
-        ),
-      ]),
-    )
+        ]),
+      )
+    }
   }
 
   return statements
@@ -1324,7 +1711,7 @@ function generateLazyConditionalMemo(
   const memoCall = t.callExpression(t.identifier('__fictUseMemo'), [
     t.identifier('__fictCtx'),
     t.arrowFunctionExpression([], t.blockStatement(memoBody)),
-    t.numericLiteral(region.id),
+    t.numericLiteral(reserveHookSlot(ctx)),
   ])
 
   statements.push(
@@ -1355,6 +1742,12 @@ function generateLazyConditionalMemo(
  * Convert an instruction to a Babel statement
  * Handles SSA name de-versioning
  */
+function reserveHookSlot(ctx: CodegenContext): number {
+  const slot = ctx.nextHookSlot ?? 0
+  ctx.nextHookSlot = slot + 1
+  return slot
+}
+
 function instructionToStatement(
   instr: Instruction,
   t: typeof BabelCore.types,
@@ -1365,54 +1758,81 @@ function instructionToStatement(
     const ssaName = instr.target.name
     const baseName = deSSAVarName(ssaName)
     const declKind = instr.declarationKind
+    if (process.env.DEBUG_TEMPLATE_OUTPUT && baseName === 'snapshot') {
+      // eslint-disable-next-line no-console
+      console.log('lowering snapshot', {
+        nonReactive: ctx.nonReactiveScopeDepth,
+        noMemo: ctx.noMemo,
+        tracked: Array.from(ctx.trackedVars ?? []),
+      })
+    }
     const isTracked = ctx.trackedVars.has(baseName)
+    const isSignal = ctx.signalVars?.has(baseName) ?? false
     const aliasVars = ctx.aliasVars ?? (ctx.aliasVars = new Set())
     const dependsOnTracked = expressionUsesTracked(instr.value, ctx)
     const capturedTracked =
       ctx.externalTracked && ctx.externalTracked.has(baseName) && !declaredVars.has(baseName)
     const isShadowDeclaration = !!declKind && declaredVars.has(baseName)
     const treatAsTracked = !isShadowDeclaration && isTracked
+    const isDestructuringTemp = baseName.startsWith('__destruct_')
     const isStateCall =
       instr.value.kind === 'CallExpression' &&
       instr.value.callee.kind === 'Identifier' &&
       instr.value.callee.name === '$state'
+    const inRegionMemo = ctx.inRegionMemo ?? false
+    const buildMemoCall = (expr: BabelCore.types.Expression) => {
+      const args: BabelCore.types.Expression[] = [
+        t.identifier('__fictCtx'),
+        t.arrowFunctionExpression([], expr),
+      ]
+      if (inRegionMemo) {
+        args.push(t.numericLiteral(reserveHookSlot(ctx)))
+      }
+      ctx.helpersUsed.add('useMemo')
+      ctx.needsCtx = true
+      return t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), args)
+    }
 
     if (isShadowDeclaration && declKind) {
       ctx.trackedVars.delete(baseName)
     }
 
     if (declKind) {
-      const normalizedDecl: typeof declKind = isStateCall || dependsOnTracked ? 'const' : declKind
+      const normalizedDecl: typeof declKind =
+        isStateCall || (dependsOnTracked && !isDestructuringTemp) ? 'const' : declKind
+      const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
+      const isExternalAlias =
+        declKind === 'const' &&
+        instr.value.kind === 'Identifier' &&
+        !(ctx.scopes?.byName?.has(deSSAVarName(instr.value.name)) ?? false)
       const fallbackDecl: typeof declKind =
-        !treatAsTracked && !dependsOnTracked
-          ? declKind === 'const'
+        !treatAsTracked && (!dependsOnTracked || isDestructuringTemp)
+          ? declKind === 'const' && (needsMutable || isExternalAlias)
             ? 'let'
             : declKind
           : normalizedDecl
       const isAliasOfTracked =
         !isShadowDeclaration &&
         instr.value.kind === 'Identifier' &&
-        ctx.trackedVars.has(deSSAVarName(instr.value.name))
+        ctx.trackedVars.has(deSSAVarName(instr.value.name)) &&
+        !isDestructuringTemp
 
       if (isAliasOfTracked) {
+        // Alias captures the current value, not a reactive getter.
+        // Just read the value at assignment time: const alias = source()
         declaredVars.add(baseName)
-        aliasVars.add(baseName)
-        ctx.trackedVars.add(baseName)
         const sourceIdent = instr.value as Identifier
-        return t.variableDeclaration(normalizedDecl, [
+        return t.variableDeclaration(fallbackDecl, [
           t.variableDeclarator(
             t.identifier(baseName),
-            t.arrowFunctionExpression(
-              [],
-              t.callExpression(t.identifier(deSSAVarName(sourceIdent.name)), []),
-            ),
+            t.callExpression(t.identifier(deSSAVarName(sourceIdent.name)), []),
           ),
         ])
       }
 
       declaredVars.add(baseName)
 
-      if (treatAsTracked) {
+      if (treatAsTracked && !isDestructuringTemp) {
         if (isStateCall) {
           return t.variableDeclaration(normalizedDecl, [
             t.variableDeclarator(
@@ -1423,35 +1843,47 @@ function instructionToStatement(
         }
 
         if (dependsOnTracked) {
-          ctx.helpersUsed.add('useMemo')
-          ctx.needsCtx = true
+          const derivedExpr = lowerExpressionWithDeSSA(instr.value, ctx)
+          if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
+            return t.variableDeclaration(normalizedDecl, [
+              t.variableDeclarator(t.identifier(baseName), derivedExpr),
+            ])
+          }
           // Track as memo - derived values shouldn't be cached by getter cache
           ctx.memoVars?.add(baseName)
+          if (ctx.noMemo) {
+            return t.variableDeclaration(normalizedDecl, [
+              t.variableDeclarator(
+                t.identifier(baseName),
+                t.arrowFunctionExpression([], derivedExpr),
+              ),
+            ])
+          }
           return t.variableDeclaration(normalizedDecl, [
-            t.variableDeclarator(
-              t.identifier(baseName),
-              t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
-                t.identifier('__fictCtx'),
-                t.arrowFunctionExpression([], lowerExpressionWithDeSSA(instr.value, ctx)),
-              ]),
-            ),
+            t.variableDeclarator(t.identifier(baseName), buildMemoCall(derivedExpr)),
           ])
         }
       }
 
-      if (dependsOnTracked) {
-        ctx.helpersUsed.add('useMemo')
-        ctx.needsCtx = true
+      if (dependsOnTracked && !isDestructuringTemp) {
+        const derivedExpr = lowerExpressionWithDeSSA(instr.value, ctx)
+        if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
+          return t.variableDeclaration(normalizedDecl, [
+            t.variableDeclarator(t.identifier(baseName), derivedExpr),
+          ])
+        }
         // Track as memo - derived values shouldn't be cached by getter cache
         ctx.memoVars?.add(baseName)
+        if (ctx.noMemo) {
+          return t.variableDeclaration(normalizedDecl, [
+            t.variableDeclarator(
+              t.identifier(baseName),
+              t.arrowFunctionExpression([], derivedExpr),
+            ),
+          ])
+        }
         return t.variableDeclaration(normalizedDecl, [
-          t.variableDeclarator(
-            t.identifier(baseName),
-            t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
-              t.identifier('__fictCtx'),
-              t.arrowFunctionExpression([], lowerExpressionWithDeSSA(instr.value, ctx)),
-            ]),
-          ),
+          t.variableDeclarator(t.identifier(baseName), buildMemoCall(derivedExpr)),
         ])
       }
 
@@ -1464,24 +1896,22 @@ function instructionToStatement(
       throw new Error(`Alias reassignment is not supported for "${baseName}"`)
     }
 
-    if (capturedTracked && isTracked) {
+    if (capturedTracked && isSignal) {
       // Captured tracked binding from an outer scope - treat as setter call
       return t.expressionStatement(
         t.callExpression(t.identifier(baseName), [lowerExpressionWithDeSSA(instr.value, ctx)]),
       )
     }
 
-    // Alias of a tracked variable: const alias = count -> const alias = () => count()
-    if (instr.value.kind === 'Identifier') {
+    // Alias of a tracked variable: const alias = count -> const alias = count()
+    // This captures the current value, not a reactive getter.
+    // The alias is NOT added to trackedVars because it's a plain value capture.
+    if (instr.value.kind === 'Identifier' && !isDestructuringTemp) {
       const source = deSSAVarName(instr.value.name)
       if (ctx.trackedVars.has(source) && !declaredVars.has(baseName)) {
-        aliasVars.add(baseName)
-        ctx.trackedVars.add(baseName)
-        return t.variableDeclaration('const', [
-          t.variableDeclarator(
-            t.identifier(baseName),
-            t.arrowFunctionExpression([], t.callExpression(t.identifier(source), [])),
-          ),
+        // Just read the value at assignment time, don't create a getter
+        return t.variableDeclaration(declKind ?? 'const', [
+          t.variableDeclarator(t.identifier(baseName), t.callExpression(t.identifier(source), [])),
         ])
       }
     }
@@ -1496,7 +1926,7 @@ function instructionToStatement(
       }
 
       // Already declared - use assignment expression
-      if (isTracked) {
+      if (isSignal) {
         return t.expressionStatement(
           t.callExpression(t.identifier(baseName), [lowerExpressionWithDeSSA(instr.value, ctx)]),
         )
@@ -1537,18 +1967,24 @@ function instructionToStatement(
       }
 
       if (dependsOnTracked) {
-        ctx.helpersUsed.add('useMemo')
-        ctx.needsCtx = true
+        const derivedExpr = lowerExpressionWithDeSSA(instr.value, ctx)
+        if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
+          return t.variableDeclaration('const', [
+            t.variableDeclarator(t.identifier(baseName), derivedExpr),
+          ])
+        }
         // Track as memo - derived values shouldn't be cached by getter cache
         ctx.memoVars?.add(baseName)
+        if (ctx.noMemo) {
+          return t.variableDeclaration('const', [
+            t.variableDeclarator(
+              t.identifier(baseName),
+              t.arrowFunctionExpression([], derivedExpr),
+            ),
+          ])
+        }
         return t.variableDeclaration('const', [
-          t.variableDeclarator(
-            t.identifier(baseName),
-            t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
-              t.identifier('__fictCtx'),
-              t.arrowFunctionExpression([], lowerExpressionWithDeSSA(instr.value, ctx)),
-            ]),
-          ),
+          t.variableDeclarator(t.identifier(baseName), buildMemoCall(derivedExpr)),
         ])
       }
 
@@ -1558,18 +1994,21 @@ function instructionToStatement(
     }
 
     if (dependsOnTracked) {
-      ctx.helpersUsed.add('useMemo')
-      ctx.needsCtx = true
+      const derivedExpr = lowerExpressionWithDeSSA(instr.value, ctx)
+      if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
+        return t.variableDeclaration('let', [
+          t.variableDeclarator(t.identifier(baseName), derivedExpr),
+        ])
+      }
       // Track as memo - derived values shouldn't be cached by getter cache
       ctx.memoVars?.add(baseName)
+      if (ctx.noMemo) {
+        return t.variableDeclaration('const', [
+          t.variableDeclarator(t.identifier(baseName), t.arrowFunctionExpression([], derivedExpr)),
+        ])
+      }
       return t.variableDeclaration('const', [
-        t.variableDeclarator(
-          t.identifier(baseName),
-          t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
-            t.identifier('__fictCtx'),
-            t.arrowFunctionExpression([], lowerExpressionWithDeSSA(instr.value, ctx)),
-          ]),
-        ),
+        t.variableDeclarator(t.identifier(baseName), buildMemoCall(derivedExpr)),
       ])
     }
 

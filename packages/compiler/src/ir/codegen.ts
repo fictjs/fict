@@ -1,6 +1,7 @@
 import type * as BabelCore from '@babel/core'
 
 import { RUNTIME_ALIASES, RUNTIME_HELPERS, RUNTIME_MODULE } from '../constants'
+import type { FictCompilerOptions } from '../types'
 
 import {
   HIRError,
@@ -14,7 +15,10 @@ import {
   type JSXElementExpression,
 } from './hir'
 import type { ReactiveScope, ReactiveScopeResult } from './scopes'
-import { deSSAVarName, type Region } from './regions'
+import { deSSAVarName, lowerStructuredNodeWithoutRegions, type Region } from './regions'
+import { structurizeCFG, type StructuredNode } from './structurize'
+
+const HOOK_SLOT_BASE = 1000
 
 /**
  * Region metadata for fine-grained DOM integration.
@@ -44,13 +48,13 @@ export function applyRegionToContext(
   const prevRegion = ctx.currentRegion
   ctx.currentRegion = region ?? undefined
 
-  // Mark region declarations as tracked for reactive detection
-  if (region) {
-    region.declarations.forEach(decl => ctx.trackedVars.add(decl))
-    region.dependencies.forEach(dep => ctx.trackedVars.add(dep))
-  }
-
   return prevRegion
+}
+
+function reserveHookSlot(ctx: CodegenContext): number {
+  const slot = ctx.nextHookSlot ?? HOOK_SLOT_BASE
+  ctx.nextHookSlot = slot + 1
+  return slot
 }
 
 /**
@@ -58,6 +62,8 @@ export function applyRegionToContext(
  */
 export interface CodegenContext {
   t: typeof BabelCore.types
+  /** Compiler options (for feature toggles like lazyConditional). */
+  options?: FictCompilerOptions
   /** Tracks which runtime helpers are used */
   helpersUsed: Set<string>
   /** Counter for generating unique identifiers */
@@ -84,8 +90,20 @@ export interface CodegenContext {
   externalTracked?: Set<string>
   /** Variables initialized with $store (need path-level reactivity, no getter transformation) */
   storeVars?: Set<string>
+  /** Variables initialized with $state (signal accessors) */
+  signalVars?: Set<string>
+  /** Variables assigned to function expressions (should not be treated as reactive accessors) */
+  functionVars?: Set<string>
   /** Variables that are memos (derived values) - these shouldn't be cached by getter cache */
   memoVars?: Set<string>
+  /** Variables that are assigned after declaration (need mutable binding) */
+  mutatedVars?: Set<string>
+  /** Whether we are emitting statements inside a region memo */
+  inRegionMemo?: boolean
+  /** Whether we are lowering a list item render callback */
+  inListRender?: boolean
+  /** Next explicit slot index for nested memo hooks */
+  nextHookSlot?: number
   /**
    * Rule L: Getter cache for sync blocks.
    * Maps getter expression keys to their cached variable names.
@@ -97,10 +115,16 @@ export interface CodegenContext {
   getterCacheDeclarations?: Map<string, BabelCore.types.Expression>
   /** Whether getter caching is enabled for the current scope */
   getterCacheEnabled?: boolean
+  /** Disable memoization for the current function (\"use no memo\" directive) */
+  noMemo?: boolean
   /** Current expression recursion depth for stack overflow protection */
   expressionDepth?: number
   /** Maximum allowed expression depth (default: 500) */
   maxExpressionDepth?: number
+  /** Track non-reactive nested scopes (event handlers, effects) */
+  nonReactiveScopeDepth?: number
+  /** Depth counter for conditional child lowering (disable memo caching) */
+  inConditional?: number
 }
 
 /**
@@ -118,7 +142,15 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     aliasVars: new Set(),
     externalTracked: new Set(),
     storeVars: new Set(),
+    signalVars: new Set(),
+    functionVars: new Set(),
     memoVars: new Set(),
+    mutatedVars: new Set(),
+    inRegionMemo: false,
+    inListRender: false,
+    nextHookSlot: HOOK_SLOT_BASE,
+    nonReactiveScopeDepth: 0,
+    inConditional: 0,
     getterCache: new Map(),
     getterCacheDeclarations: new Map(),
     getterCacheEnabled: false,
@@ -161,6 +193,16 @@ function withGetterCache<T>(
   ctx.getterCacheEnabled = prevEnabled
 
   return { result, cacheDeclarations }
+}
+
+function withNonReactiveScope<T>(ctx: CodegenContext, fn: () => T): T {
+  const prevDepth = ctx.nonReactiveScopeDepth ?? 0
+  ctx.nonReactiveScopeDepth = prevDepth + 1
+  try {
+    return fn()
+  } finally {
+    ctx.nonReactiveScopeDepth = prevDepth
+  }
 }
 
 /**
@@ -290,6 +332,572 @@ function detectDerivedCycles(fn: HIRFunction, scopeResult: ReactiveScopeResult):
   }
 }
 
+function collectExpressionIdentifiers(expr: Expression, into: Set<string>): void {
+  if (!expr || typeof expr !== 'object') return
+
+  switch (expr.kind) {
+    case 'Identifier':
+      into.add(deSSAVarName(expr.name))
+      return
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      collectExpressionIdentifiers(expr.object as Expression, into)
+      if (expr.computed && expr.property.kind !== 'Literal') {
+        collectExpressionIdentifiers(expr.property as Expression, into)
+      }
+      return
+    case 'CallExpression':
+    case 'OptionalCallExpression': {
+      const isMacroCallee =
+        expr.callee.kind === 'Identifier' &&
+        (expr.callee.name === '$state' ||
+          expr.callee.name === '$effect' ||
+          expr.callee.name === '$store')
+      if (!isMacroCallee) {
+        collectExpressionIdentifiers(expr.callee as Expression, into)
+      }
+      expr.arguments.forEach(arg => collectExpressionIdentifiers(arg as Expression, into))
+      return
+    }
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      collectExpressionIdentifiers(expr.left as Expression, into)
+      collectExpressionIdentifiers(expr.right as Expression, into)
+      return
+    case 'UnaryExpression':
+      collectExpressionIdentifiers(expr.argument as Expression, into)
+      return
+    case 'ConditionalExpression':
+      collectExpressionIdentifiers(expr.test as Expression, into)
+      collectExpressionIdentifiers(expr.consequent as Expression, into)
+      collectExpressionIdentifiers(expr.alternate as Expression, into)
+      return
+    case 'ArrayExpression':
+      expr.elements.forEach(el => {
+        if (el) collectExpressionIdentifiers(el as Expression, into)
+      })
+      return
+    case 'ObjectExpression':
+      expr.properties.forEach(prop => {
+        if (prop.kind === 'SpreadElement') {
+          collectExpressionIdentifiers(prop.argument as Expression, into)
+          return
+        }
+        // HIR ObjectProperty keys are always Identifier | Literal, not computed expressions
+        collectExpressionIdentifiers(prop.value as Expression, into)
+      })
+      return
+    case 'TemplateLiteral':
+      expr.expressions.forEach(ex => collectExpressionIdentifiers(ex as Expression, into))
+      return
+    case 'ArrowFunction':
+    case 'FunctionExpression':
+      // Avoid traversing nested function bodies.
+      return
+    case 'AssignmentExpression':
+      collectExpressionIdentifiers(expr.left as Expression, into)
+      collectExpressionIdentifiers(expr.right as Expression, into)
+      return
+    case 'UpdateExpression':
+      collectExpressionIdentifiers(expr.argument as Expression, into)
+      return
+    case 'AwaitExpression':
+      collectExpressionIdentifiers(expr.argument as Expression, into)
+      return
+    case 'NewExpression':
+      collectExpressionIdentifiers(expr.callee as Expression, into)
+      expr.arguments.forEach(arg => collectExpressionIdentifiers(arg as Expression, into))
+      return
+    case 'SequenceExpression':
+      expr.expressions.forEach(ex => collectExpressionIdentifiers(ex as Expression, into))
+      return
+    case 'YieldExpression':
+      if (expr.argument) collectExpressionIdentifiers(expr.argument as Expression, into)
+      return
+    case 'TaggedTemplateExpression':
+      collectExpressionIdentifiers(expr.tag as Expression, into)
+      expr.quasi.expressions.forEach(ex => collectExpressionIdentifiers(ex as Expression, into))
+      return
+    case 'SpreadElement':
+      collectExpressionIdentifiers(expr.argument as Expression, into)
+      return
+    case 'JSXElement': {
+      if (typeof expr.tagName !== 'string') {
+        collectExpressionIdentifiers(expr.tagName as Expression, into)
+      }
+      expr.attributes.forEach(attr => {
+        if (attr.isSpread && attr.spreadExpr) {
+          collectExpressionIdentifiers(attr.spreadExpr, into)
+          return
+        }
+        if (attr.value) {
+          collectExpressionIdentifiers(attr.value, into)
+        }
+      })
+      expr.children.forEach(child => {
+        if (child.kind === 'expression') {
+          collectExpressionIdentifiers(child.value as Expression, into)
+        } else if (child.kind === 'element') {
+          collectExpressionIdentifiers(child.value as Expression, into)
+        }
+      })
+      return
+    }
+    case 'Literal':
+      return
+  }
+}
+
+function collectExpressionIdentifiersDeep(
+  expr: Expression,
+  into: Set<string>,
+  bound: Set<string> = new Set(),
+): void {
+  if (!expr || typeof expr !== 'object') return
+
+  const addIdentifier = (name: string) => {
+    const base = deSSAVarName(name)
+    if (!bound.has(base)) {
+      into.add(base)
+    }
+  }
+
+  switch (expr.kind) {
+    case 'Identifier':
+      addIdentifier(expr.name)
+      return
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      collectExpressionIdentifiersDeep(expr.object as Expression, into, bound)
+      if (expr.computed && expr.property.kind !== 'Literal') {
+        collectExpressionIdentifiersDeep(expr.property as Expression, into, bound)
+      }
+      return
+    case 'CallExpression':
+    case 'OptionalCallExpression': {
+      const isMacroCallee =
+        expr.callee.kind === 'Identifier' &&
+        (expr.callee.name === '$state' ||
+          expr.callee.name === '$effect' ||
+          expr.callee.name === '$store')
+      if (!isMacroCallee) {
+        collectExpressionIdentifiersDeep(expr.callee as Expression, into, bound)
+      }
+      expr.arguments.forEach(arg =>
+        collectExpressionIdentifiersDeep(arg as Expression, into, bound),
+      )
+      return
+    }
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      collectExpressionIdentifiersDeep(expr.left as Expression, into, bound)
+      collectExpressionIdentifiersDeep(expr.right as Expression, into, bound)
+      return
+    case 'UnaryExpression':
+      collectExpressionIdentifiersDeep(expr.argument as Expression, into, bound)
+      return
+    case 'ConditionalExpression':
+      collectExpressionIdentifiersDeep(expr.test as Expression, into, bound)
+      collectExpressionIdentifiersDeep(expr.consequent as Expression, into, bound)
+      collectExpressionIdentifiersDeep(expr.alternate as Expression, into, bound)
+      return
+    case 'ArrayExpression':
+      expr.elements.forEach(el => {
+        if (el) collectExpressionIdentifiersDeep(el as Expression, into, bound)
+      })
+      return
+    case 'ObjectExpression':
+      expr.properties.forEach(prop => {
+        if (prop.kind === 'SpreadElement') {
+          collectExpressionIdentifiersDeep(prop.argument as Expression, into, bound)
+          return
+        }
+        // HIR ObjectProperty keys are always Identifier | Literal, not computed expressions
+        collectExpressionIdentifiersDeep(prop.value as Expression, into, bound)
+      })
+      return
+    case 'TemplateLiteral':
+      expr.expressions.forEach(ex =>
+        collectExpressionIdentifiersDeep(ex as Expression, into, bound),
+      )
+      return
+    case 'ArrowFunction': {
+      const nextBound = new Set(bound)
+      expr.params.forEach(p => nextBound.add(deSSAVarName(p.name)))
+      if (expr.isExpression && expr.body && !Array.isArray(expr.body)) {
+        collectExpressionIdentifiersDeep(expr.body as Expression, into, nextBound)
+      } else if (Array.isArray(expr.body)) {
+        for (const block of expr.body) {
+          for (const instr of block.instructions) {
+            if (instr.kind === 'Assign') {
+              collectExpressionIdentifiersDeep(instr.value, into, nextBound)
+            } else if (instr.kind === 'Expression') {
+              collectExpressionIdentifiersDeep(instr.value, into, nextBound)
+            } else if (instr.kind === 'Phi') {
+              instr.sources.forEach(src => addIdentifier(src.id.name))
+            }
+          }
+          const term = block.terminator
+          if (term.kind === 'Branch') {
+            collectExpressionIdentifiersDeep(term.test, into, nextBound)
+          } else if (term.kind === 'Switch') {
+            collectExpressionIdentifiersDeep(term.discriminant, into, nextBound)
+            term.cases.forEach(c => {
+              if (c.test) collectExpressionIdentifiersDeep(c.test, into, nextBound)
+            })
+          } else if (term.kind === 'ForOf') {
+            collectExpressionIdentifiersDeep(term.iterable, into, nextBound)
+          } else if (term.kind === 'ForIn') {
+            collectExpressionIdentifiersDeep(term.object, into, nextBound)
+          } else if (term.kind === 'Return' && term.argument) {
+            collectExpressionIdentifiersDeep(term.argument, into, nextBound)
+          } else if (term.kind === 'Throw') {
+            collectExpressionIdentifiersDeep(term.argument, into, nextBound)
+          }
+        }
+      }
+      return
+    }
+    case 'FunctionExpression': {
+      const nextBound = new Set(bound)
+      expr.params.forEach(p => nextBound.add(deSSAVarName(p.name)))
+      for (const block of expr.body) {
+        for (const instr of block.instructions) {
+          if (instr.kind === 'Assign') {
+            collectExpressionIdentifiersDeep(instr.value, into, nextBound)
+          } else if (instr.kind === 'Expression') {
+            collectExpressionIdentifiersDeep(instr.value, into, nextBound)
+          } else if (instr.kind === 'Phi') {
+            instr.sources.forEach(src => addIdentifier(src.id.name))
+          }
+        }
+        const term = block.terminator
+        if (term.kind === 'Branch') {
+          collectExpressionIdentifiersDeep(term.test, into, nextBound)
+        } else if (term.kind === 'Switch') {
+          collectExpressionIdentifiersDeep(term.discriminant, into, nextBound)
+          term.cases.forEach(c => {
+            if (c.test) collectExpressionIdentifiersDeep(c.test, into, nextBound)
+          })
+        } else if (term.kind === 'ForOf') {
+          collectExpressionIdentifiersDeep(term.iterable, into, nextBound)
+        } else if (term.kind === 'ForIn') {
+          collectExpressionIdentifiersDeep(term.object, into, nextBound)
+        } else if (term.kind === 'Return' && term.argument) {
+          collectExpressionIdentifiersDeep(term.argument, into, nextBound)
+        } else if (term.kind === 'Throw') {
+          collectExpressionIdentifiersDeep(term.argument, into, nextBound)
+        }
+      }
+      return
+    }
+    case 'AssignmentExpression':
+      collectExpressionIdentifiersDeep(expr.left as Expression, into, bound)
+      collectExpressionIdentifiersDeep(expr.right as Expression, into, bound)
+      return
+    case 'UpdateExpression':
+      collectExpressionIdentifiersDeep(expr.argument as Expression, into, bound)
+      return
+    case 'AwaitExpression':
+      collectExpressionIdentifiersDeep(expr.argument as Expression, into, bound)
+      return
+    case 'NewExpression':
+      collectExpressionIdentifiersDeep(expr.callee as Expression, into, bound)
+      expr.arguments.forEach(arg =>
+        collectExpressionIdentifiersDeep(arg as Expression, into, bound),
+      )
+      return
+    case 'SequenceExpression':
+      expr.expressions.forEach(ex =>
+        collectExpressionIdentifiersDeep(ex as Expression, into, bound),
+      )
+      return
+    case 'YieldExpression':
+      if (expr.argument) collectExpressionIdentifiersDeep(expr.argument as Expression, into, bound)
+      return
+    case 'TaggedTemplateExpression':
+      collectExpressionIdentifiersDeep(expr.tag as Expression, into, bound)
+      expr.quasi.expressions.forEach(ex =>
+        collectExpressionIdentifiersDeep(ex as Expression, into, bound),
+      )
+      return
+    case 'SpreadElement':
+      collectExpressionIdentifiersDeep(expr.argument as Expression, into, bound)
+      return
+    case 'JSXElement': {
+      if (typeof expr.tagName !== 'string') {
+        collectExpressionIdentifiersDeep(expr.tagName as Expression, into, bound)
+      }
+      expr.attributes.forEach(attr => {
+        if (attr.isSpread && attr.spreadExpr) {
+          collectExpressionIdentifiersDeep(attr.spreadExpr, into, bound)
+          return
+        }
+        if (attr.value) {
+          collectExpressionIdentifiersDeep(attr.value, into, bound)
+        }
+      })
+      expr.children.forEach(child => {
+        if (child.kind === 'expression') {
+          collectExpressionIdentifiersDeep(child.value as Expression, into, bound)
+        } else if (child.kind === 'element') {
+          collectExpressionIdentifiersDeep(child.value as Expression, into, bound)
+        }
+      })
+      return
+    }
+    case 'Literal':
+      return
+  }
+}
+
+function getExpressionIdentifiers(expr?: Expression | null): Set<string> {
+  const deps = new Set<string>()
+  if (expr) {
+    collectExpressionIdentifiers(expr, deps)
+  }
+  return deps
+}
+
+function buildControlDependencyMap(fn: HIRFunction): Map<Instruction, Set<string>> {
+  const depsByInstruction = new Map<Instruction, Set<string>>()
+  let structured: StructuredNode
+  try {
+    structured = structurizeCFG(fn, {
+      warnOnIssues: false,
+      throwOnIssues: false,
+      useFallback: true,
+    })
+  } catch {
+    return depsByInstruction
+  }
+
+  const mergeDeps = (base: Set<string>, extra: Set<string>): Set<string> => {
+    if (extra.size === 0) return base
+    const merged = new Set(base)
+    extra.forEach(dep => merged.add(dep))
+    return merged
+  }
+
+  const registerInstruction = (instr: Instruction, deps: Set<string>) => {
+    if (instr.kind !== 'Assign') return
+    depsByInstruction.set(instr, new Set(deps))
+  }
+
+  const walk = (node: StructuredNode, activeDeps: Set<string>) => {
+    switch (node.kind) {
+      case 'sequence':
+        node.nodes.forEach(child => walk(child, activeDeps))
+        return
+      case 'block':
+        node.statements.forEach(child => walk(child, activeDeps))
+        return
+      case 'instruction':
+        registerInstruction(node.instruction, activeDeps)
+        return
+      case 'if': {
+        const condDeps = getExpressionIdentifiers(node.test)
+        const nextDeps = mergeDeps(activeDeps, condDeps)
+        walk(node.consequent, nextDeps)
+        if (node.alternate) walk(node.alternate, nextDeps)
+        return
+      }
+      case 'while': {
+        const condDeps = getExpressionIdentifiers(node.test)
+        const nextDeps = mergeDeps(activeDeps, condDeps)
+        walk(node.body, nextDeps)
+        return
+      }
+      case 'doWhile': {
+        const condDeps = getExpressionIdentifiers(node.test)
+        const nextDeps = mergeDeps(activeDeps, condDeps)
+        walk(node.body, nextDeps)
+        return
+      }
+      case 'for': {
+        const initDeps = activeDeps
+        node.init?.forEach(instr => registerInstruction(instr, initDeps))
+        const condDeps = node.test ? getExpressionIdentifiers(node.test) : new Set<string>()
+        const loopDeps = mergeDeps(activeDeps, condDeps)
+        node.update?.forEach(instr => registerInstruction(instr, loopDeps))
+        walk(node.body, loopDeps)
+        return
+      }
+      case 'forOf': {
+        const iterDeps = getExpressionIdentifiers(node.iterable)
+        const loopDeps = mergeDeps(activeDeps, iterDeps)
+        walk(node.body, loopDeps)
+        return
+      }
+      case 'forIn': {
+        const iterDeps = getExpressionIdentifiers(node.object)
+        const loopDeps = mergeDeps(activeDeps, iterDeps)
+        walk(node.body, loopDeps)
+        return
+      }
+      case 'switch': {
+        const discDeps = getExpressionIdentifiers(node.discriminant)
+        const nextDeps = mergeDeps(activeDeps, discDeps)
+        node.cases.forEach(c => walk(c.body, nextDeps))
+        return
+      }
+      case 'try':
+        walk(node.block, activeDeps)
+        if (node.handler) walk(node.handler.body, activeDeps)
+        if (node.finalizer) walk(node.finalizer, activeDeps)
+        return
+      case 'stateMachine':
+        node.blocks.forEach(block => {
+          block.instructions.forEach(instr => registerInstruction(instr, activeDeps))
+        })
+        return
+      case 'return':
+      case 'throw':
+      case 'break':
+      case 'continue':
+        return
+    }
+  }
+
+  walk(structured, new Set())
+  return depsByInstruction
+}
+
+function computeReactiveAccessors(
+  fn: HIRFunction,
+  ctx: CodegenContext,
+): { tracked: Set<string>; memo: Set<string> } {
+  const activeReadVars = new Set<string>()
+  const dataDepsByTarget = new Map<string, Set<string>>()
+  const controlDepsByTarget = new Map<string, Set<string>>()
+  const controlDepsByInstr = buildControlDependencyMap(fn)
+
+  const addActiveReads = (expr?: Expression | null, deep = false) => {
+    if (!expr) return
+    const deps = new Set<string>()
+    if (deep) {
+      collectExpressionIdentifiersDeep(expr, deps)
+    } else {
+      collectExpressionIdentifiers(expr, deps)
+    }
+    deps.forEach(dep => activeReadVars.add(dep))
+  }
+
+  const addDepsToTarget = (target: string, deps: Set<string>, map: Map<string, Set<string>>) => {
+    if (deps.size === 0) return
+    const existing = map.get(target)
+    if (!existing) {
+      map.set(target, new Set(deps))
+      return
+    }
+    deps.forEach(dep => existing.add(dep))
+  }
+
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign') {
+        const target = deSSAVarName(instr.target.name)
+        const dataDeps = getExpressionIdentifiers(instr.value)
+        addDepsToTarget(target, dataDeps, dataDepsByTarget)
+        const controlDeps = controlDepsByInstr.get(instr) ?? new Set<string>()
+        addDepsToTarget(target, controlDeps, controlDepsByTarget)
+      } else if (instr.kind === 'Expression') {
+        addActiveReads(instr.value)
+      } else if (instr.kind === 'Phi') {
+        const target = deSSAVarName(instr.target.name)
+        const sources = new Set(instr.sources.map(src => deSSAVarName(src.id.name)))
+        addDepsToTarget(target, sources, dataDepsByTarget)
+      }
+    }
+    const term = block.terminator
+    if (term.kind === 'Branch') {
+      addActiveReads(term.test)
+    } else if (term.kind === 'Switch') {
+      addActiveReads(term.discriminant)
+      term.cases.forEach(c => addActiveReads(c.test))
+    } else if (term.kind === 'ForOf') {
+      addActiveReads(term.iterable)
+    } else if (term.kind === 'ForIn') {
+      addActiveReads(term.object)
+    } else if (term.kind === 'Return') {
+      addActiveReads(term.argument ?? null, true)
+    } else if (term.kind === 'Throw') {
+      addActiveReads(term.argument)
+    }
+  }
+
+  const neededVars = new Set(activeReadVars)
+  let needsChanged = true
+  while (needsChanged) {
+    needsChanged = false
+    for (const [target, dataDeps] of dataDepsByTarget) {
+      if (!neededVars.has(target)) continue
+      const controlDeps = controlDepsByTarget.get(target)
+      const mergedDeps = new Set(dataDeps)
+      controlDeps?.forEach(dep => mergedDeps.add(dep))
+      for (const dep of mergedDeps) {
+        if (!neededVars.has(dep)) {
+          neededVars.add(dep)
+          needsChanged = true
+        }
+      }
+    }
+  }
+
+  const tracked = new Set(ctx.trackedVars)
+  ctx.signalVars?.forEach(dep => tracked.add(dep))
+  ctx.aliasVars?.forEach(dep => tracked.add(dep))
+  ctx.storeVars?.forEach(dep => tracked.add(dep))
+  const memo = new Set(ctx.memoVars)
+
+  const isFunctionVar = (name: string) => ctx.functionVars?.has(name) ?? false
+  const isSignal = (name: string) => ctx.signalVars?.has(name) ?? false
+  const isStore = (name: string) => ctx.storeVars?.has(name) ?? false
+
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const block of fn.blocks) {
+      for (const instr of block.instructions) {
+        if (instr.kind === 'Assign') {
+          const target = deSSAVarName(instr.target.name)
+          if (isFunctionVar(target)) continue
+
+          const dataDeps = getExpressionIdentifiers(instr.value)
+          const controlDepsForInstr = controlDepsByInstr.get(instr) ?? new Set<string>()
+          const hasDataDep = Array.from(dataDeps).some(dep => tracked.has(dep))
+          const hasControlDep = Array.from(controlDepsForInstr).some(dep => tracked.has(dep))
+
+          if (!hasDataDep && !hasControlDep) continue
+          if (!neededVars.has(target)) continue
+
+          if (!tracked.has(target)) {
+            tracked.add(target)
+            changed = true
+          }
+          if (hasDataDep && !isSignal(target) && !isStore(target)) {
+            memo.add(target)
+          }
+        } else if (instr.kind === 'Phi') {
+          const target = deSSAVarName(instr.target.name)
+          if (isFunctionVar(target)) continue
+          const hasDep = instr.sources.some(src => tracked.has(deSSAVarName(src.id.name)))
+          if (!hasDep || !neededVars.has(target)) continue
+          if (!tracked.has(target)) {
+            tracked.add(target)
+            changed = true
+          }
+          if (!isSignal(target) && !isStore(target)) {
+            memo.add(target)
+          }
+        }
+      }
+    }
+  }
+
+  return { tracked, memo }
+}
+
 /**
  * Generate a unique temporary identifier
  */
@@ -387,6 +995,37 @@ function extractKeyFromAttributes(attributes: JSXAttribute[]): Expression | unde
     }
   }
   return undefined
+}
+
+function getReturnedJSXFromCallback(callback: Expression): JSXElementExpression | null {
+  if (callback.kind === 'ArrowFunction') {
+    if (callback.isExpression && callback.body && (callback.body as any).kind === 'JSXElement') {
+      return callback.body as JSXElementExpression
+    }
+    if (Array.isArray(callback.body)) {
+      for (const block of callback.body) {
+        const term = block.terminator
+        if (term.kind === 'Return' && term.argument?.kind === 'JSXElement') {
+          return term.argument as JSXElementExpression
+        }
+      }
+    }
+  }
+  if (callback.kind === 'FunctionExpression') {
+    for (const block of callback.body ?? []) {
+      const term = block.terminator
+      if (term.kind === 'Return' && term.argument?.kind === 'JSXElement') {
+        return term.argument as JSXElementExpression
+      }
+    }
+  }
+  return null
+}
+
+function extractKeyFromMapCallback(callback: Expression): Expression | undefined {
+  const jsx = getReturnedJSXFromCallback(callback)
+  if (!jsx) return undefined
+  return extractKeyFromAttributes(jsx.attributes)
 }
 
 /**
@@ -491,6 +1130,18 @@ function lowerTrackedExpression(expr: Expression, ctx: CodegenContext): BabelCor
         }
       : null)
   const lowered = lowerExpression(expr, ctx)
+  if (ctx.t.isAssignmentExpression(lowered)) {
+    const right = applyRegionMetadataToExpression(lowered.right, ctx, regionOverride ?? undefined)
+    return ctx.t.assignmentExpression(lowered.operator, lowered.left, right)
+  }
+  if (ctx.t.isUpdateExpression(lowered)) {
+    const arg = applyRegionMetadataToExpression(
+      lowered.argument as BabelCore.types.Expression,
+      ctx,
+      regionOverride ?? undefined,
+    )
+    return ctx.t.updateExpression(lowered.operator, arg as any, lowered.prefix)
+  }
   return applyRegionMetadataToExpression(lowered, ctx, regionOverride ?? undefined)
 }
 
@@ -500,12 +1151,14 @@ function lowerInstruction(
 ): BabelCore.types.Statement | null {
   const { t } = ctx
   if (instr.kind === 'Assign') {
+    const baseName = deSSAVarName(instr.target.name)
+    if (ctx.signalVars?.has(baseName)) {
+      return t.expressionStatement(
+        t.callExpression(t.identifier(baseName), [lowerTrackedExpression(instr.value, ctx)]),
+      )
+    }
     return t.expressionStatement(
-      t.assignmentExpression(
-        '=',
-        t.identifier(instr.target.name),
-        lowerTrackedExpression(instr.value, ctx),
-      ),
+      t.assignmentExpression('=', t.identifier(baseName), lowerTrackedExpression(instr.value, ctx)),
     )
   }
   if (instr.kind === 'Expression') {
@@ -625,12 +1278,88 @@ function attachHelperImports(
 ): BabelCore.types.Statement[] {
   if (ctx.helpersUsed.size === 0) return body
 
+  const declared = new Set<string>()
+  const addPatternNames = (pattern: BabelCore.types.LVal | BabelCore.types.PatternLike): void => {
+    if (t.isIdentifier(pattern)) {
+      declared.add(pattern.name)
+      return
+    }
+    if (t.isAssignmentPattern(pattern)) {
+      addPatternNames(pattern.left as BabelCore.types.PatternLike)
+      return
+    }
+    if (t.isRestElement(pattern)) {
+      addPatternNames(pattern.argument as BabelCore.types.PatternLike)
+      return
+    }
+    if (t.isObjectPattern(pattern)) {
+      for (const prop of pattern.properties) {
+        if (t.isRestElement(prop)) {
+          addPatternNames(prop.argument as BabelCore.types.PatternLike)
+        } else if (t.isObjectProperty(prop)) {
+          addPatternNames(prop.value as BabelCore.types.PatternLike)
+        }
+      }
+      return
+    }
+    if (t.isArrayPattern(pattern)) {
+      for (const el of pattern.elements) {
+        if (!el) continue
+        if (t.isPatternLike(el)) addPatternNames(el as BabelCore.types.PatternLike)
+      }
+    }
+  }
+
+  for (const stmt of body) {
+    if (t.isImportDeclaration(stmt)) {
+      for (const spec of stmt.specifiers) {
+        declared.add(spec.local.name)
+      }
+      continue
+    }
+    if (t.isFunctionDeclaration(stmt) && stmt.id) {
+      declared.add(stmt.id.name)
+      continue
+    }
+    if (t.isClassDeclaration(stmt) && stmt.id) {
+      declared.add(stmt.id.name)
+      continue
+    }
+    if (t.isVariableDeclaration(stmt)) {
+      for (const decl of stmt.declarations) {
+        addPatternNames(decl.id)
+      }
+      continue
+    }
+    if (t.isExportNamedDeclaration(stmt)) {
+      if (stmt.declaration) {
+        const decl = stmt.declaration
+        if (t.isFunctionDeclaration(decl) && decl.id) declared.add(decl.id.name)
+        if (t.isClassDeclaration(decl) && decl.id) declared.add(decl.id.name)
+        if (t.isVariableDeclaration(decl)) {
+          for (const d of decl.declarations) addPatternNames(d.id)
+        }
+      } else {
+        for (const spec of stmt.specifiers) {
+          if (t.isExportSpecifier(spec)) {
+            declared.add(spec.local.name)
+          }
+        }
+      }
+      continue
+    }
+    if (t.isExportDefaultDeclaration(stmt) && t.isIdentifier(stmt.declaration)) {
+      declared.add(stmt.declaration.name)
+    }
+  }
+
   const specifiers: BabelCore.types.ImportSpecifier[] = []
 
   for (const name of ctx.helpersUsed) {
     const alias = (RUNTIME_ALIASES as Record<string, string>)[name]
     const helper = (RUNTIME_HELPERS as Record<string, string>)[name]
     if (alias && helper) {
+      if (declared.has(alias)) continue
       specifiers.push(t.importSpecifier(t.identifier(alias), t.identifier(helper)))
     }
   }
@@ -740,6 +1469,28 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
     }
     return stmts
   }
+  const lowerStructuredBlocks = (
+    blocks: BasicBlock[],
+    params: { name: string }[],
+    paramIds: BabelCore.types.Identifier[],
+  ): BabelCore.types.Statement[] => {
+    try {
+      const fn: HIRFunction = {
+        params: params.map(p => ({ kind: 'Identifier', name: p.name })),
+        blocks,
+        meta: { fromExpression: true },
+      }
+      const structured = structurizeCFG(fn, {
+        warnOnIssues: false,
+        throwOnIssues: false,
+        useFallback: true,
+      })
+      const declared = new Set(paramIds.map(p => p.name))
+      return lowerStructuredNodeWithoutRegions(structured, t, ctx, declared)
+    } catch {
+      return lowerBlocksToStatements(blocks)
+    }
+  }
 
   switch (expr.kind) {
     case 'Identifier':
@@ -769,7 +1520,11 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
         ctx.needsCtx = true
         return t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
           t.identifier('__fictCtx'),
-          ...expr.arguments.map(a => lowerExpression(a, ctx)),
+          ...expr.arguments.map(arg =>
+            arg.kind === 'ArrowFunction' || arg.kind === 'FunctionExpression'
+              ? withNonReactiveScope(ctx, () => lowerExpression(arg, ctx))
+              : lowerExpression(arg, ctx),
+          ),
         ])
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '__forOf') {
@@ -834,7 +1589,13 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
       )
 
     case 'ArrayExpression':
-      return t.arrayExpression(expr.elements.map(el => lowerExpression(el, ctx)))
+      return t.arrayExpression(
+        expr.elements.map(el =>
+          el.kind === 'SpreadElement'
+            ? t.spreadElement(lowerExpression(el.argument, ctx))
+            : lowerExpression(el, ctx),
+        ),
+      )
 
     case 'ObjectExpression':
       return t.objectExpression(
@@ -889,7 +1650,7 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
         } else if (Array.isArray(expr.body)) {
           // Rule L: Enable getter caching for sync arrow functions with block body
           const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
-            lowerBlocksToStatements(expr.body as BasicBlock[]),
+            lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
           )
           fn = t.arrowFunctionExpression(
             paramIds,
@@ -911,7 +1672,7 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
         if (Array.isArray(expr.body)) {
           // Rule L: Enable getter caching for sync function expressions
           const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
-            lowerBlocksToStatements(expr.body as BasicBlock[]),
+            lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
           )
           fn = t.functionExpression(
             expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
@@ -1080,6 +1841,84 @@ function lowerDomExpression(
   return applyRegionMetadataToExpression(lowered, ctx, region)
 }
 
+function lowerJSXChildNonFineGrained(
+  child: JSXChild,
+  ctx: CodegenContext,
+): BabelCore.types.Expression {
+  const { t } = ctx
+  if (child.kind === 'text') {
+    return t.stringLiteral(child.value)
+  }
+  if (child.kind === 'element') {
+    return lowerJSXElement(child.value, ctx)
+  }
+  const expr = child.value
+  const lowered = lowerDomExpression(expr, ctx)
+  if (isExpressionReactive(expr, ctx)) {
+    return t.arrowFunctionExpression([], lowered)
+  }
+  return lowered
+}
+
+function lowerIntrinsicElementAsVNode(
+  jsx: JSXElementExpression,
+  ctx: CodegenContext,
+): BabelCore.types.Expression {
+  const { t } = ctx
+  const props: BabelCore.types.ObjectProperty[] = []
+  const spreads: BabelCore.types.SpreadElement[] = []
+  const toPropKey = (name: string) =>
+    /^[a-zA-Z_$][\w$]*$/.test(name) ? t.identifier(name) : t.stringLiteral(name)
+
+  for (const attr of jsx.attributes) {
+    if (attr.isSpread && attr.spreadExpr) {
+      spreads.push(t.spreadElement(lowerDomExpression(attr.spreadExpr, ctx)))
+      continue
+    }
+
+    const name = attr.name
+    if (name === 'key') {
+      // Key is ignored in runtime VNode mode.
+      continue
+    }
+
+    const isEvent = name.startsWith('on') && name.length > 2 && name[2] === name[2]?.toUpperCase()
+    const rawExpr = attr.value ? lowerDomExpression(attr.value, ctx) : t.booleanLiteral(true)
+    let valueExpr = rawExpr
+
+    if (attr.value) {
+      if (isEvent) {
+        if (!(t.isArrowFunctionExpression(rawExpr) || t.isFunctionExpression(rawExpr))) {
+          valueExpr = t.arrowFunctionExpression([], rawExpr)
+        }
+      } else if (isExpressionReactive(attr.value, ctx)) {
+        valueExpr = t.arrowFunctionExpression([], rawExpr)
+      }
+    }
+
+    props.push(t.objectProperty(toPropKey(name), valueExpr))
+  }
+
+  const children = jsx.children.map(child => lowerJSXChildNonFineGrained(child, ctx))
+  if (children.length === 1) {
+    props.push(t.objectProperty(t.identifier('children'), children[0]))
+  } else if (children.length > 1) {
+    props.push(t.objectProperty(t.identifier('children'), t.arrayExpression(children)))
+  }
+
+  const propsExpr =
+    spreads.length > 0
+      ? t.objectExpression([...spreads, ...props])
+      : props.length > 0
+        ? t.objectExpression(props)
+        : t.nullLiteral()
+
+  return t.objectExpression([
+    t.objectProperty(t.identifier('type'), t.stringLiteral(String(jsx.tagName))),
+    t.objectProperty(t.identifier('props'), propsExpr),
+  ])
+}
+
 /**
  * Lower a JSX Element expression to fine-grained DOM operations
  */
@@ -1159,6 +1998,11 @@ function lowerJSXElement(
         propsWithChildren.length > 0 ? t.objectExpression(propsWithChildren) : t.nullLiteral(),
       ),
     ])
+  }
+
+  const useFineGrainedDom = !ctx.noMemo
+  if (!useFineGrainedDom) {
+    return lowerIntrinsicElementAsVNode(jsx, ctx)
   }
 
   // Intrinsic element - use fine-grained DOM
@@ -1308,6 +2152,10 @@ export function applyRegionMetadataToExpression(
   state.identifierOverrides = overrides
 
   const shadowed = ctx.shadowedNames
+  const isReactiveAccessor = (name: string): boolean =>
+    ctx.trackedVars.has(name) ||
+    !!(ctx.signalVars?.has(name) || ctx.memoVars?.has(name) || ctx.aliasVars?.has(name))
+  const isNonReactiveFunction = (name: string): boolean => ctx.functionVars?.has(name) ?? false
 
   if (shadowed && Object.keys(overrides).length > 0) {
     for (const key of Object.keys(overrides)) {
@@ -1318,11 +2166,25 @@ export function applyRegionMetadataToExpression(
     }
   }
 
+  if (Object.keys(overrides).length > 0) {
+    for (const key of Object.keys(overrides)) {
+      const base = normalizeDependencyKey(key).split('.')[0] ?? key
+      if (isNonReactiveFunction(base)) {
+        delete overrides[key]
+      }
+    }
+  }
+
   // Ensure tracked variables are also covered even if region metadata missed them
-  for (const dep of ctx.trackedVars) {
+  const trackedNames = new Set(ctx.trackedVars)
+  if (ctx.memoVars) {
+    ctx.memoVars.forEach(dep => trackedNames.add(dep))
+  }
+  for (const dep of trackedNames) {
     const key = normalizeDependencyKey(dep)
     const base = key.split('.')[0] ?? key
     if (shadowed && shadowed.has(base)) continue
+    if (isNonReactiveFunction(base)) continue
     if (!overrides[key]) {
       overrides[key] = () => buildDependencyGetter(dep, ctx)
     }
@@ -1467,12 +2329,15 @@ function buildDependencyGetter(name: string, ctx: CodegenContext): BabelCore.typ
   const parts = name.split('.')
   const base = parts.shift()!
   const baseId = t.identifier(base)
-  const isTracked = ctx.trackedVars.has(base) || ctx.currentRegion?.dependencies.has(base)
+  const isTracked =
+    ctx.trackedVars.has(base) ||
+    !!(ctx.signalVars?.has(base) || ctx.memoVars?.has(base) || ctx.aliasVars?.has(base))
   // $store variables use proxy-based reactivity, don't convert to getter calls
   const isStore = ctx.storeVars?.has(base) ?? false
+  const isNonReactiveFunction = ctx.functionVars?.has(base) ?? false
 
   let baseExpr: BabelCore.types.Expression
-  if (isTracked && !isStore) {
+  if (isTracked && !isStore && !isNonReactiveFunction) {
     // Rule L: Use getter cache when enabled to avoid redundant getter calls
     const getterCall = t.callExpression(baseId, [])
     baseExpr = getCachedGetterExpression(ctx, base, getterCall)
@@ -1608,7 +2473,7 @@ function getReactiveDependencies(expr: Expression, ctx: CodegenContext): Set<str
 // ============================================================================
 
 interface HIRBinding {
-  type: 'attr' | 'child' | 'event'
+  type: 'attr' | 'child' | 'event' | 'key'
   path: number[] // path to navigate from root to target node
   name?: string // for attributes/events
   expr?: Expression // the dynamic expression
@@ -1658,8 +2523,17 @@ function extractHIRStaticHtml(
 
     const name = normalizeHIRAttrName(attr.name)
 
-    // Skip key attribute
-    if (name === 'key') continue
+    // Key attribute is for list reconciliation only; keep expression for evaluation
+    if (name === 'key') {
+      if (attr.value && !isStaticValue(attr.value)) {
+        bindings.push({
+          type: 'key',
+          path: [...parentPath],
+          expr: attr.value,
+        })
+      }
+      continue
+    }
 
     // Event handlers are always dynamic
     if (name.startsWith('on') && name.length > 2 && name[2] === name[2]?.toUpperCase()) {
@@ -1804,7 +2678,10 @@ function lowerIntrinsicElement(
   }
   const prevRegion = applyRegionToContext(ctx, containingRegion)
   const regionMeta = containingRegion ? regionInfoToMetadata(containingRegion) : null
-  const shouldMemo = regionMeta ? shouldMemoizeRegion(regionMeta) : false
+  const shouldMemo =
+    !ctx.inListRender && !(ctx.inConditional && ctx.inConditional > 0) && regionMeta
+      ? shouldMemoizeRegion(regionMeta)
+      : false
   if (shouldMemo) {
     ctx.helpersUsed.add('useMemo')
     ctx.needsCtx = true
@@ -1844,11 +2721,15 @@ function lowerIntrinsicElement(
       ctx.helpersUsed.add('bindEvent')
       ctx.helpersUsed.add('onDestroy')
       const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
+      const handlerExpr =
+        t.isArrowFunctionExpression(valueExpr) || t.isFunctionExpression(valueExpr)
+          ? valueExpr
+          : t.arrowFunctionExpression([], valueExpr)
       const cleanupId = genTemp(ctx, 'evt')
       const args: BabelCore.types.Expression[] = [
         targetId,
         t.stringLiteral(binding.name),
-        valueExpr,
+        handlerExpr,
       ]
       if (
         binding.eventOptions &&
@@ -1942,6 +2823,10 @@ function lowerIntrinsicElement(
           ),
         )
       }
+    } else if (binding.type === 'key' && binding.expr) {
+      statements.push(
+        t.expressionStatement(lowerDomExpression(binding.expr, ctx, containingRegion)),
+      )
     } else if (binding.type === 'child' && binding.expr) {
       // Child binding (dynamic expression at placeholder)
       emitHIRChildBinding(targetId, binding.expr, statements, ctx, containingRegion)
@@ -1963,7 +2848,7 @@ function lowerIntrinsicElement(
       t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
         t.identifier('__fictCtx'),
         t.arrowFunctionExpression([], body),
-        t.numericLiteral(containingRegion.id),
+        t.numericLiteral(reserveHookSlot(ctx)),
       ]),
       [],
     )
@@ -2036,12 +2921,32 @@ function emitHIRChildBinding(
   const { t } = ctx
   const parentId = t.memberExpression(markerId, t.identifier('parentNode'))
 
+  // createPortal call inside JSX child: register cleanup but don't insert marker into parent
+  if (
+    expr.kind === 'CallExpression' &&
+    expr.callee.kind === 'Identifier' &&
+    expr.callee.name === 'createPortal'
+  ) {
+    ctx.helpersUsed.add('onDestroy')
+    const portalId = genTemp(ctx, 'portal')
+    const portalExpr = lowerExpression(expr, ctx)
+    statements.push(
+      t.variableDeclaration('const', [t.variableDeclarator(portalId, portalExpr)]),
+      t.expressionStatement(
+        t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [
+          t.memberExpression(portalId, t.identifier('dispose')),
+        ]),
+      ),
+    )
+    return
+  }
+
   // Check if it's a conditional
   if (
     expr.kind === 'ConditionalExpression' ||
     (expr.kind === 'LogicalExpression' && expr.operator === '&&')
   ) {
-    emitConditionalChild(parentId, expr, statements, ctx)
+    emitConditionalChild(parentId, markerId, expr, statements, ctx)
     return
   }
 
@@ -2053,7 +2958,7 @@ function emitHIRChildBinding(
       callee.property.kind === 'Identifier' &&
       callee.property.name === 'map'
     ) {
-      emitListChild(parentId, expr, statements, ctx)
+      emitListChild(parentId, markerId, expr, statements, ctx)
       return
     }
   }
@@ -2093,76 +2998,11 @@ function emitHIRChildBinding(
 }
 
 /**
- * Emit a JSX child to the parent element
- */
-function emitChild(
-  parentId: BabelCore.types.Identifier,
-  child: JSXChild,
-  statements: BabelCore.types.Statement[],
-  ctx: CodegenContext,
-): void {
-  const { t } = ctx
-
-  if (child.kind === 'text') {
-    // Static text node
-    ctx.helpersUsed.add('insert')
-    statements.push(
-      t.expressionStatement(
-        t.callExpression(t.identifier(RUNTIME_ALIASES.insert), [
-          parentId,
-          t.arrowFunctionExpression([], t.stringLiteral(child.value)),
-          t.nullLiteral(),
-          t.identifier(RUNTIME_ALIASES.createElement),
-        ]),
-      ),
-    )
-  } else if (child.kind === 'element') {
-    // Nested element
-    const childExpr = lowerJSXElement(child.value, ctx)
-    ctx.helpersUsed.add('insert')
-    ctx.helpersUsed.add('createElement')
-    statements.push(
-      t.expressionStatement(
-        t.callExpression(t.identifier(RUNTIME_ALIASES.insert), [
-          parentId,
-          t.arrowFunctionExpression([], childExpr),
-          t.nullLiteral(),
-          t.identifier(RUNTIME_ALIASES.createElement),
-        ]),
-      ),
-    )
-  } else if (child.kind === 'expression') {
-    // Dynamic expression
-    const expr = child.value
-
-    // Check if it's a conditional
-    if (
-      expr.kind === 'ConditionalExpression' ||
-      (expr.kind === 'LogicalExpression' && expr.operator === '&&')
-    ) {
-      emitConditionalChild(parentId, expr, statements, ctx)
-    } else if (expr.kind === 'CallExpression') {
-      // Check if it's a map call (list rendering)
-      if (
-        expr.callee.kind === 'MemberExpression' &&
-        expr.callee.property.kind === 'Identifier' &&
-        (expr.callee.property as any).name === 'map'
-      ) {
-        emitListChild(parentId, expr, statements, ctx)
-      } else {
-        emitDynamicTextChild(parentId, expr, statements, ctx)
-      }
-    } else {
-      emitDynamicTextChild(parentId, expr, statements, ctx)
-    }
-  }
-}
-
-/**
  * Emit a conditional child expression
  */
 function emitConditionalChild(
   parentId: BabelCore.types.Expression,
+  markerId: BabelCore.types.Expression,
   expr: Expression,
   statements: BabelCore.types.Statement[],
   ctx: CodegenContext,
@@ -2172,19 +3012,29 @@ function emitConditionalChild(
   ctx.helpersUsed.add('createElement')
   ctx.helpersUsed.add('onDestroy')
   ctx.helpersUsed.add('toNodeArray')
-  ctx.helpersUsed.add('insert')
 
   let condition: BabelCore.types.Expression
   let consequent: BabelCore.types.Expression
   let alternate: BabelCore.types.Expression | null = null
 
+  const enterConditional = () => {
+    ctx.inConditional = (ctx.inConditional ?? 0) + 1
+  }
+  const exitConditional = () => {
+    ctx.inConditional = Math.max(0, (ctx.inConditional ?? 1) - 1)
+  }
+
   if (expr.kind === 'ConditionalExpression') {
     condition = lowerDomExpression(expr.test, ctx)
+    enterConditional()
     consequent = lowerDomExpression(expr.consequent, ctx)
     alternate = lowerDomExpression(expr.alternate, ctx)
+    exitConditional()
   } else if (expr.kind === 'LogicalExpression' && expr.operator === '&&') {
     condition = lowerDomExpression(expr.left, ctx)
+    enterConditional()
     consequent = lowerDomExpression(expr.right, ctx)
+    exitConditional()
   } else {
     return
   }
@@ -2228,11 +3078,9 @@ function emitConditionalChild(
       markersId,
       t.blockStatement([
         t.expressionStatement(
-          t.callExpression(t.identifier(RUNTIME_ALIASES.insert), [
-            parentId,
+          t.callExpression(t.memberExpression(parentId, t.identifier('insertBefore')), [
             mId,
-            t.nullLiteral(),
-            t.identifier(RUNTIME_ALIASES.createElement),
+            markerId,
           ]),
         ),
       ]),
@@ -2261,6 +3109,7 @@ function emitConditionalChild(
  */
 function emitListChild(
   parentId: BabelCore.types.Expression,
+  markerId: BabelCore.types.Expression,
   expr: Expression,
   statements: BabelCore.types.Statement[],
   ctx: CodegenContext,
@@ -2271,20 +3120,33 @@ function emitListChild(
     return
   }
 
-  ctx.helpersUsed.add('list')
-  ctx.helpersUsed.add('onDestroy')
-  ctx.helpersUsed.add('toNodeArray')
-  ctx.helpersUsed.add('keyedList')
-  ctx.helpersUsed.add('insert')
-
   const arrayExpr = lowerDomExpression(expr.callee.object, ctx)
   const mapCallback = expr.arguments[0]
   if (!mapCallback) {
     throw new Error('map callback is required')
   }
-  let callbackExpr = applyRegionMetadataToExpression(lowerExpression(mapCallback, ctx), ctx)
+  const keyExpr = extractKeyFromMapCallback(mapCallback)
+  const isKeyed = !!keyExpr
 
-  if (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) {
+  ctx.helpersUsed.add('onDestroy')
+  ctx.helpersUsed.add('toNodeArray')
+  if (isKeyed) {
+    ctx.helpersUsed.add('keyedList')
+  } else {
+    ctx.helpersUsed.add('list')
+    ctx.helpersUsed.add('createElement')
+  }
+
+  const prevInListRender = ctx.inListRender
+  ctx.inListRender = true
+  let callbackExpr = lowerExpression(mapCallback, ctx)
+  ctx.inListRender = prevInListRender
+  callbackExpr = applyRegionMetadataToExpression(callbackExpr, ctx)
+
+  if (
+    isKeyed &&
+    (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr))
+  ) {
     const firstParam = callbackExpr.params[0]
     if (t.isIdentifier(firstParam)) {
       const overrides: RegionOverrideMap = {
@@ -2301,17 +3163,62 @@ function emitListChild(
   }
 
   const listId = genTemp(ctx, 'list')
-  statements.push(
-    t.variableDeclaration('const', [
-      t.variableDeclarator(
-        listId,
-        t.callExpression(t.identifier(RUNTIME_ALIASES.keyedList), [
-          t.arrowFunctionExpression([], arrayExpr),
-          callbackExpr,
-        ]),
-      ),
-    ]),
-  )
+  if (isKeyed && keyExpr) {
+    let keyExprAst = lowerExpression(keyExpr, ctx)
+    if (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) {
+      const itemParam = callbackExpr.params[0]
+      const indexParam = callbackExpr.params[1]
+      const shadowed = new Set(ctx.shadowedNames ?? [])
+      if (t.isIdentifier(itemParam)) shadowed.add(itemParam.name)
+      if (t.isIdentifier(indexParam)) shadowed.add(indexParam.name)
+      const prevShadowed = ctx.shadowedNames
+      ctx.shadowedNames = shadowed
+      keyExprAst = applyRegionMetadataToExpression(keyExprAst, ctx)
+      ctx.shadowedNames = prevShadowed
+    }
+
+    const itemParamName =
+      t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)
+        ? callbackExpr.params[0]
+        : null
+    const indexParamName =
+      t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)
+        ? callbackExpr.params[1]
+        : null
+    const keyFn = t.arrowFunctionExpression(
+      [
+        t.isIdentifier(itemParamName) ? itemParamName : t.identifier('__item'),
+        t.isIdentifier(indexParamName) ? indexParamName : t.identifier('__index'),
+      ],
+      keyExprAst,
+    )
+
+    statements.push(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(
+          listId,
+          t.callExpression(t.identifier(RUNTIME_ALIASES.keyedList), [
+            t.arrowFunctionExpression([], arrayExpr),
+            keyFn,
+            callbackExpr,
+          ]),
+        ),
+      ]),
+    )
+  } else {
+    statements.push(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(
+          listId,
+          t.callExpression(t.identifier(RUNTIME_ALIASES.list), [
+            t.arrowFunctionExpression([], arrayExpr),
+            callbackExpr,
+            t.identifier(RUNTIME_ALIASES.createElement),
+          ]),
+        ),
+      ]),
+    )
+  }
 
   // Insert markers
   const markersId = genTemp(ctx, 'markers')
@@ -2333,11 +3240,9 @@ function emitListChild(
       markersId,
       t.blockStatement([
         t.expressionStatement(
-          t.callExpression(t.identifier(RUNTIME_ALIASES.insert), [
-            parentId,
+          t.callExpression(t.memberExpression(parentId, t.identifier('insertBefore')), [
             mId,
-            t.nullLiteral(),
-            t.identifier(RUNTIME_ALIASES.createElement),
+            markerId,
           ]),
         ),
       ]),
@@ -2418,15 +3323,17 @@ function buildPropsObject(
 
   const properties: BabelCore.types.ObjectProperty[] = []
   const spreads: BabelCore.types.SpreadElement[] = []
+  const toPropKey = (name: string) =>
+    /^[a-zA-Z_$][\w$]*$/.test(name) ? t.identifier(name) : t.stringLiteral(name)
 
   for (const attr of attributes) {
     if (attr.isSpread && attr.spreadExpr) {
-      spreads.push(t.spreadElement(lowerExpression(attr.spreadExpr, ctx)))
+      spreads.push(t.spreadElement(lowerDomExpression(attr.spreadExpr, ctx)))
     } else if (attr.value) {
-      properties.push(t.objectProperty(t.identifier(attr.name), lowerExpression(attr.value, ctx)))
+      properties.push(t.objectProperty(toPropKey(attr.name), lowerDomExpression(attr.value, ctx)))
     } else {
       // Boolean attribute
-      properties.push(t.objectProperty(t.identifier(attr.name), t.booleanLiteral(true)))
+      properties.push(t.objectProperty(toPropKey(attr.name), t.booleanLiteral(true)))
     }
   }
 
@@ -2579,8 +3486,10 @@ import { applyRegionMetadata, shouldMemoizeRegion, type RegionMetadata } from '.
 export function lowerHIRWithRegions(
   program: HIRProgram,
   t: typeof BabelCore.types,
+  options?: FictCompilerOptions,
 ): BabelCore.types.File {
   const ctx = createCodegenContext(t)
+  ctx.options = options
   const body: BabelCore.types.Statement[] = []
   const topLevelAliases = new Set<string>()
   let topLevelCtxInjected = false
@@ -2883,47 +3792,150 @@ function lowerTopLevelStatementBlock(
 
   const regionResult = generateRegions(fn, scopeResult)
   ctx.regions = flattenRegions(regionResult.topLevelRegions)
+  ctx.nextHookSlot = HOOK_SLOT_BASE
   const aliasVars = existingAliases ? new Set(existingAliases) : new Set<string>()
   ctx.aliasVars = aliasVars
 
-  // Track region dependencies/declarations for reactive lookups
-  if (ctx.regions) {
-    for (const region of ctx.regions) {
-      region.dependencies.forEach(dep => ctx.trackedVars.add(dep))
-      region.declarations.forEach(decl => ctx.trackedVars.add(decl))
-    }
-  }
+  const functionVars = ctx.functionVars ?? new Set<string>()
+  const signalVars = ctx.signalVars ?? new Set<string>()
+  const storeVars = ctx.storeVars ?? new Set<string>()
+  const mutatedVars = new Set<string>()
+  ctx.functionVars = functionVars
+  ctx.signalVars = signalVars
+  ctx.storeVars = storeVars
+  ctx.mutatedVars = mutatedVars
 
-  // Mark tracked variables from scope analysis
-  for (const scope of scopeResult.scopes) {
-    if (scope.dependencies.size > 0) {
-      for (const decl of scope.declarations) {
-        const baseName = deSSAVarName(decl)
-        ctx.trackedVars.add(baseName)
-        // Derived variables (those with dependencies) are memos - shouldn't be cached
-        ctx.memoVars?.add(baseName)
-      }
-    }
-  }
-
-  // Track $state variables not captured in scopes
   for (const block of fn.blocks) {
     for (const instr of block.instructions) {
-      if (instr.kind === 'Assign' && instr.value.kind === 'CallExpression') {
-        const call = instr.value
-        if (call.callee.kind === 'Identifier' && call.callee.name === '$state') {
-          ctx.trackedVars.add(deSSAVarName(instr.target.name))
+      if (instr.kind === 'Assign') {
+        const target = deSSAVarName(instr.target.name)
+        if (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression') {
+          functionVars.add(target)
         }
-        // Track $store variables for path-level reactivity
-        if (call.callee.kind === 'Identifier' && call.callee.name === '$store') {
-          ctx.storeVars?.add(deSSAVarName(instr.target.name))
+        if (instr.value.kind === 'CallExpression' && instr.value.callee.kind === 'Identifier') {
+          if (instr.value.callee.name === '$state') {
+            signalVars.add(target)
+          } else if (instr.value.callee.name === '$store') {
+            storeVars.add(target)
+          }
         }
+        if (!instr.declarationKind) {
+          mutatedVars.add(target)
+        }
+      } else if (instr.kind === 'Phi') {
+        mutatedVars.add(deSSAVarName(instr.target.name))
       }
     }
   }
+
+  const reactive = computeReactiveAccessors(fn, ctx)
+  ctx.trackedVars = reactive.tracked
+  ctx.memoVars = reactive.memo
 
   const lowered = generateRegionCode(fn, scopeResult, t, ctx)
   return { statements: lowered, aliases: aliasVars }
+}
+
+function transformControlFlowReturns(
+  statements: BabelCore.types.Statement[],
+  ctx: CodegenContext,
+): BabelCore.types.Statement[] | null {
+  const { t } = ctx
+
+  const toStatements = (node: BabelCore.types.Statement | BabelCore.types.BlockStatement) =>
+    t.isBlockStatement(node) ? node.body : [node]
+
+  const endsWithReturn = (stmts: BabelCore.types.Statement[]) => {
+    if (stmts.length === 0) return false
+    return t.isReturnStatement(stmts[stmts.length - 1])
+  }
+
+  function buildReturnBlock(
+    stmts: BabelCore.types.Statement[],
+  ): BabelCore.types.Statement[] | null {
+    if (stmts.length === 0) return null
+    for (let i = 0; i < stmts.length; i++) {
+      const stmt = stmts[i]
+      if (!t.isIfStatement(stmt)) continue
+      const conditionalExpr = buildConditionalExpr(stmt, stmts.slice(i + 1))
+      if (conditionalExpr) {
+        const prefix = stmts.slice(0, i)
+        return [...prefix, t.returnStatement(conditionalExpr)]
+      }
+    }
+    if (!endsWithReturn(stmts)) return null
+    return stmts
+  }
+
+  function buildBranchFunction(
+    stmts: BabelCore.types.Statement[],
+  ): BabelCore.types.ArrowFunctionExpression | null {
+    const block = buildReturnBlock(stmts)
+    if (!block) return null
+    return t.arrowFunctionExpression([], t.blockStatement(block))
+  }
+
+  function buildConditionalExpr(
+    ifStmt: BabelCore.types.IfStatement,
+    rest: BabelCore.types.Statement[],
+  ): BabelCore.types.Expression | null {
+    const consequentStmts = toStatements(ifStmt.consequent)
+    if (!endsWithReturn(consequentStmts)) return null
+
+    let alternateStmts: BabelCore.types.Statement[] | null = null
+    if (ifStmt.alternate) {
+      if (rest.length > 0) return null
+      alternateStmts = toStatements(ifStmt.alternate)
+      if (!endsWithReturn(alternateStmts)) return null
+    } else {
+      if (rest.length === 0) return null
+      alternateStmts = rest
+      if (!buildReturnBlock(alternateStmts)) return null
+    }
+
+    const trueFn = buildBranchFunction(consequentStmts)
+    const falseFn = alternateStmts ? buildBranchFunction(alternateStmts) : null
+    if (!trueFn || !falseFn) return null
+
+    ctx.helpersUsed.add('conditional')
+    ctx.helpersUsed.add('createElement')
+    ctx.helpersUsed.add('onDestroy')
+    const bindingId = genTemp(ctx, 'cond')
+    const args: BabelCore.types.Expression[] = [
+      t.arrowFunctionExpression([], ifStmt.test as BabelCore.types.Expression),
+      trueFn,
+      t.identifier(RUNTIME_ALIASES.createElement),
+      falseFn,
+    ]
+    const bindingCall = t.callExpression(t.identifier(RUNTIME_ALIASES.conditional), args)
+
+    return t.callExpression(
+      t.arrowFunctionExpression(
+        [],
+        t.blockStatement([
+          t.variableDeclaration('const', [t.variableDeclarator(bindingId, bindingCall)]),
+          t.expressionStatement(
+            t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [
+              t.memberExpression(bindingId, t.identifier('dispose')),
+            ]),
+          ),
+          t.returnStatement(bindingId),
+        ]),
+      ),
+      [],
+    )
+  }
+
+  for (let i = 0; i < statements.length; i++) {
+    const stmt = statements[i]
+    if (!t.isIfStatement(stmt)) continue
+    const conditionalExpr = buildConditionalExpr(stmt, statements.slice(i + 1))
+    if (!conditionalExpr) continue
+    const prefix = statements.slice(0, i)
+    return [...prefix, t.returnStatement(conditionalExpr)]
+  }
+
+  return null
 }
 
 /**
@@ -2935,6 +3947,14 @@ function lowerFunctionWithRegions(
 ): BabelCore.types.FunctionDeclaration | null {
   const { t } = ctx
   const prevTracked = ctx.trackedVars
+  const prevSignalVars = ctx.signalVars
+  const prevFunctionVars = ctx.functionVars
+  const prevMemoVars = ctx.memoVars
+  const prevStoreVars = ctx.storeVars
+  const prevMutatedVars = ctx.mutatedVars
+  const prevAliasVars = ctx.aliasVars
+  const prevNoMemo = ctx.noMemo
+  const prevNextHookSlot = ctx.nextHookSlot
   const scopedTracked = new Set(ctx.trackedVars)
   const shadowedParams = new Set(fn.params.map(p => deSSAVarName(p.name)))
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
@@ -2949,7 +3969,44 @@ function lowerFunctionWithRegions(
   const inheritedTracked = new Set(ctx.trackedVars)
   ctx.externalTracked = inheritedTracked
   // Always ensure context exists to support memo/region wrappers
-  ctx.aliasVars = new Set()
+  ctx.aliasVars = new Set(prevAliasVars ?? [])
+  ctx.signalVars = new Set(prevSignalVars ?? [])
+  ctx.functionVars = new Set(prevFunctionVars ?? [])
+  ctx.memoVars = new Set(prevMemoVars ?? [])
+  ctx.storeVars = new Set(prevStoreVars ?? [])
+  ctx.mutatedVars = new Set()
+  ctx.noMemo = !!(prevNoMemo || fn.meta?.noMemo)
+
+  // Collect function-valued bindings, signals, and mutation info in this function
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign') {
+        const target = deSSAVarName(instr.target.name)
+        if (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression') {
+          ctx.functionVars?.add(target)
+        }
+        if (
+          instr.value.kind === 'CallExpression' &&
+          instr.value.callee.kind === 'Identifier' &&
+          instr.value.callee.name === '$state'
+        ) {
+          ctx.signalVars?.add(target)
+        }
+        if (
+          instr.value.kind === 'CallExpression' &&
+          instr.value.callee.kind === 'Identifier' &&
+          instr.value.callee.name === '$store'
+        ) {
+          ctx.storeVars?.add(target)
+        }
+        if (!instr.declarationKind) {
+          ctx.mutatedVars?.add(target)
+        }
+      } else if (instr.kind === 'Phi') {
+        ctx.mutatedVars?.add(deSSAVarName(instr.target.name))
+      }
+    }
+  }
 
   // Analyze reactive scopes with SSA/CFG awareness
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
@@ -2961,45 +4018,14 @@ function lowerFunctionWithRegions(
 
   // Build RegionInfo array for DOM integration (with de-versioned names, flattened with children)
   ctx.regions = flattenRegions(regionResult.topLevelRegions)
+  ctx.nextHookSlot = HOOK_SLOT_BASE
 
-  // Track region dependencies globally for reactive binding lookups
-  for (const region of ctx.regions) {
-    region.dependencies.forEach(dep => ctx.trackedVars.add(dep))
-  }
-
-  // Mark tracked variables (de-versioned for consistent lookups)
-  for (const scope of scopeResult.scopes) {
-    if (scope.dependencies.size > 0) {
-      for (const decl of scope.declarations) {
-        const baseName = deSSAVarName(decl)
-        ctx.trackedVars.add(baseName)
-        // Derived variables (those with dependencies) are memos - shouldn't be cached
-        ctx.memoVars?.add(baseName)
-      }
-    }
-  }
-
-  // Also track $state variables that may not be in any scope
-  // (e.g., signals used directly in JSX without derived values)
-  for (const block of fn.blocks) {
-    for (const instr of block.instructions) {
-      if (instr.kind === 'Assign' && instr.value.kind === 'CallExpression') {
-        const call = instr.value
-        if (call.callee.kind === 'Identifier' && call.callee.name === '$state') {
-          ctx.trackedVars.add(deSSAVarName(instr.target.name))
-        }
-        // Track $store variables for path-level reactivity
-        if (call.callee.kind === 'Identifier' && call.callee.name === '$store') {
-          ctx.storeVars?.add(deSSAVarName(instr.target.name))
-        }
-      }
-    }
-  }
-
-  shadowedParams.forEach(n => ctx.trackedVars.delete(n))
+  const reactive = computeReactiveAccessors(fn, ctx)
+  ctx.trackedVars = reactive.tracked
+  ctx.memoVars = reactive.memo
 
   // Generate region-based statements
-  const statements = generateRegionCode(fn, scopeResult, t, ctx)
+  let statements = generateRegionCode(fn, scopeResult, t, ctx)
 
   // Ensure context if signals/effects are used in experimental path
   if (ctx.needsCtx) {
@@ -3043,6 +4069,13 @@ function lowerFunctionWithRegions(
     statements.unshift(...propsDestructuring)
   }
 
+  if (isComponent && !ctx.noMemo) {
+    const transformed = transformControlFlowReturns(statements, ctx)
+    if (transformed) {
+      statements = transformed
+    }
+  }
+
   // De-version param names for clean output
   const params = finalParams
   const funcDecl = t.functionDeclaration(
@@ -3054,6 +4087,14 @@ function lowerFunctionWithRegions(
   ctx.shadowedNames = prevShadowed
   ctx.trackedVars = prevTracked
   ctx.externalTracked = prevExternalTracked
+  ctx.signalVars = prevSignalVars
+  ctx.functionVars = prevFunctionVars
+  ctx.memoVars = prevMemoVars
+  ctx.storeVars = prevStoreVars
+  ctx.mutatedVars = prevMutatedVars
+  ctx.aliasVars = prevAliasVars
+  ctx.noMemo = prevNoMemo
+  ctx.nextHookSlot = prevNextHookSlot
   return funcDecl
 }
 

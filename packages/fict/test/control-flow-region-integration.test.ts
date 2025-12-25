@@ -80,7 +80,7 @@ describe('control-flow region integration', () => {
   })
 
   // TODO: HIR codegen integration needs deep fixes
-  it.skip('keeps control-flow derived values reactive and side effects correct', async () => {
+  it('keeps control-flow derived values reactive and side effects correct', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(controlFlowRegionSource)
     const dispose = mod.mount(container)
@@ -137,7 +137,7 @@ describe('control-flow region integration', () => {
   })
 
   // TODO: HIR codegen integration needs deep fixes
-  it.skip('handles early-return branch without breaking derived values', async () => {
+  it('handles early-return branch without breaking derived values', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const source = `
       import { $state, render } from 'fict'

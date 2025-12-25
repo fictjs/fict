@@ -78,7 +78,8 @@ describe('Fict Compiler - Basic Transforms', () => {
         const doubled = count * 2
       `
       const output = transform(input)
-      expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2)')
+      // Memo is created with an ID parameter for tracking
+      expect(output).toMatch(/__fictUseMemo\(__fictCtx, \(\) => count\(\) \* 2, \d+\)/)
     })
 
     it('creates memo for chained derived values (derived-from-derived) in component body', () => {
@@ -94,8 +95,9 @@ describe('Fict Compiler - Basic Transforms', () => {
   `
       const output = transform(input)
       // Dependent derived values should each get their own memo to preserve memoized chains.
-      expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2)')
-      expect(output).toContain('__fictUseMemo(__fictCtx, () => doubled() * 2)')
+      // Memos are created with ID parameters for tracking
+      expect(output).toMatch(/__fictUseMemo\(__fictCtx, \(\) => count\(\) \* 2, \d+\)/)
+      expect(output).toMatch(/__fictUseMemo\(__fictCtx, \(\) => doubled\(\) \* 2, \d+\)/)
       expect(output).toContain('console.log("fourfold", fourfold())')
       // Note: regions ARE now created in the new HIR codegen
       expect(output).toContain('__region_')
@@ -141,7 +143,8 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transform(input)
-      expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2)')
+      // Memo is created with an ID parameter for tracking
+      expect(output).toMatch(/__fictUseMemo\(__fictCtx, \(\) => count\(\) \* 2, \d+\)/)
       expect(output).toContain('onClick = () => console.log(doubled())')
     })
 
@@ -250,7 +253,7 @@ describe('Fict Compiler - Basic Transforms', () => {
     })
 
     // TODO: Fix HIR codegen key attribute handling
-    it.skip('does not wrap key attribute', () => {
+    it('does not wrap key attribute', () => {
       const input = `
         import { $state } from 'fict'
         let id = $state('1')
@@ -326,7 +329,7 @@ describe('Fict Compiler - Basic Transforms', () => {
     })
 
     // TODO: Fix HIR codegen portal handling
-    it.skip('wraps createPortal calls with dispose registration', () => {
+    it('wraps createPortal calls with dispose registration', () => {
       const input = `
         import { $state, createPortal, createElement } from 'fict'
         function View() {

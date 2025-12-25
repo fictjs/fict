@@ -73,7 +73,7 @@ describe('Control Flow Re-Execution', () => {
 
   describe('for/while loop control flow', () => {
     // TODO: HIR codegen loop condition handling is different
-    it.skip('transforms signal read in for loop condition', () => {
+    it('transforms signal read in for loop condition', () => {
       const output = transform(`
         import { $state } from 'fict'
         function Component() {
@@ -345,7 +345,7 @@ describe('ErrorBoundary Integration', () => {
 // "use no memo" Directive Tests (Future Feature - Currently Skipped)
 // ============================================================================
 
-describe.skip('"use no memo" Directive', () => {
+describe('"use no memo" Directive', () => {
   it('skips memo optimization when directive is present', () => {
     const output = transform(`
       import { $state } from 'fict'

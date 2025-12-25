@@ -120,7 +120,7 @@ export function analyzeReactiveScopes(fn: HIRFunction): ReactiveScopeResult {
   for (const block of fn.blocks) {
     const term = block.terminator
     if (term.kind === 'Return' && term.argument) {
-      collectExprReads(term.argument, escapingVars)
+      collectExprReads(term.argument, escapingVars, undefined, new Set(), true)
     }
   }
 
@@ -410,6 +410,7 @@ function collectExprReads(
   into: Set<string>,
   paths?: Map<string, DependencyPath[]>,
   bound: Set<string> = new Set(),
+  includeFunctionBodies = false,
 ) {
   if (!expr || typeof expr !== 'object') return
   switch (expr.kind) {
@@ -487,57 +488,83 @@ function collectExprReads(
       })
       return
     case 'ArrowFunction': {
+      if (!includeFunctionBodies) return
       const nextBound = new Set(bound)
-      expr.params?.forEach((p: any) => {
-        if (p?.name) nextBound.add(baseName(p.name))
-      })
-      if (expr.isExpression && expr.body) {
-        collectExprReads(expr.body, into, paths, nextBound)
+      expr.params?.forEach((p: any) => nextBound.add(baseName(p.name)))
+      if (expr.isExpression && expr.body && !Array.isArray(expr.body)) {
+        collectExprReads(expr.body, into, paths, nextBound, includeFunctionBodies)
       } else if (Array.isArray(expr.body)) {
-        expr.body.forEach((block: BasicBlock) => {
-          block.instructions.forEach((instr: Instruction) =>
-            collectReads(instr, into, paths, nextBound),
-          )
-          const term = block.terminator
-          if (term.kind === 'Return' && term.argument) {
-            collectExprReads(term.argument, into, paths, nextBound)
-          } else if (term.kind === 'Throw') {
-            collectExprReads(term.argument, into, paths, nextBound)
-          } else if (term.kind === 'Branch') {
-            collectExprReads(term.test, into, paths, nextBound)
-          } else if (term.kind === 'Switch') {
-            collectExprReads(term.discriminant, into, paths, nextBound)
-            term.cases.forEach(c => {
-              if (c.test) collectExprReads(c.test, into, paths, nextBound)
-            })
+        for (const block of expr.body) {
+          for (const instr of block.instructions) {
+            if (instr.kind === 'Assign') {
+              collectExprReads(instr.value, into, paths, nextBound, includeFunctionBodies)
+            } else if (instr.kind === 'Expression') {
+              collectExprReads(instr.value, into, paths, nextBound, includeFunctionBodies)
+            } else if (instr.kind === 'Phi') {
+              instr.sources.forEach((src: any) => {
+                if (!nextBound.has(baseName(src.id.name))) {
+                  into.add(src.id.name)
+                }
+              })
+            }
           }
-        })
+          const term = block.terminator
+          if (term.kind === 'Branch') {
+            collectExprReads(term.test, into, paths, nextBound, includeFunctionBodies)
+          } else if (term.kind === 'Switch') {
+            collectExprReads(term.discriminant, into, paths, nextBound, includeFunctionBodies)
+            term.cases.forEach((c: any) => {
+              if (c.test) collectExprReads(c.test, into, paths, nextBound, includeFunctionBodies)
+            })
+          } else if (term.kind === 'ForOf') {
+            collectExprReads(term.iterable, into, paths, nextBound, includeFunctionBodies)
+          } else if (term.kind === 'ForIn') {
+            collectExprReads(term.object, into, paths, nextBound, includeFunctionBodies)
+          } else if (term.kind === 'Return' && term.argument) {
+            collectExprReads(term.argument, into, paths, nextBound, includeFunctionBodies)
+          } else if (term.kind === 'Throw') {
+            collectExprReads(term.argument, into, paths, nextBound, includeFunctionBodies)
+          }
+        }
       }
       return
     }
     case 'FunctionExpression': {
+      if (!includeFunctionBodies) return
       const nextBound = new Set(bound)
-      expr.params?.forEach((p: any) => {
-        if (p?.name) nextBound.add(baseName(p.name))
-      })
-      expr.body?.forEach((block: BasicBlock) => {
-        block.instructions.forEach((instr: Instruction) =>
-          collectReads(instr, into, paths, nextBound),
-        )
-        const term = block.terminator
-        if (term.kind === 'Return' && term.argument) {
-          collectExprReads(term.argument, into, paths, nextBound)
-        } else if (term.kind === 'Throw') {
-          collectExprReads(term.argument, into, paths, nextBound)
-        } else if (term.kind === 'Branch') {
-          collectExprReads(term.test, into, paths, nextBound)
-        } else if (term.kind === 'Switch') {
-          collectExprReads(term.discriminant, into, paths, nextBound)
-          term.cases.forEach(c => {
-            if (c.test) collectExprReads(c.test, into, paths, nextBound)
-          })
+      expr.params?.forEach((p: any) => nextBound.add(baseName(p.name)))
+      for (const block of expr.body ?? []) {
+        for (const instr of block.instructions) {
+          if (instr.kind === 'Assign') {
+            collectExprReads(instr.value, into, paths, nextBound, includeFunctionBodies)
+          } else if (instr.kind === 'Expression') {
+            collectExprReads(instr.value, into, paths, nextBound, includeFunctionBodies)
+          } else if (instr.kind === 'Phi') {
+            instr.sources.forEach((src: any) => {
+              if (!nextBound.has(baseName(src.id.name))) {
+                into.add(src.id.name)
+              }
+            })
+          }
         }
-      })
+        const term = block.terminator
+        if (term.kind === 'Branch') {
+          collectExprReads(term.test, into, paths, nextBound, includeFunctionBodies)
+        } else if (term.kind === 'Switch') {
+          collectExprReads(term.discriminant, into, paths, nextBound, includeFunctionBodies)
+          term.cases.forEach((c: any) => {
+            if (c.test) collectExprReads(c.test, into, paths, nextBound, includeFunctionBodies)
+          })
+        } else if (term.kind === 'ForOf') {
+          collectExprReads(term.iterable, into, paths, nextBound, includeFunctionBodies)
+        } else if (term.kind === 'ForIn') {
+          collectExprReads(term.object, into, paths, nextBound, includeFunctionBodies)
+        } else if (term.kind === 'Return' && term.argument) {
+          collectExprReads(term.argument, into, paths, nextBound, includeFunctionBodies)
+        } else if (term.kind === 'Throw') {
+          collectExprReads(term.argument, into, paths, nextBound, includeFunctionBodies)
+        }
+      }
       return
     }
     case 'JSXElement':

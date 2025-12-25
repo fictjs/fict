@@ -15,6 +15,10 @@ function compileAndLoad<TModule extends Record<string, any>>(
   options?: FictCompilerOptions,
 ): TModule {
   const output = transformCommonJS(source, options)
+  if (process.env.DEBUG_TEMPLATE_OUTPUT) {
+    // eslint-disable-next-line no-console
+    console.log(output)
+  }
 
   const module: { exports: any } = { exports: {} }
   const prelude =
@@ -64,11 +68,8 @@ describe('compiled templates DOM integration', () => {
   })
 
   // TODO: HIR codegen integration needs deep fixes
-  it.skip(
-    'mounts and cleans up fragment output produced via insert',
-    { timeout: 10000 },
-    async () => {
-      const source = `
+  it('mounts and cleans up fragment output produced via insert', { timeout: 10000 }, async () => {
+    const source = `
       import { $state, onDestroy } from 'fict'
       import { render } from 'fict'
 
@@ -97,31 +98,30 @@ describe('compiled templates DOM integration', () => {
       }
     `
 
-      const mod = compileAndLoad<{
-        mount: (el: HTMLElement) => () => void
-        api: { toggle(): void }
-        destroyed: string[]
-      }>(source, { fineGrainedDom: true })
-      const container = document.createElement('div')
-      document.body.appendChild(container)
-      const teardown = mod.mount(container)
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { toggle(): void }
+      destroyed: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
 
-      expect(container.querySelectorAll('span').length).toBe(2)
+    expect(container.querySelectorAll('span').length).toBe(2)
 
-      mod.api.toggle()
-      await flushUpdates()
-      expect(container.querySelectorAll('span').length).toBe(0)
-      expect(mod.destroyed).toEqual(['child'])
+    mod.api.toggle()
+    await flushUpdates()
+    expect(container.querySelectorAll('span').length).toBe(0)
+    expect(mod.destroyed).toEqual(['child'])
 
-      teardown()
-      await flushUpdates()
-      expect(container.innerHTML).toBe('')
-      container.remove()
-    },
-  )
+    teardown()
+    await flushUpdates()
+    expect(container.innerHTML).toBe('')
+    container.remove()
+  })
 
   // TODO: HIR codegen integration needs deep fixes
-  it.skip('keeps todo list DOM in sync with keyed state updates', { timeout: 10000 }, async () => {
+  it('keeps todo list DOM in sync with keyed state updates', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
 
@@ -211,7 +211,7 @@ describe('compiled templates DOM integration', () => {
   })
 
   // TODO: HIR codegen integration needs deep fixes
-  it.skip(
+  it(
     'lazily evaluates branch-only derived regions when conditionally rendered',
     { timeout: 10000 },
     async () => {
@@ -277,6 +277,8 @@ describe('compiled templates DOM integration', () => {
       }
 
       await flushMicrotasks()
+      // Debugging output to inspect fallback rendering
+      // eslint-disable-next-line no-console
       expect(activeBranch()).toBe('fallback')
       expect(fallbackText()).toContain('fallback=0')
       expect(mod.computeLog.length).toBeGreaterThan(0)
@@ -312,12 +314,8 @@ describe('compiled templates DOM integration', () => {
     },
   )
 
-  // TODO: HIR codegen integration needs deep fixes
-  it.skip(
-    'keeps async $effect boundaries from committing stale data',
-    { timeout: 10000 },
-    async () => {
-      const source = `
+  it('keeps async $effect boundaries from committing stale data', { timeout: 10000 }, async () => {
+    const source = `
       import { $state, $effect, render } from 'fict'
 
       const pending: Array<() => void> = []
@@ -363,42 +361,41 @@ describe('compiled templates DOM integration', () => {
       }
     `
 
-      const mod = compileAndLoad<{
-        mount: (el: HTMLElement) => () => void
-        effectLog: string[]
-        flushPending(): void
-        controls: { inc?: () => void }
-      }>(source, { fineGrainedDom: true })
-      const container = document.createElement('div')
-      document.body.appendChild(container)
-      const teardown = mod.mount(container)
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      effectLog: string[]
+      flushPending(): void
+      controls: { inc?: () => void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
 
-      await flushMicrotasks()
-      mod.flushPending()
-      expect(mod.effectLog[0]).toMatch(/commit:/)
-      mod.effectLog.length = 0
+    await flushMicrotasks()
+    mod.flushPending()
+    expect(mod.effectLog[0]).toMatch(/commit:/)
+    mod.effectLog.length = 0
 
-      mod.controls.inc?.()
-      await flushUpdates()
-      mod.flushPending()
-      const value1 = container.querySelector('[data-id="value"]')?.textContent ?? ''
-      expect(mod.effectLog).toEqual([`commit:${value1}`])
-      mod.effectLog.length = 0
+    mod.controls.inc?.()
+    await flushUpdates()
+    mod.flushPending()
+    const value1 = container.querySelector('[data-id="value"]')?.textContent ?? ''
+    expect(mod.effectLog).toEqual([`commit:${value1}`])
+    mod.effectLog.length = 0
 
-      mod.controls.inc?.()
-      await flushUpdates()
-      mod.flushPending()
-      const value2 = container.querySelector('[data-id="value"]')?.textContent ?? ''
-      expect(mod.effectLog).toEqual([`commit:${value2}`])
-      expect(Number(value2)).toBeGreaterThan(Number(value1))
+    mod.controls.inc?.()
+    await flushUpdates()
+    mod.flushPending()
+    const value2 = container.querySelector('[data-id="value"]')?.textContent ?? ''
+    expect(mod.effectLog).toEqual([`commit:${value2}`])
+    expect(Number(value2)).toBeGreaterThan(Number(value1))
 
-      teardown()
-      container.remove()
-    },
-  )
+    teardown()
+    container.remove()
+  })
 
   // TODO: HIR codegen integration needs deep fixes
-  it.skip('exposes latest state to DOM event handlers', { timeout: 10000 }, async () => {
+  it('exposes latest state to DOM event handlers', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
 
@@ -470,7 +467,7 @@ describe('compiled templates DOM integration', () => {
   })
 
   // TODO: HIR codegen integration needs deep fixes
-  it.skip('updates DOM via fine-grained bindings when enabled', { timeout: 10000 }, async () => {
+  it('updates DOM via fine-grained bindings when enabled', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
 
@@ -524,7 +521,7 @@ describe('compiled templates DOM integration', () => {
   })
 
   // TODO: HIR codegen integration needs deep fixes
-  it.skip('wires event handlers in fine-grained mode', { timeout: 10000 }, async () => {
+  it('wires event handlers in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
 
@@ -566,7 +563,7 @@ describe('compiled templates DOM integration', () => {
   })
 
   // TODO: HIR codegen integration needs deep fixes
-  it.skip('keeps keyed list DOM in sync in fine-grained mode', { timeout: 10000 }, async () => {
+  it('keeps keyed list DOM in sync in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
 
@@ -647,7 +644,7 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
+  // TODO: HIR codegen integration needs deep fixes - bindAttribute reactivity issue
   it.skip(
     'switches conditional branches and updates attributes in fine-grained mode',
     { timeout: 10000 },
@@ -718,7 +715,7 @@ describe('compiled templates DOM integration', () => {
   )
 
   // TODO: HIR codegen integration needs deep fixes
-  it.skip('renders and cleans up a portal in fine-grained mode', { timeout: 10000 }, async () => {
+  it('renders and cleans up a portal in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render, createPortal, createElement } from 'fict'
 
@@ -766,7 +763,7 @@ describe('compiled templates DOM integration', () => {
   })
 
   // TODO: HIR codegen integration needs deep fixes
-  it.skip(
+  it(
     'updates nested text content without re-rendering parent elements',
     { timeout: 10000 },
     async () => {
@@ -827,7 +824,7 @@ describe('compiled templates DOM integration', () => {
   )
 
   // TODO: HIR codegen integration needs deep fixes
-  it.skip('supports dynamic swapping of event handlers', { timeout: 10000 }, async () => {
+  it('supports dynamic swapping of event handlers', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
 

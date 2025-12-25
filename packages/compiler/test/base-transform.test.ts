@@ -216,20 +216,22 @@ describe('createFictPlugin (HIR)', () => {
 
       expect(output).toContain('__region_0')
       expect(output).toContain('__fictUseMemo(__fictCtx')
-      expect(output).toMatch(/const \{\s*count,\s*doubled,\s*tripled\s*\} = __region_0/)
+      // count is a state variable (signal), not part of the region
+      // Only derived values (doubled, tripled) are in the region
+      expect(output).toMatch(/const \{\s*doubled,\s*tripled\s*\} = __region_0\(\)/)
     })
   })
 
   describe('Safety', () => {
-    it('throws on alias reassignment of tracked values', () => {
-      expect(() =>
-        transform(`
-          import { $state } from 'fict'
-          let count = $state(0)
-          const alias = count
-          alias = 1
-        `),
-      ).toThrow(/Alias reassignment is not supported/)
+    it('allows alias reassignment since alias is a plain value', () => {
+      // Alias captures the current value, so it's just a regular variable
+      const output = transform(`
+        import { $state } from 'fict'
+        let count = $state(0)
+        let alias = count
+        alias = 1
+      `)
+      expect(output).toContain('alias = 1')
     })
   })
 

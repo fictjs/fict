@@ -3,7 +3,7 @@ import { transform } from './test-utils'
 
 describe('Alias-Safe Reactive Lowering', () => {
   describe('Local Aliasing', () => {
-    it('transforms local alias to getter', () => {
+    it('transforms local alias to value capture', () => {
       const source = `
         import { $state } from 'fict'
         const count = $state(0)
@@ -11,18 +11,21 @@ describe('Alias-Safe Reactive Lowering', () => {
         console.log(alias)
       `
       const output = transform(source)
-      expect(output).toContain('const alias = () => count()')
-      expect(output).toContain('console.log(alias())')
+      // Alias captures the current value, not a reactive getter
+      expect(output).toContain('alias = count()')
+      expect(output).toContain('console.log(alias')
     })
 
-    it('prevents reassignment of alias', () => {
+    it('allows reassignment of alias since it is a plain value', () => {
       const source = `
         import { $state } from 'fict'
-        const count = $state(0)
-        const alias = count
+        let count = $state(0)
+        let alias = count
         alias = 1
       `
-      expect(() => transform(source)).toThrow(/reassignment is not supported/)
+      // Alias is just a value, reassignment is allowed
+      const output = transform(source)
+      expect(output).toContain('alias = 1')
     })
 
     it('handles alias usage in JSX', () => {
@@ -70,14 +73,15 @@ describe('Alias-Safe Reactive Lowering', () => {
       expect(output).toContain('export const double = __fictUseMemo(__fictCtx, () => count() * 2')
     })
 
-    it('exports alias as reactive getter', () => {
+    it('exports alias as captured value', () => {
       const source = `
         import { $state } from 'fict'
         const count = $state(0)
         export const alias = count
       `
       const output = transform(source)
-      expect(output).toContain('export const alias = () => count()')
+      // Alias captures the current value when declared
+      expect(output).toContain('export const alias = count()')
     })
   })
 })

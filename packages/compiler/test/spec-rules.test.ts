@@ -171,7 +171,6 @@ describe('Spec rule coverage', () => {
     expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
   })
 
-  // TODO: HIR path aliasing handling is different
   it('aliasing state inside component creates a snapshot', () => {
     const input = `
       import { $state } from 'fict'
@@ -183,8 +182,10 @@ describe('Spec rule coverage', () => {
       }
     `
     const output = transform(input)
-    // HIR wraps reactive values in memo for consistency
-    expect(output).toContain('const snap = () => count()')
+    // Alias captures the current value (snapshot)
+    expect(output).toContain('snap = count()')
+    // snap is used as a plain value, not a function call
+    expect(output).toContain('console.log(snap')
   })
 
   it('closure always reads live value (getter)', () => {

@@ -107,7 +107,7 @@ describe('Scope Handling', () => {
     })
 
     // TODO: HIR codegen assignment patterns differ
-    it.skip('should expose let variables assigned in if blocks', () => {
+    it('should expose let variables assigned in if blocks', () => {
       const input = `
         import { $state } from 'fict'
         let count = $state(0)
@@ -128,7 +128,7 @@ describe('Scope Handling', () => {
 
   describe('Name collision prevention', () => {
     // TODO: HIR codegen scope handling differs from expected
-    it.skip('should not conflict when same name exists in different scopes', () => {
+    it('should not conflict when same name exists in different scopes', () => {
       const input = `
         import { $state } from 'fict'
         let count = $state(0)
@@ -143,7 +143,7 @@ describe('Scope Handling', () => {
       const output = transform(input)
 
       // Outer 'value' should be preserved
-      expect(output).toContain("const value = 'outer'")
+      expect(output).toContain('const value = "outer"')
       // Inner 'value' should not generate a getter
       expect(output).not.toContain('() => __fictRegion')
     })

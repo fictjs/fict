@@ -240,8 +240,7 @@ describe('CFG Structurization', () => {
       expect(countNodes(structured, 'try')).toBe(1)
     })
 
-    // TODO: CFG structurization limitation for try-catch-finally with mixed control flow
-    it.skip('should structurize try-catch-finally', () => {
+    it('should structurize try-catch-finally', () => {
       const ast = parseFile(`
         function foo() {
           try {

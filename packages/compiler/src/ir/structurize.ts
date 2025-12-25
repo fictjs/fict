@@ -161,6 +161,8 @@ interface StructurizeContext {
   blocksWithSideEffects: Set<BlockId>
   /** Blocks that were seen multiple times with side effects (unsafe to skip) */
   sharedSideEffectBlocks: Set<BlockId>
+  /** Blocks reserved for explicit processing (e.g., finally blocks in try-catch) */
+  reservedBlocks: Set<BlockId>
 }
 
 /**
@@ -227,6 +229,7 @@ export function structurizeCFG(
     joinPoints,
     blocksWithSideEffects,
     sharedSideEffectBlocks: new Set(),
+    reservedBlocks: new Set(),
   }
 
   const entryBlock = fn.blocks[0]
@@ -391,6 +394,7 @@ export function structurizeCFGWithDiagnostics(fn: HIRFunction): StructurizationR
     joinPoints,
     blocksWithSideEffects,
     sharedSideEffectBlocks: new Set(),
+    reservedBlocks: new Set(),
   }
 
   const entryBlock = fn.blocks[0]
@@ -482,6 +486,12 @@ function structurizeBlock(ctx: StructurizeContext, blockId: BlockId): Structured
         `[structurizeCFG] Detected cycle involving block ${blockId} - possible irreducible control flow`,
       )
     }
+    return { kind: 'sequence', nodes: [] }
+  }
+
+  // Check if this block is reserved for explicit processing (e.g., finally blocks)
+  // Reserved blocks should not trigger shared side effect warnings
+  if (ctx.reservedBlocks.has(blockId)) {
     return { kind: 'sequence', nodes: [] }
   }
 
@@ -1013,6 +1023,13 @@ function structurizeTry(
     exit: BlockId
   },
 ): StructuredNode {
+  // Reserve finally and exit blocks to prevent catch/try blocks from prematurely processing them
+  // This avoids "shared side effect block" issues when catch jumps to finally
+  if (term.finallyBlock !== undefined) {
+    ctx.reservedBlocks.add(term.finallyBlock)
+  }
+  ctx.reservedBlocks.add(term.exit)
+
   const tryBody = structurizeBlock(ctx, term.tryBlock)
 
   let handler: { param: string | null; body: StructuredNode } | null = null
@@ -1023,6 +1040,12 @@ function structurizeTry(
       body: catchBody,
     }
   }
+
+  // Unreserve and actually process finally and exit blocks
+  if (term.finallyBlock !== undefined) {
+    ctx.reservedBlocks.delete(term.finallyBlock)
+  }
+  ctx.reservedBlocks.delete(term.exit)
 
   let finalizer: StructuredNode | null = null
   if (term.finallyBlock !== undefined) {

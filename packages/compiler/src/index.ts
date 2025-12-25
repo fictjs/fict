@@ -229,6 +229,7 @@ function createHIREntrypointVisitor(
         })
         // Validate macro placement similar to legacy path
         const stateVars = new Set<string>()
+        const derivedVars = new Set<string>()
         path.traverse({
           VariableDeclarator(varPath) {
             const init = varPath.node.init
@@ -253,6 +254,23 @@ function createHIREntrypointVisitor(
                 throw varPath.buildCodeFrameError(
                   '$state() cannot be declared inside nested functions',
                 )
+              }
+            } else if (t.isIdentifier(varPath.node.id)) {
+              // Check if this is a derived value (const declaration depending on state)
+              const parentDecl = varPath.parentPath.node as BabelCore.types.VariableDeclaration
+              if (parentDecl.kind === 'const') {
+                let dependsOnState = false
+                varPath.get('init').traverse({
+                  Identifier(idPath: BabelCore.NodePath<BabelCore.types.Identifier>) {
+                    if (stateVars.has(idPath.node.name)) {
+                      dependsOnState = true
+                      idPath.stop()
+                    }
+                  },
+                })
+                if (dependsOnState) {
+                  derivedVars.add(varPath.node.id.name)
+                }
               }
             }
           },
@@ -288,12 +306,26 @@ function createHIREntrypointVisitor(
           },
         })
 
+        // Validate derived variable reassignments
+        if (derivedVars.size > 0) {
+          path.traverse({
+            AssignmentExpression(assignPath) {
+              const { left } = assignPath.node
+              if (t.isIdentifier(left) && derivedVars.has(left.name)) {
+                throw assignPath.buildCodeFrameError(
+                  `Cannot reassign derived value '${left.name}'. Derived values are read-only.`,
+                )
+              }
+            },
+          })
+        }
+
         // Emit conservative warnings for mutation/dynamic access
         runWarningPass(path as any, stateVars, options, t)
 
         const fileAst = t.file(path.node)
         const hir = buildHIR(fileAst)
-        const lowered = lowerHIRWithRegions(hir, t)
+        const lowered = lowerHIRWithRegions(hir, t, options)
 
         path.node.body = lowered.program.body
         path.node.directives = lowered.program.directives

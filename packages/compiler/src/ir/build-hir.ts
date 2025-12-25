@@ -39,6 +39,21 @@ function normalizeVarKind(
   return kind === 'const' || kind === 'let' || kind === 'var' ? kind : 'let'
 }
 
+function hasNoMemoDirective(directives?: BabelCore.types.Directive[] | null): boolean {
+  if (!directives) return false
+  return directives.some(d => d.value.value === 'use no memo')
+}
+
+function hasNoMemoDirectiveInStatements(body: BabelCore.types.Statement[]): boolean {
+  const first = body[0]
+  return !!(
+    first &&
+    t.isExpressionStatement(first) &&
+    t.isStringLiteral(first.expression) &&
+    first.expression.value === 'use no memo'
+  )
+}
+
 /**
  * Extract identifiers from destructuring patterns.
  * Handles object patterns, array patterns, rest elements, and assignment patterns.
@@ -99,6 +114,7 @@ function extractIdentifiersFromPattern(pattern: BabelCore.types.Pattern): HIdent
 function buildBlocksFromStatements(statements: BabelCore.types.Statement[]): BasicBlock[] {
   const blocks: BasicBlock[] = []
   let nextBlockId = 0
+  let tempCounter = 0
 
   const createBlock = (): BasicBlock => ({
     id: nextBlockId++,
@@ -111,7 +127,8 @@ function buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Bas
 
   // Simple recursive processor for nested statements
   const processStmts = (stmts: BabelCore.types.Statement[], target: BasicBlock): void => {
-    for (const stmt of stmts) {
+    for (let index = 0; index < stmts.length; index++) {
+      const stmt = stmts[index]
       if (t.isReturnStatement(stmt)) {
         target.terminator = {
           kind: 'Return',
@@ -143,15 +160,59 @@ function buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Bas
       }
       if (t.isVariableDeclaration(stmt)) {
         for (const decl of stmt.declarations) {
-          if (!t.isIdentifier(decl.id)) continue
-          target.instructions.push({
-            kind: 'Assign',
-            target: { kind: 'Identifier', name: decl.id.name },
-            value: decl.init
-              ? convertExpression(decl.init)
-              : ({ kind: 'Literal', value: undefined } as HLiteral),
-            declarationKind: normalizeVarKind(stmt.kind),
-          })
+          const declKind = normalizeVarKind(stmt.kind)
+          if (t.isIdentifier(decl.id)) {
+            target.instructions.push({
+              kind: 'Assign',
+              target: { kind: 'Identifier', name: decl.id.name },
+              value: decl.init
+                ? convertExpression(decl.init)
+                : ({ kind: 'Literal', value: undefined } as HLiteral),
+              declarationKind: declKind,
+            })
+            continue
+          }
+
+          if (t.isArrayPattern(decl.id)) {
+            const tempName = `__destruct_${tempCounter++}`
+            target.instructions.push({
+              kind: 'Assign',
+              target: { kind: 'Identifier', name: tempName },
+              value: decl.init
+                ? convertExpression(decl.init)
+                : ({ kind: 'Literal', value: undefined } as HLiteral),
+              declarationKind: declKind,
+            })
+
+            decl.id.elements.forEach((elem, index) => {
+              if (!elem) return
+              if (t.isIdentifier(elem)) {
+                const memberExpr = t.memberExpression(
+                  t.identifier(tempName),
+                  t.numericLiteral(index),
+                  true,
+                )
+                target.instructions.push({
+                  kind: 'Assign',
+                  target: { kind: 'Identifier', name: elem.name },
+                  value: convertExpression(memberExpr),
+                  declarationKind: declKind,
+                })
+              } else if (t.isRestElement(elem) && t.isIdentifier(elem.argument)) {
+                const sliceCall = t.callExpression(
+                  t.memberExpression(t.identifier(tempName), t.identifier('slice')),
+                  [t.numericLiteral(index)],
+                )
+                target.instructions.push({
+                  kind: 'Assign',
+                  target: { kind: 'Identifier', name: elem.argument.name },
+                  value: convertExpression(sliceCall),
+                  declarationKind: declKind,
+                })
+              }
+            })
+            continue
+          }
         }
         continue
       }
@@ -215,8 +276,10 @@ function buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Bas
           alternateBlock.terminator = { kind: 'Jump', target: joinBlock.id }
         }
 
-        // Continue processing in join block - but we can't continue using target
-        // For simplicity, mark target as having branched and return
+        const remaining = stmts.slice(index + 1)
+        if (remaining.length > 0) {
+          processStmts(remaining, joinBlock)
+        }
         return
       }
       // For other statement types (for, while, etc.), convert to expression if possible
@@ -244,6 +307,9 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
   const preamble: any[] = []
   const postamble: any[] = []
   const originalBody = [...ast.program.body]
+  const programNoMemo =
+    hasNoMemoDirective(ast.program.directives) ||
+    hasNoMemoDirectiveInStatements(ast.program.body as BabelCore.types.Statement[])
 
   // Track which function names we've processed to avoid duplicates in export
   const processedFunctions = new Set<string>()
@@ -259,7 +325,12 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
     if (t.isFunctionDeclaration(stmt) && stmt.body) {
       const name = stmt.id?.name
       if (name) processedFunctions.add(name)
-      functions.push(convertFunction(name, stmt.params, stmt.body.body))
+      functions.push(
+        convertFunction(name, stmt.params, stmt.body.body, {
+          noMemo: programNoMemo,
+          directives: stmt.body.directives,
+        }),
+      )
       continue
     }
 
@@ -270,7 +341,12 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
         // Export function declaration - convert to HIR and preserve export wrapper
         const name = decl.id?.name
         if (name) processedFunctions.add(name)
-        functions.push(convertFunction(name, decl.params, decl.body.body))
+        functions.push(
+          convertFunction(name, decl.params, decl.body.body, {
+            noMemo: programNoMemo,
+            directives: decl.body.directives,
+          }),
+        )
         // We'll recreate the export in codegen
         postamble.push({ kind: 'ExportFunction', name })
       } else if (decl && t.isVariableDeclaration(decl)) {
@@ -287,9 +363,14 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
             const isArrow = t.isArrowFunctionExpression(v.init)
             const hasExpressionBody = isArrow && !t.isBlockStatement(body)
             const fnHIR = t.isBlockStatement(body)
-              ? convertFunction(name, params, body.body)
-              : convertFunction(name, params, [t.returnStatement(body as any)])
-            fnHIR.meta = { fromExpression: true, isArrow, hasExpressionBody }
+              ? convertFunction(name, params, body.body, {
+                  noMemo: programNoMemo,
+                  directives: body.directives,
+                })
+              : convertFunction(name, params, [t.returnStatement(body as any)], {
+                  noMemo: programNoMemo,
+                })
+            fnHIR.meta = { ...(fnHIR.meta ?? {}), fromExpression: true, isArrow, hasExpressionBody }
             functions.push(fnHIR)
             postamble.push({ kind: 'ExportFunction', name })
           }
@@ -313,7 +394,12 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
       if (t.isFunctionDeclaration(decl) && decl.body) {
         const name = decl.id?.name || '__default'
         processedFunctions.add(name)
-        functions.push(convertFunction(name, decl.params, decl.body.body))
+        functions.push(
+          convertFunction(name, decl.params, decl.body.body, {
+            noMemo: programNoMemo,
+            directives: decl.body.directives,
+          }),
+        )
         postamble.push({ kind: 'ExportDefault', name })
       } else if (t.isIdentifier(decl)) {
         postamble.push({ kind: 'ExportDefault', name: decl.name })
@@ -337,9 +423,19 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
           const isArrow = t.isArrowFunctionExpression(decl.init)
           const hasExpressionBody = isArrow && !t.isBlockStatement(body)
           const fnHIR = t.isBlockStatement(body)
-            ? convertFunction(name, params, body.body)
-            : convertFunction(name, params, [t.returnStatement(body as BabelCore.types.Expression)])
-          fnHIR.meta = { fromExpression: true, isArrow, hasExpressionBody }
+            ? convertFunction(name, params, body.body, {
+                noMemo: programNoMemo,
+                directives: body.directives,
+              })
+            : convertFunction(
+                name,
+                params,
+                [t.returnStatement(body as BabelCore.types.Expression)],
+                {
+                  noMemo: programNoMemo,
+                },
+              )
+          fnHIR.meta = { ...(fnHIR.meta ?? {}), fromExpression: true, isArrow, hasExpressionBody }
           functions.push(fnHIR)
         }
       }
@@ -361,6 +457,7 @@ function convertFunction(
   name: string | undefined,
   params: BabelCore.types.Node[],
   body: BabelCore.types.Statement[],
+  options?: { noMemo?: boolean; directives?: BabelCore.types.Directive[] | null },
 ): HIRFunction {
   const paramIds: HIdentifier[] = []
   for (const p of params) {
@@ -381,6 +478,12 @@ function convertFunction(
       paramIds.push({ kind: 'Identifier', name: p.argument.name })
     }
     // Other unsupported patterns are skipped to keep builder total
+  }
+
+  const bodyStatements = [...body]
+  const hasNoMemoInBody = hasNoMemoDirectiveInStatements(bodyStatements)
+  while (hasNoMemoDirectiveInStatements(bodyStatements)) {
+    bodyStatements.shift()
   }
 
   const blocks: BasicBlock[] = []
@@ -415,7 +518,7 @@ function convertFunction(
     loopStack: [],
   }
 
-  for (const stmt of body) {
+  for (const stmt of bodyStatements) {
     if (t.isReturnStatement(stmt)) {
       const returnExpr = stmt.argument ? convertExpression(stmt.argument) : undefined
       sealCurrent({ kind: 'Return', argument: returnExpr })
@@ -854,11 +957,15 @@ function convertFunction(
     current.sealed = true
   }
 
+  const hasNoMemo =
+    !!options?.noMemo || hasNoMemoDirective(options?.directives ?? null) || hasNoMemoInBody
+
   return {
     rawParams: params,
     name,
     params: paramIds,
     blocks,
+    meta: hasNoMemo ? { noMemo: true } : undefined,
   }
 }
 
@@ -1555,7 +1662,17 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     const arr: HArrayExpression = {
       kind: 'ArrayExpression',
       elements: (node.elements ?? [])
-        .map(el => (t.isExpression(el) ? convertExpression(el) : undefined))
+        .map(el => {
+          if (!el) return undefined
+          if (t.isSpreadElement(el)) {
+            return {
+              kind: 'SpreadElement',
+              argument: convertExpression(el.argument as BabelCore.types.Expression),
+            } as HSpreadElement
+          }
+          if (t.isExpression(el)) return convertExpression(el)
+          return undefined
+        })
         .filter(Boolean) as Expression[],
     }
     return arr
@@ -1571,6 +1688,27 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
               kind: 'SpreadElement',
               argument: convertExpression(prop.argument as BabelCore.types.Expression),
             } as HSpreadElement
+          }
+          if (t.isObjectMethod(prop)) {
+            if (prop.computed) return undefined
+            const keyExpr = t.isIdentifier(prop.key)
+              ? ({ kind: 'Identifier', name: prop.key.name } as HIdentifier)
+              : t.isStringLiteral(prop.key)
+                ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
+                : undefined
+            if (!keyExpr) return undefined
+            const fnExpr = t.functionExpression(
+              null,
+              prop.params,
+              prop.body,
+              prop.generator,
+              prop.async,
+            )
+            return {
+              kind: 'Property',
+              key: keyExpr,
+              value: convertExpression(fnExpr),
+            }
           }
           if (!t.isObjectProperty(prop) || prop.computed) return undefined
           const keyExpr = t.isIdentifier(prop.key)

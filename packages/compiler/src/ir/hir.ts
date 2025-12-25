@@ -516,6 +516,7 @@ export interface HIRFunction {
     fromExpression?: boolean
     isArrow?: boolean
     hasExpressionBody?: boolean
+    noMemo?: boolean
   }
 }
 

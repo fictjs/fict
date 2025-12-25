@@ -493,7 +493,7 @@ describe('R010: Lazy conditional evaluation', () => {
 // ============================================================================
 
 describe('R014: State formal semantics', () => {
-  it('alias creates reactive getter', () => {
+  it('alias captures current value', () => {
     const output = transform(`
       import { $state } from 'fict'
       function Component() {
@@ -502,21 +502,21 @@ describe('R014: State formal semantics', () => {
         return () => console.log(alias)
       }
     `)
-    expect(output).toContain('const alias = () => count()')
+    // Alias captures the current value at assignment time
+    expect(output).toContain('alias = count()')
   })
 
-  // TODO: HIR codegen alias validation is different
-  it('alias reassignment is illegal', () => {
-    expect(() =>
-      transform(`
-        import { $state } from 'fict'
-        function Component() {
-          let count = $state(0)
-          const alias = count
-          alias = 1
-        }
-      `),
-    ).toThrow(/Alias reassignment is not supported/)
+  it('alias reassignment is allowed since it is a plain value', () => {
+    // Alias is just a captured value, not a reactive reference
+    const output = transform(`
+      import { $state } from 'fict'
+      function Component() {
+        let count = $state(0)
+        let alias = count
+        alias = 1
+      }
+    `)
+    expect(output).toContain('alias = 1')
   })
 
   it('destructuring from state creates snapshot', () => {
@@ -554,7 +554,6 @@ describe('R015: Derived formal semantics', () => {
     expect(output).toContain('__fictUseSignal')
   })
 
-  // TODO: HIR codegen snapshot handling is different
   it('snapshot vs live value in closures', () => {
     const output = transform(`
       import { $state } from 'fict'
@@ -563,10 +562,12 @@ describe('R015: Derived formal semantics', () => {
       const onClick = () => console.log(count)
       const onSnap = () => console.log(snap)
     `)
-    // HIR wraps reactive values in region memo
+    // Live value: count() reads current state value
     expect(output).toContain('count()')
-    // snapshot preserved (getter)
-    expect(output).toContain('const snap = () => count()')
+    // Snapshot: snap captures the value at assignment time
+    expect(output).toContain('snap = count()')
+    // onSnap uses the captured value directly (not a function call)
+    expect(output).toContain('console.log(snap)')
   })
 })
 

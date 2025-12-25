@@ -1368,6 +1368,7 @@ export function createConditional(
   let currentNodes: Node[] = []
   let currentRoot: RootContext | null = null
   let lastCondition: boolean | undefined = undefined
+  let pendingRender = false
 
   // Use computed to memoize condition value - this prevents the effect from
   // re-running when condition dependencies change but the boolean result stays same.
@@ -1375,8 +1376,14 @@ export function createConditional(
   // (like bindText) even if we early-return, breaking fine-grained reactivity.
   const conditionMemo = computed(condition)
 
-  const dispose = createEffect(() => {
+  const runConditional = () => {
     const cond = conditionMemo()
+    const parent = startMarker.parentNode as (ParentNode & Node) | null
+    if (!parent) {
+      pendingRender = true
+      return
+    }
+    pendingRender = false
 
     if (lastCondition === cond && currentNodes.length > 0) {
       return
@@ -1412,11 +1419,8 @@ export function createConditional(
       }
       const el = createElementFn(output)
       const nodes = toNodeArray(el)
-      const parent = startMarker.parentNode as (ParentNode & Node) | null
-      if (parent) {
-        insertNodesBefore(parent, nodes, endMarker)
-        currentNodes = nodes
-      }
+      insertNodesBefore(parent, nodes, endMarker)
+      currentNodes = nodes
     } catch (err) {
       if (handleSuspend(err as any, root)) {
         handledError = true
@@ -1438,12 +1442,17 @@ export function createConditional(
         currentRoot = null
       }
     }
-  })
+  }
+
+  const dispose = createEffect(runConditional)
 
   return {
     marker: fragment,
-    // No-op flush kept for API compatibility
-    flush: () => {},
+    flush: () => {
+      if (pendingRender) {
+        runConditional()
+      }
+    },
     dispose: () => {
       dispose()
       if (currentRoot) {
@@ -1479,11 +1488,16 @@ export function createList<T>(
   fragment.append(startMarker, endMarker)
 
   const nodeMap = new Map<string | number, ManagedBlock<T>>()
+  let pendingItems: T[] | null = null
 
   const runListUpdate = () => {
     const arr = items()
     const parent = startMarker.parentNode as (ParentNode & Node) | null
-    if (!parent) return
+    if (!parent) {
+      pendingItems = arr
+      return
+    }
+    pendingItems = null
 
     const newNodeMap = new Map<string | number, ManagedBlock<T>>()
     const blocks: ManagedBlock<T>[] = []
@@ -1546,7 +1560,11 @@ export function createList<T>(
 
   return {
     marker: fragment,
-    flush: () => {},
+    flush: () => {
+      if (pendingItems !== null) {
+        runListUpdate()
+      }
+    },
     dispose: () => {
       dispose()
       for (const [, managed] of nodeMap) {
