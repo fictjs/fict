@@ -122,6 +122,16 @@ export type StructuredNode =
   | { kind: 'break'; label?: string }
   | { kind: 'continue'; label?: string }
   | { kind: 'instruction'; instruction: Instruction }
+  | {
+      // Fallback: state machine representation for non-structurable CFGs
+      kind: 'stateMachine'
+      blocks: Array<{
+        blockId: BlockId
+        instructions: Instruction[]
+        terminator: BasicBlock['terminator']
+      }>
+      entryBlock: BlockId
+    }
 
 /**
  * Context for CFG structurization
@@ -160,11 +170,12 @@ interface StructurizeContext {
  * @param fn - The HIR function to structurize
  * @param options - Optional configuration
  * @param options.warnOnIssues - Whether to emit console warnings for structurization issues (default: true in dev)
- * @param options.throwOnIssues - Whether to throw StructurizationError for critical issues (default: false)
+ * @param options.throwOnIssues - Whether to throw StructurizationError for critical issues (default: true)
+ * @param options.useFallback - Whether to use state machine fallback for non-structurable CFGs (default: true)
  */
 export function structurizeCFG(
   fn: HIRFunction,
-  options?: { warnOnIssues?: boolean; throwOnIssues?: boolean },
+  options?: { warnOnIssues?: boolean; throwOnIssues?: boolean; useFallback?: boolean },
 ): StructuredNode {
   if (fn.blocks.length === 0) {
     return { kind: 'sequence', nodes: [] }
@@ -234,8 +245,27 @@ export function structurizeCFG(
     }
   }
 
-  // Handle issues based on options
-  if (throwOnIssues) {
+  // Check if we have any structurization issues
+  const hasIssues =
+    ctx.sharedSideEffectBlocks.size > 0 ||
+    ctx.problematicBlocks.size > 0 ||
+    unemittedBlocks.length > 0
+
+  // Use fallback state machine if issues detected and fallback is enabled
+  const useFallback = options?.useFallback ?? true
+  if (hasIssues && useFallback) {
+    if (ctx.warnOnIssues) {
+      console.warn(
+        `[structurizeCFG] Using state machine fallback due to non-structurable CFG ` +
+          `(${ctx.problematicBlocks.size} problematic, ${unemittedBlocks.length} unemitted, ` +
+          `${ctx.sharedSideEffectBlocks.size} shared side-effect blocks)`,
+      )
+    }
+    return createStateMachineFallback(fn)
+  }
+
+  // Handle issues based on options (when fallback is disabled)
+  if (throwOnIssues && hasIssues) {
     if (ctx.sharedSideEffectBlocks.size > 0) {
       const firstBlock = Array.from(ctx.sharedSideEffectBlocks)[0]
       throw new StructurizationError(
@@ -259,7 +289,7 @@ export function structurizeCFG(
         'unreachable_blocks',
       )
     }
-  } else if (ctx.warnOnIssues) {
+  } else if (ctx.warnOnIssues && hasIssues) {
     for (const blockId of unemittedBlocks) {
       console.warn(
         `[structurizeCFG] Block ${blockId} was not emitted - possible unreachable or non-structurable code`,
@@ -280,6 +310,24 @@ export function structurizeCFG(
   }
 
   return result
+}
+
+/**
+ * Create a state machine fallback for non-structurable CFGs.
+ * This generates a switch-based state machine that can handle any control flow.
+ */
+function createStateMachineFallback(fn: HIRFunction): StructuredNode {
+  const blocks = fn.blocks.map(block => ({
+    blockId: block.id,
+    instructions: block.instructions,
+    terminator: block.terminator,
+  }))
+
+  return {
+    kind: 'stateMachine',
+    blocks,
+    entryBlock: fn.blocks[0]?.id ?? 0,
+  }
 }
 
 /**
@@ -732,6 +780,18 @@ function structurizeBlockUntilJoin(
   }
 
   if (ctx.emitted.has(blockId)) {
+    // Track shared blocks with side effects that were skipped
+    // This can happen when a block is reached from multiple paths
+    // but wasn't properly identified as a join point
+    if (ctx.blocksWithSideEffects.has(blockId) && ctx.joinPoints.has(blockId)) {
+      ctx.sharedSideEffectBlocks.add(blockId)
+      if (ctx.warnOnIssues) {
+        console.warn(
+          `[structurizeCFG] Block ${blockId} with side effects was already emitted - ` +
+            `this may indicate incorrect join point detection`,
+        )
+      }
+    }
     return { kind: 'sequence', nodes: [] }
   }
 

@@ -104,12 +104,11 @@ export function analyzeReactiveScopes(fn: HIRFunction): ReactiveScopeResult {
         // Collect reads with dependency paths for optional chain analysis
         collectReads(instr, scope.reads, scope.dependencyPaths)
       } else if (instr.kind === 'Phi') {
-        const phi = instr as any
-        const scope = getScope(phi.target.name)
-        scope.writes.add(phi.target.name)
+        const scope = getScope(instr.target.name)
+        scope.writes.add(instr.target.name)
         scope.blocks.add(block.id)
-        definitionScope.set(phi.target.name, scope)
-        phi.sources?.forEach((s: any) => scope.reads.add(s.id?.name ?? s.name))
+        definitionScope.set(instr.target.name, scope)
+        instr.sources.forEach(s => scope.reads.add(s.id.name))
       } else {
         collectReads(instr, accumulateAllReads(byName))
       }
@@ -439,6 +438,7 @@ function collectExprReads(
       return
     }
     case 'MemberExpression':
+    case 'OptionalMemberExpression':
       // Extract full dependency path for optional chain analysis
       const depPath = extractDependencyPath(expr)
       if (depPath) {

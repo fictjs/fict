@@ -2,15 +2,16 @@ import type * as BabelCore from '@babel/core'
 
 import { RUNTIME_ALIASES, RUNTIME_HELPERS, RUNTIME_MODULE } from '../constants'
 
-import type {
-  BasicBlock,
-  Expression,
-  HIRFunction,
-  HIRProgram,
-  Instruction,
-  JSXAttribute,
-  JSXChild,
-  JSXElementExpression,
+import {
+  HIRError,
+  type BasicBlock,
+  type Expression,
+  type HIRFunction,
+  type HIRProgram,
+  type Instruction,
+  type JSXAttribute,
+  type JSXChild,
+  type JSXElementExpression,
 } from './hir'
 import type { ReactiveScope, ReactiveScopeResult } from './scopes'
 import { deSSAVarName, type Region } from './regions'
@@ -83,6 +84,8 @@ export interface CodegenContext {
   externalTracked?: Set<string>
   /** Variables initialized with $store (need path-level reactivity, no getter transformation) */
   storeVars?: Set<string>
+  /** Variables that are memos (derived values) - these shouldn't be cached by getter cache */
+  memoVars?: Set<string>
   /**
    * Rule L: Getter cache for sync blocks.
    * Maps getter expression keys to their cached variable names.
@@ -94,6 +97,10 @@ export interface CodegenContext {
   getterCacheDeclarations?: Map<string, BabelCore.types.Expression>
   /** Whether getter caching is enabled for the current scope */
   getterCacheEnabled?: boolean
+  /** Current expression recursion depth for stack overflow protection */
+  expressionDepth?: number
+  /** Maximum allowed expression depth (default: 500) */
+  maxExpressionDepth?: number
 }
 
 /**
@@ -111,6 +118,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     aliasVars: new Set(),
     externalTracked: new Set(),
     storeVars: new Set(),
+    memoVars: new Set(),
     getterCache: new Map(),
     getterCacheDeclarations: new Map(),
     getterCacheEnabled: false,
@@ -157,8 +165,8 @@ function withGetterCache<T>(
 
 /**
  * Get or create a cached getter expression.
- * If the getter was already accessed, return the cached variable.
- * Otherwise, record it for caching and return the call expression.
+ * Rule L: Only cache when a getter is accessed multiple times in the same sync block.
+ * First access returns the call expression directly; subsequent accesses use the cache.
  */
 function getCachedGetterExpression(
   ctx: CodegenContext,
@@ -169,19 +177,30 @@ function getCachedGetterExpression(
     return callExpr
   }
 
-  const existingCache = ctx.getterCache.get(getterName)
-  if (existingCache) {
-    // Already cached, return the cached variable
-    return ctx.t.identifier(existingCache)
+  // Skip caching for memo variables - memos already cache internally
+  if (ctx.memoVars?.has(getterName)) {
+    return callExpr
   }
 
-  // First access - record for caching
-  const cacheVar = `__cached_${getterName}_${ctx.tempCounter++}`
-  ctx.getterCache.set(getterName, cacheVar)
-  ctx.getterCacheDeclarations.set(cacheVar, callExpr)
+  const existingEntry = ctx.getterCache.get(getterName)
 
-  // Return the cache variable (will be declared at function start)
-  return ctx.t.identifier(cacheVar)
+  if (existingEntry === undefined) {
+    // First access - just record that we've seen it, don't cache yet
+    // Use empty string as marker for "seen once"
+    ctx.getterCache.set(getterName, '')
+    return callExpr
+  }
+
+  if (existingEntry === '') {
+    // Second access - NOW create the cache variable
+    const cacheVar = `__cached_${getterName}_${ctx.tempCounter++}`
+    ctx.getterCache.set(getterName, cacheVar)
+    ctx.getterCacheDeclarations.set(cacheVar, callExpr)
+    return ctx.t.identifier(cacheVar)
+  }
+
+  // Third+ access - use existing cache variable
+  return ctx.t.identifier(existingEntry)
 }
 
 function detectDerivedCycles(fn: HIRFunction, scopeResult: ReactiveScopeResult): void {
@@ -666,6 +685,26 @@ function attachHelperImports(
  * All SSA-versioned variable names are automatically de-versioned to their original names.
  */
 export function lowerExpression(expr: Expression, ctx: CodegenContext): BabelCore.types.Expression {
+  // Check recursion depth to prevent stack overflow
+  const depth = (ctx.expressionDepth ?? 0) + 1
+  const maxDepth = ctx.maxExpressionDepth ?? 500
+  if (depth > maxDepth) {
+    throw new HIRError(
+      `Expression too deeply nested (depth ${depth} exceeds maximum ${maxDepth}). ` +
+        `This may indicate a malformed AST or excessively complex expression.`,
+      'DEPTH_EXCEEDED',
+    )
+  }
+  ctx.expressionDepth = depth
+
+  try {
+    return lowerExpressionImpl(expr, ctx)
+  } finally {
+    ctx.expressionDepth = depth - 1
+  }
+}
+
+function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.types.Expression {
   const { t } = ctx
   const mapParams = (params: { name: string }[]) =>
     params.map(p => t.identifier(deSSAVarName(p.name)))
@@ -1051,23 +1090,75 @@ function lowerJSXElement(
   const { t } = ctx
 
   if (jsx.isComponent) {
-    // Component - use createElement
+    // Check if this is a Fragment component
+    const isFragment =
+      typeof jsx.tagName === 'object' &&
+      jsx.tagName.kind === 'Identifier' &&
+      jsx.tagName.name === 'Fragment'
+
+    if (isFragment) {
+      // Fragment - create VNode directly for runtime to handle
+      ctx.helpersUsed.add('createElement')
+      ctx.helpersUsed.add('fragment')
+      const children = jsx.children.map(c => lowerJSXChild(c, ctx))
+
+      // Create VNode: { type: Fragment, props: { children: [...] } }
+      const childrenProp =
+        children.length === 1
+          ? children[0]
+          : children.length > 1
+            ? t.arrayExpression(children)
+            : t.nullLiteral()
+
+      return t.callExpression(t.identifier('createElement'), [
+        t.objectExpression([
+          t.objectProperty(t.identifier('type'), t.identifier('Fragment')),
+          t.objectProperty(
+            t.identifier('props'),
+            children.length > 0
+              ? t.objectExpression([t.objectProperty(t.identifier('children'), childrenProp)])
+              : t.nullLiteral(),
+          ),
+        ]),
+      ])
+    }
+
+    // Component - create VNode {type, props} for runtime createElement
     ctx.helpersUsed.add('createElement')
-    const props = buildPropsObject(jsx.attributes, ctx)
+    const propsObj = buildPropsObject(jsx.attributes, ctx)
     const children = jsx.children.map(c => lowerJSXChild(c, ctx))
 
-    const args: BabelCore.types.Expression[] = [
+    const componentRef =
       typeof jsx.tagName === 'string'
         ? t.identifier(jsx.tagName)
-        : lowerExpression(jsx.tagName, ctx),
-    ]
+        : lowerExpression(jsx.tagName, ctx)
 
-    if (props || children.length > 0) {
-      args.push(props ?? t.nullLiteral())
+    // Build props with children included
+    const propsWithChildren: BabelCore.types.ObjectProperty[] = []
+
+    // Add existing props
+    if (propsObj && t.isObjectExpression(propsObj)) {
+      propsWithChildren.push(...(propsObj.properties as BabelCore.types.ObjectProperty[]))
     }
-    args.push(...children)
 
-    return t.callExpression(t.identifier('createElement'), args)
+    // Add children if present
+    if (children.length === 1) {
+      propsWithChildren.push(t.objectProperty(t.identifier('children'), children[0]))
+    } else if (children.length > 1) {
+      propsWithChildren.push(
+        t.objectProperty(t.identifier('children'), t.arrayExpression(children)),
+      )
+    }
+
+    // Create VNode: { type: Component, props: {...} }
+    // Return VNode object directly - runtime render()/insert() will call createElement on it
+    return t.objectExpression([
+      t.objectProperty(t.identifier('type'), componentRef),
+      t.objectProperty(
+        t.identifier('props'),
+        propsWithChildren.length > 0 ? t.objectExpression(propsWithChildren) : t.nullLiteral(),
+      ),
+    ])
   }
 
   // Intrinsic element - use fine-grained DOM
@@ -1383,12 +1474,8 @@ function buildDependencyGetter(name: string, ctx: CodegenContext): BabelCore.typ
   let baseExpr: BabelCore.types.Expression
   if (isTracked && !isStore) {
     // Rule L: Use getter cache when enabled to avoid redundant getter calls
-    const cached = getCachedGetterExpression(base, ctx)
-    if (cached) {
-      baseExpr = cached
-    } else {
-      baseExpr = t.callExpression(baseId, [])
-    }
+    const getterCall = t.callExpression(baseId, [])
+    baseExpr = getCachedGetterExpression(ctx, base, getterCall)
   } else {
     // For store variables and non-tracked variables, use identifier directly
     // Stores use proxy-based path-level reactivity internally
@@ -1740,12 +1827,9 @@ function lowerIntrinsicElement(
       t.variableDeclarator(rootId, t.callExpression(t.identifier(tmplId.name), [])),
     ]),
   )
-  const elId = genTemp(ctx, 'el')
-  statements.push(
-    t.variableDeclaration('const', [
-      t.variableDeclarator(elId, t.memberExpression(rootId, t.identifier('firstChild'))),
-    ]),
-  )
+  // Note: template() already returns content.firstChild, so rootId IS the root element
+  // We use rootId directly as elId
+  const elId = rootId
 
   // Build a cache for resolved node paths
   const nodeCache = new Map<string, BabelCore.types.Identifier>()
@@ -1874,11 +1958,15 @@ function lowerIntrinsicElement(
 
   // Wrap in memo if region suggests memoization
   if (shouldMemo && containingRegion) {
-    return t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
-      t.identifier('__fictCtx'),
-      t.arrowFunctionExpression([], body),
-      t.numericLiteral(containingRegion.id),
-    ])
+    // __fictUseMemo returns a getter function - invoke it to get the actual DOM element
+    return t.callExpression(
+      t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
+        t.identifier('__fictCtx'),
+        t.arrowFunctionExpression([], body),
+        t.numericLiteral(containingRegion.id),
+      ]),
+      [],
+    )
   }
 
   // Wrap in IIFE
@@ -2074,7 +2162,7 @@ function emitChild(
  * Emit a conditional child expression
  */
 function emitConditionalChild(
-  parentId: BabelCore.types.Identifier,
+  parentId: BabelCore.types.Expression,
   expr: Expression,
   statements: BabelCore.types.Statement[],
   ctx: CodegenContext,
@@ -2172,7 +2260,7 @@ function emitConditionalChild(
  * Emit a list rendering child (array.map)
  */
 function emitListChild(
-  parentId: BabelCore.types.Identifier,
+  parentId: BabelCore.types.Expression,
   expr: Expression,
   statements: BabelCore.types.Statement[],
   ctx: CodegenContext,
@@ -2383,7 +2471,12 @@ export function codegenWithScopes(
   if (scopes) {
     for (const scope of scopes.scopes) {
       for (const decl of scope.declarations) {
-        ctx.trackedVars.add(decl)
+        const baseName = deSSAVarName(decl)
+        ctx.trackedVars.add(baseName)
+        // Derived variables (those with dependencies) are memos - shouldn't be cached
+        if (scope.dependencies.size > 0) {
+          ctx.memoVars?.add(baseName)
+        }
       }
     }
   }
@@ -2447,9 +2540,16 @@ function lowerInstructionWithScopes(
       ])
     }
 
-    return t.variableDeclaration('const', [
-      t.variableDeclarator(t.identifier(targetName), valueExpr),
-    ])
+    // Check if this is a declaration or just an assignment
+    if (instr.declarationKind) {
+      // Actual declaration - emit variableDeclaration
+      return t.variableDeclaration(instr.declarationKind, [
+        t.variableDeclarator(t.identifier(targetName), valueExpr),
+      ])
+    } else {
+      // Pure assignment (e.g. api = {...}) - emit assignmentExpression to update existing variable
+      return t.expressionStatement(t.assignmentExpression('=', t.identifier(targetName), valueExpr))
+    }
   }
 
   if (instr.kind === 'Expression') {
@@ -2798,7 +2898,10 @@ function lowerTopLevelStatementBlock(
   for (const scope of scopeResult.scopes) {
     if (scope.dependencies.size > 0) {
       for (const decl of scope.declarations) {
-        ctx.trackedVars.add(deSSAVarName(decl))
+        const baseName = deSSAVarName(decl)
+        ctx.trackedVars.add(baseName)
+        // Derived variables (those with dependencies) are memos - shouldn't be cached
+        ctx.memoVars?.add(baseName)
       }
     }
   }
@@ -2868,7 +2971,10 @@ function lowerFunctionWithRegions(
   for (const scope of scopeResult.scopes) {
     if (scope.dependencies.size > 0) {
       for (const decl of scope.declarations) {
-        ctx.trackedVars.add(deSSAVarName(decl))
+        const baseName = deSSAVarName(decl)
+        ctx.trackedVars.add(baseName)
+        // Derived variables (those with dependencies) are memos - shouldn't be cached
+        ctx.memoVars?.add(baseName)
       }
     }
   }

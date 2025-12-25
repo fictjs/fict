@@ -183,8 +183,7 @@ function isInstructionInScope(instr: Instruction, scope: ReactiveScope): boolean
     return scope.writes.has(instr.target.name) || scope.declarations.has(instr.target.name)
   }
   if (instr.kind === 'Phi') {
-    const phi = instr as any
-    return scope.writes.has(phi.target.name) || scope.declarations.has(phi.target.name)
+    return scope.writes.has(instr.target.name) || scope.declarations.has(instr.target.name)
   }
   if (instr.kind === 'Expression') {
     // Include all expression instructions (side effects, console.log, $effect calls, etc.)
@@ -270,38 +269,75 @@ function expressionUsesTracked(expr: Expression, ctx: CodegenContext): boolean {
  * Determine region hierarchy (nesting) based on block containment
  */
 function determineRegionHierarchy(regions: Region[]): Region[] {
+  if (regions.length === 0) return []
+  if (regions.length === 1) return regions
+
   const topLevel: Region[] = []
 
-  // Sort regions by size (smaller first, so inner regions are processed before outer)
-  const sorted = [...regions].sort((a, b) => a.blocks.size - b.blocks.size)
+  // Sort regions by size (larger first for parent-first processing)
+  // This allows us to check parents before children
+  const sorted = [...regions].sort((a, b) => b.blocks.size - a.blocks.size)
+
+  // Build a map of block -> containing regions for O(1) lookup
+  const blockToRegions = new Map<BlockId, Region[]>()
+  for (const region of regions) {
+    for (const blockId of region.blocks) {
+      const list = blockToRegions.get(blockId)
+      if (list) {
+        list.push(region)
+      } else {
+        blockToRegions.set(blockId, [region])
+      }
+    }
+  }
+
+  // For each region, find its immediate parent (smallest containing region)
+  // Process from largest to smallest so parent relationships are established first
+  const regionById = new Map<number, Region>()
+  for (const region of regions) {
+    regionById.set(region.id, region)
+  }
 
   for (const region of sorted) {
-    let parent: Region | undefined
+    // Skip if already has a parent (shouldn't happen but be safe)
+    if (region.parentId !== undefined) continue
 
-    // Find the smallest containing region
-    for (const candidate of sorted) {
+    // Find candidate parents by looking at regions that share a block
+    // The parent must contain ALL blocks of this region
+    const firstBlock = region.blocks.values().next().value as BlockId | undefined
+    if (firstBlock === undefined) {
+      topLevel.push(region)
+      continue
+    }
+
+    const candidates = blockToRegions.get(firstBlock) ?? []
+    let bestParent: Region | undefined
+
+    for (const candidate of candidates) {
       if (candidate.id === region.id) continue
+      // Parent must be larger
       if (candidate.blocks.size <= region.blocks.size) continue
 
       // Check if candidate contains all blocks of region
-      let contains = true
+      let containsAll = true
       for (const blockId of region.blocks) {
         if (!candidate.blocks.has(blockId)) {
-          contains = false
+          containsAll = false
           break
         }
       }
 
-      if (contains) {
-        if (!parent || parent.blocks.size > candidate.blocks.size) {
-          parent = candidate
+      if (containsAll) {
+        // Pick smallest containing region as immediate parent
+        if (!bestParent || candidate.blocks.size < bestParent.blocks.size) {
+          bestParent = candidate
         }
       }
     }
 
-    if (parent) {
-      region.parentId = parent.id
-      parent.children.push(region)
+    if (bestParent) {
+      region.parentId = bestParent.id
+      bestParent.children.push(region)
     } else {
       topLevel.push(region)
     }
@@ -594,8 +630,110 @@ function lowerNodeWithRegionContext(
       return [t.tryStatement(block, handler, finalizer)]
     }
 
+    case 'stateMachine': {
+      // Fallback: generate a switch-based state machine
+      // This handles non-structurable CFGs by emulating goto with a state variable
+      const stateVar = t.identifier('__state')
+      const stateDecl = t.variableDeclaration('let', [
+        t.variableDeclarator(stateVar, t.numericLiteral(node.entryBlock)),
+      ])
+
+      // Generate switch cases for each block
+      const cases: BabelCore.types.SwitchCase[] = []
+      for (const block of node.blocks) {
+        const stmts: BabelCore.types.Statement[] = []
+
+        // Lower instructions
+        for (const instr of block.instructions) {
+          const stmt = instructionToStatement(instr, t, declaredVars, ctx)
+          if (stmt) stmts.push(stmt)
+        }
+
+        // Lower terminator
+        stmts.push(...lowerTerminatorForStateMachine(block.terminator, t, ctx, stateVar))
+
+        cases.push(t.switchCase(t.numericLiteral(block.blockId), stmts))
+      }
+
+      // Add default case that breaks the loop
+      cases.push(t.switchCase(null, [t.breakStatement(t.identifier('__cfgLoop'))]))
+
+      const switchStmt = t.switchStatement(stateVar, cases)
+      const whileLoop = t.whileStatement(t.booleanLiteral(true), t.blockStatement([switchStmt]))
+      const labeledLoop = t.labeledStatement(t.identifier('__cfgLoop'), whileLoop)
+
+      return [stateDecl, labeledLoop]
+    }
+
     default:
       return []
+  }
+}
+
+/**
+ * Lower a terminator for state machine fallback
+ */
+function lowerTerminatorForStateMachine(
+  term: any,
+  t: typeof BabelCore.types,
+  ctx: CodegenContext,
+  stateVar: BabelCore.types.Identifier,
+): BabelCore.types.Statement[] {
+  switch (term.kind) {
+    case 'Return':
+      return [
+        t.returnStatement(term.argument ? lowerExpressionWithDeSSA(term.argument, ctx) : null),
+      ]
+
+    case 'Throw':
+      return [t.throwStatement(lowerExpressionWithDeSSA(term.argument, ctx))]
+
+    case 'Jump':
+      return [
+        t.expressionStatement(t.assignmentExpression('=', stateVar, t.numericLiteral(term.target))),
+        t.continueStatement(t.identifier('__cfgLoop')),
+      ]
+
+    case 'Branch':
+      return [
+        t.ifStatement(
+          lowerExpressionWithDeSSA(term.test, ctx),
+          t.blockStatement([
+            t.expressionStatement(
+              t.assignmentExpression('=', stateVar, t.numericLiteral(term.consequent)),
+            ),
+          ]),
+          t.blockStatement([
+            t.expressionStatement(
+              t.assignmentExpression('=', stateVar, t.numericLiteral(term.alternate)),
+            ),
+          ]),
+        ),
+        t.continueStatement(t.identifier('__cfgLoop')),
+      ]
+
+    case 'Break':
+      // State machine doesn't preserve break semantics perfectly
+      // For labeled breaks, we'd need more complex handling
+      return [t.breakStatement(term.label ? t.identifier(term.label) : t.identifier('__cfgLoop'))]
+
+    case 'Continue':
+      return [
+        t.continueStatement(term.label ? t.identifier(term.label) : t.identifier('__cfgLoop')),
+      ]
+
+    case 'Unreachable':
+      // Insert unreachable marker (throws at runtime if reached)
+      return [
+        t.throwStatement(
+          t.newExpression(t.identifier('Error'), [t.stringLiteral('Unreachable code')]),
+        ),
+      ]
+
+    default:
+      // For complex terminators (ForOf, ForIn, Try, Switch), break the loop
+      // The state machine fallback is mainly for simple CFG issues
+      return [t.breakStatement(t.identifier('__cfgLoop'))]
   }
 }
 
@@ -881,7 +1019,8 @@ function wrapInMemo(
               t.objectProperty(t.identifier(name), t.identifier(name), false, true),
             ),
           ),
-          t.identifier(regionVarName),
+          // Invoke the memo accessor to get the actual object for destructuring
+          t.callExpression(t.identifier(regionVarName), []),
         ),
       ]),
     )
@@ -1286,6 +1425,8 @@ function instructionToStatement(
         if (dependsOnTracked) {
           ctx.helpersUsed.add('useMemo')
           ctx.needsCtx = true
+          // Track as memo - derived values shouldn't be cached by getter cache
+          ctx.memoVars?.add(baseName)
           return t.variableDeclaration(normalizedDecl, [
             t.variableDeclarator(
               t.identifier(baseName),
@@ -1301,6 +1442,8 @@ function instructionToStatement(
       if (dependsOnTracked) {
         ctx.helpersUsed.add('useMemo')
         ctx.needsCtx = true
+        // Track as memo - derived values shouldn't be cached by getter cache
+        ctx.memoVars?.add(baseName)
         return t.variableDeclaration(normalizedDecl, [
           t.variableDeclarator(
             t.identifier(baseName),
@@ -1367,6 +1510,18 @@ function instructionToStatement(
       )
     }
 
+    // If no declarationKind, this is a pure assignment (e.g. api = {...})
+    // Emit assignmentExpression to update existing variable, not create new declaration
+    if (!declKind) {
+      return t.expressionStatement(
+        t.assignmentExpression(
+          '=',
+          t.identifier(baseName),
+          lowerExpressionWithDeSSA(instr.value, ctx),
+        ),
+      )
+    }
+
     // First declaration - use let (allows reassignment)
     declaredVars.add(baseName)
     if (isTracked) {
@@ -1384,6 +1539,8 @@ function instructionToStatement(
       if (dependsOnTracked) {
         ctx.helpersUsed.add('useMemo')
         ctx.needsCtx = true
+        // Track as memo - derived values shouldn't be cached by getter cache
+        ctx.memoVars?.add(baseName)
         return t.variableDeclaration('const', [
           t.variableDeclarator(
             t.identifier(baseName),
@@ -1403,6 +1560,8 @@ function instructionToStatement(
     if (dependsOnTracked) {
       ctx.helpersUsed.add('useMemo')
       ctx.needsCtx = true
+      // Track as memo - derived values shouldn't be cached by getter cache
+      ctx.memoVars?.add(baseName)
       return t.variableDeclaration('const', [
         t.variableDeclarator(
           t.identifier(baseName),

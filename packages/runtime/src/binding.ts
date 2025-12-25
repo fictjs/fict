@@ -1021,6 +1021,88 @@ export function bindEvent(
 }
 
 // ============================================================================
+// Ref Binding
+// ============================================================================
+
+/**
+ * Bind a ref to an element.
+ * Supports both callback refs and ref objects.
+ *
+ * @param el - The element to bind the ref to
+ * @param ref - Either a callback function, a ref object, or a reactive getter
+ * @returns Cleanup function
+ *
+ * @example
+ * ```ts
+ * // Callback ref
+ * bindRef(el, (element) => { store.input = element })
+ *
+ * // Ref object
+ * const inputRef = createRef()
+ * bindRef(el, inputRef)
+ *
+ * // Reactive ref (compiler output)
+ * bindRef(el, () => props.ref)
+ * ```
+ */
+export function bindRef(el: HTMLElement, ref: unknown): Cleanup {
+  if (ref == null) return () => {}
+
+  // Handle reactive refs (getters)
+  const getRef = isReactive(ref) ? (ref as () => unknown) : () => ref
+
+  const applyRef = (refValue: unknown) => {
+    if (refValue == null) return
+
+    if (typeof refValue === 'function') {
+      // Callback ref: call with element
+      ;(refValue as (el: HTMLElement) => void)(el)
+    } else if (typeof refValue === 'object' && 'current' in refValue) {
+      // Ref object: set current property
+      ;(refValue as { current: HTMLElement | null }).current = el
+    }
+  }
+
+  // Apply ref initially
+  const initialRef = getRef()
+  applyRef(initialRef)
+
+  // For reactive refs, track changes
+  if (isReactive(ref)) {
+    const cleanup = createEffect(() => {
+      const currentRef = getRef()
+      applyRef(currentRef)
+    })
+    registerRootCleanup(cleanup)
+
+    // On cleanup, null out the ref
+    const nullifyCleanup = () => {
+      const currentRef = getRef()
+      if (currentRef && typeof currentRef === 'object' && 'current' in currentRef) {
+        ;(currentRef as { current: HTMLElement | null }).current = null
+      }
+    }
+    registerRootCleanup(nullifyCleanup)
+
+    return () => {
+      cleanup()
+      nullifyCleanup()
+    }
+  }
+
+  // For static refs, register cleanup to null out on unmount
+  const cleanup = () => {
+    const refValue = getRef()
+    if (refValue && typeof refValue === 'object' && 'current' in refValue) {
+      ;(refValue as { current: HTMLElement | null }).current = null
+    }
+  }
+  registerRootCleanup(cleanup)
+
+  return cleanup
+}
+
+// ============================================================================
 // Spread Props
 // ============================================================================
 

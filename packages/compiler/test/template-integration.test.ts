@@ -101,7 +101,7 @@ describe('compiled templates DOM integration', () => {
         mount: (el: HTMLElement) => () => void
         api: { toggle(): void }
         destroyed: string[]
-      }>(source, { fineGrainedDom: false })
+      }>(source, { fineGrainedDom: true })
       const container = document.createElement('div')
       document.body.appendChild(container)
       const teardown = mod.mount(container)
@@ -260,7 +260,7 @@ describe('compiled templates DOM integration', () => {
         mount: (el: HTMLElement) => () => void
         computeLog: string[]
         setCount: (value: number) => void
-      }>(source, { lazyConditional: true, fineGrainedDom: false })
+      }>(source, { lazyConditional: true, fineGrainedDom: true })
       const container = document.createElement('div')
       document.body.appendChild(container)
       const teardown = mod.mount(container)
@@ -368,7 +368,7 @@ describe('compiled templates DOM integration', () => {
         effectLog: string[]
         flushPending(): void
         controls: { inc?: () => void }
-      }>(source, { fineGrainedDom: false })
+      }>(source, { fineGrainedDom: true })
       const container = document.createElement('div')
       document.body.appendChild(container)
       const teardown = mod.mount(container)
@@ -431,7 +431,7 @@ describe('compiled templates DOM integration', () => {
       mount: (el: HTMLElement) => () => void
       eventLog: number[]
       handlers: { inc?: () => void; read?: () => void }
-    }>(source, { fineGrainedDom: false })
+    }>(source, { fineGrainedDom: true })
     const container = document.createElement('div')
     document.body.appendChild(container)
     const teardown = mod.mount(container)

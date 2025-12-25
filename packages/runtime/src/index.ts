@@ -81,6 +81,7 @@ export {
   bindClass,
   bindEvent,
   bindProperty,
+  bindRef,
   insert,
   // Event delegation
   delegateEvents,

@@ -1,30 +1,31 @@
 import type * as BabelCore from '@babel/core'
 import * as t from '@babel/types'
 
-import type {
-  ArrayExpression as HArrayExpression,
-  ArrowFunctionExpression as HArrowFunctionExpression,
-  AssignmentExpression as HAssignmentExpression,
-  BasicBlock,
-  BinaryExpression as HBinaryExpression,
-  CallExpression as HCallExpression,
-  ConditionalExpression as HConditionalExpression,
-  Expression,
-  FunctionExpression as HFunctionExpression,
-  HIRFunction,
-  HIRProgram,
-  Identifier as HIdentifier,
-  JSXAttribute as HJSXAttribute,
-  JSXChild as HJSXChild,
-  JSXElementExpression as HJSXElementExpression,
-  Literal as HLiteral,
-  LogicalExpression as HLogicalExpression,
-  MemberExpression as HMemberExpression,
-  ObjectExpression as HObjectExpression,
-  SpreadElement as HSpreadElement,
-  TemplateLiteral as HTemplateLiteral,
-  UnaryExpression as HUnaryExpression,
-  UpdateExpression as HUpdateExpression,
+import {
+  HIRError,
+  type ArrayExpression as HArrayExpression,
+  type ArrowFunctionExpression as HArrowFunctionExpression,
+  type AssignmentExpression as HAssignmentExpression,
+  type BasicBlock,
+  type BinaryExpression as HBinaryExpression,
+  type CallExpression as HCallExpression,
+  type ConditionalExpression as HConditionalExpression,
+  type Expression,
+  type FunctionExpression as HFunctionExpression,
+  type HIRFunction,
+  type HIRProgram,
+  type Identifier as HIdentifier,
+  type JSXAttribute as HJSXAttribute,
+  type JSXChild as HJSXChild,
+  type JSXElementExpression as HJSXElementExpression,
+  type Literal as HLiteral,
+  type LogicalExpression as HLogicalExpression,
+  type MemberExpression as HMemberExpression,
+  type ObjectExpression as HObjectExpression,
+  type SpreadElement as HSpreadElement,
+  type TemplateLiteral as HTemplateLiteral,
+  type UnaryExpression as HUnaryExpression,
+  type UpdateExpression as HUpdateExpression,
 } from './hir'
 
 interface BlockBuilder {
@@ -1043,8 +1044,11 @@ function processStatement(
       bb.block.terminator = { kind: 'Break', target: loopCtx.breakTarget, label }
       bb.sealed = true
     } else {
-      bb.block.terminator = { kind: 'Unreachable' }
-      bb.sealed = true
+      // Break statement outside of loop or labeled statement
+      const message = label
+        ? `Break statement with label '${label}' is not within a labeled statement`
+        : 'Break statement is not within a loop or switch statement'
+      throw new HIRError(message, 'BUILD_ERROR', { blockId: bb.block.id })
     }
     return bb
   }
@@ -1059,8 +1063,11 @@ function processStatement(
       bb.block.terminator = { kind: 'Continue', target: loopCtx.continueTarget, label }
       bb.sealed = true
     } else {
-      bb.block.terminator = { kind: 'Unreachable' }
-      bb.sealed = true
+      // Continue statement outside of loop
+      const message = label
+        ? `Continue statement with label '${label}' is not within a labeled loop`
+        : 'Continue statement is not within a loop'
+      throw new HIRError(message, 'BUILD_ERROR', { blockId: bb.block.id })
     }
     return bb
   }
@@ -1481,14 +1488,30 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     const propertyNode = t.isPrivateName(node.property)
       ? t.identifier(node.property.id.name)
       : (node.property as BabelCore.types.Node)
+    const isOptional = t.isOptionalMemberExpression(node)
+    const object = convertExpression(node.object as BabelCore.types.Expression)
+    const property = t.isExpression(propertyNode)
+      ? convertExpression(propertyNode)
+      : ({ kind: 'Literal', value: undefined } as HLiteral)
+
+    if (isOptional) {
+      // Use OptionalMemberExpression for proper dependency tracking
+      const optionalMember: Expression = {
+        kind: 'OptionalMemberExpression',
+        object,
+        property,
+        computed: node.computed,
+        optional: node.optional ?? true,
+      }
+      return optionalMember
+    }
+
     const member: HMemberExpression = {
       kind: 'MemberExpression',
-      object: convertExpression(node.object as BabelCore.types.Expression),
-      property: t.isExpression(propertyNode)
-        ? convertExpression(propertyNode)
-        : ({ kind: 'Literal', value: undefined } as HLiteral),
+      object,
+      property,
       computed: node.computed,
-      optional: t.isOptionalMemberExpression(node),
+      optional: false,
     }
     return member
   }
@@ -1571,6 +1594,61 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
   // JSX Element
   if (t.isJSXElement(node)) {
     return convertJSXElement(node)
+  }
+
+  // JSX Fragment - return as Fragment VNode with children
+  if (t.isJSXFragment(node)) {
+    const children: HJSXChild[] = []
+    for (const child of node.children) {
+      if (t.isJSXText(child)) {
+        const text = child.value
+        if (text.trim()) {
+          children.push({ kind: 'text', value: text })
+        }
+      } else if (t.isJSXExpressionContainer(child)) {
+        if (!t.isJSXEmptyExpression(child.expression)) {
+          children.push({
+            kind: 'expression',
+            value: convertExpression(child.expression as BabelCore.types.Expression),
+          })
+        }
+      } else if (t.isJSXElement(child)) {
+        children.push({
+          kind: 'element',
+          value: convertJSXElement(child),
+        })
+      } else if (t.isJSXFragment(child)) {
+        // Nested fragment - flatten its children
+        for (const fragChild of child.children) {
+          if (t.isJSXText(fragChild)) {
+            const text = fragChild.value
+            if (text.trim()) {
+              children.push({ kind: 'text', value: text })
+            }
+          } else if (t.isJSXExpressionContainer(fragChild)) {
+            if (!t.isJSXEmptyExpression(fragChild.expression)) {
+              children.push({
+                kind: 'expression',
+                value: convertExpression(fragChild.expression as BabelCore.types.Expression),
+              })
+            }
+          } else if (t.isJSXElement(fragChild)) {
+            children.push({
+              kind: 'element',
+              value: convertJSXElement(fragChild),
+            })
+          }
+        }
+      }
+    }
+    // Return as JSXElement with Fragment type
+    return {
+      kind: 'JSXElement',
+      tagName: { kind: 'Identifier', name: 'Fragment' } as HIdentifier,
+      isComponent: true,
+      attributes: [],
+      children,
+    } as HJSXElementExpression
   }
 
   // Arrow Function Expression

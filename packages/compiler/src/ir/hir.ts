@@ -6,6 +6,57 @@
  * (conditionals/loops/logical expressions) to preserve source shape.
  */
 
+/**
+ * Unified error class for HIR-related errors.
+ * Provides consistent error reporting across the HIR pipeline.
+ */
+export class HIRError extends Error {
+  constructor(
+    message: string,
+    public readonly code: HIRErrorCode,
+    public readonly context?: {
+      blockId?: BlockId
+      variable?: string
+      file?: string
+      line?: number
+    },
+  ) {
+    super(`[HIR] ${message}`)
+    this.name = 'HIRError'
+  }
+
+  /**
+   * Create a formatted error message with context
+   */
+  toString(): string {
+    let msg = this.message
+    if (this.context) {
+      const parts: string[] = []
+      if (this.context.file) parts.push(`file: ${this.context.file}`)
+      if (this.context.line) parts.push(`line: ${this.context.line}`)
+      if (this.context.blockId !== undefined) parts.push(`block: ${this.context.blockId}`)
+      if (this.context.variable) parts.push(`variable: ${this.context.variable}`)
+      if (parts.length > 0) {
+        msg += ` (${parts.join(', ')})`
+      }
+    }
+    return msg
+  }
+}
+
+/**
+ * Error codes for HIR-related errors
+ */
+export type HIRErrorCode =
+  | 'BUILD_ERROR' // Error during HIR construction
+  | 'SSA_ERROR' // Error during SSA conversion
+  | 'STRUCTURIZE_ERROR' // Error during CFG structurization
+  | 'CODEGEN_ERROR' // Error during code generation
+  | 'SCOPE_ERROR' // Error in reactive scope analysis
+  | 'VALIDATION_ERROR' // Error in HIR validation
+  | 'CYCLE_ERROR' // Cyclic dependency detected
+  | 'DEPTH_EXCEEDED' // Recursion depth exceeded
+
 export type BlockId = number
 
 /**
@@ -90,21 +141,38 @@ export type Terminator =
       exit: BlockId
     }
 
-/** A single HIR instruction, kept coarse for now */
-export type Instruction =
-  | {
-      kind: 'Assign'
-      target: Identifier
-      value: Expression
-      declarationKind?: 'const' | 'let' | 'var'
-    }
-  | { kind: 'Expression'; value: Expression }
-  | {
-      kind: 'Phi'
-      variable: string
-      target: Identifier
-      sources: { block: BlockId; id: Identifier }[]
-    }
+/** Instruction interfaces for proper type narrowing */
+export interface AssignInstruction {
+  kind: 'Assign'
+  target: Identifier
+  value: Expression
+  declarationKind?: 'const' | 'let' | 'var'
+}
+
+export interface ExpressionInstruction {
+  kind: 'Expression'
+  value: Expression
+}
+
+export interface PhiInstruction {
+  kind: 'Phi'
+  variable: string
+  target: Identifier
+  sources: { block: BlockId; id: Identifier }[]
+}
+
+/** A single HIR instruction */
+export type Instruction = AssignInstruction | ExpressionInstruction | PhiInstruction
+
+/** Type guard for Phi instructions */
+export function isPhiInstruction(instr: Instruction): instr is PhiInstruction {
+  return instr.kind === 'Phi'
+}
+
+/** Type guard for Assign instructions */
+export function isAssignInstruction(instr: Instruction): instr is AssignInstruction {
+  return instr.kind === 'Assign'
+}
 
 /** Minimal expression placeholder; future work will refine variants */
 export type Expression =
@@ -196,14 +264,14 @@ export function extractDependencyPath(expr: Expression): DependencyPath | undefi
     }
   }
 
-  if (expr.kind === 'MemberExpression') {
+  if (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') {
     const segments: PathSegment[] = []
     let hasOptional = false
     let current: Expression = expr
 
-    // Walk up the member expression chain
-    while (current.kind === 'MemberExpression') {
-      const member = current as MemberExpression
+    // Walk up the member expression chain (handles both MemberExpression and OptionalMemberExpression)
+    while (current.kind === 'MemberExpression' || current.kind === 'OptionalMemberExpression') {
+      const member = current as MemberExpression | OptionalMemberExpression
 
       // Get property name
       let propertyName: string

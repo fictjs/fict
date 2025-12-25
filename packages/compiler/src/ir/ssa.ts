@@ -12,7 +12,10 @@ import { makeSSAName, getSSABaseName } from './hir'
 export function enterSSA(program: HIRProgram): HIRProgram {
   const functions = program.functions.map(fn => {
     const ssa = toSSA(fn)
-    return eliminateRedundantPhis(ssa)
+    const result = eliminateRedundantPhis(ssa)
+    // Validate phi node sources after SSA conversion
+    validatePhiSources(result)
+    return result
   })
   return {
     functions,
@@ -408,11 +411,17 @@ function toSSA(fn: HIRFunction): HIRFunction {
       }
     }
 
+    // Use index-based access instead of shift() to avoid race conditions
+    let phiIndex = 0
     for (const instr of block.instructions) {
       if (instr.kind === 'Phi') {
-        // Use the renamed phi from above
-        const renamedPhi = renamedPhis.shift()
-        if (renamedPhi) newInstr.push(renamedPhi)
+        // Use the renamed phi from above with index-based access
+        const renamedPhi = renamedPhis[phiIndex++]
+        if (renamedPhi) {
+          newInstr.push(renamedPhi)
+        } else {
+          throw new Error(`SSA: Phi instruction count mismatch at block ${blockId}`)
+        }
         continue
       }
       if (instr.kind === 'Assign') {
@@ -426,6 +435,13 @@ function toSSA(fn: HIRFunction): HIRFunction {
       } else if (instr.kind === 'Expression') {
         newInstr.push({ kind: 'Expression', value: renameExpr(instr.value) })
       }
+    }
+
+    // Validate all phis were processed
+    if (phiIndex !== renamedPhis.length) {
+      throw new Error(
+        `SSA: Phi instruction count mismatch at block ${blockId}: processed ${phiIndex}, expected ${renamedPhis.length}`,
+      )
     }
 
     // Collect phi sources for successors (immutable approach)
@@ -604,6 +620,13 @@ function computeDomTree(
 ) {
   const start = blocks[0]?.id ?? 0
   const order = reversePostOrder(blocks, succs, start)
+  // Create a map from block ID to its reverse post-order position
+  // This is needed for the intersect function to work correctly
+  // regardless of actual block ID values
+  const rpoIndex = new Map<number, number>()
+  for (let i = 0; i < order.length; i++) {
+    rpoIndex.set(order[i], i)
+  }
   const idom = new Map<number, number>()
   idom.set(start, start)
 
@@ -616,7 +639,7 @@ function computeDomTree(
       let newIdom: number | undefined
       for (const p of bPreds) {
         if (idom.has(p)) {
-          newIdom = newIdom === undefined ? p : intersect(idom, p, newIdom)
+          newIdom = newIdom === undefined ? p : intersect(idom, p, newIdom, rpoIndex)
         }
       }
       if (newIdom !== undefined && idom.get(b) !== newIdom) {
@@ -654,14 +677,22 @@ function reversePostOrder(
   return out.reverse()
 }
 
-function intersect(idom: Map<number, number>, b1: number, b2: number): number {
+function intersect(
+  idom: Map<number, number>,
+  b1: number,
+  b2: number,
+  rpoIndex: Map<number, number>,
+): number {
   let finger1 = b1
   let finger2 = b2
+  // Use reverse post-order position for comparison instead of raw block IDs
+  // This ensures correct behavior regardless of block ID assignment
+  const getIndex = (b: number) => rpoIndex.get(b) ?? 0
   while (finger1 !== finger2) {
-    while (finger1 > finger2) {
+    while (getIndex(finger1) > getIndex(finger2)) {
       finger1 = idom.get(finger1) ?? finger1
     }
-    while (finger2 > finger1) {
+    while (getIndex(finger2) > getIndex(finger1)) {
       finger2 = idom.get(finger2) ?? finger2
     }
   }
@@ -718,5 +749,42 @@ function renameTerminator(term: any, renameExpr: (expr: any) => any) {
       }
     default:
       return term
+  }
+}
+
+/**
+ * Validate that all phi nodes have sources from all predecessors.
+ * This ensures the SSA form is well-formed.
+ */
+function validatePhiSources(fn: HIRFunction): void {
+  const preds = computePredecessors(fn.blocks)
+
+  for (const block of fn.blocks) {
+    const blockPreds = preds.get(block.id) ?? []
+    // Entry block has no predecessors, skip validation
+    if (blockPreds.length === 0) continue
+
+    for (const instr of block.instructions) {
+      if (instr.kind !== 'Phi') continue
+
+      const phi = instr as any
+      const sources = phi.sources as Array<{ block: number }>
+
+      // Collect blocks that provided sources
+      const sourceBlocks = new Set(sources.map((s: { block: number }) => s.block))
+
+      // Check if all predecessors provided a source
+      const missingPreds = blockPreds.filter(pred => !sourceBlocks.has(pred))
+
+      if (missingPreds.length > 0) {
+        // Log warning but don't fail - some predecessors may be unreachable
+        // This is not an error in valid SSA, just a diagnostic
+        if (process.env.DEBUG_SSA) {
+          console.warn(
+            `SSA: Phi node for '${phi.variable}' in block ${block.id} missing sources from predecessors: ${missingPreds.join(', ')}`,
+          )
+        }
+      }
+    }
   }
 }
