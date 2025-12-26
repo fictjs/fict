@@ -35,12 +35,12 @@ interface EffectState {
 interface DevToolsState {
   signals: Map<number, SignalState>
   effects: Map<number, EffectState>
-  updateLog: Array<{
+  updateLog: {
     timestamp: number
     type: 'signal' | 'effect'
     id: number
     data?: unknown
-  }>
+  }[]
   maxLogEntries: number
   isConnected: boolean
 }

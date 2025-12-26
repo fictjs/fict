@@ -17,25 +17,17 @@ import {
   buildDependencyGetter,
   lowerExpression,
 } from './codegen'
-import type {
-  BasicBlock,
-  BlockId,
-  HIRFunction,
-  HIRProgram,
-  Expression,
-  Instruction,
-  Identifier,
-} from './hir'
+import type { BlockId, HIRFunction, Expression, Instruction, Identifier } from './hir'
 import { getSSABaseName } from './hir'
 import type { ReactiveScope, ReactiveScopeResult } from './scopes'
 import { getScopeDependencies } from './scopes'
-import { structurizeCFG, type StructuredNode } from './structurize'
 import {
   analyzeObjectShapes,
   getPropertySubscription,
   shouldUseWholeObjectSubscription,
   type ShapeAnalysisResult,
 } from './shapes'
+import { structurizeCFG, type StructuredNode } from './structurize'
 
 /**
  * A Region represents a contiguous section of code that should be
@@ -564,6 +556,7 @@ function lowerNodeWithRegionContext(
       const ifStmt = t.ifStatement(lowerExpressionWithDeSSA(node.test, ctx), conseq, alt)
       const shouldWrapEffect =
         ctx.wrapTrackedExpressions !== false &&
+        !ctx.inRegionMemo &&
         expressionUsesTracked(node.test, ctx) &&
         !statementHasEarlyExit(ifStmt, t)
       if (shouldWrapEffect) {
@@ -895,6 +888,7 @@ function lowerStructuredNodeForRegion(
       )
       const shouldWrapEffect =
         ctx.wrapTrackedExpressions !== false &&
+        !ctx.inRegionMemo &&
         expressionUsesTracked(node.test, ctx) &&
         !statementHasEarlyExit(ifStmt, t)
       if (shouldWrapEffect) {
@@ -1398,7 +1392,6 @@ function wrapInMemo(
   const uniqueOutputNames = [...new Set(outputNames)]
 
   if (process.env.DEBUG_REGION) {
-    // eslint-disable-next-line no-console
     console.log('Region memo', region.id, {
       instructions: region.instructions.map(instr => instr.kind),
       outputs: uniqueOutputNames,
@@ -1477,7 +1470,6 @@ function wrapInMemo(
     const directOutputs = uniqueOutputNames.filter(name => !getterOutputs.includes(name))
 
     if (process.env.DEBUG_REGION) {
-      // eslint-disable-next-line no-console
       console.log('Region debug', {
         id: region.id,
         outputs: uniqueOutputNames,
@@ -1559,7 +1551,7 @@ interface HIRConditionalInfo {
  */
 function analyzeHIRConditionalUsage(
   region: Region,
-  ctx: CodegenContext,
+  _ctx: CodegenContext,
 ): HIRConditionalInfo | null {
   const declarations = new Set(Array.from(region.declarations).map(d => deSSAVarName(d)))
   if (declarations.size < 2) {
@@ -2139,7 +2131,9 @@ function instructionToStatement(
       ctx.trackedVars.has(deSSAVarName(dep)),
     )
     const usesTracked = expressionUsesTracked(instr.value, ctx)
-    if (ctx.wrapTrackedExpressions !== false && (usesTracked || hasTrackedControlDep)) {
+    const shouldWrapExpr =
+      ctx.wrapTrackedExpressions !== false && (usesTracked || hasTrackedControlDep)
+    if (shouldWrapExpr) {
       ctx.helpersUsed.add('useEffect')
       ctx.needsCtx = true
       const depReads: BabelCore.types.Statement[] = []
@@ -2616,7 +2610,7 @@ function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expres
         }),
       )
 
-    case 'ArrowFunction':
+    case 'ArrowFunction': {
       const params = (expr.params || []).map((p: any) => t.identifier(p.name))
       if (expr.isExpression) {
         return t.arrowFunctionExpression(params, exprToAST(expr.body, t))
@@ -2652,14 +2646,16 @@ function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expres
         }
         return t.arrowFunctionExpression(params, t.blockStatement(stmts))
       }
+    }
 
-    case 'FunctionExpression':
+    case 'FunctionExpression': {
       const fnParams = (expr.params || []).map((p: any) => t.identifier(p.name))
       return t.functionExpression(
         expr.name ? t.identifier(expr.name) : null,
         fnParams,
         t.blockStatement([]),
       )
+    }
 
     case 'AssignmentExpression':
       return t.assignmentExpression(
@@ -2675,12 +2671,13 @@ function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expres
         expr.prefix || false,
       )
 
-    case 'TemplateLiteral':
+    case 'TemplateLiteral': {
       const quasis = (expr.quasis || []).map((q: string, i: number, arr: any[]) =>
         t.templateElement({ raw: q, cooked: q }, i === arr.length - 1),
       )
       const expressions = (expr.expressions || []).map((e: any) => exprToAST(e, t))
       return t.templateLiteral(quasis, expressions)
+    }
 
     case 'SpreadElement':
       // Spread is handled in ArrayExpression/ObjectExpression, here just return the argument

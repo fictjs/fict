@@ -14,15 +14,15 @@ import {
   type JSXChild,
   type JSXElementExpression,
 } from './hir'
-import type { ReactiveScope, ReactiveScopeResult } from './scopes'
 import {
   deSSAVarName,
   expressionUsesTracked,
   lowerStructuredNodeWithoutRegions,
   type Region,
 } from './regions'
-import { structurizeCFG, structurizeCFGWithDiagnostics, type StructuredNode } from './structurize'
+import type { ReactiveScopeResult } from './scopes'
 import { analyzeCFG } from './ssa'
+import { structurizeCFG, structurizeCFGWithDiagnostics, type StructuredNode } from './structurize'
 
 const HOOK_SLOT_BASE = 1000
 
@@ -304,7 +304,7 @@ function getCachedGetterExpression(
   return ctx.t.identifier(existingEntry)
 }
 
-function detectDerivedCycles(fn: HIRFunction, scopeResult: ReactiveScopeResult): void {
+function detectDerivedCycles(fn: HIRFunction, _scopeResult: ReactiveScopeResult): void {
   if (process.env.DEBUG_CYCLES_THROW) {
     throw new Error('cycle check invoked')
   }
@@ -383,7 +383,6 @@ function detectDerivedCycles(fn: HIRFunction, scopeResult: ReactiveScopeResult):
   }
 
   if (process.env.DEBUG_CYCLES) {
-    // eslint-disable-next-line no-console
     console.error(
       'cycle graph',
       Array.from(graph.entries()).map(([k, v]) => [k, Array.from(v)]),
@@ -510,7 +509,7 @@ function collectExpressionIdentifiers(expr: Expression, into: Set<string>): void
 function collectExpressionIdentifiersDeep(
   expr: Expression,
   into: Set<string>,
-  bound: Set<string> = new Set(),
+  bound = new Set<string>(),
 ): void {
   if (!expr || typeof expr !== 'object') return
 
@@ -979,7 +978,7 @@ interface NormalizedAttribute {
  * Normalize an attribute name for HIR codegen
  * Mirrors the logic from fine-grained-dom.ts normalizeAttributeName
  */
-function normalizeAttribute(name: string): NormalizedAttribute {
+function _normalizeAttribute(name: string): NormalizedAttribute {
   // Event handlers: onClick, onSubmit, etc.
   if (name.length > 2 && name.startsWith('on') && name[2]?.toUpperCase() === name[2]) {
     let eventName = name.slice(2)
@@ -1585,7 +1584,7 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
       if (typeof expr.value === 'boolean') return t.booleanLiteral(expr.value)
       return t.identifier('undefined')
 
-    case 'CallExpression':
+    case 'CallExpression': {
       // Handle Fict macros in experimental path
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '$state') {
         ctx.helpersUsed.add('useSignal')
@@ -1635,6 +1634,7 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
         lowerCallee(),
         expr.arguments.map(a => lowerExpression(a, ctx)),
       )
+    }
 
     case 'MemberExpression':
       return t.memberExpression(
@@ -2255,7 +2255,7 @@ export function applyRegionMetadataToExpression(
   state.identifierOverrides = overrides
 
   const shadowed = ctx.shadowedNames
-  const isReactiveAccessor = (name: string): boolean =>
+  const _isReactiveAccessor = (name: string): boolean =>
     ctx.trackedVars.has(name) ||
     !!(ctx.signalVars?.has(name) || ctx.memoVars?.has(name) || ctx.aliasVars?.has(name))
   const isNonReactiveFunction = (name: string): boolean => ctx.functionVars?.has(name) ?? false
@@ -2553,7 +2553,7 @@ function isExpressionReactive(expr: Expression, ctx: CodegenContext): boolean {
  * Get the reactive dependencies of an expression that require binding.
  * Returns the set of tracked variables that the expression depends on.
  */
-function getReactiveDependencies(expr: Expression, ctx: CodegenContext): Set<string> {
+function _getReactiveDependencies(expr: Expression, ctx: CodegenContext): Set<string> {
   const deps = new Set<string>()
   collectExpressionDependencies(expr, deps)
 
@@ -3386,7 +3386,7 @@ function emitListChild(
 /**
  * Emit a dynamic text child
  */
-function emitDynamicTextChild(
+function _emitDynamicTextChild(
   parentId: BabelCore.types.Identifier,
   expr: Expression,
   statements: BabelCore.types.Statement[],
@@ -3445,10 +3445,42 @@ function buildPropsObject(
     const spreads: BabelCore.types.SpreadElement[] = []
     const toPropKey = (name: string) =>
       /^[a-zA-Z_$][\w$]*$/.test(name) ? t.identifier(name) : t.stringLiteral(name)
+    const isAccessorName = (name: string): boolean =>
+      (ctx.memoVars?.has(name) ?? false) ||
+      (ctx.signalVars?.has(name) ?? false) ||
+      (ctx.aliasVars?.has(name) ?? false)
+
+    const wrapAccessorSource = (node: BabelCore.types.Expression): BabelCore.types.Expression => {
+      if (t.isCallExpression(node) && t.isIdentifier(node.callee) && node.arguments.length === 0) {
+        const baseName = deSSAVarName(node.callee.name)
+        if (isAccessorName(baseName)) {
+          // Keep accessor lazy so mergeProps can re-evaluate per access
+          return t.arrowFunctionExpression([], node)
+        }
+      }
+      if (t.isIdentifier(node)) {
+        const baseName = deSSAVarName(node.name)
+        if (isAccessorName(baseName)) {
+          return t.arrowFunctionExpression([], t.callExpression(t.identifier(baseName), []))
+        }
+      }
+      return node
+    }
 
     for (const attr of attributes) {
       if (attr.isSpread && attr.spreadExpr) {
-        spreads.push(t.spreadElement(lowerDomExpression(attr.spreadExpr, ctx)))
+        let spreadExpr = lowerDomExpression(attr.spreadExpr, ctx)
+        if (t.isCallExpression(spreadExpr)) {
+          const callExpr = spreadExpr
+          const rewrittenArgs = callExpr.arguments.map(arg =>
+            t.isExpression(arg) ? wrapAccessorSource(arg) : arg,
+          )
+          if (rewrittenArgs.some((arg, idx) => arg !== callExpr.arguments[idx])) {
+            spreadExpr = t.callExpression(callExpr.callee, rewrittenArgs as any)
+          }
+        }
+        spreadExpr = wrapAccessorSource(spreadExpr)
+        spreads.push(t.spreadElement(spreadExpr))
       } else if (attr.value) {
         const lowered = lowerDomExpression(attr.value, ctx)
         const isFunctionLike =
@@ -3495,7 +3527,7 @@ function buildPropsObject(
 /**
  * Normalize attribute name from JSX to DOM
  */
-function normalizeAttrName(name: string): string {
+function _normalizeAttrName(name: string): string {
   if (name === 'className') return 'class'
   if (name === 'htmlFor') return 'for'
   return name
@@ -4182,9 +4214,8 @@ function lowerFunctionWithRegions(
   ctx.memoVars = reactive.memo
   ctx.controlDepsByInstr = reactive.controlDepsByInstr
   if (process.env.DEBUG_REGION && fn.name === 'Counter') {
-    // eslint-disable-next-line no-console
     console.log('Tracked vars for Counter', Array.from(ctx.trackedVars))
-    // eslint-disable-next-line no-console
+
     console.log('Memo vars for Counter', Array.from(ctx.memoVars))
   }
 

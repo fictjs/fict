@@ -125,11 +125,11 @@ export type StructuredNode =
   | {
       // Fallback: state machine representation for non-structurable CFGs
       kind: 'stateMachine'
-      blocks: Array<{
+      blocks: {
         blockId: BlockId
         instructions: Instruction[]
         terminator: BasicBlock['terminator']
-      }>
+      }[]
       entryBlock: BlockId
     }
 

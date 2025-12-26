@@ -97,19 +97,29 @@ export function __fictPropsRest<T extends Record<string, unknown>>(
  * Uses lazy lookup strategy - properties are only accessed when read,
  * avoiding upfront iteration of all keys.
  */
+type MergeSource<T extends Record<string, unknown>> = T | (() => T)
+
 export function mergeProps<T extends Record<string, unknown>>(
-  ...sources: (T | null | undefined)[]
+  ...sources: (MergeSource<T> | null | undefined)[]
 ): Record<string, unknown> {
   // Filter out null/undefined sources upfront and store as concrete type
-  const validSources: T[] = sources.filter((s): s is T => s != null && typeof s === 'object')
+  const validSources: MergeSource<T>[] = sources.filter(
+    (s): s is MergeSource<T> => s != null && (typeof s === 'object' || typeof s === 'function'),
+  )
 
   if (validSources.length === 0) {
     return {}
   }
 
-  if (validSources.length === 1) {
+  if (validSources.length === 1 && typeof validSources[0] === 'object') {
     // Return source directly to preserve getter behavior (consistent with multi-source)
     return validSources[0]!
+  }
+
+  const resolveSource = (src: MergeSource<T>): T | undefined => {
+    const value = typeof src === 'function' ? src() : src
+    if (!value || typeof value !== 'object') return undefined
+    return unwrapProps(value as T)
   }
 
   return new Proxy({} as Record<string, unknown>, {
@@ -120,20 +130,28 @@ export function mergeProps<T extends Record<string, unknown>>(
       }
       // Search sources in reverse order (last wins)
       for (let i = validSources.length - 1; i >= 0; i--) {
-        const raw = unwrapProps(validSources[i]!)
-        if (prop in raw) {
-          const value = (raw as Record<string | symbol, unknown>)[prop]
-          // Preserve prop getters - let child component's createPropsProxy unwrap lazily
-          return value
+        const src = validSources[i]!
+        const raw = resolveSource(src)
+        if (!raw || !(prop in raw)) continue
+
+        const value = (raw as Record<string | symbol, unknown>)[prop]
+        // Preserve prop getters - let child component's createPropsProxy unwrap lazily
+        if (typeof src === 'function' && !isPropGetter(value)) {
+          return __fictProp(() => {
+            const latest = resolveSource(src)
+            if (!latest || !(prop in latest)) return undefined
+            return (latest as Record<string | symbol, unknown>)[prop]
+          })
         }
+        return value
       }
       return undefined
     },
 
     has(_, prop) {
       for (const src of validSources) {
-        const raw = unwrapProps(src)
-        if (prop in raw) {
+        const raw = resolveSource(src)
+        if (raw && prop in raw) {
           return true
         }
       }
@@ -143,9 +161,11 @@ export function mergeProps<T extends Record<string, unknown>>(
     ownKeys() {
       const keys = new Set<string | symbol>()
       for (const src of validSources) {
-        const raw = unwrapProps(src)
-        for (const key of Reflect.ownKeys(raw)) {
-          keys.add(key)
+        const raw = resolveSource(src)
+        if (raw) {
+          for (const key of Reflect.ownKeys(raw)) {
+            keys.add(key)
+          }
         }
       }
       return Array.from(keys)
@@ -153,8 +173,8 @@ export function mergeProps<T extends Record<string, unknown>>(
 
     getOwnPropertyDescriptor(_, prop) {
       for (let i = validSources.length - 1; i >= 0; i--) {
-        const raw = unwrapProps(validSources[i]!)
-        if (prop in raw) {
+        const raw = resolveSource(validSources[i]!)
+        if (raw && prop in raw) {
           return {
             enumerable: true,
             configurable: true,

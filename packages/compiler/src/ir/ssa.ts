@@ -768,7 +768,7 @@ function validatePhiSources(fn: HIRFunction): void {
       if (instr.kind !== 'Phi') continue
 
       const phi = instr as any
-      const sources = phi.sources as Array<{ block: number }>
+      const sources = phi.sources as { block: number }[]
 
       // Collect blocks that provided sources
       const sourceBlocks = new Set(sources.map((s: { block: number }) => s.block))

@@ -234,9 +234,9 @@ export function validateNoConditionalHooks(
  * Validate that lists have keys
  */
 export function validateListKeys(
-  node: BabelCore.types.JSXElement,
-  ctx: TransformContext,
-  t: typeof BabelCore.types,
+  _node: BabelCore.types.JSXElement,
+  _ctx: TransformContext,
+  _t: typeof BabelCore.types,
 ): Diagnostic | null {
   // Check if this is inside a .map() call
   // This would require parent context
@@ -268,9 +268,9 @@ export function validateNoInlineFunctions(
  * Run all validations on a function body and collect diagnostics
  */
 export function validateFunction(
-  node: BabelCore.types.Function,
-  ctx: TransformContext,
-  t: typeof BabelCore.types,
+  _node: BabelCore.types.Function,
+  _ctx: TransformContext,
+  _t: typeof BabelCore.types,
 ): Diagnostic[] {
   const diagnostics: Diagnostic[] = []
   // Validation logic would go here

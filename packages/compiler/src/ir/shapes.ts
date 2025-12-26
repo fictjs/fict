@@ -10,7 +10,7 @@
  * helping avoid whole-object subscriptions when only specific properties are needed.
  */
 
-import type { HIRFunction, BasicBlock, Instruction, Expression, Identifier } from './hir'
+import type { HIRFunction, Instruction, Expression } from './hir'
 
 /**
  * Shape state for a single object

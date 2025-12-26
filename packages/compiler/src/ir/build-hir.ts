@@ -113,7 +113,7 @@ function extractIdentifiersFromPattern(pattern: BabelCore.types.Pattern): HIdent
  * Build basic blocks from a list of statements (simplified version for nested functions).
  * This version handles common control flow structures to properly capture arrow function bodies.
  */
-function buildBlocksFromStatements(statements: BabelCore.types.Statement[]): BasicBlock[] {
+function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): BasicBlock[] {
   const blocks: BasicBlock[] = []
   let nextBlockId = 0
   let tempCounter = 0
@@ -841,7 +841,7 @@ function convertFunction(
 
       // Get the iteration variable info (name, kind, pattern)
       const left = stmt.left
-      let varName: string = '_item'
+      let varName = '_item'
       let varKind: 'const' | 'let' | 'var' = 'const'
       let pattern: any = undefined
 
@@ -898,7 +898,7 @@ function convertFunction(
 
       // Get the iteration variable info (name, kind, pattern)
       const left = stmt.left
-      let varName: string = '_item'
+      let varName = '_item'
       let varKind: 'const' | 'let' | 'var' = 'const'
       let pattern: any = undefined
 
@@ -1078,13 +1078,8 @@ function fillStatements(
   jumpTarget: number,
   ctx?: CFGBuildContext,
 ): BlockBuilder {
-  const push = (instr: BasicBlock['instructions'][number]) => bb.block.instructions.push(instr)
-  const seal = () => {
-    if (!bb.sealed) {
-      bb.block.terminator = { kind: 'Jump', target: jumpTarget }
-      bb.sealed = true
-    }
-  }
+  // Note: push and seal are not used directly here but kept for consistency
+  // with processStatement. The function delegates to processStatement.
 
   if (t.isBlockStatement(stmt)) {
     let current = bb
@@ -1123,12 +1118,6 @@ function processStatement(
   ctx?: CFGBuildContext,
 ): BlockBuilder {
   const push = (instr: BasicBlock['instructions'][number]) => bb.block.instructions.push(instr)
-  const seal = () => {
-    if (!bb.sealed) {
-      bb.block.terminator = { kind: 'Jump', target: jumpTarget }
-      bb.sealed = true
-    }
-  }
 
   if (t.isExpressionStatement(stmt)) {
     if (t.isAssignmentExpression(stmt.expression) && t.isIdentifier(stmt.expression.left)) {
@@ -1450,7 +1439,7 @@ function processStatement(
 
     // Get the iteration variable info (name, kind, pattern)
     const left = stmt.left
-    let varName: string = '_item'
+    let varName = '_item'
     let varKind: 'const' | 'let' | 'var' = 'const'
     let pattern: any = undefined
 
@@ -1506,7 +1495,7 @@ function processStatement(
 
     // Get the iteration variable info (name, kind, pattern)
     const left = stmt.left
-    let varName: string = '_item'
+    let varName = '_item'
     let varKind: 'const' | 'let' | 'var' = 'const'
     let pattern: any = undefined
 

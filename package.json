@@ -24,6 +24,7 @@
     "changeset": "changeset",
     "version": "changeset version",
     "release": "turbo run build && changeset publish",
+    "precommit": "pnpm test && pnpm typecheck && pnpm lint && pnpm build",
     "prepare": "husky"
   },
   "devDependencies": {

@@ -262,7 +262,7 @@ function handleMessage(event: MessageEvent): void {
       render()
       break
 
-    case 'signal:update':
+    case 'signal:update': {
       const signal = state.signals.find(s => s.id === payload.id)
       if (signal) {
         signal.value = payload.value
@@ -272,6 +272,7 @@ function handleMessage(event: MessageEvent): void {
         render()
       }
       break
+    }
 
     case 'effect:register':
       state.effects.push({
@@ -284,7 +285,7 @@ function handleMessage(event: MessageEvent): void {
       render()
       break
 
-    case 'effect:run':
+    case 'effect:run': {
       const effect = state.effects.find(e => e.id === payload.id)
       if (effect) {
         effect.runCount = payload.runCount
@@ -293,6 +294,7 @@ function handleMessage(event: MessageEvent): void {
         render()
       }
       break
+    }
 
     case 'cycle:detected':
       console.warn('[DevTools] Cycle detected:', payload)

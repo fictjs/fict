@@ -1,11 +1,4 @@
-import type {
-  BasicBlock,
-  BlockId,
-  HIRFunction,
-  Instruction,
-  Expression,
-  DependencyPath,
-} from './hir'
+import type { BlockId, HIRFunction, Instruction, DependencyPath } from './hir'
 import { extractDependencyPath, pathToString, getSSABaseName } from './hir'
 
 /**
@@ -191,7 +184,7 @@ function shouldMemoizeScope(scope: ReactiveScope, byName: Map<string, ReactiveSc
  */
 function mergeOverlappingScopes(
   scopes: ReactiveScope[],
-  byName: Map<string, ReactiveScope>,
+  _byName: Map<string, ReactiveScope>,
 ): ReactiveScope[] {
   // Use union-find for efficient merging
   const parent = new Map<number, number>()
@@ -320,7 +313,7 @@ function hasOverlappingDependencies(a: ReactiveScope, b: ReactiveScope): boolean
  */
 function pruneNonEscapingScopes(
   scopes: ReactiveScope[],
-  escapingVars: Set<string>,
+  _escapingVars: Set<string>,
 ): ReactiveScope[] {
   // Build dependency graph (which scopes depend on which)
   const dependsOn = new Map<number, Set<number>>()
@@ -409,7 +402,7 @@ function collectExprReads(
   expr: any,
   into: Set<string>,
   paths?: Map<string, DependencyPath[]>,
-  bound: Set<string> = new Set(),
+  bound = new Set<string>(),
   includeFunctionBodies = false,
 ) {
   if (!expr || typeof expr !== 'object') return
@@ -439,7 +432,7 @@ function collectExprReads(
       return
     }
     case 'MemberExpression':
-    case 'OptionalMemberExpression':
+    case 'OptionalMemberExpression': {
       // Extract full dependency path for optional chain analysis
       const depPath = extractDependencyPath(expr)
       if (depPath) {
@@ -456,6 +449,7 @@ function collectExprReads(
         }
       }
       return
+    }
     case 'BinaryExpression':
     case 'LogicalExpression':
       collectExprReads(expr.left, into, paths, bound)

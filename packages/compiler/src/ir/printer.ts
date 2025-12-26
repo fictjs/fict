@@ -8,7 +8,7 @@ import type {
 } from './hir'
 
 function formatExpression(expr: Expression, depth = 0): string {
-  const indent = '  '.repeat(depth)
+  const _indent = '  '.repeat(depth)
   switch (expr.kind) {
     case 'Identifier':
       return expr.name
