@@ -66,8 +66,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     },
 
     async transform(code: string, id: string): Promise<TransformResult | null> {
+      const filename = stripQuery(id)
+
       // Skip non-matching files
-      if (!shouldTransform(id, include, exclude)) {
+      if (!shouldTransform(filename, include, exclude)) {
         return null
       }
 
@@ -79,25 +81,18 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           sourcemap: compilerOptions.sourcemap ?? true,
         }
 
-        const isTypeScript = id.endsWith('.tsx') || id.endsWith('.ts')
+        const isTypeScript = filename.endsWith('.tsx') || filename.endsWith('.ts')
 
         const result = await transformAsync(code, {
-          filename: id,
+          filename,
           sourceMaps: fictOptions.sourcemap,
-          sourceFileName: id,
+          sourceFileName: filename,
           presets: isTypeScript
             ? [['@babel/preset-typescript', { isTSX: true, allExtensions: true }]]
             : [],
           plugins: [
             ['@babel/plugin-syntax-jsx', {}],
             [createFictPlugin, fictOptions],
-            [
-              '@babel/plugin-transform-react-jsx',
-              {
-                runtime: 'automatic',
-                importSource: '@fictjs/runtime',
-              },
-            ],
           ],
         })
 
@@ -140,7 +135,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
  */
 function shouldTransform(id: string, include: string[], exclude: string[]): boolean {
   // Normalize path separators
-  const normalizedId = id.replace(/\\/g, '/')
+  const normalizedId = stripQuery(id).replace(/\\/g, '/')
 
   // Check exclude patterns first
   for (const pattern of exclude) {
@@ -185,4 +180,12 @@ function matchPattern(id: string, pattern: string): boolean {
 
   const regex = new RegExp(`^${regexPattern}$`)
   return regex.test(id)
+}
+
+/**
+ * Remove Vite query parameters (e.g. ?import, ?v=123) from an id
+ */
+function stripQuery(id: string): string {
+  const queryStart = id.indexOf('?')
+  return queryStart === -1 ? id : id.slice(0, queryStart)
 }

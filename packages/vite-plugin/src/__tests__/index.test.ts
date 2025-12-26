@@ -31,4 +31,31 @@ describe('fict vite-plugin', () => {
       expect(hasHIRMarker || hasRuntimeImport).toBe(true)
     }
   })
+
+  it('transforms files with Vite query params', async () => {
+    const plugin = fict()
+    const sample = `
+      import { $state } from 'fict'
+      let count = $state(0)
+      const Button = () => <button>{count}</button>
+    `
+
+    const mockContext = {
+      error: vi.fn(),
+    }
+
+    const transform = plugin.transform as any
+    const result =
+      typeof transform === 'function'
+        ? await transform.call(mockContext, sample, '/project/src/Button.tsx?import')
+        : await transform?.handler.call(mockContext, sample, '/project/src/Button.tsx?import')
+
+    expect(result && typeof result === 'object').toBe(true)
+    if (result && typeof result === 'object' && 'code' in result) {
+      const code = result.code as string
+      const hasHIRMarker = code.includes('__fict_hir_codegen__')
+      const hasRuntimeImport = code.includes('@fictjs/runtime')
+      expect(hasHIRMarker || hasRuntimeImport).toBe(true)
+    }
+  })
 })
