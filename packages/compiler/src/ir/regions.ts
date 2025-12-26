@@ -18,7 +18,7 @@ import {
   lowerExpression,
 } from './codegen'
 import type { BlockId, HIRFunction, Expression, Instruction, Identifier } from './hir'
-import { getSSABaseName } from './hir'
+import { getSSABaseName, HIRError } from './hir'
 import type { ReactiveScope, ReactiveScopeResult } from './scopes'
 import { getScopeDependencies } from './scopes'
 import {
@@ -27,7 +27,7 @@ import {
   shouldUseWholeObjectSubscription,
   type ShapeAnalysisResult,
 } from './shapes'
-import { structurizeCFG, type StructuredNode } from './structurize'
+import { structurizeCFG, StructurizationError, type StructuredNode } from './structurize'
 
 /**
  * A Region represents a contiguous section of code that should be
@@ -95,6 +95,72 @@ export function generateRegions(
   const topLevelRegions = determineRegionHierarchy(regions)
 
   return { regions, regionsByBlock, topLevelRegions }
+}
+
+function structurizeOrThrow(fn: HIRFunction): StructuredNode {
+  validateCFGTargets(fn)
+  try {
+    return structurizeCFG(fn, { useFallback: false, warnOnIssues: false, throwOnIssues: true })
+  } catch (err) {
+    if (err instanceof StructurizationError) {
+      throw new HIRError(err.message, 'STRUCTURIZE_ERROR', { blockId: err.blockId })
+    }
+    throw err
+  }
+}
+
+function validateCFGTargets(fn: HIRFunction): void {
+  const ids = new Set(fn.blocks.map(b => b.id))
+  const ensure = (target: BlockId | undefined, source: BlockId, kind: string) => {
+    if (target === undefined) return
+    if (!ids.has(target)) {
+      throw new HIRError(
+        `Invalid CFG: block ${source} references missing target ${target} (${kind})`,
+        'STRUCTURIZE_ERROR',
+        { blockId: source },
+      )
+    }
+  }
+
+  for (const block of fn.blocks) {
+    const term = block.terminator
+    switch (term.kind) {
+      case 'Jump':
+        ensure(term.target, block.id, 'jump')
+        break
+      case 'Branch':
+        ensure(term.consequent, block.id, 'branch.consequent')
+        ensure(term.alternate, block.id, 'branch.alternate')
+        break
+      case 'Switch':
+        term.cases.forEach(c => ensure(c.target, block.id, 'switch.case'))
+        break
+      case 'ForOf':
+        ensure(term.body, block.id, 'forof.body')
+        ensure(term.exit, block.id, 'forof.exit')
+        break
+      case 'ForIn':
+        ensure(term.body, block.id, 'forin.body')
+        ensure(term.exit, block.id, 'forin.exit')
+        break
+      case 'Try':
+        ensure(term.tryBlock, block.id, 'try.block')
+        ensure(term.catchBlock, block.id, 'try.catch')
+        ensure(term.finallyBlock, block.id, 'try.finally')
+        ensure(term.exit, block.id, 'try.exit')
+        break
+      case 'Break':
+      case 'Continue':
+        ensure(term.target, block.id, term.kind.toLowerCase())
+        break
+      default:
+        break
+    }
+  }
+}
+
+export function assertStructurableCFG(fn: HIRFunction): void {
+  validateCFGTargets(fn)
 }
 
 /**
@@ -402,7 +468,7 @@ export function generateRegionCode(
   }
 
   // Use structured code generation for control flow
-  const structured = structurizeCFG(fn)
+  const structured = structurizeOrThrow(fn)
 
   // Lower structured code with region awareness
   return lowerStructuredNodeWithRegions(structured, regionResult, t, ctx, declaredVars)

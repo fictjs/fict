@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { parseSync } from '@babel/core'
 import { buildHIR } from '../src/ir/build-hir'
+import { HIRError, type HIRFunction } from '../src/ir/hir'
+import { assertStructurableCFG, generateRegions } from '../src/ir/regions'
+import { analyzeReactiveScopes } from '../src/ir/scopes'
 import { structurizeCFG, type StructuredNode } from '../src/ir/structurize'
 
 const parseFile = (code: string) =>
@@ -652,6 +655,55 @@ describe('CFG Structurization', () => {
 
       const structured = structurizeCFG(fn!)
       expect(structured).toBeDefined()
+    })
+  })
+
+  describe('failure modes', () => {
+    it('throws an HIRError with STRUCTURIZE_ERROR for non-structurable graphs', () => {
+      const badFn: HIRFunction = {
+        name: 'Bad',
+        params: [],
+        blocks: [
+          {
+            id: 0,
+            instructions: [
+              {
+                kind: 'Assign',
+                target: { kind: 'Identifier', name: 'x' },
+                value: { kind: 'Literal', value: 1 },
+              },
+            ],
+            terminator: {
+              kind: 'Branch',
+              test: { kind: 'Identifier', name: 'cond' },
+              consequent: 1,
+              alternate: 99, // Missing block forces validation failure
+            },
+          },
+          {
+            id: 1,
+            instructions: [],
+            terminator: { kind: 'Return', argument: { kind: 'Identifier', name: 'x' } },
+          },
+        ],
+        meta: {},
+      }
+
+      const scopes = analyzeReactiveScopes(badFn)
+      expect(badFn.blocks[0]?.terminator).toMatchObject({ alternate: 99 })
+
+      let error: unknown
+      try {
+        assertStructurableCFG(badFn)
+        generateRegions(badFn, scopes)
+      } catch (err) {
+        error = err
+      }
+
+      expect(error).toBeInstanceOf(HIRError)
+      if (error instanceof HIRError) {
+        expect(error.code).toBe('STRUCTURIZE_ERROR')
+      }
     })
   })
 })

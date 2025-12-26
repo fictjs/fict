@@ -75,6 +75,22 @@ describe('generateRegions + shapes', () => {
     const deps = regionResult.regions.flatMap(r => Array.from(r.dependencies))
     expect(deps.some(d => d === 'props.value')).toBe(true)
   })
+
+  it('keeps optional-chain subscriptions minimal', () => {
+    const ast = parseFile(`
+      function Foo(props) {
+        const title = props.user?.profile?.title ?? 'N/A'
+        return <div>{title}</div>
+      }
+    `)
+    const hirProgram = buildHIR(ast)
+    const scopeResult = analyzeReactiveScopes(hirProgram.functions[0])
+    const regionResult = generateRegions(hirProgram.functions[0], scopeResult)
+
+    const deps = new Set(regionResult.regions.flatMap(r => Array.from(r.dependencies)))
+    expect(deps.has('props')).toBe(true)
+    expect(Array.from(deps).some(d => d.includes('profile'))).toBe(false)
+  })
 })
 
 describe('regionToMetadata', () => {
