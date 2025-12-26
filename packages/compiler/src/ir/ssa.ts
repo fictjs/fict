@@ -625,7 +625,7 @@ function computeDomTree(
   // regardless of actual block ID values
   const rpoIndex = new Map<number, number>()
   for (let i = 0; i < order.length; i++) {
-    rpoIndex.set(order[i], i)
+    rpoIndex.set(order[i]!, i)
   }
   const idom = new Map<number, number>()
   idom.set(start, start)

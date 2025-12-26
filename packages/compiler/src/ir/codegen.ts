@@ -2002,7 +2002,7 @@ function lowerIntrinsicElementAsVNode(
   }
 
   const children = jsx.children.map(child => lowerJSXChildNonFineGrained(child, ctx))
-  if (children.length === 1) {
+  if (children.length === 1 && children[0]) {
     props.push(t.objectProperty(t.identifier('children'), children[0]))
   } else if (children.length > 1) {
     props.push(t.objectProperty(t.identifier('children'), t.arrayExpression(children)))
@@ -2056,7 +2056,7 @@ function lowerJSXElement(
           t.objectProperty(t.identifier('type'), t.identifier('Fragment')),
           t.objectProperty(
             t.identifier('props'),
-            children.length > 0
+            children.length > 0 && childrenProp
               ? t.objectExpression([t.objectProperty(t.identifier('children'), childrenProp)])
               : t.nullLiteral(),
           ),
@@ -2083,7 +2083,7 @@ function lowerJSXElement(
     }
 
     // Add children if present
-    if (children.length === 1) {
+    if (children.length === 1 && children[0]) {
       propsWithChildren.push(t.objectProperty(t.identifier('children'), children[0]))
     } else if (children.length > 1) {
       propsWithChildren.push(
@@ -2388,7 +2388,7 @@ function replaceIdentifiersWithOverrides(
       for (const key of Object.keys(overrides)) {
         const base = normalizeDependencyKey(key).split('.')[0] ?? key
         if (!paramNames.has(base)) {
-          scopedOverrides[key] = overrides[key]
+          scopedOverrides[key] = overrides[key]!
         }
       }
     }
@@ -4265,7 +4265,7 @@ function lowerFunctionWithRegions(
   let finalParams = fn.params.map(p => t.identifier(deSSAVarName(p.name)))
   const propsDestructuring: BabelCore.types.Statement[] = []
 
-  const isComponent = fn.name && fn.name[0] === fn.name[0].toUpperCase()
+  const isComponent = fn.name && fn.name[0] === fn.name[0]?.toUpperCase()
   if (isComponent && fn.rawParams && fn.rawParams.length === 1) {
     const rawParam = fn.rawParams[0]
     // Check if it's an ObjectPattern or AssignmentPattern with ObjectPattern

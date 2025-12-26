@@ -146,7 +146,7 @@ function createRegionFromScope(
   const baseDeps = getScopeDependencies(scope)
   const dependencies = new Set<string>()
   for (const dep of baseDeps) {
-    const baseName = dep.split('.')[0]
+    const baseName = dep.split('.')[0] ?? dep
     if (scope.dependencies.size > 0 && !scope.dependencies.has(baseName)) {
       continue
     }
