@@ -72,7 +72,6 @@ describe('Control Flow Re-Execution', () => {
   })
 
   describe('for/while loop control flow', () => {
-    // TODO: HIR codegen loop condition handling is different
     it('transforms signal read in for loop condition', () => {
       const output = transform(`
         import { $state } from 'fict'

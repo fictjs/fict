@@ -136,7 +136,6 @@ describe('R002: Derived expression collection', () => {
 // ============================================================================
 
 describe('R005: Props destructuring', () => {
-  // TODO: HIR codegen uses different props handling pattern
   it('transforms destructured props to getter', () => {
     const output = transform(`
       import { $state } from 'fict'
@@ -148,7 +147,6 @@ describe('R005: Props destructuring', () => {
     expect(output).toContain('= __props')
   })
 
-  // TODO: HIR codegen uses different props handling pattern
   it('handles default values in destructured props', () => {
     const output = transform(`
       import { $state } from 'fict'
@@ -161,7 +159,6 @@ describe('R005: Props destructuring', () => {
     expect(output).toContain('__props') //expect(output).toMatch(/=== undefined \? 0|undefined.*0/)
   })
 
-  // TODO: HIR codegen uses different props handling pattern
   it('handles nested destructuring', () => {
     const output = transform(`
       import { $state } from 'fict'
@@ -172,7 +169,6 @@ describe('R005: Props destructuring', () => {
     expect(output).toContain('__props')
   })
 
-  // TODO: HIR codegen uses different props handling pattern
   it('handles rest props', () => {
     const output = transform(`
       import { $state } from 'fict'
@@ -246,7 +242,6 @@ describe('R007: $effect semantics', () => {
     expect(output).toContain('() => console.log(count())')
   })
 
-  // TODO: HIR codegen effect format is different
   it('handles async $effect', () => {
     const output = transform(`
       import { $state, $effect } from 'fict'
@@ -259,7 +254,6 @@ describe('R007: $effect semantics', () => {
     expect(output).toContain('async')
   })
 
-  // TODO: HIR codegen effect format is different
   it('preserves cleanup return', () => {
     const output = transform(`
       import { $state, $effect } from 'fict'
@@ -393,7 +387,6 @@ describe('R010: Lazy conditional evaluation', () => {
     expect(output).toContain('message()')
   })
 
-  // TODO: HIR codegen region handling is different
   it('does not rewrite shorthand when no region is emitted (single derived output)', () => {
     const output = transform(
       `
@@ -413,7 +406,6 @@ describe('R010: Lazy conditional evaluation', () => {
     expect(output).toContain('message()')
   })
 
-  // TODO: HIR codegen region handling is different
   it('scopes pending region outputs per function', () => {
     const output = transform(
       `
@@ -598,7 +590,6 @@ describe('R016: Loop semantics', () => {
 })
 
 describe('R017: Ambiguity resolution', () => {
-  // TODO: HIR codegen parameter shadowing needs fix
   it('function parameter shadows outer state', () => {
     const output = transform(`
       import { $state } from 'fict'
@@ -610,7 +601,6 @@ describe('R017: Ambiguity resolution', () => {
     expect(output).not.toContain('(count) => console.log(count())')
   })
 
-  // TODO: HIR codegen block shadowing needs fix
   it('block-scoped variable shadows outer state', () => {
     const output = transform(`
       import { $state } from 'fict'
@@ -757,7 +747,6 @@ describe('Fine-grained DOM generation', () => {
 // ============================================================================
 
 describe('Error cases', () => {
-  // TODO: HIR path validation may be different
   it('throws on $state without fict import', () => {
     // Compiler throws when $state is used without importing from fict
     expect(() => {
@@ -767,7 +756,6 @@ describe('Error cases', () => {
     }).toThrow(/\$state\(\) must be imported/)
   })
 
-  // TODO: HIR path validation may be different
   it('requires $effect to be imported explicitly', () => {
     // $effect must be imported from 'fict' before use
     expect(() =>
@@ -777,7 +765,6 @@ describe('Error cases', () => {
     ).toThrow(/\$effect\(\) must be imported/)
   })
 
-  // TODO: HIR path validation may be different
   it('throws on $state in nested function', () => {
     // Nested functions are not allowed to declare $state
     expect(() =>
@@ -824,7 +811,6 @@ describe('Error cases', () => {
     ).toThrow(/\$effect\(\) cannot be called inside loops/)
   })
 
-  // TODO: HIR path validation may be different
   it('throws on $effect in nested function', () => {
     expect(() =>
       transform(`
@@ -900,7 +886,6 @@ describe('Integration scenarios', () => {
     // In non-fine-grained mode, this uses regular JSX runtime
   })
 
-  // TODO: HIR codegen uses different props handling pattern
   it('component with props and state transforms correctly', () => {
     const output = transform(`
       import { $state, $effect } from 'fict'

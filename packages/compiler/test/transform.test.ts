@@ -252,7 +252,6 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).not.toContain('onClick: () => () =>')
     })
 
-    // TODO: Fix HIR codegen key attribute handling
     it('does not wrap key attribute', () => {
       const input = `
         import { $state } from 'fict'
@@ -328,7 +327,6 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('cb')
     })
 
-    // TODO: Fix HIR codegen portal handling
     it('wraps createPortal calls with dispose registration', () => {
       const input = `
         import { $state, createPortal, createElement } from 'fict'

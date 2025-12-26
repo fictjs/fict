@@ -11,7 +11,6 @@ function transformWithWarnings(source: string): { output: string; warnings: Comp
 }
 
 describe('Spec rule coverage', () => {
-  // TODO: HIR path validation is different
   it('throws when $state is used without importing from fict', () => {
     const input = `
       let count = $state(0)
@@ -31,7 +30,6 @@ describe('Spec rule coverage', () => {
     )
   })
 
-  // TODO: HIR path props handling is different
   it('supports props destructuring with tracked getters', () => {
     const input = `
       import { $state } from 'fict'
@@ -49,7 +47,6 @@ describe('Spec rule coverage', () => {
     expect(output).toContain('__fictUseMemo')
   })
 
-  // TODO: HIR path props handling is different
   it('does not leak prop getter tracking outside the function', () => {
     const input = `
       import { $state } from 'fict'
@@ -66,7 +63,6 @@ describe('Spec rule coverage', () => {
     expect(output).toContain('name')
   })
 
-  // TODO: HIR path props handling is different
   it('preserves nested default values in destructured props', () => {
     const input = `
       import { $state } from 'fict'
@@ -80,7 +76,6 @@ describe('Spec rule coverage', () => {
     expect(output).toContain('name')
   })
 
-  // TODO: HIR path props handling is different
   it('rewrites destructured props that shadow tracked names inside JSX', () => {
     const input = `
       import { $state } from 'fict'
@@ -590,7 +585,6 @@ describe('Rule J: Lazy evaluation of conditional derivation', () => {
     expect(output).toContain('__fictUseMemo')
   })
 
-  // TODO: HIR path region handling is different
   it('creates region memo with multiple derived values', () => {
     const output = transformWithLazy(`
       import { $state } from 'fict'
@@ -772,7 +766,6 @@ describe('Rule C: memo vs getter selection', () => {
     expect(output).toContain('console.log(doubled())')
   })
 
-  // TODO: HIR path memo selection is different
   it('both JSX and event usage produces memo', () => {
     const output = transform(`
       import { $state } from 'fict'

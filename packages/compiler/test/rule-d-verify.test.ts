@@ -8,7 +8,6 @@ function transformWithOptions(source: string, options: FictCompilerOptions) {
 }
 
 describe('Rule D Verification', () => {
-  // TODO: HIR codegen region handling is different - skip until output format is aligned
   it('groups related derived values into a single region', () => {
     const input = `
       import { $state } from 'fict'
@@ -33,7 +32,6 @@ describe('Rule D Verification', () => {
     expect(output).toContain('__region_')
   })
 
-  // TODO: HIR codegen region handling is different - skip until output format is aligned
   it('groups derived values that include ternary control flow', () => {
     const input = `
       import { $state } from 'fict'
@@ -85,7 +83,6 @@ describe('Rule D Verification', () => {
     expect(hasRegion || hasSimpleGetters || hasMemoCalls).toBe(true)
   })
 
-  // TODO: HIR codegen condition caching is different - skip until output format is aligned
   it('caches conditional evaluation for lazy branches', () => {
     const input = `
       import { $state } from 'fict'
@@ -105,7 +102,6 @@ describe('Rule D Verification', () => {
     expect(output).toContain('detail')
   })
 
-  // TODO: HIR codegen region handling is different - skip until output format is aligned
   it('groups derived values assigned inside switch branches', () => {
     const input = `
       import { $state } from 'fict'

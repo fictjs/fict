@@ -375,4 +375,283 @@ describe('CFG Structurization', () => {
       expect(countNodes(structured, 'return')).toBe(1)
     })
   })
+
+  describe('break statements', () => {
+    it('should structurize break in for-of loop', () => {
+      const ast = parseFile(`
+        function findFirst(items, predicate) {
+          let result = null
+          for (const item of items) {
+            if (predicate(item)) {
+              result = item
+              break
+            }
+          }
+          return result
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'forOf')).toBe(1)
+    })
+
+    it('should structurize break in nested for-of loops (inner only)', () => {
+      const ast = parseFile(`
+        function countUntilNegative(matrix) {
+          let total = 0
+          for (const row of matrix) {
+            for (const cell of row) {
+              if (cell < 0) {
+                break
+              }
+              total = total + cell
+            }
+          }
+          return total
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'forOf')).toBe(2)
+    })
+
+    it('should structurize break in for-in loop', () => {
+      const ast = parseFile(`
+        function findKey(obj, value) {
+          let foundKey = null
+          for (const key in obj) {
+            if (obj[key] === value) {
+              foundKey = key
+              break
+            }
+          }
+          return foundKey
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'forIn')).toBe(1)
+    })
+  })
+
+  describe('continue statements', () => {
+    it('should structurize continue in for-of loop', () => {
+      const ast = parseFile(`
+        function filterActive(items) {
+          const result = []
+          for (const item of items) {
+            if (!item.active) {
+              continue
+            }
+            result.push(item)
+          }
+          return result
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'forOf')).toBe(1)
+    })
+
+    it('should structurize continue in for-in loop', () => {
+      const ast = parseFile(`
+        function countOwnProperties(obj) {
+          let count = 0
+          for (const key in obj) {
+            if (!Object.hasOwn(obj, key)) {
+              continue
+            }
+            count = count + 1
+          }
+          return count
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'forIn')).toBe(1)
+    })
+
+    it('should structurize nested for-of with continue', () => {
+      const ast = parseFile(`
+        function sumValidCells(matrix) {
+          let sum = 0
+          for (const row of matrix) {
+            for (const cell of row) {
+              if (cell === null) {
+                continue
+              }
+              sum = sum + cell
+            }
+          }
+          return sum
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'forOf')).toBe(2)
+    })
+  })
+
+  describe('labeled statements', () => {
+    it('should structurize labeled for-of loop', () => {
+      const ast = parseFile(`
+        function findInMatrix(matrix, target) {
+          let found = false
+          outer: for (const row of matrix) {
+            for (const cell of row) {
+              if (cell === target) {
+                found = true
+                break outer
+              }
+            }
+          }
+          return found
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      // Labeled loops are structured, the exact representation may vary
+      expect(structured).toBeDefined()
+    })
+
+    it('should structurize labeled for-in loop', () => {
+      const ast = parseFile(`
+        function findDeepKey(obj) {
+          let foundKey = null
+          outer: for (const key in obj) {
+            for (const subKey in obj[key]) {
+              if (subKey === 'target') {
+                foundKey = key
+                break outer
+              }
+            }
+          }
+          return foundKey
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      // Labeled loops are structured, the exact representation may vary
+      expect(structured).toBeDefined()
+    })
+  })
+
+  describe('switch fall-through', () => {
+    it('should structurize switch with fall-through cases', () => {
+      const ast = parseFile(`
+        function categorize(x) {
+          let result = ''
+          switch (x) {
+            case 1:
+            case 2:
+            case 3:
+              result = 'small'
+              break
+            case 4:
+            case 5:
+              result = 'medium'
+              break
+            default:
+              result = 'large'
+          }
+          return result
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'switch')).toBe(1)
+    })
+
+    it('should structurize switch without default', () => {
+      const ast = parseFile(`
+        function getName(x) {
+          let result = 'unknown'
+          switch (x) {
+            case 'a':
+              result = 'alpha'
+              break
+            case 'b':
+              result = 'beta'
+              break
+          }
+          return result
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'switch')).toBe(1)
+    })
+  })
+
+  describe('do-while loops', () => {
+    it('should structurize do-while loop', () => {
+      const ast = parseFile(`
+        function countdown(n) {
+          let i = n
+          do {
+            i = i - 1
+          } while (i > 0)
+          return i
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      // Do-while may be represented as doWhile or other control flow
+      expect(structured).toBeDefined()
+    })
+
+    it('should structurize do-while with condition', () => {
+      const ast = parseFile(`
+        function readN(reader, n) {
+          let count = 0
+          do {
+            const value = reader.read()
+            if (value !== null) {
+              count = count + 1
+            }
+          } while (count < n)
+          return count
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(structured).toBeDefined()
+    })
+  })
 })

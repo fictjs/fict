@@ -134,7 +134,6 @@ describe('compiler + fict integration', () => {
     document.title = ''
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('compiles and runs a counter end to end', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -174,7 +173,6 @@ describe('compiler + fict integration', () => {
     expect(container.innerHTML).toBe('')
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('logs doubled on every count change and updates both branch and title', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(conditionalCounterSource)
@@ -223,7 +221,6 @@ describe('compiler + fict integration', () => {
     logSpy.mockRestore()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('does not re-run doubled log when only count1 changes', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(conditionalCounterSource)
@@ -259,7 +256,6 @@ describe('compiler + fict integration', () => {
     logSpy.mockRestore()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('logs execution branches correctly on count change', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(
@@ -291,7 +287,7 @@ describe('compiler + fict integration', () => {
   })
 
   // Edge case 1: Multiple side effects in both branches
-  // TODO: HIR codegen integration needs deep fixes
+
   it('handles multiple side effects in both branches', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -358,7 +354,7 @@ describe('compiler + fict integration', () => {
   })
 
   // Edge case 2: Variable declaration inside if block
-  // TODO: HIR codegen integration needs deep fixes
+
   it('handles variable declarations inside if block', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -414,7 +410,7 @@ describe('compiler + fict integration', () => {
   })
 
   // Edge case 3: if-else structure (should still work, just not optimized)
-  // TODO: HIR codegen integration needs deep fixes
+
   it('handles if-else structure correctly', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -464,7 +460,7 @@ describe('compiler + fict integration', () => {
   })
 
   // Edge case 4: Complex condition with multiple signals
-  // TODO: HIR codegen integration needs deep fixes
+
   it('handles complex condition with multiple signals', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -528,7 +524,7 @@ describe('compiler + fict integration', () => {
   })
 
   // Edge case 5: Multiple statements between if and return (false branch)
-  // TODO: HIR codegen integration needs deep fixes
+
   it('handles multiple statements between if and final return', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -588,7 +584,7 @@ describe('compiler + fict integration', () => {
   })
 
   // Edge case 6a: Simple conditional - verify bindText updates when condition unchanged
-  // TODO: HIR codegen integration needs deep fixes
+
   it('updates text when condition stays false but value changes', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -642,7 +638,7 @@ describe('compiler + fict integration', () => {
   // Note: Inner if-else statements inside a branch only execute when the branch
   // is first rendered. They don't re-execute when signals change within the same branch.
   // This is by design - only the createConditional's condition determines branch switching.
-  // TODO: HIR codegen integration needs deep fixes
+
   it('handles nested if inside if block', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -781,7 +777,7 @@ describe('compiler + fict integration', () => {
   })
 
   // Edge case 8: Side effect depends on signal that changes
-  // TODO: HIR codegen integration needs deep fixes
+
   it('handles reactive side effects in branches', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -843,7 +839,7 @@ describe('compiler + fict integration', () => {
   // The console.log inside the if block only executes once during initial render,
   // not reactively when the signal changes. This is by design - use $effect for
   // reactive side effects.
-  // TODO: HIR codegen integration needs deep fixes
+
   it('handles if block without return correctly', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -967,7 +963,6 @@ describe('compiler + fict integration', () => {
     logSpy.mockRestore()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('props: runtime-built spread vs reactive marked spread', async () => {
     const naiveSource = `
       import { $state, render } from 'fict'
@@ -1065,7 +1060,6 @@ describe('compiler + fict integration', () => {
     }
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('props: prop helper keeps child reactive without parent rerender', async () => {
     const source = `
       import { $state, render, prop } from 'fict'
@@ -1098,7 +1092,6 @@ describe('compiler + fict integration', () => {
     dispose()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('props: merged sources keep reactive fields with prop/mergeProps', async () => {
     const source = `
       import { $state, render, prop, mergeProps } from 'fict'
@@ -1158,7 +1151,6 @@ describe('compiler + fict integration', () => {
     dispose()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('props: heavy computation memoized with useProp vs raw', async () => {
     const source = `
       import { $state, render, useProp } from 'fict'
@@ -1236,7 +1228,6 @@ describe('compiler + fict integration', () => {
     dispose()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('props: unknown shape factory, mark reactive fields explicitly', async () => {
     const source = `
       import { $state, render, prop, mergeProps } from 'fict'

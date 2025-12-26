@@ -3,7 +3,6 @@ import { transform } from './test-utils'
 
 describe('Scope Handling', () => {
   describe('Block-scoped variables should not leak', () => {
-    // TODO: HIR codegen scope handling differs from expected
     it('should not expose const declared inside if block', () => {
       const input = `
         import { $state } from 'fict'
@@ -25,7 +24,6 @@ describe('Scope Handling', () => {
       expect(output).toMatch(/result/)
     })
 
-    // TODO: HIR codegen scope handling differs from expected
     it('should not expose let declared inside if block', () => {
       const input = `
         import { $state } from 'fict'
@@ -106,7 +104,6 @@ describe('Scope Handling', () => {
       expect(output).toContain('const tripled = ')
     })
 
-    // TODO: HIR codegen assignment patterns differ
     it('should expose let variables assigned in if blocks', () => {
       const input = `
         import { $state } from 'fict'
@@ -127,7 +124,6 @@ describe('Scope Handling', () => {
   })
 
   describe('Name collision prevention', () => {
-    // TODO: HIR codegen scope handling differs from expected
     it('should not conflict when same name exists in different scopes', () => {
       const input = `
         import { $state } from 'fict'

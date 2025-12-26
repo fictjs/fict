@@ -5,7 +5,6 @@ import { transform } from './test-utils'
 
 describe('Cross-Module Reactivity', () => {
   describe('Store Module (Exports)', () => {
-    // TODO: HIR codegen exports signals differently (no region ID)
     it('exports state as signal accessor', () => {
       const source = `
         import { $state } from 'fict'
@@ -35,7 +34,6 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toContain("export { count } from './store'")
     })
 
-    // TODO: HIR codegen re-export handling is different
     it('re-exports alias without creating new signal', () => {
       const source = `
         import { count } from './store'

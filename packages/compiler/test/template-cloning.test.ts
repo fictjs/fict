@@ -6,7 +6,6 @@ describe('Template Cloning Strategy', () => {
     return transform(code, { fineGrainedDom: true })
   }
 
-  // TODO: HIR codegen template format is different
   it('compiles specific static JSX to template cloning', () => {
     const code = `
       export function Counter() {
@@ -30,7 +29,6 @@ describe('Template Cloning Strategy', () => {
     expect(output).toContain('__tmpl_')
   })
 
-  // TODO: HIR codegen template format is different
   it('handles dynamic text binding with template cloning', () => {
     const code = `
       import { $state } from 'fict'

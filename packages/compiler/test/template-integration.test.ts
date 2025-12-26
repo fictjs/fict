@@ -67,7 +67,6 @@ describe('compiled templates DOM integration', () => {
     document.body.innerHTML = ''
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('mounts and cleans up fragment output produced via insert', { timeout: 10000 }, async () => {
     const source = `
       import { $state, onDestroy } from 'fict'
@@ -120,7 +119,6 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('keeps todo list DOM in sync with keyed state updates', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -210,7 +208,6 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it(
     'lazily evaluates branch-only derived regions when conditionally rendered',
     { timeout: 10000 },
@@ -394,7 +391,6 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('exposes latest state to DOM event handlers', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -466,7 +462,6 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('updates DOM via fine-grained bindings when enabled', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -520,7 +515,6 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('wires event handlers in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -562,7 +556,6 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('keeps keyed list DOM in sync in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -644,7 +637,6 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  // TODO: HIR codegen integration needs deep fixes - bindAttribute reactivity issue
   it(
     'switches conditional branches and updates attributes in fine-grained mode',
     { timeout: 10000 },
@@ -714,7 +706,6 @@ describe('compiled templates DOM integration', () => {
     },
   )
 
-  // TODO: HIR codegen integration needs deep fixes
   it('renders and cleans up a portal in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render, createPortal, createElement } from 'fict'
@@ -762,7 +753,6 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it(
     'updates nested text content without re-rendering parent elements',
     { timeout: 10000 },
@@ -823,7 +813,6 @@ describe('compiled templates DOM integration', () => {
     },
   )
 
-  // TODO: HIR codegen integration needs deep fixes
   it('supports dynamic swapping of event handlers', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'

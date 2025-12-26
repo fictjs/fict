@@ -317,3 +317,425 @@ describe('buildHIR - Advanced Patterns', () => {
     expect(hir.functions[0]).toBeDefined()
   })
 })
+
+// ============================================================================
+// Break/Continue Statement Tests
+// ============================================================================
+
+describe('buildHIR - break statements', () => {
+  it('handles break in for-of loop', () => {
+    const ast = parseFile(`
+      function BreakForOf(items, target) {
+        let found = null
+        for (const item of items) {
+          if (item.id === target) {
+            found = item
+            break
+          }
+        }
+        return found
+      }
+    `)
+    const hir = buildHIR(ast)
+    const printed = printHIR(hir)
+    expect(printed.toLowerCase()).toContain('break')
+  })
+
+  it('handles break in for-in loop', () => {
+    const ast = parseFile(`
+      function BreakForIn(obj, targetKey) {
+        let foundValue = null
+        for (const key in obj) {
+          if (key === targetKey) {
+            foundValue = obj[key]
+            break
+          }
+        }
+        return foundValue
+      }
+    `)
+    const hir = buildHIR(ast)
+    const printed = printHIR(hir)
+    expect(printed.toLowerCase()).toContain('break')
+  })
+
+  it('handles break in nested for-of loops (inner loop only)', () => {
+    const ast = parseFile(`
+      function BreakNested(matrix) {
+        let count = 0
+        for (const row of matrix) {
+          for (const cell of row) {
+            if (cell < 0) {
+              break
+            }
+            count = count + 1
+          }
+        }
+        return count
+      }
+    `)
+    const hir = buildHIR(ast)
+    const printed = printHIR(hir)
+    expect(printed.toLowerCase()).toContain('break')
+    expect(hir.functions[0].blocks.length).toBeGreaterThanOrEqual(4)
+  })
+})
+
+describe('buildHIR - continue statements', () => {
+  it('handles continue in for-of loop', () => {
+    const ast = parseFile(`
+      function ContinueForOf(items) {
+        const result = []
+        for (const item of items) {
+          if (!item.active) {
+            continue
+          }
+          result.push(item)
+        }
+        return result
+      }
+    `)
+    const hir = buildHIR(ast)
+    const printed = printHIR(hir)
+    expect(printed.toLowerCase()).toContain('continue')
+  })
+
+  it('handles continue in for-in loop', () => {
+    const ast = parseFile(`
+      function ContinueForIn(obj) {
+        const result = {}
+        for (const key in obj) {
+          if (key.startsWith('_')) {
+            continue
+          }
+          result[key] = obj[key]
+        }
+        return result
+      }
+    `)
+    const hir = buildHIR(ast)
+    const printed = printHIR(hir)
+    expect(printed.toLowerCase()).toContain('continue')
+  })
+
+  it('handles multiple continue statements', () => {
+    const ast = parseFile(`
+      function MultiContinue(items) {
+        const result = []
+        for (const item of items) {
+          if (item === null) {
+            continue
+          }
+          if (item.skip) {
+            continue
+          }
+          result.push(item)
+        }
+        return result
+      }
+    `)
+    const hir = buildHIR(ast)
+    const printed = printHIR(hir)
+    expect((printed.toLowerCase().match(/continue/g) || []).length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+describe('buildHIR - labeled statements', () => {
+  it('handles labeled break in nested for-of loops', () => {
+    const ast = parseFile(`
+      function LabeledBreak(matrix, target) {
+        let found = false
+        outer: for (const row of matrix) {
+          for (const cell of row) {
+            if (cell === target) {
+              found = true
+              break outer
+            }
+          }
+        }
+        return found
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+    const printed = printHIR(hir)
+    expect(printed.toLowerCase()).toContain('break')
+  })
+
+  it('handles labeled continue in nested for-of loops', () => {
+    const ast = parseFile(`
+      function LabeledContinue(matrix) {
+        let sum = 0
+        outer: for (const row of matrix) {
+          for (const cell of row) {
+            if (cell < 0) {
+              continue outer
+            }
+            sum = sum + cell
+          }
+        }
+        return sum
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+    const printed = printHIR(hir)
+    expect(printed.toLowerCase()).toContain('continue')
+  })
+
+  it('handles labeled block with break', () => {
+    const ast = parseFile(`
+      function LabeledBlock(items) {
+        let result = null
+        search: {
+          for (const item of items) {
+            if (item.match) {
+              result = item
+              break search
+            }
+          }
+          result = { fallback: true }
+        }
+        return result
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+  })
+
+  it('handles multiple nested labeled loops', () => {
+    const ast = parseFile(`
+      function MultiLabel(cube) {
+        let count = 0
+        outer: for (const plane of cube) {
+          middle: for (const row of plane) {
+            for (const cell of row) {
+              if (cell === 0) {
+                continue middle
+              }
+              if (cell < 0) {
+                break outer
+              }
+              count = count + 1
+            }
+          }
+        }
+        return count
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+  })
+})
+
+describe('buildHIR - throw statements', () => {
+  it('handles throw statement', () => {
+    const ast = parseFile(`
+      function ThrowError(x) {
+        if (x < 0) {
+          throw new Error('negative value')
+        }
+        return x
+      }
+    `)
+    const hir = buildHIR(ast)
+    const printed = printHIR(hir)
+    expect(printed.toLowerCase()).toContain('throw')
+  })
+
+  it('handles throw in try-catch', () => {
+    const ast = parseFile(`
+      function ThrowInTry(x) {
+        try {
+          if (x === null) {
+            throw new Error('null value')
+          }
+          return x.value
+        } catch (e) {
+          return 0
+        }
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+    const printed = printHIR(hir)
+    expect(printed.toLowerCase()).toContain('throw')
+  })
+
+  it('handles rethrow in catch', () => {
+    const ast = parseFile(`
+      function Rethrow(fn) {
+        try {
+          return fn()
+        } catch (e) {
+          console.error(e)
+          throw e
+        }
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+  })
+})
+
+describe('buildHIR - try-finally patterns', () => {
+  it('handles try-finally without catch', () => {
+    const ast = parseFile(`
+      function TryFinally(resource) {
+        try {
+          return resource.read()
+        } finally {
+          resource.close()
+        }
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+    const printed = printHIR(hir)
+    expect(printed).toContain('TryFinally')
+  })
+
+  it('handles return in try with finally', () => {
+    const ast = parseFile(`
+      function ReturnInTry(x) {
+        let result = 0
+        try {
+          if (x > 0) {
+            return x
+          }
+          result = x * -1
+        } finally {
+          console.log('cleanup')
+        }
+        return result
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+  })
+
+  it('handles throw in try with finally', () => {
+    const ast = parseFile(`
+      function ThrowInTryWithFinally(x) {
+        try {
+          if (x === null) {
+            throw new Error('null')
+          }
+          return x
+        } finally {
+          console.log('always runs')
+        }
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+  })
+
+  it('handles nested try-finally', () => {
+    const ast = parseFile(`
+      function NestedTryFinally(a, b) {
+        try {
+          try {
+            return a.read()
+          } finally {
+            a.close()
+          }
+        } finally {
+          b.cleanup()
+        }
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+  })
+})
+
+describe('buildHIR - switch fall-through', () => {
+  it('handles switch with fall-through cases', () => {
+    const ast = parseFile(`
+      function SwitchFallthrough(x) {
+        let result = ''
+        switch (x) {
+          case 1:
+          case 2:
+          case 3:
+            result = 'small'
+            break
+          case 4:
+          case 5:
+            result = 'medium'
+            break
+          default:
+            result = 'large'
+        }
+        return result
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+    const printed = printHIR(hir)
+    expect(printed.toLowerCase()).toContain('switch')
+  })
+
+  it('handles switch without default', () => {
+    const ast = parseFile(`
+      function SwitchNoDefault(x) {
+        let result = 'unknown'
+        switch (x) {
+          case 'a':
+            result = 'alpha'
+            break
+          case 'b':
+            result = 'beta'
+            break
+        }
+        return result
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+  })
+
+  it('handles switch with return in cases', () => {
+    const ast = parseFile(`
+      function SwitchReturn(x) {
+        switch (x) {
+          case 1:
+            return 'one'
+          case 2:
+            return 'two'
+          default:
+            return 'other'
+        }
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+    const printed = printHIR(hir)
+    expect(printed.toLowerCase()).toContain('return')
+  })
+
+  it('handles switch with mixed return and break', () => {
+    const ast = parseFile(`
+      function SwitchMixed(x, y) {
+        let result = 0
+        switch (x) {
+          case 1:
+            if (y > 0) {
+              return y
+            }
+            result = 1
+            break
+          case 2:
+            result = 2
+            break
+          default:
+            return -1
+        }
+        return result
+      }
+    `)
+    const hir = buildHIR(ast)
+    expect(hir.functions[0]).toBeDefined()
+  })
+})

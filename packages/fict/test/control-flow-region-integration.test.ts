@@ -83,7 +83,6 @@ describe('control-flow region integration', () => {
     container.remove()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('keeps control-flow derived values reactive and side effects correct', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(controlFlowRegionSource)
@@ -149,7 +148,6 @@ describe('control-flow region integration', () => {
     logSpy.mockRestore()
   })
 
-  // TODO: HIR codegen integration needs deep fixes
   it('handles early-return branch without breaking derived values', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const source = `
