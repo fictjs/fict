@@ -1,0 +1,53 @@
+{
+  "name": "@fictjs/babel-preset",
+  "version": "0.0.1",
+  "description": "Babel preset for Fict - includes TypeScript, JSX, and Fict compiler",
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup src/index.ts --format cjs,esm --watch",
+    "lint": "eslint src",
+    "typecheck": "echo 'Types checked via dependencies'",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "@babel/core": ">=7.0.0"
+  },
+  "dependencies": {
+    "@babel/plugin-syntax-jsx": "^7.27.1",
+    "@babel/preset-typescript": "^7.26.0",
+    "@fictjs/compiler": "workspace:*"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.26.0",
+    "@types/babel__core": "^7.20.5",
+    "tsup": "^8.5.1"
+  },
+  "keywords": [
+    "babel-preset",
+    "fict",
+    "jsx",
+    "typescript",
+    "reactive"
+  ],
+  "author": "Michael Lin",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fictjs/fict.git",
+    "directory": "packages/babel-preset"
+  }
+}

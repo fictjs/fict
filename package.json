@@ -25,7 +25,8 @@
     "version": "changeset version",
     "release": "turbo run build && changeset publish",
     "precommit": "pnpm test && pnpm typecheck && pnpm lint && pnpm build",
-    "prepare": "husky"
+    "prepare": "husky",
+    "guardrails:hir": "node scripts/hir-guardrails.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.26.0",

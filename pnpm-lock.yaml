@@ -123,9 +123,6 @@ importers:
 
   examples/counter-webpack:
     dependencies:
-      '@fictjs/compiler':
-        specifier: workspace:*
-        version: link:../../packages/compiler
       '@fictjs/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
@@ -136,12 +133,9 @@ importers:
       '@babel/core':
         specifier: ^7.26.0
         version: 7.28.5
-      '@babel/plugin-syntax-jsx':
-        specifier: ^7.27.1
-        version: 7.27.1(@babel/core@7.28.5)
-      '@babel/preset-typescript':
-        specifier: ^7.26.0
-        version: 7.28.5(@babel/core@7.28.5)
+      '@fictjs/babel-preset':
+        specifier: workspace:*
+        version: link:../../packages/babel-preset
       babel-loader:
         specifier: ^9.2.1
         version: 9.2.1(@babel/core@7.28.5)(webpack@5.104.1(esbuild@0.27.0)(webpack-cli@6.0.1))
@@ -160,6 +154,28 @@ importers:
       webpack-dev-server:
         specifier: ^5.2.0
         version: 5.2.2(webpack-cli@6.0.1)(webpack@5.104.1)
+
+  packages/babel-preset:
+    dependencies:
+      '@babel/plugin-syntax-jsx':
+        specifier: ^7.27.1
+        version: 7.27.1(@babel/core@7.28.5)
+      '@babel/preset-typescript':
+        specifier: ^7.26.0
+        version: 7.28.5(@babel/core@7.28.5)
+      '@fictjs/compiler':
+        specifier: workspace:*
+        version: link:../compiler
+    devDependencies:
+      '@babel/core':
+        specifier: ^7.26.0
+        version: 7.28.5
+      '@types/babel__core':
+        specifier: ^7.20.5
+        version: 7.20.5
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(typescript@5.9.3)(yaml@2.8.1)
 
   packages/compiler:
     dependencies:

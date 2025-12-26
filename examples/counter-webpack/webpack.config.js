@@ -1,6 +1,5 @@
 const path = require('path')
 const HtmlWebpackPlugin = require('html-webpack-plugin')
-const { createFictPlugin } = require('@fictjs/compiler')
 
 module.exports = {
   entry: './src/main.tsx',
@@ -15,26 +14,12 @@ module.exports = {
   module: {
     rules: [
       {
-        test: /\.(tsx|jsx)$/,
-        exclude: /node_modules/,
+        test: /\.(tsx|ts|jsx|js)$/,
+        include: path.resolve(__dirname, 'src'),
         use: {
           loader: 'babel-loader',
           options: {
-            presets: [['@babel/preset-typescript', { isTSX: true, allExtensions: true }]],
-            plugins: [
-              ['@babel/plugin-syntax-jsx', {}],
-              [createFictPlugin, {}],
-            ],
-          },
-        },
-      },
-      {
-        test: /\.ts$/,
-        exclude: /node_modules/,
-        use: {
-          loader: 'babel-loader',
-          options: {
-            presets: ['@babel/preset-typescript'],
+            presets: ['@fictjs/babel-preset'],
           },
         },
       },
