@@ -645,7 +645,7 @@ describe('compiled templates DOM integration', () => {
   })
 
   // TODO: HIR codegen integration needs deep fixes - bindAttribute reactivity issue
-  it.skip(
+  it(
     'switches conditional branches and updates attributes in fine-grained mode',
     { timeout: 10000 },
     async () => {

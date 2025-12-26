@@ -33,6 +33,8 @@ interface BlockBuilder {
   sealed: boolean
 }
 
+let destructuringTempCounter = 0
+
 function normalizeVarKind(
   kind: BabelCore.types.VariableDeclaration['kind'],
 ): 'const' | 'let' | 'var' {
@@ -211,7 +213,6 @@ function buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Bas
                 })
               }
             })
-            continue
           }
         }
         continue
@@ -541,16 +542,59 @@ function convertFunction(
       continue
     }
     if (t.isVariableDeclaration(stmt)) {
+      const declKind = normalizeVarKind(stmt.kind)
       for (const decl of stmt.declarations) {
-        if (!t.isIdentifier(decl.id)) continue
-        current.block.instructions.push({
-          kind: 'Assign',
-          target: { kind: 'Identifier', name: decl.id.name },
-          value: decl.init
-            ? convertExpression(decl.init)
-            : ({ kind: 'Literal', value: undefined } as HLiteral),
-          declarationKind: normalizeVarKind(stmt.kind),
-        })
+        if (t.isIdentifier(decl.id)) {
+          current.block.instructions.push({
+            kind: 'Assign',
+            target: { kind: 'Identifier', name: decl.id.name },
+            value: decl.init
+              ? convertExpression(decl.init)
+              : ({ kind: 'Literal', value: undefined } as HLiteral),
+            declarationKind: declKind,
+          })
+          continue
+        }
+
+        if (t.isArrayPattern(decl.id)) {
+          const tempName = `__destruct_${destructuringTempCounter++}`
+          current.block.instructions.push({
+            kind: 'Assign',
+            target: { kind: 'Identifier', name: tempName },
+            value: decl.init
+              ? convertExpression(decl.init)
+              : ({ kind: 'Literal', value: undefined } as HLiteral),
+            declarationKind: declKind,
+          })
+
+          decl.id.elements.forEach((elem, index) => {
+            if (!elem) return
+            if (t.isIdentifier(elem)) {
+              const memberExpr = t.memberExpression(
+                t.identifier(tempName),
+                t.numericLiteral(index),
+                true,
+              )
+              current.block.instructions.push({
+                kind: 'Assign',
+                target: { kind: 'Identifier', name: elem.name },
+                value: convertExpression(memberExpr),
+                declarationKind: declKind,
+              })
+            } else if (t.isRestElement(elem) && t.isIdentifier(elem.argument)) {
+              const sliceCall = t.callExpression(
+                t.memberExpression(t.identifier(tempName), t.identifier('slice')),
+                [t.numericLiteral(index)],
+              )
+              current.block.instructions.push({
+                kind: 'Assign',
+                target: { kind: 'Identifier', name: elem.argument.name },
+                value: convertExpression(sliceCall),
+                declarationKind: declKind,
+              })
+            }
+          })
+        }
       }
       continue
     }
@@ -647,12 +691,14 @@ function convertFunction(
 
       // init in current block
       if (stmt.init && t.isVariableDeclaration(stmt.init)) {
+        const initKind = normalizeVarKind(stmt.init.kind)
         for (const decl of stmt.init.declarations) {
           if (!t.isIdentifier(decl.id) || !decl.init) continue
           current.block.instructions.push({
             kind: 'Assign',
             target: { kind: 'Identifier', name: decl.id.name },
             value: convertExpression(decl.init),
+            declarationKind: initKind,
           })
         }
       } else if (stmt.init && t.isExpression(stmt.init)) {
@@ -1059,7 +1105,12 @@ function fillStatements(
     return current
   }
 
-  return processStatement(stmt, bb, jumpTarget, ctx)
+  const result = processStatement(stmt, bb, jumpTarget, ctx)
+  if (!result.sealed) {
+    result.block.terminator = { kind: 'Jump', target: jumpTarget }
+    result.sealed = true
+  }
+  return result
 }
 
 /**
@@ -1094,15 +1145,56 @@ function processStatement(
 
   if (t.isVariableDeclaration(stmt)) {
     for (const decl of stmt.declarations) {
-      if (!t.isIdentifier(decl.id)) continue
-      push({
-        kind: 'Assign',
-        target: { kind: 'Identifier', name: decl.id.name },
-        value: decl.init
-          ? convertExpression(decl.init)
-          : ({ kind: 'Literal', value: undefined } as HLiteral),
-        declarationKind: normalizeVarKind(stmt.kind),
-      })
+      const declKind = normalizeVarKind(stmt.kind)
+      if (t.isIdentifier(decl.id)) {
+        push({
+          kind: 'Assign',
+          target: { kind: 'Identifier', name: decl.id.name },
+          value: decl.init
+            ? convertExpression(decl.init)
+            : ({ kind: 'Literal', value: undefined } as HLiteral),
+          declarationKind: declKind,
+        })
+        continue
+      }
+      if (t.isArrayPattern(decl.id)) {
+        const tempName = `__destruct_${destructuringTempCounter++}`
+        push({
+          kind: 'Assign',
+          target: { kind: 'Identifier', name: tempName },
+          value: decl.init
+            ? convertExpression(decl.init)
+            : ({ kind: 'Literal', value: undefined } as HLiteral),
+          declarationKind: declKind,
+        })
+        decl.id.elements.forEach((elem, index) => {
+          if (!elem) return
+          if (t.isIdentifier(elem)) {
+            const memberExpr = t.memberExpression(
+              t.identifier(tempName),
+              t.numericLiteral(index),
+              true,
+            )
+            push({
+              kind: 'Assign',
+              target: { kind: 'Identifier', name: elem.name },
+              value: convertExpression(memberExpr),
+              declarationKind: declKind,
+            })
+          } else if (t.isRestElement(elem) && t.isIdentifier(elem.argument)) {
+            const sliceCall = t.callExpression(
+              t.memberExpression(t.identifier(tempName), t.identifier('slice')),
+              [t.numericLiteral(index)],
+            )
+            push({
+              kind: 'Assign',
+              target: { kind: 'Identifier', name: elem.argument.name },
+              value: convertExpression(sliceCall),
+              declarationKind: declKind,
+            })
+          }
+        })
+      }
     }
     return bb
   }
@@ -1259,12 +1351,14 @@ function processStatement(
 
     // Init in current block
     if (stmt.init && t.isVariableDeclaration(stmt.init)) {
+      const initKind = normalizeVarKind(stmt.init.kind)
       for (const decl of stmt.init.declarations) {
         if (!t.isIdentifier(decl.id) || !decl.init) continue
         push({
           kind: 'Assign',
           target: { kind: 'Identifier', name: decl.id.name },
           value: convertExpression(decl.init),
+          declarationKind: initKind,
         })
       }
     } else if (stmt.init && t.isExpression(stmt.init)) {
@@ -1791,25 +1885,15 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
 
   // Arrow Function Expression
   if (t.isArrowFunctionExpression(node)) {
-    const params: HIdentifier[] = []
-    for (const p of node.params) {
-      if (t.isIdentifier(p)) {
-        params.push({ kind: 'Identifier', name: p.name })
-      } else if (t.isObjectPattern(p) || t.isArrayPattern(p)) {
-        params.push(...extractIdentifiersFromPattern(p))
-      } else if (t.isAssignmentPattern(p) && t.isIdentifier(p.left)) {
-        params.push({ kind: 'Identifier', name: p.left.name })
-      } else if (t.isRestElement(p) && t.isIdentifier(p.argument)) {
-        params.push({ kind: 'Identifier', name: p.argument.name })
-      }
-    }
     if (t.isBlockStatement(node.body)) {
-      // Build proper blocks for block body
-      const bodyBlocks = buildBlocksFromStatements(node.body.body)
+      const nested = convertFunction(undefined, node.params, node.body.body, {
+        noMemo: hasNoMemoDirectiveInStatements(node.body.body),
+        directives: node.body.directives,
+      })
       const arrow: HArrowFunctionExpression = {
         kind: 'ArrowFunction',
-        params,
-        body: bodyBlocks,
+        params: nested.params,
+        body: nested.blocks,
         isExpression: false,
         isAsync: node.async,
       }
@@ -1817,7 +1901,15 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     } else {
       const arrow: HArrowFunctionExpression = {
         kind: 'ArrowFunction',
-        params,
+        params: node.params
+          .map(p =>
+            t.isPattern(p)
+              ? extractIdentifiersFromPattern(p)
+              : t.isIdentifier(p)
+                ? [{ kind: 'Identifier' as const, name: p.name }]
+                : [],
+          )
+          .flat(),
         body: convertExpression(node.body as BabelCore.types.Expression),
         isExpression: true,
         isAsync: node.async,
@@ -1828,27 +1920,15 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
 
   // Function Expression
   if (t.isFunctionExpression(node)) {
-    const params: HIdentifier[] = []
-    for (const p of node.params) {
-      if (t.isIdentifier(p)) {
-        params.push({ kind: 'Identifier', name: p.name })
-      } else if (t.isObjectPattern(p) || t.isArrayPattern(p)) {
-        params.push(...extractIdentifiersFromPattern(p))
-      } else if (t.isAssignmentPattern(p)) {
-        if (t.isIdentifier(p.left)) {
-          params.push({ kind: 'Identifier', name: p.left.name })
-        } else if (t.isPattern(p.left)) {
-          params.push(...extractIdentifiersFromPattern(p.left))
-        }
-      } else if (t.isRestElement(p) && t.isIdentifier(p.argument)) {
-        params.push({ kind: 'Identifier', name: p.argument.name })
-      }
-    }
+    const nested = convertFunction(undefined, node.params, node.body.body, {
+      noMemo: hasNoMemoDirectiveInStatements(node.body.body),
+      directives: node.body.directives,
+    })
     const fn: HFunctionExpression = {
       kind: 'FunctionExpression',
       name: node.id?.name ?? '',
-      params,
-      body: buildBlocksFromStatements(node.body.body),
+      params: nested.params,
+      body: nested.blocks,
       isAsync: node.async,
     }
     return fn

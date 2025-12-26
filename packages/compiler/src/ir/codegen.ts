@@ -15,8 +15,14 @@ import {
   type JSXElementExpression,
 } from './hir'
 import type { ReactiveScope, ReactiveScopeResult } from './scopes'
-import { deSSAVarName, lowerStructuredNodeWithoutRegions, type Region } from './regions'
-import { structurizeCFG, type StructuredNode } from './structurize'
+import {
+  deSSAVarName,
+  expressionUsesTracked,
+  lowerStructuredNodeWithoutRegions,
+  type Region,
+} from './regions'
+import { structurizeCFG, structurizeCFGWithDiagnostics, type StructuredNode } from './structurize'
+import { analyzeCFG } from './ssa'
 
 const HOOK_SLOT_BASE = 1000
 
@@ -57,6 +63,50 @@ function reserveHookSlot(ctx: CodegenContext): number {
   return slot
 }
 
+function expressionContainsJSX(expr: any): boolean {
+  if (!expr || typeof expr !== 'object') return false
+  if (expr.kind === 'JSXElement') return true
+
+  switch (expr.kind) {
+    case 'CallExpression':
+      if (expressionContainsJSX(expr.callee as Expression)) return true
+      return expr.arguments?.some((arg: Expression) => expressionContainsJSX(arg)) ?? false
+    case 'ArrayExpression':
+      return expr.elements?.some((el: Expression) => expressionContainsJSX(el)) ?? false
+    case 'ObjectExpression':
+      return expr.properties?.some((p: any) => expressionContainsJSX(p.value)) ?? false
+    case 'ConditionalExpression':
+      return (
+        expressionContainsJSX(expr.test as Expression) ||
+        expressionContainsJSX(expr.consequent as Expression) ||
+        expressionContainsJSX(expr.alternate as Expression)
+      )
+    case 'ArrowFunction':
+      return expressionContainsJSX(expr.body as Expression)
+    default:
+      return false
+  }
+}
+
+function functionContainsJSX(fn: HIRFunction): boolean {
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (
+        (instr.kind === 'Assign' || instr.kind === 'Expression') &&
+        expressionContainsJSX((instr as any).value)
+      ) {
+        return true
+      }
+    }
+
+    const term = block.terminator
+    if (term.kind === 'Return' && term.argument && expressionContainsJSX(term.argument as any)) {
+      return true
+    }
+  }
+  return false
+}
+
 /**
  * Codegen context for tracking state during code generation
  */
@@ -80,6 +130,8 @@ export interface CodegenContext {
   needsForOfHelper?: boolean
   /** Whether local for-in helper is needed */
   needsForInHelper?: boolean
+  /** Control-flow dependencies per instruction (from CFG analysis) */
+  controlDepsByInstr?: Map<Instruction, Set<string>>
   /** Current region info for fine-grained DOM optimization */
   currentRegion?: RegionInfo
   /** All regions for the current function */
@@ -125,6 +177,10 @@ export interface CodegenContext {
   nonReactiveScopeDepth?: number
   /** Depth counter for conditional child lowering (disable memo caching) */
   inConditional?: number
+  /** Whether we are lowering JSX props (enables prop getter wrapping) */
+  inPropsContext?: boolean
+  /** Whether tracked expressions should be wrapped in runtime effects */
+  wrapTrackedExpressions?: boolean
 }
 
 /**
@@ -139,6 +195,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     shadowedNames: new Set(),
     needsForOfHelper: false,
     needsForInHelper: false,
+    controlDepsByInstr: new Map(),
     aliasVars: new Set(),
     externalTracked: new Set(),
     storeVars: new Set(),
@@ -151,9 +208,11 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     nextHookSlot: HOOK_SLOT_BASE,
     nonReactiveScopeDepth: 0,
     inConditional: 0,
+    wrapTrackedExpressions: true,
     getterCache: new Map(),
     getterCacheDeclarations: new Map(),
     getterCacheEnabled: false,
+    inPropsContext: false,
   }
 }
 
@@ -680,7 +739,6 @@ function buildControlDependencyMap(fn: HIRFunction): Map<Instruction, Set<string
   }
 
   const registerInstruction = (instr: Instruction, deps: Set<string>) => {
-    if (instr.kind !== 'Assign') return
     depsByInstruction.set(instr, new Set(deps))
   }
 
@@ -766,7 +824,7 @@ function buildControlDependencyMap(fn: HIRFunction): Map<Instruction, Set<string
 function computeReactiveAccessors(
   fn: HIRFunction,
   ctx: CodegenContext,
-): { tracked: Set<string>; memo: Set<string> } {
+): { tracked: Set<string>; memo: Set<string>; controlDepsByInstr: Map<Instruction, Set<string>> } {
   const activeReadVars = new Set<string>()
   const dataDepsByTarget = new Map<string, Set<string>>()
   const controlDepsByTarget = new Map<string, Set<string>>()
@@ -895,7 +953,7 @@ function computeReactiveAccessors(
     }
   }
 
-  return { tracked, memo }
+  return { tracked, memo, controlDepsByInstr }
 }
 
 /**
@@ -1480,11 +1538,33 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
         blocks,
         meta: { fromExpression: true },
       }
-      const structured = structurizeCFG(fn, {
-        warnOnIssues: false,
-        throwOnIssues: false,
-        useFallback: true,
-      })
+      const cfg = analyzeCFG(fn.blocks)
+      const hasLoop = cfg.loopHeaders.size > 0 || cfg.backEdges.size > 0
+      const { node, diagnostics } = structurizeCFGWithDiagnostics(fn)
+      const structured =
+        node.kind === 'stateMachine' || hasLoop
+          ? node.kind === 'stateMachine'
+            ? node
+            : {
+                kind: 'stateMachine' as const,
+                blocks: fn.blocks.map(block => ({
+                  blockId: block.id,
+                  instructions: block.instructions,
+                  terminator: block.terminator,
+                })),
+                entryBlock: fn.blocks[0]?.id ?? 0,
+              }
+          : diagnostics.isComplete
+            ? node
+            : {
+                kind: 'stateMachine' as const,
+                blocks: fn.blocks.map(block => ({
+                  blockId: block.id,
+                  instructions: block.instructions,
+                  terminator: block.terminator,
+                })),
+                entryBlock: fn.blocks[0]?.id ?? 0,
+              }
       const declared = new Set(paramIds.map(p => p.name))
       return lowerStructuredNodeWithoutRegions(structured, t, ctx, declared)
     } catch {
@@ -1543,8 +1623,16 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
           cb ?? t.arrowFunctionExpression([], t.identifier('undefined')),
         ])
       }
+      const isIIFE =
+        (expr.callee.kind === 'ArrowFunction' || expr.callee.kind === 'FunctionExpression') &&
+        expr.arguments.length === 0 &&
+        expr.callee.params.length === 0
+      const lowerCallee = () =>
+        isIIFE
+          ? withNonReactiveScope(ctx, () => lowerExpression(expr.callee, ctx))
+          : lowerExpression(expr.callee, ctx)
       return t.callExpression(
-        lowerExpression(expr.callee, ctx),
+        lowerCallee(),
         expr.arguments.map(a => lowerExpression(a, ctx)),
       )
 
@@ -1604,7 +1692,22 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
             return t.spreadElement(lowerExpression(p.argument, ctx))
           }
           // For shorthand properties, ensure key matches the de-versioned value name
-          const valueExpr = lowerExpression(p.value, ctx)
+          const valueExprRaw = lowerExpression(p.value, ctx)
+          const usesTracked =
+            !!ctx.inPropsContext &&
+            (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
+            p.value.kind !== 'ArrowFunction' &&
+            p.value.kind !== 'FunctionExpression' &&
+            expressionUsesTracked(p.value, ctx)
+          const valueExpr =
+            usesTracked && ctx.t.isExpression(valueExprRaw)
+              ? (() => {
+                  ctx.helpersUsed.add('propGetter')
+                  return t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
+                    t.arrowFunctionExpression([], valueExprRaw),
+                  ])
+                })()
+              : valueExprRaw
           const keyName = p.key.kind === 'Identifier' ? p.key.name : String(p.key.value ?? '')
           const keyNode =
             p.key.kind === 'Identifier' ? t.identifier(keyName) : t.stringLiteral(keyName)
@@ -2323,21 +2426,28 @@ function replaceIdentifiersWithOverrides(
   }
 }
 
-function buildDependencyGetter(name: string, ctx: CodegenContext): BabelCore.types.Expression {
+export function buildDependencyGetter(
+  name: string,
+  ctx: CodegenContext,
+): BabelCore.types.Expression {
   const { t } = ctx
   // Support simple dotted paths: foo.bar -> foo().bar if foo is tracked
   const parts = name.split('.')
   const base = parts.shift()!
   const baseId = t.identifier(base)
-  const isTracked =
-    ctx.trackedVars.has(base) ||
-    !!(ctx.signalVars?.has(base) || ctx.memoVars?.has(base) || ctx.aliasVars?.has(base))
+  // Only signal/memo/alias variables are actual getter functions that need () calls
+  // trackedVars includes all reactive dependencies but may contain plain values
+  const isActualGetter = !!(
+    ctx.signalVars?.has(base) ||
+    ctx.memoVars?.has(base) ||
+    ctx.aliasVars?.has(base)
+  )
   // $store variables use proxy-based reactivity, don't convert to getter calls
   const isStore = ctx.storeVars?.has(base) ?? false
   const isNonReactiveFunction = ctx.functionVars?.has(base) ?? false
 
   let baseExpr: BabelCore.types.Expression
-  if (isTracked && !isStore && !isNonReactiveFunction) {
+  if (isActualGetter && !isStore && !isNonReactiveFunction) {
     // Rule L: Use getter cache when enabled to avoid redundant getter calls
     const getterCall = t.callExpression(baseId, [])
     baseExpr = getCachedGetterExpression(ctx, base, getterCall)
@@ -2711,6 +2821,13 @@ function lowerIntrinsicElement(
   // Build a cache for resolved node paths
   const nodeCache = new Map<string, BabelCore.types.Identifier>()
   nodeCache.set('', elId)
+
+  // Precompute node references before any binding mutates the DOM tree
+  const pathStatements: BabelCore.types.Statement[] = []
+  for (const binding of bindings) {
+    resolveHIRBindingPath(binding.path, nodeCache, pathStatements, ctx)
+  }
+  statements.push(...pathStatements)
 
   // Apply bindings using path navigation
   for (const binding of bindings) {
@@ -3318,30 +3435,61 @@ function buildPropsObject(
   ctx: CodegenContext,
 ): BabelCore.types.Expression | null {
   const { t } = ctx
+  const prevPropsContext = ctx.inPropsContext
+  ctx.inPropsContext = true
 
-  if (attributes.length === 0) return null
+  try {
+    if (attributes.length === 0) return null
 
-  const properties: BabelCore.types.ObjectProperty[] = []
-  const spreads: BabelCore.types.SpreadElement[] = []
-  const toPropKey = (name: string) =>
-    /^[a-zA-Z_$][\w$]*$/.test(name) ? t.identifier(name) : t.stringLiteral(name)
+    const properties: BabelCore.types.ObjectProperty[] = []
+    const spreads: BabelCore.types.SpreadElement[] = []
+    const toPropKey = (name: string) =>
+      /^[a-zA-Z_$][\w$]*$/.test(name) ? t.identifier(name) : t.stringLiteral(name)
 
-  for (const attr of attributes) {
-    if (attr.isSpread && attr.spreadExpr) {
-      spreads.push(t.spreadElement(lowerDomExpression(attr.spreadExpr, ctx)))
-    } else if (attr.value) {
-      properties.push(t.objectProperty(toPropKey(attr.name), lowerDomExpression(attr.value, ctx)))
-    } else {
-      // Boolean attribute
-      properties.push(t.objectProperty(toPropKey(attr.name), t.booleanLiteral(true)))
+    for (const attr of attributes) {
+      if (attr.isSpread && attr.spreadExpr) {
+        spreads.push(t.spreadElement(lowerDomExpression(attr.spreadExpr, ctx)))
+      } else if (attr.value) {
+        const lowered = lowerDomExpression(attr.value, ctx)
+        const isFunctionLike =
+          attr.value.kind === 'ArrowFunction' || attr.value.kind === 'FunctionExpression'
+        const baseIdent =
+          attr.value.kind === 'Identifier' ? deSSAVarName(attr.value.name) : undefined
+        const alreadyGetter =
+          isFunctionLike ||
+          (baseIdent
+            ? (ctx.memoVars?.has(baseIdent) ?? false) ||
+              (ctx.signalVars?.has(baseIdent) ?? false) ||
+              (ctx.storeVars?.has(baseIdent) ?? false)
+            : false)
+        const usesTracked =
+          (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
+          expressionUsesTracked(attr.value, ctx) &&
+          !alreadyGetter
+        const valueExpr =
+          usesTracked && t.isExpression(lowered)
+            ? (() => {
+                ctx.helpersUsed.add('propGetter')
+                return t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
+                  t.arrowFunctionExpression([], lowered),
+                ])
+              })()
+            : lowered
+        properties.push(t.objectProperty(toPropKey(attr.name), valueExpr))
+      } else {
+        // Boolean attribute
+        properties.push(t.objectProperty(toPropKey(attr.name), t.booleanLiteral(true)))
+      }
     }
-  }
 
-  if (spreads.length > 0) {
-    return t.objectExpression([...spreads, ...properties])
-  }
+    if (spreads.length > 0) {
+      return t.objectExpression([...spreads, ...properties])
+    }
 
-  return t.objectExpression(properties)
+    return t.objectExpression(properties)
+  } finally {
+    ctx.inPropsContext = prevPropsContext
+  }
 }
 
 /**
@@ -3831,6 +3979,7 @@ function lowerTopLevelStatementBlock(
   const reactive = computeReactiveAccessors(fn, ctx)
   ctx.trackedVars = reactive.tracked
   ctx.memoVars = reactive.memo
+  ctx.controlDepsByInstr = reactive.controlDepsByInstr
 
   const lowered = generateRegionCode(fn, scopeResult, t, ctx)
   return { statements: lowered, aliases: aliasVars }
@@ -3845,9 +3994,16 @@ function transformControlFlowReturns(
   const toStatements = (node: BabelCore.types.Statement | BabelCore.types.BlockStatement) =>
     t.isBlockStatement(node) ? node.body : [node]
 
-  const endsWithReturn = (stmts: BabelCore.types.Statement[]) => {
+  const endsWithReturn = (stmts: BabelCore.types.Statement[]): boolean => {
     if (stmts.length === 0) return false
-    return t.isReturnStatement(stmts[stmts.length - 1])
+    const tail = stmts[stmts.length - 1]!
+    if (t.isReturnStatement(tail)) return true
+    if (t.isIfStatement(tail) && tail.consequent && tail.alternate) {
+      const conseqStmts = toStatements(tail.consequent)
+      const altStmts = toStatements(tail.alternate)
+      return endsWithReturn(conseqStmts) && endsWithReturn(altStmts)
+    }
+    return false
   }
 
   function buildReturnBlock(
@@ -3955,6 +4111,7 @@ function lowerFunctionWithRegions(
   const prevAliasVars = ctx.aliasVars
   const prevNoMemo = ctx.noMemo
   const prevNextHookSlot = ctx.nextHookSlot
+  const prevWrapTracked = ctx.wrapTrackedExpressions
   const scopedTracked = new Set(ctx.trackedVars)
   const shadowedParams = new Set(fn.params.map(p => deSSAVarName(p.name)))
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
@@ -4023,9 +4180,42 @@ function lowerFunctionWithRegions(
   const reactive = computeReactiveAccessors(fn, ctx)
   ctx.trackedVars = reactive.tracked
   ctx.memoVars = reactive.memo
+  ctx.controlDepsByInstr = reactive.controlDepsByInstr
+  if (process.env.DEBUG_REGION && fn.name === 'Counter') {
+    // eslint-disable-next-line no-console
+    console.log('Tracked vars for Counter', Array.from(ctx.trackedVars))
+    // eslint-disable-next-line no-console
+    console.log('Memo vars for Counter', Array.from(ctx.memoVars))
+  }
 
-  // Generate region-based statements
-  let statements = generateRegionCode(fn, scopeResult, t, ctx)
+  const hasJSX = regionResult.regions.some(r => r.hasJSX) || functionContainsJSX(fn)
+  ctx.wrapTrackedExpressions = hasJSX
+  const hasTrackedValues =
+    ctx.trackedVars.size > 0 ||
+    (ctx.signalVars?.size ?? 0) > 0 ||
+    (ctx.storeVars?.size ?? 0) > 0 ||
+    (ctx.memoVars?.size ?? 0) > 0 ||
+    (ctx.aliasVars?.size ?? 0) > 0
+  if (!hasJSX && !hasTrackedValues) {
+    ctx.needsCtx = prevNeedsCtx
+    ctx.shadowedNames = prevShadowed
+    ctx.trackedVars = prevTracked
+    ctx.externalTracked = prevExternalTracked
+    ctx.signalVars = prevSignalVars
+    ctx.functionVars = prevFunctionVars
+    ctx.memoVars = prevMemoVars
+    ctx.storeVars = prevStoreVars
+    ctx.mutatedVars = prevMutatedVars
+    ctx.aliasVars = prevAliasVars
+    ctx.noMemo = prevNoMemo
+    ctx.nextHookSlot = prevNextHookSlot
+    ctx.wrapTrackedExpressions = prevWrapTracked
+    return null
+  }
+
+  // Generate region-based statements (JSX-bearing functions)
+  let statements: BabelCore.types.Statement[]
+  statements = generateRegionCode(fn, scopeResult, t, ctx)
 
   // Ensure context if signals/effects are used in experimental path
   if (ctx.needsCtx) {
@@ -4095,6 +4285,7 @@ function lowerFunctionWithRegions(
   ctx.aliasVars = prevAliasVars
   ctx.noMemo = prevNoMemo
   ctx.nextHookSlot = prevNextHookSlot
+  ctx.wrapTrackedExpressions = prevWrapTracked
   return funcDecl
 }
 

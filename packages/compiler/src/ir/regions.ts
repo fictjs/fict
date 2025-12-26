@@ -11,7 +11,12 @@ import { RUNTIME_ALIASES } from '../constants'
 import type { RegionMetadata } from '../fine-grained-dom'
 
 import type { CodegenContext, RegionInfo } from './codegen'
-import { applyRegionToContext, applyRegionMetadataToExpression, lowerExpression } from './codegen'
+import {
+  applyRegionToContext,
+  applyRegionMetadataToExpression,
+  buildDependencyGetter,
+  lowerExpression,
+} from './codegen'
 import type {
   BasicBlock,
   BlockId,
@@ -187,7 +192,7 @@ function isInstructionInScope(instr: Instruction, scope: ReactiveScope): boolean
   }
   if (instr.kind === 'Expression') {
     const deps = collectExprDependencies(instr.value)
-    if (deps.size === 0) return false
+    if (deps.size === 0) return true
     for (const decl of scope.declarations) {
       if (deps.has(deSSAVarName(decl))) return true
     }
@@ -230,7 +235,7 @@ function containsJSXExpr(expr: any): boolean {
   return false
 }
 
-function expressionUsesTracked(expr: Expression, ctx: CodegenContext): boolean {
+export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): boolean {
   switch (expr.kind) {
     case 'Identifier':
       return (
@@ -544,6 +549,8 @@ function lowerNodeWithRegionContext(
     }
 
     case 'if': {
+      const prevConditional = ctx.inConditional ?? 0
+      ctx.inConditional = prevConditional + 1
       const conseq = t.blockStatement(
         lowerNodeWithRegionContext(node.consequent, t, ctx, declaredVars, regionCtx),
       )
@@ -552,8 +559,27 @@ function lowerNodeWithRegionContext(
             lowerNodeWithRegionContext(node.alternate, t, ctx, declaredVars, regionCtx),
           )
         : null
+      ctx.inConditional = prevConditional
 
-      return [t.ifStatement(lowerExpressionWithDeSSA(node.test, ctx), conseq, alt)]
+      const ifStmt = t.ifStatement(lowerExpressionWithDeSSA(node.test, ctx), conseq, alt)
+      const shouldWrapEffect =
+        ctx.wrapTrackedExpressions !== false &&
+        expressionUsesTracked(node.test, ctx) &&
+        !statementHasEarlyExit(ifStmt, t)
+      if (shouldWrapEffect) {
+        ctx.helpersUsed.add('useEffect')
+        ctx.needsCtx = true
+        return [
+          t.expressionStatement(
+            t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
+              t.identifier('__fictCtx'),
+              t.arrowFunctionExpression([], t.blockStatement([ifStmt])),
+            ]),
+          ),
+        ]
+      }
+
+      return [ifStmt]
     }
 
     case 'while': {
@@ -651,6 +677,30 @@ function lowerNodeWithRegionContext(
     }
 
     case 'stateMachine': {
+      const hoisted: string[] = []
+      const normalizedBlocks = node.blocks.map(block => {
+        const instructions = block.instructions.map(instr => {
+          if (instr.kind === 'Assign' && instr.declarationKind) {
+            const base = deSSAVarName(instr.target.name)
+            if (!hoisted.includes(base)) hoisted.push(base)
+            return { ...instr, declarationKind: undefined }
+          }
+          return instr
+        })
+        return { ...block, instructions }
+      })
+      const hoistedDecl =
+        hoisted.length > 0
+          ? [
+              t.variableDeclaration(
+                'let',
+                hoisted.map(name => t.variableDeclarator(t.identifier(name))),
+              ),
+            ]
+          : []
+      const stateMachineDeclared = new Set(declaredVars)
+      hoisted.forEach(n => stateMachineDeclared.add(n))
+
       // Fallback: generate a switch-based state machine
       // This handles non-structurable CFGs by emulating goto with a state variable
       const stateVar = t.identifier('__state')
@@ -660,12 +710,12 @@ function lowerNodeWithRegionContext(
 
       // Generate switch cases for each block
       const cases: BabelCore.types.SwitchCase[] = []
-      for (const block of node.blocks) {
+      for (const block of normalizedBlocks) {
         const stmts: BabelCore.types.Statement[] = []
 
         // Lower instructions
         for (const instr of block.instructions) {
-          const stmt = instructionToStatement(instr, t, declaredVars, ctx)
+          const stmt = instructionToStatement(instr, t, stateMachineDeclared, ctx)
           if (stmt) stmts.push(stmt)
         }
 
@@ -682,7 +732,7 @@ function lowerNodeWithRegionContext(
       const whileLoop = t.whileStatement(t.booleanLiteral(true), t.blockStatement([switchStmt]))
       const labeledLoop = t.labeledStatement(t.identifier('__cfgLoop'), whileLoop)
 
-      return [stateDecl, labeledLoop]
+      return [...hoistedDecl, stateDecl, labeledLoop]
     }
 
     default:
@@ -838,13 +888,28 @@ function lowerStructuredNodeForRegion(
           )
         : []
       if (consequent.length === 0 && alternate.length === 0) return []
-      return [
-        t.ifStatement(
-          lowerExpressionWithDeSSA(node.test, ctx),
-          t.blockStatement(consequent),
-          alternate.length > 0 ? t.blockStatement(alternate) : null,
-        ),
-      ]
+      const ifStmt = t.ifStatement(
+        lowerExpressionWithDeSSA(node.test, ctx),
+        t.blockStatement(consequent),
+        alternate.length > 0 ? t.blockStatement(alternate) : null,
+      )
+      const shouldWrapEffect =
+        ctx.wrapTrackedExpressions !== false &&
+        expressionUsesTracked(node.test, ctx) &&
+        !statementHasEarlyExit(ifStmt, t)
+      if (shouldWrapEffect) {
+        ctx.helpersUsed.add('useEffect')
+        ctx.needsCtx = true
+        return [
+          t.expressionStatement(
+            t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
+              t.identifier('__fictCtx'),
+              t.arrowFunctionExpression([], t.blockStatement([ifStmt])),
+            ]),
+          ),
+        ]
+      }
+      return [ifStmt]
     }
 
     case 'while': {
@@ -1151,6 +1216,33 @@ function lowerInstructionsToUpdateExpr(
   return t.sequenceExpression(exprs)
 }
 
+function statementHasEarlyExit(
+  stmt: BabelCore.types.Statement,
+  t: typeof BabelCore.types,
+): boolean {
+  if (
+    t.isReturnStatement(stmt) ||
+    t.isThrowStatement(stmt) ||
+    t.isBreakStatement(stmt) ||
+    t.isContinueStatement(stmt)
+  ) {
+    return true
+  }
+
+  if (t.isIfStatement(stmt)) {
+    return (
+      (stmt.consequent ? statementHasEarlyExit(stmt.consequent, t) : false) ||
+      (stmt.alternate ? statementHasEarlyExit(stmt.alternate, t) : false)
+    )
+  }
+
+  if (t.isBlockStatement(stmt)) {
+    return stmt.body.some(child => statementHasEarlyExit(child, t))
+  }
+
+  return false
+}
+
 /**
  * Remove SSA version suffix from variable name.
  * Exported for use in codegen.ts and other modules that need SSA de-versioning.
@@ -1305,6 +1397,14 @@ function wrapInMemo(
   // Remove duplicates that may result from de-versioning (e.g., count_1 and count_2 both become count)
   const uniqueOutputNames = [...new Set(outputNames)]
 
+  if (process.env.DEBUG_REGION) {
+    // eslint-disable-next-line no-console
+    console.log('Region memo', region.id, {
+      instructions: region.instructions.map(instr => instr.kind),
+      outputs: uniqueOutputNames,
+    })
+  }
+
   if (uniqueOutputNames.length === 0) {
     // No outputs - just execute for side effects
     ctx.helpersUsed.add('useEffect')
@@ -1376,6 +1476,18 @@ function wrapInMemo(
     )
     const directOutputs = uniqueOutputNames.filter(name => !getterOutputs.includes(name))
 
+    if (process.env.DEBUG_REGION) {
+      // eslint-disable-next-line no-console
+      console.log('Region debug', {
+        id: region.id,
+        outputs: uniqueOutputNames,
+        getterOutputs,
+        directOutputs,
+        tracked: Array.from(ctx.trackedVars),
+        memoVars: Array.from(ctx.memoVars ?? []),
+      })
+    }
+
     // Destructure outputs that are already accessors or non-reactive values.
     if (directOutputs.length > 0) {
       directOutputs.forEach(name => declaredVars.add(name))
@@ -1394,21 +1506,34 @@ function wrapInMemo(
     }
 
     // Wrap pending outputs in getters that call the region accessor lazily.
+    // These become memo-like getters that should be called with () when used.
     for (const name of getterOutputs) {
       declaredVars.add(name)
+      const callRegion = t.callExpression(t.identifier(regionVarName), [])
+      const baseAccess = t.memberExpression(callRegion, t.identifier(name))
       statements.push(
         t.variableDeclaration('const', [
-          t.variableDeclarator(
-            t.identifier(name),
-            t.arrowFunctionExpression(
-              [],
-              t.memberExpression(
-                t.callExpression(t.identifier(regionVarName), []),
-                t.identifier(name),
-              ),
-            ),
-          ),
+          t.variableDeclarator(t.identifier(name), t.arrowFunctionExpression([], baseAccess)),
         ]),
+      )
+      // Mark as a memo so buildDependencyGetter will add () when this name is used
+      ctx.memoVars?.add(name)
+    }
+
+    if (region.hasControlFlow && getterOutputs.length > 0) {
+      ctx.helpersUsed.add('useEffect')
+      ctx.needsCtx = true
+      const effectBody = t.blockStatement(
+        getterOutputs.map(name => t.expressionStatement(t.callExpression(t.identifier(name), []))),
+      )
+      statements.push(
+        t.expressionStatement(
+          t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
+            t.identifier('__fictCtx'),
+            t.arrowFunctionExpression([], effectBody),
+            t.numericLiteral(reserveHookSlot(ctx)),
+          ]),
+        ),
       )
     }
   }
@@ -1758,14 +1883,6 @@ function instructionToStatement(
     const ssaName = instr.target.name
     const baseName = deSSAVarName(ssaName)
     const declKind = instr.declarationKind
-    if (process.env.DEBUG_TEMPLATE_OUTPUT && baseName === 'snapshot') {
-      // eslint-disable-next-line no-console
-      console.log('lowering snapshot', {
-        nonReactive: ctx.nonReactiveScopeDepth,
-        noMemo: ctx.noMemo,
-        tracked: Array.from(ctx.trackedVars ?? []),
-      })
-    }
     const isTracked = ctx.trackedVars.has(baseName)
     const isSignal = ctx.signalVars?.has(baseName) ?? false
     const aliasVars = ctx.aliasVars ?? (ctx.aliasVars = new Set())
@@ -2017,6 +2134,37 @@ function instructionToStatement(
     ])
   }
   if (instr.kind === 'Expression') {
+    const controlDeps = ctx.controlDepsByInstr?.get(instr) ?? new Set<string>()
+    const hasTrackedControlDep = Array.from(controlDeps).some(dep =>
+      ctx.trackedVars.has(deSSAVarName(dep)),
+    )
+    const usesTracked = expressionUsesTracked(instr.value, ctx)
+    if (ctx.wrapTrackedExpressions !== false && (usesTracked || hasTrackedControlDep)) {
+      ctx.helpersUsed.add('useEffect')
+      ctx.needsCtx = true
+      const depReads: BabelCore.types.Statement[] = []
+      if (hasTrackedControlDep) {
+        const uniqueDeps = new Set(Array.from(controlDeps).map(dep => deSSAVarName(dep)))
+        uniqueDeps.forEach(dep => {
+          if (!ctx.trackedVars.has(dep)) return
+          const depExpr = buildDependencyGetter(dep, ctx)
+          depReads.push(ctx.t.expressionStatement(depExpr))
+        })
+      }
+      const loweredExpr = lowerExpressionWithDeSSA(instr.value, ctx)
+      const effectBody =
+        depReads.length > 0
+          ? ctx.t.blockStatement([...depReads, ctx.t.expressionStatement(loweredExpr)])
+          : loweredExpr
+      return t.expressionStatement(
+        t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
+          t.identifier('__fictCtx'),
+          ctx.t.isBlockStatement(effectBody)
+            ? t.arrowFunctionExpression([], effectBody)
+            : t.arrowFunctionExpression([], effectBody as BabelCore.types.Expression),
+        ]),
+      )
+    }
     return t.expressionStatement(lowerExpressionWithDeSSA(instr.value, ctx))
   }
   // Phi nodes are handled by SSA elimination pass

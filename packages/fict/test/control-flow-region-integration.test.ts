@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs'
 import { createRequire } from 'module'
 
 import * as runtime from '@fictjs/runtime'
@@ -16,6 +17,9 @@ const tick = () =>
 
 function compileAndLoad<TModule extends Record<string, any>>(source: string): TModule {
   const output = transformCommonJS(source)
+  if (process.env.DEBUG_COMPILED) {
+    writeFileSync('/tmp/fict-compiled.js', output)
+  }
   const module: { exports: any } = { exports: {} }
   const dynamicRequire = createRequire(import.meta.url)
 
@@ -119,6 +123,15 @@ describe('control-flow region integration', () => {
     await tick()
     expect(countText()).toBe('Count: 3')
     expect(doubleText()).toBe('Double: 6')
+    if (process.env.DEBUG_VALUES) {
+      // eslint-disable-next-line no-console
+      console.info({
+        count: countText(),
+        double: doubleText(),
+        message: messageText(),
+        color: root().style.color,
+      })
+    }
     expect(messageText()).toBe('Threshold Reached!')
     expect(root().style.color).toBe('red')
     expect(logSpy).toHaveBeenCalledTimes(1)

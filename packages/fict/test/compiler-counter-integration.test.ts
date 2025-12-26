@@ -16,6 +16,10 @@ const tick = () =>
 
 function compileAndLoad<TModule extends Record<string, any>>(source: string): TModule {
   const output = transformCommonJS(source)
+  if (process.env.DEBUG_TEMPLATE_OUTPUT) {
+    // eslint-disable-next-line no-console
+    console.warn(output)
+  }
   const module: { exports: any } = { exports: {} }
   const dynamicRequire = createRequire(import.meta.url)
 
@@ -190,6 +194,11 @@ describe('compiler + fict integration', () => {
     countBtn().click()
     await tick()
 
+    if (process.env.DEBUG_TEMPLATE_OUTPUT) {
+      // eslint-disable-next-line no-console
+      console.warn('after first click', logSpy.mock.calls.length, countBtn().textContent)
+    }
+
     expect(logSpy).toHaveBeenCalledTimes(2)
     expect(logSpy).toHaveBeenLastCalledWith('doubled', 2)
     expect(countBtn().textContent).toContain('Count: 1 is not divisible by 2, count1: 2')
@@ -198,6 +207,11 @@ describe('compiler + fict integration', () => {
 
     countBtn().click()
     await tick()
+
+    if (process.env.DEBUG_TEMPLATE_OUTPUT) {
+      // eslint-disable-next-line no-console
+      console.warn('after second click', logSpy.mock.calls.length, countBtn().textContent)
+    }
 
     expect(logSpy).toHaveBeenCalledTimes(3)
     expect(logSpy).toHaveBeenLastCalledWith('doubled', 4)
