@@ -1,6 +1,6 @@
 # HIR 全量落地实施方案（大胆版）
 
-> 目标：移除 legacy 路径，彻底以 HIR → SSA → Region → fine-grained DOM 为唯一编译链路。以下四大工作面需一次性补齐，确保产物可运行且与现有运行时对齐。
+> 目标：移除 legacy 路径，彻底以 HIR → SSA → Region → fine-grained DOM 为唯一编译链路。当前代码已完成切换，以下内容保留为实施记录与守护清单。
 
 ## 1. CFG 结构化回写（if/loop/switch/try + for-of/in 实语义）
 

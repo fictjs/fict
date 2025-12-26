@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { transformHIR } from './test-utils'
 
-describe('HIR entrypoint (hirEntrypoint)', () => {
+describe('HIR entrypoint (default)', () => {
   it('lowers $state and assignments via HIR pipeline', () => {
     const code = transformHIR(
       `
@@ -12,7 +12,6 @@ describe('HIR entrypoint (hirEntrypoint)', () => {
           return count
         }
       `,
-      { hirEntrypoint: true },
     )
 
     expect(code).toContain('__fictUseSignal(__fictCtx')
@@ -30,7 +29,6 @@ describe('HIR entrypoint (hirEntrypoint)', () => {
           return <div className={count}>{count}</div>
         }
       `,
-      { hirEntrypoint: true },
     )
 
     expect(code).toContain('__fictUseEffect(__fictCtx')
@@ -47,7 +45,6 @@ describe('HIR entrypoint (hirEntrypoint)', () => {
         return <div className={state.user.name}>{state.user.name}</div>
       }
     `,
-      { hirEntrypoint: true },
     )
 
     expect(code).toContain('state().user.name')

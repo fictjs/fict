@@ -1091,8 +1091,7 @@ function extractKeyFromMapCallback(callback: Expression): Expression | undefined
  * - Linearizes blocks in order and reconstructs statements best-effort.
  * - Unsupported instructions become empty statements.
  * - Placeholder for region→fine-grained DOM mapping (not implemented yet).
- *
- * This is for experimental mode only; legacy pipeline remains the source of truth.
+ * Primarily used for tests that snapshot intermediate lowering.
  */
 export function lowerHIRToBabel(
   program: HIRProgram,

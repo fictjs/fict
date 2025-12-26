@@ -227,7 +227,7 @@ function createHIREntrypointVisitor(
             }
           },
         })
-        // Validate macro placement similar to legacy path
+        // Validate macro placement consistently for HIR path
         const stateVars = new Set<string>()
         const derivedVars = new Set<string>()
         path.traverse({
@@ -341,13 +341,6 @@ export const createFictPlugin = declare(
   (api, options: FictCompilerOptions = {}): BabelCore.PluginObj => {
     api.assertVersion(7)
     const t = api.types as typeof BabelCore.types
-
-    if (options.experimentalHIR === false || options.hirCodegen === false) {
-      throw new Error('HIR-only compiler: experimentalHIR/hirCodegen cannot be disabled')
-    }
-    if (options.hirEntrypoint === false) {
-      throw new Error('HIR-only compiler: hirEntrypoint cannot be disabled')
-    }
 
     return {
       name: 'fict-compiler-hir',

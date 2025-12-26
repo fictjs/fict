@@ -16,17 +16,11 @@
 
 ## 状态校准（当前分支）
 
-> **✅ HIR 已成为默认编译路径！**
+> **✅ HIR 现为唯一编译路径，Legacy 代码已移除。**
 
-- `experimentalHIR: true` 和 `hirCodegen: true` 现为默认值。
-- 旧 Babel 直接变换路径已标记为废弃（deprecated），会输出控制台警告。
-- 16 个测试文件已更新为显式使用旧路径（`transformLegacy`/`transformLegacyPath`）以保持兼容。
-- 402/404 测试通过（2 个因运行时解析问题跳过，与 HIR 无关）。
-
-**后续计划：**
-
-- 移除旧路径代码（在几个版本后）
-- 完善 HIR 路径的边缘情况处理
+- 编译选项中不再支持关闭 HIR；插件直接走 `HIR → SSA → Region → fine-grained DOM`。
+- 所有编译/运行时集成测试均在 HIR 管线上通过。
+- 后续工作聚焦于边缘场景完善与性能/体积回归监控。
 
 ---
 
@@ -174,11 +168,11 @@
 ## 优先级 TODO 列表
 
 - **P0｜管线支架与可回退**
-  - ✅ 在 `packages/compiler/src/index.ts` 增加 `experimentalHIR` 选项（默认关闭），上下文携带到各 pass，确保旧路径完全不受影响。
-  - ✅ 创建 `packages/compiler/src/ir/` 目录：定义 HIR 基本块/指令/终结符类型、`buildHIR` 骨架与 Babel AST ↔ HIR 桥接函数（stub 先返回空 IR，但接口稳定）。
-  - ⏳ Fixture 双跑 harness：已有 `process.env.FICT_HIR=1` 切换，但仅覆盖最小 sample，未对现有 fixtures 产出双份 snapshot/对比。
+  - ✅ HIR 已默认且不可关闭，Legacy 入口与 flag 已移除。
+  - ✅ 创建 `packages/compiler/src/ir/` 目录：定义 HIR 基本块/指令/终结符类型、`buildHIR` 骨架与 Babel AST ↔ HIR 桥接函数。
+  - ⏳ Fixture 双跑 harness：可按需增加历史对比，但主干仅跑 HIR。
   - ✅ IR 打印器雏形：`printHIR` 输出文本版 CFG（块 ID、终结符、指令列表），用于早期 snapshot 与调试。
-  - ✅ 文档 stub：新增 `docs/compiler-hir.md` 占位，记录 flag、已支持/未支持特性列表，方便回归时对齐预期。
+  - (原) 文档 stub：`docs/compiler-hir.md` 已移除，信息收敛到升级计划。
 
 - **P0｜回写与运行时对齐**
   - ⚠️ 在新管线实现最小化 codegen：`lowerHIRWithRegions` 仅在单测中运行，未接入 Babel 插件/运行时导入，生成代码未实际落地。（已实现：`lowerHIRWithRegions`、`getRegionMetadataForFunction`、`hasReactiveRegions` 单测通过）

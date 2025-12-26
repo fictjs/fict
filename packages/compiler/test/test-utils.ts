@@ -2,8 +2,6 @@ import { transformSync, type PluginItem } from '@babel/core'
 // @ts-expect-error - CommonJS module without proper types
 import pluginTransformCjs from '@babel/plugin-transform-modules-commonjs'
 // @ts-expect-error - CommonJS module without proper types
-import pluginTransformReactJsx from '@babel/plugin-transform-react-jsx'
-// @ts-expect-error - CommonJS module without proper types
 import presetTypescript from '@babel/preset-typescript'
 
 import createFictPlugin, { type FictCompilerOptions } from '../src/index'
@@ -14,20 +12,7 @@ function runTransform(
   filename = 'module.tsx',
   extraPlugins: PluginItem[] = [],
 ): string {
-  const mergedOptions: FictCompilerOptions = {
-    experimentalHIR: true,
-    hirCodegen: true,
-    hirEntrypoint: options.hirEntrypoint ?? true,
-    ...options,
-  }
-
-  // Always use @babel/plugin-transform-react-jsx to handle:
-  // 1. Non-fine-grained mode: all JSX
-  // 2. Fine-grained mode: component JSX (<App />) and fragments (<></>)
-  //    since the Fict compiler only handles intrinsic elements
-  const jsxPlugins: PluginItem[] = mergedOptions.hirEntrypoint
-    ? []
-    : [[pluginTransformReactJsx, { runtime: 'automatic', importSource: '@fictjs/runtime' }]]
+  const mergedOptions: FictCompilerOptions = { ...options }
 
   const result = transformSync(source, {
     filename,
@@ -42,7 +27,7 @@ function runTransform(
     // JSX plugin runs AFTER Fict plugin (Babel runs plugins left to right, but visitors run bottom-up)
     // However, for conditional bindings, we need the JSX inside arrow functions to be transformed
     // The Fict plugin should handle transforming JSX inside these generated constructs
-    plugins: [[createFictPlugin, mergedOptions], ...jsxPlugins, ...extraPlugins],
+    plugins: [[createFictPlugin, mergedOptions], ...extraPlugins],
     presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
     generatorOpts: {
       compact: false,
@@ -70,26 +55,7 @@ export function transformHIR(
   options: FictCompilerOptions = {},
   filename = 'module.tsx',
 ): string {
-  return runTransform(
-    source,
-    { experimentalHIR: true, hirCodegen: true, hirEntrypoint: true, ...options },
-    filename,
-  )
-}
-
-/**
- * Legacy transform function - opt back into legacy visitor for specific tests.
- */
-export function transformLegacy(
-  source: string,
-  options: FictCompilerOptions = {},
-  filename = 'module.tsx',
-): string {
-  return runTransform(
-    source,
-    { experimentalHIR: true, hirCodegen: true, hirEntrypoint: false, ...options },
-    filename,
-  )
+  return runTransform(source, options, filename)
 }
 
 /**
