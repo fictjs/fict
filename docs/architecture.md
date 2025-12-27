@@ -104,6 +104,58 @@ return <>{count}</>
 
 When `count` changes, only the text node updates. The component body doesn't re-execute because `doubled` is defined but never read at runtime in control flow.
 
+#### Concrete Example: What Runs When?
+
+This example demonstrates exactly which parts of your code run and when:
+
+```tsx
+function Counter() {
+  console.log('index0') // 🔵 Runs ONCE (initialization)
+  let count = $state(0)
+  const doubled = count * 2
+  console.log('index1', doubled) // 🟢 Runs on EVERY count change
+  return (
+    <button onClick={() => count++}>
+      {(console.log('index2'), doubled)} {/* 🟢 Runs on EVERY count change */}
+      {(console.log('index3'), 'static')} {/* 🔵 Runs ONCE (no dependency) */}
+    </button>
+  )
+}
+```
+
+**Initial render output:**
+
+```
+index0        ← Component body starts (once)
+index1 0      ← Derived value memo executes
+index2        ← JSX binding with reactive dependency
+index3        ← JSX binding without dependency (static)
+```
+
+**After clicking the button (count: 0 → 1):**
+
+```
+index1 2      ← Derived memo recomputes (doubled = 1 * 2)
+index2        ← JSX binding updates
+              ← index0 and index3 do NOT execute again!
+```
+
+**Why this behavior?**
+
+The compiler analyzes your code and splits it into reactive regions:
+
+1. **Initialization region** (`index0`): Code before any reactive dependencies - runs once
+2. **Derived memo** (`index1`): Expression `count * 2` depends on `count` - recomputes when `count` changes
+3. **Reactive JSX binding** (`index2`): Uses `doubled` - updates when `doubled` changes
+4. **Static JSX binding** (`index3`): No reactive dependencies - runs once
+
+This is fundamentally different from:
+
+- **React**: The entire function re-runs on every state change (all 4 logs every time)
+- **Solid**: The function runs once, but you must explicitly wrap derived values in `createMemo`
+
+Fict gives you the best of both worlds: React's familiar syntax with Solid's fine-grained updates.
+
 During initial execution, the compiled code will:
 
 - Assign a "Source Node" (signal) for each `$state`
