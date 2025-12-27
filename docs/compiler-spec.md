@@ -659,6 +659,10 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
     - **Snapshot**: `const snap = count; const fn = () => snap` reads the definition-time value by design.
 4.  **Control Flow Re-execution**: When a signal or derived value is **read at runtime** in control flow statements (`if`, `for`, `while`, `switch`, ternary in statements), the component re-executes and re-renders when that value changes. Note: simply defining a derived (`const x = signal * 2`) doesn't trigger re-execution—only reading in control flow does. This matches developer intuition: conditional logic naturally re-evaluates when its dependencies change.
 5.  **Control Flow Regions**: Derived values defined across `if`/`switch`/early-return paths are grouped into a single region memo that returns the outward-facing values, ensuring consistent dependency tracking and avoiding duplicated condition evaluation.
+6.  **DX Notes (control flow + closures)**:
+    - Branch-local bindings stay branch-local: SSA + structurize restore `let`/assignments at merge points, so JSX/effects read the live value for the active path; no “wrong branch” capture.
+    - Render memos are invoked (`__fictUseMemo(...)()`) to build DOM with the current branch values; slot ordering is stable as long as hooks stay top-level (compiler errors on conditional hooks).
+    - Region grouping may be broader for perf heuristics, but it does not change semantics—at worst it recomputes more than necessary; it will not mix distinct branch locals.
 
 ### 15.3 Effect Semantics
 

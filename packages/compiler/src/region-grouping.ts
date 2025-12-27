@@ -9,7 +9,7 @@
 import type * as BabelCore from '@babel/core'
 
 import { RUNTIME_ALIASES } from './constants'
-import { analyzeConditionalUsage } from './rule-j'
+import { analyzeConditionalUsage } from './conditional-derived'
 import type { TransformContext } from './types'
 import { collectBindingNames, dependsOnTracked, isStateCall } from './utils'
 
