@@ -79,7 +79,8 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
   [DiagnosticCode.FICT_S001]: 'State variable mutation detected outside component scope.',
   [DiagnosticCode.FICT_S002]: 'State variable escaped to external scope, may cause memory leaks.',
 
-  [DiagnosticCode.FICT_E001]: 'Effect without dependencies will re-run on every render.',
+  [DiagnosticCode.FICT_E001]:
+    'Effect without reactive dependencies will run only once; consider adding state reads or removing the effect.',
   [DiagnosticCode.FICT_E002]: 'Effect captures reactive value that may change.',
   [DiagnosticCode.FICT_E003]: 'Effect cleanup function is not properly tracked.',
 

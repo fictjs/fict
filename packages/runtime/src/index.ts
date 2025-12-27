@@ -7,6 +7,8 @@ export { createMemo, type Memo, $memo } from './memo'
 export { createEffect, type Effect, $effect } from './effect'
 export {
   __fictUseContext,
+  __fictPushContext,
+  __fictPopContext,
   __fictUseSignal,
   __fictUseMemo,
   __fictUseEffect,

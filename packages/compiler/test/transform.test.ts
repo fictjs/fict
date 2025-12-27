@@ -22,7 +22,8 @@ describe('Fict Compiler - Basic Transforms', () => {
         let count = $state(0)
       `
       const output = transform(input)
-      expect(output).toContain('__fictUseContext')
+      expect(output).toContain('__fictPushContext')
+      expect(output).toContain('__fictPopContext')
       expect(output).toContain('__fictUseSignal(__fictCtx, 0)')
       expect(output).not.toContain('$state')
     })

@@ -90,10 +90,10 @@ function isDynamicPropertyAccess(
 function runWarningPass(
   programPath: BabelCore.NodePath<BabelCore.types.Program>,
   stateVars: Set<string>,
+  derivedVars: Set<string>,
   options: FictCompilerOptions,
   t: typeof BabelCore.types,
 ): void {
-  if (stateVars.size === 0) return
   const fileName = (programPath.hub as any)?.file?.opts?.filename || '<unknown>'
   const isStateRoot = (expr: BabelCore.types.Expression): boolean => {
     const root = getRootIdentifier(expr, t)
@@ -163,7 +163,50 @@ function runWarningPass(
       }
     },
     CallExpression(path) {
-      const callee = path.node.callee
+      if (t.isIdentifier(path.node.callee, { name: '$effect' })) {
+        const argPath = path.get('arguments.0')
+        if (argPath?.isFunctionExpression() || argPath?.isArrowFunctionExpression()) {
+          let hasReactiveDependency = false
+          argPath.traverse({
+            Identifier(idPath) {
+              // Ignore property keys and non-computed member properties
+              if (
+                idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
+                !(idPath.parent as BabelCore.types.MemberExpression).computed
+              ) {
+                return
+              }
+              if (
+                idPath.parentPath.isObjectProperty({ key: idPath.node }) &&
+                !(idPath.parent as BabelCore.types.ObjectProperty).computed
+              ) {
+                return
+              }
+              const binding = idPath.scope.getBinding(idPath.node.name)
+              if (binding && binding.scope === argPath.scope) return
+
+              if (stateVars.has(idPath.node.name) || derivedVars.has(idPath.node.name)) {
+                hasReactiveDependency = true
+                idPath.stop()
+              }
+            },
+          })
+
+          if (!hasReactiveDependency) {
+            emitWarning(
+              path.node,
+              'FICT-E001',
+              'Effect has no reactive reads; it will run once. Consider removing $effect or adding dependencies.',
+              options,
+              fileName,
+            )
+          }
+        }
+        return
+      }
+
+      // Re-extract callee to reset TypeScript type narrowing from the $effect check above
+      const callee = path.node.callee as BabelCore.types.Expression
       let calleeName = ''
       if (t.isIdentifier(callee)) {
         calleeName = callee.name
@@ -321,7 +364,7 @@ function createHIREntrypointVisitor(
         }
 
         // Emit conservative warnings for mutation/dynamic access
-        runWarningPass(path as any, stateVars, options, t)
+        runWarningPass(path as any, stateVars, derivedVars, options, t)
 
         const fileAst = t.file(path.node)
         const hir = buildHIR(fileAst)

@@ -4224,12 +4224,12 @@ export function lowerHIRWithRegions(
   }
   const ensureTopLevelCtx = () => {
     if (topLevelCtxInjected) return
-    ctx.helpersUsed.add('useContext')
+    ctx.helpersUsed.add('pushContext')
     body.push(
       t.variableDeclaration('const', [
         t.variableDeclarator(
           t.identifier('__fictCtx'),
-          t.callExpression(t.identifier(RUNTIME_ALIASES.useContext), []),
+          t.callExpression(t.identifier(RUNTIME_ALIASES.pushContext), []),
         ),
       ]),
     )
@@ -4478,6 +4478,11 @@ export function lowerHIRWithRegions(
   for (const func of generatedFunctions.values()) {
     body.push(func.stmt)
     if (func.stmt.id?.name) emittedFunctionNames.add(func.stmt.id.name)
+  }
+
+  if (topLevelCtxInjected) {
+    ctx.helpersUsed.add('popContext')
+    body.push(t.expressionStatement(t.callExpression(t.identifier(RUNTIME_ALIASES.popContext), [])))
   }
 
   return t.file(t.program(attachHelperImports(ctx, body, t)))

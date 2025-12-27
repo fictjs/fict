@@ -1595,4 +1595,87 @@ describe('compiler + fict integration', () => {
 
     dispose()
   })
+
+  it('wires cross-module state + derived exports end to end', async () => {
+    const storeSource = `
+      import { $state } from 'fict'
+
+      export let count = $state(0)
+      export const double = count * 2
+      export const inc = () => count(count() + 1)
+    `
+
+    const appSource = `
+      import { render } from 'fict'
+      import { count, double, inc } from './store'
+
+      export function mount(el: HTMLElement) {
+        return render(() => (
+          <div>
+            <p data-testid="count">Count: {count()}</p>
+            <p data-testid="double">Double: {double()}</p>
+            <button data-testid="inc" onClick={inc}>Increment</button>
+          </div>
+        ), el)
+      }
+    `
+
+    const moduleCache: Record<string, any> = {}
+    const evalModule = (code: string, id: string) => {
+      const mod = { exports: {} as any }
+      const wrapped = new Function('require', 'module', 'exports', code)
+      wrapped(
+        (reqId: string) => {
+          if (reqId === '@fictjs/runtime') return runtime
+          if (reqId === '@fictjs/runtime/jsx-runtime') return runtimeJsx
+          if (reqId === 'fict') return fict
+          if (moduleCache[reqId]) return moduleCache[reqId]
+          throw new Error('Unresolved module: ' + reqId)
+        },
+        mod,
+        mod.exports,
+      )
+      moduleCache[id] = mod.exports
+      return mod.exports
+    }
+
+    const storeCode = transformCommonJS(storeSource, {}, 'store.tsx')
+    if (process.env.DEBUG_TEMPLATE_OUTPUT) {
+      // eslint-disable-next-line no-console
+      console.warn('STORE MODULE\n', storeCode)
+    }
+    evalModule(storeCode, './store')
+
+    const appCode = transformCommonJS(appSource, {}, 'app.tsx')
+    if (process.env.DEBUG_TEMPLATE_OUTPUT) {
+      // eslint-disable-next-line no-console
+      console.warn('APP MODULE\n', appCode)
+    }
+    const app = evalModule(appCode, './app') as { mount: (el: HTMLElement) => () => void }
+    const dispose = app.mount(container)
+    await tick()
+    if (process.env.DEBUG_TEMPLATE_OUTPUT) {
+      // eslint-disable-next-line no-console
+      console.warn('HTML AFTER MOUNT\n', container.innerHTML)
+    }
+
+    const readCount = () => container.querySelector('[data-testid="count"]')?.textContent
+    const readDouble = () => container.querySelector('[data-testid="double"]')?.textContent
+    const incBtn = container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+    expect(readCount()).toBe('Count: 0')
+    expect(readDouble()).toBe('Double: 0')
+
+    incBtn.click()
+    await tick()
+    expect(readCount()).toBe('Count: 1')
+    expect(readDouble()).toBe('Double: 2')
+
+    incBtn.click()
+    await tick()
+    expect(readCount()).toBe('Count: 2')
+    expect(readDouble()).toBe('Double: 4')
+
+    dispose()
+  })
 })

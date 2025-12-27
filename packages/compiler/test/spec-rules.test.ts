@@ -110,6 +110,30 @@ describe('Spec rule coverage', () => {
     expect(hasMutationWarning || hasDynamicAccessWarning).toBe(true)
   })
 
+  it('emits a warning when $effect has no reactive reads', () => {
+    const warnings: CompilerWarning[] = []
+    const input = `
+      import { $state, $effect } from 'fict'
+
+      $effect(() => {
+        console.log('mount only')
+      })
+
+      function Demo() {
+        const count = $state(0)
+        $effect(() => {
+          const msg = 'static'
+          console.log(msg)
+        })
+        return <button onClick={() => count++}>{count}</button>
+      }
+    `
+
+    transform(input, { onWarn: w => warnings.push(w) })
+
+    expect(warnings.some(w => w.code === 'FICT-E001')).toBe(true)
+  })
+
   it('detects cyclic derived dependencies', () => {
     const input = `
       import { $state } from 'fict'
