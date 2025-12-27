@@ -392,6 +392,60 @@ function createHIREntrypointVisitor(
     Program: {
       exit(path) {
         const fileName = (path.hub as any)?.file?.opts?.filename || '<unknown>'
+        const isComponentLike = (fnPath: BabelCore.NodePath<BabelCore.types.Function>): boolean => {
+          const name =
+            fnPath.isFunctionDeclaration() && fnPath.node.id
+              ? fnPath.node.id.name
+              : fnPath.isFunctionExpression() && fnPath.node.id
+                ? fnPath.node.id.name
+                : fnPath.parentPath.isVariableDeclarator() &&
+                    t.isIdentifier(fnPath.parentPath.node.id) &&
+                    fnPath.parentPath.node.init === fnPath.node
+                  ? fnPath.parentPath.node.id.name
+                  : undefined
+          return (
+            (name && isComponentName(name)) ||
+            functionHasJSX(fnPath) ||
+            functionUsesStateLike(fnPath, t)
+          )
+        }
+        const memoHasSideEffects = (
+          fn: BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression,
+        ): boolean => {
+          const checkNode = (node: BabelCore.types.Node | null | undefined): boolean => {
+            if (!node) return false
+            if (
+              t.isAssignmentExpression(node) ||
+              t.isUpdateExpression(node) ||
+              t.isThrowStatement(node) ||
+              t.isNewExpression(node)
+            ) {
+              return true
+            }
+            if (
+              t.isCallExpression(node) &&
+              ((t.isIdentifier(node.callee) && node.callee.name === '$effect') ||
+                (t.isIdentifier(node.callee) && node.callee.name === 'render'))
+            ) {
+              return true
+            }
+            if (t.isExpressionStatement(node)) return checkNode(node.expression)
+            if (t.isBlockStatement(node)) return node.body.some(stmt => checkNode(stmt))
+            if (t.isReturnStatement(node)) return checkNode(node.argument as any)
+            if (t.isSequenceExpression(node)) return node.expressions.some(expr => checkNode(expr))
+            if (t.isConditionalExpression(node))
+              return (
+                checkNode(node.test as any) ||
+                checkNode(node.consequent as any) ||
+                checkNode(node.alternate as any)
+              )
+            if (t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)) {
+              return checkNode(node.body as any)
+            }
+            return false
+          }
+          return checkNode(fn.body as any)
+        }
 
         // Warn on component-like functions missing a return
         path.traverse({
@@ -553,6 +607,19 @@ function createHIREntrypointVisitor(
               collectPatternIdentifiers(varPath.node.id).forEach(id => destructuredAliases.add(id))
             }
           },
+          Function(fnPath) {
+            const parentFn = fnPath.getFunctionParent()
+            if (!parentFn) return
+            if (!isComponentLike(parentFn as any)) return
+            if (!isComponentLike(fnPath as any)) return
+            emitWarning(
+              fnPath.node,
+              'FICT-C003',
+              'Components should not be defined inside other components. Move this definition to module scope to preserve identity and performance.',
+              options,
+              fileName,
+            )
+          },
           CallExpression(callPath) {
             if (isStateCall(callPath.node, t)) {
               if (isInsideLoop(callPath) || isInsideConditional(callPath)) {
@@ -580,6 +647,53 @@ function createHIREntrypointVisitor(
                 throw callPath.buildCodeFrameError(
                   '$effect() cannot be called inside nested functions',
                 )
+              }
+            }
+            const callee = callPath.node.callee
+            const calleeId = t.isIdentifier(callee) ? callee.name : null
+            const allowedStateCallees = new Set([
+              '$effect',
+              '$memo',
+              'render',
+              'createMemo',
+              'createEffect',
+            ])
+            callPath.node.arguments.forEach(arg => {
+              if (
+                t.isIdentifier(arg) &&
+                stateVars.has(arg.name) &&
+                (!calleeId || !allowedStateCallees.has(calleeId))
+              ) {
+                const loc = arg.loc?.start ?? callPath.node.loc?.start
+                options.onWarn?.({
+                  code: 'FICT-S002',
+                  message:
+                    'State variable is passed as an argument; this passes a value snapshot and may escape component scope.',
+                  fileName,
+                  line: loc?.line ?? 0,
+                  column: loc ? loc.column + 1 : 0,
+                })
+              }
+            })
+            if (
+              calleeId &&
+              (calleeId === '$memo' || calleeId === 'createMemo') &&
+              (fictImports.has('$memo') || fictImports.has('createMemo'))
+            ) {
+              const firstArg = callPath.node.arguments[0]
+              if (
+                firstArg &&
+                (t.isArrowFunctionExpression(firstArg) || t.isFunctionExpression(firstArg)) &&
+                memoHasSideEffects(firstArg)
+              ) {
+                const loc = firstArg.loc?.start ?? callPath.node.loc?.start
+                options.onWarn?.({
+                  code: 'FICT-M003',
+                  message: 'Memo should not contain side effects.',
+                  fileName,
+                  line: loc?.line ?? 0,
+                  column: loc ? loc.column + 1 : 0,
+                })
               }
             }
           },

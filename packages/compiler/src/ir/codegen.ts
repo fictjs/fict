@@ -4947,7 +4947,8 @@ function lowerFunctionWithRegions(
   ctx.currentFnIsHook = (!!fn.name && fn.name.startsWith(HOOK_NAME_PREFIX)) || inferredHook
   const isComponent = !!(fn.name && fn.name[0] === fn.name[0]?.toUpperCase())
   ctx.isComponentFn = isComponent
-  const rawPropsParam = fn.params.length === 1 ? deSSAVarName(fn.params[0].name) : undefined
+  const rawPropsParam =
+    fn.params.length === 1 && fn.params[0] ? deSSAVarName(fn.params[0].name) : undefined
   if (isComponent && rawPropsParam) {
     ctx.propsParamName = rawPropsParam
     ctx.trackedVars.add(rawPropsParam)

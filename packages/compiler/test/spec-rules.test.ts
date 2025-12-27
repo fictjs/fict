@@ -163,6 +163,51 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
   })
 
+  it('warns on nested component definitions (FICT-C003)', () => {
+    const warnings: CompilerWarning[] = []
+    const input = `
+      import { $state } from 'fict'
+      function Parent() {
+        const count = $state(0)
+        function Child() {
+          return <div>{count}</div>
+        }
+        return <Child />
+      }
+    `
+    transform(input, { onWarn: w => warnings.push(w) })
+    expect(warnings.some(w => w.code === 'FICT-C003')).toBe(true)
+  })
+
+  it('warns when memo contains obvious side effects (FICT-M003)', () => {
+    const warnings: CompilerWarning[] = []
+    const input = `
+      import { $state, $memo } from 'fict'
+      function Demo() {
+        const count = $state(0)
+        const bad = $memo(() => { count++ ; return count })
+        return <button onClick={() => count++}>{bad}</button>
+      }
+    `
+    transform(input, { onWarn: w => warnings.push(w) })
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+  })
+
+  it('warns when passing state as function argument (FICT-S002)', () => {
+    const warnings: CompilerWarning[] = []
+    const input = `
+      import { $state } from 'fict'
+      function log(v: number) { console.log(v) }
+      function Demo() {
+        const count = $state(0)
+        log(count)
+        return <div>{count}</div>
+      }
+    `
+    transform(input, { onWarn: w => warnings.push(w) })
+    expect(warnings.some(w => w.code === 'FICT-S002')).toBe(true)
+  })
+
   it('detects cyclic derived dependencies', () => {
     const input = `
       import { $state } from 'fict'

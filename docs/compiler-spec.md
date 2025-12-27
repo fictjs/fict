@@ -17,6 +17,13 @@ This specification uses a set of "Rules A–L" to describe the entire process.
 
 ---
 
+## Warning surface (new)
+
+- `FICT-C003` Nested component definition – defining components inside another component causes identity/perf issues. Keep component functions at module scope.
+- `FICT-M003` Memo contains side effects – `$memo` callbacks must be pure; assignments/updates/effects inside memo bodies are warned.
+- `FICT-S002` State escape – passing a `$state` accessor to an arbitrary function passes a value snapshot and may leak scope; prefer passing a getter or ref.
+- `FICT-J002` Missing key in list – mapping without `key` now warns.
+
 ## 0. Terminology
 
 - **Source**: Reactive source (signal) produced by `$state` declaration.
@@ -677,6 +684,9 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
   - Write: assignments/`++` to `count` are disallowed; mutate via `state.count++` or immutable updates (e.g., `state = { ...state(), count: state().count + 1 }`).
   - Correct Usage: `const s = $state({ id: 1 }); const id = () => s.id;` or usage in JSX `{s.id}`.
 - **Blackbox Functions**: Passing `$state` to a function `fn(state)` passes the _current value_. `fn` cannot subscribe to updates unless it receives a getter or signal object (future `$store`).
+- **Function arguments**: When you pass a `$state` accessor to an arbitrary function (e.g. `someFn(count)`), the compiler rewrites it to a snapshot (`someFn(count())`). If the callee expects reactivity, pass an explicit getter (`() => count`) or a future `$ref/$store` handle. The compiler emits `FICT-S002` as a warning in this case.
+- **Arrays**: `$state` arrays track mutations (`push`, index writes, `length` assignment) as writes to the signal. Prefer immutable updates for predictability; mutating `length` is allowed but should be documented as a full write.
+- **Refs**: Both ref callbacks (`ref={node => el = node}`) and ref objects (`ref={divRef}`) are supported. Choose callbacks for inline capture; use objects for reuse and cleanup semantics.
 
 ### 15.6 Illegal Patterns (Compile Errors)
 
