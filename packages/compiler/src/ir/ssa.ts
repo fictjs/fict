@@ -1,3 +1,4 @@
+import { debugEnabled } from '../debug'
 import type { BasicBlock, BlockId, HIRFunction, HIRProgram, Identifier, Instruction } from './hir'
 import { makeSSAName, getSSABaseName } from './hir'
 
@@ -779,7 +780,7 @@ function validatePhiSources(fn: HIRFunction): void {
       if (missingPreds.length > 0) {
         // Log warning but don't fail - some predecessors may be unreachable
         // This is not an error in valid SSA, just a diagnostic
-        if (process.env.DEBUG_SSA) {
+        if (debugEnabled('ssa')) {
           console.warn(
             `SSA: Phi node for '${phi.variable}' in block ${block.id} missing sources from predecessors: ${missingPreds.join(', ')}`,
           )

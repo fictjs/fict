@@ -19,6 +19,7 @@ import {
   propagateHookResultAlias,
   resolveHookMemberValue,
 } from './codegen'
+import { debugEnabled } from '../debug'
 import type { BlockId, HIRFunction, Expression, Instruction, Identifier } from './hir'
 import { getSSABaseName, HIRError } from './hir'
 import type { ReactiveScope, ReactiveScopeResult } from './scopes'
@@ -1485,7 +1486,7 @@ function wrapInMemo(
   // Remove duplicates that may result from de-versioning (e.g., count_1 and count_2 both become count)
   const uniqueOutputNames = [...new Set(outputNames)]
 
-  if (process.env.DEBUG_REGION) {
+  if (debugEnabled('region')) {
     console.log('Region memo', region.id, {
       instructions: region.instructions.map(instr => instr.kind),
       outputs: uniqueOutputNames,
@@ -1563,7 +1564,7 @@ function wrapInMemo(
     )
     const directOutputs = uniqueOutputNames.filter(name => !getterOutputs.includes(name))
 
-    if (process.env.DEBUG_REGION) {
+    if (debugEnabled('region')) {
       console.log('Region debug', {
         id: region.id,
         outputs: uniqueOutputNames,

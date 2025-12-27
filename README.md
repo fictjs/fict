@@ -628,7 +628,7 @@ Each time `userId` changes:
 1. Previous effect's cleanup runs → aborts old request
 2. New effect runs → starts new request
 
-### Error boundaries (planned)
+### Error boundaries
 
 ```tsx
 import { ErrorBoundary } from 'fict'

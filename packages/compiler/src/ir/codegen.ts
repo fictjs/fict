@@ -1,6 +1,7 @@
 import type * as BabelCore from '@babel/core'
 
 import { RUNTIME_ALIASES, RUNTIME_HELPERS, RUNTIME_MODULE } from '../constants'
+import { debugEnabled } from '../debug'
 import type { FictCompilerOptions } from '../types'
 
 import {
@@ -549,7 +550,7 @@ function getCachedGetterExpression(
 }
 
 function detectDerivedCycles(fn: HIRFunction, _scopeResult: ReactiveScopeResult): void {
-  if (process.env.DEBUG_CYCLES_THROW) {
+  if (debugEnabled('cycles_throw')) {
     throw new Error('cycle check invoked')
   }
   const declared = new Map<
@@ -626,7 +627,7 @@ function detectDerivedCycles(fn: HIRFunction, _scopeResult: ReactiveScopeResult)
     visit(node)
   }
 
-  if (process.env.DEBUG_CYCLES) {
+  if (debugEnabled('cycles')) {
     console.error(
       'cycle graph',
       Array.from(graph.entries()).map(([k, v]) => [k, Array.from(v)]),
@@ -4791,7 +4792,7 @@ function lowerFunctionWithRegions(
       ctx.hookReturnInfo.set(fn.name, info)
     }
   }
-  if (process.env.DEBUG_REGION && fn.name === 'Counter') {
+  if (debugEnabled('region') && fn.name === 'Counter') {
     console.log('Tracked vars for Counter', Array.from(ctx.trackedVars))
 
     console.log('Memo vars for Counter', Array.from(ctx.memoVars))
