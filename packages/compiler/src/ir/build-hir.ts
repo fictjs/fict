@@ -779,8 +779,17 @@ function convertFunction(
       }
       condBlock.sealed = true
 
+      // Push loop context for break/continue
+      cfgContext.loopStack.push({
+        breakTarget: exitBlock.block.id,
+        continueTarget: condBlock.block.id,
+      })
+
       // body: after body, jump back to condition (with nested control flow support)
       fillStatements(stmt.body, bodyBlock, condBlock.block.id, cfgContext)
+
+      // Pop loop context
+      cfgContext.loopStack.pop()
 
       current = exitBlock as BlockBuilder
       continue
@@ -836,8 +845,17 @@ function convertFunction(
       }
       condBlock.sealed = true
 
+      // Push loop context for break/continue
+      cfgContext.loopStack.push({
+        breakTarget: exitBlock.block.id,
+        continueTarget: updateBlock.block.id, // continue goes to update in for loop
+      })
+
       // body (with nested control flow support)
       fillStatements(stmt.body, bodyBlock, updateBlock.block.id, cfgContext)
+
+      // Pop loop context
+      cfgContext.loopStack.pop()
 
       // update
       if (stmt.update && t.isExpression(stmt.update)) {
@@ -864,8 +882,17 @@ function convertFunction(
       current.block.terminator = { kind: 'Jump', target: bodyBlock.block.id }
       current.sealed = true
 
+      // Push loop context for break/continue BEFORE processing body
+      cfgContext.loopStack.push({
+        breakTarget: exitBlock.block.id,
+        continueTarget: condBlock.block.id,
+      })
+
       // Body goes to condition (with nested control flow support)
       fillStatements(stmt.body, bodyBlock, condBlock.block.id, cfgContext)
+
+      // Pop loop context AFTER processing body
+      cfgContext.loopStack.pop()
 
       // Condition branches back to body or exits
       const testExpr = convertExpression(stmt.test as BabelCore.types.Expression)
@@ -1567,8 +1594,17 @@ function processStatement(
     bb.block.terminator = { kind: 'Jump', target: bodyBlock.block.id }
     bb.sealed = true
 
+    // Push loop context for break/continue BEFORE processing body
+    ctx.loopStack.push({
+      breakTarget: exitBlock.block.id,
+      continueTarget: condBlock.block.id,
+    })
+
     // Body goes to condition
     fillStatements(stmt.body, bodyBlock, condBlock.block.id, ctx)
+
+    // Pop loop context AFTER processing body
+    ctx.loopStack.pop()
 
     // Condition branches back to body or exits
     const testExpr = convertExpression(stmt.test as BabelCore.types.Expression)

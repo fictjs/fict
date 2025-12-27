@@ -105,7 +105,13 @@ function structurizeOrThrow(fn: HIRFunction): StructuredNode {
     return structurizeCFG(fn, { useFallback: false, warnOnIssues: false, throwOnIssues: true })
   } catch (err) {
     if (err instanceof StructurizationError) {
-      throw new HIRError(err.message, 'STRUCTURIZE_ERROR', { blockId: err.blockId })
+      // Fall back to state machine structurization to preserve correctness
+      const fallback = structurizeCFG(fn, {
+        useFallback: true,
+        warnOnIssues: false,
+        throwOnIssues: false,
+      })
+      return fallback
     }
     throw err
   }
