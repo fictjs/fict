@@ -4133,12 +4133,18 @@ function buildPropsObject(
         }
         const baseIdent =
           attr.value.kind === 'Identifier' ? deSSAVarName(attr.value.name) : undefined
+        const isAccessorBase =
+          baseIdent &&
+          ((ctx.memoVars?.has(baseIdent) ?? false) ||
+            (ctx.signalVars?.has(baseIdent) ?? false) ||
+            (ctx.aliasVars?.has(baseIdent) ?? false))
+        const isStoreBase = baseIdent ? (ctx.storeVars?.has(baseIdent) ?? false) : false
         const alreadyGetter =
           isFunctionLike ||
           (baseIdent
-            ? (ctx.memoVars?.has(baseIdent) ?? false) ||
-              (ctx.signalVars?.has(baseIdent) ?? false) ||
-              (ctx.storeVars?.has(baseIdent) ?? false)
+            ? isStoreBase ||
+              (ctx.memoVars?.has(baseIdent) ?? false) ||
+              (ctx.aliasVars?.has(baseIdent) ?? false)
             : false)
         const usesTracked =
           (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
@@ -4155,26 +4161,34 @@ function buildPropsObject(
           !t.isMemberExpression(trackedExpr) &&
           !t.isLiteral(trackedExpr)
         const valueExpr =
-          usesTracked && t.isExpression(lowered)
+          !isFunctionLike && isAccessorBase && baseIdent
             ? (() => {
-                if (useMemoProp) {
-                  ctx.helpersUsed.add('useProp')
-                  return t.callExpression(t.identifier(RUNTIME_ALIASES.useProp), [
+                // Preserve accessor laziness for signals/memos passed as props
+                ctx.helpersUsed.add('propGetter')
+                return t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
+                  t.arrowFunctionExpression([], t.callExpression(t.identifier(baseIdent), [])),
+                ])
+              })()
+            : usesTracked && t.isExpression(lowered)
+              ? (() => {
+                  if (useMemoProp) {
+                    ctx.helpersUsed.add('useProp')
+                    return t.callExpression(t.identifier(RUNTIME_ALIASES.useProp), [
+                      t.arrowFunctionExpression(
+                        [],
+                        trackedExpr ?? (lowered as BabelCore.types.Expression),
+                      ),
+                    ])
+                  }
+                  ctx.helpersUsed.add('propGetter')
+                  return t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
                     t.arrowFunctionExpression(
                       [],
                       trackedExpr ?? (lowered as BabelCore.types.Expression),
                     ),
                   ])
-                }
-                ctx.helpersUsed.add('propGetter')
-                return t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
-                  t.arrowFunctionExpression(
-                    [],
-                    trackedExpr ?? (lowered as BabelCore.types.Expression),
-                  ),
-                ])
-              })()
-            : lowered
+                })()
+              : lowered
         properties.push(t.objectProperty(toPropKey(attr.name), valueExpr))
       } else {
         // Boolean attribute
