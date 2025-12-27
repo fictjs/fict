@@ -16,6 +16,8 @@ import {
   applyRegionMetadataToExpression,
   buildDependencyGetter,
   lowerExpression,
+  propagateHookResultAlias,
+  resolveHookMemberValue,
 } from './codegen'
 import type { BlockId, HIRFunction, Expression, Instruction, Identifier } from './hir'
 import { getSSABaseName, HIRError } from './hir'
@@ -1215,9 +1217,19 @@ function lowerInstructionsToInitExpr(
   if (allAssigns) {
     const decls = instrs.map(i => {
       if (i.kind === 'Assign') {
+        const hookMember = resolveHookMemberValue(i.value, ctx)
+        const base = deSSAVarName(i.target.name)
+        if (hookMember) {
+          if (hookMember.kind === 'signal') {
+            ctx.signalVars?.add(base)
+            ctx.trackedVars.add(base)
+          } else if (hookMember.kind === 'memo') {
+            ctx.memoVars?.add(base)
+          }
+        }
         return t.variableDeclarator(
           t.identifier(deSSAVarName(i.target.name)),
-          lowerExpression(i.value, ctx),
+          hookMember ? hookMember.member : lowerExpression(i.value, ctx),
         )
       }
       return t.variableDeclarator(t.identifier('_'))
@@ -1228,10 +1240,20 @@ function lowerInstructionsToInitExpr(
   // Otherwise use sequence expression
   const exprs = instrs.map(i => {
     if (i.kind === 'Assign') {
+      const hookMember = resolveHookMemberValue(i.value, ctx)
+      const base = deSSAVarName(i.target.name)
+      if (hookMember) {
+        if (hookMember.kind === 'signal') {
+          ctx.signalVars?.add(base)
+          ctx.trackedVars.add(base)
+        } else if (hookMember.kind === 'memo') {
+          ctx.memoVars?.add(base)
+        }
+      }
       return t.assignmentExpression(
         '=',
-        t.identifier(deSSAVarName(i.target.name)),
-        lowerExpression(i.value, ctx),
+        t.identifier(base),
+        hookMember ? hookMember.member : lowerExpression(i.value, ctx),
       )
     }
     if (i.kind === 'Expression') {
@@ -1940,6 +1962,30 @@ function instructionToStatement(
   if (instr.kind === 'Assign') {
     const ssaName = instr.target.name
     const baseName = deSSAVarName(ssaName)
+    propagateHookResultAlias(baseName, instr.value, ctx)
+    const hookMember = resolveHookMemberValue(instr.value, ctx)
+    if (hookMember) {
+      if (hookMember.kind === 'signal') {
+        ctx.signalVars?.add(baseName)
+        ctx.trackedVars.add(baseName)
+      } else if (hookMember.kind === 'memo') {
+        ctx.memoVars?.add(baseName)
+      }
+      if (instr.declarationKind) {
+        declaredVars.add(baseName)
+        return t.variableDeclaration(instr.declarationKind, [
+          t.variableDeclarator(t.identifier(baseName), hookMember.member),
+        ])
+      }
+      if (declaredVars.has(baseName)) {
+        return t.expressionStatement(
+          t.assignmentExpression('=', t.identifier(baseName), hookMember.member),
+        )
+      }
+      return t.expressionStatement(
+        t.assignmentExpression('=', t.identifier(baseName), hookMember.member),
+      )
+    }
     const declKind = instr.declarationKind
     const isTracked = ctx.trackedVars.has(baseName)
     const isSignal = ctx.signalVars?.has(baseName) ?? false

@@ -16,7 +16,8 @@ describe('fast paths', () => {
 
     expect(output).not.toContain('template(')
     expect(output).toContain('__fictUseSignal')
-    expect(output).toMatch(/count\(\)/)
-    expect(output).toMatch(/doubled\(\)/)
+    expect(output).toContain('return {')
+    expect(output).toContain('count:')
+    expect(output).toContain('doubled:')
   })
 })

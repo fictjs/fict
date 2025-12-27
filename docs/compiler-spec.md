@@ -26,6 +26,7 @@ This specification uses a set of "Rules A–L" to describe the entire process.
 - **Region**: A group of Derived expressions closely related in terms of control flow/scope.
 - **IR (Intermediate Representation)**: Abstract structure used internally by the compiler, not directly exposed to user code.
 - **Error Boundary**: Runtime component that captures errors in render/effect/event/cleanup for its subtree and renders a fallback.
+- **Hook**: Any function whose name **starts with `use`**. The compiler treats such functions as hooks when they are defined or invoked: their slot ordering is preserved, and object/array/direct returns are analyzed so that members like `{ count } = useCounter()` remain reactive accessors. Functions without the `use` prefix are compiled as plain functions, so reactive returns are not inferred.
 
 ---
 

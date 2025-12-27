@@ -235,6 +235,23 @@ describe('buildHIR - Advanced Patterns', () => {
     expect(hir.functions[0]).toBeDefined()
   })
 
+  it('handles object pattern variable declarations', () => {
+    const ast = parseFile(`
+      function Foo() {
+        const { count, double } = useCounter()
+        return count + double
+      }
+    `)
+    const hir = buildHIR(ast)
+    const fn = hir.functions[0]
+    expect(fn.blocks.length).toBeGreaterThan(0)
+    const assigns = fn.blocks.flatMap(b => b.instructions).filter(i => i.kind === 'Assign')
+    const targets = assigns.map(a => (a as any).target.name)
+    expect(targets.some(t => t.startsWith('__destruct_'))).toBe(true)
+    expect(targets).toContain('count')
+    expect(targets).toContain('double')
+  })
+
   it('handles complex conditional with loops', () => {
     const ast = parseFile(`
       function ComplexControl(items, filter) {

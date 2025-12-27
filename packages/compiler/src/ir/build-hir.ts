@@ -556,6 +556,52 @@ function convertFunction(
           continue
         }
 
+        if (t.isObjectPattern(decl.id)) {
+          const tempName = `__destruct_${destructuringTempCounter++}`
+          current.block.instructions.push({
+            kind: 'Assign',
+            target: { kind: 'Identifier', name: tempName },
+            value: decl.init
+              ? convertExpression(decl.init)
+              : ({ kind: 'Literal', value: undefined } as HLiteral),
+            declarationKind: declKind,
+          })
+
+          decl.id.properties.forEach(prop => {
+            if (t.isObjectProperty(prop)) {
+              const keyName = t.isIdentifier(prop.key)
+                ? prop.key.name
+                : t.isStringLiteral(prop.key)
+                  ? prop.key.value
+                  : t.isNumericLiteral(prop.key)
+                    ? String(prop.key.value)
+                    : null
+              if (!keyName) return
+              if (t.isIdentifier(prop.value)) {
+                const memberExpr = t.memberExpression(
+                  t.identifier(tempName),
+                  t.identifier(keyName),
+                  false,
+                )
+                current.block.instructions.push({
+                  kind: 'Assign',
+                  target: { kind: 'Identifier', name: prop.value.name },
+                  value: convertExpression(memberExpr),
+                  declarationKind: declKind,
+                })
+              }
+            } else if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) {
+              const restExpr = t.identifier(tempName)
+              current.block.instructions.push({
+                kind: 'Assign',
+                target: { kind: 'Identifier', name: prop.argument.name },
+                value: convertExpression(restExpr),
+                declarationKind: declKind,
+              })
+            }
+          })
+        }
+
         if (t.isArrayPattern(decl.id)) {
           const tempName = `__destruct_${destructuringTempCounter++}`
           current.block.instructions.push({

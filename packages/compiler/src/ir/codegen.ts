@@ -25,6 +25,7 @@ import { analyzeCFG } from './ssa'
 import { structurizeCFG, structurizeCFGWithDiagnostics, type StructuredNode } from './structurize'
 
 const HOOK_SLOT_BASE = 1000
+const HOOK_NAME_PREFIX = 'use'
 
 /**
  * Region metadata for fine-grained DOM integration.
@@ -36,6 +37,37 @@ export interface RegionInfo {
   declarations: Set<string>
   hasControlFlow: boolean
   hasReactiveWrites?: boolean
+}
+
+type HookAccessorKind = 'signal' | 'memo'
+
+interface HookReturnInfo {
+  objectProps?: Map<string, HookAccessorKind>
+  arrayProps?: Map<number, HookAccessorKind>
+  directAccessor?: HookAccessorKind
+}
+
+function isHookName(name: string | undefined): boolean {
+  return !!name && name.startsWith(HOOK_NAME_PREFIX)
+}
+
+export function propagateHookResultAlias(
+  targetBase: string,
+  value: Expression,
+  ctx: CodegenContext,
+): void {
+  if (value.kind !== 'Identifier') return
+  const source = deSSAVarName(value.name)
+  const hookName = ctx.hookResultVarMap?.get(source)
+  if (!hookName) return
+  ctx.hookResultVarMap?.set(targetBase, hookName)
+  const info = getHookReturnInfo(hookName, ctx)
+  if (info?.directAccessor === 'signal') {
+    ctx.signalVars?.add(targetBase)
+    ctx.trackedVars.add(targetBase)
+  } else if (info?.directAccessor === 'memo') {
+    ctx.memoVars?.add(targetBase)
+  }
 }
 
 /**
@@ -181,6 +213,18 @@ export interface CodegenContext {
   inPropsContext?: boolean
   /** Whether tracked expressions should be wrapped in runtime effects */
   wrapTrackedExpressions?: boolean
+  /** Whether the current function is treated as a hook (preserve accessor returns) */
+  currentFnIsHook?: boolean
+  /** Whether the current function is a component (PascalCase) */
+  isComponentFn?: boolean
+  /** Whether we are lowering a return statement (for hook return preservation) */
+  inReturn?: boolean
+  /** Cache of hook return accessor metadata keyed by hook name */
+  hookReturnInfo?: Map<string, HookReturnInfo>
+  /** Map of local variables bound to hook results (per function) */
+  hookResultVarMap?: Map<string, string>
+  /** Program functions keyed by name for hook metadata lookup */
+  programFunctions?: Map<string, HIRFunction>
 }
 
 /**
@@ -213,6 +257,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     getterCacheDeclarations: new Map(),
     getterCacheEnabled: false,
     inPropsContext: false,
+    hookReturnInfo: new Map(),
   }
 }
 
@@ -252,6 +297,189 @@ function withGetterCache<T>(
   ctx.getterCacheEnabled = prevEnabled
 
   return { result, cacheDeclarations }
+}
+
+function collectHookReactiveVars(fn: HIRFunction): {
+  signalVars: Set<string>
+  storeVars: Set<string>
+  functionVars: Set<string>
+  mutatedVars: Set<string>
+} {
+  const signalVars = new Set<string>()
+  const storeVars = new Set<string>()
+  const functionVars = new Set<string>()
+  const mutatedVars = new Set<string>()
+
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign') {
+        const target = deSSAVarName(instr.target.name)
+        if (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression') {
+          functionVars.add(target)
+        }
+        if (instr.value.kind === 'CallExpression' && instr.value.callee.kind === 'Identifier') {
+          if (instr.value.callee.name === '$state') {
+            signalVars.add(target)
+          } else if (instr.value.callee.name === '$store') {
+            storeVars.add(target)
+          }
+        }
+        if (!instr.declarationKind) {
+          mutatedVars.add(target)
+        }
+      } else if (instr.kind === 'Phi') {
+        mutatedVars.add(deSSAVarName(instr.target.name))
+      }
+    }
+  }
+
+  return { signalVars, storeVars, functionVars, mutatedVars }
+}
+
+function analyzeHookReturnInfo(fn: HIRFunction, ctx: CodegenContext): HookReturnInfo | null {
+  if (!isHookName(fn.name)) return null
+
+  const { signalVars, storeVars, functionVars, mutatedVars } = collectHookReactiveVars(fn)
+  const tmpCtx = createCodegenContext(ctx.t)
+  tmpCtx.signalVars = new Set(signalVars)
+  tmpCtx.storeVars = new Set(storeVars)
+  tmpCtx.functionVars = new Set(functionVars)
+  tmpCtx.mutatedVars = new Set(mutatedVars)
+  tmpCtx.aliasVars = new Set()
+  tmpCtx.trackedVars = new Set()
+  tmpCtx.memoVars = new Set()
+
+  const scopeResult = analyzeReactiveScopesWithSSA(fn)
+  detectDerivedCycles(fn, scopeResult)
+  tmpCtx.scopes = scopeResult
+  const regionResult = generateRegions(fn, scopeResult)
+  tmpCtx.regions = flattenRegions(regionResult.topLevelRegions)
+  const reactive = computeReactiveAccessors(fn, tmpCtx)
+  tmpCtx.trackedVars = reactive.tracked
+  tmpCtx.memoVars = reactive.memo
+
+  const info: HookReturnInfo = {}
+  let hasInfo = false
+
+  const recordAccessor = (kind: HookAccessorKind | undefined, handler: () => void) => {
+    if (kind) {
+      hasInfo = true
+      handler()
+    }
+  }
+
+  const exprAccessorKind = (name: string | undefined): HookAccessorKind | undefined => {
+    if (!name) return undefined
+    const base = deSSAVarName(name)
+    if (tmpCtx.signalVars?.has(base)) return 'signal'
+    if (tmpCtx.memoVars?.has(base)) return 'memo'
+    return undefined
+  }
+
+  const visitReturnExpr = (expr: Expression) => {
+    if (expr.kind === 'ObjectExpression') {
+      expr.properties.forEach(prop => {
+        if (prop.kind !== 'Property') return
+        const keyName =
+          prop.key.kind === 'Identifier'
+            ? prop.key.name
+            : prop.key.kind === 'Literal'
+              ? String(prop.key.value)
+              : undefined
+        if (!keyName) return
+        if (prop.value.kind === 'Identifier') {
+          const kind = exprAccessorKind(prop.value.name)
+          recordAccessor(kind, () => {
+            if (!info.objectProps) info.objectProps = new Map()
+            info.objectProps.set(keyName, kind!)
+          })
+        }
+      })
+    } else if (expr.kind === 'ArrayExpression') {
+      expr.elements.forEach((el, idx) => {
+        if (!el || el.kind !== 'Identifier') return
+        const kind = exprAccessorKind(el.name)
+        recordAccessor(kind, () => {
+          if (!info.arrayProps) info.arrayProps = new Map()
+          info.arrayProps.set(idx, kind!)
+        })
+      })
+    } else if (expr.kind === 'Identifier') {
+      const kind = exprAccessorKind(expr.name)
+      recordAccessor(kind, () => {
+        info.directAccessor = kind
+      })
+    }
+  }
+
+  for (const block of fn.blocks) {
+    if (block.terminator.kind === 'Return' && block.terminator.argument) {
+      visitReturnExpr(block.terminator.argument)
+    }
+  }
+
+  return hasInfo ? info : null
+}
+
+function getHookReturnInfo(name: string, ctx: CodegenContext): HookReturnInfo | null {
+  if (!isHookName(name)) return null
+  if (!ctx.hookReturnInfo) ctx.hookReturnInfo = new Map()
+  const cached = ctx.hookReturnInfo.get(name)
+  if (cached) return cached
+
+  const fn = ctx.programFunctions?.get(name)
+  if (!fn) return null
+
+  const info = analyzeHookReturnInfo(fn, ctx)
+  if (info) {
+    ctx.hookReturnInfo.set(name, info)
+  }
+  return info ?? null
+}
+
+function getStaticPropName(expr: Expression, computed: boolean): string | number | null {
+  if (!computed) {
+    if ((expr as any).kind === 'Identifier') {
+      return deSSAVarName((expr as any).name as string)
+    }
+    if ((expr as any).kind === 'Literal') {
+      return (expr as any).value as any
+    }
+    return null
+  }
+  if (expr.kind === 'Literal') {
+    return expr.value as any
+  }
+  return null
+}
+
+export function resolveHookMemberValue(
+  expr: Expression,
+  ctx: CodegenContext,
+): { member: BabelCore.types.MemberExpression; kind: HookAccessorKind } | null {
+  if (expr.kind !== 'MemberExpression') return null
+  if (expr.object.kind !== 'Identifier') return null
+  const hookName = ctx.hookResultVarMap?.get(deSSAVarName(expr.object.name))
+  if (!hookName) return null
+  const info = getHookReturnInfo(hookName, ctx)
+  const propName = getStaticPropName(expr.property as Expression, expr.computed)
+  let kind: HookAccessorKind | undefined =
+    typeof propName === 'string'
+      ? info?.objectProps?.get(propName)
+      : typeof propName === 'number'
+        ? info?.arrayProps?.get(propName)
+        : undefined
+  if (!info && propName !== null) {
+    kind = 'signal'
+  }
+  if (!kind) return null
+
+  const obj = ctx.t.identifier(deSSAVarName(expr.object.name))
+  const prop = expr.computed
+    ? lowerExpression(expr.property as Expression, ctx)
+    : ctx.t.identifier(String(propName))
+  const member = ctx.t.memberExpression(obj, prop, expr.computed, expr.optional)
+  return { member, kind }
 }
 
 function withNonReactiveScope<T>(ctx: CodegenContext, fn: () => T): T {
@@ -1098,6 +1326,9 @@ export function lowerHIRToBabel(
   t: typeof BabelCore.types,
 ): BabelCore.types.File {
   const ctx = createCodegenContext(t)
+  ctx.programFunctions = new Map(
+    program.functions.filter(fn => !!fn.name).map(fn => [fn.name as string, fn]),
+  )
   const body: BabelCore.types.Statement[] = []
   const emittedFunctionNames = new Set<string>()
   for (const fn of program.functions) {
@@ -1175,16 +1406,18 @@ function lowerFunction(
 
 function lowerTrackedExpression(expr: Expression, ctx: CodegenContext): BabelCore.types.Expression {
   const regionOverride =
-    ctx.currentRegion ??
-    (ctx.trackedVars.size
-      ? {
-          id: -1,
-          dependencies: new Set(ctx.trackedVars),
-          declarations: new Set<string>(),
-          hasControlFlow: false,
-          hasReactiveWrites: false,
-        }
-      : null)
+    ctx.inReturn && ctx.currentFnIsHook
+      ? null
+      : (ctx.currentRegion ??
+        (ctx.trackedVars.size
+          ? {
+              id: -1,
+              dependencies: new Set(ctx.trackedVars),
+              declarations: new Set<string>(),
+              hasControlFlow: false,
+              hasReactiveWrites: false,
+            }
+          : null))
   const lowered = lowerExpression(expr, ctx)
   if (ctx.t.isAssignmentExpression(lowered)) {
     const right = applyRegionMetadataToExpression(lowered.right, ctx, regionOverride ?? undefined)
@@ -1208,6 +1441,38 @@ function lowerInstruction(
   const { t } = ctx
   if (instr.kind === 'Assign') {
     const baseName = deSSAVarName(instr.target.name)
+    propagateHookResultAlias(baseName, instr.value, ctx)
+    const hookMember = resolveHookMemberValue(instr.value, ctx)
+    if (hookMember) {
+      if (hookMember.kind === 'signal') {
+        ctx.signalVars?.add(baseName)
+        ctx.trackedVars.add(baseName)
+      } else if (hookMember.kind === 'memo') {
+        ctx.memoVars?.add(baseName)
+      }
+      if (instr.declarationKind) {
+        return t.variableDeclaration(instr.declarationKind, [
+          t.variableDeclarator(t.identifier(baseName), hookMember.member),
+        ])
+      }
+      return t.expressionStatement(
+        t.assignmentExpression('=', t.identifier(baseName), hookMember.member),
+      )
+    }
+    if (
+      instr.value.kind === 'CallExpression' &&
+      instr.value.callee.kind === 'Identifier' &&
+      isHookName(instr.value.callee.name)
+    ) {
+      ctx.hookResultVarMap?.set(baseName, instr.value.callee.name)
+      const retInfo = getHookReturnInfo(instr.value.callee.name, ctx)
+      if (retInfo?.directAccessor === 'signal') {
+        ctx.signalVars?.add(baseName)
+        ctx.trackedVars.add(baseName)
+      } else if (retInfo?.directAccessor === 'memo') {
+        ctx.memoVars?.add(baseName)
+      }
+    }
     if (ctx.signalVars?.has(baseName)) {
       return t.expressionStatement(
         t.callExpression(t.identifier(baseName), [lowerTrackedExpression(instr.value, ctx)]),
@@ -1230,12 +1495,21 @@ function lowerInstruction(
 function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.types.Statement[] {
   const { t } = ctx
   switch (block.terminator.kind) {
-    case 'Return':
-      return [
-        t.returnStatement(
-          block.terminator.argument ? lowerTrackedExpression(block.terminator.argument, ctx) : null,
-        ),
-      ]
+    case 'Return': {
+      const prevRegion = ctx.currentRegion
+      const preserveAccessors = ctx.currentFnIsHook
+      if (preserveAccessors) ctx.currentRegion = undefined
+      ctx.inReturn = true
+      let retExpr = block.terminator.argument
+        ? lowerTrackedExpression(block.terminator.argument, ctx)
+        : null
+      if (preserveAccessors && retExpr) {
+        retExpr = unwrapAccessorCalls(retExpr, ctx)
+      }
+      ctx.inReturn = false
+      ctx.currentRegion = prevRegion
+      return [t.returnStatement(retExpr)]
+    }
     case 'Throw':
       return [t.throwStatement(lowerTrackedExpression(block.terminator.argument, ctx))]
     case 'Jump':
@@ -1636,6 +1910,30 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
     }
 
     case 'MemberExpression':
+      if (
+        expr.object.kind === 'Identifier' &&
+        ctx.hookResultVarMap?.has(deSSAVarName(expr.object.name))
+      ) {
+        const hookName = ctx.hookResultVarMap.get(deSSAVarName(expr.object.name))!
+        const info = getHookReturnInfo(hookName, ctx)
+        const propName = getStaticPropName(expr.property as Expression, expr.computed)
+        let accessorKind: HookAccessorKind | undefined
+        if (typeof propName === 'string') {
+          accessorKind = info?.objectProps?.get(propName)
+        } else if (typeof propName === 'number') {
+          accessorKind = info?.arrayProps?.get(propName)
+        }
+        const shouldTreatAccessor = accessorKind || (!info && propName !== null)
+        if (shouldTreatAccessor) {
+          const member = t.memberExpression(
+            t.identifier(deSSAVarName(expr.object.name)),
+            expr.computed ? lowerExpression(expr.property, ctx) : t.identifier(String(propName)),
+            expr.computed,
+            expr.optional,
+          )
+          return t.callExpression(member, [])
+        }
+      }
       return t.memberExpression(
         lowerExpression(expr.object, ctx),
         expr.computed
@@ -1794,6 +2092,60 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
     }
 
     case 'AssignmentExpression':
+      if (expr.left.kind === 'MemberExpression') {
+        if (
+          expr.left.object.kind === 'Identifier' &&
+          ctx.hookResultVarMap?.has(deSSAVarName(expr.left.object.name))
+        ) {
+          const hookName = ctx.hookResultVarMap.get(deSSAVarName(expr.left.object.name))!
+          const info = getHookReturnInfo(hookName, ctx)
+          const propName = getStaticPropName(expr.left.property as Expression, expr.left.computed)
+          let kind: HookAccessorKind | undefined =
+            typeof propName === 'string'
+              ? info?.objectProps?.get(propName)
+              : typeof propName === 'number'
+                ? info?.arrayProps?.get(propName)
+                : undefined
+          if (!info && propName !== null) {
+            kind = 'signal'
+          }
+          if (kind === 'signal') {
+            const member = t.memberExpression(
+              t.identifier(deSSAVarName(expr.left.object.name)),
+              expr.left.computed
+                ? lowerExpression(expr.left.property as Expression, ctx)
+                : expr.left.property.kind === 'Identifier'
+                  ? t.identifier(expr.left.property.name)
+                  : t.stringLiteral(String((expr.left.property as any).value ?? '')),
+              expr.left.computed,
+              expr.left.optional,
+            )
+            const current = t.callExpression(member, [])
+            const right = lowerExpression(expr.right, ctx)
+            let next: BabelCore.types.Expression
+            switch (expr.operator) {
+              case '=':
+                next = right
+                break
+              case '+=':
+                next = t.binaryExpression('+', current, right)
+                break
+              case '-=':
+                next = t.binaryExpression('-', current, right)
+                break
+              case '*=':
+                next = t.binaryExpression('*', current, right)
+                break
+              case '/=':
+                next = t.binaryExpression('/', current, right)
+                break
+              default:
+                next = right
+            }
+            return t.callExpression(member, [next])
+          }
+        }
+      }
       if (expr.left.kind === 'Identifier') {
         const baseName = deSSAVarName(expr.left.name)
         if (ctx.trackedVars.has(baseName)) {
@@ -1831,6 +2183,47 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
       )
 
     case 'UpdateExpression':
+      if (expr.argument.kind === 'MemberExpression') {
+        if (
+          expr.argument.object.kind === 'Identifier' &&
+          ctx.hookResultVarMap?.has(deSSAVarName(expr.argument.object.name))
+        ) {
+          const hookName = ctx.hookResultVarMap.get(deSSAVarName(expr.argument.object.name))!
+          const info = getHookReturnInfo(hookName, ctx)
+          const propName = getStaticPropName(
+            expr.argument.property as Expression,
+            expr.argument.computed,
+          )
+          let kind: HookAccessorKind | undefined =
+            typeof propName === 'string'
+              ? info?.objectProps?.get(propName)
+              : typeof propName === 'number'
+                ? info?.arrayProps?.get(propName)
+                : undefined
+          if (!info && propName !== null) {
+            kind = 'signal'
+          }
+          if (kind === 'signal') {
+            const member = t.memberExpression(
+              t.identifier(deSSAVarName(expr.argument.object.name)),
+              expr.argument.computed
+                ? lowerExpression(expr.argument.property as Expression, ctx)
+                : expr.argument.property.kind === 'Identifier'
+                  ? t.identifier(expr.argument.property.name)
+                  : t.stringLiteral(String((expr.argument.property as any).value ?? '')),
+              expr.argument.computed,
+              expr.argument.optional,
+            )
+            const current = t.callExpression(member, [])
+            const delta = t.numericLiteral(1)
+            const next =
+              expr.operator === '++'
+                ? t.binaryExpression('+', current, delta)
+                : t.binaryExpression('-', current, delta)
+            return t.callExpression(member, [next])
+          }
+        }
+      }
       if (expr.argument.kind === 'Identifier') {
         const baseName = deSSAVarName(expr.argument.name)
         if (ctx.trackedVars.has(baseName)) {
@@ -1939,7 +2332,22 @@ function lowerDomExpression(
   ctx: CodegenContext,
   region?: RegionInfo | null,
 ): BabelCore.types.Expression {
-  const lowered = lowerExpression(expr, ctx)
+  let lowered = lowerExpression(expr, ctx)
+  if (
+    ctx.t.isMemberExpression(lowered) &&
+    ctx.t.isIdentifier(lowered.object) &&
+    ctx.hookResultVarMap?.has(deSSAVarName(lowered.object.name))
+  ) {
+    lowered = ctx.t.callExpression(lowered, [])
+  } else if (ctx.t.isIdentifier(lowered)) {
+    const hookName = ctx.hookResultVarMap?.get(deSSAVarName(lowered.name))
+    if (hookName) {
+      const info = getHookReturnInfo(hookName, ctx)
+      if (info?.directAccessor) {
+        lowered = ctx.t.callExpression(ctx.t.identifier(deSSAVarName(lowered.name)), [])
+      }
+    }
+  }
   return applyRegionMetadataToExpression(lowered, ctx, region)
 }
 
@@ -2239,6 +2647,9 @@ export function applyRegionMetadataToExpression(
   ctx: CodegenContext,
   regionOverride?: RegionInfo | null,
 ): BabelCore.types.Expression {
+  if (ctx.inReturn && ctx.currentFnIsHook) {
+    return expr
+  }
   const region = regionOverride ?? ctx.currentRegion
   if (!region) return expr
 
@@ -2277,6 +2688,15 @@ export function applyRegionMetadataToExpression(
     }
   }
 
+  if (ctx.inReturn && ctx.currentFnIsHook) {
+    for (const key of Object.keys(overrides)) {
+      const base = normalizeDependencyKey(key).split('.')[0] ?? key
+      if (ctx.trackedVars.has(base) || ctx.memoVars?.has(base) || ctx.signalVars?.has(base)) {
+        delete overrides[key]
+      }
+    }
+  }
+
   // Ensure tracked variables are also covered even if region metadata missed them
   const trackedNames = new Set(ctx.trackedVars)
   if (ctx.memoVars) {
@@ -2287,6 +2707,7 @@ export function applyRegionMetadataToExpression(
     const base = key.split('.')[0] ?? key
     if (shadowed && shadowed.has(base)) continue
     if (isNonReactiveFunction(base)) continue
+    if (ctx.inReturn && ctx.currentFnIsHook) continue
     if (!overrides[key]) {
       overrides[key] = () => buildDependencyGetter(dep, ctx)
     }
@@ -2406,6 +2827,13 @@ function replaceIdentifiersWithOverrides(
     if (t.isObjectProperty(node as any) && key === 'key' && !(node as any).computed) {
       continue
     }
+    if (
+      (t.isMemberExpression(node as any) || t.isOptionalMemberExpression(node as any)) &&
+      key === 'property' &&
+      !(node as any).computed
+    ) {
+      continue
+    }
     const value = (node as unknown as Record<string, unknown>)[key]
     if (Array.isArray(value)) {
       for (const item of value) {
@@ -2460,6 +2888,41 @@ export function buildDependencyGetter(
     const key = /^[a-zA-Z_$][\w$]*$/.test(prop) ? t.identifier(prop) : t.stringLiteral(prop)
     return t.memberExpression(acc, key, t.isStringLiteral(key))
   }, baseExpr)
+}
+
+function unwrapAccessorCalls(
+  expr: BabelCore.types.Expression,
+  ctx: CodegenContext,
+): BabelCore.types.Expression {
+  const { t } = ctx
+  const isAccessorName = (name: string) =>
+    ctx.signalVars?.has(name) || ctx.memoVars?.has(name) || ctx.aliasVars?.has(name)
+
+  if (t.isCallExpression(expr) && t.isIdentifier(expr.callee) && expr.arguments.length === 0) {
+    if (isAccessorName(expr.callee.name)) {
+      return t.identifier(expr.callee.name)
+    }
+  }
+
+  if (t.isObjectExpression(expr)) {
+    const props = expr.properties.map(p => {
+      if (t.isObjectProperty(p)) {
+        const value = unwrapAccessorCalls(p.value as BabelCore.types.Expression, ctx)
+        return t.objectProperty(p.key, value, p.computed, p.shorthand)
+      }
+      return p
+    })
+    return t.objectExpression(props)
+  }
+
+  if (t.isArrayExpression(expr)) {
+    const elements = expr.elements.map(el =>
+      el && t.isExpression(el) ? unwrapAccessorCalls(el, ctx) : el,
+    )
+    return t.arrayExpression(elements)
+  }
+
+  return expr
 }
 
 function regionInfoToMetadata(region: RegionInfo): RegionMetadata {
@@ -2960,14 +3423,14 @@ function lowerIntrinsicElement(
   // Wrap in memo if region suggests memoization
   if (shouldMemo && containingRegion) {
     // __fictUseMemo returns a getter function - invoke it to get the actual DOM element
-    return t.callExpression(
-      t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
-        t.identifier('__fictCtx'),
-        t.arrowFunctionExpression([], body),
-        t.numericLiteral(reserveHookSlot(ctx)),
-      ]),
-      [],
-    )
+    const memoArgs: BabelCore.types.Expression[] = [
+      t.identifier('__fictCtx'),
+      t.arrowFunctionExpression([], body),
+    ]
+    if (ctx.isComponentFn) {
+      memoArgs.push(t.numericLiteral(reserveHookSlot(ctx)))
+    }
+    return t.callExpression(t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), memoArgs), [])
   }
 
   // Wrap in IIFE
@@ -3551,6 +4014,9 @@ export function codegenWithScopes(
   t: typeof BabelCore.types,
 ): BabelCore.types.File {
   const ctx = createCodegenContext(t)
+  ctx.programFunctions = new Map(
+    program.functions.filter(fn => !!fn.name).map(fn => [fn.name as string, fn]),
+  )
   ctx.scopes = scopes
 
   // Mark tracked variables based on scope analysis
@@ -3668,6 +4134,9 @@ export function lowerHIRWithRegions(
   options?: FictCompilerOptions,
 ): BabelCore.types.File {
   const ctx = createCodegenContext(t)
+  ctx.programFunctions = new Map(
+    program.functions.filter(fn => !!fn.name).map(fn => [fn.name as string, fn]),
+  )
   ctx.options = options
   const body: BabelCore.types.Statement[] = []
   const topLevelAliases = new Set<string>()
@@ -3971,7 +4440,9 @@ function lowerTopLevelStatementBlock(
 
   const regionResult = generateRegions(fn, scopeResult)
   ctx.regions = flattenRegions(regionResult.topLevelRegions)
-  ctx.nextHookSlot = HOOK_SLOT_BASE
+  if (ctx.nextHookSlot === undefined) {
+    ctx.nextHookSlot = HOOK_SLOT_BASE
+  }
   const aliasVars = existingAliases ? new Set(existingAliases) : new Set<string>()
   ctx.aliasVars = aliasVars
 
@@ -4011,6 +4482,13 @@ function lowerTopLevelStatementBlock(
   ctx.trackedVars = reactive.tracked
   ctx.memoVars = reactive.memo
   ctx.controlDepsByInstr = reactive.controlDepsByInstr
+  if (fn.name && isHookName(fn.name)) {
+    const info = analyzeHookReturnInfo(fn, ctx)
+    if (info) {
+      ctx.hookReturnInfo = ctx.hookReturnInfo ?? new Map()
+      ctx.hookReturnInfo.set(fn.name, info)
+    }
+  }
 
   const lowered = generateRegionCode(fn, scopeResult, t, ctx)
   return { statements: lowered, aliases: aliasVars }
@@ -4141,8 +4619,9 @@ function lowerFunctionWithRegions(
   const prevMutatedVars = ctx.mutatedVars
   const prevAliasVars = ctx.aliasVars
   const prevNoMemo = ctx.noMemo
-  const prevNextHookSlot = ctx.nextHookSlot
   const prevWrapTracked = ctx.wrapTrackedExpressions
+  const prevIsComponent = ctx.isComponentFn
+  const prevHookResultVarMap = ctx.hookResultVarMap
   const scopedTracked = new Set(ctx.trackedVars)
   const shadowedParams = new Set(fn.params.map(p => deSSAVarName(p.name)))
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
@@ -4164,6 +4643,9 @@ function lowerFunctionWithRegions(
   ctx.storeVars = new Set(prevStoreVars ?? [])
   ctx.mutatedVars = new Set()
   ctx.noMemo = !!(prevNoMemo || fn.meta?.noMemo)
+  ctx.hookResultVarMap = new Map()
+  const hookResultVars = new Set<string>()
+  const hookAccessorAliases = new Set<string>()
 
   // Collect function-valued bindings, signals, and mutation info in this function
   for (const block of fn.blocks) {
@@ -4183,6 +4665,21 @@ function lowerFunctionWithRegions(
         if (
           instr.value.kind === 'CallExpression' &&
           instr.value.callee.kind === 'Identifier' &&
+          instr.value.callee.name.startsWith(HOOK_NAME_PREFIX)
+        ) {
+          hookResultVars.add(target)
+          ctx.hookResultVarMap?.set(target, instr.value.callee.name)
+        }
+        if (
+          instr.value.kind === 'MemberExpression' &&
+          instr.value.object.kind === 'Identifier' &&
+          hookResultVars.has(deSSAVarName(instr.value.object.name))
+        ) {
+          hookAccessorAliases.add(target)
+        }
+        if (
+          instr.value.kind === 'CallExpression' &&
+          instr.value.callee.kind === 'Identifier' &&
           instr.value.callee.name === '$store'
         ) {
           ctx.storeVars?.add(target)
@@ -4195,7 +4692,14 @@ function lowerFunctionWithRegions(
       }
     }
   }
+  hookAccessorAliases.forEach(name => {
+    ctx.aliasVars?.add(name)
+    ctx.trackedVars.add(name)
+  })
 
+  const inferredHook =
+    (!fn.name || fn.name[0] !== fn.name[0]?.toUpperCase()) &&
+    ((ctx.signalVars?.size ?? 0) > 0 || (ctx.storeVars?.size ?? 0) > 0)
   // Analyze reactive scopes with SSA/CFG awareness
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
   detectDerivedCycles(fn, scopeResult)
@@ -4204,19 +4708,45 @@ function lowerFunctionWithRegions(
   // Generate region result for metadata
   const regionResult = generateRegions(fn, scopeResult)
 
+  const prevHookFlag = ctx.currentFnIsHook
+  ctx.currentFnIsHook = (!!fn.name && fn.name.startsWith(HOOK_NAME_PREFIX)) || inferredHook
+  const isComponent = !!(fn.name && fn.name[0] === fn.name[0]?.toUpperCase())
+  ctx.isComponentFn = isComponent
+
   // Build RegionInfo array for DOM integration (with de-versioned names, flattened with children)
   ctx.regions = flattenRegions(regionResult.topLevelRegions)
-  ctx.nextHookSlot = HOOK_SLOT_BASE
+  if (ctx.nextHookSlot === undefined) {
+    ctx.nextHookSlot = HOOK_SLOT_BASE
+  }
 
   const reactive = computeReactiveAccessors(fn, ctx)
   ctx.trackedVars = reactive.tracked
   ctx.memoVars = reactive.memo
   ctx.controlDepsByInstr = reactive.controlDepsByInstr
+  if (fn.name && isHookName(fn.name)) {
+    const info = analyzeHookReturnInfo(fn, ctx)
+    if (info) {
+      ctx.hookReturnInfo = ctx.hookReturnInfo ?? new Map()
+      ctx.hookReturnInfo.set(fn.name, info)
+    }
+  }
   if (process.env.DEBUG_REGION && fn.name === 'Counter') {
     console.log('Tracked vars for Counter', Array.from(ctx.trackedVars))
 
     console.log('Memo vars for Counter', Array.from(ctx.memoVars))
   }
+
+  // Ensure hook call results that return direct accessors are treated as reactive aliases
+  hookResultVars.forEach(varName => {
+    const hookName = ctx.hookResultVarMap?.get(varName)
+    const info = hookName ? getHookReturnInfo(hookName, ctx) : null
+    if (info?.directAccessor === 'signal') {
+      ctx.signalVars?.add(varName)
+      ctx.trackedVars.add(varName)
+    } else if (info?.directAccessor === 'memo') {
+      ctx.memoVars?.add(varName)
+    }
+  })
 
   const hasJSX = regionResult.regions.some(r => r.hasJSX) || functionContainsJSX(fn)
   ctx.wrapTrackedExpressions = hasJSX
@@ -4238,14 +4768,23 @@ function lowerFunctionWithRegions(
     ctx.mutatedVars = prevMutatedVars
     ctx.aliasVars = prevAliasVars
     ctx.noMemo = prevNoMemo
-    ctx.nextHookSlot = prevNextHookSlot
     ctx.wrapTrackedExpressions = prevWrapTracked
+    ctx.hookResultVarMap = prevHookResultVarMap
     return null
   }
 
   // Generate region-based statements (JSX-bearing functions)
   let statements: BabelCore.types.Statement[]
   statements = generateRegionCode(fn, scopeResult, t, ctx)
+
+  if (ctx.currentFnIsHook) {
+    statements = statements.map(stmt => {
+      if (t.isReturnStatement(stmt) && stmt.argument && t.isExpression(stmt.argument)) {
+        return t.returnStatement(unwrapAccessorCalls(stmt.argument, ctx))
+      }
+      return stmt
+    })
+  }
 
   // Ensure context if signals/effects are used in experimental path
   if (ctx.needsCtx) {
@@ -4265,7 +4804,6 @@ function lowerFunctionWithRegions(
   let finalParams = fn.params.map(p => t.identifier(deSSAVarName(p.name)))
   const propsDestructuring: BabelCore.types.Statement[] = []
 
-  const isComponent = fn.name && fn.name[0] === fn.name[0]?.toUpperCase()
   if (isComponent && fn.rawParams && fn.rawParams.length === 1) {
     const rawParam = fn.rawParams[0]
     // Check if it's an ObjectPattern or AssignmentPattern with ObjectPattern
@@ -4314,8 +4852,10 @@ function lowerFunctionWithRegions(
   ctx.mutatedVars = prevMutatedVars
   ctx.aliasVars = prevAliasVars
   ctx.noMemo = prevNoMemo
-  ctx.nextHookSlot = prevNextHookSlot
   ctx.wrapTrackedExpressions = prevWrapTracked
+  ctx.currentFnIsHook = prevHookFlag
+  ctx.isComponentFn = prevIsComponent
+  ctx.hookResultVarMap = prevHookResultVarMap
   return funcDecl
 }
 
