@@ -1,11 +1,13 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createRequire } from 'module'
 
-import * as runtime from '@fictjs/runtime'
-import * as runtimeJsx from '@fictjs/runtime/jsx-runtime'
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-
 import { transformCommonJS } from '../../compiler/test/test-utils'
-import * as fict from '../src'
+
+const dynamicRequire = createRequire(import.meta.url)
+const runtime = dynamicRequire('@fictjs/runtime')
+const runtimeJsx = dynamicRequire('@fictjs/runtime/jsx-runtime')
+const fict = dynamicRequire('fict')
+const fictPlus = dynamicRequire('fict/plus')
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -20,8 +22,8 @@ function compileAndLoad<TModule extends Record<string, any>>(source: string): TM
     // eslint-disable-next-line no-console
     console.warn(output)
   }
+
   const module: { exports: any } = { exports: {} }
-  const dynamicRequire = createRequire(import.meta.url)
 
   const wrapped = new Function('require', 'module', 'exports', output)
   wrapped(
@@ -29,6 +31,7 @@ function compileAndLoad<TModule extends Record<string, any>>(source: string): TM
       if (id === '@fictjs/runtime') return runtime
       if (id === '@fictjs/runtime/jsx-runtime') return runtimeJsx
       if (id === 'fict') return fict
+      if (id === 'fict/plus') return fictPlus
       return dynamicRequire(id)
     },
     module,
@@ -1908,6 +1911,43 @@ describe('compiler + fict integration', () => {
     await tick()
     expect(readCount()).toBe('Count: 2')
     expect(readDouble()).toBe('Double: 4')
+
+    dispose()
+  })
+
+  it('supports $store fine-grained updates across nested objects', async () => {
+    const source = `
+      import { render } from 'fict'
+      import { $store } from 'fict/plus'
+
+      let user = $store({ name: 'Alice', address: { city: 'London' } })
+
+      export function mount(el: HTMLElement) {
+        return render(() => (
+          <div>
+            <p data-testid="name">{user.name}</p>
+            <p data-testid="city">{user.address.city}</p>
+            <button data-testid="mutate" onClick={() => { user.address.city = 'Paris' }}>Update</button>
+          </div>
+        ), el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const nameEl = () => container.querySelector('[data-testid="name"]')!.textContent
+    const cityEl = () => container.querySelector('[data-testid="city"]')!.textContent
+    const btn = () => container.querySelector('[data-testid="mutate"]') as HTMLButtonElement
+
+    expect(nameEl()).toBe('Alice')
+    expect(cityEl()).toBe('London')
+
+    btn().click()
+    await tick()
+    expect(nameEl()).toBe('Alice')
+    expect(cityEl()).toBe('Paris')
 
     dispose()
   })

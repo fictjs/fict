@@ -35,9 +35,9 @@ real data. Fict makes that fiction explicit, testable, and trivial to write.
 
 ## Status
 
-> ⚠️ **Experimental / pre-alpha**  
-> Fict is a design-driven experiment in what a "fiction-first" UI model and a compiler-powered DX could look like.  
-> **Do not** ship critical production code with it yet.
+> ⚠️ **Beta**
+> Fict v1.0 is feature-complete for the core compiler and runtime. The API surface is stable, but edge cases may still be refined.
+> Production use is possible for adventurous teams; please report issues.
 
 ---
 
@@ -103,17 +103,18 @@ The `render` function automatically marks containers with `data-fict-fine-graine
 **Learn more:**
 
 - 📘 Architecture: [`docs/architecture.md`](./docs/architecture.md#fine-grained-dom-pipeline-preview)
-- 🧠 Compiler plan: [`docs/compiler-fine-grained-plan.md`](./docs/compiler-fine-grained-plan.md)
-- 🔬 Technical specs: [`docs/fine-grained-jsx-subset.md`](./docs/fine-grained-jsx-subset.md), [`docs/fine-grained-ir.md`](./docs/fine-grained-ir.md)
+- 📋 Compiler spec: [`docs/compiler-spec.md`](./docs/compiler-spec.md)
+- 🔬 Technical specs: [`docs/fine-grained-jsx-subset.md`](./docs/fine-grained-jsx-subset.md)
 
 ### Compiler modes & `fineGrainedDom`
 
-The TypeScript transformer ships with `fineGrainedDom` **enabled by default** so that generated code matches the runtime pipeline above. If you are wiring the transformer manually (e.g. inside a custom build step) make sure you pass through the same option:
+The Babel plugin ships with `fineGrainedDom` **enabled by default** so that generated code matches the runtime pipeline above. If you are wiring the compiler manually (e.g. inside a custom build step) make sure you pass through the same option:
 
 ```ts
-import { createFictTransformer } from 'fict/compiler-ts'
+import createFictPlugin from '@fictjs/compiler'
 
-const transformer = createFictTransformer(program, { fineGrainedDom: true })
+// In your Babel config
+plugins: [[createFictPlugin, { fineGrainedDom: true }]]
 ```
 
 Only set `fineGrainedDom: false` when you explicitly need the legacy `insert()` fallback (for example, when bisecting compiler output or comparing against older fixtures). Mixing the runtime's fine-grained renderer with legacy compiler output will lead to missing helpers at runtime, so keep the option consistent across build tools and CI.
@@ -760,22 +761,28 @@ The current focus is:
 
 ## Roadmap
 
-Planned areas (subject to change):
+### Completed in v1.0
 
 - **Core**
-  - [ ] Stable `$state` / `$effect` semantics
-  - [ ] Cross-module derived value support
-  - [ ] Better dev warnings for unsafe patterns
+  - [x] Stable `$state` / `$effect` semantics
+  - [x] Cross-module derived value support
+  - [x] Dev warnings for unsafe patterns (FICT-C003, FICT-M003, FICT-S002, FICT-J002, FICT-E001, FICT-C004)
 
-- **Advanced APIs (opt-in, likely in `fict/plus`)**
-  - [ ] `$store` for deep/path-level tracking (complex forms, editors)
-  - [ ] `resource` for declarative async data (cache, de-dupe, cancellation)
-  - [ ] `transition` / `task` for scheduling and low-priority updates
-  - [ ] `untrack` escape hatch for black-box libraries
+- **Advanced APIs (`fict/plus`)**
+  - [x] `$store` for deep/path-level tracking (complex forms, editors)
+  - [x] `resource` for declarative async data (cache, de-dupe, cancellation)
+  - [x] `lazy` for code-splitting components
+  - [x] `transition` / `useDeferredValue` for scheduling and low-priority updates
+  - [x] `untrack` escape hatch for black-box libraries
+
 - **Tooling**
-  - [ ] Vite plugin
-  - [ ] ESLint rules for common footguns
-  - [ ] DevTools panel (inspect graph, "why did this rerender?")
+  - [x] Vite plugin (`@fictjs/vite-plugin`)
+  - [x] ESLint rules for common footguns (`@fictjs/eslint-plugin`)
+  - [x] DevTools panel (`@fictjs/devtools`)
+
+### Planned (post v1.0)
+
+- **Tooling**
   - [ ] TypeScript language service plugin (keeps types/go-to-def aligned with compiled signals)
 
 - **Docs**
@@ -783,13 +790,16 @@ Planned areas (subject to change):
   - [ ] Migration notes from React / Vue / Svelte / Solid
   - [ ] Patterns for forms, lists, async flows
 
+- **Runtime**
+  - [ ] SSR / streaming implementation
+
 ---
 
 ## FAQ
 
 ### Is Fict production-ready?
 
-No. It’s an experimental project exploring a different way to think about UI: as fiction over real state, with a compiler doing most of the reactive wiring.
+Fict v1.0 is feature-complete with stable APIs. While it's suitable for adventurous production use, you may encounter edge cases. We recommend thorough testing for critical applications.
 
 ### Does Fict use a virtual DOM?
 
@@ -808,7 +818,14 @@ let todos = $state([])
 todos = [...todos, newTodo] // ✅ Triggers update
 ```
 
-For deep mutations, use `$store` from `fict/plus` (coming soon).
+For deep mutations with path-level tracking, use `$store` from `fict/plus`:
+
+```ts
+import { $store } from 'fict/plus'
+
+let user = $store({ name: 'Alice', address: { city: 'London' } })
+user.address.city = 'Paris' // ✅ Fine-grained update
+```
 
 ### What about Server Components / SSR?
 

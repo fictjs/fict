@@ -1,6 +1,6 @@
-# Fict Compiler Spec (Draft)
+# Fict Compiler Spec (v1.0)
 
-> This document is a "trial specification" for the Fict compiler: you can use it as a reference blueprint when implementing TS transform / SWC plugins.
+> This is the official specification for the Fict compiler v1.0. Use it as a reference when implementing transforms or understanding compiler behavior.
 
 Goal:
 Given a piece of TSX source code, the Fict compiler needs to:
@@ -582,7 +582,7 @@ Compiler should:
 ## 13. Compilation Pipeline Overview
 
 1. **Parse + Type Check (Handled by TS / SWC)**
-2. **Mark Imports: Identify `$state`, `$effect`, (future `$store`, `resource`, etc.)**
+2. **Mark Imports: Identify `$state`, `$effect`, `$store`, `resource`, etc.**
 3. **Build Scope Info** (Function, Block, Module)
 4. **Scan `$state`** → Generate `SourceNode` set
 5. **Static Data Flow Analysis**:
@@ -683,8 +683,8 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
   - Read: rewritten to a memoized getter (`count` reads `state().count`), so JSX/logic stays reactive.
   - Write: assignments/`++` to `count` are disallowed; mutate via `state.count++` or immutable updates (e.g., `state = { ...state(), count: state().count + 1 }`).
   - Correct Usage: `const s = $state({ id: 1 }); const id = () => s.id;` or usage in JSX `{s.id}`.
-- **Blackbox Functions**: Passing `$state` to a function `fn(state)` passes the _current value_. `fn` cannot subscribe to updates unless it receives a getter or signal object (future `$store`).
-- **Function arguments**: When you pass a `$state` accessor to an arbitrary function (e.g. `someFn(count)`), the compiler rewrites it to a snapshot (`someFn(count())`). If the callee expects reactivity, pass an explicit getter (`() => count`) or a future `$ref/$store` handle. The compiler emits `FICT-S002` as a warning in this case.
+- **Blackbox Functions**: Passing `$state` to a function `fn(state)` passes the _current value_. `fn` cannot subscribe to updates unless it receives a getter or signal object (`$store` from `fict/plus`).
+- **Function arguments**: When you pass a `$state` accessor to an arbitrary function (e.g. `someFn(count)`), the compiler rewrites it to a snapshot (`someFn(count())`). If the callee expects reactivity, pass an explicit getter (`() => count`) or use `$store` from `fict/plus`. The compiler emits `FICT-S002` as a warning in this case.
 - **Arrays**: `$state` arrays track mutations (`push`, index writes, `length` assignment) as writes to the signal. Prefer immutable updates for predictability; mutating `length` is allowed but should be documented as a full write.
 - **Refs**: Both ref callbacks (`ref={node => el = node}`) and ref objects (`ref={divRef}`) are supported. Choose callbacks for inline capture; use objects for reuse and cleanup semantics.
 
