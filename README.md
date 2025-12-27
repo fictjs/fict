@@ -12,7 +12,10 @@ Fict is a tiny UI library where you write plain JavaScript and the compiler figu
 - `$effect` for side effects
 - Everything else is automatic
 - Props stay reactive even through destructuring/rest/spread—compiler inserts lazy getters/`useProp` for you.
-- Manual helpers are rarely needed; reach for `prop/mergeProps/useProp` only when passing truly dynamic/unknown-shape objects or intentional cached-heavy work.
+- Manual helpers are rarely needed; reach for `prop/mergeProps/useProp` only when:
+  - You build objects with unknown/dynamic keys at runtime (compiler can’t see inside).
+  - You explicitly want to memoize a heavy prop computation you control.
+  - You need to mark specific reactive fields on a dynamic shape before spreading/merging.
 
 No `useMemo`. No dependency arrays. No `.value`. Just JavaScript.
 

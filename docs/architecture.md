@@ -155,12 +155,15 @@ The compiler already wraps destructuring/rest/spread/children for you. Manual he
   ```
 
 - **Mark specific reactive fields on a dynamic shape**:
+
   ```ts
   function getSettings() {
     return { theme, user: prop(() => currentUser), staticFlag: true }
   }
   return <Dashboard {...mergeProps(getSettings())} />
   ```
+
+- **Interop / escape hatches**: when passing third-party objects or functions where the compiler cannot safely inject getters, annotate the reactive parts with `prop`/`useProp` or wrap with `mergeProps`.
 
 For everyday props/destructuring/spread patterns, rely on the compiler’s automatic wrapping; no manual helpers required.
 
