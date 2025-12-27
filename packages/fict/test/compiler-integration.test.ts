@@ -427,6 +427,63 @@ describe('compiler + fict integration', () => {
     dispose()
   })
 
+  it('isolates context per render root (no state leakage across mounts)', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        const count = $state(0)
+        return (
+          <div>
+            <p data-testid="count">Count: {count}</p>
+            <button data-testid="inc" onClick={() => count++}>Inc</button>
+          </div>
+        )
+      }
+
+      export function mount(el) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+
+    const containerA = document.createElement('div')
+    const containerB = document.createElement('div')
+    document.body.appendChild(containerA)
+    document.body.appendChild(containerB)
+
+    const disposeA = mod.mount(containerA)
+    const disposeB = mod.mount(containerB)
+    await tick()
+
+    const countA = () => containerA.querySelector('[data-testid="count"]')!.textContent
+    const countB = () => containerB.querySelector('[data-testid="count"]')!.textContent
+    const incA = () =>
+      (containerA.querySelector('[data-testid="inc"]') as HTMLButtonElement).click()
+    const incB = () =>
+      (containerB.querySelector('[data-testid="inc"]') as HTMLButtonElement).click()
+
+    expect(countA()).toBe('Count: 0')
+    expect(countB()).toBe('Count: 0')
+
+    incA()
+    await tick()
+    expect(countA()).toBe('Count: 1')
+    expect(countB()).toBe('Count: 0') // isolated
+
+    incB()
+    incB()
+    await tick()
+    expect(countA()).toBe('Count: 1')
+    expect(countB()).toBe('Count: 2')
+
+    disposeA()
+    disposeB()
+    containerA.remove()
+    containerB.remove()
+  })
+
   it('logs doubled on every count change and updates both branch and title', async () => {
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(conditionalCounterSource)
