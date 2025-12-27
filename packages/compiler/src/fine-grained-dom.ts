@@ -1254,6 +1254,17 @@ export function createListBinding(
       t.arrowFunctionExpression(paramNodes as any, transformedBody),
     ])
   } else {
+    // Warn on missing key prop in mapped lists
+    if (ctx.options.onWarn) {
+      const loc = body.loc?.start ?? originalExpr.loc?.start
+      ctx.options.onWarn({
+        code: 'FICT-J002',
+        message: 'Missing key prop in list rendering.',
+        fileName: ctx.file.opts.filename || '<unknown>',
+        line: loc?.line ?? 0,
+        column: loc ? loc.column + 1 : 0,
+      })
+    }
     // Unkeyed List
     ctx.helpersUsed.list = true
     return t.callExpression(t.identifier(RUNTIME_ALIASES.list), [

@@ -297,6 +297,7 @@ function createHIREntrypointVisitor(
   return {
     Program: {
       exit(path) {
+        const fileName = (path.hub as any)?.file?.opts?.filename || '<unknown>'
         // Collect macro imports from fict
         const fictImports = new Set<string>()
         path.traverse({
@@ -309,6 +310,64 @@ function createHIREntrypointVisitor(
             }
           },
         })
+        // Warn on list rendering without key
+        path.traverse({
+          JSXExpressionContainer(exprPath) {
+            const expr = exprPath.node.expression
+            if (!t.isCallExpression(expr)) return
+            if (
+              !t.isMemberExpression(expr.callee) ||
+              !t.isIdentifier(expr.callee.property, { name: 'map' })
+            ) {
+              return
+            }
+            const cb = expr.arguments[0]
+            if (!cb || (!t.isArrowFunctionExpression(cb) && !t.isFunctionExpression(cb))) return
+
+            const getReturnedJsx = (
+              fn: BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression,
+            ): BabelCore.types.JSXElement | null => {
+              if (t.isJSXElement(fn.body)) return fn.body
+              if (t.isBlockStatement(fn.body)) {
+                const ret = fn.body.body.find(stmt => t.isReturnStatement(stmt))
+                if (
+                  ret &&
+                  t.isReturnStatement(ret) &&
+                  ret.argument &&
+                  t.isJSXElement(ret.argument)
+                ) {
+                  return ret.argument
+                }
+              }
+              return null
+            }
+
+            const jsx = getReturnedJsx(cb as any)
+            if (!jsx) return
+
+            let hasKey = false
+            let hasUnknownSpread = false
+            for (const attr of jsx.openingElement.attributes) {
+              if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name, { name: 'key' })) {
+                hasKey = true
+                break
+              }
+              if (t.isJSXSpreadAttribute(attr)) {
+                hasUnknownSpread = true
+              }
+            }
+            if (hasKey || hasUnknownSpread) return
+
+            options.onWarn?.({
+              code: 'FICT-J002',
+              message: 'Missing key prop in list rendering.',
+              fileName,
+              line: expr.loc?.start.line ?? 0,
+              column: expr.loc ? expr.loc.start.column + 1 : 0,
+            })
+          },
+        })
+
         // Validate macro placement consistently for HIR path
         const stateVars = new Set<string>()
         const derivedVars = new Set<string>()

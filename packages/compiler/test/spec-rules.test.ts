@@ -134,6 +134,18 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-E001')).toBe(true)
   })
 
+  it('warns when mapping a list without key', () => {
+    const warnings: CompilerWarning[] = []
+    const input = `
+      import { $state } from 'fict'
+      export function List({ items }) {
+        return <ul>{items.map(item => <li>{item.name}</li>)}</ul>
+      }
+    `
+    transform(input, { onWarn: w => warnings.push(w) })
+    expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
+  })
+
   it('detects cyclic derived dependencies', () => {
     const input = `
       import { $state } from 'fict'
