@@ -175,6 +175,58 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
             continue
           }
 
+          if (t.isObjectPattern(decl.id)) {
+            const tempName = `__destruct_${tempCounter++}`
+            target.instructions.push({
+              kind: 'Assign',
+              target: { kind: 'Identifier', name: tempName },
+              value: decl.init
+                ? convertExpression(decl.init)
+                : ({ kind: 'Literal', value: undefined } as HLiteral),
+              declarationKind: declKind,
+            })
+
+            const excludeKeys: BabelCore.types.Expression[] = []
+
+            decl.id.properties.forEach(prop => {
+              if (t.isObjectProperty(prop)) {
+                const keyName = t.isIdentifier(prop.key)
+                  ? prop.key.name
+                  : t.isStringLiteral(prop.key)
+                    ? prop.key.value
+                    : t.isNumericLiteral(prop.key)
+                      ? String(prop.key.value)
+                      : null
+                if (!keyName) return
+                excludeKeys.push(t.stringLiteral(keyName))
+                if (t.isIdentifier(prop.value)) {
+                  const memberExpr = t.memberExpression(
+                    t.identifier(tempName),
+                    t.identifier(keyName),
+                    false,
+                  )
+                  target.instructions.push({
+                    kind: 'Assign',
+                    target: { kind: 'Identifier', name: prop.value.name },
+                    value: convertExpression(memberExpr),
+                    declarationKind: declKind,
+                  })
+                }
+              } else if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) {
+                const restExpr = t.callExpression(t.identifier('__fictPropsRest'), [
+                  t.identifier(tempName),
+                  t.arrayExpression(excludeKeys),
+                ])
+                target.instructions.push({
+                  kind: 'Assign',
+                  target: { kind: 'Identifier', name: prop.argument.name },
+                  value: convertExpression(restExpr),
+                  declarationKind: declKind,
+                })
+              }
+            })
+          }
+
           if (t.isArrayPattern(decl.id)) {
             const tempName = `__destruct_${tempCounter++}`
             target.instructions.push({
@@ -567,6 +619,8 @@ function convertFunction(
             declarationKind: declKind,
           })
 
+          const excludeKeys: BabelCore.types.Expression[] = []
+
           decl.id.properties.forEach(prop => {
             if (t.isObjectProperty(prop)) {
               const keyName = t.isIdentifier(prop.key)
@@ -577,6 +631,7 @@ function convertFunction(
                     ? String(prop.key.value)
                     : null
               if (!keyName) return
+              excludeKeys.push(t.stringLiteral(keyName))
               if (t.isIdentifier(prop.value)) {
                 const memberExpr = t.memberExpression(
                   t.identifier(tempName),
@@ -591,7 +646,10 @@ function convertFunction(
                 })
               }
             } else if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) {
-              const restExpr = t.identifier(tempName)
+              const restExpr = t.callExpression(t.identifier('__fictPropsRest'), [
+                t.identifier(tempName),
+                t.arrayExpression(excludeKeys),
+              ])
               current.block.instructions.push({
                 kind: 'Assign',
                 target: { kind: 'Identifier', name: prop.argument.name },
@@ -1191,6 +1249,55 @@ function processStatement(
           declarationKind: declKind,
         })
         continue
+      }
+      if (t.isObjectPattern(decl.id)) {
+        const tempName = `__destruct_${destructuringTempCounter++}`
+        push({
+          kind: 'Assign',
+          target: { kind: 'Identifier', name: tempName },
+          value: decl.init
+            ? convertExpression(decl.init)
+            : ({ kind: 'Literal', value: undefined } as HLiteral),
+          declarationKind: declKind,
+        })
+        const excludeKeys: BabelCore.types.Expression[] = []
+        decl.id.properties.forEach(prop => {
+          if (t.isObjectProperty(prop)) {
+            const keyName = t.isIdentifier(prop.key)
+              ? prop.key.name
+              : t.isStringLiteral(prop.key)
+                ? prop.key.value
+                : t.isNumericLiteral(prop.key)
+                  ? String(prop.key.value)
+                  : null
+            if (!keyName) return
+            excludeKeys.push(t.stringLiteral(keyName))
+            if (t.isIdentifier(prop.value)) {
+              const memberExpr = t.memberExpression(
+                t.identifier(tempName),
+                t.identifier(keyName),
+                false,
+              )
+              push({
+                kind: 'Assign',
+                target: { kind: 'Identifier', name: prop.value.name },
+                value: convertExpression(memberExpr),
+                declarationKind: declKind,
+              })
+            }
+          } else if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) {
+            const restExpr = t.callExpression(t.identifier('__fictPropsRest'), [
+              t.identifier(tempName),
+              t.arrayExpression(excludeKeys),
+            ])
+            push({
+              kind: 'Assign',
+              target: { kind: 'Identifier', name: prop.argument.name },
+              value: convertExpression(restExpr),
+              declarationKind: declKind,
+            })
+          }
+        })
       }
       if (t.isArrayPattern(decl.id)) {
         const tempName = `__destruct_${destructuringTempCounter++}`

@@ -234,10 +234,40 @@ describe('tracked reads/writes in HIR codegen', () => {
     const { code } = generate(file)
 
     expect(code).toMatch(/const __destruct_\d+ = useCounter\(\)/)
-    expect(code).toMatch(/const props = __destruct_\d+/)
+    expect(code).toMatch(/__fictPropsRest\(__destruct_\d+, \[\]\)/)
     expect(code).toContain('props.count()')
     expect(code).toContain('props.count(props.count() + 1)')
     expect(code).toContain('props.double()')
+  })
+
+  it('wraps complex prop expressions with useProp for caching', () => {
+    const ast = parseFile(`
+      function Parent() {
+        let count = $state(0)
+        return <Child value={count * 2 + count} />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('useProp')
+    expect(code).toContain('useProp(() => count() * 2 + count())')
+  })
+
+  it('lowers props rest destructuring to runtime helper', () => {
+    const ast = parseFile(`
+      function Comp(props) {
+        const { title, ...rest } = props
+        return <div>{rest.count}</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/__fictPropsRest\(__destruct_\d+, \["title"\]\)/)
+    expect(code).toContain('__fictPropsRest')
   })
 })
 

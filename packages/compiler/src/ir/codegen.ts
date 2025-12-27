@@ -56,17 +56,33 @@ export function propagateHookResultAlias(
   value: Expression,
   ctx: CodegenContext,
 ): void {
-  if (value.kind !== 'Identifier') return
-  const source = deSSAVarName(value.name)
-  const hookName = ctx.hookResultVarMap?.get(source)
-  if (!hookName) return
-  ctx.hookResultVarMap?.set(targetBase, hookName)
-  const info = getHookReturnInfo(hookName, ctx)
-  if (info?.directAccessor === 'signal') {
-    ctx.signalVars?.add(targetBase)
-    ctx.trackedVars.add(targetBase)
-  } else if (info?.directAccessor === 'memo') {
-    ctx.memoVars?.add(targetBase)
+  const mapSource = (source: string) => {
+    const hookName = ctx.hookResultVarMap?.get(source)
+    if (!hookName) return
+    ctx.hookResultVarMap?.set(targetBase, hookName)
+    const info = getHookReturnInfo(hookName, ctx)
+    if (info?.directAccessor === 'signal') {
+      ctx.signalVars?.add(targetBase)
+      ctx.trackedVars.add(targetBase)
+    } else if (info?.directAccessor === 'memo') {
+      ctx.memoVars?.add(targetBase)
+    }
+  }
+
+  if (value.kind === 'Identifier') {
+    mapSource(deSSAVarName(value.name))
+    return
+  }
+
+  if (
+    value.kind === 'CallExpression' &&
+    value.callee.kind === 'Identifier' &&
+    value.callee.name === '__fictPropsRest'
+  ) {
+    const firstArg = value.arguments[0]
+    if (firstArg && firstArg.kind === 'Identifier') {
+      mapSource(deSSAVarName(firstArg.name))
+    }
   }
 }
 
@@ -1895,6 +1911,16 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
           cb ?? t.arrowFunctionExpression([], t.identifier('undefined')),
         ])
       }
+      if (expr.callee.kind === 'Identifier' && expr.callee.name === '__fictPropsRest') {
+        ctx.helpersUsed.add('propsRest')
+        const args = expr.arguments.map(a => lowerExpression(a, ctx))
+        return t.callExpression(t.identifier(RUNTIME_ALIASES.propsRest), args)
+      }
+      if (expr.callee.kind === 'Identifier' && expr.callee.name === 'mergeProps') {
+        ctx.helpersUsed.add('mergeProps')
+        const args = expr.arguments.map(a => lowerExpression(a, ctx))
+        return t.callExpression(t.identifier(RUNTIME_ALIASES.mergeProps), args)
+      }
       const isIIFE =
         (expr.callee.kind === 'ArrowFunction' || expr.callee.kind === 'FunctionExpression') &&
         expr.arguments.length === 0 &&
@@ -1989,16 +2015,29 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
             return t.spreadElement(lowerExpression(p.argument, ctx))
           }
           // For shorthand properties, ensure key matches the de-versioned value name
-          const valueExprRaw = lowerExpression(p.value, ctx)
           const usesTracked =
             !!ctx.inPropsContext &&
             (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
             p.value.kind !== 'ArrowFunction' &&
             p.value.kind !== 'FunctionExpression' &&
             expressionUsesTracked(p.value, ctx)
+          const valueExprRaw = usesTracked
+            ? (lowerTrackedExpression(p.value as Expression, ctx) as BabelCore.types.Expression)
+            : lowerExpression(p.value, ctx)
+          const shouldMemoProp =
+            usesTracked &&
+            !t.isIdentifier(valueExprRaw) &&
+            !t.isMemberExpression(valueExprRaw) &&
+            !t.isLiteral(valueExprRaw)
           const valueExpr =
             usesTracked && ctx.t.isExpression(valueExprRaw)
               ? (() => {
+                  if (shouldMemoProp) {
+                    ctx.helpersUsed.add('useProp')
+                    return t.callExpression(t.identifier(RUNTIME_ALIASES.useProp), [
+                      t.arrowFunctionExpression([], valueExprRaw),
+                    ])
+                  }
                   ctx.helpersUsed.add('propGetter')
                   return t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
                     t.arrowFunctionExpression([], valueExprRaw),
@@ -3960,12 +3999,34 @@ function buildPropsObject(
           (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
           expressionUsesTracked(attr.value, ctx) &&
           !alreadyGetter
+        const trackedExpr = usesTracked
+          ? (lowerTrackedExpression(attr.value as Expression, ctx) as BabelCore.types.Expression)
+          : null
+        const useMemoProp =
+          usesTracked &&
+          trackedExpr &&
+          t.isExpression(trackedExpr) &&
+          !t.isIdentifier(trackedExpr) &&
+          !t.isMemberExpression(trackedExpr) &&
+          !t.isLiteral(trackedExpr)
         const valueExpr =
           usesTracked && t.isExpression(lowered)
             ? (() => {
+                if (useMemoProp) {
+                  ctx.helpersUsed.add('useProp')
+                  return t.callExpression(t.identifier(RUNTIME_ALIASES.useProp), [
+                    t.arrowFunctionExpression(
+                      [],
+                      trackedExpr ?? (lowered as BabelCore.types.Expression),
+                    ),
+                  ])
+                }
                 ctx.helpersUsed.add('propGetter')
                 return t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
-                  t.arrowFunctionExpression([], lowered),
+                  t.arrowFunctionExpression(
+                    [],
+                    trackedExpr ?? (lowered as BabelCore.types.Expression),
+                  ),
                 ])
               })()
             : lowered
