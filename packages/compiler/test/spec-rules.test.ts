@@ -111,6 +111,22 @@ describe('Spec rule coverage', () => {
     expect(hasMutationWarning || hasDynamicAccessWarning).toBe(true)
   })
 
+  it('warns when a component has no return statement', () => {
+    const warnings: any[] = []
+    const input = `
+      import { $state, render } from 'fict'
+      function Counter() {
+        const count = $state(0)
+        // no return
+      }
+      export function mount(el) {
+        return render(() => <Counter />, el)
+      }
+    `
+    transform(input, { onWarn: w => warnings.push(w) })
+    expect(warnings.some(w => w.code === 'FICT-C004')).toBe(true)
+  })
+
   it('emits a warning when $effect has no reactive reads', () => {
     const warnings: CompilerWarning[] = []
     const input = `

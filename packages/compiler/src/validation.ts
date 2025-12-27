@@ -50,6 +50,7 @@ export enum DiagnosticCode {
   FICT_C001 = 'FICT-C001', // Conditional hook call
   FICT_C002 = 'FICT-C002', // Loop hook call
   FICT_C003 = 'FICT-C003', // Nested component definition
+  FICT_C004 = 'FICT-C004', // Component missing return
 
   // JSX-related (FICT-J*)
   FICT_J001 = 'FICT-J001', // Dynamic key expression
@@ -91,6 +92,7 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
   [DiagnosticCode.FICT_C001]: 'Hooks should not be called conditionally.',
   [DiagnosticCode.FICT_C002]: 'Hooks should not be called inside loops.',
   [DiagnosticCode.FICT_C003]: 'Components should not be defined inside other components.',
+  [DiagnosticCode.FICT_C004]: 'Component has no return statement and will render nothing.',
 
   [DiagnosticCode.FICT_J001]: 'Dynamic key expression may impact performance.',
   [DiagnosticCode.FICT_J002]: 'Missing key prop in list rendering.',
@@ -127,6 +129,7 @@ export const DiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = 
   [DiagnosticCode.FICT_C001]: DiagnosticSeverity.Error,
   [DiagnosticCode.FICT_C002]: DiagnosticSeverity.Error,
   [DiagnosticCode.FICT_C003]: DiagnosticSeverity.Warning,
+  [DiagnosticCode.FICT_C004]: DiagnosticSeverity.Warning,
 
   [DiagnosticCode.FICT_J001]: DiagnosticSeverity.Info,
   [DiagnosticCode.FICT_J002]: DiagnosticSeverity.Warning,

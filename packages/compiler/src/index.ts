@@ -79,6 +79,100 @@ function emitWarning(
   })
 }
 
+function isComponentName(name: string | undefined): boolean {
+  return !!name && name[0] === name[0]?.toUpperCase()
+}
+
+function blockHasReturn(block: BabelCore.types.BlockStatement): boolean {
+  for (const stmt of block.body) {
+    if (stmt.type === 'ReturnStatement') return true
+    if (stmt.type === 'IfStatement') {
+      if (
+        (stmt.consequent && stmt.consequent.type === 'BlockStatement'
+          ? blockHasReturn(stmt.consequent)
+          : stmt.consequent?.type === 'ReturnStatement') ||
+        (stmt.alternate && stmt.alternate.type === 'BlockStatement'
+          ? blockHasReturn(stmt.alternate)
+          : stmt.alternate?.type === 'ReturnStatement')
+      ) {
+        return true
+      }
+    }
+    if (stmt.type === 'SwitchStatement') {
+      for (const cs of stmt.cases) {
+        for (const cstmt of cs.consequent) {
+          if (cstmt.type === 'ReturnStatement') return true
+          if (cstmt.type === 'BlockStatement' && blockHasReturn(cstmt)) return true
+        }
+      }
+    }
+    if (stmt.type === 'TryStatement') {
+      if (stmt.block && blockHasReturn(stmt.block)) return true
+      if (stmt.handler?.body && blockHasReturn(stmt.handler.body)) return true
+      if (stmt.finalizer && blockHasReturn(stmt.finalizer)) return true
+    }
+  }
+  return false
+}
+
+function functionHasReturn(node: BabelCore.types.Function): boolean {
+  if (node.type === 'ArrowFunctionExpression' && node.expression) return true
+  if (node.body && node.body.type === 'BlockStatement') {
+    return blockHasReturn(node.body)
+  }
+  return false
+}
+
+function functionHasJSX(fnPath: BabelCore.NodePath<BabelCore.types.Function>): boolean {
+  let found = false
+  fnPath.traverse({
+    JSXElement(p) {
+      found = true
+      p.stop()
+    },
+    JSXFragment(p) {
+      found = true
+      p.stop()
+    },
+    Function(inner) {
+      if (inner === fnPath) return
+      inner.skip()
+    },
+  })
+  return found
+}
+
+function functionUsesStateLike(
+  fnPath: BabelCore.NodePath<BabelCore.types.Function>,
+  t: typeof BabelCore.types,
+): boolean {
+  let found = false
+  fnPath.traverse({
+    CallExpression(callPath) {
+      if (
+        t.isIdentifier(callPath.node.callee) &&
+        (callPath.node.callee.name === '$state' || callPath.node.callee.name === '$effect')
+      ) {
+        found = true
+        callPath.stop()
+      }
+    },
+    JSXElement(p) {
+      found = true
+      p.stop()
+    },
+    JSXFragment(p) {
+      found = true
+      p.stop()
+    },
+    Function(inner) {
+      if (inner === fnPath) return
+      inner.skip()
+    },
+  })
+  return found
+}
+
 function isDynamicPropertyAccess(
   node: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
   t: typeof BabelCore.types,
@@ -298,6 +392,43 @@ function createHIREntrypointVisitor(
     Program: {
       exit(path) {
         const fileName = (path.hub as any)?.file?.opts?.filename || '<unknown>'
+
+        // Warn on component-like functions missing a return
+        path.traverse({
+          FunctionDeclaration(fnPath) {
+            const name = fnPath.node.id?.name
+            if (!isComponentName(name)) return
+            if (!functionHasJSX(fnPath) && !functionUsesStateLike(fnPath, t)) return
+            if (functionHasReturn(fnPath.node)) return
+            emitWarning(
+              fnPath.node,
+              'FICT-C004',
+              'Component has no return statement and will render nothing.',
+              options,
+              fileName,
+            )
+          },
+          VariableDeclarator(varPath) {
+            if (!t.isIdentifier(varPath.node.id) || !isComponentName(varPath.node.id.name)) return
+            const init = varPath.node.init
+            if (!init) return
+            if (!t.isArrowFunctionExpression(init) && !t.isFunctionExpression(init)) {
+              return
+            }
+            const fnPath = varPath.get('init') as BabelCore.NodePath<
+              BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression
+            >
+            if (!functionHasJSX(fnPath as any) && !functionUsesStateLike(fnPath as any, t)) return
+            if (functionHasReturn(init as any)) return
+            emitWarning(
+              init,
+              'FICT-C004',
+              'Component has no return statement and will render nothing.',
+              options,
+              fileName,
+            )
+          },
+        })
         // Collect macro imports from fict
         const fictImports = new Set<string>()
         path.traverse({
