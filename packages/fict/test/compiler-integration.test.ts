@@ -1345,6 +1345,111 @@ describe('compiler + fict integration', () => {
     dispose()
   })
 
+  it('props: compiler auto-wraps derived prop with useProp to avoid recompute', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let getCallCount: () => number
+
+      const heavy = (n: number) => {
+        callCount++
+        return n * 10
+      }
+
+      let callCount = 0
+
+      function Child(props: any) {
+        return (
+          <div>
+            <p data-testid="value-a">{props.value}</p>
+            <p data-testid="value-b">{props.value}</p>
+            <button data-testid="inc" onClick={props.onInc}>Inc</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        let count = $state(0)
+        const onInc = () => count++
+
+        getCallCount = () => callCount
+
+        return render(() => (
+          <Child value={heavy(count)} onInc={onInc} />
+        ), el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      getCallCount: () => number
+    }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const readA = () => container.querySelector('[data-testid="value-a"]')?.textContent
+    const readB = () => container.querySelector('[data-testid="value-b"]')?.textContent
+    const incBtn = container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+    expect(readA()).toBe('0')
+    expect(readB()).toBe('0')
+    expect(mod.getCallCount()).toBe(1) // heavy called once initially
+
+    incBtn.click()
+    await tick()
+    expect(readA()).toBe('10')
+    expect(readB()).toBe('10')
+    expect(mod.getCallCount()).toBe(2) // once per change, not per access
+
+    incBtn.click()
+    await tick()
+    expect(readA()).toBe('20')
+    expect(readB()).toBe('20')
+    expect(mod.getCallCount()).toBe(3)
+
+    dispose()
+  })
+
+  it('props: auto prop wrapping keeps multi-spread props reactive (no manual mergeProps)', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Child(props: any) {
+        return (
+          <div>
+            <p data-testid="label">{props.label}</p>
+            <p data-testid="count">Count: {props.count}</p>
+            <button data-testid="inc" onClick={() => props.onInc?.()}>Inc</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        let count = $state(0)
+        return render(() => (
+          <Child {...{ label: 'hello' }} {...{ count, onInc: () => count++ }} />
+        ), el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const readCount = () => container.querySelector('[data-testid="count"]')?.textContent
+    const incBtn = container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+    expect(readCount()).toBe('Count: 0')
+
+    incBtn.click()
+    await tick()
+    expect(readCount()).toBe('Count: 1')
+
+    incBtn.click()
+    await tick()
+    expect(readCount()).toBe('Count: 2')
+
+    dispose()
+  })
   it('props: heavy computation memoized with useProp vs raw', async () => {
     const source = `
       import { $state, render, useProp } from 'fict'

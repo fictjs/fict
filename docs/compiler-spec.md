@@ -314,7 +314,7 @@ export function Greeting({ name, age = 18, onClick }: Props) {
 
 3. Do not expose `__props` at the type level, keeping the IDE experience natural.
 
-4. Component spreads keep reactive props:
+4. Component spreads keep reactive props (compiler inserts lazy getters/memoizers automatically):
 
    ```tsx
    const payload = { value: count } // count is $state
@@ -328,9 +328,9 @@ export function Greeting({ name, age = 18, onClick }: Props) {
    return <Child {...obj()} />
    ```
 
-5. Rest/merge helpers (runtime) to keep reactivity:
-   - `mergeProps(...sources)` merges multiple props objects, preserving `prop` getters and override order (later wins).
-   - `prop` is the public helper for rare manual wrapping (e.g., dynamic runtime objects). The compiler internally emits its alias automatically; userland should prefer `mergeProps` / rest first.
+5. Rest/merge helpers (runtime) exist for edge cases:
+   - `mergeProps(...sources)` merges multiple props objects, preserving getters and override order (later wins). The compiler will emit it only when needed.
+   - `prop` / `useProp` are public helpers for truly dynamic or heavy cases. For normal code, the compiler inserts lazy getters/memoized wrappers automatically; manual calls are rarely needed.
 
 ---
 
