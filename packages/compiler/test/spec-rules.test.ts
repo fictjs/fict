@@ -87,8 +87,9 @@ describe('Spec rule coverage', () => {
     const output = transform(input)
     // Check that state is transformed and props are accessed
     expect(output).toContain('__fictUseSignal')
-    // HIR uses destructuring pattern = __props
-    expect(output).toContain('= __props')
+    // Props destructuring uses reactive getters
+    expect(output).toContain('useProp(() => __props.count)')
+    expect(output).toContain('count()')
     expect(output).toContain('insert')
   })
 

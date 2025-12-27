@@ -144,7 +144,8 @@ describe('R005: Props destructuring', () => {
       }
     `)
     expect(output).toContain('__props')
-    expect(output).toContain('= __props')
+    expect(output).toContain('useProp(() => __props.name)')
+    expect(output).toContain('name()')
   })
 
   it('handles default values in destructured props', () => {

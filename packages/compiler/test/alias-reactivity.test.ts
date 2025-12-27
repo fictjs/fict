@@ -103,4 +103,42 @@ describe('Alias-Safe Reactive Lowering', () => {
       expect(output).not.toContain('const count = counter().count')
     })
   })
+
+  describe('Component props destructuring', () => {
+    it('keeps destructured props reactive via useProp + memo', () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        const Counter1 = ({ count, update }) => {
+          const doubled = count * 2
+          return (
+            <div>
+              <h1>Count: {count}</h1>
+              <h2>Double: {doubled}</h2>
+              <button onClick={() => update()}>Increment</button>
+            </div>
+          )
+        }
+
+        export default function Counter() {
+          let counter = $state({ count: 0 })
+          return (
+            <Counter1
+              count={counter.count}
+              update={() => {
+                counter = { count: counter.count + 1 }
+              }}
+            />
+          )
+        }
+      `
+
+      const output = transform(source)
+      expect(output).toContain('const count = useProp(() => __props.count)')
+      expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
+      expect(output).toContain('insert(__el_2.parentNode, () => count(), __el_2')
+      expect(output).toContain('insert(__el_3.parentNode, () => doubled(), __el_3')
+      expect(output).not.toContain('const update = useProp')
+    })
+  })
 })

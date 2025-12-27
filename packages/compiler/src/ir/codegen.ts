@@ -156,6 +156,128 @@ function functionContainsJSX(fn: HIRFunction): boolean {
   return false
 }
 
+function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
+  const called = new Set<string>()
+
+  const visitExpr = (expr: Expression | undefined | null) => {
+    if (!expr) return
+    switch (expr.kind) {
+      case 'Identifier':
+        return
+      case 'CallExpression': {
+        if (expr.callee.kind === 'Identifier') {
+          called.add(deSSAVarName(expr.callee.name))
+        } else {
+          visitExpr(expr.callee as Expression)
+        }
+        expr.arguments.forEach(arg => visitExpr(arg as Expression))
+        return
+      }
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        visitExpr(expr.object as Expression)
+        visitExpr(expr.property as Expression)
+        return
+      case 'UnaryExpression':
+        visitExpr(expr.argument as Expression)
+        return
+      case 'BinaryExpression':
+      case 'LogicalExpression':
+        visitExpr(expr.left as Expression)
+        visitExpr(expr.right as Expression)
+        return
+      case 'ConditionalExpression':
+        visitExpr(expr.test as Expression)
+        visitExpr(expr.consequent as Expression)
+        visitExpr(expr.alternate as Expression)
+        return
+      case 'ArrayExpression':
+        expr.elements.forEach(el => visitExpr(el as Expression))
+        return
+      case 'ObjectExpression':
+        expr.properties.forEach(p => {
+          if (p.kind === 'SpreadElement') {
+            visitExpr(p.argument as Expression)
+          } else {
+            visitExpr(p.value as Expression)
+          }
+        })
+        return
+      case 'ArrowFunction':
+      case 'FunctionExpression':
+        if (Array.isArray(expr.body)) {
+          expr.body.forEach(block => {
+            block.instructions.forEach(instr => {
+              if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+                visitExpr((instr as any).value as Expression)
+              }
+            })
+          })
+        } else {
+          visitExpr(expr.body as Expression)
+        }
+        return
+      case 'JSXElement':
+        expr.attributes.forEach(attr => {
+          if (attr.isSpread && attr.spreadExpr) {
+            visitExpr(attr.spreadExpr)
+          } else if (attr.value) {
+            visitExpr(attr.value)
+          }
+        })
+        expr.children.forEach(child => {
+          if (child.kind === 'expression') {
+            visitExpr(child.value)
+          } else if (child.kind === 'element') {
+            visitExpr(child.value)
+          }
+        })
+        return
+      default:
+        return
+    }
+  }
+
+  const visitTerminator = (term: BasicBlock['terminator']) => {
+    switch (term.kind) {
+      case 'Branch':
+        visitExpr(term.test)
+        return
+      case 'Switch':
+        visitExpr(term.discriminant)
+        term.cases.forEach(c => visitExpr(c.test))
+        return
+      case 'ForOf':
+        visitExpr(term.iterable)
+        return
+      case 'ForIn':
+        visitExpr(term.object)
+        return
+      case 'Return':
+        visitExpr(term.argument ?? null)
+        return
+      case 'Throw':
+        visitExpr(term.argument)
+        return
+      default:
+        return
+    }
+  }
+
+  for (const block of fn.blocks) {
+    block.instructions.forEach(instr => {
+      if (instr.kind === 'Assign') {
+        visitExpr(instr.value)
+      } else if (instr.kind === 'Expression') {
+        visitExpr(instr.value)
+      }
+    })
+    visitTerminator(block.terminator)
+  }
+
+  return called
+}
+
 /**
  * Codegen context for tracking state during code generation
  */
@@ -3984,9 +4106,17 @@ function buildPropsObject(
         spreadExpr = wrapAccessorSource(spreadExpr)
         spreads.push(t.spreadElement(spreadExpr))
       } else if (attr.value) {
-        const lowered = lowerDomExpression(attr.value, ctx)
         const isFunctionLike =
           attr.value.kind === 'ArrowFunction' || attr.value.kind === 'FunctionExpression'
+        const prevPropsCtx: boolean | undefined = ctx.inPropsContext
+        // Avoid treating function bodies as props context to prevent wrapping internal values
+        if (isFunctionLike) {
+          ctx.inPropsContext = false
+        }
+        const lowered = lowerDomExpression(attr.value, ctx)
+        if (isFunctionLike) {
+          ctx.inPropsContext = prevPropsCtx
+        }
         const baseIdent =
           attr.value.kind === 'Identifier' ? deSSAVarName(attr.value.name) : undefined
         const alreadyGetter =
@@ -4713,6 +4843,13 @@ function lowerFunctionWithRegions(
   ctx.hookResultVarMap = new Map()
   const hookResultVars = new Set<string>()
   const hookAccessorAliases = new Set<string>()
+  const calledIdentifiers = collectCalledIdentifiers(fn)
+  const propsPlanAliases = new Set<string>()
+  let propsDestructurePlan: {
+    statements: BabelCore.types.Statement[]
+    usesUseProp: boolean
+    usesPropsRest: boolean
+  } | null = null
 
   // Collect function-valued bindings, signals, and mutation info in this function
   for (const block of fn.blocks) {
@@ -4784,6 +4921,98 @@ function lowerFunctionWithRegions(
   ctx.regions = flattenRegions(regionResult.topLevelRegions)
   if (ctx.nextHookSlot === undefined) {
     ctx.nextHookSlot = HOOK_SLOT_BASE
+  }
+
+  // Precompute a reactive props destructuring plan for component params
+  if (isComponent && fn.rawParams && fn.rawParams.length === 1) {
+    const rawParam = fn.rawParams[0]
+    const pattern =
+      rawParam &&
+      (rawParam.type === 'ObjectPattern' ||
+        (rawParam.type === 'AssignmentPattern' && rawParam.left?.type === 'ObjectPattern'))
+        ? rawParam.type === 'AssignmentPattern'
+          ? rawParam.left
+          : rawParam
+        : null
+
+    if (pattern && pattern.type === 'ObjectPattern') {
+      const stmts: BabelCore.types.Statement[] = []
+      const excludeKeys: BabelCore.types.Expression[] = []
+      let supported = true
+      let usesUseProp = false
+      let usesPropsRest = false
+
+      for (const prop of pattern.properties) {
+        if (t.isObjectProperty(prop) && !prop.computed) {
+          const keyName = t.isIdentifier(prop.key)
+            ? prop.key.name
+            : t.isStringLiteral(prop.key)
+              ? prop.key.value
+              : t.isNumericLiteral(prop.key)
+                ? String(prop.key.value)
+                : null
+          if (!keyName || !t.isIdentifier(prop.value)) {
+            supported = false
+            break
+          }
+          excludeKeys.push(t.stringLiteral(keyName))
+          const member = t.memberExpression(t.identifier('__props'), t.identifier(keyName), false)
+          if (!calledIdentifiers.has(prop.value.name)) {
+            usesUseProp = true
+            propsPlanAliases.add(prop.value.name)
+            stmts.push(
+              t.variableDeclaration('const', [
+                t.variableDeclarator(
+                  t.identifier(prop.value.name),
+                  t.callExpression(t.identifier(RUNTIME_ALIASES.useProp), [
+                    t.arrowFunctionExpression([], member),
+                  ]),
+                ),
+              ]),
+            )
+          } else {
+            stmts.push(
+              t.variableDeclaration('const', [
+                t.variableDeclarator(t.identifier(prop.value.name), member),
+              ]),
+            )
+          }
+          continue
+        }
+
+        if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) {
+          usesPropsRest = true
+          stmts.push(
+            t.variableDeclaration('const', [
+              t.variableDeclarator(
+                t.identifier(prop.argument.name),
+                t.callExpression(t.identifier(RUNTIME_ALIASES.propsRest), [
+                  t.identifier('__props'),
+                  t.arrayExpression(excludeKeys),
+                ]),
+              ),
+            ]),
+          )
+          continue
+        }
+
+        supported = false
+        break
+      }
+
+      if (supported) {
+        propsDestructurePlan = {
+          statements: stmts,
+          usesUseProp,
+          usesPropsRest,
+        }
+        propsPlanAliases.forEach(name => {
+          ctx.aliasVars?.add(name)
+          ctx.trackedVars.add(name)
+          ctx.shadowedNames?.delete(name)
+        })
+      }
+    }
   }
 
   const reactive = computeReactiveAccessors(fn, ctx)
@@ -4883,9 +5112,19 @@ function lowerFunctionWithRegions(
       finalParams = [t.identifier('__props')]
       // Add destructuring statement at start of function
       const pattern = rawParam.type === 'AssignmentPattern' ? rawParam.left : rawParam
-      propsDestructuring.push(
-        t.variableDeclaration('const', [t.variableDeclarator(pattern, t.identifier('__props'))]),
-      )
+      if (propsDestructurePlan) {
+        if (propsDestructurePlan.usesUseProp) {
+          ctx.helpersUsed.add('useProp')
+        }
+        if (propsDestructurePlan.usesPropsRest) {
+          ctx.helpersUsed.add('propsRest')
+        }
+        propsDestructuring.push(...propsDestructurePlan.statements)
+      } else {
+        propsDestructuring.push(
+          t.variableDeclaration('const', [t.variableDeclarator(pattern, t.identifier('__props'))]),
+        )
+      }
     }
   }
 
