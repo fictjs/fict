@@ -607,7 +607,6 @@ const setProperty: AttributeSetter = (el: HTMLElement, key: string, value: unkno
 
   // Handle style object binding style={{ color: 'red' }}
   if (key === 'style' && typeof value === 'object' && value !== null) {
-    console.log('SETTING STYLE', value)
     for (const k in value as Record<string, string>) {
       const v = (value as Record<string, string>)[k]
       if (v !== undefined) {

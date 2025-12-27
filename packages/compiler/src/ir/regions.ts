@@ -2808,7 +2808,7 @@ function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expres
 
     default:
       // Unknown expression type - log warning and return undefined
-      if (expr.kind) {
+      if (expr.kind && debugEnabled('region')) {
         console.warn(`[HIR exprToAST] Unsupported expression kind: ${expr.kind}`)
       }
       return t.identifier('undefined')
