@@ -788,10 +788,18 @@ The current focus is:
 - **Docs**
   - [ ] Deeper "Fiction UI" guide – how to design the narrative layer
   - [ ] Migration notes from React / Vue / Svelte / Solid
-  - [ ] Patterns for forms, lists, async flows
+- [ ] Patterns for forms, lists, async flows
 
 - **Runtime**
   - [ ] SSR / streaming implementation
+
+---
+
+## Linting & diagnostics
+
+- Install `@fictjs/eslint-plugin` and extend `plugin:fict/recommended` to mirror compiler guardrails.
+- Key rules: nested component definitions (FICT-C003), missing list keys (FICT-J002), memo side effects (FICT-M003), empty `$effect` (FICT-E001), component return checks (FICT-C004), plus existing `$state` footgun rules.
+- See `docs/eslint-rules.md` for configuration and rule details, and `docs/diagnostic-codes.md` for the diagnostic code reference.
 
 ---
 

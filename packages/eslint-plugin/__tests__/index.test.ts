@@ -8,6 +8,10 @@ describe('eslint-plugin-fict', () => {
     expect(plugin.rules?.['no-state-in-loop']).toBeDefined()
     expect(plugin.rules?.['no-direct-mutation']).toBeDefined()
     expect(plugin.rules?.['no-state-destructure-write']).toBeDefined()
+    expect(plugin.rules?.['no-nested-components']).toBeDefined()
+    expect(plugin.rules?.['require-list-key']).toBeDefined()
+    expect(plugin.rules?.['no-memo-side-effects']).toBeDefined()
+    expect(plugin.rules?.['require-component-return']).toBeDefined()
   })
 
   it('includes recommended config entries', () => {
@@ -15,5 +19,9 @@ describe('eslint-plugin-fict', () => {
     expect(recommended['fict/no-empty-effect']).toBe('warn')
     expect(recommended['fict/no-state-in-loop']).toBe('error')
     expect(recommended['fict/no-state-destructure-write']).toBe('error')
+    expect(recommended['fict/no-nested-components']).toBe('error')
+    expect(recommended['fict/require-list-key']).toBe('error')
+    expect(recommended['fict/no-memo-side-effects']).toBe('warn')
+    expect(recommended['fict/require-component-return']).toBe('warn')
   })
 })
