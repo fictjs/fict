@@ -513,11 +513,13 @@ export function createBindEventCall(
   ctx.helpersUsed.bindEvent = true
   ctx.helpersUsed.onDestroy = true
 
-  // Don't wrap if handler is already an arrow function or function expression
-  // This prevents double-wrapping like `() => () => handler()`
+  // Don't wrap if handler is already an arrow function or function expression.
+  // Otherwise, wrap to call the latest handler value.
   const isAlreadyFunction = t.isArrowFunctionExpression(handler) || t.isFunctionExpression(handler)
 
-  const handlerArg = isAlreadyFunction ? handler : createGetterArrow(t, handler)
+  const handlerArg = isAlreadyFunction
+    ? handler
+    : t.arrowFunctionExpression([], t.callExpression(handler, []))
 
   const args: BabelCore.types.Expression[] = [elementId, t.stringLiteral(eventName), handlerArg]
 
@@ -738,7 +740,16 @@ export function transformFineGrainedJsx(
   if (!ctx.options.fineGrainedDom) return null
 
   const tagName = getIntrinsicTagName(node, t)
-  if (!tagName) return null
+  if (!tagName) {
+    // Non-intrinsic (components): fall back to standard expression lowering so they
+    // become dynamic children, not baked into static templates.
+    return transformExpressionForFineGrained(
+      node as unknown as BabelCore.types.Expression,
+      ctx,
+      t,
+      overrides,
+    )
+  }
 
   const state: TemplateBuilderState = {
     ctx,
@@ -1349,7 +1360,17 @@ export function extractStaticHtml(
 ): TemplateExtractionResult {
   const tagName = getIntrinsicTagName(node, t)
   if (!tagName) {
-    return { html: '', hasDynamic: true, bindings: [] }
+    return {
+      html: '<!---->',
+      hasDynamic: true,
+      bindings: [
+        {
+          type: 'child',
+          node,
+          path: [...parentPath],
+        },
+      ],
+    }
   }
 
   let html = `<${tagName}`
@@ -1547,19 +1568,19 @@ export function emitTemplate(
       if (t.isJSXExpressionContainer(binding.node)) {
         expression = binding.node.expression
       } else if (t.isJSXElement(binding.node)) {
-        // Should not happen if recursive?
-        // Actually extractStaticHtml recurses for intrinsic elements.
-        // But if a component? <Comp />. It is treated as element?
-        // extractStaticHtml handles intrinsic elements.
-        // If generic component, it falls to 'else'.
-        // So it is treated as binding child.
-        // We need to transform it.
-        const expr = transformFineGrainedJsx(
-          binding.node as BabelCore.types.JSXElement,
-          state.ctx,
-          t,
-          state.identifierOverrides,
-        )
+        const expr =
+          transformFineGrainedJsx(
+            binding.node as BabelCore.types.JSXElement,
+            state.ctx,
+            t,
+            state.identifierOverrides,
+          ) ||
+          transformExpressionForFineGrained(
+            binding.node as unknown as BabelCore.types.Expression,
+            state.ctx,
+            t,
+            state.identifierOverrides,
+          )
         expression = expr || t.nullLiteral()
       } else {
         // Fragment etc?

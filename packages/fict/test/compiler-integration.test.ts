@@ -1951,4 +1951,43 @@ describe('compiler + fict integration', () => {
 
     dispose()
   })
+
+  it('handles component children and events without [object Object] leakage', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Button(props) {
+        return <button data-testid="btn" onClick={props.onClick}>{props.label}</button>
+      }
+
+      function App() {
+        let count = $state(0)
+        return (
+          <div>
+            <Button label="Add Row" onClick={() => count++} />
+            <p data-testid="count">Count: {count}</p>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const btn = container.querySelector('[data-testid="btn"]') as HTMLButtonElement
+    expect(btn?.textContent).toBe('Add Row')
+    expect(container.textContent?.includes('[object Object]')).toBe(false)
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('Count: 0')
+
+    btn.click()
+    await tick()
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('Count: 1')
+
+    dispose()
+  })
 })

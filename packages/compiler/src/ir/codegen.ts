@@ -3255,6 +3255,21 @@ function extractHIRStaticHtml(
   jsx: JSXElementExpression,
   parentPath: number[] = [],
 ): HIRTemplateExtractionResult {
+  // Components or dynamic tag expressions should be treated as dynamic children,
+  // not baked into static HTML.
+  if (jsx.isComponent || typeof jsx.tagName !== 'string') {
+    return {
+      html: '<!---->',
+      bindings: [
+        {
+          type: 'child',
+          path: [...parentPath],
+          expr: jsx,
+        },
+      ],
+    }
+  }
+
   const tagName = jsx.tagName as string
   let html = `<${tagName}`
   const bindings: HIRBinding[] = []
@@ -3476,10 +3491,14 @@ function lowerIntrinsicElement(
       ctx.wrapTrackedExpressions = false
       const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
       ctx.wrapTrackedExpressions = prevWrapTracked
-      const handlerExpr =
-        t.isArrowFunctionExpression(valueExpr) || t.isFunctionExpression(valueExpr)
-          ? valueExpr
-          : t.arrowFunctionExpression([], valueExpr)
+      let handlerExpr: BabelCore.types.Expression
+      if (t.isArrowFunctionExpression(valueExpr) || t.isFunctionExpression(valueExpr)) {
+        handlerExpr = valueExpr
+      } else if (t.isCallExpression(valueExpr)) {
+        handlerExpr = t.arrowFunctionExpression([], valueExpr)
+      } else {
+        handlerExpr = t.arrowFunctionExpression([], t.callExpression(valueExpr, []))
+      }
       const cleanupId = genTemp(ctx, 'evt')
       const args: BabelCore.types.Expression[] = [
         targetId,
