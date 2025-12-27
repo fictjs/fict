@@ -427,6 +427,64 @@ describe('compiler + fict integration', () => {
     dispose()
   })
 
+  it('keeps props reactive when accessed via props object', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      const Counter1 = (props) => {
+        const doubled = props.count * 2
+        return (
+          <div>
+            <h1 data-testid="count">Count: {props.count}</h1>
+            <h2 data-testid="double">Double: {doubled}</h2>
+            <button data-testid="inc" onClick={() => props.update()}>
+              Increment
+            </button>
+          </div>
+        )
+      }
+
+      function Counter() {
+        let counter = $state({ count: 0 })
+        return (
+          <Counter1
+            count={counter.count}
+            update={() => {
+              counter = { count: counter.count + 1 }
+            }}
+          />
+        )
+      }
+
+      export function mount(el) {
+        return render(() => <Counter />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const countEl = () => container.querySelector('[data-testid="count"]') as HTMLHeadingElement
+    const doubleEl = () => container.querySelector('[data-testid="double"]') as HTMLHeadingElement
+    const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+    expect(countEl().textContent).toBe('Count: 0')
+    expect(doubleEl().textContent).toBe('Double: 0')
+
+    incBtn().click()
+    await tick()
+    expect(countEl().textContent).toBe('Count: 1')
+    expect(doubleEl().textContent).toBe('Double: 2')
+
+    incBtn().click()
+    await tick()
+    expect(countEl().textContent).toBe('Count: 2')
+    expect(doubleEl().textContent).toBe('Double: 4')
+
+    dispose()
+  })
+
   it('isolates context per render root (no state leakage across mounts)', async () => {
     const source = `
       import { $state, render } from 'fict'

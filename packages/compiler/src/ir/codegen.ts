@@ -350,6 +350,10 @@ export interface CodegenContext {
   inConditional?: number
   /** Whether we are lowering JSX props (enables prop getter wrapping) */
   inPropsContext?: boolean
+  /** Name of the props parameter for component lowering */
+  propsParamName?: string
+  /** Pending prop accessor declarations synthesized for props reads */
+  propAccessorDecls?: Map<string, BabelCore.types.Statement>
   /** Whether tracked expressions should be wrapped in runtime effects */
   wrapTrackedExpressions?: boolean
   /** Whether the current function is treated as a hook (preserve accessor returns) */
@@ -396,6 +400,8 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     getterCacheDeclarations: new Map(),
     getterCacheEnabled: false,
     inPropsContext: false,
+    propsParamName: undefined,
+    propAccessorDecls: new Map(),
     hookReturnInfo: new Map(),
   }
 }
@@ -2555,7 +2561,12 @@ function lowerIntrinsicElementAsVNode(
     }
 
     const isEvent = name.startsWith('on') && name.length > 2 && name[2] === name[2]?.toUpperCase()
+    const prevWrapTracked = ctx.wrapTrackedExpressions
+    if (isEvent) {
+      ctx.wrapTrackedExpressions = false
+    }
     const rawExpr = attr.value ? lowerDomExpression(attr.value, ctx) : t.booleanLiteral(true)
+    ctx.wrapTrackedExpressions = prevWrapTracked
     let valueExpr = rawExpr
 
     if (attr.value) {
@@ -3461,7 +3472,10 @@ function lowerIntrinsicElement(
       // Event binding
       ctx.helpersUsed.add('bindEvent')
       ctx.helpersUsed.add('onDestroy')
+      const prevWrapTracked = ctx.wrapTrackedExpressions
+      ctx.wrapTrackedExpressions = false
       const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
+      ctx.wrapTrackedExpressions = prevWrapTracked
       const handlerExpr =
         t.isArrowFunctionExpression(valueExpr) || t.isFunctionExpression(valueExpr)
           ? valueExpr
@@ -4843,6 +4857,9 @@ function lowerFunctionWithRegions(
   ctx.hookResultVarMap = new Map()
   const hookResultVars = new Set<string>()
   const hookAccessorAliases = new Set<string>()
+  const prevPropsParam = ctx.propsParamName
+  const prevPropAccessors = ctx.propAccessorDecls
+  ctx.propAccessorDecls = new Map()
   const calledIdentifiers = collectCalledIdentifiers(fn)
   const propsPlanAliases = new Set<string>()
   let propsDestructurePlan: {
@@ -4916,6 +4933,14 @@ function lowerFunctionWithRegions(
   ctx.currentFnIsHook = (!!fn.name && fn.name.startsWith(HOOK_NAME_PREFIX)) || inferredHook
   const isComponent = !!(fn.name && fn.name[0] === fn.name[0]?.toUpperCase())
   ctx.isComponentFn = isComponent
+  const rawPropsParam = fn.params.length === 1 ? deSSAVarName(fn.params[0].name) : undefined
+  if (isComponent && rawPropsParam) {
+    ctx.propsParamName = rawPropsParam
+    ctx.trackedVars.add(rawPropsParam)
+    scopedTracked.add(rawPropsParam)
+  } else {
+    ctx.propsParamName = undefined
+  }
 
   // Build RegionInfo array for DOM integration (with de-versioned names, flattened with children)
   ctx.regions = flattenRegions(regionResult.topLevelRegions)
@@ -5162,6 +5187,8 @@ function lowerFunctionWithRegions(
   ctx.currentFnIsHook = prevHookFlag
   ctx.isComponentFn = prevIsComponent
   ctx.hookResultVarMap = prevHookResultVarMap
+  ctx.propsParamName = prevPropsParam
+  ctx.propAccessorDecls = prevPropAccessors
   return funcDecl
 }
 
