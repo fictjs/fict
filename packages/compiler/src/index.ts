@@ -255,6 +255,45 @@ function createHIREntrypointVisitor(
   t: typeof BabelCore.types,
   options: FictCompilerOptions,
 ): BabelCore.PluginObj['visitor'] {
+  const collectPatternIdentifiers = (pattern: BabelCore.types.PatternLike): string[] => {
+    const ids: string[] = []
+    const visit = (p: BabelCore.types.PatternLike) => {
+      if (t.isIdentifier(p)) {
+        ids.push(p.name)
+        return
+      }
+      if (t.isRestElement(p)) {
+        if (t.isIdentifier(p.argument)) ids.push(p.argument.name)
+        else if (t.isPatternLike(p.argument)) visit(p.argument as BabelCore.types.PatternLike)
+        return
+      }
+      if (t.isObjectPattern(p)) {
+        p.properties.forEach(prop => {
+          if (t.isObjectProperty(prop)) {
+            if (t.isIdentifier(prop.value)) ids.push(prop.value.name)
+            else if (t.isPatternLike(prop.value)) visit(prop.value as BabelCore.types.PatternLike)
+          } else if (t.isRestElement(prop)) {
+            visit(prop.argument as BabelCore.types.PatternLike)
+          }
+        })
+        return
+      }
+      if (t.isArrayPattern(p)) {
+        p.elements.forEach(el => {
+          if (!el) return
+          if (t.isIdentifier(el)) ids.push(el.name)
+          else if (t.isPatternLike(el)) visit(el as BabelCore.types.PatternLike)
+        })
+        return
+      }
+      if (t.isAssignmentPattern(p)) {
+        visit(p.left as BabelCore.types.PatternLike)
+      }
+    }
+    visit(pattern)
+    return ids
+  }
+
   return {
     Program: {
       exit(path) {
@@ -273,6 +312,7 @@ function createHIREntrypointVisitor(
         // Validate macro placement consistently for HIR path
         const stateVars = new Set<string>()
         const derivedVars = new Set<string>()
+        const destructuredAliases = new Set<string>()
         path.traverse({
           VariableDeclarator(varPath) {
             const init = varPath.node.init
@@ -315,6 +355,12 @@ function createHIREntrypointVisitor(
                   derivedVars.add(varPath.node.id.name)
                 }
               }
+            } else if (
+              (t.isObjectPattern(varPath.node.id) || t.isArrayPattern(varPath.node.id)) &&
+              t.isIdentifier(init) &&
+              stateVars.has(init.name)
+            ) {
+              collectPatternIdentifiers(varPath.node.id).forEach(id => destructuredAliases.add(id))
             }
           },
           CallExpression(callPath) {
@@ -357,6 +403,28 @@ function createHIREntrypointVisitor(
               if (t.isIdentifier(left) && derivedVars.has(left.name)) {
                 throw assignPath.buildCodeFrameError(
                   `Cannot reassign derived value '${left.name}'. Derived values are read-only.`,
+                )
+              }
+            },
+          })
+        }
+
+        // Disallow writes to destructured state aliases
+        if (destructuredAliases.size > 0) {
+          path.traverse({
+            AssignmentExpression(assignPath) {
+              const { left } = assignPath.node
+              if (t.isIdentifier(left) && destructuredAliases.has(left.name)) {
+                throw assignPath.buildCodeFrameError(
+                  `Cannot write to destructured state alias '${left.name}'. Update the original state (e.g. state.count++ or immutable update).`,
+                )
+              }
+            },
+            UpdateExpression(updatePath) {
+              const arg = updatePath.node.argument
+              if (t.isIdentifier(arg) && destructuredAliases.has(arg.name)) {
+                throw updatePath.buildCodeFrameError(
+                  `Cannot write to destructured state alias '${arg.name}'. Update the original state (e.g. state.count++ or immutable update).`,
                 )
               }
             },

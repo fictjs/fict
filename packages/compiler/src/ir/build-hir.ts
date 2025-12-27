@@ -609,15 +609,23 @@ function convertFunction(
         }
 
         if (t.isObjectPattern(decl.id)) {
+          const useTemp = !(decl.init && t.isIdentifier(decl.init))
           const tempName = `__destruct_${destructuringTempCounter++}`
-          current.block.instructions.push({
-            kind: 'Assign',
-            target: { kind: 'Identifier', name: tempName },
-            value: decl.init
-              ? convertExpression(decl.init)
-              : ({ kind: 'Literal', value: undefined } as HLiteral),
-            declarationKind: declKind,
-          })
+          // When useTemp is true, we convert and store the HIR expression
+          // When useTemp is false, we keep the Babel expression for member access
+          const hirExpr: Expression | undefined =
+            useTemp && decl.init ? convertExpression(decl.init) : undefined
+          const babelSourceExpr: BabelCore.types.Expression | undefined =
+            decl.init && !useTemp ? (decl.init as BabelCore.types.Expression) : undefined
+
+          if (useTemp) {
+            current.block.instructions.push({
+              kind: 'Assign',
+              target: { kind: 'Identifier', name: tempName },
+              value: hirExpr ?? ({ kind: 'Literal', value: undefined } as HLiteral),
+              declarationKind: declKind,
+            })
+          }
 
           const excludeKeys: BabelCore.types.Expression[] = []
 
@@ -634,7 +642,9 @@ function convertFunction(
               excludeKeys.push(t.stringLiteral(keyName))
               if (t.isIdentifier(prop.value)) {
                 const memberExpr = t.memberExpression(
-                  t.identifier(tempName),
+                  useTemp
+                    ? t.identifier(tempName)
+                    : (babelSourceExpr as BabelCore.types.Expression),
                   t.identifier(keyName),
                   false,
                 )
@@ -647,7 +657,7 @@ function convertFunction(
               }
             } else if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) {
               const restExpr = t.callExpression(t.identifier('__fictPropsRest'), [
-                t.identifier(tempName),
+                useTemp ? t.identifier(tempName) : (babelSourceExpr as BabelCore.types.Expression),
                 t.arrayExpression(excludeKeys),
               ])
               current.block.instructions.push({

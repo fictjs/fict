@@ -167,6 +167,13 @@ The compiler already wraps destructuring/rest/spread/children for you. Manual he
 
 For everyday props/destructuring/spread patterns, rely on the compiler’s automatic wrapping; no manual helpers required.
 
+### 2.5.2 State destructuring (read-only aliases)
+
+- Declaring `$state` with destructuring is still illegal: `const { id } = $state(...)` → compile error.
+- Destructuring an existing `$state` object, e.g. `let state = $state({ count: 0 }); const { count } = state;`, is rewritten to a memo/getter (`count` reads `state().count`), so reads in JSX/logic stay reactive.
+- Writes to the alias (`count++`, `count = ...`) are disallowed. Mutate via the original signal (`state.count++`) or immutable updates (`state = { ...state(), count: state().count + 1 }`, or via immer/mutative).
+- Dynamic keys / deep paths fallback to coarser subscriptions (more recompute). Static paths like `.count` get precise deps.
+
 ### 2.2 Comparison with React / Solid
 
 | Framework | Component Execution Count                                           | Update Granularity       |

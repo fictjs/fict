@@ -7,11 +7,13 @@ describe('eslint-plugin-fict', () => {
     expect(plugin.rules?.['no-empty-effect']).toBeDefined()
     expect(plugin.rules?.['no-state-in-loop']).toBeDefined()
     expect(plugin.rules?.['no-direct-mutation']).toBeDefined()
+    expect(plugin.rules?.['no-state-destructure-write']).toBeDefined()
   })
 
   it('includes recommended config entries', () => {
     const recommended = (plugin.configs as Record<string, any>)?.recommended?.rules ?? {}
     expect(recommended['fict/no-empty-effect']).toBe('warn')
     expect(recommended['fict/no-state-in-loop']).toBe('error')
+    expect(recommended['fict/no-state-destructure-write']).toBe('error')
   })
 })

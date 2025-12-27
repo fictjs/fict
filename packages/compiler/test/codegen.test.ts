@@ -266,7 +266,7 @@ describe('tracked reads/writes in HIR codegen', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    expect(code).toMatch(/__fictPropsRest\(__destruct_\d+, \["title"\]\)/)
+    expect(code).toMatch(/__fictPropsRest\(props, \["title"\]\)/)
     expect(code).toContain('__fictPropsRest')
   })
 })

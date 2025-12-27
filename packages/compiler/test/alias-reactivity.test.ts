@@ -84,4 +84,23 @@ describe('Alias-Safe Reactive Lowering', () => {
       expect(output).toContain('export const alias = count()')
     })
   })
+
+  describe('Destructuring existing state', () => {
+    it('rewrites destructured fields to memoized getters (read-only)', () => {
+      const source = `
+        import { $state } from 'fict'
+        export function App() {
+          const counter = $state({ count: 0 })
+          const { count } = counter
+          const double = count * 2
+          return <div>{count}{double}</div>
+        }
+      `
+      const output = transform(source)
+      expect(output).toContain('__fictUseMemo(__fictCtx, () => counter().count')
+      expect(output).toContain('count()')
+      expect(output).toContain('double()')
+      expect(output).not.toContain('const count = counter().count')
+    })
+  })
 })

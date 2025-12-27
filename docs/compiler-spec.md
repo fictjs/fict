@@ -672,6 +672,9 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
 
 - **Destructuring**: `const { id } = $state({ id: 1 })` is **Illegal** (Compiler Error).
   - Rationale: Destructuring would create a static snapshot `id` (the number 1), losing reactivity immediately. To prevent user confusion, this pattern is forbidden.
+- **Destructuring aliases of existing state**: `let state = $state({ count: 0 }); const { count } = state;`
+  - Read: rewritten to a memoized getter (`count` reads `state().count`), so JSX/logic stays reactive.
+  - Write: assignments/`++` to `count` are disallowed; mutate via `state.count++` or immutable updates (e.g., `state = { ...state(), count: state().count + 1 }`).
   - Correct Usage: `const s = $state({ id: 1 }); const id = () => s.id;` or usage in JSX `{s.id}`.
 - **Blackbox Functions**: Passing `$state` to a function `fn(state)` passes the _current value_. `fn` cannot subscribe to updates unless it receives a getter or signal object (future `$store`).
 

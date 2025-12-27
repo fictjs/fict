@@ -4,6 +4,7 @@ import noDirectMutation from './rules/no-direct-mutation'
 import noEmptyEffect from './rules/no-empty-effect'
 import noInlineFunctions from './rules/no-inline-functions'
 import noStateInLoop from './rules/no-state-in-loop'
+import noStateDestructureWrite from './rules/no-state-destructure-write'
 
 const plugin: ESLint.Plugin = {
   meta: {
@@ -15,6 +16,7 @@ const plugin: ESLint.Plugin = {
     'no-direct-mutation': noDirectMutation,
     'no-empty-effect': noEmptyEffect,
     'no-inline-functions': noInlineFunctions,
+    'no-state-destructure-write': noStateDestructureWrite,
   },
   configs: {
     recommended: {
@@ -24,10 +26,17 @@ const plugin: ESLint.Plugin = {
         'fict/no-direct-mutation': 'warn',
         'fict/no-empty-effect': 'warn',
         'fict/no-inline-functions': 'warn',
+        'fict/no-state-destructure-write': 'error',
       },
     },
   },
 }
 
 export default plugin
-export { noStateInLoop, noDirectMutation, noEmptyEffect, noInlineFunctions }
+export {
+  noStateInLoop,
+  noDirectMutation,
+  noEmptyEffect,
+  noInlineFunctions,
+  noStateDestructureWrite,
+}

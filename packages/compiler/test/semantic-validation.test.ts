@@ -106,4 +106,14 @@ describe('semantic validation', () => {
     `
     expect(() => transform(source)).toThrow()
   })
+
+  it('throws when writing to a destructured state alias', () => {
+    const source = `
+      import { $state } from 'fict'
+      const state = $state({ count: 0 })
+      const { count } = state
+      count++
+    `
+    expect(() => transform(source)).toThrow(/destructured state alias/)
+  })
 })
