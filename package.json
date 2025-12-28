@@ -26,7 +26,13 @@
     "release": "turbo run build && changeset publish",
     "precommit": "pnpm test && pnpm typecheck && pnpm lint && pnpm build",
     "prepare": "husky",
-    "guardrails:hir": "node scripts/hir-guardrails.mjs"
+    "guardrails:hir": "node scripts/hir-guardrails.mjs",
+    "pack": "pnpm --dir packages/compiler pack && pnpm --dir packages/runtime pack && pnpm --dir packages/vite-plugin pack && pnpm --dir packages/fict pack",
+    "perf:pack": "pnpm build && pnpm run pack",
+    "perf:install": "cd js-framework-benchmark/frameworks/keyed/fict && rm -rf node_modules package-lock.json && npm cache clean --force && npm install",
+    "perf:build": "cd js-framework-benchmark/frameworks/keyed/fict && npm run build-prod",
+    "perf:run": "cd js-framework-benchmark && npm run bench -- --framework keyed/fict --headless",
+    "perf:results": "cd js-framework-benchmark && npm run results"
   },
   "devDependencies": {
     "@babel/core": "^7.26.0",
@@ -73,13 +79,13 @@
     {
       "name": "Fict (ESM)",
       "path": "packages/fict/dist/index.js",
-      "limit": "16 KB",
+      "limit": "17 KB",
       "gzip": true
     },
     {
       "name": "Fict (CJS)",
       "path": "packages/fict/dist/index.cjs",
-      "limit": "16 KB",
+      "limit": "17 KB",
       "gzip": true
     }
   ],

@@ -3491,14 +3491,11 @@ function lowerIntrinsicElement(
       ctx.wrapTrackedExpressions = false
       const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
       ctx.wrapTrackedExpressions = prevWrapTracked
-      let handlerExpr: BabelCore.types.Expression
-      if (t.isArrowFunctionExpression(valueExpr) || t.isFunctionExpression(valueExpr)) {
-        handlerExpr = valueExpr
-      } else if (t.isCallExpression(valueExpr)) {
-        handlerExpr = t.arrowFunctionExpression([], valueExpr)
-      } else {
-        handlerExpr = t.arrowFunctionExpression([], t.callExpression(valueExpr, []))
-      }
+      // Always wrap handler in a getter function to support reactive updates.
+      // This ensures that:
+      // 1. Inline attributes like `onClick={() => ...}` are treated as the handler logic, not a getter for the handler.
+      // 2. Reactive expressions like `onClick={condition ? A : B}` work by re-evaluating the getter.
+      const handlerExpr = t.arrowFunctionExpression([], valueExpr)
       const cleanupId = genTemp(ctx, 'evt')
       const args: BabelCore.types.Expression[] = [
         targetId,

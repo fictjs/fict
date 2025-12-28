@@ -2,7 +2,8 @@
 // Core Reactive Primitives
 // ============================================================================
 
-export { createSignal, type Signal, $state } from './signal'
+export { createSignal, createSelector, type Signal, $state } from './signal'
+export { createStore, type Store } from './store'
 export { createMemo, type Memo, $memo } from './memo'
 export { createEffect, type Effect, $effect } from './effect'
 export {

@@ -8,6 +8,8 @@
 
 Fict is a UI library where you write plain JavaScript and the compiler figures out the reactivity.
 
+> Write JavaScript; let the compiler handle signals, derived values, and DOM updates. It’s a new way to think about UI—not a drop-in replacement for React/Vue/Svelte, and not a performance boast without benchmarks. The promise is less code and lower cognitive load.
+
 ```jsx
 function Counter() {
   let count = $state(0)
@@ -22,6 +24,12 @@ function Counter() {
 ---
 
 ## Why Fict?
+
+**Positioning**
+
+- “Write JavaScript; the compiler handles reactivity.” No `.value`, no deps arrays, no manual memo wiring.
+- Not pitching “better React/Vue/Svelte”; Fict is a different mental model (compile-time reactivity on plain JS).
+- The gain: less code, lower cognitive overhead. Performance is surgical by design, but we’re not selling unproven speed charts.
 
 | Pain Point        | React                  | Solid                         | Svelte 5        | Fict          |
 | ----------------- | ---------------------- | ----------------------------- | --------------- | ------------- |

@@ -1,0 +1,210 @@
+import { signal, batch, type SignalAccessor } from './signal'
+
+const PROXY = Symbol('fict:store-proxy')
+const TARGET = Symbol('fict:store-target')
+
+// ============================================================================
+// Store (Deep Proxy)
+// ============================================================================
+
+export type Store<T> = T
+
+/**
+ * Create a Store: a reactive proxy that allows fine-grained access and mutation.
+ *
+ * @param initialValue - The initial state object
+ * @returns [store, setStore]
+ */
+export function createStore<T extends object>(
+  initialValue: T,
+): [Store<T>, (fn: (state: T) => void | T) => void] {
+  const unwrapped = unwrap(initialValue)
+  const wrapped = wrap(unwrapped)
+
+  function setStore(fn: (state: T) => void | T) {
+    batch(() => {
+      const result = fn(wrapped)
+      if (result !== undefined) {
+        reconcile(wrapped, result)
+      }
+    })
+  }
+
+  return [wrapped, setStore]
+}
+
+// Map of target object -> Proxy
+const proxyCache = new WeakMap<object, any>()
+// Map of target object -> Map<key, Signal>
+const signalCache = new WeakMap<object, Map<string | symbol, SignalAccessor<any>>>()
+
+function wrap<T>(value: T): T {
+  if (value === null || typeof value !== 'object') return value
+  if ((value as any)[PROXY]) return value
+
+  if (proxyCache.has(value)) return proxyCache.get(value)
+
+  const handler: ProxyHandler<any> = {
+    get(target, prop, receiver) {
+      if (prop === PROXY) return true
+      if (prop === TARGET) return target
+
+      const value = Reflect.get(target, prop, receiver)
+
+      // Track property access
+      track(target, prop)
+
+      // Recursively wrap objects
+      return wrap(value)
+    },
+    set(target, prop, value, receiver) {
+      if (prop === PROXY || prop === TARGET) return false
+
+      const oldValue = Reflect.get(target, prop, receiver)
+      if (oldValue === value) return true
+
+      const result = Reflect.set(target, prop, value, receiver)
+      if (result) {
+        trigger(target, prop)
+      }
+      return result
+    },
+    deleteProperty(target, prop) {
+      const result = Reflect.deleteProperty(target, prop)
+      if (result) {
+        trigger(target, prop)
+      }
+      return result
+    },
+  }
+
+  const proxy = new Proxy(value, handler)
+  proxyCache.set(value, proxy)
+  return proxy as T
+}
+
+function unwrap<T>(value: T): T {
+  if (value && typeof value === 'object' && (value as any)[PROXY]) {
+    return (value as any)[TARGET]
+  }
+  return value
+}
+
+function track(target: object, prop: string | symbol) {
+  let signals = signalCache.get(target)
+  if (!signals) {
+    signals = new Map()
+    signalCache.set(target, signals)
+  }
+
+  let s = signals.get(prop)
+  if (!s) {
+    s = signal(getLastValue(target, prop))
+    signals.set(prop, s)
+  }
+  s() // subscribe
+}
+
+function trigger(target: object, prop: string | symbol) {
+  const signals = signalCache.get(target)
+  if (signals) {
+    const s = signals.get(prop)
+    if (s) {
+      s(getLastValue(target, prop)) // notify with new value
+    }
+  }
+}
+
+function getLastValue(target: any, prop: string | symbol) {
+  return target[prop]
+}
+
+/**
+ * Reconcile a store path with a new value (shallow merge/diff)
+ */
+function reconcile(target: any, value: any) {
+  if (target === value) return
+  if (value === null || typeof value !== 'object') return // Should replace?
+
+  const realTarget = unwrap(target)
+  const realValue = unwrap(value)
+
+  const keys = new Set([...Object.keys(realTarget), ...Object.keys(realValue)])
+  for (const key of keys) {
+    if (realValue[key] === undefined && realTarget[key] !== undefined) {
+      // deleted
+      delete target[key] // Triggers proxy trap
+    } else if (realTarget[key] !== realValue[key]) {
+      target[key] = realValue[key] // Triggers proxy trap
+    }
+  }
+}
+
+// ============================================================================
+// Diffing Signal (for List Items)
+// ============================================================================
+
+/**
+ * Creates a signal that returns a Stable Proxy.
+ * Updates to the signal (via set) will diff the new value against the old value
+ * and trigger property-specific updates.
+ */
+export function createDiffingSignal<T extends object>(initialValue: T) {
+  let currentValue = unwrap(initialValue)
+  const signals = new Map<string | symbol, SignalAccessor<any>>()
+
+  // The stable proxy we return
+  const proxy = new Proxy({} as T, {
+    get(_, prop) {
+      if (prop === PROXY) return true
+      if (prop === TARGET) return currentValue
+
+      // Subscribe to property
+      let s = signals.get(prop)
+      if (!s) {
+        // Initialize signal with current property value
+        s = signal((currentValue as any)[prop])
+        signals.set(prop, s)
+      }
+      return s()
+    },
+    ownKeys() {
+      return Reflect.ownKeys(currentValue)
+    },
+  })
+
+  const read = () => proxy
+
+  const write = (newValue: T) => {
+    const next = unwrap(newValue)
+    const prev = currentValue
+    currentValue = next
+
+    if (prev === next) {
+      // Same ref update: re-evaluate all tracked signals
+      // This is necessary for in-place mutations
+      for (const [prop, s] of signals) {
+        const newVal = (next as any)[prop]
+        s(newVal)
+      }
+      return
+    }
+
+    // Diff logic
+    // We only trigger signals for properties that exist in our cache (tracked)
+    // and have changed.
+    for (const [prop, s] of signals) {
+      const oldVal = (prev as any)[prop]
+      const newVal = (next as any)[prop]
+      if (oldVal !== newVal) {
+        s(newVal)
+      }
+    }
+
+    // Note: If new properties appeared that weren't tracked, we don't care
+    // because no one is listening.
+    // If we assume shape stability (Keyed List), this is efficient.
+  }
+
+  return [read, write] as const
+}

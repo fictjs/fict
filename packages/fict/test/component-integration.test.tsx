@@ -41,7 +41,7 @@ describe('Component Integration', () => {
           }),
           _jsx('button', {
             id: 'inc',
-            onClick: () => count(count() + 1),
+            onClick: (_e: any) => count(count() + 1),
             children: 'Increment',
           }),
         ],
@@ -81,7 +81,7 @@ describe('Component Integration', () => {
         children: [
           _jsx('button', {
             id: 'toggle',
-            onClick: () => on(!on()),
+            onClick: (_e: any) => on(!on()),
             children: 'Toggle',
           }),
           _jsx('div', {
@@ -122,7 +122,7 @@ describe('Component Integration', () => {
         children: [
           _jsx('button', {
             id: 'add',
-            onClick: () => items([...items(), 'c']),
+            onClick: (_e: any) => items([...items(), 'c']),
             children: 'Add',
           }),
           _jsx('ul', {
@@ -167,7 +167,7 @@ describe('Component Integration', () => {
         style: () => ({ color: active() ? 'red' : 'blue' }),
         // Reactive standard attribute
         disabled: () => active(),
-        onClick: () => active(!active()),
+        onClick: (_e: any) => active(!active()),
         children: 'Click me',
       })
     }

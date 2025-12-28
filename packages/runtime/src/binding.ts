@@ -11,6 +11,16 @@
  * - The compiler transforms JSX expressions to use these primitives
  */
 
+import {
+  $$EVENTS,
+  DelegatedEvents,
+  UnitlessStyles,
+  Properties,
+  ChildProperties,
+  getPropAlias,
+  SVGNamespace,
+  Aliases,
+} from './constants'
 import { createEffect } from './effect'
 import { Fragment } from './jsx'
 import {
@@ -26,19 +36,9 @@ import {
   registerRootCleanup,
   type RootContext,
 } from './lifecycle'
+import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 import { computed, createSignal, untrack, type Signal } from './signal'
 import type { Cleanup, FictNode } from './types'
-import {
-  $$EVENTS,
-  DelegatedEvents,
-  UnitlessStyles,
-  Properties,
-  ChildProperties,
-  getPropAlias,
-  SVGNamespace,
-  Aliases,
-} from './constants'
-import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 
 // ============================================================================
 // Type Definitions
@@ -260,7 +260,10 @@ export function createTextBinding(value: MaybeReactive<unknown>): Text {
     // Reactive: create effect to update text when value changes
     createEffect(() => {
       const v = (value as () => unknown)()
-      text.data = formatTextValue(v)
+      const fmt = formatTextValue(v)
+      if (text.data !== fmt) {
+        text.data = fmt
+      }
     })
   } else {
     // Static: set once
@@ -276,7 +279,10 @@ export function createTextBinding(value: MaybeReactive<unknown>): Text {
  */
 export function bindText(textNode: Text, getValue: () => unknown): Cleanup {
   return createEffect(() => {
-    textNode.data = formatTextValue(getValue())
+    const value = formatTextValue(getValue())
+    if (textNode.data !== value) {
+      textNode.data = value
+    }
   })
 }
 
@@ -330,8 +336,12 @@ export function createAttributeBinding(
  * Bind a reactive value to an element's attribute.
  */
 export function bindAttribute(el: HTMLElement, key: string, getValue: () => unknown): Cleanup {
+  let prevValue: unknown = undefined
   return createEffect(() => {
     const value = getValue()
+    if (value === prevValue) return
+    prevValue = value
+
     if (value === undefined || value === null || value === false) {
       el.removeAttribute(key)
     } else if (value === true) {
@@ -359,8 +369,12 @@ export function bindProperty(el: HTMLElement, key: string, getValue: () => unkno
     'muted',
   ])
 
+  let prevValue: unknown = undefined
   return createEffect(() => {
     const next = getValue()
+    if (next === prevValue) return
+    prevValue = next
+
     if (PROPERTY_BINDING_KEYS.has(key) && (next === undefined || next === null)) {
       const fallback = key === 'checked' || key === 'selected' ? false : ''
       ;(el as unknown as Record<string, unknown>)[key] = fallback
@@ -979,9 +993,56 @@ export function bindEvent(
   options?: boolean | AddEventListenerOptions,
 ): Cleanup {
   if (handler == null) return () => {}
-
   const rootRef = getCurrentRoot()
-  const shouldDelegate = DelegatedEvents.has(eventName) && !options
+
+  // Optimization: Global Event Delegation
+  // If the event is delegatable and no special options (capture, passive) are used,
+  // we attach the handler to the element property and rely on the global listener.
+  if (DelegatedEvents.has(eventName) && !options) {
+    const key = `$$${eventName}`
+
+    // Ensure global delegation is active for this event
+    delegateEvents([eventName])
+
+    const createWrapped = (fn: EventListenerOrEventListenerObject) => {
+      const wrapped = function (this: any, ...args: any[]) {
+        try {
+          if (typeof fn === 'function') {
+            return (fn as EventListener).apply(this, args as [Event])
+          } else if (fn && typeof fn.handleEvent === 'function') {
+            return fn.handleEvent.apply(fn, args as [Event])
+          }
+        } catch (err) {
+          handleError(err, { source: 'event', eventName }, rootRef)
+        }
+      }
+      return wrapped
+    }
+
+    if (isReactive(handler)) {
+      // Reactive handler: e.g. onClick={() => $handler()}
+      // Updates the property when signal changes
+      return createEffect(() => {
+        const h = (handler as () => any)()
+        // Wrap handler to capture current root for error handling
+        // @ts-expect-error - using dynamic property for delegation
+        el[key] = createWrapped(h)
+      })
+    } else {
+      // Static handler: set once
+      // @ts-expect-error - using dynamic property for delegation
+      el[key] = createWrapped(handler as any)
+    }
+
+    // Cleanup: remove property (no effect needed for static, just return cleanup)
+    return () => {
+      // @ts-expect-error - using dynamic property for delegation
+      el[key] = undefined
+    }
+  }
+
+  // Fallback: Native addEventListener
+  // Used for non-delegated events or when options are present
   const getHandler = isReactive(handler) ? (handler as () => unknown) : () => handler
 
   // Create wrapped handler that resolves reactive handlers
@@ -1001,23 +1062,10 @@ export function bindEvent(
     }
   }
 
-  if (shouldDelegate) {
-    // Use event delegation
-    addEventListener(el, eventName, wrapped, true)
-    delegateEvents([eventName])
-    const cleanup = () => {
-      delete el[`$$${eventName}` as `$$${string}`]
-      delete el[`$$${eventName}Data` as `$$${string}Data`]
-    }
-    registerRootCleanup(cleanup)
-    return cleanup
-  } else {
-    // Direct event listener (for events with options or non-delegated events)
-    el.addEventListener(eventName, wrapped, options)
-    const cleanup = () => el.removeEventListener(eventName, wrapped, options)
-    registerRootCleanup(cleanup)
-    return cleanup
-  }
+  el.addEventListener(eventName, wrapped, options)
+  const cleanup = () => el.removeEventListener(eventName, wrapped, options)
+  registerRootCleanup(cleanup)
+  return cleanup
 }
 
 // ============================================================================

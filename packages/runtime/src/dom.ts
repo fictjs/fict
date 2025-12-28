@@ -25,7 +25,6 @@ import {
   type AttributeSetter,
   type BindingHandle,
 } from './binding'
-import { createPropsProxy, unwrapProps } from './props'
 import { Properties, ChildProperties, Aliases, getPropAlias, SVGNamespace } from './constants'
 import { __fictPushContext, __fictPopContext } from './hooks'
 import { Fragment } from './jsx'
@@ -40,6 +39,7 @@ import {
   registerRootCleanup,
   getCurrentRoot,
 } from './lifecycle'
+import { createPropsProxy, unwrapProps } from './props'
 import { untrack } from './scheduler'
 import type { DOMElement, FictNode, FictVNode, RefObject } from './types'
 

@@ -513,13 +513,12 @@ export function createBindEventCall(
   ctx.helpersUsed.bindEvent = true
   ctx.helpersUsed.onDestroy = true
 
-  // Don't wrap if handler is already an arrow function or function expression.
-  // Otherwise, wrap to call the latest handler value.
-  const isAlreadyFunction = t.isArrowFunctionExpression(handler) || t.isFunctionExpression(handler)
-
-  const handlerArg = isAlreadyFunction
-    ? handler
-    : t.arrowFunctionExpression([], t.callExpression(handler, []))
+  // Always wrap handler in a getter function to support reactive updates.
+  // This ensures that:
+  // 1. Inline attributes like `onClick={() => ...}` are treated as the handler logic, not a getter for the handler.
+  // 2. Reactive expressions like `onClick={condition ? A : B}` work by re-evaluating the getter.
+  console.log('[DEBUG-COMPILER] creating bindEvent call for:', eventName)
+  const handlerArg = t.arrowFunctionExpression([], handler)
 
   const args: BabelCore.types.Expression[] = [elementId, t.stringLiteral(eventName), handlerArg]
 
@@ -730,6 +729,94 @@ function getMemberPath(
   return `${objectPath}.${propName}`
 }
 
+/**
+ * Transform a component JSX element into a direct function call.
+ * <Button id="1" />  ->  Button({ id: "1" })
+ */
+function transformComponentCall(
+  node: BabelCore.types.JSXElement,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+  overrides?: IdentifierOverrideMap,
+): BabelCore.types.CallExpression {
+  const componentName = (node.openingElement.name as BabelCore.types.JSXIdentifier).name
+  const componentId = t.identifier(componentName)
+
+  const props: BabelCore.types.ObjectProperty[] = []
+
+  // 1. Process Attributes
+  for (const attr of node.openingElement.attributes) {
+    if (t.isJSXAttribute(attr)) {
+      if (!attr.name || typeof attr.name.name !== 'string') continue
+      const propName = attr.name.name
+      let propValue: BabelCore.types.Expression
+
+      if (attr.value === null) {
+        propValue = t.booleanLiteral(true)
+      } else if (t.isJSXExpressionContainer(attr.value)) {
+        if (t.isJSXEmptyExpression(attr.value.expression)) continue
+        // Use fine-grained transform for prop values (handles signals etc)
+        propValue = transformExpressionForFineGrained(
+          attr.value.expression as BabelCore.types.Expression,
+          ctx,
+          t,
+          overrides,
+        )
+      } else if (t.isStringLiteral(attr.value)) {
+        propValue = attr.value
+      } else {
+        continue
+      }
+
+      props.push(t.objectProperty(t.identifier(propName), propValue))
+    } else if (t.isJSXSpreadAttribute(attr)) {
+      // Support spread props: { ...props }
+      props.push(
+        t.spreadElement(
+          transformExpressionForFineGrained(attr.argument, ctx, t, overrides),
+        ) as unknown as BabelCore.types.ObjectProperty,
+      )
+    }
+  }
+
+  // 2. Process Children
+  const children = node.children
+  if (children.length > 0) {
+    const transformedChildren: BabelCore.types.Expression[] = []
+
+    for (const child of children) {
+      if (t.isJSXText(child)) {
+        if (child.value.trim() === '') continue
+        transformedChildren.push(t.stringLiteral(child.value))
+      } else if (t.isJSXElement(child)) {
+        // Recursively transform child elements (might be fine-grained templates or other components)
+        const transformed = transformFineGrainedJsx(child, ctx, t, overrides)
+        if (transformed) {
+          transformedChildren.push(transformed)
+        }
+      } else if (t.isJSXExpressionContainer(child)) {
+        if (t.isJSXEmptyExpression(child.expression)) continue
+        transformedChildren.push(
+          transformExpressionForFineGrained(
+            child.expression as BabelCore.types.Expression,
+            ctx,
+            t,
+            overrides,
+          ),
+        )
+      }
+    }
+
+    if (transformedChildren.length === 1) {
+      props.push(t.objectProperty(t.identifier('children'), transformedChildren[0]!))
+    } else if (transformedChildren.length > 1) {
+      props.push(t.objectProperty(t.identifier('children'), t.arrayExpression(transformedChildren)))
+    }
+  }
+
+  return t.callExpression(componentId, [t.objectExpression(props)])
+}
+
 export function transformFineGrainedJsx(
   node: BabelCore.types.JSXElement,
   ctx: TransformContext,
@@ -740,15 +827,10 @@ export function transformFineGrainedJsx(
   if (!ctx.options.fineGrainedDom) return null
 
   const tagName = getIntrinsicTagName(node, t)
+
   if (!tagName) {
-    // Non-intrinsic (components): fall back to standard expression lowering so they
-    // become dynamic children, not baked into static templates.
-    return transformExpressionForFineGrained(
-      node as unknown as BabelCore.types.Expression,
-      ctx,
-      t,
-      overrides,
-    )
+    // Non-intrinsic (components): Transform to direct function call
+    return transformComponentCall(node, ctx, t, overrides)
   }
 
   const state: TemplateBuilderState = {
@@ -1339,7 +1421,7 @@ export function createInsertBinding(
 // ============================================================================
 
 export interface TemplateBinding {
-  type: 'attr' | 'child' | 'spread'
+  type: 'attr' | 'child' | 'spread' | 'text'
   node: BabelCore.types.Node
   // Path is array of child indices from root
   // e.g. [] = root, [0] = first child, [0, 1] = second child of first child
@@ -1444,14 +1526,51 @@ export function extractStaticHtml(
         continue
       }
 
-      // Insert placeholder
-      html += '<!---->'
-      hasDynamic = true
-      bindings.push({
-        type: 'child',
-        node: child as BabelCore.types.Node,
-        path: [...parentPath, childIndex],
-      })
+      // Optimization: If expression is likely a text value (literal or simple identifier),
+      // use a text node placeholder instead of a comment marker.
+      // This allows using fast-path bindText.
+      let isTextBinding = false
+      if (t.isJSXExpressionContainer(child)) {
+        const expr = child.expression
+        // Literals, Identifiers, MemberExpressions, and UnaryExpressions, Arithmetic
+        if (
+          t.isStringLiteral(expr) ||
+          t.isNumericLiteral(expr) ||
+          t.isBooleanLiteral(expr) ||
+          t.isIdentifier(expr) ||
+          t.isMemberExpression(expr) ||
+          t.isCallExpression(expr) || // Assume function calls return text mostly? risky if it returns Node.
+          t.isBinaryExpression(expr) ||
+          t.isConditionalExpression(expr) ||
+          t.isTemplateLiteral(expr)
+        ) {
+          // We'll optimistically assume it's text.
+          // If it returns a Node at runtime, bindText might fail or print "[object Object]".
+          // But for Fict "text" binding usually implies stringification.
+          isTextBinding = true
+        }
+      }
+
+      if (isTextBinding) {
+        // Use a space as placeholder (Solid uses " " or "")
+        // " " ensures it takes up a spot in childNodes.
+        html += ' '
+        hasDynamic = true
+        bindings.push({
+          type: 'text',
+          node: child as BabelCore.types.Node,
+          path: [...parentPath, childIndex],
+        })
+      } else {
+        // Insert placeholder
+        html += '<!---->'
+        hasDynamic = true
+        bindings.push({
+          type: 'child',
+          node: child as BabelCore.types.Node,
+          path: [...parentPath, childIndex],
+        })
+      }
       childIndex++
     }
   }
@@ -1600,6 +1719,23 @@ export function emitTemplate(
       }
 
       applyChildBinding(nodeId, expression, state, t)
+    } else if (binding.type === 'text') {
+      // Optimized text binding
+      // The node at this path is a Text node (from " " placeholder)
+      let expression: BabelCore.types.Expression
+
+      if (t.isJSXExpressionContainer(binding.node)) {
+        expression = transformExpressionForFineGrained(
+          binding.node.expression as BabelCore.types.Expression,
+          state.ctx,
+          t,
+          state.identifierOverrides,
+        )
+      } else {
+        expression = t.stringLiteral('')
+      }
+
+      state.statements.push(createBindTextCall(t, nodeId, expression, state.ctx))
     } else if (binding.type === 'spread') {
       // Spread attribute
       // Not implemented in this pass?

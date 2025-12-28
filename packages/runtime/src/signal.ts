@@ -1,5 +1,6 @@
 import { beginFlushGuard, beforeEffectRunGuard, endFlushGuard } from './cycle-guard'
 import { getDevtoolsHook } from './devtools'
+import { registerRootCleanup } from './lifecycle'
 
 // ============================================================================
 // Type Definitions
@@ -1217,4 +1218,46 @@ function effectRunDevtools(node: EffectNode): void {
   if (!hook) return
   const id = (node as EffectNode & DevtoolsIdentifiable).__id
   if (id) hook.effectRun(id)
+}
+
+// ============================================================================
+// Selector
+// ============================================================================
+/**
+ * Create a selector signal that efficiently updates only when the selected key matches.
+ * Useful for large lists where only one item is selected.
+ *
+ * @param source - The source signal returning the current key
+ * @param equalityFn - Optional equality function
+ * @returns A selector function that takes a key and returns a boolean signal accessor
+ */
+export function createSelector<T>(
+  source: () => T,
+  equalityFn: (a: T, b: T) => boolean = (a, b) => a === b,
+): (key: T) => boolean {
+  let current = source()
+  const observers = new Map<T, SignalAccessor<boolean>>()
+
+  effect(() => {
+    const next = source()
+    if (equalityFn(current, next)) return
+
+    const prevSig = observers.get(current)
+    if (prevSig) prevSig(false)
+
+    const nextSig = observers.get(next)
+    if (nextSig) nextSig(true)
+
+    current = next
+  })
+
+  return (key: T) => {
+    let sig = observers.get(key)
+    if (!sig) {
+      sig = signal(equalityFn(key, current))
+      observers.set(key, sig)
+      registerRootCleanup(() => observers.delete(key))
+    }
+    return sig()
+  }
 }

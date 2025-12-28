@@ -5,6 +5,7 @@
  * They provide low-level primitives for DOM node manipulation without rebuilding.
  */
 
+import { createElement } from './dom'
 import { createEffect } from './effect'
 import {
   createRootContext,
@@ -14,12 +15,12 @@ import {
   pushRoot,
   type RootContext,
 } from './lifecycle'
-import { createSignal, type Signal } from './signal'
-import { createVersionedSignal } from './versioned-signal'
-import { createElement } from './dom'
-import reconcileArrays from './reconcile'
-import type { FictNode } from './types'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
+import reconcileArrays from './reconcile'
+import { createSignal, type Signal } from './signal'
+import { createDiffingSignal } from './store'
+import type { FictNode } from './types'
+import { createVersionedSignal } from './versioned-signal'
 
 // Re-export shared DOM helpers for compiler-generated code
 export { insertNodesBefore, removeNodes, toNodeArray }
@@ -54,6 +55,8 @@ export interface KeyedListContainer<T = unknown> {
   endMarker: Comment
   /** Map of key to block */
   blocks: Map<string | number, KeyedBlock<T>>
+  /** Current nodes in DOM order (including markers) */
+  currentNodes: Node[]
   /** Cleanup function */
   dispose: () => void
 }
@@ -210,21 +213,30 @@ export function createKeyedListContainer<T = unknown>(): KeyedListContainer<T> {
     // Clean up all blocks
     for (const block of blocks.values()) {
       destroyRoot(block.root)
-      removeNodes(block.nodes)
+      // Nodes are removed by parent disposal or specific cleanup if needed
+      // But for list disposal, we just clear the container
     }
     blocks.clear()
 
-    // Remove markers
-    startMarker.parentNode?.removeChild(startMarker)
-    endMarker.parentNode?.removeChild(endMarker)
+    // Remove nodes (including markers)
+    const range = document.createRange()
+    range.setStartBefore(startMarker)
+    range.setEndAfter(endMarker)
+    range.deleteContents()
+
+    // Clear cache
+    container.currentNodes = []
   }
 
-  return {
+  const container: KeyedListContainer<T> = {
     startMarker,
     endMarker,
     blocks,
+    currentNodes: [startMarker, endMarker],
     dispose,
   }
+
+  return container
 }
 
 // ============================================================================
@@ -246,7 +258,22 @@ export function createKeyedBlock<T>(
   index: number,
   render: (item: Signal<T>, index: Signal<number>) => Node[],
 ): KeyedBlock<T> {
-  const itemSig = createVersionedSignalAccessor(item)
+  let itemSig: Signal<T>
+
+  if (typeof item === 'object' && item !== null) {
+    // Use fine-grained diffing for objects to avoid full row re-renders
+    const [read, write] = createDiffingSignal(item as object)
+    itemSig = ((val?: T) => {
+      if (val !== undefined) {
+        write(val as object)
+        return
+      }
+      return read()
+    }) as Signal<T>
+  } else {
+    itemSig = createVersionedSignalAccessor(item)
+  }
+
   const indexSig = createSignal<number>(index)
   const root = createRootContext()
   const prev = pushRoot(root)
@@ -398,37 +425,31 @@ function createFineGrainedKeyedList<T>(
     // Phase 2: Remove old blocks that are no longer in the list
     for (const block of oldBlocks.values()) {
       destroyRoot(block.root)
-      removeNodes(block.nodes)
+      // Note: We don't remove nodes here, reconcileArrays will handle it
+      // using the efficient diff
     }
 
-    // Phase 3: Insert and reorder DOM nodes to match new order using efficient reconcile
-    if (newBlocks.size > 0) {
-      // Collect current DOM nodes (between markers)
-      const oldNodes: Node[] = []
-      let cursor: Node | null = container.startMarker.nextSibling
-      while (cursor && cursor !== container.endMarker) {
-        oldNodes.push(cursor)
-        cursor = cursor.nextSibling
-      }
+    // Phase 3: Reconcile DOM
+    if (newBlocks.size > 0 || oldBlocks.size > 0) {
+      // Collect new nodes in target order
+      const newNodes: Node[] = [container.startMarker]
 
-      // Collect new nodes in desired order
-      const newNodes: Node[] = []
       for (const key of Array.from(newBlocks.keys())) {
         const block = newBlocks.get(key)!
-        // Ensure nodes are in the DOM first
-        for (const node of block.nodes) {
-          if (!node.parentNode) {
-            // New node - insert before end marker
-            parent.insertBefore(node, container.endMarker)
-          }
+        // Flatten block nodes into the new list
+        for (let i = 0; i < block.nodes.length; i++) {
+          newNodes.push(block.nodes[i]!)
         }
-        newNodes.push(...block.nodes)
       }
 
-      // Use efficient reconcile algorithm if we have nodes to diff
-      if (oldNodes.length > 0 || newNodes.length > 0) {
-        reconcileArrays(parent, oldNodes, newNodes)
-      }
+      newNodes.push(container.endMarker)
+
+      // Use efficient reconcile algorithm to update DOM
+      // container.currentNodes contains the accurate DOM state from previous render
+      reconcileArrays(parent, container.currentNodes, newNodes)
+
+      // Update cache
+      container.currentNodes = newNodes
     }
 
     // Update container.blocks (clear and repopulate instead of reassigning)
