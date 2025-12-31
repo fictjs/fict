@@ -78,12 +78,64 @@ export function toNodeArray(node: Node | Node[] | unknown): Node[] {
 
 /**
  * Insert nodes before an anchor node, preserving order.
+ * Uses DocumentFragment for batch insertion when inserting multiple nodes.
  */
 export function insertNodesBefore(
   parent: ParentNode & Node,
   nodes: Node[],
   anchor: Node | null,
 ): void {
+  if (nodes.length === 0) return
+
+  // Single node optimization - direct insertion
+  if (nodes.length === 1) {
+    const node = nodes[0]!
+    if (node === undefined || node === null) return
+    if (node.ownerDocument !== parent.ownerDocument && parent.ownerDocument) {
+      parent.ownerDocument.adoptNode(node)
+    }
+    try {
+      parent.insertBefore(node, anchor)
+    } catch (e: unknown) {
+      if (parent.ownerDocument) {
+        try {
+          const clone = parent.ownerDocument.importNode(node, true)
+          parent.insertBefore(clone, anchor)
+          return
+        } catch {
+          // Clone fallback failed
+        }
+      }
+      throw e
+    }
+    return
+  }
+
+  // Batch insertion using DocumentFragment for multiple nodes
+  const doc = parent.ownerDocument
+  if (doc) {
+    const frag = doc.createDocumentFragment()
+    for (let i = 0; i < nodes.length; i++) {
+      const node = nodes[i]!
+      if (node === undefined || node === null) continue
+      // Handle DocumentFragment - append children
+      if (node.nodeType === 11) {
+        const childrenArr = Array.from(node.childNodes)
+        for (let j = 0; j < childrenArr.length; j++) {
+          frag.appendChild(childrenArr[j]!)
+        }
+      } else {
+        if (node.ownerDocument !== doc) {
+          doc.adoptNode(node)
+        }
+        frag.appendChild(node)
+      }
+    }
+    parent.insertBefore(frag, anchor)
+    return
+  }
+
+  // Fallback for non-document contexts (rare)
   const insertSingle = (nodeToInsert: Node, anchorNode: Node | null): Node => {
     if (nodeToInsert.ownerDocument !== parent.ownerDocument && parent.ownerDocument) {
       parent.ownerDocument.adoptNode(nodeToInsert)
@@ -91,7 +143,7 @@ export function insertNodesBefore(
     try {
       parent.insertBefore(nodeToInsert, anchorNode)
       return nodeToInsert
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (parent.ownerDocument) {
         try {
           const clone = parent.ownerDocument.importNode(nodeToInsert, true)

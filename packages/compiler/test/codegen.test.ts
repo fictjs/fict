@@ -287,8 +287,8 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    // Event handlers are transformed to bindEvent or similar
-    expect(code).toContain('bindEvent')
+    // Delegated events like click use direct property assignment for performance
+    expect(code).toContain('$$click')
     expect(code).toContain('count(count() + 1)')
   })
 
@@ -303,7 +303,8 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    expect(code).toContain('bindEvent')
+    // input is a delegated event, uses direct property assignment
+    expect(code).toContain('$$input')
   })
 
   it('should transform onChange handler', () => {
@@ -317,6 +318,7 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
+    // change is NOT a delegated event, uses bindEvent
     expect(code).toContain('bindEvent')
   })
 
@@ -333,6 +335,7 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
+    // submit is NOT a delegated event, uses bindEvent
     expect(code).toContain('bindEvent')
     expect(code).toMatch(/handleSubmit/)
   })
@@ -356,8 +359,10 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    // Multiple event handlers
-    expect((code.match(/bindEvent/g) || []).length).toBeGreaterThanOrEqual(1)
+    // Multiple delegated event handlers use $$eventName pattern
+    expect(code).toContain('$$click')
+    // mouseenter/mouseleave are NOT delegated, use bindEvent
+    expect(code).toContain('bindEvent')
   })
 
   it('should handle event handler as expression', () => {
@@ -370,7 +375,8 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    expect(code).toContain('bindEvent')
+    // click is delegated, uses direct property assignment
+    expect(code).toContain('$$click')
     expect(code).toMatch(/props/)
   })
 })
@@ -974,7 +980,8 @@ describe('complex component integration', () => {
     const { code } = generate(file)
 
     expect(code).toContain('__fictUseSignal')
-    expect(code).toContain('bindEvent')
+    // click is a delegated event, uses direct property assignment
+    expect(code).toContain('$$click')
   })
 
   it('should handle form component with state', () => {
@@ -1006,7 +1013,9 @@ describe('complex component integration', () => {
     const { code } = generate(file)
 
     expect(code).toContain('__fictUseSignal')
+    // submit is NOT a delegated event, uses bindEvent; input IS delegated
     expect(code).toContain('bindEvent')
+    expect(code).toContain('$$input')
   })
 
   it('should handle todo list component', () => {

@@ -65,12 +65,14 @@ export function onCleanup(fn: Cleanup): void {
 }
 
 export function flushOnMount(root: RootContext): void {
-  for (const cb of root.onMountCallbacks.splice(0)) {
-    const cleanup = cb()
+  const cbs = root.onMountCallbacks
+  for (let i = 0; i < cbs.length; i++) {
+    const cleanup = cbs[i]!()
     if (typeof cleanup === 'function') {
       root.cleanups.push(cleanup)
     }
   }
+  cbs.length = 0
 }
 
 export function registerRootCleanup(fn: Cleanup): void {

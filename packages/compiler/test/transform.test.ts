@@ -247,8 +247,8 @@ describe('Fict Compiler - Basic Transforms', () => {
       `
       const output = transform(input)
       // Event handler should not be wrapped in an additional arrow function
-      // The HIR codegen uses bindEvent for events
-      expect(output).toContain('bindEvent')
+      // Delegated events like click use direct property assignment for performance
+      expect(output).toContain('$$click')
       expect(output).toContain('count(count() + 1)')
       expect(output).not.toContain('onClick: () => () =>')
     })

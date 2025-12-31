@@ -1,6 +1,6 @@
 import type * as BabelCore from '@babel/core'
 
-import { RUNTIME_ALIASES, RUNTIME_HELPERS, RUNTIME_MODULE } from '../constants'
+import { DelegatedEvents, RUNTIME_ALIASES, RUNTIME_HELPERS, RUNTIME_MODULE } from '../constants'
 import { debugEnabled } from '../debug'
 import type { FictCompilerOptions } from '../types'
 
@@ -368,6 +368,12 @@ export interface CodegenContext {
   hookResultVarMap?: Map<string, string>
   /** Program functions keyed by name for hook metadata lookup */
   programFunctions?: Map<string, HIRFunction>
+  /** Cache of hoisted template identifiers keyed by HTML string */
+  hoistedTemplates?: Map<string, BabelCore.types.Identifier>
+  /** Hoisted template declarations to insert at function/component scope */
+  hoistedTemplateStatements?: BabelCore.types.Statement[]
+  /** Set of delegated events used (for hoisting delegateEvents call) */
+  delegatedEventsUsed?: Set<string>
 }
 
 /**
@@ -403,6 +409,9 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     propsParamName: undefined,
     propAccessorDecls: new Map(),
     hookReturnInfo: new Map(),
+    hoistedTemplates: new Map(),
+    hoistedTemplateStatements: [],
+    delegatedEventsUsed: new Set(),
   }
 }
 
@@ -675,6 +684,39 @@ function getCachedGetterExpression(
 
   // Third+ access - use existing cache variable
   return ctx.t.identifier(existingEntry)
+}
+
+/**
+ * Get or create a hoisted template identifier for the given HTML.
+ * When in list render context, templates are hoisted outside the render callback
+ * to avoid repeated HTML parsing (1000 items = 1000 parses -> 1 parse + 1000 clones).
+ */
+function getOrCreateHoistedTemplate(
+  html: string,
+  ctx: CodegenContext,
+): BabelCore.types.Identifier | null {
+  if (!ctx.inListRender || !ctx.hoistedTemplates || !ctx.hoistedTemplateStatements) {
+    return null
+  }
+
+  const existing = ctx.hoistedTemplates.get(html)
+  if (existing) {
+    return existing
+  }
+
+  const { t } = ctx
+  ctx.helpersUsed.add('template')
+  const tmplId = genTemp(ctx, 'htmpl')
+  ctx.hoistedTemplates.set(html, tmplId)
+  ctx.hoistedTemplateStatements.push(
+    t.variableDeclaration('const', [
+      t.variableDeclarator(
+        tmplId,
+        t.callExpression(t.identifier(RUNTIME_ALIASES.template), [t.stringLiteral(html)]),
+      ),
+    ]),
+  )
+  return tmplId
 }
 
 function detectDerivedCycles(fn: HIRFunction, _scopeResult: ReactiveScopeResult): void {
@@ -3603,22 +3645,35 @@ function lowerIntrinsicElement(
   }
 
   // Create template with full static HTML
-  ctx.helpersUsed.add('template')
-  const tmplId = genTemp(ctx, 'tmpl')
+  // For list render context, try to hoist template to avoid repeated HTML parsing
+  const hoistedTmplId = getOrCreateHoistedTemplate(html, ctx)
   const rootId = genTemp(ctx, 'root')
-  statements.push(
-    t.variableDeclaration('const', [
-      t.variableDeclarator(
-        tmplId,
-        t.callExpression(t.identifier(RUNTIME_ALIASES.template), [t.stringLiteral(html)]),
-      ),
-    ]),
-  )
-  statements.push(
-    t.variableDeclaration('const', [
-      t.variableDeclarator(rootId, t.callExpression(t.identifier(tmplId.name), [])),
-    ]),
-  )
+
+  if (hoistedTmplId) {
+    // Use hoisted template (already declared outside list callback)
+    statements.push(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(rootId, t.callExpression(t.identifier(hoistedTmplId.name), [])),
+      ]),
+    )
+  } else {
+    // Create template inline (non-list context)
+    ctx.helpersUsed.add('template')
+    const tmplId = genTemp(ctx, 'tmpl')
+    statements.push(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(
+          tmplId,
+          t.callExpression(t.identifier(RUNTIME_ALIASES.template), [t.stringLiteral(html)]),
+        ),
+      ]),
+    )
+    statements.push(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(rootId, t.callExpression(t.identifier(tmplId.name), [])),
+      ]),
+    )
+  }
   // Note: template() already returns content.firstChild, so rootId IS the root element
   // We use rootId directly as elId
   const elId = rootId
@@ -3640,8 +3695,12 @@ function lowerIntrinsicElement(
 
     if (binding.type === 'event' && binding.expr && binding.name) {
       // Event binding
-      ctx.helpersUsed.add('bindEvent')
-      ctx.helpersUsed.add('onDestroy')
+      const eventName = binding.name
+      const hasEventOptions =
+        binding.eventOptions &&
+        (binding.eventOptions.capture || binding.eventOptions.passive || binding.eventOptions.once)
+      const isDelegated = DelegatedEvents.has(eventName) && !hasEventOptions
+
       const shouldWrapHandler = isExpressionReactive(binding.expr, ctx)
       const prevWrapTracked = ctx.wrapTrackedExpressions
       ctx.wrapTrackedExpressions = false
@@ -3667,39 +3726,64 @@ function lowerIntrinsicElement(
         !isFn && shouldWrapHandler
           ? t.arrowFunctionExpression([], valueExpr)
           : ensureHandlerParam(valueExpr)
-      const cleanupId = genTemp(ctx, 'evt')
-      const args: BabelCore.types.Expression[] = [
-        targetId,
-        t.stringLiteral(binding.name),
-        handlerExpr,
-      ]
-      if (
-        binding.eventOptions &&
-        (binding.eventOptions.capture || binding.eventOptions.passive || binding.eventOptions.once)
-      ) {
-        const optionProps: BabelCore.types.ObjectProperty[] = []
-        if (binding.eventOptions.capture) {
-          optionProps.push(t.objectProperty(t.identifier('capture'), t.booleanLiteral(true)))
-        }
-        if (binding.eventOptions.passive) {
-          optionProps.push(t.objectProperty(t.identifier('passive'), t.booleanLiteral(true)))
-        }
-        if (binding.eventOptions.once) {
-          optionProps.push(t.objectProperty(t.identifier('once'), t.booleanLiteral(true)))
-        }
-        args.push(t.objectExpression(optionProps))
-      }
-      statements.push(
-        t.variableDeclaration('const', [
-          t.variableDeclarator(
-            cleanupId,
-            t.callExpression(t.identifier(RUNTIME_ALIASES.bindEvent), args),
+
+      if (isDelegated) {
+        // Optimization: Direct property assignment for delegated events
+        // This avoids creating cleanup functions and onDestroy registrations
+        // The runtime's global event handler will pick up handlers stored as $$eventName
+        ctx.delegatedEventsUsed?.add(eventName)
+
+        // For reactive handlers (non-function expressions), we need to wrap them
+        // so that when called, they resolve the handler and invoke it with the event
+        const finalHandler =
+          !isFn && shouldWrapHandler
+            ? t.arrowFunctionExpression([eventParam], t.callExpression(valueExpr, [eventParam]))
+            : handlerExpr
+
+        statements.push(
+          t.expressionStatement(
+            t.assignmentExpression(
+              '=',
+              t.memberExpression(targetId, t.identifier(`$$${eventName}`)),
+              finalHandler,
+            ),
           ),
-        ]),
-        t.expressionStatement(
-          t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [cleanupId]),
-        ),
-      )
+        )
+      } else {
+        // Fallback: Use bindEvent for non-delegated events or events with options
+        ctx.helpersUsed.add('bindEvent')
+        ctx.helpersUsed.add('onDestroy')
+        const cleanupId = genTemp(ctx, 'evt')
+        const args: BabelCore.types.Expression[] = [
+          targetId,
+          t.stringLiteral(eventName),
+          handlerExpr,
+        ]
+        if (hasEventOptions && binding.eventOptions) {
+          const optionProps: BabelCore.types.ObjectProperty[] = []
+          if (binding.eventOptions.capture) {
+            optionProps.push(t.objectProperty(t.identifier('capture'), t.booleanLiteral(true)))
+          }
+          if (binding.eventOptions.passive) {
+            optionProps.push(t.objectProperty(t.identifier('passive'), t.booleanLiteral(true)))
+          }
+          if (binding.eventOptions.once) {
+            optionProps.push(t.objectProperty(t.identifier('once'), t.booleanLiteral(true)))
+          }
+          args.push(t.objectExpression(optionProps))
+        }
+        statements.push(
+          t.variableDeclaration('const', [
+            t.variableDeclarator(
+              cleanupId,
+              t.callExpression(t.identifier(RUNTIME_ALIASES.bindEvent), args),
+            ),
+          ]),
+          t.expressionStatement(
+            t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [cleanupId]),
+          ),
+        )
+      }
     } else if (binding.type === 'attr' && binding.name) {
       // Attribute binding
       const attrName = binding.name
@@ -4436,11 +4520,22 @@ function emitListChild(
     ctx.helpersUsed.add('createElement')
   }
 
+  // Save and reset hoisted template state for this list render callback
+  const prevHoistedTemplates = ctx.hoistedTemplates
+  const prevHoistedTemplateStatements = ctx.hoistedTemplateStatements
+  ctx.hoistedTemplates = new Map()
+  ctx.hoistedTemplateStatements = []
+
   const prevInListRender = ctx.inListRender
   ctx.inListRender = true
   let callbackExpr = lowerExpression(mapCallback, ctx)
   ctx.inListRender = prevInListRender
   callbackExpr = applyRegionMetadataToExpression(callbackExpr, ctx)
+
+  // Collect hoisted template declarations to insert before list call
+  const hoistedStatements = ctx.hoistedTemplateStatements
+  ctx.hoistedTemplates = prevHoistedTemplates
+  ctx.hoistedTemplateStatements = prevHoistedTemplateStatements
 
   if (
     isKeyed &&
@@ -4501,6 +4596,14 @@ function emitListChild(
       keyExprAst,
     )
 
+    // Determine if the callback uses an index parameter
+    const hasIndexParam =
+      (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) &&
+      callbackExpr.params.length >= 2
+
+    // Insert hoisted template declarations before list call
+    statements.push(...hoistedStatements)
+
     statements.push(
       t.variableDeclaration('const', [
         t.variableDeclarator(
@@ -4509,11 +4612,15 @@ function emitListChild(
             t.arrowFunctionExpression([], arrayExpr),
             keyFn,
             callbackExpr,
+            t.booleanLiteral(hasIndexParam),
           ]),
         ),
       ]),
     )
   } else {
+    // Insert hoisted template declarations before list call
+    statements.push(...hoistedStatements)
+
     statements.push(
       t.variableDeclaration('const', [
         t.variableDeclarator(
@@ -5427,6 +5534,8 @@ function lowerFunctionWithRegions(
   const prevPropsParam = ctx.propsParamName
   const prevPropAccessors = ctx.propAccessorDecls
   ctx.propAccessorDecls = new Map()
+  const prevDelegatedEventsUsed = ctx.delegatedEventsUsed
+  ctx.delegatedEventsUsed = new Set()
   const calledIdentifiers = collectCalledIdentifiers(fn)
   const propsPlanAliases = new Set<string>()
   let propsDestructurePlan: {
@@ -5688,6 +5797,18 @@ function lowerFunctionWithRegions(
     )
   }
 
+  // Hoist delegateEvents call if any delegated events are used
+  if (ctx.delegatedEventsUsed && ctx.delegatedEventsUsed.size > 0) {
+    ctx.helpersUsed.add('delegateEvents')
+    statements.unshift(
+      t.expressionStatement(
+        t.callExpression(t.identifier(RUNTIME_ALIASES.delegateEvents), [
+          t.arrayExpression(Array.from(ctx.delegatedEventsUsed).map(name => t.stringLiteral(name))),
+        ]),
+      ),
+    )
+  }
+
   // Handle props destructuring pattern for component functions
   // If first rawParam is ObjectPattern, emit __props and add destructuring
   let finalParams = fn.params.map(p => t.identifier(deSSAVarName(p.name)))
@@ -5757,6 +5878,7 @@ function lowerFunctionWithRegions(
   ctx.hookResultVarMap = prevHookResultVarMap
   ctx.propsParamName = prevPropsParam
   ctx.propAccessorDecls = prevPropAccessors
+  ctx.delegatedEventsUsed = prevDelegatedEventsUsed
   return funcDecl
 }
 

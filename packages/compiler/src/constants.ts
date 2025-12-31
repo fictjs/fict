@@ -41,6 +41,7 @@ export const RUNTIME_HELPERS = {
   destroyMarkerBlock: 'destroyMarkerBlock',
   getFirstNodeAfter: 'getFirstNodeAfter',
   template: 'template',
+  delegateEvents: 'delegateEvents',
 } as const
 
 export const RUNTIME_ALIASES = {
@@ -80,10 +81,41 @@ export const RUNTIME_ALIASES = {
   destroyMarkerBlock: 'destroyMarkerBlock',
   getFirstNodeAfter: 'getFirstNodeAfter',
   template: 'template',
+  delegateEvents: 'delegateEvents',
 } as const
 
 // Attributes that should NOT be wrapped in reactive functions
 export const NON_REACTIVE_ATTRS = new Set(['key', 'ref'])
+
+/**
+ * Events that should use event delegation for performance.
+ * These events bubble and are commonly used across many elements.
+ * Must match the runtime's DelegatedEvents set.
+ */
+export const DelegatedEvents = new Set<string>([
+  'beforeinput',
+  'click',
+  'dblclick',
+  'contextmenu',
+  'focusin',
+  'focusout',
+  'input',
+  'keydown',
+  'keyup',
+  'mousedown',
+  'mousemove',
+  'mouseout',
+  'mouseover',
+  'mouseup',
+  'pointerdown',
+  'pointermove',
+  'pointerout',
+  'pointerover',
+  'pointerup',
+  'touchend',
+  'touchmove',
+  'touchstart',
+])
 
 // Functions that are known to be safe (read-only, won't mutate passed objects)
 export const SAFE_FUNCTIONS = new Set([
