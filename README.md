@@ -104,6 +104,10 @@ export default defineConfig({
 
 ---
 
+## Online Examples
+
+- [Counter](https://stackblitz.com/edit/vite-fict-ts?file=src%2Fmain.tsx)
+
 ## Core Concepts
 
 ### `$state` — Reactive data
