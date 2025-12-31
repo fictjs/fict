@@ -6,17 +6,17 @@
   "linked": [
     [
       "fict",
-      "runtime",
-      "compiler",
-      "vite-plugin",
-      "eslint-plugin",
-      "devtools",
-      "ssr",
-      "testing-library"
+      "@fictjs/runtime",
+      "@fictjs/compiler",
+      "@fictjs/vite-plugin",
+      "@fictjs/babel-preset",
+      "@fictjs/eslint-plugin",
+      "@fictjs/ssr",
+      "@fictjs/testing-library"
     ]
   ],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["fict-docs-site", "fict-devtools", "fict-example-*"]
+  "ignore": ["fict-docs-site", "@fictjs/devtools", "fict-example-*"]
 }

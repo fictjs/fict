@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Fict DevTools",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Developer tools for Fict applications",
   "permissions": ["storage"],
   "devtools_page": "src/panel/devtools.html",
