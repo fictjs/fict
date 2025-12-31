@@ -2,6 +2,9 @@
   "name": "@fictjs/compiler",
   "version": "0.0.2",
   "description": "Babel plugin for Fict Compiler",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",

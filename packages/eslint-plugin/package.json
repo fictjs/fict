@@ -2,6 +2,9 @@
   "name": "@fictjs/eslint-plugin",
   "version": "0.0.2",
   "description": "ESLint plugin for Fict",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",

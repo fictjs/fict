@@ -2,6 +2,9 @@
   "name": "fict",
   "version": "0.0.2",
   "description": "Main package for the Fict framework",
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "fict",
     "framework",
