@@ -422,13 +422,13 @@ _Lower is better. Baseline relative to best performer in each category._
 ## FAQ
 
 **Is Fict production-ready?**
-Beta. Core is stable, but expect edge cases. Test thoroughly for critical apps.
+Alpha. Core is stable, but expect edge cases. Test thoroughly for critical apps.
 
 **Does Fict use a virtual DOM?**
-No. Components run once. JSX compiles to direct DOM operations.
+No. Components run once.
 
 **How does Fict handle arrays?**
-Default: immutable style (`todos = [...todos, newTodo]`). For deep mutations, use `$store` from `fict/plus`.
+Default: immutable style (`todos = [...todos, newTodo]`). For deep mutations, you can use spread operation to create new immutable data, or use Immer/Mutative, or use `$store` from `fict/plus`.
 
 **Can I use existing React components?**
 Not directly. Fict compiles to DOM operations, not React elements.
