@@ -85,6 +85,7 @@ export default defineConfig({
 
 ```ts
 let count = $state(0)
+
 count++ // ✅ direct mutation
 count = count + 1 // ✅ assignment
 ```
@@ -349,7 +350,9 @@ The compiler detects this automatically. You don't need to think about it — wr
 
 ## Status
 
-> ⚠️ **Beta** — Fict is feature-complete for core compiler and runtime. API is stable, but edge cases may be refined. Production use is possible for adventurous teams.
+> ⚠️ **Alpha** — Fict is feature-complete for core compiler and runtime. API is stable, but edge cases may be refined. Production use is possible for adventurous teams.
+
+> ⚠️ Don't use it in production yet.
 
 ## Roadmap
 
