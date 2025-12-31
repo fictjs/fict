@@ -876,6 +876,7 @@ export function clearDelegatedEvents(doc: Document = window.document): void {
 function globalEventHandler(e: Event): void {
   let node = e.target as HTMLElement | null
   const key = `$$${e.type}` as const
+  const dataKey = `${key}Data` as `$$${string}Data`
   const oriTarget = e.target
   const oriCurrentTarget = e.currentTarget
 
@@ -891,20 +892,31 @@ function globalEventHandler(e: Event): void {
     if (!node) return false
     const handler = node[key]
     if (handler && !(node as HTMLButtonElement).disabled) {
-      const data = node[`${key}Data` as `$$${string}Data`]
-      if (data !== undefined) {
-        if (typeof handler === 'function') {
-          // Handler with data: handler(data, event)
-          ;(handler as (data: unknown, e: Event) => void).call(node, data, e)
+      const resolveData = (value: unknown): unknown => {
+        if (typeof value === 'function') {
+          try {
+            const fn = value as (event?: Event) => unknown
+            return fn.length > 0 ? fn(e) : fn()
+          } catch {
+            return (value as () => unknown)()
+          }
         }
-      } else {
-        if (typeof handler === 'function') {
-          // Handler without data: handler(event)
+        return value
+      }
+
+      const rawData = (node as any)[dataKey] as unknown
+      const hasData = rawData !== undefined
+      const resolvedNodeData = hasData ? resolveData(rawData) : undefined
+      if (typeof handler === 'function') {
+        // Handler with optional data: handler(data, event?) or handler(event)
+        if (hasData) {
+          ;(handler as (data: unknown, e: Event) => void).call(node, resolvedNodeData, e)
+        } else {
           ;(handler as EventListener).call(node, e)
-        } else if (Array.isArray(handler)) {
-          // Array syntax: [handler, data]
-          ;(handler[0] as (data: unknown, e: Event) => void).call(node, handler[1], e)
         }
+      } else if (Array.isArray(handler)) {
+        const tupleData = resolveData(handler[1])
+        ;(handler[0] as (data: unknown, e: Event) => void).call(node, tupleData, e)
       }
       if (e.cancelBubble) return false
     }

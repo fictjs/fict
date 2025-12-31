@@ -3726,6 +3726,8 @@ function lowerIntrinsicElement(
         binding.eventOptions &&
         (binding.eventOptions.capture || binding.eventOptions.passive || binding.eventOptions.once)
       const isDelegated = DelegatedEvents.has(eventName) && !hasEventOptions
+      const dataBinding =
+        isDelegated && !shouldWrapHandler ? extractDelegatedEventData(valueExpr, t) : null
 
       // Attempt data-binding for delegated events to avoid per-node closures
       if (isDelegated) {
@@ -3741,15 +3743,75 @@ function lowerIntrinsicElement(
             ? t.arrowFunctionExpression([eventParam], t.callExpression(valueExpr, [eventParam]))
             : handlerExpr
 
+        const normalizeHandler = (expr: BabelCore.types.Expression): BabelCore.types.Expression => {
+          if (
+            t.isCallExpression(expr) &&
+            (t.isIdentifier(expr.callee) || t.isMemberExpression(expr.callee))
+          ) {
+            return expr.callee as BabelCore.types.Expression
+          }
+          return expr
+        }
+
+        const normalizedDataHandler =
+          dataBinding !== null
+            ? normalizeHandler((dataBinding?.handler ?? handlerExpr) as BabelCore.types.Expression)
+            : null
+
+        const dataForDelegate =
+          dataBinding?.data &&
+          (t.isArrowFunctionExpression(dataBinding.data) || t.isFunctionExpression(dataBinding.data)
+            ? dataBinding.data
+            : t.arrowFunctionExpression([], dataBinding.data))
+
+        const handlerForDelegate =
+          normalizedDataHandler ??
+          (dataBinding ? normalizeHandler(handlerExpr as BabelCore.types.Expression) : finalHandler)
+        const handlerIsCallableExpr =
+          t.isArrowFunctionExpression(handlerForDelegate) ||
+          t.isFunctionExpression(handlerForDelegate) ||
+          t.isIdentifier(handlerForDelegate) ||
+          t.isMemberExpression(handlerForDelegate)
+
+        let handlerToAssign: BabelCore.types.Expression = handlerIsCallableExpr
+          ? handlerForDelegate
+          : t.arrowFunctionExpression([eventParam], handlerForDelegate)
+
+        if (dataForDelegate) {
+          let payloadExpr: BabelCore.types.Expression
+          if (t.isArrowFunctionExpression(dataForDelegate) && dataForDelegate.params.length === 0) {
+            payloadExpr = t.isBlockStatement(dataForDelegate.body)
+              ? t.callExpression(t.arrowFunctionExpression([], dataForDelegate.body), [])
+              : (dataForDelegate.body as BabelCore.types.Expression)
+          } else {
+            payloadExpr = t.callExpression(dataForDelegate, [])
+          }
+          handlerToAssign = t.arrowFunctionExpression(
+            [eventParam],
+            t.callExpression(handlerForDelegate, [payloadExpr]),
+          )
+        }
+
         statements.push(
           t.expressionStatement(
             t.assignmentExpression(
               '=',
               t.memberExpression(targetId, t.identifier(`$$${eventName}`)),
-              finalHandler,
+              handlerToAssign,
             ),
           ),
         )
+        if (dataForDelegate) {
+          statements.push(
+            t.expressionStatement(
+              t.assignmentExpression(
+                '=',
+                t.memberExpression(targetId, t.identifier(`$$${eventName}Data`)),
+                dataForDelegate,
+              ),
+            ),
+          )
+        }
       } else {
         // Fallback: Use bindEvent for non-delegated events or events with options
         ctx.helpersUsed.add('bindEvent')
@@ -4231,6 +4293,44 @@ function expressionUsesIdentifier(
 
   visit(expr)
   return found
+}
+
+function extractDelegatedEventData(
+  expr: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): { handler: BabelCore.types.Expression; data?: BabelCore.types.Expression } | null {
+  const isSimpleHandler = t.isIdentifier(expr) || t.isMemberExpression(expr)
+  if (isSimpleHandler) {
+    return { handler: expr }
+  }
+
+  if (!t.isArrowFunctionExpression(expr) && !t.isFunctionExpression(expr)) {
+    return null
+  }
+
+  const paramNames = expr.params
+    .map(p => (t.isIdentifier(p) ? p.name : null))
+    .filter((n): n is string => !!n)
+  const bodyExpr = t.isBlockStatement(expr.body)
+    ? expr.body.body.length === 1 &&
+      t.isReturnStatement(expr.body.body[0]) &&
+      expr.body.body[0].argument &&
+      t.isExpression(expr.body.body[0].argument)
+      ? (expr.body.body[0].argument as BabelCore.types.Expression)
+      : null
+    : (expr.body as BabelCore.types.Expression)
+
+  if (!bodyExpr || !t.isCallExpression(bodyExpr)) return null
+  if (paramNames.some(name => expressionUsesIdentifier(bodyExpr, name, t))) return null
+  if (!t.isIdentifier(bodyExpr.callee) && !t.isMemberExpression(bodyExpr.callee)) return null
+  if (bodyExpr.arguments.length === 0) return null
+  if (bodyExpr.arguments.length > 1) return null
+
+  const dataArg = bodyExpr.arguments[0]
+  return {
+    handler: bodyExpr.callee as BabelCore.types.Expression,
+    data: dataArg && t.isExpression(dataArg) ? (dataArg as BabelCore.types.Expression) : undefined,
+  }
 }
 
 function getTrackedCallIdentifier(

@@ -5,7 +5,7 @@ type LifecycleFn = () => void | Cleanup
 
 export interface RootContext {
   parent?: RootContext | undefined
-  onMountCallbacks: LifecycleFn[]
+  onMountCallbacks?: LifecycleFn[]
   cleanups: Cleanup[]
   destroyCallbacks: Cleanup[]
   errorHandlers?: ErrorHandler[]
@@ -21,7 +21,7 @@ const globalErrorHandlers = new WeakMap<RootContext, ErrorHandler[]>()
 const globalSuspenseHandlers = new WeakMap<RootContext, SuspenseHandler[]>()
 
 export function createRootContext(parent: RootContext | undefined = currentRoot): RootContext {
-  return { parent, onMountCallbacks: [], cleanups: [], destroyCallbacks: [] }
+  return { parent, cleanups: [], destroyCallbacks: [] }
 }
 
 export function pushRoot(root: RootContext): RootContext | undefined {
@@ -46,7 +46,7 @@ export function popRoot(prev: RootContext | undefined): void {
 
 export function onMount(fn: LifecycleFn): void {
   if (currentRoot) {
-    currentRoot.onMountCallbacks.push(fn)
+    ;(currentRoot.onMountCallbacks ||= []).push(fn)
     return
   }
   runLifecycle(fn)
@@ -66,6 +66,7 @@ export function onCleanup(fn: Cleanup): void {
 
 export function flushOnMount(root: RootContext): void {
   const cbs = root.onMountCallbacks
+  if (!cbs || cbs.length === 0) return
   for (let i = 0; i < cbs.length; i++) {
     const cleanup = cbs[i]!()
     if (typeof cleanup === 'function') {
@@ -83,7 +84,9 @@ export function registerRootCleanup(fn: Cleanup): void {
 
 export function clearRoot(root: RootContext): void {
   runCleanupList(root.cleanups)
-  root.onMountCallbacks.length = 0
+  if (root.onMountCallbacks) {
+    root.onMountCallbacks.length = 0
+  }
 }
 
 export function destroyRoot(root: RootContext): void {

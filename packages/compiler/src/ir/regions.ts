@@ -2012,6 +2012,10 @@ function instructionToStatement(
       instr.value.callee.kind === 'Identifier' &&
       instr.value.callee.name === '$state'
     const inRegionMemo = ctx.inRegionMemo ?? false
+    const isFunctionValue =
+      instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression'
+    const lowerAssignedValue = (forceAssigned = false) =>
+      lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
     const buildMemoCall = (expr: BabelCore.types.Expression) => {
       const args: BabelCore.types.Expression[] = [
         t.identifier('__fictCtx'),
@@ -2067,15 +2071,12 @@ function instructionToStatement(
       if (treatAsTracked && !isDestructuringTemp) {
         if (isStateCall) {
           return t.variableDeclaration(normalizedDecl, [
-            t.variableDeclarator(
-              t.identifier(baseName),
-              lowerExpressionWithDeSSA(instr.value, ctx, true),
-            ),
+            t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
           ])
         }
 
         if (dependsOnTracked) {
-          const derivedExpr = lowerExpressionWithDeSSA(instr.value, ctx, true)
+          const derivedExpr = lowerAssignedValue(true)
           if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
             return t.variableDeclaration(normalizedDecl, [
               t.variableDeclarator(t.identifier(baseName), derivedExpr),
@@ -2098,7 +2099,7 @@ function instructionToStatement(
       }
 
       if (dependsOnTracked && !isDestructuringTemp) {
-        const derivedExpr = lowerExpressionWithDeSSA(instr.value, ctx, true)
+        const derivedExpr = lowerAssignedValue(true)
         if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
           return t.variableDeclaration(normalizedDecl, [
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
@@ -2120,10 +2121,7 @@ function instructionToStatement(
       }
 
       return t.variableDeclaration(fallbackDecl, [
-        t.variableDeclarator(
-          t.identifier(baseName),
-          lowerExpressionWithDeSSA(instr.value, ctx, true),
-        ),
+        t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
       ])
     }
 
@@ -2134,9 +2132,7 @@ function instructionToStatement(
     if (capturedTracked && isSignal) {
       // Captured tracked binding from an outer scope - treat as setter call
       return t.expressionStatement(
-        t.callExpression(t.identifier(baseName), [
-          lowerExpressionWithDeSSA(instr.value, ctx, true),
-        ]),
+        t.callExpression(t.identifier(baseName), [lowerAssignedValue(true)]),
       )
     }
 
@@ -2165,17 +2161,11 @@ function instructionToStatement(
       // Already declared - use assignment expression
       if (isSignal) {
         return t.expressionStatement(
-          t.callExpression(t.identifier(baseName), [
-            lowerExpressionWithDeSSA(instr.value, ctx, true),
-          ]),
+          t.callExpression(t.identifier(baseName), [lowerAssignedValue(true)]),
         )
       }
       return t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.identifier(baseName),
-          lowerExpressionWithDeSSA(instr.value, ctx, true),
-        ),
+        t.assignmentExpression('=', t.identifier(baseName), lowerAssignedValue(true)),
       )
     }
 
@@ -2183,11 +2173,7 @@ function instructionToStatement(
     // Emit assignmentExpression to update existing variable, not create new declaration
     if (!declKind) {
       return t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.identifier(baseName),
-          lowerExpressionWithDeSSA(instr.value, ctx, true),
-        ),
+        t.assignmentExpression('=', t.identifier(baseName), lowerAssignedValue(true)),
       )
     }
 
@@ -2201,15 +2187,12 @@ function instructionToStatement(
         instr.value.callee.name === '$state'
       ) {
         return t.variableDeclaration('const', [
-          t.variableDeclarator(
-            t.identifier(baseName),
-            lowerExpressionWithDeSSA(instr.value, ctx, true),
-          ),
+          t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
         ])
       }
 
       if (dependsOnTracked) {
-        const derivedExpr = lowerExpressionWithDeSSA(instr.value, ctx, true)
+        const derivedExpr = lowerAssignedValue(true)
         if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
           return t.variableDeclaration('const', [
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
@@ -2231,15 +2214,12 @@ function instructionToStatement(
       }
 
       return t.variableDeclaration('let', [
-        t.variableDeclarator(
-          t.identifier(baseName),
-          lowerExpressionWithDeSSA(instr.value, ctx, true),
-        ),
+        t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
       ])
     }
 
     if (dependsOnTracked) {
-      const derivedExpr = lowerExpressionWithDeSSA(instr.value, ctx, true)
+      const derivedExpr = lowerAssignedValue(true)
       if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
         return t.variableDeclaration('let', [
           t.variableDeclarator(t.identifier(baseName), derivedExpr),

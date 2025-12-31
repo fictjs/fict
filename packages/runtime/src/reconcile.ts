@@ -56,8 +56,19 @@ export default function reconcileArrays(parentNode: ParentNode, a: Node[], b: No
       const node: Node | null =
         bEnd < bLength ? (bStart ? b[bStart - 1]!.nextSibling : (b[bEnd - bStart] ?? null)) : after
 
-      while (bStart < bEnd) {
-        parentNode.insertBefore(b[bStart++]!, node)
+      const count = bEnd - bStart
+      const doc = (parentNode as Node).ownerDocument
+      if (count > 1 && doc) {
+        const frag = doc.createDocumentFragment()
+        for (let i = bStart; i < bEnd; i++) {
+          frag.appendChild(b[i]!)
+        }
+        parentNode.insertBefore(frag, node)
+        bStart = bEnd
+      } else {
+        while (bStart < bEnd) {
+          parentNode.insertBefore(b[bStart++]!, node)
+        }
       }
     }
     // 4. Remove - new array exhausted, remove remaining old nodes
