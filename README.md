@@ -348,6 +348,24 @@ The compiler detects this automatically. You don't need to think about it — wr
 
 ---
 
+## Performance
+
+> 🚧 **Note**: Package size and memory optimizations are currently in progress.
+
+![Performance Benchmark](./perf.png)
+
+### Benchmark Summary (Geometric Mean)
+
+| Metric             | Solid | Vue Vapor | Svelte 5 | Fict | React Compiler |
+| :----------------- | :---- | :-------- | :------- | :--- | :------------- |
+| **CPU (Duration)** | 1.03  | 1.01      | 1.05     | 1.09 | 1.45           |
+| **Memory**         | 1.00  | 1.28      | 1.27     | 1.40 | 2.26           |
+| **Size / Load**    | 1.00  | 2.72      | 2.37     | 4.92 | 10.06          |
+
+_Lower is better. Baseline relative to best performer in each category._
+
+---
+
 ## Status
 
 > ⚠️ **Alpha** — Fict is feature-complete for core compiler and runtime. API is stable, but edge cases may be refined. Production use is possible for adventurous teams.
