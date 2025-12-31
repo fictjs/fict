@@ -90,7 +90,11 @@ export interface KeyedListBinding {
   dispose: () => void
 }
 
-type FineGrainedRenderItem<T> = (itemSig: Signal<T>, indexSig: Signal<number>) => Node[]
+type FineGrainedRenderItem<T> = (
+  itemSig: Signal<T>,
+  indexSig: Signal<number>,
+  key: string | number,
+) => Node[]
 
 /**
  * A block identified by start/end comment markers.
@@ -286,7 +290,7 @@ export function createKeyedBlock<T>(
   key: string | number,
   item: T,
   index: number,
-  render: (item: Signal<T>, index: Signal<number>) => Node[],
+  render: (item: Signal<T>, index: Signal<number>, key: string | number) => Node[],
   needsIndex = true,
 ): KeyedBlock<T> {
   // Use versioned signal for all item types; avoid diffing proxy overhead for objects
@@ -308,7 +312,7 @@ export function createKeyedBlock<T>(
 
   let nodes: Node[] = []
   try {
-    const rendered = render(itemSig, indexSig)
+    const rendered = render(itemSig, indexSig, key)
     // If render returns real DOM nodes/arrays, preserve them to avoid
     // reparenting side-effects (tests may pre-insert them).
     if (
@@ -381,9 +385,11 @@ export function createKeyedList<T>(
   getItems: () => T[],
   keyFn: (item: T, index: number) => string | number,
   renderItem: FineGrainedRenderItem<T>,
-  needsIndex = true,
+  needsIndex?: boolean,
 ): KeyedListBinding {
-  return createFineGrainedKeyedList(getItems, keyFn, renderItem, needsIndex)
+  const resolvedNeedsIndex =
+    arguments.length >= 4 ? !!needsIndex : renderItem.length > 1 /* has index param */
+  return createFineGrainedKeyedList(getItems, keyFn, renderItem, resolvedNeedsIndex)
 }
 
 function createFineGrainedKeyedList<T>(

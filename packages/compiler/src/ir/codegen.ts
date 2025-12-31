@@ -3695,12 +3695,6 @@ function lowerIntrinsicElement(
 
     if (binding.type === 'event' && binding.expr && binding.name) {
       // Event binding
-      const eventName = binding.name
-      const hasEventOptions =
-        binding.eventOptions &&
-        (binding.eventOptions.capture || binding.eventOptions.passive || binding.eventOptions.once)
-      const isDelegated = DelegatedEvents.has(eventName) && !hasEventOptions
-
       const shouldWrapHandler = isExpressionReactive(binding.expr, ctx)
       const prevWrapTracked = ctx.wrapTrackedExpressions
       ctx.wrapTrackedExpressions = false
@@ -3727,6 +3721,13 @@ function lowerIntrinsicElement(
           ? t.arrowFunctionExpression([], valueExpr)
           : ensureHandlerParam(valueExpr)
 
+      const eventName = binding.name
+      const hasEventOptions =
+        binding.eventOptions &&
+        (binding.eventOptions.capture || binding.eventOptions.passive || binding.eventOptions.once)
+      const isDelegated = DelegatedEvents.has(eventName) && !hasEventOptions
+
+      // Attempt data-binding for delegated events to avoid per-node closures
       if (isDelegated) {
         // Optimization: Direct property assignment for delegated events
         // This avoids creating cleanup functions and onDestroy registrations
