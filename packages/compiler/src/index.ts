@@ -15,7 +15,8 @@ function stripMacroImports(
 ): void {
   path.traverse({
     ImportDeclaration(importPath) {
-      if (importPath.node.source.value !== 'fict') return
+      if (importPath.node.source.value !== 'fict' && importPath.node.source.value !== 'fict/slim')
+        return
       const filtered = importPath.node.specifiers.filter(spec => {
         if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
           return !['$state', '$effect'].includes(spec.imported.name)
@@ -487,7 +488,11 @@ function createHIREntrypointVisitor(
         const fictImports = new Set<string>()
         path.traverse({
           ImportDeclaration(importPath) {
-            if (importPath.node.source.value !== 'fict') return
+            if (
+              importPath.node.source.value !== 'fict' &&
+              importPath.node.source.value !== 'fict/slim'
+            )
+              return
             for (const spec of importPath.node.specifiers) {
               if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
                 fictImports.add(spec.imported.name)
