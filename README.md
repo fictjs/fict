@@ -27,22 +27,22 @@ function Counter() {
 
 **Positioning**
 
-- “Write JavaScript; the compiler handles reactivity.” No `.value`, no deps arrays, no manual memo wiring.
+- “Write JavaScript; the compiler handles reactivity.” No `.value`, no deps arrays, no manual memo wiring (no explicit unwrap/getter calls).
 - Not pitching “better React/Vue/Svelte”; Fict is a different mental model (compile-time reactivity on plain JS).
 - The gain: less code, lower cognitive overhead. Performance is surgical by design, but we’re not selling unproven speed charts.
 
-| Pain Point        | React                  | Solid                         | Svelte 5        | Fict          |
-| ----------------- | ---------------------- | ----------------------------- | --------------- | ------------- |
-| State syntax      | `useState()` + setter  | `createSignal()` + `()` calls | `$state()`      | `$state()`    |
-| Derived values    | `useMemo` + deps array | `createMemo()`                | `$derived()`    | **automatic** |
-| Props destructure | ✅                     | ❌ breaks reactivity          | via `$props()`  | ✅            |
-| Control flow      | native JS              | `<Show>/<For>`                | `{#if}/{#each}` | native JS     |
+| Pain Point        | React                          | Solid                         | Svelte 5                  | Fict          |
+| ----------------- | ------------------------------ | ----------------------------- | ------------------------- | ------------- |
+| State syntax      | `useState()` + setter          | `createSignal()` + `()` calls | `$state()`                | `$state()`    |
+| Derived values    | `useMemo` + deps (or Compiler) | `createMemo()`                | `$derived()`              | **automatic** |
+| Props destructure | ✅                             | ❌ (props) breaks reactivity  | ✅ (`$props()` semantics) | ✅            |
+| Control flow      | native JS                      | typically `<Show>/<For>`      | `{#if}/{#each}`           | native JS     |
 
 Fict gives you:
 
-- **React's familiar syntax** — JSX, destructuring, native `if`/`for`
-- **Solid's fine-grained performance** — no VDOM, surgical DOM updates
-- **Less boilerplate than both** — compiler infers derived values automatically
+- **React's familiar syntax** — JSX, destructuring-friendly, native `if`/`for`, etc.
+- **Solid's fine-grained update model** — no VDOM, surgical DOM updates
+- **Less boilerplate than both** — compiler infers derived values automatically (when possible)
 
 ---
 
