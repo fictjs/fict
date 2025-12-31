@@ -1,6 +1,6 @@
 # Fict – A compiler that makes JavaScript variables automatically reactive
 
-Fict - https://github.com/unadlib/fict
+Fict Repo - https://github.com/fictjs/fict
 
 ## Opening: A Starting Point for Technical Exploration
 
