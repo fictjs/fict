@@ -438,6 +438,18 @@ Not directly. Fict compiles to DOM operations, not React elements.
 
 ---
 
+## Acknowledgments
+
+Fict is built upon the brilliant ideas and relentless innovation of the open-source community. We would like to express our deepest respect and sincere gratitude to the following projects, whose work has been an indispensable source of inspiration and reference for Fict:
+
+- **[React](https://react.dev/)** – For defining the modern era of UI development. Its component model and declarative philosophy set the standard for developer experience, a standard Fict strives to uphold.
+- **[Solid](https://www.solidjs.com/)** – For pioneering fine-grained reactivity and demonstrating the power of compilation. Its architecture is the bedrock upon which Fict’s performance assertions are built.
+- **[alien-signals](https://github.com/stackblitz/alien-signals)** – For pushing the boundaries of signal performance. Its advanced implementation details provided critical guidance for Fict’s reactive system.
+
+We are profoundly grateful for their contributions to the web development world.
+
+---
+
 ## License
 
 [MIT](https://github.com/fictjs/fict/blob/main/LICENSE)
