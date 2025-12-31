@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+
+vi.setConfig({ testTimeout: 60000, hookTimeout: 60000 })
 import { createRequire } from 'module'
 
 import { transformCommonJS } from '../../compiler/test/test-utils'
@@ -1989,5 +1991,549 @@ describe('compiler + fict integration', () => {
     expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('Count: 1')
 
     dispose()
+  })
+
+  it('runs the keyed example end to end', async () => {
+    const counterBasicSource = `
+      import { $effect, $state, render } from 'fict'
+
+      const adjectives = [
+        'pretty',
+        'large',
+        'big',
+        'small',
+        'tall',
+        'short',
+        'long',
+        'handsome',
+        'plain',
+        'quaint',
+        'clean',
+        'elegant',
+        'easy',
+        'angry',
+        'crazy',
+        'helpful',
+        'mushy',
+        'odd',
+        'unsightly',
+        'adorable',
+        'important',
+        'inexpensive',
+        'cheap',
+        'expensive',
+        'fancy',
+      ]
+
+      const colours = [
+        'red',
+        'yellow',
+        'blue',
+        'green',
+        'pink',
+        'brown',
+        'purple',
+        'brown',
+        'white',
+        'black',
+        'orange',
+      ]
+
+      const nouns = [
+        'table',
+        'chair',
+        'house',
+        'bbq',
+        'desk',
+        'car',
+        'pony',
+        'cookie',
+        'sandwich',
+        'burger',
+        'pizza',
+        'mouse',
+        'keyboard',
+      ]
+
+      let nextId = 1
+      function random(max: number) {
+        return Math.round(Math.random() * 1000) % max
+      }
+
+      function buildData(count: number) {
+        const data = new Array(count)
+        for (let i = 0; i < count; i++) {
+          data[i] = {
+            id: nextId++,
+            label: \`\${adjectives[random(adjectives.length)]} \${colours[random(colours.length)]} \${nouns[random(nouns.length)]}\`,
+          }
+        }
+        return data
+      }
+
+      function Button(props: any) {
+        return (
+          <div class="col-sm-6 smallpad">
+            <button id={props.id} class="btn btn-primary btn-block" type="button" onClick={props.onClick}>
+              {props.text}
+            </button>
+          </div>
+        )
+      }
+
+      function App() {
+        let data: { id: number; label: string }[] = $state([])
+        let selected: number | null = $state(null)
+
+        const run = () => {
+          data = buildData(10)
+          selected = null
+        }
+
+        const runLots = () => {
+          data = buildData(100)
+          selected = null
+        }
+
+        const add = () => {
+          data = [...data, ...buildData(10)]
+        }
+
+        const update = () => {
+          data = data.map((row, i) => (i % 3 === 0 ? { ...row, label: row.label + ' !!!' } : row))
+        }
+
+        const swapRows = () => {
+          const list = data
+          if (list.length < 3) return
+          const copy = list.slice()
+          const last = copy.length - 1
+          const tmp = copy[1]
+          copy[1] = copy[last]
+          copy[last] = tmp
+          data = copy
+        }
+
+        const clear = () => {
+          data = []
+          selected = null
+        }
+
+        const remove = (id: number) => {
+          data = data.filter(row => row.id !== id)
+          if (selected === id) {
+            selected = null
+          }
+        }
+
+        const select = (id: number) => {
+          selected = id
+        }
+
+        $effect(() => {
+          console.log('data', data)
+        })
+
+        return (
+          <div class="container">
+            <div class="jumbotron">
+              <div class="row">
+                <div class="col-md-6">
+                  <h1>Fict Keyed</h1>
+                </div>
+                <div class="col-md-6">
+                  <div class="row">
+                    <Button id="run" text="Create 1,0 rows" onClick={run} />
+                    <Button id="runlots" text="Create 10,0 rows" onClick={runLots} />
+                    <Button id="add" text="Append 1,0 rows" onClick={add} />
+                    <Button id="update" text="Update every 1th row" onClick={update} />
+                    <Button id="clear" text="Clear" onClick={clear} />
+                    <Button id="swaprows" text="Swap Rows" onClick={swapRows} />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <table class="table table-hover table-striped test-data">
+              <tbody>
+                {data.map(row => (
+                  <tr key={row.id} class={selected === row.id ? 'danger' : ''}>
+                    <td class="col-md-1">{row.id}</td>
+                    <td class="col-md-4">
+                      <a onClick={() => select(row.id)}>{row.label}</a>
+                    </td>
+                    <td class="col-md-1">
+                      <a onClick={() => remove(row.id)}>
+                        <span class="glyphicon glyphicon-remove" aria-hidden="true"></span>
+                      </a>
+                    </td>
+                    <td class="col-md-6"></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <span class="preloadicon glyphicon glyphicon-remove" aria-hidden="true"></span>
+          </div>
+        )
+      }
+
+      const app = document.getElementById('app')
+      if (app) {
+        render(() => <App />, app)
+      }
+
+      export default App
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(counterBasicSource)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const runBtn = container.querySelector('#run') as HTMLButtonElement
+    const runLotsBtn = container.querySelector('#runlots') as HTMLButtonElement
+    const addBtn = container.querySelector('#add') as HTMLButtonElement
+    const updateBtn = container.querySelector('#update') as HTMLButtonElement
+    const clearBtn = container.querySelector('#clear') as HTMLButtonElement
+    const swapRowsBtn = container.querySelector('#swaprows') as HTMLButtonElement
+
+    const rows = () => Array.from(container.querySelectorAll('tbody tr')) as HTMLTableRowElement[]
+    const rowInfo = (row: HTMLTableRowElement) => ({
+      id: row.querySelector('.col-md-1')?.textContent,
+      label: row.querySelector('.col-md-4 a')?.textContent,
+      selected: row.classList.contains('danger'),
+    })
+    const lastLoggedLength = () =>
+      logSpy.mock.calls.length
+        ? ((logSpy.mock.calls[logSpy.mock.calls.length - 1][1] as any[])?.length ?? null)
+        : null
+
+    expect(rows().length).toBe(0)
+
+    runBtn.click()
+    await tick()
+    expect(rows().length).toBe(10)
+    expect(rowInfo(rows()[0]).id).toBe('1')
+    expect(rowInfo(rows()[0]).label).toBe('pretty red table')
+    expect(lastLoggedLength()).toBe(10)
+
+    const secondRowLabel = rows()[1].querySelector('.col-md-4 a') as HTMLAnchorElement
+    secondRowLabel.click()
+    await tick()
+    expect(rowInfo(rows()[1]).selected).toBe(true)
+    expect(rowInfo(rows()[0]).selected).toBe(false)
+
+    const removeLink = rows()[1].querySelectorAll('a')[1] as HTMLAnchorElement
+    removeLink.click()
+    await tick()
+    expect(rows().length).toBe(9)
+    expect(rows().some(r => r.classList.contains('danger'))).toBe(false)
+
+    addBtn.click()
+    await tick()
+    expect(rows().length).toBe(19)
+    expect(lastLoggedLength()).toBe(19)
+
+    updateBtn.click()
+    await tick()
+    expect(rowInfo(rows()[0]).label).toBe('pretty red table !!!')
+    expect(rowInfo(rows()[1]).label).toBe('pretty red table')
+
+    swapRowsBtn.click()
+    await tick()
+    expect(rowInfo(rows()[1]).id).toBe('20')
+    expect(rowInfo(rows()[rows().length - 1]).id).toBe('3')
+
+    runLotsBtn.click()
+    await tick()
+    expect(rows().length).toBe(100)
+    expect(rowInfo(rows()[0]).id).toBe('21')
+    expect(rows().some(r => r.classList.contains('danger'))).toBe(false)
+    expect(lastLoggedLength()).toBe(100)
+
+    clearBtn.click()
+    await tick()
+    expect(rows().length).toBe(0)
+    expect(lastLoggedLength()).toBe(0)
+
+    dispose()
+    randomSpy.mockRestore()
+    logSpy.mockRestore()
+  })
+
+  it('runs the non-keyed example end to end', async () => {
+    const counterBasicSource = `
+      import { $effect, $state, render } from 'fict'
+
+      const adjectives = [
+        'pretty',
+        'large',
+        'big',
+        'small',
+        'tall',
+        'short',
+        'long',
+        'handsome',
+        'plain',
+        'quaint',
+        'clean',
+        'elegant',
+        'easy',
+        'angry',
+        'crazy',
+        'helpful',
+        'mushy',
+        'odd',
+        'unsightly',
+        'adorable',
+        'important',
+        'inexpensive',
+        'cheap',
+        'expensive',
+        'fancy',
+      ]
+
+      const colours = [
+        'red',
+        'yellow',
+        'blue',
+        'green',
+        'pink',
+        'brown',
+        'purple',
+        'brown',
+        'white',
+        'black',
+        'orange',
+      ]
+
+      const nouns = [
+        'table',
+        'chair',
+        'house',
+        'bbq',
+        'desk',
+        'car',
+        'pony',
+        'cookie',
+        'sandwich',
+        'burger',
+        'pizza',
+        'mouse',
+        'keyboard',
+      ]
+
+      let nextId = 1
+      function random(max: number) {
+        return Math.round(Math.random() * 1000) % max
+      }
+
+      function buildData(count: number) {
+        const data = new Array(count)
+        for (let i = 0; i < count; i++) {
+          data[i] = {
+            id: nextId++,
+            label: \`\${adjectives[random(adjectives.length)]} \${colours[random(colours.length)]} \${nouns[random(nouns.length)]}\`,
+          }
+        }
+        return data
+      }
+
+      function Button(props: any) {
+        return (
+          <div class="col-sm-6 smallpad">
+            <button id={props.id} class="btn btn-primary btn-block" type="button" onClick={props.onClick}>
+              {props.text}
+            </button>
+          </div>
+        )
+      }
+
+      function App() {
+        let data: { id: number; label: string }[] = $state([])
+        let selected: number | null = $state(null)
+
+        const run = () => {
+          data = buildData(10)
+          selected = null
+        }
+
+        const runLots = () => {
+          data = buildData(100)
+          selected = null
+        }
+
+        const add = () => {
+          data = [...data, ...buildData(10)]
+        }
+
+        const update = () => {
+          data = data.map((row, i) => (i % 3 === 0 ? { ...row, label: row.label + ' !!!' } : row))
+        }
+
+        const swapRows = () => {
+          const list = data
+          if (list.length < 3) return
+          const copy = list.slice()
+          const last = copy.length - 1
+          const tmp = copy[1]
+          copy[1] = copy[last]
+          copy[last] = tmp
+          data = copy
+        }
+
+        const clear = () => {
+          data = []
+          selected = null
+        }
+
+        const remove = (id: number) => {
+          data = data.filter(row => row.id !== id)
+          if (selected === id) {
+            selected = null
+          }
+        }
+
+        const select = (id: number) => {
+          selected = id
+        }
+
+        $effect(() => {
+          console.log('data', data)
+        })
+
+        return (
+          <div class="container">
+            <div class="jumbotron">
+              <div class="row">
+                <div class="col-md-6">
+                  <h1>Fict Keyed</h1>
+                </div>
+                <div class="col-md-6">
+                  <div class="row">
+                    <Button id="run" text="Create 1,0 rows" onClick={run} />
+                    <Button id="runlots" text="Create 10,0 rows" onClick={runLots} />
+                    <Button id="add" text="Append 1,0 rows" onClick={add} />
+                    <Button id="update" text="Update every 1th row" onClick={update} />
+                    <Button id="clear" text="Clear" onClick={clear} />
+                    <Button id="swaprows" text="Swap Rows" onClick={swapRows} />
+                  </div>
+                </div>
+              </div>
+            </div>
+            <table class="table table-hover table-striped test-data">
+              <tbody>
+                {data.map(row => (
+                  <tr class={selected === row.id ? 'danger' : ''}>
+                    <td class="col-md-1">{row.id}</td>
+                    <td class="col-md-4">
+                      <a onClick={() => select(row.id)}>{row.label}</a>
+                    </td>
+                    <td class="col-md-1">
+                      <a onClick={() => remove(row.id)}>
+                        <span class="glyphicon glyphicon-remove" aria-hidden="true"></span>
+                      </a>
+                    </td>
+                    <td class="col-md-6"></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <span class="preloadicon glyphicon glyphicon-remove" aria-hidden="true"></span>
+          </div>
+        )
+      }
+
+      const app = document.getElementById('app')
+      if (app) {
+        render(() => <App />, app)
+      }
+
+      export default App
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(counterBasicSource)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const runBtn = container.querySelector('#run') as HTMLButtonElement
+    const runLotsBtn = container.querySelector('#runlots') as HTMLButtonElement
+    const addBtn = container.querySelector('#add') as HTMLButtonElement
+    const updateBtn = container.querySelector('#update') as HTMLButtonElement
+    const clearBtn = container.querySelector('#clear') as HTMLButtonElement
+    const swapRowsBtn = container.querySelector('#swaprows') as HTMLButtonElement
+
+    const rows = () => Array.from(container.querySelectorAll('tbody tr')) as HTMLTableRowElement[]
+    const rowInfo = (row: HTMLTableRowElement) => ({
+      id: row.querySelector('.col-md-1')?.textContent,
+      label: row.querySelector('.col-md-4 a')?.textContent,
+      selected: row.classList.contains('danger'),
+    })
+    const lastLoggedLength = () =>
+      logSpy.mock.calls.length
+        ? ((logSpy.mock.calls[logSpy.mock.calls.length - 1][1] as any[])?.length ?? null)
+        : null
+
+    expect(rows().length).toBe(0)
+
+    runBtn.click()
+    await tick()
+    expect(rows().length).toBe(10)
+    expect(rowInfo(rows()[0]).id).toBe('1')
+    expect(rowInfo(rows()[0]).label).toBe('pretty red table')
+    expect(lastLoggedLength()).toBe(10)
+
+    const secondRowLabel = rows()[1].querySelector('.col-md-4 a') as HTMLAnchorElement
+    secondRowLabel.click()
+    await tick()
+    expect(rowInfo(rows()[1]).selected).toBe(true)
+    expect(rowInfo(rows()[0]).selected).toBe(false)
+
+    const removeLink = rows()[1].querySelectorAll('a')[1] as HTMLAnchorElement
+    removeLink.click()
+    await tick()
+    expect(rows().length).toBe(9)
+    expect(rows().some(r => r.classList.contains('danger'))).toBe(false)
+
+    addBtn.click()
+    await tick()
+    expect(rows().length).toBe(19)
+    expect(lastLoggedLength()).toBe(19)
+
+    updateBtn.click()
+    await tick()
+    expect(rowInfo(rows()[0]).label).toBe('pretty red table !!!')
+    expect(rowInfo(rows()[1]).label).toBe('pretty red table')
+
+    swapRowsBtn.click()
+    await tick()
+    expect(rowInfo(rows()[1]).id).toBe('20')
+    expect(rowInfo(rows()[rows().length - 1]).id).toBe('3')
+
+    runLotsBtn.click()
+    await tick()
+    expect(rows().length).toBe(100)
+    expect(rowInfo(rows()[0]).id).toBe('21')
+    expect(rows().some(r => r.classList.contains('danger'))).toBe(false)
+    expect(lastLoggedLength()).toBe(100)
+
+    clearBtn.click()
+    await tick()
+    expect(rows().length).toBe(0)
+    expect(lastLoggedLength()).toBe(0)
+
+    dispose()
+    randomSpy.mockRestore()
+    logSpy.mockRestore()
   })
 })

@@ -174,7 +174,7 @@ describe('createFictPlugin (HIR)', () => {
         const view = () => <div>{count}</div>
       `)
 
-      expect(output).toContain('insert')
+      expect(output).toContain('bindText')
       expect(output).toContain('count()')
     })
 
@@ -185,7 +185,7 @@ describe('createFictPlugin (HIR)', () => {
       `)
 
       expect(output).toContain(`"static"`)
-      expect(output).toContain(`insert`)
+      expect(output).toContain(`bindText`)
     })
 
     it('wraps complex expressions that depend on state', () => {
@@ -195,7 +195,7 @@ describe('createFictPlugin (HIR)', () => {
         const view = () => <div>{count > 0 ? 'positive' : 'zero'}</div>
       `)
 
-      expect(output).toContain('createConditional')
+      expect(output).toContain('bindText')
       expect(output).toContain(`count()`)
     })
   })
@@ -248,7 +248,7 @@ describe('createFictPlugin (HIR)', () => {
       `)
 
       expect(output).toContain('document.title = `Count: ${count()}`')
-      expect(output).toContain('insert')
+      expect(output).toContain('bindText')
       expect(output).toContain('count()')
     })
   })

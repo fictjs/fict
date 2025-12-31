@@ -65,9 +65,8 @@ describe('Cross-Module Reactivity', () => {
       // OR standard handling if they return a value.
 
       // If 'count()' is an expression, 'emitDynamicTextChild' will wrap it in a getter?
-      // Template cloning uses insert for dynamic content
-      expect(output).toContain('insert')
-      expect(output).toMatch(/children: \[\s*count\(\)\s*\]|insert.*count\(\)/)
+      expect(output).toContain('bindText')
+      expect(output).toMatch(/bindText.*count\(\)/)
     })
 
     it('compiles usage of imported symbol in effect', () => {

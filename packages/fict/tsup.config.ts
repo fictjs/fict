@@ -1,7 +1,13 @@
 import { defineConfig } from 'tsup'
 
 export default defineConfig({
-  entry: ['src/index.ts', 'src/jsx-runtime.ts', 'src/jsx-dev-runtime.ts', 'src/plus.ts'],
+  entry: [
+    'src/index.ts',
+    'src/jsx-runtime.ts',
+    'src/jsx-dev-runtime.ts',
+    'src/plus.ts',
+    'src/slim.ts',
+  ],
   format: ['cjs', 'esm'],
   dts: true,
   clean: true,

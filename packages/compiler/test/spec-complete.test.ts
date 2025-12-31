@@ -203,7 +203,7 @@ describe('R006: JSX dynamic binding', () => {
       let text = $state('Hello')
       return <span>{text}</span>
     `)
-    expect(output).toContain('insert')
+    expect(output).toContain('bindText')
   })
 
   it('handles event handlers', () => {
@@ -455,7 +455,7 @@ describe('R010: Lazy conditional evaluation', () => {
     )
     expect(output).toContain('bindClass')
     expect(output).toContain('() => cls()')
-    expect(output).toContain('() => console.log(label())')
+    expect(output).toContain('_e => console.log(label())')
     expect(output).toContain('() => label()')
   })
 

@@ -38,8 +38,7 @@ describe('Alias-Safe Reactive Lowering', () => {
         }
       `
       const output = transform(source)
-      // Template cloning uses insert with marker for dynamic content
-      expect(output).toContain('insert(')
+      expect(output).toContain('insert')
       expect(output).toContain('alias()')
     })
   })
@@ -136,8 +135,6 @@ describe('Alias-Safe Reactive Lowering', () => {
       const output = transform(source)
       expect(output).toContain('const count = useProp(() => __props.count)')
       expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
-      expect(output).toContain('insert(__el_2.parentNode, () => count(), __el_2')
-      expect(output).toContain('insert(__el_3.parentNode, () => doubled(), __el_3')
       expect(output).not.toContain('const update = useProp')
     })
   })

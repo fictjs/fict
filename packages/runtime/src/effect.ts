@@ -45,3 +45,39 @@ export function createEffect(fn: Effect): () => void {
 }
 
 export const $effect = createEffect
+
+export function createRenderEffect(fn: Effect): () => void {
+  let cleanup: Cleanup | undefined
+  const rootForError = getCurrentRoot()
+
+  const run = () => {
+    if (cleanup) {
+      cleanup()
+      cleanup = undefined
+    }
+    try {
+      const maybeCleanup = fn()
+      if (typeof maybeCleanup === 'function') {
+        cleanup = maybeCleanup
+      }
+    } catch (err) {
+      if (handleError(err, { source: 'effect' }, rootForError)) {
+        return
+      }
+      throw err
+    }
+  }
+
+  const disposeEffect = effect(run)
+  const teardown = () => {
+    if (cleanup) {
+      cleanup()
+      cleanup = undefined
+    }
+    disposeEffect()
+  }
+
+  registerRootCleanup(teardown)
+
+  return teardown
+}

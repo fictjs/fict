@@ -6,7 +6,7 @@
  */
 
 import { createElement } from './dom'
-import { createEffect } from './effect'
+import { createRenderEffect } from './effect'
 import {
   createRootContext,
   destroyRoot,
@@ -17,10 +17,9 @@ import {
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import reconcileArrays from './reconcile'
-import { createSignal, type Signal } from './signal'
-import { createDiffingSignal } from './store'
+import { batch } from './scheduler'
+import { createSignal, setActiveSub, type Signal } from './signal'
 import type { FictNode } from './types'
-import { createVersionedSignal } from './versioned-signal'
 
 // Re-export shared DOM helpers for compiler-generated code
 export { insertNodesBefore, removeNodes, toNodeArray }
@@ -43,6 +42,10 @@ export interface KeyedBlock<T = unknown> {
   item: Signal<T>
   /** Signal containing the current index */
   index: Signal<number>
+  /** Last raw item value assigned to this block */
+  rawItem: T
+  /** Last raw index value assigned to this block */
+  rawIndex: number
 }
 
 /**
@@ -55,8 +58,18 @@ export interface KeyedListContainer<T = unknown> {
   endMarker: Comment
   /** Map of key to block */
   blocks: Map<string | number, KeyedBlock<T>>
+  /** Scratch map reused for the next render */
+  nextBlocks: Map<string | number, KeyedBlock<T>>
   /** Current nodes in DOM order (including markers) */
   currentNodes: Node[]
+  /** Next-frame node buffer to avoid reallocations */
+  nextNodes: Node[]
+  /** Ordered blocks in current DOM order */
+  orderedBlocks: KeyedBlock<T>[]
+  /** Next-frame ordered block buffer to avoid reallocations */
+  nextOrderedBlocks: KeyedBlock<T>[]
+  /** Track position of keys in the ordered buffer to handle duplicates */
+  orderedIndexByKey: Map<string | number, number>
   /** Cleanup function */
   dispose: () => void
 }
@@ -184,13 +197,20 @@ function removeBlockRange(block: MarkerBlock): void {
 }
 
 function createVersionedSignalAccessor<T>(initialValue: T): Signal<T> {
-  const versioned = createVersionedSignal(initialValue)
+  let current = initialValue
+  let version = 0
+  const track = createSignal(version)
+
   function accessor(value?: T): T | void {
     if (arguments.length === 0) {
-      return versioned.read()
+      track()
+      return current
     }
-    versioned.write(value as T)
+    current = value as T
+    version++
+    track(version)
   }
+
   return accessor as Signal<T>
 }
 
@@ -207,16 +227,16 @@ function createVersionedSignalAccessor<T>(initialValue: T): Signal<T> {
 export function createKeyedListContainer<T = unknown>(): KeyedListContainer<T> {
   const startMarker = document.createComment('fict:list:start')
   const endMarker = document.createComment('fict:list:end')
-  const blocks = new Map<string | number, KeyedBlock<T>>()
 
   const dispose = () => {
     // Clean up all blocks
-    for (const block of blocks.values()) {
+    for (const block of container.blocks.values()) {
       destroyRoot(block.root)
       // Nodes are removed by parent disposal or specific cleanup if needed
       // But for list disposal, we just clear the container
     }
-    blocks.clear()
+    container.blocks.clear()
+    container.nextBlocks.clear()
 
     // Remove nodes (including markers)
     const range = document.createRange()
@@ -226,13 +246,23 @@ export function createKeyedListContainer<T = unknown>(): KeyedListContainer<T> {
 
     // Clear cache
     container.currentNodes = []
+    container.nextNodes = []
+    container.nextBlocks.clear()
+    container.orderedBlocks.length = 0
+    container.nextOrderedBlocks.length = 0
+    container.orderedIndexByKey.clear()
   }
 
   const container: KeyedListContainer<T> = {
     startMarker,
     endMarker,
-    blocks,
+    blocks: new Map<string | number, KeyedBlock<T>>(),
+    nextBlocks: new Map<string | number, KeyedBlock<T>>(),
     currentNodes: [startMarker, endMarker],
+    nextNodes: [],
+    orderedBlocks: [],
+    nextOrderedBlocks: [],
+    orderedIndexByKey: new Map<string | number, number>(),
     dispose,
   }
 
@@ -257,28 +287,24 @@ export function createKeyedBlock<T>(
   item: T,
   index: number,
   render: (item: Signal<T>, index: Signal<number>) => Node[],
+  needsIndex = true,
 ): KeyedBlock<T> {
-  let itemSig: Signal<T>
+  // Use versioned signal for all item types; avoid diffing proxy overhead for objects
+  const itemSig = createVersionedSignalAccessor(item)
 
-  if (typeof item === 'object' && item !== null) {
-    // Use fine-grained diffing for objects to avoid full row re-renders
-    const [read, write] = createDiffingSignal(item as object)
-    itemSig = ((val?: T) => {
-      if (val !== undefined) {
-        write(val as object)
-        return
-      }
-      return read()
-    }) as Signal<T>
-  } else {
-    itemSig = createVersionedSignalAccessor(item)
-  }
-
-  const indexSig = createSignal<number>(index)
+  const indexSig = needsIndex
+    ? createSignal<number>(index)
+    : (((next?: number) => {
+        if (arguments.length === 0) return index
+        index = next as number
+        return index
+      }) as Signal<number>)
   const root = createRootContext()
-  const prev = pushRoot(root)
+  const prevRoot = pushRoot(root)
 
-  // ... (omitted intermediate code) ...
+  // Isolate child effects from the outer effect (e.g., performDiff) by clearing activeSub.
+  // This prevents child effects from being purged when the outer effect re-runs.
+  const prevSub = setActiveSub(undefined)
 
   let nodes: Node[] = []
   try {
@@ -295,7 +321,8 @@ export function createKeyedBlock<T>(
       nodes = toNodeArray(element)
     }
   } finally {
-    popRoot(prev)
+    setActiveSub(prevSub)
+    popRoot(prevRoot)
     flushOnMount(root)
   }
 
@@ -305,6 +332,8 @@ export function createKeyedBlock<T>(
     root,
     item: itemSig,
     index: indexSig,
+    rawItem: item,
+    rawIndex: index,
   }
 }
 
@@ -352,14 +381,16 @@ export function createKeyedList<T>(
   getItems: () => T[],
   keyFn: (item: T, index: number) => string | number,
   renderItem: FineGrainedRenderItem<T>,
+  needsIndex = true,
 ): KeyedListBinding {
-  return createFineGrainedKeyedList(getItems, keyFn, renderItem)
+  return createFineGrainedKeyedList(getItems, keyFn, renderItem, needsIndex)
 }
 
 function createFineGrainedKeyedList<T>(
   getItems: () => T[],
   keyFn: (item: T, index: number) => string | number,
   renderItem: FineGrainedRenderItem<T>,
+  needsIndex: boolean,
 ): KeyedListBinding {
   const container = createKeyedListContainer<T>()
   const fragment = document.createDocumentFragment()
@@ -370,96 +401,198 @@ function createFineGrainedKeyedList<T>(
   const performDiff = () => {
     if (disposed) return
 
-    const newItems = pendingItems || getItems()
-    pendingItems = null
+    batch(() => {
+      const newItems = pendingItems || getItems()
+      pendingItems = null
 
-    const oldBlocks = container.blocks
-    const newBlocks = new Map<string | number, KeyedBlock<T>>()
-    const endParent = container.endMarker.parentNode
-    const startParent = container.startMarker.parentNode
-    const parent =
-      endParent && startParent && endParent === startParent && (endParent as Node).isConnected
-        ? (endParent as ParentNode & Node)
-        : null
+      const oldBlocks = container.blocks
+      const newBlocks = container.nextBlocks
+      const prevOrderedBlocks = container.orderedBlocks
+      const nextOrderedBlocks = container.nextOrderedBlocks
+      const orderedIndexByKey = container.orderedIndexByKey
+      newBlocks.clear()
+      nextOrderedBlocks.length = 0
+      orderedIndexByKey.clear()
 
-    // If markers aren't mounted yet, store items and retry in microtask
-    if (!parent) {
-      pendingItems = newItems
-      queueMicrotask(performDiff)
-      return
-    }
+      const endParent = container.endMarker.parentNode
+      const startParent = container.startMarker.parentNode
+      const parent =
+        endParent && startParent && endParent === startParent && (endParent as Node).isConnected
+          ? (endParent as ParentNode & Node)
+          : null
 
-    // Phase 1: Build new blocks map (reuse or create)
-    newItems.forEach((item, index) => {
-      const key = keyFn(item, index)
-      let block = oldBlocks.get(key)
-
-      if (block) {
-        // Reuse existing block - update signals
-        block.item(item)
-        block.index(index)
-
-        // If newBlocks already has this key (duplicate key case), clean up the previous block
-        const existingBlock = newBlocks.get(key)
-        if (existingBlock) {
-          destroyRoot(existingBlock.root)
-          removeNodes(existingBlock.nodes)
-        }
-
-        newBlocks.set(key, block)
-        oldBlocks.delete(key)
-      } else {
-        // If newBlocks already has this key (duplicate key case), clean up the previous block
-        const existingBlock = newBlocks.get(key)
-        if (existingBlock) {
-          destroyRoot(existingBlock.root)
-          removeNodes(existingBlock.nodes)
-        }
-
-        // Create new block
-        block = createKeyedBlock(key, item, index, renderItem)
-        newBlocks.set(key, block)
+      // If markers aren't mounted yet, store items and retry in microtask
+      if (!parent) {
+        pendingItems = newItems
+        queueMicrotask(performDiff)
+        return
       }
+
+      if (newItems.length === 0) {
+        if (oldBlocks.size > 0) {
+          for (const block of oldBlocks.values()) {
+            destroyRoot(block.root)
+            removeNodes(block.nodes)
+          }
+        }
+        oldBlocks.clear()
+        newBlocks.clear()
+        prevOrderedBlocks.length = 0
+        nextOrderedBlocks.length = 0
+        orderedIndexByKey.clear()
+        container.currentNodes.length = 0
+        container.currentNodes.push(container.startMarker, container.endMarker)
+        container.nextNodes.length = 0
+        return
+      }
+
+      const prevCount = prevOrderedBlocks.length
+      let appendCandidate = prevCount > 0 && newItems.length >= prevCount
+      const appendedBlocks: KeyedBlock<T>[] = []
+
+      // Phase 1: Build new blocks map (reuse or create)
+      newItems.forEach((item, index) => {
+        const key = keyFn(item, index)
+        const existed = oldBlocks.has(key)
+        let block = oldBlocks.get(key)
+
+        if (block) {
+          if (block.rawItem !== item) {
+            block.rawItem = item
+            block.item(item)
+          }
+          if (needsIndex && block.rawIndex !== index) {
+            block.rawIndex = index
+            block.index(index)
+          }
+        }
+
+        // If newBlocks already has this key (duplicate key case), clean up the previous block
+        const existingBlock = newBlocks.get(key)
+        if (existingBlock && existingBlock !== block) {
+          destroyRoot(existingBlock.root)
+          removeNodes(existingBlock.nodes)
+        }
+
+        if (block) {
+          newBlocks.set(key, block)
+          oldBlocks.delete(key)
+        } else {
+          const existingBlock = newBlocks.get(key)
+          if (existingBlock) {
+            destroyRoot(existingBlock.root)
+            removeNodes(existingBlock.nodes)
+          }
+
+          // Create new block
+          block = createKeyedBlock(key, item, index, renderItem, needsIndex)
+        }
+
+        const resolvedBlock = block!
+
+        newBlocks.set(key, resolvedBlock)
+
+        const position = orderedIndexByKey.get(key)
+        if (position !== undefined) {
+          appendCandidate = false
+        }
+        if (appendCandidate) {
+          if (index < prevCount) {
+            if (!prevOrderedBlocks[index] || prevOrderedBlocks[index]!.key !== key) {
+              appendCandidate = false
+            }
+          } else if (existed) {
+            appendCandidate = false
+          }
+        }
+        if (position !== undefined) {
+          const prior = nextOrderedBlocks[position]
+          if (prior && prior !== resolvedBlock) {
+            destroyRoot(prior.root)
+            removeNodes(prior.nodes)
+          }
+          nextOrderedBlocks[position] = resolvedBlock
+        } else {
+          orderedIndexByKey.set(key, nextOrderedBlocks.length)
+          nextOrderedBlocks.push(resolvedBlock)
+        }
+
+        if (appendCandidate && index >= prevCount) {
+          appendedBlocks.push(resolvedBlock)
+        }
+      })
+
+      const canAppend =
+        appendCandidate &&
+        prevCount > 0 &&
+        newItems.length > prevCount &&
+        oldBlocks.size === 0 &&
+        appendedBlocks.length > 0
+      if (canAppend) {
+        const appendedNodes: Node[] = []
+        for (const block of appendedBlocks) {
+          for (let i = 0; i < block.nodes.length; i++) {
+            appendedNodes.push(block.nodes[i]!)
+          }
+        }
+        if (appendedNodes.length > 0) {
+          insertNodesBefore(parent, appendedNodes, container.endMarker)
+          const currentNodes = container.currentNodes
+          currentNodes.pop()
+          for (let i = 0; i < appendedNodes.length; i++) {
+            currentNodes.push(appendedNodes[i]!)
+          }
+          currentNodes.push(container.endMarker)
+        }
+
+        container.blocks = newBlocks
+        container.nextBlocks = oldBlocks
+        container.orderedBlocks = nextOrderedBlocks
+        container.nextOrderedBlocks = prevOrderedBlocks
+        return
+      }
+
+      // Phase 2: Remove old blocks that are no longer in the list
+      if (oldBlocks.size > 0) {
+        for (const block of oldBlocks.values()) {
+          destroyRoot(block.root)
+          removeNodes(block.nodes)
+        }
+        oldBlocks.clear()
+      }
+
+      // Phase 3: Reconcile DOM with buffered node arrays
+      if (newBlocks.size > 0 || container.currentNodes.length > 0) {
+        const prevNodes = container.currentNodes
+        const nextNodes = container.nextNodes
+        nextNodes.length = 0
+        nextNodes.push(container.startMarker)
+
+        for (let i = 0; i < nextOrderedBlocks.length; i++) {
+          const nodes = nextOrderedBlocks[i]!.nodes
+          for (let j = 0; j < nodes.length; j++) {
+            nextNodes.push(nodes[j]!)
+          }
+        }
+
+        nextNodes.push(container.endMarker)
+
+        reconcileArrays(parent, prevNodes, nextNodes)
+
+        // Swap buffers to reuse arrays on next diff
+        container.currentNodes = nextNodes
+        container.nextNodes = prevNodes
+      }
+
+      // Swap block maps for reuse
+      container.blocks = newBlocks
+      container.nextBlocks = oldBlocks
+      container.orderedBlocks = nextOrderedBlocks
+      container.nextOrderedBlocks = prevOrderedBlocks
     })
-
-    // Phase 2: Remove old blocks that are no longer in the list
-    for (const block of oldBlocks.values()) {
-      destroyRoot(block.root)
-      // Note: We don't remove nodes here, reconcileArrays will handle it
-      // using the efficient diff
-    }
-
-    // Phase 3: Reconcile DOM
-    if (newBlocks.size > 0 || oldBlocks.size > 0) {
-      // Collect new nodes in target order
-      const newNodes: Node[] = [container.startMarker]
-
-      for (const key of Array.from(newBlocks.keys())) {
-        const block = newBlocks.get(key)!
-        // Flatten block nodes into the new list
-        for (let i = 0; i < block.nodes.length; i++) {
-          newNodes.push(block.nodes[i]!)
-        }
-      }
-
-      newNodes.push(container.endMarker)
-
-      // Use efficient reconcile algorithm to update DOM
-      // container.currentNodes contains the accurate DOM state from previous render
-      reconcileArrays(parent, container.currentNodes, newNodes)
-
-      // Update cache
-      container.currentNodes = newNodes
-    }
-
-    // Update container.blocks (clear and repopulate instead of reassigning)
-    container.blocks.clear()
-    for (const [key, block] of newBlocks) {
-      container.blocks.set(key, block)
-    }
   }
 
-  const effectDispose = createEffect(performDiff)
+  const effectDispose = createRenderEffect(performDiff)
 
   return {
     marker: fragment,

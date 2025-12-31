@@ -56,10 +56,10 @@ describe('extractStaticHtml', () => {
     // Children: [Text(0), Expression(1), Element(2)]
     const code = '<div>Text {name} <span>Static</span></div>'
     const params = extractStaticHtml(parseJSX(code), t)
-    expect(params.html).toBe('<div>Text  <span>Static</span></div>')
+    expect(params.html).toBe('<div>Text <!----><span>Static</span></div>')
     expect(params.hasDynamic).toBe(true)
     expect(params.bindings).toHaveLength(1)
-    expect(params.bindings[0].type).toBe('text')
+    expect(params.bindings[0].type).toBe('child')
     expect(params.bindings[0].path).toEqual([1])
   })
 
@@ -69,10 +69,10 @@ describe('extractStaticHtml', () => {
     // </ul>
     const code = '<ul><li>{item}</li></ul>'
     const params = extractStaticHtml(parseJSX(code), t)
-    expect(params.html).toBe('<ul><li> </li></ul>')
+    expect(params.html).toBe('<ul><li><!----></li></ul>')
     expect(params.hasDynamic).toBe(true)
     expect(params.bindings).toHaveLength(1)
-    expect(params.bindings[0].type).toBe('text')
+    expect(params.bindings[0].type).toBe('child')
     expect(params.bindings[0].path).toEqual([0, 0])
   })
 })

@@ -163,8 +163,7 @@ describe('Control Flow Re-Execution', () => {
           return <div>{count}</div>
         }
       `)
-      // Template cloning uses insert for fine-grained updates
-      expect(output).toContain('insert')
+      expect(output).toContain('bindText')
       expect(output).toContain('count()')
     })
 

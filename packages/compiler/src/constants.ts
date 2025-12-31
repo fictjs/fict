@@ -6,6 +6,7 @@ export const RUNTIME_MODULE = '@fictjs/runtime'
 
 export const RUNTIME_HELPERS = {
   signal: 'createSignal',
+  createSelector: 'createSelector',
   memo: 'createMemo',
   effect: 'createEffect',
   useContext: '__fictUseContext',
@@ -44,6 +45,7 @@ export const RUNTIME_HELPERS = {
 
 export const RUNTIME_ALIASES = {
   signal: 'createSignal',
+  createSelector: 'createSelector',
   memo: 'createMemo',
   effect: 'createEffect',
   useContext: '__fictUseContext',

@@ -659,13 +659,10 @@ function notify(effect: ReactiveNode): void {
     effect.flags &= ~Watching
   }
 
-  // Reverse to maintain correct execution order
-  effects.reverse()
-
   // Route effects to appropriate queue based on transition context
   const targetQueue = isInTransition ? lowPriorityQueue : highPriorityQueue
-  for (const e of effects) {
-    targetQueue.push(e)
+  for (let i = effects.length - 1; i >= 0; i--) {
+    targetQueue.push(effects[i]!)
   }
 }
 /**
@@ -792,30 +789,48 @@ function flush(): void {
   flushScheduled = false
 
   // 1. Process all high-priority effects first
-  while (highPriorityQueue.length > 0) {
-    const e = highPriorityQueue.shift()!
+  let highIndex = 0
+  while (highIndex < highPriorityQueue.length) {
+    const e = highPriorityQueue[highIndex]!
     if (!beforeEffectRunGuard()) {
+      if (highIndex > 0) {
+        highPriorityQueue.copyWithin(0, highIndex)
+        highPriorityQueue.length -= highIndex
+      }
       endFlushGuard()
       return
     }
+    highIndex++
     runEffect(e)
   }
+  highPriorityQueue.length = 0
 
   // 2. Process low-priority effects, interruptible by high priority
-  while (lowPriorityQueue.length > 0) {
+  let lowIndex = 0
+  while (lowIndex < lowPriorityQueue.length) {
     // Check if high priority work arrived during low priority execution
     if (highPriorityQueue.length > 0) {
+      if (lowIndex > 0) {
+        lowPriorityQueue.copyWithin(0, lowIndex)
+        lowPriorityQueue.length -= lowIndex
+      }
       scheduleFlush()
       endFlushGuard()
       return
     }
-    const e = lowPriorityQueue.shift()!
+    const e = lowPriorityQueue[lowIndex]!
     if (!beforeEffectRunGuard()) {
+      if (lowIndex > 0) {
+        lowPriorityQueue.copyWithin(0, lowIndex)
+        lowPriorityQueue.length -= lowIndex
+      }
       endFlushGuard()
       return
     }
+    lowIndex++
     runEffect(e)
   }
+  lowPriorityQueue.length = 0
 
   endFlushGuard()
 }

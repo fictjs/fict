@@ -37,14 +37,7 @@ export function __fictResetContext(): void {
 export function __fictUseSignal<T>(ctx: HookContext, initial: T, slot?: number): SignalAccessor<T> {
   const index = slot ?? ctx.cursor++
   if (!ctx.slots[index]) {
-    const base = createSignal(initial)
-    const wrapped = ((...args: [T?]) => {
-      if (args.length === 0) {
-        return base()
-      }
-      return base(args[0] as T)
-    }) as SignalAccessor<T>
-    ctx.slots[index] = wrapped
+    ctx.slots[index] = createSignal(initial)
   }
   return ctx.slots[index] as SignalAccessor<T>
 }

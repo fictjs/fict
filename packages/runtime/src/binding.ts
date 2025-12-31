@@ -21,7 +21,7 @@ import {
   SVGNamespace,
   Aliases,
 } from './constants'
-import { createEffect } from './effect'
+import { createRenderEffect } from './effect'
 import { Fragment } from './jsx'
 import {
   clearRoot,
@@ -258,7 +258,7 @@ export function createTextBinding(value: MaybeReactive<unknown>): Text {
 
   if (isReactive(value)) {
     // Reactive: create effect to update text when value changes
-    createEffect(() => {
+    createRenderEffect(() => {
       const v = (value as () => unknown)()
       const fmt = formatTextValue(v)
       if (text.data !== fmt) {
@@ -278,7 +278,7 @@ export function createTextBinding(value: MaybeReactive<unknown>): Text {
  * This is a convenience function for binding to existing DOM nodes.
  */
 export function bindText(textNode: Text, getValue: () => unknown): Cleanup {
-  return createEffect(() => {
+  return createRenderEffect(() => {
     const value = formatTextValue(getValue())
     if (textNode.data !== value) {
       textNode.data = value
@@ -323,7 +323,7 @@ export function createAttributeBinding(
 ): void {
   if (isReactive(value)) {
     // Reactive: create effect to update attribute when value changes
-    createEffect(() => {
+    createRenderEffect(() => {
       setter(el, key, (value as () => unknown)())
     })
   } else {
@@ -337,7 +337,7 @@ export function createAttributeBinding(
  */
 export function bindAttribute(el: HTMLElement, key: string, getValue: () => unknown): Cleanup {
   let prevValue: unknown = undefined
-  return createEffect(() => {
+  return createRenderEffect(() => {
     const value = getValue()
     if (value === prevValue) return
     prevValue = value
@@ -370,7 +370,7 @@ export function bindProperty(el: HTMLElement, key: string, getValue: () => unkno
   ])
 
   let prevValue: unknown = undefined
-  return createEffect(() => {
+  return createRenderEffect(() => {
     const next = getValue()
     if (next === prevValue) return
     prevValue = next
@@ -397,7 +397,7 @@ export function createStyleBinding(
 ): void {
   if (isReactive(value)) {
     let prev: unknown
-    createEffect(() => {
+    createRenderEffect(() => {
       const next = (value as () => unknown)()
       applyStyle(el, next, prev)
       prev = next
@@ -415,7 +415,7 @@ export function bindStyle(
   getValue: () => string | Record<string, string | number> | null | undefined,
 ): Cleanup {
   let prev: unknown
-  return createEffect(() => {
+  return createRenderEffect(() => {
     const next = getValue()
     applyStyle(el, next, prev)
     prev = next
@@ -492,7 +492,7 @@ export function createClassBinding(
 ): void {
   if (isReactive(value)) {
     let prev: Record<string, boolean> = {}
-    createEffect(() => {
+    createRenderEffect(() => {
       const next = (value as () => unknown)()
       prev = applyClass(el, next, prev)
     })
@@ -509,7 +509,7 @@ export function bindClass(
   getValue: () => string | Record<string, boolean> | null | undefined,
 ): Cleanup {
   let prev: Record<string, boolean> = {}
-  return createEffect(() => {
+  return createRenderEffect(() => {
     const next = getValue()
     prev = applyClass(el, next, prev)
   })
@@ -621,73 +621,102 @@ export function insert(
   markerOrCreateElement?: Node | CreateElementFn,
   createElementFn?: CreateElementFn,
 ): Cleanup {
-  // Determine if third argument is a marker node or createElementFn
-  let marker: Comment
+  let marker: Node
+  let ownsMarker = false
   let createFn: CreateElementFn | undefined = createElementFn
 
   if (markerOrCreateElement instanceof Node) {
-    // Third argument is a marker node - insert before it
-    marker = document.createComment('fict:insert')
-    parent.insertBefore(marker, markerOrCreateElement)
+    marker = markerOrCreateElement
     createFn = createElementFn
   } else {
-    // Third argument is createElementFn (or undefined) - append marker at end
     marker = document.createComment('fict:insert')
     parent.appendChild(marker)
     createFn = markerOrCreateElement as CreateElementFn | undefined
+    ownsMarker = true
   }
 
-  const dispose = createEffect(() => {
-    // Create new content
+  let currentNodes: Node[] = []
+  let currentText: Text | null = null
+  let currentRoot: RootContext | null = null
+
+  const clearCurrentNodes = () => {
+    if (currentNodes.length > 0) {
+      removeNodes(currentNodes)
+      currentNodes = []
+    }
+  }
+
+  const setTextNode = (textValue: string, shouldInsert: boolean, parentNode: ParentNode & Node) => {
+    if (!currentText) {
+      currentText = document.createTextNode(textValue)
+    } else if (currentText.data !== textValue) {
+      currentText.data = textValue
+    }
+
+    if (!shouldInsert) {
+      clearCurrentNodes()
+      return
+    }
+
+    if (currentNodes.length === 1 && currentNodes[0] === currentText) {
+      return
+    }
+
+    clearCurrentNodes()
+    insertNodesBefore(parentNode, [currentText], marker)
+    currentNodes = [currentText]
+  }
+
+  const dispose = createRenderEffect(() => {
+    const value = getValue()
+    const parentNode = marker.parentNode as (ParentNode & Node) | null
+    const isPrimitive =
+      value == null ||
+      value === false ||
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean'
+
+    if (isPrimitive) {
+      if (currentRoot) {
+        destroyRoot(currentRoot)
+        currentRoot = null
+      }
+      if (!parentNode) {
+        clearCurrentNodes()
+        return
+      }
+      const textValue = value == null || value === false ? '' : String(value)
+      const shouldInsert = value != null && value !== false
+      setTextNode(textValue, shouldInsert, parentNode)
+      return
+    }
+
+    if (currentRoot) {
+      destroyRoot(currentRoot)
+      currentRoot = null
+    }
+    clearCurrentNodes()
+
     const root = createRootContext()
     const prev = pushRoot(root)
     let nodes: Node[] = []
     try {
-      const value = getValue()
-
-      // Skip if value is null/undefined/false
-      if (value == null || value === false) {
-        return () => {
-          destroyRoot(root)
-        }
-      }
-
       let newNode: Node | Node[]
 
       if (value instanceof Node) {
         newNode = value
       } else if (Array.isArray(value)) {
-        // Handle array of nodes (e.g. from createList) directly
-        // Filter to ensure we only have Nodes, or use createElement for mixed content if needed
-        // For now, assume if it's an array from a binding handle, it's nodes.
-        // If it's a mixed array from JSX, createElementFn should handle it if passed there?
-        // Actually, let's keep it simple: if array, pass to toNodeArray which handles recursion/arrays
-        newNode = [] as Node[]
-        // But wait, toNodeArray takes Node | Node[].
-        // We need to resolve the array items.
-        // If the array contains non-Nodes, we might need createElementFn?
-        // For the specific case of BindingHandle.marker returning Node[], this is fine.
-        // But insert is generic.
-        // Let's rely on toNodeArray but we need to pass something that toNodeArray accepts or handle the resolution here.
-        // Actually, if value is array, let's trust createElementFn or handle it if it contains pure Nodes.
-
-        // Revised strategy:
-        // If it's an array of Nodes, use it.
-        // If mixed, use createElementFn.
         if (value.every(v => v instanceof Node)) {
           newNode = value as Node[]
         } else {
-          // Fallback to createFn which likely handles arrays (via Fragment logic) or standard text conv
           newNode = createFn ? createFn(value) : document.createTextNode(String(value))
         }
-      } else if (typeof value === 'string' || typeof value === 'number') {
-        newNode = document.createTextNode(String(value))
       } else {
         newNode = createFn ? createFn(value) : document.createTextNode(String(value))
       }
 
       nodes = toNodeArray(newNode)
-      const parentNode = marker.parentNode as (ParentNode & Node) | null
       if (parentNode) {
         insertNodesBefore(parentNode, nodes, marker)
       }
@@ -696,15 +725,20 @@ export function insert(
       flushOnMount(root)
     }
 
-    return () => {
-      destroyRoot(root)
-      removeNodes(nodes)
-    }
+    currentRoot = root
+    currentNodes = nodes
   })
 
   return () => {
     dispose()
-    marker.parentNode?.removeChild(marker)
+    if (currentRoot) {
+      destroyRoot(currentRoot)
+      currentRoot = null
+    }
+    clearCurrentNodes()
+    if (ownsMarker) {
+      marker.parentNode?.removeChild(marker)
+    }
   }
 }
 
@@ -729,7 +763,7 @@ export function createChildBinding(
   const marker = document.createComment('fict:child')
   parent.appendChild(marker)
 
-  const dispose = createEffect(() => {
+  const dispose = createRenderEffect(() => {
     const root = createRootContext()
     const prev = pushRoot(root)
     let nodes: Node[] = []
@@ -1004,9 +1038,12 @@ export function bindEvent(
     // Ensure global delegation is active for this event
     delegateEvents([eventName])
 
-    const createWrapped = (fn: EventListenerOrEventListenerObject) => {
+    const createWrapped = (
+      resolve: () => EventListenerOrEventListenerObject | null | undefined,
+    ) => {
       const wrapped = function (this: any, ...args: any[]) {
         try {
+          const fn = resolve()
           if (typeof fn === 'function') {
             return (fn as EventListener).apply(this, args as [Event])
           } else if (fn && typeof fn.handleEvent === 'function') {
@@ -1019,22 +1056,15 @@ export function bindEvent(
       return wrapped
     }
 
-    if (isReactive(handler)) {
-      // Reactive handler: e.g. onClick={() => $handler()}
-      // Updates the property when signal changes
-      return createEffect(() => {
-        const h = (handler as () => any)()
-        // Wrap handler to capture current root for error handling
-        // @ts-expect-error - using dynamic property for delegation
-        el[key] = createWrapped(h)
-      })
-    } else {
-      // Static handler: set once
-      // @ts-expect-error - using dynamic property for delegation
-      el[key] = createWrapped(handler as any)
-    }
+    const resolveHandler = isReactive(handler)
+      ? (handler as () => EventListenerOrEventListenerObject | null | undefined)
+      : () => handler
 
-    // Cleanup: remove property (no effect needed for static, just return cleanup)
+    // Cache a single wrapper that resolves the latest handler when invoked
+    // @ts-expect-error - using dynamic property for delegation
+    el[key] = createWrapped(resolveHandler)
+
+    // Cleanup: remove property (no effect needed for static or reactive)
     return () => {
       // @ts-expect-error - using dynamic property for delegation
       el[key] = undefined
@@ -1117,7 +1147,7 @@ export function bindRef(el: HTMLElement, ref: unknown): Cleanup {
 
   // For reactive refs, track changes
   if (isReactive(ref)) {
-    const cleanup = createEffect(() => {
+    const cleanup = createRenderEffect(() => {
       const currentRef = getRef()
       applyRef(currentRef)
     })
@@ -1180,20 +1210,20 @@ export function spread(
 
   // Handle children if not skipped
   if (!skipChildren && 'children' in props) {
-    createEffect(() => {
+    createRenderEffect(() => {
       prevProps.children = props.children
     })
   }
 
   // Handle ref
-  createEffect(() => {
+  createRenderEffect(() => {
     if (typeof props.ref === 'function') {
       ;(props.ref as (el: HTMLElement) => void)(node)
     }
   })
 
   // Handle all other props
-  createEffect(() => {
+  createRenderEffect(() => {
     assign(node, props, isSVG, true, prevProps, true)
   })
 
@@ -1492,7 +1522,7 @@ export function createConditional(
     }
   }
 
-  const dispose = createEffect(runConditional)
+  const dispose = createRenderEffect(runConditional)
 
   return {
     marker: fragment,
@@ -1604,7 +1634,7 @@ export function createList<T>(
     }
   }
 
-  const dispose = createEffect(runListUpdate)
+  const dispose = createRenderEffect(runListUpdate)
 
   return {
     marker: fragment,
@@ -1641,7 +1671,7 @@ export function createList<T>(
  */
 export function createShow(el: HTMLElement, condition: () => boolean, displayValue?: string): void {
   const originalDisplay = displayValue ?? el.style.display
-  createEffect(() => {
+  createRenderEffect(() => {
     el.style.display = condition() ? originalDisplay : 'none'
   })
 }
@@ -1668,7 +1698,7 @@ export function createPortal(
   createElementFn: CreateElementFn,
 ): BindingHandle {
   // Capture the parent root BEFORE any effects run
-  // This is needed because createEffect will push/pop its own root context
+  // This is needed because createRenderEffect will push/pop its own root context
   const parentRoot = getCurrentRoot()
 
   const marker = document.createComment('fict:portal')
@@ -1677,7 +1707,7 @@ export function createPortal(
   let currentNodes: Node[] = []
   let currentRoot: RootContext | null = null
 
-  const dispose = createEffect(() => {
+  const dispose = createRenderEffect(() => {
     // Clean up previous
     if (currentRoot) {
       destroyRoot(currentRoot)
@@ -1741,7 +1771,7 @@ export function createPortal(
 
   // Register the portal's cleanup with the parent component's root context
   // This ensures the portal is cleaned up when the parent unmounts
-  // We use parentRoot (captured before createEffect) to avoid registering
+  // We use parentRoot (captured before createRenderEffect) to avoid registering
   // with the portal's internal root which would be destroyed separately
   if (parentRoot) {
     parentRoot.destroyCallbacks.push(portalDispose)

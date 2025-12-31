@@ -1888,7 +1888,11 @@ function attachHelperImports(
  * Lower an HIR Expression to a Babel AST Expression.
  * All SSA-versioned variable names are automatically de-versioned to their original names.
  */
-export function lowerExpression(expr: Expression, ctx: CodegenContext): BabelCore.types.Expression {
+export function lowerExpression(
+  expr: Expression,
+  ctx: CodegenContext,
+  isAssigned = false,
+): BabelCore.types.Expression {
   // Check recursion depth to prevent stack overflow
   const depth = (ctx.expressionDepth ?? 0) + 1
   const maxDepth = ctx.maxExpressionDepth ?? 500
@@ -1902,13 +1906,17 @@ export function lowerExpression(expr: Expression, ctx: CodegenContext): BabelCor
   ctx.expressionDepth = depth
 
   try {
-    return lowerExpressionImpl(expr, ctx)
+    return lowerExpressionImpl(expr, ctx, isAssigned)
   } finally {
     ctx.expressionDepth = depth - 1
   }
 }
 
-function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.types.Expression {
+function lowerExpressionImpl(
+  expr: Expression,
+  ctx: CodegenContext,
+  isAssigned = false,
+): BabelCore.types.Expression {
   const { t } = ctx
   const mapParams = (params: { name: string }[]) =>
     params.map(p => t.identifier(deSSAVarName(p.name)))
@@ -1984,7 +1992,11 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
               }
       const declared = new Set(paramIds.map(p => p.name))
       return lowerStructuredNodeWithoutRegions(structured, t, ctx, declared)
-    } catch {
+    } catch (e) {
+      console.log(
+        '[DEBUG] Structurization failed, falling back to lowerBlocksToStatements via lowerInstruction',
+        e,
+      )
       return lowerBlocksToStatements(blocks)
     }
   }
@@ -2200,63 +2212,77 @@ function lowerExpressionImpl(expr: Expression, ctx: CodegenContext): BabelCore.t
       const paramIds = mapParams(expr.params)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
       return withFunctionScope(shadowed, () => {
+        // If assigned to a variable (event handler), create non-reactive scope to avoid memo leaks
+        if (isAssigned) {
+          ctx.nonReactiveScopeDepth = (ctx.nonReactiveScopeDepth ?? 0) + 1
+        }
+
         let fn: BabelCore.types.ArrowFunctionExpression
-        if (expr.isExpression && !Array.isArray(expr.body)) {
-          // Rule L: Enable getter caching for sync arrow functions with expression body
-          const { result: bodyExpr, cacheDeclarations } = withGetterCache(ctx, () =>
-            lowerTrackedExpression(expr.body as Expression, ctx),
-          )
-          if (cacheDeclarations.length > 0) {
-            // Need to convert to block body to include cache declarations
+
+        try {
+          if (expr.isExpression && !Array.isArray(expr.body)) {
+            // Rule L: Enable getter caching for sync arrow functions with expression body
+            const { result: bodyExpr, cacheDeclarations } = withGetterCache(ctx, () =>
+              lowerTrackedExpression(expr.body as Expression, ctx),
+            )
+            if (cacheDeclarations.length > 0) {
+              // Need to convert to block body to include cache declarations
+              fn = t.arrowFunctionExpression(
+                paramIds,
+                t.blockStatement([...cacheDeclarations, t.returnStatement(bodyExpr)]),
+              )
+            } else {
+              fn = t.arrowFunctionExpression(paramIds, bodyExpr)
+            }
+          } else if (Array.isArray(expr.body)) {
+            // Rule L: Enable getter caching for sync arrow functions with block body
+            const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
+              lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
+            )
             fn = t.arrowFunctionExpression(
               paramIds,
-              t.blockStatement([...cacheDeclarations, t.returnStatement(bodyExpr)]),
+              t.blockStatement([...cacheDeclarations, ...stmts]),
             )
           } else {
-            fn = t.arrowFunctionExpression(paramIds, bodyExpr)
+            fn = t.arrowFunctionExpression(paramIds, t.blockStatement([]))
           }
-        } else if (Array.isArray(expr.body)) {
-          // Rule L: Enable getter caching for sync arrow functions with block body
-          const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
-            lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
-          )
-          fn = t.arrowFunctionExpression(
-            paramIds,
-            t.blockStatement([...cacheDeclarations, ...stmts]),
-          )
-        } else {
-          fn = t.arrowFunctionExpression(paramIds, t.blockStatement([]))
+          fn.async = expr.isAsync ?? false
+          return fn
+        } finally {
+          if (isAssigned) {
+            ctx.nonReactiveScopeDepth = (ctx.nonReactiveScopeDepth ?? 0) - 1
+          }
         }
-        fn.async = expr.isAsync ?? false
-        return fn
       })
     }
 
     case 'FunctionExpression': {
       const paramIds = mapParams(expr.params)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
-      return withFunctionScope(shadowed, () => {
-        let fn: BabelCore.types.FunctionExpression
-        if (Array.isArray(expr.body)) {
-          // Rule L: Enable getter caching for sync function expressions
-          const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
-            lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
-          )
-          fn = t.functionExpression(
-            expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
-            paramIds,
-            t.blockStatement([...cacheDeclarations, ...stmts]),
-          )
-        } else {
-          fn = t.functionExpression(
-            expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
-            paramIds,
-            t.blockStatement([]),
-          )
-        }
-        fn.async = expr.isAsync ?? false
-        return fn
-      })
+      return withNonReactiveScope(ctx, () =>
+        withFunctionScope(shadowed, () => {
+          let fn: BabelCore.types.FunctionExpression
+          if (Array.isArray(expr.body)) {
+            // Rule L: Enable getter caching for sync function expressions
+            const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
+              lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
+            )
+            fn = t.functionExpression(
+              expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
+              paramIds,
+              t.blockStatement([...cacheDeclarations, ...stmts]),
+            )
+          } else {
+            fn = t.functionExpression(
+              expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
+              paramIds,
+              t.blockStatement([]),
+            )
+          }
+          fn.async = expr.isAsync ?? false
+          return fn
+        }),
+      )
     }
 
     case 'AssignmentExpression':
@@ -3218,7 +3244,7 @@ function _getReactiveDependencies(expr: Expression, ctx: CodegenContext): Set<st
 // ============================================================================
 
 interface HIRBinding {
-  type: 'attr' | 'child' | 'event' | 'key'
+  type: 'attr' | 'child' | 'event' | 'key' | 'text'
   path: number[] // path to navigate from root to target node
   name?: string // for attributes/events
   expr?: Expression // the dynamic expression
@@ -3238,6 +3264,111 @@ function isStaticValue(expr: Expression | null): expr is Expression & { kind: 'L
   return expr.kind === 'Literal'
 }
 
+function isComponentLikeCallee(expr: Expression): boolean {
+  if (expr.kind === 'Identifier') {
+    return expr.name[0] === expr.name[0]?.toUpperCase()
+  }
+  if (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') {
+    return isComponentLikeCallee(expr.object)
+  }
+  return false
+}
+
+function isLikelyTextExpression(expr: Expression, ctx: CodegenContext): boolean {
+  let ok = true
+  const isReactiveIdentifier = (name: string) => {
+    if (ctx.storeVars?.has(name)) return false
+    const isAlias = ctx.aliasVars?.has(name) ?? false
+    if (!isAlias && ctx.memoVars?.has(name)) return false
+    if (ctx.trackedVars.has(name)) return true
+    if (ctx.signalVars?.has(name) || isAlias) return true
+    const hookName = ctx.hookResultVarMap?.get(name)
+    if (hookName) {
+      const info = getHookReturnInfo(hookName, ctx)
+      if (info?.directAccessor) return true
+    }
+    return false
+  }
+  const visit = (node: Expression, allowNonSignalReference = false): void => {
+    if (!ok) return
+    switch (node.kind) {
+      case 'JSXElement':
+      case 'ArrayExpression':
+      case 'ObjectExpression':
+      case 'ArrowFunction':
+      case 'FunctionExpression':
+      case 'ClassExpression':
+      case 'NewExpression':
+        ok = false
+        return
+      case 'CallExpression':
+      case 'OptionalCallExpression': {
+        if (isComponentLikeCallee(node.callee)) {
+          ok = false
+          return
+        }
+        visit(node.callee, true)
+        node.arguments.forEach(arg => visit(arg))
+        return
+      }
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        visit(node.object, true)
+        if (node.computed) {
+          visit(node.property)
+        }
+        return
+      case 'BinaryExpression':
+      case 'LogicalExpression':
+        visit(node.left)
+        visit(node.right)
+        return
+      case 'ConditionalExpression':
+        visit(node.test)
+        visit(node.consequent)
+        visit(node.alternate)
+        return
+      case 'UnaryExpression':
+      case 'UpdateExpression':
+      case 'AwaitExpression':
+        visit(node.argument)
+        return
+      case 'AssignmentExpression':
+        visit(node.left)
+        visit(node.right)
+        return
+      case 'SequenceExpression':
+        node.expressions.forEach(item => visit(item))
+        return
+      case 'TemplateLiteral':
+        node.expressions.forEach(item => visit(item))
+        return
+      case 'TaggedTemplateExpression':
+        visit(node.tag)
+        node.quasi.expressions.forEach(item => visit(item))
+        return
+      case 'YieldExpression':
+        if (node.argument) visit(node.argument)
+        return
+      case 'SpreadElement':
+        visit(node.argument)
+        return
+      case 'Identifier':
+        if (!isReactiveIdentifier(node.name) && !allowNonSignalReference) {
+          ok = false
+        }
+        return
+      case 'Literal':
+      case 'ThisExpression':
+      case 'SuperExpression':
+        return
+    }
+  }
+
+  visit(expr)
+  return ok
+}
+
 /**
  * Normalize attribute names for special cases.
  */
@@ -3253,6 +3384,7 @@ function normalizeHIRAttrName(name: string): string {
  */
 function extractHIRStaticHtml(
   jsx: JSXElementExpression,
+  ctx: CodegenContext,
   parentPath: number[] = [],
 ): HIRTemplateExtractionResult {
   // Components or dynamic tag expressions should be treated as dynamic children,
@@ -3374,7 +3506,20 @@ function extractHIRStaticHtml(
 
   // Process children
   let childIndex = 0
-  for (const child of jsx.children) {
+  const children = jsx.children
+  const isNonEmptyText = (node: JSXChild): boolean =>
+    node.kind === 'text' && node.value.trim().length > 0
+  const hasAdjacentInline = (index: number): boolean => {
+    const prev = children[index - 1]
+    const next = children[index + 1]
+    return (
+      (!!prev && (prev.kind === 'expression' || isNonEmptyText(prev))) ||
+      (!!next && (next.kind === 'expression' || isNonEmptyText(next)))
+    )
+  }
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i]!
     if (child.kind === 'text') {
       const text = child.value
       if (text.trim()) {
@@ -3383,18 +3528,28 @@ function extractHIRStaticHtml(
       }
     } else if (child.kind === 'element') {
       const childPath = [...parentPath, childIndex]
-      const childResult = extractHIRStaticHtml(child.value, childPath)
+      const childResult = extractHIRStaticHtml(child.value, ctx, childPath)
       html += childResult.html
       bindings.push(...childResult.bindings)
       childIndex++
     } else if (child.kind === 'expression') {
-      // Dynamic expression - insert placeholder comment
-      html += '<!---->'
-      bindings.push({
-        type: 'child',
-        path: [...parentPath, childIndex],
-        expr: child.value,
-      })
+      const inline = hasAdjacentInline(i)
+      if (!inline && isLikelyTextExpression(child.value, ctx)) {
+        html += ' '
+        bindings.push({
+          type: 'text',
+          path: [...parentPath, childIndex],
+          expr: child.value,
+        })
+      } else {
+        // Dynamic expression - insert placeholder comment
+        html += '<!---->'
+        bindings.push({
+          type: 'child',
+          path: [...parentPath, childIndex],
+          expr: child.value,
+        })
+      }
       childIndex++
     }
   }
@@ -3417,7 +3572,7 @@ function lowerIntrinsicElement(
   const statements: BabelCore.types.Statement[] = []
 
   // Extract static HTML with bindings (aligned with fine-grained-dom.ts)
-  const { html, bindings } = extractHIRStaticHtml(jsx)
+  const { html, bindings } = extractHIRStaticHtml(jsx, ctx)
 
   // Collect all dependencies from bindings to find containing region
   const allDeps = new Set<string>()
@@ -3487,15 +3642,31 @@ function lowerIntrinsicElement(
       // Event binding
       ctx.helpersUsed.add('bindEvent')
       ctx.helpersUsed.add('onDestroy')
+      const shouldWrapHandler = isExpressionReactive(binding.expr, ctx)
       const prevWrapTracked = ctx.wrapTrackedExpressions
       ctx.wrapTrackedExpressions = false
       const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
       ctx.wrapTrackedExpressions = prevWrapTracked
-      // Always wrap handler in a getter function to support reactive updates.
-      // This ensures that:
-      // 1. Inline attributes like `onClick={() => ...}` are treated as the handler logic, not a getter for the handler.
-      // 2. Reactive expressions like `onClick={condition ? A : B}` work by re-evaluating the getter.
-      const handlerExpr = t.arrowFunctionExpression([], valueExpr)
+      const eventParam = t.identifier('_e')
+      const isFn = t.isArrowFunctionExpression(valueExpr) || t.isFunctionExpression(valueExpr)
+      const ensureHandlerParam = (fn: BabelCore.types.Expression): BabelCore.types.Expression => {
+        if (t.isArrowFunctionExpression(fn)) {
+          if (fn.params.length > 0) return fn
+          return t.arrowFunctionExpression([eventParam], fn.body, fn.async)
+        }
+        if (t.isFunctionExpression(fn)) {
+          if (fn.params.length > 0) return fn
+          return t.functionExpression(fn.id, [eventParam], fn.body, fn.generator, fn.async)
+        }
+        return t.arrowFunctionExpression(
+          [eventParam],
+          t.callExpression(fn as BabelCore.types.Expression, [eventParam]),
+        )
+      }
+      const handlerExpr =
+        !isFn && shouldWrapHandler
+          ? t.arrowFunctionExpression([], valueExpr)
+          : ensureHandlerParam(valueExpr)
       const cleanupId = genTemp(ctx, 'evt')
       const args: BabelCore.types.Expression[] = [
         targetId,
@@ -3597,6 +3768,17 @@ function lowerIntrinsicElement(
     } else if (binding.type === 'key' && binding.expr) {
       statements.push(
         t.expressionStatement(lowerDomExpression(binding.expr, ctx, containingRegion)),
+      )
+    } else if (binding.type === 'text' && binding.expr) {
+      ctx.helpersUsed.add('bindText')
+      const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
+      statements.push(
+        t.expressionStatement(
+          t.callExpression(t.identifier(RUNTIME_ALIASES.bindText), [
+            targetId,
+            t.arrowFunctionExpression([], valueExpr),
+          ]),
+        ),
       )
     } else if (binding.type === 'child' && binding.expr) {
       // Child binding (dynamic expression at placeholder)
@@ -3875,6 +4057,352 @@ function emitConditionalChild(
   )
 }
 
+function expressionUsesIdentifier(
+  expr: BabelCore.types.Node,
+  name: string,
+  t: typeof BabelCore.types,
+): boolean {
+  let found = false
+  const visit = (node?: BabelCore.types.Node | null): void => {
+    if (!node || found) return
+    if (t.isIdentifier(node)) {
+      if (node.name === name) found = true
+      return
+    }
+    if (
+      t.isFunctionExpression(node) ||
+      t.isArrowFunctionExpression(node) ||
+      t.isClassExpression(node)
+    ) {
+      return
+    }
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      visit(node.object)
+      if (node.computed) visit(node.property)
+      return
+    }
+    if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+      visit(node.callee)
+      node.arguments.forEach(arg => {
+        if (t.isExpression(arg)) visit(arg)
+      })
+      return
+    }
+    if (t.isBinaryExpression(node) || t.isLogicalExpression(node)) {
+      visit(node.left)
+      visit(node.right)
+      return
+    }
+    if (t.isConditionalExpression(node)) {
+      visit(node.test)
+      visit(node.consequent)
+      visit(node.alternate)
+      return
+    }
+    if (t.isUnaryExpression(node) || t.isUpdateExpression(node)) {
+      visit(node.argument)
+      return
+    }
+    if (t.isAssignmentExpression(node)) {
+      visit(node.left)
+      visit(node.right)
+      return
+    }
+    if (t.isSequenceExpression(node)) {
+      node.expressions.forEach(expr => visit(expr))
+      return
+    }
+    if (t.isTemplateLiteral(node)) {
+      node.expressions.forEach(expr => visit(expr))
+      return
+    }
+    if (t.isArrayExpression(node)) {
+      node.elements.forEach(el => {
+        if (t.isExpression(el)) visit(el)
+      })
+      return
+    }
+    if (t.isObjectExpression(node)) {
+      node.properties.forEach(prop => {
+        if (t.isObjectProperty(prop)) {
+          if (prop.computed) visit(prop.key)
+          visit(prop.value)
+          return
+        }
+        if (t.isSpreadElement(prop)) {
+          visit(prop.argument)
+        }
+      })
+      return
+    }
+    if (t.isParenthesizedExpression(node)) {
+      visit(node.expression)
+      return
+    }
+    if (t.isTSAsExpression(node) || t.isTSTypeAssertion(node) || t.isTSNonNullExpression(node)) {
+      visit(node.expression)
+    }
+  }
+
+  visit(expr)
+  return found
+}
+
+function getTrackedCallIdentifier(
+  expr: BabelCore.types.Expression,
+  ctx: CodegenContext,
+  itemParamName: string,
+): string | null {
+  if (ctx.t.isCallExpression(expr) && ctx.t.isIdentifier(expr.callee)) {
+    if (expr.arguments.length !== 0) return null
+    const name = deSSAVarName(expr.callee.name)
+    if (name === itemParamName) return null
+    if (!ctx.trackedVars.has(name)) return null
+    return expr.callee.name
+  }
+  return null
+}
+
+function rewriteSelectorExpression(
+  expr: BabelCore.types.Expression,
+  itemParamName: string,
+  getSelectorId: (name: string) => BabelCore.types.Identifier,
+  ctx: CodegenContext,
+): { expr: BabelCore.types.Expression; changed: boolean } {
+  const { t } = ctx
+  if (t.isBinaryExpression(expr) && (expr.operator === '===' || expr.operator === '==')) {
+    const leftTracked = getTrackedCallIdentifier(
+      expr.left as BabelCore.types.Expression,
+      ctx,
+      itemParamName,
+    )
+    const rightTracked = getTrackedCallIdentifier(
+      expr.right as BabelCore.types.Expression,
+      ctx,
+      itemParamName,
+    )
+    if (leftTracked && expressionUsesIdentifier(expr.right, itemParamName, t)) {
+      return {
+        expr: t.callExpression(getSelectorId(leftTracked), [
+          expr.right as BabelCore.types.Expression,
+        ]),
+        changed: true,
+      }
+    }
+    if (rightTracked && expressionUsesIdentifier(expr.left, itemParamName, t)) {
+      return {
+        expr: t.callExpression(getSelectorId(rightTracked), [
+          expr.left as BabelCore.types.Expression,
+        ]),
+        changed: true,
+      }
+    }
+  }
+
+  let changed = false
+  const rewrite = (node: BabelCore.types.Expression): BabelCore.types.Expression => {
+    const result = rewriteSelectorExpression(node, itemParamName, getSelectorId, ctx)
+    if (result.changed) changed = true
+    return result.expr
+  }
+
+  if (t.isConditionalExpression(expr)) {
+    expr.test = rewrite(expr.test)
+    expr.consequent = rewrite(expr.consequent)
+    expr.alternate = rewrite(expr.alternate)
+  } else if (t.isLogicalExpression(expr) || t.isBinaryExpression(expr)) {
+    expr.left = rewrite(expr.left as BabelCore.types.Expression)
+    expr.right = rewrite(expr.right as BabelCore.types.Expression)
+  } else if (t.isUnaryExpression(expr) || t.isUpdateExpression(expr)) {
+    expr.argument = rewrite(expr.argument as BabelCore.types.Expression)
+  } else if (t.isAssignmentExpression(expr)) {
+    // Only rewrite the right side; left must be an LVal, not a general Expression
+    expr.right = rewrite(expr.right as BabelCore.types.Expression)
+  } else if (t.isSequenceExpression(expr)) {
+    expr.expressions = expr.expressions.map(item => rewrite(item as BabelCore.types.Expression))
+  } else if (t.isTemplateLiteral(expr)) {
+    expr.expressions = expr.expressions.map(item => rewrite(item as BabelCore.types.Expression))
+  } else if (t.isArrayExpression(expr)) {
+    expr.elements = expr.elements.map(el => {
+      if (t.isExpression(el)) return rewrite(el)
+      return el
+    })
+  } else if (t.isObjectExpression(expr)) {
+    expr.properties = expr.properties.map(prop => {
+      if (t.isObjectProperty(prop)) {
+        if (prop.computed && t.isExpression(prop.key)) {
+          prop.key = rewrite(prop.key)
+        }
+        if (t.isExpression(prop.value)) {
+          prop.value = rewrite(prop.value)
+        }
+        return prop
+      }
+      if (t.isSpreadElement(prop)) {
+        prop.argument = rewrite(prop.argument as BabelCore.types.Expression)
+        return prop
+      }
+      return prop
+    })
+  } else if (t.isCallExpression(expr) || t.isOptionalCallExpression(expr)) {
+    if (t.isExpression(expr.callee)) {
+      expr.callee = rewrite(expr.callee)
+    }
+    expr.arguments = expr.arguments.map(arg => {
+      if (t.isExpression(arg)) return rewrite(arg)
+      return arg
+    })
+  } else if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr)) {
+    expr.object = rewrite(expr.object as BabelCore.types.Expression)
+    if (expr.computed && t.isExpression(expr.property)) {
+      expr.property = rewrite(expr.property)
+    }
+  } else if (t.isParenthesizedExpression(expr)) {
+    expr.expression = rewrite(expr.expression)
+  } else if (
+    t.isTSAsExpression(expr) ||
+    t.isTSTypeAssertion(expr) ||
+    t.isTSNonNullExpression(expr)
+  ) {
+    expr.expression = rewrite(expr.expression)
+  }
+
+  return { expr, changed }
+}
+
+function applySelectorHoist(
+  callbackExpr: BabelCore.types.Expression,
+  itemParamName: string | null,
+  statements: BabelCore.types.Statement[],
+  ctx: CodegenContext,
+): void {
+  const { t } = ctx
+  if (!itemParamName) return
+  if (!t.isArrowFunctionExpression(callbackExpr) && !t.isFunctionExpression(callbackExpr)) return
+
+  const selectorIds = new Map<string, BabelCore.types.Identifier>()
+  const getSelectorId = (name: string): BabelCore.types.Identifier => {
+    const existing = selectorIds.get(name)
+    if (existing) return existing
+    const selectorId = genTemp(ctx, 'sel')
+    selectorIds.set(name, selectorId)
+    return selectorId
+  }
+
+  const rewriteInFunction = (
+    fn: BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression,
+  ): void => {
+    if (t.isBlockStatement(fn.body)) {
+      for (const stmt of fn.body.body) {
+        if (t.isReturnStatement(stmt) && stmt.argument && t.isExpression(stmt.argument)) {
+          const result = rewriteSelectorExpression(stmt.argument, itemParamName, getSelectorId, ctx)
+          if (result.changed) {
+            stmt.argument = result.expr
+          }
+        }
+      }
+      return
+    }
+    if (t.isExpression(fn.body)) {
+      const result = rewriteSelectorExpression(fn.body, itemParamName, getSelectorId, ctx)
+      if (result.changed) {
+        fn.body = result.expr
+      }
+    }
+  }
+
+  const visitNode = (node: BabelCore.types.Node): void => {
+    if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
+      if (node !== callbackExpr) return
+    }
+    if (t.isCallExpression(node) && t.isIdentifier(node.callee)) {
+      if (node.callee.name === RUNTIME_ALIASES.bindClass) {
+        const handler = node.arguments[1]
+        if (handler && (t.isArrowFunctionExpression(handler) || t.isFunctionExpression(handler))) {
+          rewriteInFunction(handler)
+        }
+      }
+    }
+
+    if (t.isBlockStatement(node)) {
+      node.body.forEach(stmt => visitNode(stmt))
+      return
+    }
+    if (t.isExpressionStatement(node)) {
+      visitNode(node.expression)
+      return
+    }
+    if (t.isReturnStatement(node) && node.argument) {
+      visitNode(node.argument)
+      return
+    }
+    if (t.isIfStatement(node)) {
+      visitNode(node.test)
+      visitNode(node.consequent)
+      if (node.alternate) visitNode(node.alternate)
+      return
+    }
+    if (t.isExpression(node)) {
+      if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+        visitNode(node.callee as BabelCore.types.Node)
+        node.arguments.forEach(arg => {
+          if (t.isExpression(arg)) visitNode(arg)
+        })
+      } else if (t.isConditionalExpression(node)) {
+        visitNode(node.test)
+        visitNode(node.consequent)
+        visitNode(node.alternate)
+      } else if (t.isLogicalExpression(node) || t.isBinaryExpression(node)) {
+        visitNode(node.left as BabelCore.types.Node)
+        visitNode(node.right as BabelCore.types.Node)
+      } else if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+        visitNode(node.object as BabelCore.types.Node)
+        if (node.computed) visitNode(node.property as BabelCore.types.Node)
+      } else if (t.isSequenceExpression(node)) {
+        node.expressions.forEach(expr => visitNode(expr))
+      } else if (t.isArrayExpression(node)) {
+        node.elements.forEach(el => {
+          if (t.isExpression(el)) visitNode(el)
+        })
+      } else if (t.isObjectExpression(node)) {
+        node.properties.forEach(prop => {
+          if (t.isObjectProperty(prop)) {
+            if (prop.computed) visitNode(prop.key as BabelCore.types.Node)
+            visitNode(prop.value as BabelCore.types.Node)
+          } else if (t.isSpreadElement(prop)) {
+            visitNode(prop.argument as BabelCore.types.Node)
+          }
+        })
+      } else if (t.isUnaryExpression(node) || t.isUpdateExpression(node)) {
+        visitNode(node.argument as BabelCore.types.Node)
+      } else if (t.isAssignmentExpression(node)) {
+        visitNode(node.left as BabelCore.types.Node)
+        visitNode(node.right as BabelCore.types.Node)
+      } else if (t.isParenthesizedExpression(node)) {
+        visitNode(node.expression)
+      }
+    }
+  }
+
+  visitNode(callbackExpr.body)
+
+  if (selectorIds.size > 0) {
+    ctx.helpersUsed.add('createSelector')
+    for (const [name, selectorId] of selectorIds) {
+      statements.push(
+        t.variableDeclaration('const', [
+          t.variableDeclarator(
+            selectorId,
+            t.callExpression(t.identifier(RUNTIME_ALIASES.createSelector), [
+              t.arrowFunctionExpression([], t.callExpression(t.identifier(name), [])),
+            ]),
+          ),
+        ]),
+      )
+    }
+  }
+}
+
 /**
  * Emit a list rendering child (array.map)
  */
@@ -3934,6 +4462,15 @@ function emitListChild(
   }
 
   const listId = genTemp(ctx, 'list')
+  if (isKeyed) {
+    const itemParamName =
+      t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)
+        ? t.isIdentifier(callbackExpr.params[0])
+          ? callbackExpr.params[0].name
+          : null
+        : null
+    applySelectorHoist(callbackExpr as BabelCore.types.Expression, itemParamName, statements, ctx)
+  }
   if (isKeyed && keyExpr) {
     let keyExprAst = lowerExpression(keyExpr, ctx)
     if (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) {

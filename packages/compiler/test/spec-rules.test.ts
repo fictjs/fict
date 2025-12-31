@@ -90,7 +90,7 @@ describe('Spec rule coverage', () => {
     // Props destructuring uses reactive getters
     expect(output).toContain('useProp(() => __props.count)')
     expect(output).toContain('count()')
-    expect(output).toContain('insert')
+    expect(output).toContain('bindText')
   })
 
   it('emits warnings for deep mutations and dynamic property access', () => {

@@ -208,6 +208,68 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('updates every 10th row label in keyed tables', { timeout: 10000 }, async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { update(): void }
+
+      export function App() {
+        let rows = $state(
+          Array.from({ length: 20 }, (_, i) => ({ id: i + 1, label: 'row ' + (i + 1) })),
+        )
+
+        api = {
+          update() {
+            rows = rows.map((row, idx) =>
+              idx % 10 === 0 ? { ...row, label: row.label + ' !!!' } : row,
+            )
+          },
+        }
+
+        return (
+          <table>
+            <tbody>
+              {rows.map(row => (
+                <tr key={row.id}>
+                  <td class="lbl" data-id={row.id}>{row.label}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { update(): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+    mod.api.update()
+    await flushUpdates()
+
+    const labels = Array.from(container.querySelectorAll('.lbl')).map(
+      node => node.textContent?.trim() ?? '',
+    )
+
+    expect(labels.length).toBe(20)
+    expect(labels[0]).toContain('!!!')
+    expect(labels[10]).toContain('!!!')
+    expect(labels.some(text => text.includes('NaN'))).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
   it(
     'lazily evaluates branch-only derived regions when conditionally rendered',
     { timeout: 10000 },

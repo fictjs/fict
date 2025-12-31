@@ -5,7 +5,7 @@
 export { createSignal, createSelector, type Signal, $state } from './signal'
 export { createStore, type Store } from './store'
 export { createMemo, type Memo, $memo } from './memo'
-export { createEffect, type Effect, $effect } from './effect'
+export { createEffect, createRenderEffect, type Effect, $effect } from './effect'
 export {
   __fictUseContext,
   __fictPushContext,

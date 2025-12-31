@@ -756,10 +756,14 @@ export const createFictPlugin = declare(
   (api, options: FictCompilerOptions = {}): BabelCore.PluginObj => {
     api.assertVersion(7)
     const t = api.types as typeof BabelCore.types
+    const normalizedOptions: FictCompilerOptions = {
+      ...options,
+      fineGrainedDom: options.fineGrainedDom ?? true,
+    }
 
     return {
       name: 'fict-compiler-hir',
-      visitor: createHIREntrypointVisitor(t, options),
+      visitor: createHIREntrypointVisitor(t, normalizedOptions),
     }
   },
 )

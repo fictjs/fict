@@ -10,6 +10,7 @@ import type * as BabelCore from '@babel/core'
 import { RUNTIME_ALIASES } from './constants'
 import { transformExpression } from './transform-expression'
 import type { TransformContext } from './types'
+import { dependsOnTracked } from './utils'
 
 // ============================================================================
 // Types
@@ -512,13 +513,29 @@ export function createBindEventCall(
 ): BabelCore.types.Statement[] {
   ctx.helpersUsed.bindEvent = true
   ctx.helpersUsed.onDestroy = true
+  const eventParam = t.identifier('_e')
+  const isFn = t.isArrowFunctionExpression(handler) || t.isFunctionExpression(handler)
+  const shouldWrapHandler = !isFn && dependsOnTracked(handler, ctx, t)
 
-  // Always wrap handler in a getter function to support reactive updates.
-  // This ensures that:
-  // 1. Inline attributes like `onClick={() => ...}` are treated as the handler logic, not a getter for the handler.
-  // 2. Reactive expressions like `onClick={condition ? A : B}` work by re-evaluating the getter.
-  console.log('[DEBUG-COMPILER] creating bindEvent call for:', eventName)
-  const handlerArg = t.arrowFunctionExpression([], handler)
+  const ensureHandlerParam = (fn: BabelCore.types.Expression): BabelCore.types.Expression => {
+    if (t.isArrowFunctionExpression(fn)) {
+      if (fn.params.length > 0) return fn
+      const next = t.arrowFunctionExpression([eventParam], fn.body, fn.async)
+      return next
+    }
+    if (t.isFunctionExpression(fn)) {
+      if (fn.params.length > 0) return fn
+      return t.functionExpression(fn.id, [eventParam], fn.body, fn.generator, fn.async)
+    }
+    return t.arrowFunctionExpression(
+      [eventParam],
+      t.callExpression(fn as BabelCore.types.Expression, [eventParam]),
+    )
+  }
+
+  const handlerArg = shouldWrapHandler
+    ? t.arrowFunctionExpression([], handler)
+    : ensureHandlerParam(handler)
 
   const args: BabelCore.types.Expression[] = [elementId, t.stringLiteral(eventName), handlerArg]
 
@@ -738,9 +755,19 @@ function transformComponentCall(
   ctx: TransformContext,
   t: typeof BabelCore.types,
   overrides?: IdentifierOverrideMap,
-): BabelCore.types.CallExpression {
-  const componentName = (node.openingElement.name as BabelCore.types.JSXIdentifier).name
-  const componentId = t.identifier(componentName)
+): BabelCore.types.Expression {
+  const nameNode = node.openingElement.name
+  if (!t.isJSXIdentifier(nameNode)) {
+    // Fallback to generic expression lowering for non-identifier components (e.g., MemberExpression)
+    return transformExpressionForFineGrained(
+      node as unknown as BabelCore.types.Expression,
+      ctx,
+      t,
+      overrides,
+    ) as BabelCore.types.CallExpression
+  }
+
+  const componentId = t.identifier(nameNode.name)
 
   const props: BabelCore.types.ObjectProperty[] = []
 
@@ -756,12 +783,17 @@ function transformComponentCall(
       } else if (t.isJSXExpressionContainer(attr.value)) {
         if (t.isJSXEmptyExpression(attr.value.expression)) continue
         // Use fine-grained transform for prop values (handles signals etc)
-        propValue = transformExpressionForFineGrained(
+        const transformed = transformExpressionForFineGrained(
           attr.value.expression as BabelCore.types.Expression,
           ctx,
           t,
           overrides,
         )
+        // Wrap dynamic props in __fictProp getter so children can track dependencies
+        ctx.helpersUsed.propGetter = true
+        propValue = t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
+          t.arrowFunctionExpression([], transformed),
+        ])
       } else if (t.isStringLiteral(attr.value)) {
         propValue = attr.value
       } else {
@@ -1333,6 +1365,7 @@ export function createListBinding(
     // renderItem: (itemSignal, indexSignal) => Node[] - receives signal functions
     const itemParamName = params[0] && t.isIdentifier(params[0]) ? params[0].name : '__item'
     const indexParamName = params[1] && t.isIdentifier(params[1]) ? params[1].name : '__index'
+    const hasIndexParam = params.length > 1
 
     const keyFn = t.arrowFunctionExpression(
       [t.identifier(itemParamName), t.identifier(indexParamName)],
@@ -1345,6 +1378,7 @@ export function createListBinding(
       t.arrowFunctionExpression([], transformedArray),
       keyFn,
       t.arrowFunctionExpression(paramNodes as any, transformedBody),
+      t.booleanLiteral(hasIndexParam),
     ])
   } else {
     // Warn on missing key prop in mapped lists
@@ -1433,6 +1467,27 @@ export interface TemplateExtractionResult {
   html: string
   hasDynamic: boolean
   bindings: TemplateBinding[]
+}
+
+function isStaticTextExpression(
+  expr: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): boolean {
+  if (
+    t.isStringLiteral(expr) ||
+    t.isNumericLiteral(expr) ||
+    t.isBooleanLiteral(expr) ||
+    t.isNullLiteral(expr) ||
+    t.isBigIntLiteral(expr)
+  ) {
+    return true
+  }
+
+  if (t.isTemplateLiteral(expr) && expr.expressions.length === 0) {
+    return true
+  }
+
+  return false
 }
 
 export function extractStaticHtml(
@@ -1526,29 +1581,11 @@ export function extractStaticHtml(
         continue
       }
 
-      // Optimization: If expression is likely a text value (literal or simple identifier),
-      // use a text node placeholder instead of a comment marker.
-      // This allows using fast-path bindText.
+      // Optimization: Only treat obviously-static primitives as text.
+      // Everything else stays as a generic child to avoid stringifying DOM nodes.
       let isTextBinding = false
       if (t.isJSXExpressionContainer(child)) {
-        const expr = child.expression
-        // Literals, Identifiers, MemberExpressions, and UnaryExpressions, Arithmetic
-        if (
-          t.isStringLiteral(expr) ||
-          t.isNumericLiteral(expr) ||
-          t.isBooleanLiteral(expr) ||
-          t.isIdentifier(expr) ||
-          t.isMemberExpression(expr) ||
-          t.isCallExpression(expr) || // Assume function calls return text mostly? risky if it returns Node.
-          t.isBinaryExpression(expr) ||
-          t.isConditionalExpression(expr) ||
-          t.isTemplateLiteral(expr)
-        ) {
-          // We'll optimistically assume it's text.
-          // If it returns a Node at runtime, bindText might fail or print "[object Object]".
-          // But for Fict "text" binding usually implies stringification.
-          isTextBinding = true
-        }
+        isTextBinding = isStaticTextExpression(child.expression as BabelCore.types.Expression, t)
       }
 
       if (isTextBinding) {
