@@ -50,8 +50,8 @@ Fict gives you:
 
 ```bash
 npm install fict
-# yarn add mutative
-# pnpm add mutative
+# yarn add fict
+# pnpm add fict
 ```
 
 **Vite setup:**
