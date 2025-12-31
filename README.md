@@ -350,7 +350,7 @@ The compiler detects this automatically. You don't need to think about it — wr
 
 ## Performance
 
-> 🚧 **Note**: Package size and memory optimizations are currently in progress.
+> 🚧 **Note**: Bundle size and memory optimizations are currently in progress.
 
 ![Performance Benchmark](./perf.png)
 
