@@ -368,7 +368,7 @@ _Lower is better. Baseline relative to best performer in each category._
 
 ## Status
 
-> ⚠️ **Alpha** — Fict is feature-complete for core compiler and runtime. API is stable, but edge cases may be refined. Production use is possible for adventurous teams.
+> ⚠️ **Alpha** — Fict is feature-complete for core compiler and runtime. API is stable, but edge cases may be refined.
 
 > ⚠️ Don't use it in production yet.
 
