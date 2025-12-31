@@ -58,8 +58,8 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toContain('insert')
       // Should have getItems arrow function
       expect(output).toContain('() => items()')
-      // Should have keyFn
-      expect(output).toContain('item =>')
+      // Keyed list callback should have __key as third parameter for key constification
+      expect(output).toContain('__key')
     })
 
     it('handles keyed list with object property as key', () => {

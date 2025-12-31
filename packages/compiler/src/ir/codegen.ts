@@ -374,6 +374,12 @@ export interface CodegenContext {
   hoistedTemplateStatements?: BabelCore.types.Statement[]
   /** Set of delegated events used (for hoisting delegateEvents call) */
   delegatedEventsUsed?: Set<string>
+  /** Parameter name for the list key constant (e.g., "__key") when in list render */
+  listKeyParamName?: string
+  /** The key expression HIR (e.g., row.id) for comparison when replacing with __key */
+  listKeyExpr?: Expression
+  /** The item parameter name in list render (e.g., "row") for key expression matching */
+  listItemParamName?: string
 }
 
 /**
@@ -717,6 +723,70 @@ function getOrCreateHoistedTemplate(
     ]),
   )
   return tmplId
+}
+
+/**
+ * Check if a MemberExpression matches the list key pattern.
+ * Matches `item.prop` when key expression is `item.prop`.
+ *
+ * For example, if keyExpr is `row.id` and we see `row.id` in the HIR,
+ * this returns true allowing replacement with `__key`.
+ *
+ * Note: This matches the HIR pattern BEFORE signal accessor transform.
+ * The signal transform (`row` -> `row()`) happens after lowering via replaceIdentifiersWithOverrides.
+ */
+function matchesListKeyPattern(expr: Expression, ctx: CodegenContext): boolean {
+  // Must have active key constification context
+  if (!ctx.listKeyExpr || !ctx.listItemParamName || !ctx.listKeyParamName) {
+    return false
+  }
+
+  // Expression must be MemberExpression: X.prop
+  if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') {
+    return false
+  }
+
+  // Key expression must also be MemberExpression: item.prop
+  const keyExpr = ctx.listKeyExpr
+  if (keyExpr.kind !== 'MemberExpression' && keyExpr.kind !== 'OptionalMemberExpression') {
+    return false
+  }
+
+  // Key expression object must be the item param: row.id -> row
+  if (keyExpr.object.kind !== 'Identifier') {
+    return false
+  }
+  const keyItemName = deSSAVarName(keyExpr.object.name)
+  if (keyItemName !== ctx.listItemParamName) {
+    return false
+  }
+
+  // Key expression property must be static: row.id -> id
+  if (keyExpr.property.kind !== 'Identifier' && keyExpr.property.kind !== 'Literal') {
+    return false
+  }
+  const keyPropName =
+    keyExpr.property.kind === 'Identifier' ? keyExpr.property.name : String(keyExpr.property.value)
+
+  // Current expression object must be the item param identifier: row
+  // (At HIR level, before signal accessor transform, it's still Identifier not CallExpression)
+  const exprObj = expr.object
+  if (exprObj.kind !== 'Identifier') {
+    return false
+  }
+  const exprItemName = deSSAVarName(exprObj.name)
+  if (exprItemName !== ctx.listItemParamName) {
+    return false
+  }
+
+  // Property must match: row.id -> id
+  if (expr.property.kind !== 'Identifier' && expr.property.kind !== 'Literal') {
+    return false
+  }
+  const exprPropName =
+    expr.property.kind === 'Identifier' ? expr.property.name : String(expr.property.value)
+
+  return exprPropName === keyPropName
 }
 
 function detectDerivedCycles(fn: HIRFunction, _scopeResult: ReactiveScopeResult): void {
@@ -2119,6 +2189,10 @@ function lowerExpressionImpl(
     }
 
     case 'MemberExpression':
+      // Key constification: replace row().id with __key when it matches the key expression
+      if (matchesListKeyPattern(expr, ctx)) {
+        return t.identifier(ctx.listKeyParamName!)
+      }
       if (
         expr.object.kind === 'Identifier' &&
         ctx.hookResultVarMap?.has(deSSAVarName(expr.object.name))
@@ -4627,10 +4701,33 @@ function emitListChild(
   ctx.hoistedTemplates = new Map()
   ctx.hoistedTemplateStatements = []
 
+  // Key constification: store key expression in context for downstream optimization
+  const prevListKeyExpr = ctx.listKeyExpr
+  const prevListItemParamName = ctx.listItemParamName
+  const prevListKeyParamName = ctx.listKeyParamName
+
+  if (isKeyed && keyExpr) {
+    ctx.listKeyExpr = keyExpr
+    ctx.listKeyParamName = '__key'
+    // Extract item param name from callback
+    if (mapCallback.kind === 'ArrowFunction' || mapCallback.kind === 'FunctionExpression') {
+      const firstParam = mapCallback.params[0]
+      if (firstParam) {
+        ctx.listItemParamName = deSSAVarName(firstParam.name)
+      }
+    }
+  }
+
   const prevInListRender = ctx.inListRender
   ctx.inListRender = true
   let callbackExpr = lowerExpression(mapCallback, ctx)
   ctx.inListRender = prevInListRender
+
+  // Restore key constification context
+  ctx.listKeyExpr = prevListKeyExpr
+  ctx.listItemParamName = prevListItemParamName
+  ctx.listKeyParamName = prevListKeyParamName
+
   callbackExpr = applyRegionMetadataToExpression(callbackExpr, ctx)
 
   // Collect hoisted template declarations to insert before list call
@@ -4701,6 +4798,28 @@ function emitListChild(
     const hasIndexParam =
       (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) &&
       callbackExpr.params.length >= 2
+
+    // Add __key as third parameter to the callback for key constification
+    if (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) {
+      const newParams = [...callbackExpr.params]
+      // Ensure we have at least 2 params (item, index) before adding key
+      while (newParams.length < 2) {
+        newParams.push(t.identifier(newParams.length === 0 ? '__item' : '__index'))
+      }
+      // Add __key as third param
+      newParams.push(t.identifier('__key'))
+      if (t.isArrowFunctionExpression(callbackExpr)) {
+        callbackExpr = t.arrowFunctionExpression(newParams, callbackExpr.body, callbackExpr.async)
+      } else {
+        callbackExpr = t.functionExpression(
+          callbackExpr.id,
+          newParams,
+          callbackExpr.body as BabelCore.types.BlockStatement,
+          callbackExpr.generator,
+          callbackExpr.async,
+        )
+      }
+    }
 
     // Insert hoisted template declarations before list call
     statements.push(...hoistedStatements)
