@@ -8,7 +8,7 @@
 
 Fict is a UI library where you write plain JavaScript and the compiler figures out the reactivity.
 
-> Write JavaScript; let the compiler handle signals, derived values, and DOM updates. It’s a new way to think about UI—not a drop-in replacement for React/Vue/Svelte, and not a performance boast without benchmarks. The promise is less code and lower cognitive load.
+> Write JavaScript; let the compiler handle signals, derived values, and DOM updates. It’s a new way to think about UI—not a drop-in replacement for React/Vue/Svelte. The promise is less code and lower cognitive load.
 
 ```jsx
 function Counter() {

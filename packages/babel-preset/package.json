@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/babel-preset",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Babel preset for Fict - includes TypeScript, JSX, and Fict compiler",
   "type": "module",
   "main": "dist/index.cjs",
