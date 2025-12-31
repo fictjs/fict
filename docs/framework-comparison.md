@@ -39,9 +39,9 @@
 
 ### 2.3 Runtime Size & Overhead
 
-- **Fict**: Targets ~6kb (Core). Since most logic is compiled away, the runtime is very small.
-- **React**: Larger runtime (Scheduler, Reconciler, VDOM).
-- **Solid**: ~7kb. Very close to Fict.
+- **Fict**: ~10kb brotli compressed (including runtime). Performance is within ~8% of Solid in js-framework-benchmark.
+- **React**: Larger runtime (Scheduler, Reconciler, VDOM). ~50kb compressed.
+- **Solid**: ~4.5kb brotli compressed. The smallest runtime among major frameworks.
 - **Svelte**: Runtime is small, but code size can grow with component complexity (though Runes improves this).
 - **Vue**: Larger runtime due to supporting Options/Composition API and legacy VDOM (unless using a Vapor-only build).
 

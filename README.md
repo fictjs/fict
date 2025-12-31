@@ -349,11 +349,11 @@ The compiler detects this automatically. You don't need to think about it — wr
 
 ## Status
 
-> ⚠️ **Beta** — Fict v1.0 is feature-complete for core compiler and runtime. API is stable, but edge cases may be refined. Production use is possible for adventurous teams.
+> ⚠️ **Beta** — Fict is feature-complete for core compiler and runtime. API is stable, but edge cases may be refined. Production use is possible for adventurous teams.
 
 ## Roadmap
 
-### Completed (v1.0)
+### Completed
 
 - [x] Compiler with HIR/SSA
 - [x] Stable `$state` / `$effect` semantics
@@ -413,7 +413,7 @@ Default: immutable style (`todos = [...todos, newTodo]`). For deep mutations, us
 Not directly. Fict compiles to DOM operations, not React elements.
 
 **How big is the runtime?**
-~13kb gzipped (core only).
+~10kb brotli compressed. Performance is within ~8% of Solid in js-framework-benchmark.
 
 ---
 
