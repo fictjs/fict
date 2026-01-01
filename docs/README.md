@@ -2,6 +2,11 @@
 
 This folder holds design documents and specifications for the Fict project.
 
+## Getting Started
+
+- `reactivity-semantics.md` — **Start here!** Semantic rules for Fict reactivity (sink-driven memoization, closures, call-site expansion)
+- `diagnostic-codes.md` — Complete reference for compiler warnings and errors with fixes
+
 ## Core Specs
 
 - `compiler-spec.md` — Compiler rules, lowering details, and formal semantics (v1.0)
@@ -18,3 +23,8 @@ This folder holds design documents and specifications for the Fict project.
 - `scheduler.md` — Scheduler and batching implementation
 - `cycle-protection.md` — Cycle detection in reactive graphs
 - `error-boundary.md` — Error boundary implementation
+
+## Tooling
+
+- `eslint-rules.md` — ESLint plugin rules
+- `diagnostic-codes.md` — Compiler diagnostic reference
