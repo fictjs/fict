@@ -42,7 +42,7 @@ jobs:
           echo "registry=https://registry.npmjs.org/" >> .npmrc
 
       - name: Publish to NPM
-        run: pnpm release --provenance
+        run: pnpx changeset publish --provenance
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
