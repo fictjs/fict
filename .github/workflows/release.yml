@@ -37,7 +37,7 @@ jobs:
       - run: pnpm build
 
       - name: Publish to NPM
-        run: pnpm release
+        run: pnpm release --provenance
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
