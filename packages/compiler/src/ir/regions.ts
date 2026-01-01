@@ -2001,7 +2001,10 @@ function instructionToStatement(
     const isTracked = ctx.trackedVars.has(baseName)
     const isSignal = ctx.signalVars?.has(baseName) ?? false
     const aliasVars = ctx.aliasVars ?? (ctx.aliasVars = new Set())
-    const dependsOnTracked = expressionUsesTracked(instr.value, ctx)
+    // Check both expression-level dependencies AND pre-computed memoVars (from computeReactiveAccessors)
+    // This handles cases where dependencies are inside callbacks (e.g., array.find(n => n === target))
+    const dependsOnTracked =
+      expressionUsesTracked(instr.value, ctx) || (ctx.memoVars?.has(baseName) ?? false)
     const capturedTracked =
       ctx.externalTracked && ctx.externalTracked.has(baseName) && !declaredVars.has(baseName)
     const isShadowDeclaration = !!declKind && declaredVars.has(baseName)
@@ -2014,6 +2017,19 @@ function instructionToStatement(
     const inRegionMemo = ctx.inRegionMemo ?? false
     const isFunctionValue =
       instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression'
+    // Detect accessor-returning calls ($memo, createMemo, useProp) - these return accessors and should be added to memoVars
+    const isAccessorReturningCall =
+      instr.value.kind === 'CallExpression' &&
+      instr.value.callee.kind === 'Identifier' &&
+      ['$memo', 'createMemo', 'useProp'].includes(instr.value.callee.name)
+    // Detect reactive object calls (mergeProps, prop) - these return objects/getters, not accessors
+    // They should NOT be wrapped in __fictUseMemo AND should NOT be added to memoVars
+    const isReactiveObjectCall =
+      instr.value.kind === 'CallExpression' &&
+      instr.value.callee.kind === 'Identifier' &&
+      ['mergeProps', 'prop'].includes(instr.value.callee.name)
+    // Combined check for skipping memo wrapping
+    const isMemoReturningCall = isAccessorReturningCall || isReactiveObjectCall
     const lowerAssignedValue = (forceAssigned = false) =>
       lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
     const buildMemoCall = (expr: BabelCore.types.Expression) => {
@@ -2082,8 +2098,8 @@ function instructionToStatement(
               t.variableDeclarator(t.identifier(baseName), derivedExpr),
             ])
           }
-          // Track as memo - derived values shouldn't be cached by getter cache
-          ctx.memoVars?.add(baseName)
+          // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
+          if (!isReactiveObjectCall) ctx.memoVars?.add(baseName)
           if (ctx.noMemo) {
             return t.variableDeclaration(normalizedDecl, [
               t.variableDeclarator(
@@ -2092,8 +2108,12 @@ function instructionToStatement(
               ),
             ])
           }
+          // Skip memo wrapping if expression already returns an accessor
           return t.variableDeclaration(normalizedDecl, [
-            t.variableDeclarator(t.identifier(baseName), buildMemoCall(derivedExpr)),
+            t.variableDeclarator(
+              t.identifier(baseName),
+              isMemoReturningCall ? derivedExpr : buildMemoCall(derivedExpr),
+            ),
           ])
         }
       }
@@ -2105,8 +2125,8 @@ function instructionToStatement(
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
           ])
         }
-        // Track as memo - derived values shouldn't be cached by getter cache
-        ctx.memoVars?.add(baseName)
+        // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
+        if (!isReactiveObjectCall) ctx.memoVars?.add(baseName)
         if (ctx.noMemo) {
           return t.variableDeclaration(normalizedDecl, [
             t.variableDeclarator(
@@ -2115,8 +2135,12 @@ function instructionToStatement(
             ),
           ])
         }
+        // Skip memo wrapping if expression already returns an accessor
         return t.variableDeclaration(normalizedDecl, [
-          t.variableDeclarator(t.identifier(baseName), buildMemoCall(derivedExpr)),
+          t.variableDeclarator(
+            t.identifier(baseName),
+            isMemoReturningCall ? derivedExpr : buildMemoCall(derivedExpr),
+          ),
         ])
       }
 
@@ -2198,8 +2222,8 @@ function instructionToStatement(
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
           ])
         }
-        // Track as memo - derived values shouldn't be cached by getter cache
-        ctx.memoVars?.add(baseName)
+        // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
+        if (!isReactiveObjectCall) ctx.memoVars?.add(baseName)
         if (ctx.noMemo) {
           return t.variableDeclaration('const', [
             t.variableDeclarator(
@@ -2208,8 +2232,12 @@ function instructionToStatement(
             ),
           ])
         }
+        // Skip memo wrapping if expression already returns an accessor
         return t.variableDeclaration('const', [
-          t.variableDeclarator(t.identifier(baseName), buildMemoCall(derivedExpr)),
+          t.variableDeclarator(
+            t.identifier(baseName),
+            isMemoReturningCall ? derivedExpr : buildMemoCall(derivedExpr),
+          ),
         ])
       }
 
@@ -2225,25 +2253,19 @@ function instructionToStatement(
           t.variableDeclarator(t.identifier(baseName), derivedExpr),
         ])
       }
-      // Track as memo - derived values shouldn't be cached by getter cache
-      if (ctx.memoVars?.has(baseName)) {
-        if (buildMemoCall) {
-          // const derivedExprLambda = t.arrowFunctionExpression([], derivedExpr)
-          console.log('Declaring memo var:', baseName)
-          return t.variableDeclaration('const', [
-            t.variableDeclarator(t.identifier(baseName), buildMemoCall(derivedExpr)),
-          ])
-        }
-      }
-
-      ctx.memoVars?.add(baseName)
+      // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
+      if (!isReactiveObjectCall) ctx.memoVars?.add(baseName)
       if (ctx.noMemo) {
         return t.variableDeclaration('const', [
           t.variableDeclarator(t.identifier(baseName), t.arrowFunctionExpression([], derivedExpr)),
         ])
       }
+      // Skip memo wrapping if expression already returns an accessor
       return t.variableDeclaration('const', [
-        t.variableDeclarator(t.identifier(baseName), buildMemoCall(derivedExpr)),
+        t.variableDeclarator(
+          t.identifier(baseName),
+          isMemoReturningCall ? derivedExpr : buildMemoCall(derivedExpr),
+        ),
       ])
     }
 

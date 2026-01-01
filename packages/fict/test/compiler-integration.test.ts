@@ -3521,4 +3521,909 @@ describe('compiler + fict integration', () => {
 
     dispose()
   })
+
+  // ============================================================
+  // Alias & Reference Escape Test Suite
+  // Tests for $state variables wrapped in functions, objects, arrays, etc.
+  // ============================================================
+
+  describe('alias and reference escape', () => {
+    it('handles $state wrapped in simple getter function', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let count = $state(0)
+          const get = () => count
+
+          return (
+            <div>
+              <p data-testid="value">{get()}</p>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getValue = () => container.querySelector('[data-testid="value"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      expect(getValue()).toBe('0')
+
+      incBtn().click()
+      await tick()
+      expect(getValue()).toBe('1')
+
+      incBtn().click()
+      await tick()
+      expect(getValue()).toBe('2')
+
+      dispose()
+    })
+
+    it('handles $state wrapped in object property getter', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let count = $state(0)
+          const obj = {
+            getValue: () => count,
+            increment: () => count++
+          }
+
+          return (
+            <div>
+              <p data-testid="value">{obj.getValue()}</p>
+              <button data-testid="inc" onClick={obj.increment}>Inc</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getValue = () => container.querySelector('[data-testid="value"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      expect(getValue()).toBe('0')
+
+      incBtn().click()
+      await tick()
+      expect(getValue()).toBe('1')
+
+      incBtn().click()
+      await tick()
+      expect(getValue()).toBe('2')
+
+      dispose()
+    })
+
+    it('handles $state accessed inside array map callback', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let multiplier = $state(1)
+          const numbers = [1, 2, 3]
+
+          return (
+            <div>
+              <p data-testid="values">{numbers.map(n => n * multiplier).join(',')}</p>
+              <button data-testid="inc" onClick={() => multiplier++}>Double</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getValues = () => container.querySelector('[data-testid="values"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      expect(getValues()).toBe('1,2,3')
+
+      incBtn().click()
+      await tick()
+      expect(getValues()).toBe('2,4,6')
+
+      incBtn().click()
+      await tick()
+      expect(getValues()).toBe('3,6,9')
+
+      dispose()
+    })
+
+    it('handles $state in nested getter (higher-order function)', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let count = $state(0)
+          const createGetter = () => () => count
+
+          const getter = createGetter()
+
+          return (
+            <div>
+              <p data-testid="value">{getter()}</p>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getValue = () => container.querySelector('[data-testid="value"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      expect(getValue()).toBe('0')
+
+      incBtn().click()
+      await tick()
+      expect(getValue()).toBe('1')
+
+      incBtn().click()
+      await tick()
+      expect(getValue()).toBe('2')
+
+      dispose()
+    })
+
+    it('handles $state in array element as getter', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let count = $state(0)
+          const getters = [() => count, () => count * 2]
+
+          return (
+            <div>
+              <p data-testid="single">{getters[0]()}</p>
+              <p data-testid="double">{getters[1]()}</p>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getSingle = () => container.querySelector('[data-testid="single"]')?.textContent
+      const getDouble = () => container.querySelector('[data-testid="double"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      expect(getSingle()).toBe('0')
+      expect(getDouble()).toBe('0')
+
+      incBtn().click()
+      await tick()
+      expect(getSingle()).toBe('1')
+      expect(getDouble()).toBe('2')
+
+      incBtn().click()
+      await tick()
+      expect(getSingle()).toBe('2')
+      expect(getDouble()).toBe('4')
+
+      dispose()
+    })
+
+    it('handles $state in reduce callback', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let offset = $state(0)
+          const numbers = [1, 2, 3, 4, 5]
+
+          return (
+            <div>
+              <p data-testid="sum">{numbers.reduce((acc, n) => acc + n + offset, 0)}</p>
+              <button data-testid="inc" onClick={() => offset++}>Add Offset</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getSum = () => container.querySelector('[data-testid="sum"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      // 1+2+3+4+5 = 15, with offset 0
+      expect(getSum()).toBe('15')
+
+      incBtn().click()
+      await tick()
+      // 1+2+3+4+5 + 5*1 = 20
+      expect(getSum()).toBe('20')
+
+      incBtn().click()
+      await tick()
+      // 1+2+3+4+5 + 5*2 = 25
+      expect(getSum()).toBe('25')
+
+      dispose()
+    })
+
+    it('handles $state in filter callback', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let threshold = $state(3)
+          const numbers = [1, 2, 3, 4, 5]
+
+          return (
+            <div>
+              <p data-testid="filtered">{numbers.filter(n => n > threshold).join(',')}</p>
+              <button data-testid="dec" onClick={() => threshold--}>Lower Threshold</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getFiltered = () => container.querySelector('[data-testid="filtered"]')?.textContent
+      const decBtn = () => container.querySelector('[data-testid="dec"]') as HTMLButtonElement
+
+      expect(getFiltered()).toBe('4,5')
+
+      decBtn().click()
+      await tick()
+      expect(getFiltered()).toBe('3,4,5')
+
+      decBtn().click()
+      await tick()
+      expect(getFiltered()).toBe('2,3,4,5')
+
+      dispose()
+    })
+
+    it('handles $state accessed through closure in setTimeout callback', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let count = $state(0)
+          let snapshots = $state<number[]>([])
+
+          const captureWithDelay = () => {
+            setTimeout(() => {
+              snapshots = [...snapshots, count]
+            }, 0)
+          }
+
+          return (
+            <div>
+              <p data-testid="count">{count}</p>
+              <p data-testid="snapshots">{snapshots.join(',')}</p>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+              <button data-testid="capture" onClick={captureWithDelay}>Capture</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getCount = () => container.querySelector('[data-testid="count"]')?.textContent
+      const getSnapshots = () => container.querySelector('[data-testid="snapshots"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+      const captureBtn = () =>
+        container.querySelector('[data-testid="capture"]') as HTMLButtonElement
+
+      expect(getCount()).toBe('0')
+      expect(getSnapshots()).toBe('')
+
+      captureBtn().click()
+      await new Promise(r => setTimeout(r, 10))
+      await tick()
+      expect(getSnapshots()).toBe('0')
+
+      incBtn().click()
+      await tick()
+      expect(getCount()).toBe('1')
+
+      incBtn().click()
+      await tick()
+      expect(getCount()).toBe('2')
+
+      captureBtn().click()
+      await new Promise(r => setTimeout(r, 10))
+      await tick()
+      expect(getSnapshots()).toBe('0,2')
+
+      dispose()
+    })
+
+    it('handles multiple $state variables in single getter', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let a = $state(1)
+          let b = $state(2)
+          let c = $state(3)
+
+          const sum = () => a + b + c
+          const product = () => a * b * c
+
+          return (
+            <div>
+              <p data-testid="sum">{sum()}</p>
+              <p data-testid="product">{product()}</p>
+              <button data-testid="inc-a" onClick={() => a++}>A++</button>
+              <button data-testid="inc-b" onClick={() => b++}>B++</button>
+              <button data-testid="inc-c" onClick={() => c++}>C++</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getSum = () => container.querySelector('[data-testid="sum"]')?.textContent
+      const getProduct = () => container.querySelector('[data-testid="product"]')?.textContent
+      const incA = () => container.querySelector('[data-testid="inc-a"]') as HTMLButtonElement
+      const incB = () => container.querySelector('[data-testid="inc-b"]') as HTMLButtonElement
+      const incC = () => container.querySelector('[data-testid="inc-c"]') as HTMLButtonElement
+
+      expect(getSum()).toBe('6') // 1+2+3
+      expect(getProduct()).toBe('6') // 1*2*3
+
+      incA().click()
+      await tick()
+      expect(getSum()).toBe('7') // 2+2+3
+      expect(getProduct()).toBe('12') // 2*2*3
+
+      incB().click()
+      await tick()
+      expect(getSum()).toBe('8') // 2+3+3
+      expect(getProduct()).toBe('18') // 2*3*3
+
+      incC().click()
+      await tick()
+      expect(getSum()).toBe('9') // 2+3+4
+      expect(getProduct()).toBe('24') // 2*3*4
+
+      dispose()
+    })
+
+    it('handles $state in conditional getter', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let count = $state(0)
+          let useDouble = $state(false)
+
+          const getValue = () => useDouble ? count * 2 : count
+
+          return (
+            <div>
+              <p data-testid="value">{getValue()}</p>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+              <button data-testid="toggle" onClick={() => useDouble = !useDouble}>Toggle Double</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getValue = () => container.querySelector('[data-testid="value"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+      const toggleBtn = () => container.querySelector('[data-testid="toggle"]') as HTMLButtonElement
+
+      expect(getValue()).toBe('0')
+
+      incBtn().click()
+      await tick()
+      expect(getValue()).toBe('1')
+
+      toggleBtn().click()
+      await tick()
+      expect(getValue()).toBe('2') // now doubled
+
+      incBtn().click()
+      await tick()
+      expect(getValue()).toBe('4') // 2 * 2
+
+      toggleBtn().click()
+      await tick()
+      expect(getValue()).toBe('2') // back to normal
+
+      dispose()
+    })
+
+    it('handles $state in find callback (both array and predicate depend on $state)', async () => {
+      // When finding in a $state array with a $state predicate, found is auto-derived
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let target = $state(3)
+          let numbers = $state([1, 2, 3, 4, 5])
+
+          // When both are $state, this becomes an auto-derived memo
+          const found = numbers.find(n => n === target)
+
+          return (
+            <div>
+              <p data-testid="found">{found ?? 'not found'}</p>
+              <button data-testid="next" onClick={() => target++}>Next</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getFound = () => container.querySelector('[data-testid="found"]')?.textContent
+      const nextBtn = () => container.querySelector('[data-testid="next"]') as HTMLButtonElement
+
+      expect(getFound()).toBe('3')
+
+      nextBtn().click()
+      await tick()
+      expect(getFound()).toBe('4')
+
+      nextBtn().click()
+      await tick()
+      expect(getFound()).toBe('5')
+
+      nextBtn().click()
+      await tick()
+      expect(getFound()).toBe('not found')
+
+      dispose()
+    })
+
+    // Verify: When the array is a plain value but the predicate depends on $state,
+    // is the derived value correctly reactive?
+    it('handles $state in find callback (only predicate depends on $state)', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let target = $state(3)
+          const numbers = [1, 2, 3, 4, 5]  // plain array
+          const found = numbers.find(n => n === target)
+
+          return (
+            <div>
+              <p data-testid="found">{found ?? 'not found'}</p>
+              <button data-testid="next" onClick={() => target++}>Next</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getFound = () => container.querySelector('[data-testid="found"]')?.textContent
+      const nextBtn = () => container.querySelector('[data-testid="next"]') as HTMLButtonElement
+
+      expect(getFound()).toBe('3')
+
+      nextBtn().click()
+      await tick()
+      expect(getFound()).toBe('4')
+
+      nextBtn().click()
+      await tick()
+      expect(getFound()).toBe('5')
+
+      nextBtn().click()
+      await tick()
+      expect(getFound()).toBe('not found')
+
+      dispose()
+    })
+
+    it('handles $state passed to external utility function', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        const format = (value: number) => \`Value: \${value}\`
+
+        function App() {
+          let count = $state(0)
+
+          return (
+            <div>
+              <p data-testid="formatted">{format(count)}</p>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getFormatted = () => container.querySelector('[data-testid="formatted"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      expect(getFormatted()).toBe('Value: 0')
+
+      incBtn().click()
+      await tick()
+      expect(getFormatted()).toBe('Value: 1')
+
+      incBtn().click()
+      await tick()
+      expect(getFormatted()).toBe('Value: 2')
+
+      dispose()
+    })
+
+    it('handles $state in IIFE returning getter', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let count = $state(0)
+
+          const getter = (() => {
+            return () => count * 10
+          })()
+
+          return (
+            <div>
+              <p data-testid="value">{getter()}</p>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getValue = () => container.querySelector('[data-testid="value"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      expect(getValue()).toBe('0')
+
+      incBtn().click()
+      await tick()
+      expect(getValue()).toBe('10')
+
+      incBtn().click()
+      await tick()
+      expect(getValue()).toBe('20')
+
+      dispose()
+    })
+
+    it('handles $state in deeply nested object getter', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let count = $state(0)
+
+          const api = {
+            data: {
+              getters: {
+                count: () => count,
+                doubled: () => count * 2
+              }
+            }
+          }
+
+          return (
+            <div>
+              <p data-testid="count">{api.data.getters.count()}</p>
+              <p data-testid="doubled">{api.data.getters.doubled()}</p>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getCount = () => container.querySelector('[data-testid="count"]')?.textContent
+      const getDoubled = () => container.querySelector('[data-testid="doubled"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      expect(getCount()).toBe('0')
+      expect(getDoubled()).toBe('0')
+
+      incBtn().click()
+      await tick()
+      expect(getCount()).toBe('1')
+      expect(getDoubled()).toBe('2')
+
+      incBtn().click()
+      await tick()
+      expect(getCount()).toBe('2')
+      expect(getDoubled()).toBe('4')
+
+      dispose()
+    })
+
+    it('handles $state in spread into array with getters', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let count = $state(0)
+
+          const baseGetters = [() => count]
+          const allGetters = [...baseGetters, () => count + 1]
+
+          return (
+            <div>
+              <p data-testid="base">{allGetters[0]()}</p>
+              <p data-testid="plus-one">{allGetters[1]()}</p>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getBase = () => container.querySelector('[data-testid="base"]')?.textContent
+      const getPlusOne = () => container.querySelector('[data-testid="plus-one"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      expect(getBase()).toBe('0')
+      expect(getPlusOne()).toBe('1')
+
+      incBtn().click()
+      await tick()
+      expect(getBase()).toBe('1')
+      expect(getPlusOne()).toBe('2')
+
+      incBtn().click()
+      await tick()
+      expect(getBase()).toBe('2')
+      expect(getPlusOne()).toBe('3')
+
+      dispose()
+    })
+
+    it('handles derived value (memo) wrapped in getter', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let count = $state(0)
+          const doubled = count * 2
+          const getDoubled = () => doubled
+
+          return (
+            <div>
+              <p data-testid="doubled">{getDoubled()}</p>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getDoubled = () => container.querySelector('[data-testid="doubled"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      expect(getDoubled()).toBe('0')
+
+      incBtn().click()
+      await tick()
+      expect(getDoubled()).toBe('2')
+
+      incBtn().click()
+      await tick()
+      expect(getDoubled()).toBe('4')
+
+      dispose()
+    })
+
+    it('handles $state with getter returned from useCallback-like pattern', async () => {
+      // Note: When destructuring hook results, function properties are treated as accessors
+      // Use explicit arrow function wrapper for event handlers: onClick={() => increment()}
+      const source = `
+        import { $state, render } from 'fict'
+
+        function useValue() {
+          let value = $state(0)
+          return {
+            getValue: () => value,
+            setValue: (v: number) => value = v,
+            increment: () => value++
+          }
+        }
+
+        function App() {
+          const { getValue, increment } = useValue()
+
+          return (
+            <div>
+              <p data-testid="value">{getValue()}</p>
+              <button data-testid="inc" onClick={() => increment()}>Inc</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getValue = () => container.querySelector('[data-testid="value"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      expect(getValue()).toBe('0')
+
+      incBtn().click()
+      await tick()
+      expect(getValue()).toBe('1')
+
+      incBtn().click()
+      await tick()
+      expect(getValue()).toBe('2')
+
+      dispose()
+    })
+
+    it('handles $state in object shorthand with getter method', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let count = $state(0)
+
+          const methods = {
+            getCount() { return count },
+            increment() { count++ }
+          }
+
+          return (
+            <div>
+              <p data-testid="count">{methods.getCount()}</p>
+              <button data-testid="inc" onClick={methods.increment}>Inc</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getCount = () => container.querySelector('[data-testid="count"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      expect(getCount()).toBe('0')
+
+      incBtn().click()
+      await tick()
+      expect(getCount()).toBe('1')
+
+      incBtn().click()
+      await tick()
+      expect(getCount()).toBe('2')
+
+      dispose()
+    })
+  })
 })

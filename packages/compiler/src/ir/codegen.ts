@@ -1023,9 +1023,15 @@ function collectExpressionIdentifiersDeep(
         (expr.callee.name === '$state' ||
           expr.callee.name === '$effect' ||
           expr.callee.name === '$store')
-      if (!isMacroCallee) {
+      // For IIFEs (callee is a function literal), don't traverse into the callee body.
+      // IIFEs are snapshots - they execute once and capture values at that moment.
+      // Only traverse into the callee for regular calls (identifiers, member expressions).
+      const isIIFE =
+        expr.callee.kind === 'ArrowFunction' || expr.callee.kind === 'FunctionExpression'
+      if (!isMacroCallee && !isIIFE) {
         collectExpressionIdentifiersDeep(expr.callee as Expression, into, bound)
       }
+      // Always traverse into arguments - this handles callbacks like array.find(n => n === target)
       expr.arguments.forEach(arg =>
         collectExpressionIdentifiersDeep(arg as Expression, into, bound),
       )
@@ -1065,72 +1071,87 @@ function collectExpressionIdentifiersDeep(
       )
       return
     case 'ArrowFunction': {
-      const nextBound = new Set(bound)
-      expr.params.forEach(p => nextBound.add(deSSAVarName(p.name)))
+      // Collect identifiers used in the function body, but use SHALLOW traversal
+      // to avoid treating nested returned functions as dependencies.
+      // E.g., for `numbers.find(n => n === target)`: detect `target`
+      // But for `(() => { return () => count })()`: don't detect `count` in the inner function
+      const tempSet = new Set<string>()
       if (expr.isExpression && expr.body && !Array.isArray(expr.body)) {
-        collectExpressionIdentifiersDeep(expr.body as Expression, into, nextBound)
+        collectExpressionIdentifiers(expr.body as Expression, tempSet)
       } else if (Array.isArray(expr.body)) {
         for (const block of expr.body) {
           for (const instr of block.instructions) {
             if (instr.kind === 'Assign') {
-              collectExpressionIdentifiersDeep(instr.value, into, nextBound)
+              collectExpressionIdentifiers(instr.value, tempSet)
             } else if (instr.kind === 'Expression') {
-              collectExpressionIdentifiersDeep(instr.value, into, nextBound)
+              collectExpressionIdentifiers(instr.value, tempSet)
             } else if (instr.kind === 'Phi') {
-              instr.sources.forEach(src => addIdentifier(src.id.name))
+              instr.sources.forEach(src => tempSet.add(deSSAVarName(src.id.name)))
             }
           }
           const term = block.terminator
           if (term.kind === 'Branch') {
-            collectExpressionIdentifiersDeep(term.test, into, nextBound)
+            collectExpressionIdentifiers(term.test, tempSet)
           } else if (term.kind === 'Switch') {
-            collectExpressionIdentifiersDeep(term.discriminant, into, nextBound)
+            collectExpressionIdentifiers(term.discriminant, tempSet)
             term.cases.forEach(c => {
-              if (c.test) collectExpressionIdentifiersDeep(c.test, into, nextBound)
+              if (c.test) collectExpressionIdentifiers(c.test, tempSet)
             })
           } else if (term.kind === 'ForOf') {
-            collectExpressionIdentifiersDeep(term.iterable, into, nextBound)
+            collectExpressionIdentifiers(term.iterable, tempSet)
           } else if (term.kind === 'ForIn') {
-            collectExpressionIdentifiersDeep(term.object, into, nextBound)
+            collectExpressionIdentifiers(term.object, tempSet)
           } else if (term.kind === 'Return' && term.argument) {
-            collectExpressionIdentifiersDeep(term.argument, into, nextBound)
+            collectExpressionIdentifiers(term.argument, tempSet)
           } else if (term.kind === 'Throw') {
-            collectExpressionIdentifiersDeep(term.argument, into, nextBound)
+            collectExpressionIdentifiers(term.argument, tempSet)
           }
         }
+      }
+      // Filter out bound parameters
+      const paramNames = new Set(expr.params.map(p => deSSAVarName(p.name)))
+      for (const name of bound) paramNames.add(name)
+      for (const dep of tempSet) {
+        if (!paramNames.has(dep)) into.add(dep)
       }
       return
     }
     case 'FunctionExpression': {
-      const nextBound = new Set(bound)
-      expr.params.forEach(p => nextBound.add(deSSAVarName(p.name)))
+      // Same logic as ArrowFunction - use shallow traversal inside function bodies
+      const tempSet = new Set<string>()
       for (const block of expr.body) {
         for (const instr of block.instructions) {
           if (instr.kind === 'Assign') {
-            collectExpressionIdentifiersDeep(instr.value, into, nextBound)
+            collectExpressionIdentifiers(instr.value, tempSet)
           } else if (instr.kind === 'Expression') {
-            collectExpressionIdentifiersDeep(instr.value, into, nextBound)
+            collectExpressionIdentifiers(instr.value, tempSet)
           } else if (instr.kind === 'Phi') {
-            instr.sources.forEach(src => addIdentifier(src.id.name))
+            instr.sources.forEach(src => tempSet.add(deSSAVarName(src.id.name)))
           }
         }
         const term = block.terminator
         if (term.kind === 'Branch') {
-          collectExpressionIdentifiersDeep(term.test, into, nextBound)
+          collectExpressionIdentifiers(term.test, tempSet)
         } else if (term.kind === 'Switch') {
-          collectExpressionIdentifiersDeep(term.discriminant, into, nextBound)
+          collectExpressionIdentifiers(term.discriminant, tempSet)
           term.cases.forEach(c => {
-            if (c.test) collectExpressionIdentifiersDeep(c.test, into, nextBound)
+            if (c.test) collectExpressionIdentifiers(c.test, tempSet)
           })
         } else if (term.kind === 'ForOf') {
-          collectExpressionIdentifiersDeep(term.iterable, into, nextBound)
+          collectExpressionIdentifiers(term.iterable, tempSet)
         } else if (term.kind === 'ForIn') {
-          collectExpressionIdentifiersDeep(term.object, into, nextBound)
+          collectExpressionIdentifiers(term.object, tempSet)
         } else if (term.kind === 'Return' && term.argument) {
-          collectExpressionIdentifiersDeep(term.argument, into, nextBound)
+          collectExpressionIdentifiers(term.argument, tempSet)
         } else if (term.kind === 'Throw') {
-          collectExpressionIdentifiersDeep(term.argument, into, nextBound)
+          collectExpressionIdentifiers(term.argument, tempSet)
         }
+      }
+      // Filter out bound parameters
+      const paramNames = new Set(expr.params.map(p => deSSAVarName(p.name)))
+      for (const name of bound) paramNames.add(name)
+      for (const dep of tempSet) {
+        if (!paramNames.has(dep)) into.add(dep)
       }
       return
     }
@@ -1198,6 +1219,14 @@ function getExpressionIdentifiers(expr?: Expression | null): Set<string> {
   const deps = new Set<string>()
   if (expr) {
     collectExpressionIdentifiers(expr, deps)
+  }
+  return deps
+}
+
+function getExpressionIdentifiersDeep(expr?: Expression | null): Set<string> {
+  const deps = new Set<string>()
+  if (expr) {
+    collectExpressionIdentifiersDeep(expr, deps)
   }
   return deps
 }
@@ -1339,7 +1368,8 @@ function computeReactiveAccessors(
     for (const instr of block.instructions) {
       if (instr.kind === 'Assign') {
         const target = deSSAVarName(instr.target.name)
-        const dataDeps = getExpressionIdentifiers(instr.value)
+        // Use deep traversal to capture dependencies inside callbacks (e.g., array.find(n => n === state))
+        const dataDeps = getExpressionIdentifiersDeep(instr.value)
         addDepsToTarget(target, dataDeps, dataDepsByTarget)
         const controlDeps = controlDepsByInstr.get(instr) ?? new Set<string>()
         addDepsToTarget(target, controlDeps, controlDepsByTarget)
@@ -1405,7 +1435,8 @@ function computeReactiveAccessors(
           const target = deSSAVarName(instr.target.name)
           if (isFunctionVar(target)) continue
 
-          const dataDeps = getExpressionIdentifiers(instr.value)
+          // Use deep traversal to capture dependencies inside callbacks
+          const dataDeps = getExpressionIdentifiersDeep(instr.value)
           const controlDepsForInstr = controlDepsByInstr.get(instr) ?? new Set<string>()
           const hasDataDep = Array.from(dataDeps).some(dep => tracked.has(dep))
           const hasControlDep = Array.from(controlDepsForInstr).some(dep => tracked.has(dep))
@@ -1417,7 +1448,13 @@ function computeReactiveAccessors(
             tracked.add(target)
             changed = true
           }
-          if (hasDataDep && !isSignal(target) && !isStore(target)) {
+          // Check if this is a reactive object call (mergeProps, prop) - should not be added to memo
+          // These return objects/getters, not accessor functions
+          const isReactiveObjectCall =
+            instr.value.kind === 'CallExpression' &&
+            instr.value.callee.kind === 'Identifier' &&
+            ['mergeProps', 'prop'].includes(instr.value.callee.name)
+          if (hasDataDep && !isSignal(target) && !isStore(target) && !isReactiveObjectCall) {
             memo.add(target)
           }
         } else if (instr.kind === 'Phi') {
@@ -5176,10 +5213,11 @@ function lowerInstructionWithScopes(
 
   if (instr.kind === 'Assign') {
     const targetName = instr.target.name
+    const targetBase = deSSAVarName(targetName)
     const valueExpr = lowerExpression(instr.value, ctx)
 
-    // Check if target is a tracked variable
-    if (ctx.trackedVars.has(targetName)) {
+    // Check if target is a tracked variable (use de-versioned name for lookup)
+    if (ctx.trackedVars.has(targetBase)) {
       // Wrap in memo if it depends on other tracked vars
       ctx.helpersUsed.add('useMemo')
       return t.variableDeclaration('const', [
