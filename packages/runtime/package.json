@@ -62,7 +62,7 @@
     "clean": "rm -rf dist coverage"
   },
   "devDependencies": {
-    "jsdom": "^27.2.0",
+    "jsdom": "^27.4.0",
     "tsup": "^8.5.1"
   }
 }
