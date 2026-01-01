@@ -2215,6 +2215,14 @@ function lowerExpressionImpl(
         (expr.callee.kind === 'ArrowFunction' || expr.callee.kind === 'FunctionExpression') &&
         expr.arguments.length === 0 &&
         expr.callee.params.length === 0
+      const calleeName = expr.callee.kind === 'Identifier' ? deSSAVarName(expr.callee.name) : null
+      const calleeIsMemoAccessor = !!calleeName && ctx.memoVars?.has(calleeName)
+      const calleeIsSignalLike =
+        !!calleeName && (ctx.signalVars?.has(calleeName) || ctx.storeVars?.has(calleeName))
+      if (calleeIsMemoAccessor && !calleeIsSignalLike && expr.arguments.length > 0) {
+        const loweredArgs = expr.arguments.map(a => lowerExpression(a, ctx))
+        return t.callExpression(t.callExpression(t.identifier(calleeName), []), loweredArgs)
+      }
       const lowerCallee = () =>
         isIIFE
           ? withNonReactiveScope(ctx, () => lowerExpression(expr.callee, ctx))
@@ -2678,15 +2686,18 @@ function lowerDomExpression(
   expr: Expression,
   ctx: CodegenContext,
   region?: RegionInfo | null,
+  options?: { skipHookAccessors?: boolean; skipRegionRootOverride?: boolean },
 ): BabelCore.types.Expression {
   let lowered = lowerExpression(expr, ctx)
+  const skipHookAccessors = options?.skipHookAccessors ?? false
   if (
+    !skipHookAccessors &&
     ctx.t.isMemberExpression(lowered) &&
     ctx.t.isIdentifier(lowered.object) &&
     ctx.hookResultVarMap?.has(deSSAVarName(lowered.object.name))
   ) {
     lowered = ctx.t.callExpression(lowered, [])
-  } else if (ctx.t.isIdentifier(lowered)) {
+  } else if (!skipHookAccessors && ctx.t.isIdentifier(lowered)) {
     const hookName = ctx.hookResultVarMap?.get(deSSAVarName(lowered.name))
     if (hookName) {
       const info = getHookReturnInfo(hookName, ctx)
@@ -2695,7 +2706,9 @@ function lowerDomExpression(
       }
     }
   }
-  return applyRegionMetadataToExpression(lowered, ctx, region)
+  return applyRegionMetadataToExpression(lowered, ctx, region, {
+    skipRootOverride: options?.skipRegionRootOverride,
+  })
 }
 
 function lowerJSXChildNonFineGrained(
@@ -2998,12 +3011,14 @@ export function applyRegionMetadataToExpression(
   expr: BabelCore.types.Expression,
   ctx: CodegenContext,
   regionOverride?: RegionInfo | null,
+  options?: { skipRootOverride?: boolean },
 ): BabelCore.types.Expression {
   if (ctx.inReturn && ctx.currentFnIsHook) {
     return expr
   }
   const region = regionOverride ?? ctx.currentRegion
   if (!region) return expr
+  const skipRootOverride = options?.skipRootOverride ?? false
 
   const metadata = regionInfoToMetadata(region)
   const state: { identifierOverrides?: RegionOverrideMap } = {}
@@ -3069,7 +3084,7 @@ export function applyRegionMetadataToExpression(
     return expr
   }
 
-  if (ctx.t.isIdentifier(expr)) {
+  if (!skipRootOverride && ctx.t.isIdentifier(expr)) {
     const key = normalizeDependencyKey(expr.name)
     const direct = overrides[key] ?? overrides[expr.name]
     if (direct) {
@@ -3078,7 +3093,7 @@ export function applyRegionMetadataToExpression(
   }
 
   const cloned = ctx.t.cloneNode(expr, true) as BabelCore.types.Expression
-  replaceIdentifiersWithOverrides(cloned, overrides, ctx.t)
+  replaceIdentifiersWithOverrides(cloned, overrides, ctx.t, undefined, undefined, skipRootOverride)
   return cloned
 }
 
@@ -3092,6 +3107,7 @@ function replaceIdentifiersWithOverrides(
   t: typeof BabelCore.types,
   parentKind?: string,
   parentKey?: string,
+  skipCurrentNode = false,
 ): void {
   const isCallTarget =
     parentKey === 'callee' &&
@@ -3132,7 +3148,10 @@ function replaceIdentifiersWithOverrides(
     return names
   }
 
-  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node as any)) {
+  if (
+    !skipCurrentNode &&
+    (t.isMemberExpression(node) || t.isOptionalMemberExpression(node as any))
+  ) {
     const path = getDependencyPathFromNode(node, t)
     const normalized = path ? normalizeDependencyKey(path) : null
     const override = (normalized && overrides[normalized]) || (path ? overrides[path] : undefined)
@@ -3143,7 +3162,7 @@ function replaceIdentifiersWithOverrides(
     }
   }
 
-  if (t.isIdentifier(node)) {
+  if (!skipCurrentNode && t.isIdentifier(node)) {
     const key = normalizeDependencyKey(node.name)
     const override = overrides[key] ?? overrides[node.name]
     if (override && !isCallTarget) {
@@ -3196,6 +3215,7 @@ function replaceIdentifiersWithOverrides(
             t,
             node.type,
             key,
+            false,
           )
         }
       }
@@ -3809,7 +3829,10 @@ function lowerIntrinsicElement(
       const shouldWrapHandler = isExpressionReactive(binding.expr, ctx)
       const prevWrapTracked = ctx.wrapTrackedExpressions
       ctx.wrapTrackedExpressions = false
-      const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
+      const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion, {
+        skipHookAccessors: true,
+        skipRegionRootOverride: true,
+      })
       ctx.wrapTrackedExpressions = prevWrapTracked
       const eventParam = t.identifier('_e')
       const isFn = t.isArrowFunctionExpression(valueExpr) || t.isFunctionExpression(valueExpr)

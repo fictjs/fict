@@ -92,6 +92,44 @@ export function unwrap<T>(value: MaybeReactive<T>): T {
   return isReactive(value) ? (value as () => T)() : value
 }
 
+/**
+ * Invoke an event handler or handler accessor in a safe way.
+ * Supports handlers that return another handler and handlers that expect an
+ * optional data payload followed by the event.
+ */
+export function callEventHandler(
+  handler: EventListenerOrEventListenerObject | null | undefined,
+  event: Event,
+  node?: EventTarget | null,
+  data?: unknown,
+): void {
+  if (!handler) return
+
+  const context = (node ?? event.currentTarget ?? undefined) as EventTarget | undefined
+  const invoke = (fn: EventListenerOrEventListenerObject | null | undefined): void => {
+    if (typeof fn === 'function') {
+      const result =
+        data === undefined
+          ? (fn as EventListener).call(context, event)
+          : (fn as (data: unknown, e: Event) => unknown).call(context, data, event)
+
+      if (typeof result === 'function' && result !== fn) {
+        if (data === undefined) {
+          ;(result as EventListener).call(context, event)
+        } else {
+          ;(result as (data: unknown, e: Event) => unknown).call(context, data, event)
+        }
+      } else if (result && typeof (result as EventListenerObject).handleEvent === 'function') {
+        ;(result as EventListenerObject).handleEvent.call(result as EventListenerObject, event)
+      }
+    } else if (fn && typeof fn.handleEvent === 'function') {
+      fn.handleEvent.call(fn, event)
+    }
+  }
+
+  invoke(handler)
+}
+
 export const PRIMITIVE_PROXY = Symbol('fict:primitive-proxy')
 const PRIMITIVE_PROXY_RAW_VALUE = Symbol('fict:primitive-proxy:raw-value')
 
@@ -908,15 +946,10 @@ function globalEventHandler(e: Event): void {
       const hasData = rawData !== undefined
       const resolvedNodeData = hasData ? resolveData(rawData) : undefined
       if (typeof handler === 'function') {
-        // Handler with optional data: handler(data, event?) or handler(event)
-        if (hasData) {
-          ;(handler as (data: unknown, e: Event) => void).call(node, resolvedNodeData, e)
-        } else {
-          ;(handler as EventListener).call(node, e)
-        }
+        callEventHandler(handler, e, node, hasData ? resolvedNodeData : undefined)
       } else if (Array.isArray(handler)) {
         const tupleData = resolveData(handler[1])
-        ;(handler[0] as (data: unknown, e: Event) => void).call(node, tupleData, e)
+        callEventHandler(handler[0], e, node, tupleData)
       }
       if (e.cancelBubble) return false
     }
@@ -1050,31 +1083,20 @@ export function bindEvent(
     // Ensure global delegation is active for this event
     delegateEvents([eventName])
 
-    const createWrapped = (
-      resolve: () => EventListenerOrEventListenerObject | null | undefined,
-    ) => {
-      const wrapped = function (this: any, ...args: any[]) {
-        try {
-          const fn = resolve()
-          if (typeof fn === 'function') {
-            return (fn as EventListener).apply(this, args as [Event])
-          } else if (fn && typeof fn.handleEvent === 'function') {
-            return fn.handleEvent.apply(fn, args as [Event])
-          }
-        } catch (err) {
-          handleError(err, { source: 'event', eventName }, rootRef)
-        }
-      }
-      return wrapped
-    }
-
     const resolveHandler = isReactive(handler)
       ? (handler as () => EventListenerOrEventListenerObject | null | undefined)
       : () => handler
 
     // Cache a single wrapper that resolves the latest handler when invoked
     // @ts-expect-error - using dynamic property for delegation
-    el[key] = createWrapped(resolveHandler)
+    el[key] = function (this: any, ...args: any[]) {
+      try {
+        const fn = resolveHandler()
+        callEventHandler(fn as EventListenerOrEventListenerObject, args[0] as Event, el)
+      } catch (err) {
+        handleError(err, { source: 'event', eventName }, rootRef)
+      }
+    }
 
     // Cleanup: remove property (no effect needed for static or reactive)
     return () => {
@@ -1091,11 +1113,7 @@ export function bindEvent(
   const wrapped: EventListener = event => {
     try {
       const resolved = getHandler()
-      if (typeof resolved === 'function') {
-        ;(resolved as EventListener)(event)
-      } else if (resolved && typeof (resolved as EventListenerObject).handleEvent === 'function') {
-        ;(resolved as EventListenerObject).handleEvent(event)
-      }
+      callEventHandler(resolved as EventListenerOrEventListenerObject, event, el)
     } catch (err) {
       if (handleError(err, { source: 'event', eventName }, rootRef)) {
         return

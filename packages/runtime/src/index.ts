@@ -83,6 +83,7 @@ export {
   bindStyle,
   bindClass,
   bindEvent,
+  callEventHandler,
   bindProperty,
   bindRef,
   insert,

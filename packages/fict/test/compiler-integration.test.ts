@@ -18,7 +18,10 @@ const tick = () =>
       : Promise.resolve().then(resolve),
   )
 
-function compileAndLoad<TModule extends Record<string, any>>(source: string): TModule {
+function compileAndLoad<TModule extends Record<string, any>>(
+  source: string,
+  deps: Record<string, any> = {},
+): TModule {
   const output = transformCommonJS(source)
   if (process.env.DEBUG_TEMPLATE_OUTPUT) {
     // eslint-disable-next-line no-console
@@ -30,6 +33,7 @@ function compileAndLoad<TModule extends Record<string, any>>(source: string): TM
   const wrapped = new Function('require', 'module', 'exports', output)
   wrapped(
     (id: string) => {
+      if (Object.prototype.hasOwnProperty.call(deps, id)) return deps[id]
       if (id === '@fictjs/runtime') return runtime
       if (id === '@fictjs/runtime/jsx-runtime') return runtimeJsx
       if (id === 'fict') return fict
@@ -368,6 +372,72 @@ describe('compiler + fict integration', () => {
     await tick()
     expect(readCount()).toBe('Count: 2')
     expect(readDouble()).toBe('Double: 4')
+
+    dispose()
+  })
+
+  it('binds functions returned from external hooks without accessor unwrapping', async () => {
+    const hookSource = `
+      import { $state } from 'fict'
+
+      export function useCounter() {
+        let count = $state(0)
+        const increment = () => {
+          count++
+        }
+        const incrementWithEvent = (e?: MouseEvent) => {
+          count += (e?.detail as number | undefined) ?? 1
+        }
+        return { count, increment, incrementWithEvent }
+      }
+    `
+
+    const hookModule = compileAndLoad<{ useCounter: () => any }>(hookSource)
+    const deps = {
+      './use-counter': hookModule,
+    }
+
+    const source = `
+      import { render } from 'fict'
+      import { useCounter } from './use-counter'
+
+      function Counter() {
+        const { count, increment, incrementWithEvent } = useCounter()
+        return (
+          <div>
+            <p data-testid="count">Count: {count}</p>
+            <button data-testid="inc" onClick={increment}>Increment</button>
+            <button data-testid="inc-event" onClick={incrementWithEvent}>Increment with event</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <Counter />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, deps)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const readCount = () => container.querySelector('[data-testid="count"]')?.textContent
+    const incBtn = container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+    const incEventBtn = container.querySelector('[data-testid="inc-event"]') as HTMLButtonElement
+
+    expect(readCount()).toBe('Count: 0')
+
+    incBtn.click()
+    await tick()
+    expect(readCount()).toBe('Count: 1')
+
+    incEventBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 3 }))
+    await tick()
+    expect(readCount()).toBe('Count: 4')
+
+    incEventBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
+    await tick()
+    expect(readCount()).toBe('Count: 5')
 
     dispose()
   })
@@ -4326,6 +4396,121 @@ describe('compiler + fict integration', () => {
       incBtn().click()
       await tick()
       expect(getDoubled()).toBe('4')
+
+      dispose()
+    })
+
+    it('supports createSelector for keyed selection toggling', async () => {
+      const source = `
+        import { $state, createSelector, render } from 'fict'
+
+        const rows = [
+          { id: 1, label: 'Row 1' },
+          { id: 2, label: 'Row 2' },
+          { id: 3, label: 'Row 3' },
+        ]
+
+        function App() {
+          let selected: number | null = $state(null)
+          const isSelected = createSelector(() => selected)
+
+          return (
+            <ul>
+              {rows.map(row => (
+                <li
+                  data-testid={\`row-\${row.id}\`}
+                  class={isSelected(row.id) ? 'selected' : ''}
+                >
+                  <button data-testid={\`select-\${row.id}\`} onClick={() => selected = row.id}>
+                    {row.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const row = (id: number) =>
+        container.querySelector(`[data-testid="row-${id}"]`) as HTMLElement
+      const selectBtn = (id: number) =>
+        container.querySelector(`[data-testid="select-${id}"]`) as HTMLButtonElement
+
+      expect(row(1).classList.contains('selected')).toBe(false)
+      expect(row(2).classList.contains('selected')).toBe(false)
+
+      selectBtn(2).click()
+      await tick()
+      expect(row(2).classList.contains('selected')).toBe(true)
+      expect(row(1).classList.contains('selected')).toBe(false)
+      expect(row(3).classList.contains('selected')).toBe(false)
+
+      selectBtn(3).click()
+      await tick()
+      expect(row(3).classList.contains('selected')).toBe(true)
+      expect(row(2).classList.contains('selected')).toBe(false)
+
+      dispose()
+    })
+
+    it('supports createSelector with custom equality for complex keys', async () => {
+      const source = `
+        import { $state, createSelector, render } from 'fict'
+
+        const items = [
+          { id: 'a', label: 'Alpha' },
+          { id: 'b', label: 'Beta' },
+        ]
+
+        function App() {
+          let selected = $state(items[0])
+          const isSelected = createSelector(() => selected, (a, b) => a.id === b.id)
+
+          return (
+            <ul>
+              {items.map(item => (
+                <li
+                  data-testid={\`item-\${item.id}\`}
+                  class={isSelected(item) ? 'selected' : ''}
+                >
+                  <button data-testid={\`pick-\${item.id}\`} onClick={() => selected = item}>
+                    {item.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const item = (id: string) =>
+        container.querySelector(`[data-testid="item-${id}"]`) as HTMLElement
+      const pickBtn = (id: string) =>
+        container.querySelector(`[data-testid="pick-${id}"]`) as HTMLButtonElement
+
+      expect(item('a').classList.contains('selected')).toBe(true)
+      expect(item('b').classList.contains('selected')).toBe(false)
+
+      pickBtn('b').click()
+      await tick()
+      expect(item('a').classList.contains('selected')).toBe(false)
+      expect(item('b').classList.contains('selected')).toBe(true)
 
       dispose()
     })
