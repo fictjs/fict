@@ -3,7 +3,7 @@ import { transform } from './test-utils'
 
 describe('Alias-Safe Reactive Lowering', () => {
   describe('Local Aliasing', () => {
-    it('transforms local alias to value capture', () => {
+    it('treats direct alias as memo accessor', () => {
       const source = `
         import { $state } from 'fict'
         const count = $state(0)
@@ -11,21 +11,44 @@ describe('Alias-Safe Reactive Lowering', () => {
         console.log(alias)
       `
       const output = transform(source)
-      // Alias captures the current value, not a reactive getter
-      expect(output).toContain('alias = count()')
-      expect(output).toContain('console.log(alias')
+      expect(output).toContain('__fictUseMemo')
+      expect(output).toContain('alias()')
+      expect(output).toContain('console.log(alias()')
     })
 
-    it('allows reassignment of alias since it is a plain value', () => {
+    it('treats post-declaration alias as memo accessor', () => {
+      const source = `
+        import { $state } from 'fict'
+        let count = $state(0)
+        let alias
+        alias = count
+        console.log(alias)
+      `
+      const output = transform(source)
+      expect(output).toContain('__fictUseMemo')
+      expect(output).toContain('alias = __fictUseMemo')
+      expect(output).toContain('console.log(alias()')
+    })
+
+    it('disallows reassignment of reactive alias', () => {
       const source = `
         import { $state } from 'fict'
         let count = $state(0)
         let alias = count
         alias = 1
       `
-      // Alias is just a value, reassignment is allowed
-      const output = transform(source)
-      expect(output).toContain('alias = 1')
+      expect(() => transform(source)).toThrow(/Alias reassignment is not supported/)
+    })
+
+    it('disallows reassignment after post-declaration alias', () => {
+      const source = `
+        import { $state } from 'fict'
+        let count = $state(0)
+        let alias
+        alias = count
+        alias = 1
+      `
+      expect(() => transform(source)).toThrow(/Alias reassignment is not supported/)
     })
 
     it('handles alias usage in JSX', () => {
@@ -38,7 +61,7 @@ describe('Alias-Safe Reactive Lowering', () => {
         }
       `
       const output = transform(source)
-      expect(output).toContain('insert')
+      expect(output).toContain('bindText')
       expect(output).toContain('alias()')
     })
   })
@@ -72,15 +95,14 @@ describe('Alias-Safe Reactive Lowering', () => {
       expect(output).toContain('export const double = __fictUseMemo(__fictCtx, () => count() * 2')
     })
 
-    it('exports alias as captured value', () => {
+    it('exports alias as memo accessor', () => {
       const source = `
         import { $state } from 'fict'
         const count = $state(0)
         export const alias = count
       `
       const output = transform(source)
-      // Alias captures the current value when declared
-      expect(output).toContain('export const alias = count()')
+      expect(output).toContain('__fictUseMemo(__fictCtx, () => count()')
     })
   })
 

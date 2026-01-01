@@ -20,7 +20,7 @@ import {
   resolveHookMemberValue,
 } from './codegen'
 import { debugEnabled } from '../debug'
-import type { BlockId, HIRFunction, Expression, Instruction, Identifier } from './hir'
+import type { BlockId, HIRFunction, Expression, Instruction } from './hir'
 import { getSSABaseName, HIRError } from './hir'
 import type { ReactiveScope, ReactiveScopeResult } from './scopes'
 import { getScopeDependencies } from './scopes'
@@ -2294,25 +2294,6 @@ function instructionToStatement(
             ? 'let'
             : declKind
           : normalizedDecl
-      const isAliasOfTracked =
-        !isShadowDeclaration &&
-        instr.value.kind === 'Identifier' &&
-        ctx.trackedVars.has(deSSAVarName(instr.value.name)) &&
-        !isDestructuringTemp
-
-      if (isAliasOfTracked) {
-        // Alias captures the current value, not a reactive getter.
-        // Just read the value at assignment time: const alias = source()
-        declaredVars.add(baseName)
-        const sourceIdent = instr.value as Identifier
-        return t.variableDeclaration(fallbackDecl, [
-          t.variableDeclarator(
-            t.identifier(baseName),
-            t.callExpression(t.identifier(deSSAVarName(sourceIdent.name)), []),
-          ),
-        ])
-      }
-
       declaredVars.add(baseName)
 
       if (treatAsTracked && !isDestructuringTemp) {
@@ -2323,6 +2304,13 @@ function instructionToStatement(
         }
 
         if (dependsOnTracked) {
+          if (
+            instr.value.kind === 'Identifier' &&
+            ctx.trackedVars.has(deSSAVarName(instr.value.name)) &&
+            !isDestructuringTemp
+          ) {
+            aliasVars.add(baseName)
+          }
           const derivedExpr = lowerAssignedValue(true)
           if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
             return t.variableDeclaration(normalizedDecl, [
@@ -2350,6 +2338,13 @@ function instructionToStatement(
       }
 
       if (dependsOnTracked && !isDestructuringTemp) {
+        if (
+          instr.value.kind === 'Identifier' &&
+          ctx.trackedVars.has(deSSAVarName(instr.value.name)) &&
+          !isDestructuringTemp
+        ) {
+          aliasVars.add(baseName)
+        }
         const derivedExpr = lowerAssignedValue(true)
         if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
           return t.variableDeclaration(normalizedDecl, [
@@ -2391,21 +2386,47 @@ function instructionToStatement(
       )
     }
 
-    // Alias of a tracked variable: const alias = count -> const alias = count()
-    // This captures the current value, not a reactive getter.
-    // The alias is NOT added to trackedVars because it's a plain value capture.
-    if (instr.value.kind === 'Identifier' && !isDestructuringTemp) {
-      const source = deSSAVarName(instr.value.name)
-      if (ctx.trackedVars.has(source) && !declaredVars.has(baseName)) {
-        // Just read the value at assignment time, don't create a getter
-        return t.variableDeclaration(declKind ?? 'const', [
-          t.variableDeclarator(t.identifier(baseName), t.callExpression(t.identifier(source), [])),
-        ])
-      }
-    }
-
     if (aliasVars.has(baseName) && !declaredVars.has(baseName)) {
       throw new Error(`Alias reassignment is not supported for "${baseName}"`)
+    }
+
+    // Handle tracked assignments to already-declared vars (e.g., let alias; alias = count)
+    if (
+      dependsOnTracked &&
+      !declKind &&
+      !isDestructuringTemp &&
+      !isTracked &&
+      !isSignal &&
+      instr.value.kind === 'Identifier' &&
+      ctx.trackedVars.has(deSSAVarName(instr.value.name))
+    ) {
+      const derivedExpr = lowerAssignedValue(true)
+      aliasVars.add(baseName)
+
+      if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
+        return t.expressionStatement(
+          t.assignmentExpression('=', t.identifier(baseName), derivedExpr),
+        )
+      }
+
+      if (!isReactiveObjectCall) ctx.memoVars?.add(baseName)
+      if (ctx.noMemo) {
+        return t.expressionStatement(
+          t.assignmentExpression(
+            '=',
+            t.identifier(baseName),
+            t.arrowFunctionExpression([], derivedExpr),
+          ),
+        )
+      }
+
+      return t.expressionStatement(
+        t.assignmentExpression(
+          '=',
+          t.identifier(baseName),
+          isMemoReturningCall ? derivedExpr : buildMemoCall(derivedExpr),
+        ),
+      )
     }
 
     if (declaredVars.has(baseName)) {

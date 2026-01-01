@@ -163,6 +163,18 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
   })
 
+  it('does not warn when list items have keys', () => {
+    const warnings: CompilerWarning[] = []
+    const input = `
+      import { $state } from 'fict'
+      export function List({ items }) {
+        return <ul>{items.map(item => <li key={item.id}>{item.name}</li>)}</ul>
+      }
+    `
+    transform(input, { onWarn: w => warnings.push(w) })
+    expect(warnings.some(w => w.code === 'FICT-J002')).toBe(false)
+  })
+
   it('warns on nested component definitions (FICT-C003)', () => {
     const warnings: CompilerWarning[] = []
     const input = `
@@ -282,21 +294,20 @@ describe('Spec rule coverage', () => {
     expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
   })
 
-  it('aliasing state inside component creates a snapshot', () => {
+  it('aliasing state inside component stays reactive via memo', () => {
     const input = `
       import { $state } from 'fict'
       function App() {
         let count = $state(0)
         const snap = count
-        // snap should be value at this point
-        console.log(snap)
+        console.log(snap())
       }
     `
     const output = transform(input)
-    // Alias captures the current value (snapshot)
-    expect(output).toContain('snap = count()')
-    // snap is used as a plain value, not a function call
-    expect(output).toContain('console.log(snap')
+    // Alias becomes a memo accessor
+    expect(output).toContain('__fictUseMemo')
+    expect(output).toContain('snap()')
+    expect(output).toContain('console.log(snap()')
   })
 
   it('closure always reads live value (getter)', () => {

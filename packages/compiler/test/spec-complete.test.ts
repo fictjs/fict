@@ -486,7 +486,7 @@ describe('R010: Lazy conditional evaluation', () => {
 // ============================================================================
 
 describe('R014: State formal semantics', () => {
-  it('alias captures current value', () => {
+  it('alias becomes memo accessor', () => {
     const output = transform(`
       import { $state } from 'fict'
       function Component() {
@@ -495,21 +495,21 @@ describe('R014: State formal semantics', () => {
         return () => console.log(alias)
       }
     `)
-    // Alias captures the current value at assignment time
-    expect(output).toContain('alias = count()')
+    expect(output).toContain('__fictUseMemo')
+    expect(output).toContain('console.log(alias()')
   })
 
-  it('alias reassignment is allowed since it is a plain value', () => {
-    // Alias is just a captured value, not a reactive reference
-    const output = transform(`
-      import { $state } from 'fict'
-      function Component() {
-        let count = $state(0)
-        let alias = count
-        alias = 1
-      }
-    `)
-    expect(output).toContain('alias = 1')
+  it('alias reassignment is rejected', () => {
+    expect(() =>
+      transform(`
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          let alias = count
+          alias = 1
+        }
+      `),
+    ).toThrow(/Alias reassignment is not supported/)
   })
 
   it('destructuring from state creates snapshot', () => {
@@ -557,10 +557,11 @@ describe('R015: Derived formal semantics', () => {
     `)
     // Live value: count() reads current state value
     expect(output).toContain('count()')
-    // Snapshot: snap captures the value at assignment time
-    expect(output).toContain('snap = count()')
-    // onSnap uses the captured value directly (not a function call)
-    expect(output).toContain('console.log(snap)')
+    // Alias is memo accessor for consistency
+    expect(output).toContain('__fictUseMemo')
+    expect(output).toContain('snap()')
+    // onSnap reads the memo accessor
+    expect(output).toContain('console.log(snap())')
   })
 })
 

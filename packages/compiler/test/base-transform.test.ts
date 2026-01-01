@@ -224,15 +224,15 @@ describe('createFictPlugin (HIR)', () => {
   })
 
   describe('Safety', () => {
-    it('allows alias reassignment since alias is a plain value', () => {
-      // Alias captures the current value, so it's just a regular variable
-      const output = transform(`
-        import { $state } from 'fict'
-        let count = $state(0)
-        let alias = count
-        alias = 1
-      `)
-      expect(output).toContain('alias = 1')
+    it('rejects alias reassignment', () => {
+      expect(() =>
+        transform(`
+          import { $state } from 'fict'
+          let count = $state(0)
+          let alias = count
+          alias = 1
+        `),
+      ).toThrow(/Alias reassignment is not supported/)
     })
   })
 

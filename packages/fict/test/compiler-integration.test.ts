@@ -4112,9 +4112,55 @@ describe('compiler + fict integration', () => {
       dispose()
     })
 
-    it('handles $state in array element as getter', async () => {
+    it('keeps direct alias reactive in DOM', async () => {
       const source = `
         import { $state, render } from 'fict'
+
+        function App() {
+          let count = $state(0)
+          const alias = count
+
+          return (
+            <div>
+              <p data-testid="alias">{alias}</p>
+              <p data-testid="count">{count}</p>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const getAlias = () => container.querySelector('[data-testid="alias"]')?.textContent
+      const getCount = () => container.querySelector('[data-testid="count"]')?.textContent
+      const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      expect(getAlias()).toBe('0')
+      expect(getCount()).toBe('0')
+
+      incBtn().click()
+      await tick()
+      expect(getAlias()).toBe('1')
+      expect(getCount()).toBe('1')
+
+      incBtn().click()
+      await tick()
+      expect(getAlias()).toBe('2')
+      expect(getCount()).toBe('2')
+
+      dispose()
+    })
+
+    it('handles $state in array element as getter', async () => {
+      const source = `
+        import { $state, $effect, render } from 'fict'
 
         function App() {
           let count = $state(0)
@@ -5197,6 +5243,58 @@ describe('compiler + fict integration', () => {
       incBtn().click()
       await tick()
       expect(getCount()).toBe('2')
+
+      dispose()
+    })
+
+    it('treats $state object property reads as whole-object reactive (coarse)', async () => {
+      const source = `
+        import { $state, $effect, render } from 'fict'
+
+        function App() {
+          let user = $state({ name: 'Alice', info: { city: 'Paris' } })
+          const nameAlias = user.name
+          let runs = 0
+          let runDisplay = $state(0)
+
+          $effect(() => {
+            runDisplay = ++runs + (nameAlias(), user.name, 0)
+          })
+
+          return (
+            <div>
+              <p data-testid="name">{user.name}</p>
+              <p data-testid="alias">{nameAlias}</p>
+              <p data-testid="runs">{runDisplay}</p>
+              <button data-testid="mutate" onClick={() => { user = { name: 'Alice', info: { city: 'Berlin' } } }}>Mutate</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const nameEl = () => container.querySelector('[data-testid=\"name\"]')!.textContent
+      const aliasEl = () => container.querySelector('[data-testid=\"alias\"]')!.textContent
+      const runsEl = () => container.querySelector('[data-testid=\"runs\"]')!.textContent
+      const btn = () => container.querySelector('[data-testid=\"mutate\"]') as HTMLButtonElement
+
+      expect(nameEl()).toBe('Alice')
+      expect(aliasEl()).toBe('Alice')
+      expect(runsEl()).toBe('1')
+
+      btn().click()
+      await tick()
+      // Whole-object invalidation updates both reads even when only a nested, unrelated property changes
+      expect(nameEl()).toBe('Alice')
+      expect(aliasEl()).toBe('Alice')
+      expect(runsEl()).toBe('2')
 
       dispose()
     })

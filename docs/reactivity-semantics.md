@@ -18,21 +18,15 @@ console.log(count()) // ← getter call
 
 ---
 
-## Rule 1: Sink-Driven Reactivity
+## Rule 1: Derived Values Are Memoized
 
-**Only values that flow to "reactive sinks" become memos.**
+Any binding that depends on reactive state becomes a memo accessor, whether or not it flows to a JSX/effect “sink.”
 
-Reactive sinks include:
-
-- JSX expressions (`<div>{value}</div>`)
-- `$effect` bodies
-- DOM bindings
-
-| Pattern               | Used in JSX/effect          | Used only in plain JS      |
-| --------------------- | --------------------------- | -------------------------- |
-| `const x = count`     | → memo (`x()`)              | → snapshot (`x = count()`) |
-| `const x = count * 2` | → memo                      | → snapshot                 |
-| `const x = a + b`     | → memo (if a or b reactive) | → snapshot                 |
+| Pattern               | Outcome                       |
+| --------------------- | ----------------------------- |
+| `const x = count`     | memo accessor (`x()`)         |
+| `const x = count * 2` | memo accessor                 |
+| `const x = a + b`     | memo accessor if a/b reactive |
 
 ### Example
 
@@ -42,13 +36,17 @@ let count = $state(0)
 const doubled = count * 2
 const tripled = count * 3
 
-console.log(tripled) // tripled is snapshot (plain JS only)
-return <div>{doubled}</div> // doubled becomes memo (used in JSX)
+console.log(tripled) // tripled is a memo accessor
+return <div>{doubled}</div>
 ```
 
-### Why This Matters
+### Snapshots (opt-in)
 
-This design avoids turning every intermediate variable into a reactive node. Only values that actually need reactivity get it — keeping the reactive graph minimal and performant.
+If you need a one-time snapshot, read the getter explicitly:
+
+```js
+const snap = count() // captures current value only
+```
 
 ---
 
@@ -129,30 +127,17 @@ Destructuring props **does not** create snapshots. Each destructured field becom
 
 ---
 
-## Rule 5: Dynamic Property Access Granularity
+## Rule 5: Property Granularity (Coarse for `$state` objects)
 
-| Access Pattern          | Tracking Granularity              |
-| ----------------------- | --------------------------------- |
-| `obj.a.b`               | Fine-grained (tracks `a` and `b`) |
-| `obj[dynamicKey]`       | Coarse (tracks entire `obj`)      |
-| `Reflect.get(obj, key)` | Coarse (tracks entire `obj`)      |
+`$state` returns a plain signal accessor. Any property read (static or dynamic) depends on the entire signal value.
 
-### Example
+| Access Pattern          | Tracking Granularity      |
+| ----------------------- | ------------------------- |
+| `obj.a.b`               | Coarse (tracks whole obj) |
+| `obj[dynamicKey]`       | Coarse (tracks whole obj) |
+| `Reflect.get(obj, key)` | Coarse (tracks whole obj) |
 
-```js
-let data = $state({ a: 1, b: 2 })
-
-// Fine-grained: only re-runs when data.a changes
-const x = data.a
-
-// Coarse: re-runs when any property of data changes
-const key = 'a'
-const y = data[key]
-```
-
-### Recommendation
-
-Prefer static property access when possible for optimal update granularity.
+Shape analysis may narrow dependency bookkeeping for compiler memos, but invalidation still happens at the whole-signal level. For per-property tracking, use store-style proxies (e.g., `createStore`) rather than `$state` objects.
 
 ---
 
@@ -175,7 +160,7 @@ return (
 )
 ```
 
-Control flow conditions that read reactive values automatically trigger re-evaluation when those values change.
+Control flow conditions that read reactive values automatically trigger re-evaluation when those values change. This is done by wrapping reactive tests in effects/scopes so updates are scheduled through the reactive system (not by re-running the function ad hoc).
 
 ---
 
@@ -236,18 +221,18 @@ return items.map(item => <Li key={item.id}>{item.name}</Li>)
 
 ## Quick Reference: What Works
 
-| Pattern                | Support | Notes                                    |
-| ---------------------- | ------- | ---------------------------------------- |
-| `const x = count`      | ✅      | Memo if used in sink, snapshot otherwise |
-| `const { x } = props`  | ✅      | Auto-converted to useProp getter         |
-| `obj.a.b.c`            | ✅      | Fine-grained tracking                    |
-| `obj[dynamicKey]`      | ⚠️      | Coarse tracking (whole object)           |
-| `compute(count)`       | ✅      | Expanded at call site                    |
-| `() => count`          | ✅      | Reads latest via getter                  |
-| `arr.map(x => <Li />)` | ✅      | Auto keyed list                          |
-| `if (count > 0) {}`    | ✅      | Native control flow                      |
-| `$state` in loop       | ❌      | Compile error                            |
-| `$effect` in nested fn | ❌      | Compile error                            |
+| Pattern                | Support | Notes                               |
+| ---------------------- | ------- | ----------------------------------- |
+| `const x = count`      | ✅      | Memo accessor (`x()`)               |
+| `const { x } = props`  | ✅      | Auto-converted to useProp getter    |
+| `obj.a.b.c`            | ⚠️      | Coarse tracking for `$state` object |
+| `obj[dynamicKey]`      | ⚠️      | Coarse tracking (whole object)      |
+| `compute(count)`       | ✅      | Expanded at call site               |
+| `() => count`          | ✅      | Reads latest via getter             |
+| `arr.map(x => <Li />)` | ✅      | Key required; warns if missing      |
+| `if (count > 0) {}`    | ✅      | Native control flow                 |
+| `$state` in loop       | ❌      | Compile error                       |
+| `$effect` in nested fn | ❌      | Compile error                       |
 
 ---
 
@@ -255,16 +240,11 @@ return items.map(item => <Li key={item.id}>{item.name}</Li>)
 
 ### Q: Why isn't my variable updating?
 
-Check if it flows to a reactive sink (JSX, `$effect`). Variables only used in plain JS become snapshots.
+If it depends on state, it is a memo accessor and will update. To intentionally capture a snapshot, call the getter once:
 
 ```js
-// This won't update — snapshot
-let count = $state(0)
-const x = count
-setInterval(() => console.log(x), 1000) // always logs initial value
-
-// This updates — flows to effect
-$effect(() => console.log(count)) // logs on every change
+const snap = count() // one-time read
+setInterval(() => console.log(snap), 1000) // logs the captured value
 ```
 
 ### Q: Will my event handler recreate on every render?
