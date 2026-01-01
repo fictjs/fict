@@ -1,5 +1,11 @@
 # @fictjs/runtime
 
+## 0.0.5
+
+### Patch Changes
+
+- fix(compiler): fix the hoisted-function breakage
+
 ## 0.0.4
 
 ### Patch Changes
