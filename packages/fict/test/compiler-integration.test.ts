@@ -2536,4 +2536,989 @@ describe('compiler + fict integration', () => {
     randomSpy.mockRestore()
     logSpy.mockRestore()
   })
+
+  it('cross-component fine-grained updates only affect dependent DOM nodes', async () => {
+    const source = `
+      import { $state, render, prop } from 'fict'
+
+      // Track render counts for each component/section
+      export let parentRenderCount = 0
+      export let childARenderCount = 0
+      export let childBRenderCount = 0
+      export let nameUpdateCount = 0
+      export let ageUpdateCount = 0
+
+      function ChildA(props: any) {
+        childARenderCount++
+        return (
+          <div data-testid="child-a">
+            <span data-testid="name" ref={(el) => { nameUpdateCount++ }}>{props.name}</span>
+            <span data-testid="age" ref={(el) => { ageUpdateCount++ }}>{props.age}</span>
+            <span data-testid="static-a">Static Content A</span>
+          </div>
+        )
+      }
+
+      function ChildB(props: any) {
+        childBRenderCount++
+        return (
+          <div data-testid="child-b">
+            <span data-testid="count">{props.count}</span>
+            <span data-testid="static-b">Static Content B</span>
+          </div>
+        )
+      }
+
+      function Parent() {
+        parentRenderCount++
+        let name = $state('Alice')
+        let age = $state(25)
+        let count = $state(0)
+
+        return (
+          <div>
+            <ChildA name={prop(() => name)} age={prop(() => age)} />
+            <ChildB count={prop(() => count)} />
+            <button data-testid="update-name" onClick={() => name = 'Bob'}>Update Name</button>
+            <button data-testid="update-age" onClick={() => age++}>Update Age</button>
+            <button data-testid="update-count" onClick={() => count++}>Update Count</button>
+            <button data-testid="update-all" onClick={() => { name = 'Charlie'; age = 30; count = 100 }}>Update All</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <Parent />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      parentRenderCount: number
+      childARenderCount: number
+      childBRenderCount: number
+      nameUpdateCount: number
+      ageUpdateCount: number
+    }>(source)
+
+    const dispose = mod.mount(container)
+    await tick()
+
+    // Initial render assertions
+    expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Alice')
+    expect(container.querySelector('[data-testid="age"]')?.textContent).toBe('25')
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('0')
+    expect(container.querySelector('[data-testid="static-a"]')?.textContent).toBe(
+      'Static Content A',
+    )
+    expect(container.querySelector('[data-testid="static-b"]')?.textContent).toBe(
+      'Static Content B',
+    )
+
+    // Record initial render counts
+    const initialParent = mod.parentRenderCount
+    const initialChildA = mod.childARenderCount
+    const initialChildB = mod.childBRenderCount
+    const initialNameUpdate = mod.nameUpdateCount
+    const initialAgeUpdate = mod.ageUpdateCount
+
+    // Update only name - should only affect the name span, not age or count
+    const updateNameBtn = container.querySelector(
+      '[data-testid="update-name"]',
+    ) as HTMLButtonElement
+    updateNameBtn.click()
+    await tick()
+
+    expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Bob')
+    expect(container.querySelector('[data-testid="age"]')?.textContent).toBe('25') // unchanged
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('0') // unchanged
+
+    // Parent should not re-render, only the reactive binding updates
+    expect(mod.parentRenderCount).toBe(initialParent)
+    // Child components should not fully re-render (fine-grained update)
+    expect(mod.childARenderCount).toBe(initialChildA)
+    expect(mod.childBRenderCount).toBe(initialChildB)
+
+    // Update age - should only affect the age span
+    const updateAgeBtn = container.querySelector('[data-testid="update-age"]') as HTMLButtonElement
+    updateAgeBtn.click()
+    await tick()
+
+    expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Bob') // unchanged
+    expect(container.querySelector('[data-testid="age"]')?.textContent).toBe('26')
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('0') // unchanged
+
+    expect(mod.parentRenderCount).toBe(initialParent)
+    expect(mod.childARenderCount).toBe(initialChildA)
+    expect(mod.childBRenderCount).toBe(initialChildB)
+
+    // Update count - should only affect ChildB, not ChildA
+    const updateCountBtn = container.querySelector(
+      '[data-testid="update-count"]',
+    ) as HTMLButtonElement
+    updateCountBtn.click()
+    await tick()
+
+    expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Bob') // unchanged
+    expect(container.querySelector('[data-testid="age"]')?.textContent).toBe('26') // unchanged
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('1')
+
+    expect(mod.parentRenderCount).toBe(initialParent)
+    expect(mod.childARenderCount).toBe(initialChildA)
+    expect(mod.childBRenderCount).toBe(initialChildB)
+
+    // Update all at once - all values should change but components should not re-render
+    const updateAllBtn = container.querySelector('[data-testid="update-all"]') as HTMLButtonElement
+    updateAllBtn.click()
+    await tick()
+
+    expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Charlie')
+    expect(container.querySelector('[data-testid="age"]')?.textContent).toBe('30')
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('100')
+
+    // Still no component re-renders, only fine-grained DOM updates
+    expect(mod.parentRenderCount).toBe(initialParent)
+    expect(mod.childARenderCount).toBe(initialChildA)
+    expect(mod.childBRenderCount).toBe(initialChildB)
+
+    // Static content should never change
+    expect(container.querySelector('[data-testid="static-a"]')?.textContent).toBe(
+      'Static Content A',
+    )
+    expect(container.querySelector('[data-testid="static-b"]')?.textContent).toBe(
+      'Static Content B',
+    )
+
+    dispose()
+  })
+
+  it('cross-component fine-grained updates with derived values', async () => {
+    const source = `
+      import { $state, $memo, render, prop } from 'fict'
+
+      export let computeCount = 0
+      export let childRenderCount = 0
+
+      function Display(props: any) {
+        childRenderCount++
+        return <span data-testid="display">{props.value}</span>
+      }
+
+      function App() {
+        let firstName = $state('John')
+        let lastName = $state('Doe')
+
+        const fullName = $memo(() => {
+          computeCount++
+          return firstName + ' ' + lastName
+        })
+
+        return (
+          <div>
+            <Display value={prop(() => fullName())} />
+            <p data-testid="first">{firstName}</p>
+            <p data-testid="last">{lastName}</p>
+            <button data-testid="update-first" onClick={() => firstName = 'Jane'}>Update First</button>
+            <button data-testid="update-last" onClick={() => lastName = 'Smith'}>Update Last</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      computeCount: number
+      childRenderCount: number
+    }>(source)
+
+    const dispose = mod.mount(container)
+    await tick()
+
+    expect(container.querySelector('[data-testid="display"]')?.textContent).toBe('John Doe')
+    expect(container.querySelector('[data-testid="first"]')?.textContent).toBe('John')
+    expect(container.querySelector('[data-testid="last"]')?.textContent).toBe('Doe')
+
+    const initialComputeCount = mod.computeCount
+    const initialChildRender = mod.childRenderCount
+
+    // Update firstName
+    const updateFirstBtn = container.querySelector(
+      '[data-testid="update-first"]',
+    ) as HTMLButtonElement
+    updateFirstBtn.click()
+    await tick()
+
+    expect(container.querySelector('[data-testid="display"]')?.textContent).toBe('Jane Doe')
+    expect(container.querySelector('[data-testid="first"]')?.textContent).toBe('Jane')
+    expect(container.querySelector('[data-testid="last"]')?.textContent).toBe('Doe')
+
+    // Derived value should be recomputed
+    expect(mod.computeCount).toBeGreaterThan(initialComputeCount)
+    // But child component should not re-render
+    expect(mod.childRenderCount).toBe(initialChildRender)
+
+    const afterFirstUpdateCompute = mod.computeCount
+
+    // Update lastName
+    const updateLastBtn = container.querySelector(
+      '[data-testid="update-last"]',
+    ) as HTMLButtonElement
+    updateLastBtn.click()
+    await tick()
+
+    expect(container.querySelector('[data-testid="display"]')?.textContent).toBe('Jane Smith')
+    expect(container.querySelector('[data-testid="first"]')?.textContent).toBe('Jane')
+    expect(container.querySelector('[data-testid="last"]')?.textContent).toBe('Smith')
+
+    expect(mod.computeCount).toBeGreaterThan(afterFirstUpdateCompute)
+    expect(mod.childRenderCount).toBe(initialChildRender)
+
+    dispose()
+  })
+
+  it('cross-component fine-grained updates with list items', async () => {
+    const source = `
+      import { $state, render, prop } from 'fict'
+
+      export let itemRenderCounts: Record<string, number> = {}
+
+      function ListItem(props: any) {
+        itemRenderCounts[props.id] = (itemRenderCounts[props.id] || 0) + 1
+        return (
+          <li
+            data-testid={\`item-\${props.id}\`}
+            class={props.selected ? 'selected' : ''}
+          >
+            {props.label}
+          </li>
+        )
+      }
+
+      function App() {
+        let items = $state([
+          { id: '1', label: 'Item 1' },
+          { id: '2', label: 'Item 2' },
+          { id: '3', label: 'Item 3' },
+        ])
+        let selectedId = $state<string | null>(null)
+
+        const updateItem = (id: string, newLabel: string) => {
+          items = items.map(item =>
+            item.id === id ? { ...item, label: newLabel } : item
+          )
+        }
+
+        return (
+          <div>
+            <ul data-testid="list">
+              {items.map(item => (
+                <ListItem
+                  key={item.id}
+                  id={item.id}
+                  label={prop(() => item.label)}
+                  selected={prop(() => selectedId === item.id)}
+                />
+              ))}
+            </ul>
+            <button data-testid="select-1" onClick={() => selectedId = '1'}>Select 1</button>
+            <button data-testid="select-2" onClick={() => selectedId = '2'}>Select 2</button>
+            <button data-testid="update-1" onClick={() => updateItem('1', 'Updated Item 1')}>Update 1</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      itemRenderCounts: Record<string, number>
+    }>(source)
+
+    const dispose = mod.mount(container)
+    await tick()
+
+    // Initial render
+    expect(container.querySelector('[data-testid="item-1"]')?.textContent).toBe('Item 1')
+    expect(container.querySelector('[data-testid="item-2"]')?.textContent).toBe('Item 2')
+    expect(container.querySelector('[data-testid="item-3"]')?.textContent).toBe('Item 3')
+
+    const initialRenderCounts = { ...mod.itemRenderCounts }
+
+    // Select item 1 - should update only the selected state
+    const select1Btn = container.querySelector('[data-testid="select-1"]') as HTMLButtonElement
+    select1Btn.click()
+    await tick()
+
+    expect(container.querySelector('[data-testid="item-1"]')?.className).toBe('selected')
+    expect(container.querySelector('[data-testid="item-2"]')?.className).toBe('')
+    expect(container.querySelector('[data-testid="item-3"]')?.className).toBe('')
+
+    // Select item 2 - item 1 should deselect, item 2 should select
+    const select2Btn = container.querySelector('[data-testid="select-2"]') as HTMLButtonElement
+    select2Btn.click()
+    await tick()
+
+    expect(container.querySelector('[data-testid="item-1"]')?.className).toBe('')
+    expect(container.querySelector('[data-testid="item-2"]')?.className).toBe('selected')
+    expect(container.querySelector('[data-testid="item-3"]')?.className).toBe('')
+
+    // Update item 1's label - only item 1's text should change
+    const update1Btn = container.querySelector('[data-testid="update-1"]') as HTMLButtonElement
+    update1Btn.click()
+    await tick()
+
+    expect(container.querySelector('[data-testid="item-1"]')?.textContent).toBe('Updated Item 1')
+    expect(container.querySelector('[data-testid="item-2"]')?.textContent).toBe('Item 2')
+    expect(container.querySelector('[data-testid="item-3"]')?.textContent).toBe('Item 3')
+
+    dispose()
+  })
+
+  it('handles ternary expression for conditional rendering', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let isLoggedIn = $state(false)
+        let userName = $state('Guest')
+
+        return (
+          <div>
+            <span data-testid="greeting">
+              {isLoggedIn ? \`Welcome, \${userName}!\` : 'Please log in'}
+            </span>
+            <button data-testid="toggle" onClick={() => isLoggedIn = !isLoggedIn}>
+              Toggle
+            </button>
+            <button data-testid="change-name" onClick={() => userName = 'Alice'}>
+              Change Name
+            </button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const greeting = () => container.querySelector('[data-testid="greeting"]')?.textContent
+    const toggleBtn = () => container.querySelector('[data-testid="toggle"]') as HTMLButtonElement
+    const changeNameBtn = () =>
+      container.querySelector('[data-testid="change-name"]') as HTMLButtonElement
+
+    expect(greeting()).toBe('Please log in')
+
+    toggleBtn().click()
+    await tick()
+    expect(greeting()).toBe('Welcome, Guest!')
+
+    changeNameBtn().click()
+    await tick()
+    expect(greeting()).toBe('Welcome, Alice!')
+
+    toggleBtn().click()
+    await tick()
+    expect(greeting()).toBe('Please log in')
+
+    dispose()
+  })
+
+  it('handles nested ternary expressions', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let status = $state<'idle' | 'loading' | 'success' | 'error'>('idle')
+
+        return (
+          <div>
+            <span data-testid="status">
+              {status === 'idle' ? 'Ready'
+                : status === 'loading' ? 'Loading...'
+                : status === 'success' ? 'Success!'
+                : 'Error occurred'}
+            </span>
+            <button data-testid="load" onClick={() => status = 'loading'}>Load</button>
+            <button data-testid="success" onClick={() => status = 'success'}>Success</button>
+            <button data-testid="error" onClick={() => status = 'error'}>Error</button>
+            <button data-testid="reset" onClick={() => status = 'idle'}>Reset</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const status = () => container.querySelector('[data-testid="status"]')?.textContent
+
+    expect(status()).toBe('Ready')
+    ;(container.querySelector('[data-testid="load"]') as HTMLButtonElement).click()
+    await tick()
+    expect(status()).toBe('Loading...')
+    ;(container.querySelector('[data-testid="success"]') as HTMLButtonElement).click()
+    await tick()
+    expect(status()).toBe('Success!')
+    ;(container.querySelector('[data-testid="error"]') as HTMLButtonElement).click()
+    await tick()
+    expect(status()).toBe('Error occurred')
+    ;(container.querySelector('[data-testid="reset"]') as HTMLButtonElement).click()
+    await tick()
+    expect(status()).toBe('Ready')
+
+    dispose()
+  })
+
+  it('handles logical AND short-circuit rendering', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let showDetails = $state(false)
+        let count = $state(0)
+
+        return (
+          <div>
+            <button data-testid="toggle" onClick={() => showDetails = !showDetails}>Toggle</button>
+            <button data-testid="inc" onClick={() => count++}>Inc</button>
+            {showDetails && <div data-testid="details">Count is: {count}</div>}
+            {count > 0 && <div data-testid="positive">Count is positive</div>}
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const details = () => container.querySelector('[data-testid="details"]')
+    const positive = () => container.querySelector('[data-testid="positive"]')
+    const toggleBtn = () => container.querySelector('[data-testid="toggle"]') as HTMLButtonElement
+    const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+    expect(details()).toBeNull()
+    expect(positive()).toBeNull()
+
+    toggleBtn().click()
+    await tick()
+    expect(details()?.textContent).toBe('Count is: 0')
+    expect(positive()).toBeNull()
+
+    incBtn().click()
+    await tick()
+    expect(details()?.textContent).toBe('Count is: 1')
+    expect(positive()?.textContent).toBe('Count is positive')
+
+    toggleBtn().click()
+    await tick()
+    expect(details()).toBeNull()
+    expect(positive()?.textContent).toBe('Count is positive')
+
+    dispose()
+  })
+
+  it('handles logical OR for default values', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let name = $state('')
+        let title = $state<string | null>(null)
+
+        return (
+          <div>
+            <span data-testid="name">{name || 'Anonymous'}</span>
+            <span data-testid="title">{title || 'No Title'}</span>
+            <button data-testid="set-name" onClick={() => name = 'John'}>Set Name</button>
+            <button data-testid="set-title" onClick={() => title = 'Developer'}>Set Title</button>
+            <button data-testid="clear" onClick={() => { name = ''; title = null }}>Clear</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const name = () => container.querySelector('[data-testid="name"]')?.textContent
+    const title = () => container.querySelector('[data-testid="title"]')?.textContent
+
+    expect(name()).toBe('Anonymous')
+    expect(title()).toBe('No Title')
+    ;(container.querySelector('[data-testid="set-name"]') as HTMLButtonElement).click()
+    await tick()
+    expect(name()).toBe('John')
+    expect(title()).toBe('No Title')
+    ;(container.querySelector('[data-testid="set-title"]') as HTMLButtonElement).click()
+    await tick()
+    expect(name()).toBe('John')
+    expect(title()).toBe('Developer')
+    ;(container.querySelector('[data-testid="clear"]') as HTMLButtonElement).click()
+    await tick()
+    expect(name()).toBe('Anonymous')
+    expect(title()).toBe('No Title')
+
+    dispose()
+  })
+
+  it('handles nullish coalescing operator in JSX', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let value = $state<number | null | undefined>(null)
+        let text = $state<string | undefined>(undefined)
+
+        return (
+          <div>
+            <span data-testid="value">{value ?? 'N/A'}</span>
+            <span data-testid="text">{text ?? 'Default Text'}</span>
+            <button data-testid="set-zero" onClick={() => value = 0}>Set Zero</button>
+            <button data-testid="set-empty" onClick={() => text = ''}>Set Empty</button>
+            <button data-testid="set-values" onClick={() => { value = 42; text = 'Hello' }}>Set Values</button>
+            <button data-testid="clear" onClick={() => { value = null; text = undefined }}>Clear</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const value = () => container.querySelector('[data-testid="value"]')?.textContent
+    const text = () => container.querySelector('[data-testid="text"]')?.textContent
+
+    expect(value()).toBe('N/A')
+    expect(text()).toBe('Default Text')
+
+    // ?? preserves falsy values like 0 and ''
+    ;(container.querySelector('[data-testid="set-zero"]') as HTMLButtonElement).click()
+    await tick()
+    expect(value()).toBe('0')
+    ;(container.querySelector('[data-testid="set-empty"]') as HTMLButtonElement).click()
+    await tick()
+    expect(text()).toBe('')
+    ;(container.querySelector('[data-testid="set-values"]') as HTMLButtonElement).click()
+    await tick()
+    expect(value()).toBe('42')
+    expect(text()).toBe('Hello')
+    ;(container.querySelector('[data-testid="clear"]') as HTMLButtonElement).click()
+    await tick()
+    expect(value()).toBe('N/A')
+    expect(text()).toBe('Default Text')
+
+    dispose()
+  })
+
+  it('handles if-else-if chain (switch-like pattern)', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let score = $state(0)
+
+        const getGrade = () => {
+          if (score >= 90) return 'A'
+          else if (score >= 80) return 'B'
+          else if (score >= 70) return 'C'
+          else if (score >= 60) return 'D'
+          else return 'F'
+        }
+
+        const getColor = () => {
+          if (score >= 90) return 'green'
+          else if (score >= 70) return 'blue'
+          else if (score >= 60) return 'orange'
+          else return 'red'
+        }
+
+        return (
+          <div>
+            <span data-testid="score">Score: {score}</span>
+            <span data-testid="grade" style={{ color: getColor() }}>Grade: {getGrade()}</span>
+            <button data-testid="set-95" onClick={() => score = 95}>95</button>
+            <button data-testid="set-85" onClick={() => score = 85}>85</button>
+            <button data-testid="set-75" onClick={() => score = 75}>75</button>
+            <button data-testid="set-65" onClick={() => score = 65}>65</button>
+            <button data-testid="set-50" onClick={() => score = 50}>50</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const score = () => container.querySelector('[data-testid="score"]')?.textContent
+    const grade = () => container.querySelector('[data-testid="grade"]')?.textContent
+    const gradeColor = () =>
+      (container.querySelector('[data-testid="grade"]') as HTMLElement)?.style.color
+
+    expect(score()).toBe('Score: 0')
+    expect(grade()).toBe('Grade: F')
+    expect(gradeColor()).toBe('red')
+    ;(container.querySelector('[data-testid="set-95"]') as HTMLButtonElement).click()
+    await tick()
+    expect(grade()).toBe('Grade: A')
+    expect(gradeColor()).toBe('green')
+    ;(container.querySelector('[data-testid="set-85"]') as HTMLButtonElement).click()
+    await tick()
+    expect(grade()).toBe('Grade: B')
+    expect(gradeColor()).toBe('blue')
+    ;(container.querySelector('[data-testid="set-75"]') as HTMLButtonElement).click()
+    await tick()
+    expect(grade()).toBe('Grade: C')
+    expect(gradeColor()).toBe('blue')
+    ;(container.querySelector('[data-testid="set-65"]') as HTMLButtonElement).click()
+    await tick()
+    expect(grade()).toBe('Grade: D')
+    expect(gradeColor()).toBe('orange')
+    ;(container.querySelector('[data-testid="set-50"]') as HTMLButtonElement).click()
+    await tick()
+    expect(grade()).toBe('Grade: F')
+    expect(gradeColor()).toBe('red')
+
+    dispose()
+  })
+
+  it('handles early return with side effect cleanup', async () => {
+    const source = `
+      import { $state, $effect, render } from 'fict'
+
+      export let effectRunCount = 0
+      export let cleanupCount = 0
+
+      function App() {
+        let isEnabled = $state(true)
+        let count = $state(0)
+
+        if (!isEnabled) {
+          return <div data-testid="disabled">Feature is disabled</div>
+        }
+
+        $effect(() => {
+          effectRunCount++
+          console.log('Effect running with count:', count)
+          return () => {
+            cleanupCount++
+            console.log('Cleanup running')
+          }
+        })
+
+        return (
+          <div data-testid="enabled">
+            <span data-testid="count">Count: {count}</span>
+            <button data-testid="inc" onClick={() => count++}>Inc</button>
+            <button data-testid="disable" onClick={() => isEnabled = false}>Disable</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      effectRunCount: number
+      cleanupCount: number
+    }>(source)
+
+    const dispose = mod.mount(container)
+    await tick()
+
+    const enabled = () => container.querySelector('[data-testid="enabled"]')
+    const disabled = () => container.querySelector('[data-testid="disabled"]')
+    const count = () => container.querySelector('[data-testid="count"]')?.textContent
+
+    expect(enabled()).not.toBeNull()
+    expect(disabled()).toBeNull()
+    expect(count()).toBe('Count: 0')
+    expect(mod.effectRunCount).toBeGreaterThanOrEqual(1)
+    ;(container.querySelector('[data-testid="inc"]') as HTMLButtonElement).click()
+    await tick()
+    expect(count()).toBe('Count: 1')
+
+    // Effect increments count on change because it tracks `count` signal
+    ;(container.querySelector('[data-testid="disable"]') as HTMLButtonElement).click()
+    await tick()
+    expect(enabled()).toBeNull()
+    expect(disabled()).not.toBeNull()
+    expect(disabled()?.textContent).toBe('Feature is disabled')
+
+    dispose()
+    logSpy.mockRestore()
+  })
+
+  it('handles reactive array filtering in JSX', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let items = $state([
+          { id: 1, name: 'Apple', category: 'fruit' },
+          { id: 2, name: 'Carrot', category: 'vegetable' },
+          { id: 3, name: 'Banana', category: 'fruit' },
+          { id: 4, name: 'Broccoli', category: 'vegetable' },
+        ])
+        let filter = $state<'all' | 'fruit' | 'vegetable'>('all')
+
+        const filteredItems = filter === 'all'
+          ? items
+          : items.filter(item => item.category === filter)
+
+        return (
+          <div>
+            <button data-testid="all" onClick={() => filter = 'all'}>All</button>
+            <button data-testid="fruit" onClick={() => filter = 'fruit'}>Fruits</button>
+            <button data-testid="vegetable" onClick={() => filter = 'vegetable'}>Vegetables</button>
+            <ul data-testid="list">
+              {filteredItems.map(item => (
+                <li key={item.id} data-testid={\`item-\${item.id}\`}>{item.name}</li>
+              ))}
+            </ul>
+            <span data-testid="count">Count: {filteredItems.length}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const count = () => container.querySelector('[data-testid="count"]')?.textContent
+    const items = () => Array.from(container.querySelectorAll('[data-testid^="item-"]'))
+
+    expect(count()).toBe('Count: 4')
+    expect(items().length).toBe(4)
+    ;(container.querySelector('[data-testid="fruit"]') as HTMLButtonElement).click()
+    await tick()
+    expect(count()).toBe('Count: 2')
+    expect(items().length).toBe(2)
+    expect(items().map(i => i.textContent)).toEqual(['Apple', 'Banana'])
+    ;(container.querySelector('[data-testid="vegetable"]') as HTMLButtonElement).click()
+    await tick()
+    expect(count()).toBe('Count: 2')
+    expect(items().length).toBe(2)
+    expect(items().map(i => i.textContent)).toEqual(['Carrot', 'Broccoli'])
+    ;(container.querySelector('[data-testid="all"]') as HTMLButtonElement).click()
+    await tick()
+    expect(count()).toBe('Count: 4')
+    expect(items().length).toBe(4)
+
+    dispose()
+  })
+
+  it('handles conditional class and style binding', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let isActive = $state(false)
+        let isHighlighted = $state(false)
+        let size = $state<'small' | 'medium' | 'large'>('medium')
+
+        return (
+          <div>
+            <span
+              data-testid="target"
+              class={'base' + (isActive ? ' active' : '') + (isHighlighted ? ' highlighted' : '')}
+              style={{
+                fontSize: size === 'small' ? '12px' : size === 'large' ? '24px' : '16px',
+                fontWeight: isActive ? 'bold' : 'normal',
+                backgroundColor: isHighlighted ? 'yellow' : 'transparent',
+              }}
+            >
+              Target Element
+            </span>
+            <button data-testid="toggle-active" onClick={() => isActive = !isActive}>Toggle Active</button>
+            <button data-testid="toggle-highlight" onClick={() => isHighlighted = !isHighlighted}>Toggle Highlight</button>
+            <button data-testid="size-small" onClick={() => size = 'small'}>Small</button>
+            <button data-testid="size-large" onClick={() => size = 'large'}>Large</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const target = () => container.querySelector('[data-testid="target"]') as HTMLElement
+
+    expect(target().className).toBe('base')
+    expect(target().style.fontSize).toBe('16px')
+    expect(target().style.fontWeight).toBe('normal')
+    ;(container.querySelector('[data-testid="toggle-active"]') as HTMLButtonElement).click()
+    await tick()
+    expect(target().className).toBe('base active')
+    expect(target().style.fontWeight).toBe('bold')
+    ;(container.querySelector('[data-testid="toggle-highlight"]') as HTMLButtonElement).click()
+    await tick()
+    expect(target().className).toBe('base active highlighted')
+    expect(target().style.backgroundColor).toBe('yellow')
+    ;(container.querySelector('[data-testid="size-small"]') as HTMLButtonElement).click()
+    await tick()
+    expect(target().style.fontSize).toBe('12px')
+    ;(container.querySelector('[data-testid="size-large"]') as HTMLButtonElement).click()
+    await tick()
+    expect(target().style.fontSize).toBe('24px')
+
+    dispose()
+  })
+
+  it('handles multiple conditional returns with shared state', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      type ViewMode = 'list' | 'grid' | 'details'
+
+      function App() {
+        let mode = $state<ViewMode>('list')
+        let items = $state(['A', 'B', 'C'])
+
+        if (mode === 'list') {
+          return (
+            <div data-testid="list-view">
+              <h2>List View ({items.length} items)</h2>
+              <ul>
+                {items.map((item, i) => <li key={i}>{item}</li>)}
+              </ul>
+              <button data-testid="to-grid" onClick={() => mode = 'grid'}>Grid</button>
+              <button data-testid="add" onClick={() => items = [...items, String.fromCharCode(65 + items.length)]}>Add</button>
+            </div>
+          )
+        }
+
+        if (mode === 'grid') {
+          return (
+            <div data-testid="grid-view">
+              <h2>Grid View ({items.length} items)</h2>
+              <div style={{ display: 'flex' }}>
+                {items.map((item, i) => <span key={i} style={{ margin: '5px' }}>{item}</span>)}
+              </div>
+              <button data-testid="to-details" onClick={() => mode = 'details'}>Details</button>
+              <button data-testid="add" onClick={() => items = [...items, String.fromCharCode(65 + items.length)]}>Add</button>
+            </div>
+          )
+        }
+
+        return (
+          <div data-testid="details-view">
+            <h2>Details View ({items.length} items)</h2>
+            <table>
+              <tbody>
+                {items.map((item, i) => (
+                  <tr key={i}>
+                    <td>{i + 1}</td>
+                    <td>{item}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <button data-testid="to-list" onClick={() => mode = 'list'}>List</button>
+            <button data-testid="add" onClick={() => items = [...items, String.fromCharCode(65 + items.length)]}>Add</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const listView = () => container.querySelector('[data-testid="list-view"]')
+    const gridView = () => container.querySelector('[data-testid="grid-view"]')
+    const detailsView = () => container.querySelector('[data-testid="details-view"]')
+
+    expect(listView()).not.toBeNull()
+    expect(gridView()).toBeNull()
+    expect(detailsView()).toBeNull()
+    expect(listView()?.querySelector('h2')?.textContent).toContain('3 items')
+
+    // Add item in list view
+    ;(container.querySelector('[data-testid="add"]') as HTMLButtonElement).click()
+    await tick()
+    expect(listView()?.querySelector('h2')?.textContent).toContain('4 items')
+
+    // Switch to grid view
+    ;(container.querySelector('[data-testid="to-grid"]') as HTMLButtonElement).click()
+    await tick()
+    expect(listView()).toBeNull()
+    expect(gridView()).not.toBeNull()
+    expect(gridView()?.querySelector('h2')?.textContent).toContain('4 items')
+
+    // Add item in grid view
+    ;(container.querySelector('[data-testid="add"]') as HTMLButtonElement).click()
+    await tick()
+    expect(gridView()?.querySelector('h2')?.textContent).toContain('5 items')
+
+    // Switch to details view
+    ;(container.querySelector('[data-testid="to-details"]') as HTMLButtonElement).click()
+    await tick()
+    expect(gridView()).toBeNull()
+    expect(detailsView()).not.toBeNull()
+    expect(detailsView()?.querySelector('h2')?.textContent).toContain('5 items')
+
+    // Switch back to list view
+    ;(container.querySelector('[data-testid="to-list"]') as HTMLButtonElement).click()
+    await tick()
+    expect(detailsView()).toBeNull()
+    expect(listView()).not.toBeNull()
+    expect(listView()?.querySelector('h2')?.textContent).toContain('5 items')
+
+    dispose()
+  })
 })
