@@ -3,7 +3,8 @@
   "version": "0.0.5",
   "description": "Fict testing library",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "type": "module",
   "main": "dist/index.cjs",

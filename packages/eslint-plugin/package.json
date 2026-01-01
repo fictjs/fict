@@ -3,7 +3,8 @@
   "version": "0.0.5",
   "description": "ESLint plugin for Fict",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "type": "module",
   "main": "dist/index.cjs",

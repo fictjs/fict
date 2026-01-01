@@ -3,7 +3,8 @@
   "version": "0.0.5",
   "description": "Fict reactive runtime",
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "keywords": [
     "fict",
