@@ -36,6 +36,11 @@ jobs:
       - run: pnpm install
       - run: pnpm build
 
+      - name: Create .npmrc
+        run: |
+          echo "//registry.npmjs.org/:_authToken=\${NODE_AUTH_TOKEN}" >> .npmrc
+          echo "registry=https://registry.npmjs.org/" >> .npmrc
+
       - name: Publish to NPM
         run: pnpm release --provenance
         env:
