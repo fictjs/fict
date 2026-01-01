@@ -1,6 +1,6 @@
 # @fictjs/runtime
 
-![Node CI](https://github.com/fictjs/fict/workflows/ci/badge.svg)
+![Node CI](https://github.com/fictjs/fict/workflows/CI/badge.svg)
 ![npm](https://img.shields.io/npm/v/fict.svg)
 ![license](https://img.shields.io/npm/l/fict)
 
