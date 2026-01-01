@@ -1390,6 +1390,7 @@ function processStatement(
       kind: 'Assign',
       target: { kind: 'Identifier', name: stmt.id.name },
       value: convertExpression(fnExpr),
+      declarationKind: 'function',
     })
     return bb
   }

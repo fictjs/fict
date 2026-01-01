@@ -1735,6 +1735,25 @@ function lowerInstruction(
   const { t } = ctx
   if (instr.kind === 'Assign') {
     const baseName = deSSAVarName(instr.target.name)
+
+    const isFunctionDecl =
+      instr.value.kind === 'FunctionExpression' &&
+      (instr.declarationKind === 'function' ||
+        (!instr.declarationKind && (instr.value as any).name === baseName))
+    if (isFunctionDecl) {
+      const loweredFn = lowerExpression(instr.value, ctx)
+      if (t.isFunctionExpression(loweredFn)) {
+        return t.functionDeclaration(
+          t.identifier(baseName),
+          loweredFn.params as BabelCore.types.Identifier[],
+          loweredFn.body as BabelCore.types.BlockStatement,
+          loweredFn.generator ?? false,
+          loweredFn.async ?? false,
+        )
+      }
+    }
+
+    const declKind = instr.declarationKind === 'function' ? undefined : instr.declarationKind
     propagateHookResultAlias(baseName, instr.value, ctx)
     const hookMember = resolveHookMemberValue(instr.value, ctx)
     if (hookMember) {
@@ -1744,8 +1763,8 @@ function lowerInstruction(
       } else if (hookMember.kind === 'memo') {
         ctx.memoVars?.add(baseName)
       }
-      if (instr.declarationKind) {
-        return t.variableDeclaration(instr.declarationKind, [
+      if (declKind) {
+        return t.variableDeclaration(declKind, [
           t.variableDeclarator(t.identifier(baseName), hookMember.member),
         ])
       }
@@ -5237,6 +5256,23 @@ function lowerInstructionWithScopes(
   if (instr.kind === 'Assign') {
     const targetName = instr.target.name
     const targetBase = deSSAVarName(targetName)
+    const isFunctionDecl =
+      instr.value.kind === 'FunctionExpression' &&
+      (instr.declarationKind === 'function' ||
+        (!instr.declarationKind && (instr.value as any).name === targetBase))
+    if (isFunctionDecl) {
+      const loweredFn = lowerExpression(instr.value, ctx)
+      if (t.isFunctionExpression(loweredFn)) {
+        return t.functionDeclaration(
+          t.identifier(targetBase),
+          loweredFn.params as BabelCore.types.Identifier[],
+          loweredFn.body as BabelCore.types.BlockStatement,
+          loweredFn.generator ?? false,
+          loweredFn.async ?? false,
+        )
+      }
+    }
+    const declKind = instr.declarationKind === 'function' ? undefined : instr.declarationKind
     const valueExpr = lowerExpression(instr.value, ctx)
 
     // Check if target is a tracked variable (use de-versioned name for lookup)
@@ -5254,9 +5290,9 @@ function lowerInstructionWithScopes(
     }
 
     // Check if this is a declaration or just an assignment
-    if (instr.declarationKind) {
+    if (declKind) {
       // Actual declaration - emit variableDeclaration
-      return t.variableDeclaration(instr.declarationKind, [
+      return t.variableDeclaration(declKind, [
         t.variableDeclarator(t.identifier(targetName), valueExpr),
       ])
     } else {

@@ -432,6 +432,7 @@ function toSSA(fn: HIRFunction): HIRFunction {
           kind: 'Assign',
           target: { ...instr.target, name: newName },
           value: renamedValue,
+          declarationKind: instr.declarationKind,
         })
       } else if (instr.kind === 'Expression') {
         newInstr.push({ kind: 'Expression', value: renameExpr(instr.value) })

@@ -2184,6 +2184,7 @@ function instructionToStatement(
   if (instr.kind === 'Assign') {
     const ssaName = instr.target.name
     const baseName = deSSAVarName(ssaName)
+    const declKindRaw = instr.declarationKind
     propagateHookResultAlias(baseName, instr.value, ctx)
     const hookMember = resolveHookMemberValue(instr.value, ctx)
     if (hookMember) {
@@ -2193,9 +2194,11 @@ function instructionToStatement(
       } else if (hookMember.kind === 'memo') {
         ctx.memoVars?.add(baseName)
       }
-      if (instr.declarationKind) {
+      const declKind =
+        declKindRaw && declKindRaw !== 'function' ? (declKindRaw as 'const' | 'let' | 'var') : null
+      if (declKind) {
         declaredVars.add(baseName)
-        return t.variableDeclaration(instr.declarationKind, [
+        return t.variableDeclaration(declKind, [
           t.variableDeclarator(t.identifier(baseName), hookMember.member),
         ])
       }
@@ -2208,7 +2211,23 @@ function instructionToStatement(
         t.assignmentExpression('=', t.identifier(baseName), hookMember.member),
       )
     }
-    const declKind = instr.declarationKind
+    const declKind = declKindRaw && declKindRaw !== 'function' ? declKindRaw : undefined
+    const isFunctionDecl =
+      instr.value.kind === 'FunctionExpression' &&
+      (declKindRaw === 'function' || (!declKindRaw && (instr.value as any).name === baseName))
+    if (isFunctionDecl) {
+      const loweredFn = lowerExpressionWithDeSSA(instr.value, ctx)
+      if (t.isFunctionExpression(loweredFn)) {
+        declaredVars.add(baseName)
+        return t.functionDeclaration(
+          t.identifier(baseName),
+          loweredFn.params,
+          loweredFn.body as BabelCore.types.BlockStatement,
+          loweredFn.generator ?? false,
+          loweredFn.async ?? false,
+        )
+      }
+    }
     const isTracked = ctx.trackedVars.has(baseName)
     const isSignal = ctx.signalVars?.has(baseName) ?? false
     const aliasVars = ctx.aliasVars ?? (ctx.aliasVars = new Set())
@@ -2261,14 +2280,15 @@ function instructionToStatement(
     }
 
     if (declKind) {
-      const normalizedDecl: typeof declKind =
+      type VarDecl = 'const' | 'let' | 'var'
+      const normalizedDecl: VarDecl =
         isStateCall || (dependsOnTracked && !isDestructuringTemp) ? 'const' : declKind
       const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
       const isExternalAlias =
         declKind === 'const' &&
         instr.value.kind === 'Identifier' &&
         !(ctx.scopes?.byName?.has(deSSAVarName(instr.value.name)) ?? false)
-      const fallbackDecl: typeof declKind =
+      const fallbackDecl: VarDecl =
         !treatAsTracked && (!dependsOnTracked || isDestructuringTemp)
           ? declKind === 'const' && (needsMutable || isExternalAlias)
             ? 'let'

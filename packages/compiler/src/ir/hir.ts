@@ -146,7 +146,7 @@ export interface AssignInstruction {
   kind: 'Assign'
   target: Identifier
   value: Expression
-  declarationKind?: 'const' | 'let' | 'var'
+  declarationKind?: 'const' | 'let' | 'var' | 'function'
 }
 
 export interface ExpressionInstruction {

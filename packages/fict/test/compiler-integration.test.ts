@@ -4980,6 +4980,57 @@ describe('compiler + fict integration', () => {
       dispose()
     })
 
+    it('preserves function declaration hoisting and tracks dependencies across calls', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        export const events: string[] = []
+
+        export function App() {
+          let count = $state(0)
+          const y = compute(count)
+          function compute(x: number) {
+            events.push(\`compute:\${x}\`)
+            return x * 2
+          }
+          return (
+            <div>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+              <span data-testid="count">{count}</span>
+              <span data-testid="y">{y}</span>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        events: string[]
+      }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const incBtn = container.querySelector('[data-testid=\"inc\"]') as HTMLButtonElement
+      const getCount = () => container.querySelector('[data-testid=\"count\"]')?.textContent
+      const getY = () => container.querySelector('[data-testid=\"y\"]')?.textContent
+
+      expect(getCount()).toBe('0')
+      expect(getY()).toBe('0')
+      expect(mod.events.some(e => e.startsWith('compute'))).toBe(true)
+
+      incBtn.click()
+      await tick()
+      expect(getCount()).toBe('1')
+      expect(getY()).toBe('2')
+      expect(mod.events.filter(e => e.startsWith('compute')).length).toBeGreaterThanOrEqual(2)
+
+      dispose()
+    })
+
     it('lets createScope manually control lifetime in non-JSX control flow', async () => {
       const source = `
         import { $state, render, createScope, createEffect, onCleanup } from 'fict'

@@ -198,6 +198,7 @@ function runWarningPass(
     const root = getRootIdentifier(expr, t)
     return !!(root && stateVars.has(root.name))
   }
+  const reactiveNames = new Set<string>([...stateVars, ...derivedVars])
 
   programPath.traverse({
     AssignmentExpression(path) {
@@ -256,6 +257,35 @@ function runWarningPass(
           path.node,
           'FICT-H',
           'Dynamic property access widens dependency tracking',
+          options,
+          fileName,
+        )
+      }
+    },
+    Function(path) {
+      const captured = new Set<string>()
+      path.traverse(
+        {
+          Function(inner) {
+            if (inner === path) return
+            inner.skip()
+          },
+          Identifier(idPath) {
+            const name = idPath.node.name
+            if (!reactiveNames.has(name)) return
+            const binding = idPath.scope.getBinding(name)
+            if (!binding) return
+            if (binding.scope === idPath.scope || binding.scope === path.scope) return
+            captured.add(name)
+          },
+        },
+        {},
+      )
+      if (captured.size > 0) {
+        emitWarning(
+          path.node,
+          'FICT-R005',
+          `Function captures reactive variable(s): ${Array.from(captured).join(', ')}. Pass them as parameters or memoize explicitly to avoid hidden dependencies.`,
           options,
           fileName,
         )
