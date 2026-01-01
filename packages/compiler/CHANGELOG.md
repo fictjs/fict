@@ -1,5 +1,11 @@
 # @fictjs/compiler
 
+## 0.0.6
+
+### Patch Changes
+
+- update version
+
 ## 0.0.5
 
 ### Patch Changes
