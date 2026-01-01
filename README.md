@@ -454,7 +454,7 @@ _Lower is better. Baseline relative to best performer in each category._
 Alpha. Core is stable, but expect edge cases. Test thoroughly for critical apps.
 
 **Does Fict use a virtual DOM?**
-No. Components run once.
+No.
 
 **How does Fict handle arrays?**
 Default: immutable style (`todos = [...todos, newTodo]`). For deep mutations, you can use spread operation to create new immutable data, or use Immer/Mutative, or use `$store` from `fict/plus`.

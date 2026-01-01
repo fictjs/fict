@@ -9,6 +9,7 @@
 export { createSignal, createSelector, $state } from './signal'
 export { createMemo } from './memo'
 export { createEffect, createRenderEffect } from './effect'
+export { effectScope, createScope, runInScope, type ReactiveScope } from './scope'
 export { batch, untrack } from './scheduler'
 
 // DOM rendering

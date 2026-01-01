@@ -4860,6 +4860,200 @@ describe('compiler + fict integration', () => {
       dispose()
     })
 
+    it('disposes reactive work in plain control flow via runInScope', async () => {
+      const source = `
+        import { $state, render, runInScope, createEffect, onCleanup } from 'fict'
+
+        export const events: string[] = []
+
+        function App() {
+          let show = $state(true)
+          runInScope(() => show, () => {
+            createEffect(() => {
+              events.push(\`effect:\${show}\`)
+              onCleanup(() => events.push(\`cleanup:\${show}\`))
+            })
+          })
+          return (
+            <div>
+              <span data-testid="flag">{show}</span>
+              <button data-testid="toggle" onClick={() => (show = !show)}>Toggle</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        events: string[]
+      }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const toggle = container.querySelector('[data-testid="toggle"]') as HTMLButtonElement
+
+      expect(mod.events).toEqual(['effect:true'])
+
+      toggle.click()
+      await tick()
+      expect(mod.events.some(e => e.startsWith('cleanup'))).toBe(true)
+      expect(mod.events.filter(e => e.startsWith('effect')).length).toBe(1)
+
+      toggle.click()
+      await tick()
+      expect(mod.events.filter(e => e.startsWith('effect')).length).toBe(2)
+
+      dispose()
+    })
+
+    it('auto scopes reactive primitives inside plain if control flow', async () => {
+      const source = `
+        import { $state, render, createMemo, createEffect, onCleanup } from 'fict'
+
+        export const events: string[] = []
+
+        function App() {
+          let show = $state(true)
+          let count = $state(0)
+
+          if (show) {
+            const doubled = createMemo(() => count * 2)
+            createEffect(() => {
+              events.push(\`effect:\${doubled()}\`)
+              onCleanup(() => events.push(\`cleanup:\${show}\`))
+            })
+          }
+
+          return (
+            <div>
+              <button data-testid="toggle" onClick={() => (show = !show)}>Toggle</button>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+              <span data-testid="flag">{show ? 'true' : 'false'}</span>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        events: string[]
+      }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const toggle = container.querySelector('[data-testid="toggle"]') as HTMLButtonElement
+      const inc = container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+      const flag = () => container.querySelector('[data-testid="flag"]')?.textContent
+      const effectCount = () => mod.events.filter(e => e.startsWith('effect')).length
+      const cleanupCount = () => mod.events.filter(e => e.startsWith('cleanup')).length
+
+      expect(flag()).toBe('true')
+      expect(effectCount()).toBe(1)
+
+      inc.click()
+      await tick()
+      expect(effectCount()).toBe(2)
+
+      toggle.click()
+      await tick()
+      expect(flag()).toBe('false')
+      expect(cleanupCount()).toBeGreaterThanOrEqual(1)
+      const afterToggleCount = effectCount()
+
+      inc.click()
+      await tick()
+      expect(effectCount()).toBe(afterToggleCount)
+
+      toggle.click()
+      await tick()
+      expect(flag()).toBe('true')
+      expect(effectCount()).toBeGreaterThanOrEqual(afterToggleCount + 1)
+
+      dispose()
+    })
+
+    it('lets createScope manually control lifetime in non-JSX control flow', async () => {
+      const source = `
+        import { $state, render, createScope, createEffect, onCleanup } from 'fict'
+
+        export const events: string[] = []
+
+        function App() {
+          let enabled = $state(false)
+          const scoped = createScope()
+          const start = () =>
+            scoped.run(() => {
+              enabled = true
+              createEffect(() => {
+                events.push(\`effect:\${enabled}\`)
+                onCleanup(() => events.push(\`cleanup:\${enabled}\`))
+              })
+            })
+          const stop = () => {
+            enabled = false
+            scoped.stop()
+          }
+
+          return (
+            <div>
+              <button data-testid="start" onClick={start}>Start</button>
+              <button data-testid="stop" onClick={stop}>Stop</button>
+              <span data-testid="flag">{enabled ? 'true' : 'false'}</span>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        events: string[]
+      }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const startBtn = container.querySelector('[data-testid="start"]') as HTMLButtonElement
+      const stopBtn = container.querySelector('[data-testid="stop"]') as HTMLButtonElement
+      const effectCount = () => mod.events.filter(e => e.startsWith('effect')).length
+      const cleanupCount = () => mod.events.filter(e => e.startsWith('cleanup')).length
+      const flag = () => container.querySelector('[data-testid="flag"]')?.textContent
+
+      expect(mod.events).toEqual([])
+      expect(flag()).toBe('false')
+
+      startBtn.click()
+      await tick()
+      expect(flag()).toBe('true')
+      expect(effectCount()).toBe(1)
+      expect(cleanupCount()).toBe(0)
+
+      stopBtn.click()
+      await tick()
+      expect(flag()).toBe('false')
+      expect(cleanupCount()).toBe(1)
+
+      startBtn.click()
+      await tick()
+      expect(effectCount()).toBe(2)
+
+      stopBtn.click()
+      await tick()
+      expect(cleanupCount()).toBe(2)
+
+      dispose()
+    })
+
     it('handles $state with getter returned from useCallback-like pattern', async () => {
       // Note: When destructuring hook results, function properties are treated as accessors
       // Use explicit arrow function wrapper for event handlers: onClick={() => increment()}

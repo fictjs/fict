@@ -3,9 +3,11 @@
 // ============================================================================
 
 export { createSignal, createSelector, type Signal, $state } from './signal'
+export { effectScope } from './signal'
 export { createStore, type Store } from './store'
 export { createMemo, type Memo, $memo } from './memo'
 export { createEffect, createRenderEffect, type Effect, $effect } from './effect'
+export { createScope, runInScope, type ReactiveScope } from './scope'
 export {
   __fictUseContext,
   __fictPushContext,

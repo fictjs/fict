@@ -69,6 +69,152 @@ export interface RegionResult {
   topLevelRegions: Region[]
 }
 
+const REACTIVE_CREATORS = new Set(['createEffect', 'createMemo', 'createSelector'])
+
+function expressionCreatesReactive(expr: Expression): boolean {
+  if (expr.kind === 'CallExpression' && expr.callee.kind === 'Identifier') {
+    const base = getSSABaseName(expr.callee.name)
+    return REACTIVE_CREATORS.has(base)
+  }
+  return false
+}
+
+function expressionContainsReactiveCreation(expr: Expression): boolean {
+  if (expressionCreatesReactive(expr)) return true
+  switch (expr.kind) {
+    case 'CallExpression':
+      return (
+        expressionContainsReactiveCreation(expr.callee) ||
+        expr.arguments.some(arg => expressionContainsReactiveCreation(arg))
+      )
+    case 'MemberExpression':
+      return (
+        expressionContainsReactiveCreation(expr.object) ||
+        expressionContainsReactiveCreation(expr.property)
+      )
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      return (
+        expressionContainsReactiveCreation(expr.left) ||
+        expressionContainsReactiveCreation(expr.right)
+      )
+    case 'UnaryExpression':
+      return expressionContainsReactiveCreation(expr.argument)
+    case 'ConditionalExpression':
+      return (
+        expressionContainsReactiveCreation(expr.test) ||
+        expressionContainsReactiveCreation(expr.consequent) ||
+        expressionContainsReactiveCreation(expr.alternate)
+      )
+    case 'ArrayExpression':
+      return expr.elements.some(el => el && expressionContainsReactiveCreation(el))
+    case 'ObjectExpression':
+      return expr.properties.some(prop =>
+        prop.kind === 'SpreadElement'
+          ? expressionContainsReactiveCreation(prop.argument)
+          : expressionContainsReactiveCreation(prop.value),
+      )
+    case 'ArrowFunction':
+      if (expr.isExpression) {
+        return expressionContainsReactiveCreation(expr.body as Expression)
+      }
+      return Array.isArray(expr.body)
+        ? expr.body.some(block =>
+            block.instructions.some(i => instructionContainsReactiveCreation(i)),
+          )
+        : false
+    case 'FunctionExpression':
+      return expr.body.some(block =>
+        block.instructions.some(i => instructionContainsReactiveCreation(i)),
+      )
+    case 'AssignmentExpression':
+      return (
+        expressionContainsReactiveCreation(expr.left) ||
+        expressionContainsReactiveCreation(expr.right)
+      )
+    case 'UpdateExpression':
+      return expressionContainsReactiveCreation(expr.argument)
+    case 'TemplateLiteral':
+      return expr.expressions.some(e => expressionContainsReactiveCreation(e))
+    case 'SpreadElement':
+      return expressionContainsReactiveCreation(expr.argument)
+    case 'AwaitExpression':
+      return expressionContainsReactiveCreation(expr.argument)
+    case 'YieldExpression':
+      return expr.argument ? expressionContainsReactiveCreation(expr.argument) : false
+    case 'NewExpression':
+      return (
+        expressionContainsReactiveCreation(expr.callee) ||
+        expr.arguments.some(arg => expressionContainsReactiveCreation(arg))
+      )
+    case 'OptionalCallExpression':
+      return (
+        expressionContainsReactiveCreation(expr.callee) ||
+        expr.arguments.some(arg => expressionContainsReactiveCreation(arg))
+      )
+    case 'JSXElement':
+      return (
+        (typeof expr.tagName !== 'string' &&
+          expressionContainsReactiveCreation(expr.tagName as Expression)) ||
+        expr.attributes.some(attr =>
+          attr.isSpread
+            ? !!attr.spreadExpr && expressionContainsReactiveCreation(attr.spreadExpr)
+            : attr.value
+              ? expressionContainsReactiveCreation(attr.value)
+              : false,
+        ) ||
+        expr.children.some(child =>
+          child.kind === 'expression' ? expressionContainsReactiveCreation(child.value) : false,
+        )
+      )
+    default:
+      return false
+  }
+}
+
+function instructionContainsReactiveCreation(instr: Instruction): boolean {
+  if (instr.kind === 'Assign') {
+    return expressionContainsReactiveCreation(instr.value)
+  }
+  if (instr.kind === 'Expression') {
+    return expressionContainsReactiveCreation(instr.value)
+  }
+  return false
+}
+
+function instructionIsReactiveSetup(instr: Instruction): boolean {
+  if (instr.kind === 'Assign') {
+    return expressionCreatesReactive(instr.value)
+  }
+  if (instr.kind === 'Expression') {
+    return expressionCreatesReactive(instr.value)
+  }
+  return false
+}
+
+function nodeIsPureReactiveScope(node: StructuredNode): boolean {
+  let found = false
+  const visit = (n: StructuredNode): boolean => {
+    switch (n.kind) {
+      case 'instruction': {
+        const ok = instructionIsReactiveSetup(n.instruction)
+        if (ok && instructionContainsReactiveCreation(n.instruction)) found = true
+        return ok
+      }
+      case 'sequence':
+        if (n.nodes.length === 0) return false
+        return n.nodes.every(child => visit(child))
+      case 'block':
+        if (n.statements.length === 0) return false
+        return n.statements.every(child => visit(child))
+      default:
+        return false
+    }
+  }
+
+  return visit(node) && found
+}
+
 /**
  * Generate regions from HIR reactive scope analysis
  */
@@ -618,17 +764,82 @@ function lowerNodeWithRegionContext(
     case 'if': {
       const prevConditional = ctx.inConditional ?? 0
       ctx.inConditional = prevConditional + 1
-      const conseq = t.blockStatement(
-        lowerNodeWithRegionContext(node.consequent, t, ctx, declaredVars, regionCtx),
+      const conseqStmts = lowerNodeWithRegionContext(
+        node.consequent,
+        t,
+        ctx,
+        declaredVars,
+        regionCtx,
       )
-      const alt = node.alternate
-        ? t.blockStatement(
-            lowerNodeWithRegionContext(node.alternate, t, ctx, declaredVars, regionCtx),
-          )
+      const altStmts = node.alternate
+        ? lowerNodeWithRegionContext(node.alternate, t, ctx, declaredVars, regionCtx)
         : null
       ctx.inConditional = prevConditional
 
-      const ifStmt = t.ifStatement(lowerExpressionWithDeSSA(node.test, ctx), conseq, alt)
+      const conseqReactiveOnly = nodeIsPureReactiveScope(node.consequent)
+      const altReactiveOnly = node.alternate ? nodeIsPureReactiveScope(node.alternate) : false
+      const testExpr = lowerExpressionWithDeSSA(node.test, ctx)
+      const unwrapTestExpr = (): BabelCore.types.Expression => {
+        if (
+          t.isArrowFunctionExpression(testExpr) &&
+          testExpr.params.length === 0 &&
+          !t.isBlockStatement(testExpr.body)
+        ) {
+          return t.cloneNode(testExpr.body)
+        }
+        return t.cloneNode(testExpr)
+      }
+      const createFlagExpr = (negate = false): BabelCore.types.ArrowFunctionExpression => {
+        const body = unwrapTestExpr()
+        const bodyExpr = negate ? t.unaryExpression('!', body) : body
+        return t.arrowFunctionExpression([], bodyExpr)
+      }
+
+      if (conseqReactiveOnly || altReactiveOnly) {
+        const stmts: BabelCore.types.Statement[] = []
+        const runInScopeId = t.identifier(RUNTIME_ALIASES.runInScope)
+        const addScoped = (
+          flagExpr: BabelCore.types.Expression,
+          body: BabelCore.types.Statement[],
+        ) => {
+          ctx.helpersUsed.add('runInScope')
+          stmts.push(
+            t.expressionStatement(
+              t.callExpression(runInScopeId, [
+                flagExpr,
+                t.arrowFunctionExpression([], t.blockStatement(body)),
+              ]),
+            ),
+          )
+        }
+
+        if (conseqReactiveOnly) {
+          addScoped(createFlagExpr(false), conseqStmts)
+        }
+        if (altReactiveOnly && altStmts) {
+          addScoped(createFlagExpr(true), altStmts)
+        }
+
+        const needsFallbackConseq = !conseqReactiveOnly && conseqStmts.length > 0
+        const needsFallbackAlt = !altReactiveOnly && altStmts && altStmts.length > 0
+        if (needsFallbackConseq || needsFallbackAlt) {
+          stmts.push(
+            t.ifStatement(
+              unwrapTestExpr(),
+              needsFallbackConseq ? t.blockStatement(conseqStmts) : t.blockStatement([]),
+              needsFallbackAlt && altStmts ? t.blockStatement(altStmts) : null,
+            ),
+          )
+        }
+
+        return stmts
+      }
+
+      const ifStmt = t.ifStatement(
+        testExpr,
+        t.blockStatement(conseqStmts),
+        altStmts ? t.blockStatement(altStmts) : null,
+      )
       const shouldWrapEffect =
         ctx.wrapTrackedExpressions !== false &&
         !ctx.inRegionMemo &&

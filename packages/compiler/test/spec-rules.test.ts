@@ -208,6 +208,24 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-S002')).toBe(true)
   })
 
+  it('warns when reactive primitives are created inside non-JSX control flow without a scope (FICT-R004)', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $state, createEffect, createMemo, createSelector } from 'fict'
+      function Demo() {
+        const count = $state(0)
+        if (count > 0) {
+          createEffect(() => console.log(count))
+          createMemo(() => count * 2)
+          createSelector(() => count)
+        }
+        return <button>{count}</button>
+      }
+    `)
+
+    const r004 = warnings.filter(w => w.code === 'FICT-R004')
+    expect(r004.length).toBeGreaterThan(0)
+  })
+
   it('detects cyclic derived dependencies', () => {
     const input = `
       import { $state } from 'fict'

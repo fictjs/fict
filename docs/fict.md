@@ -303,6 +303,60 @@ The execution model designed by Fict:
 
 The compiler analyzes and decides which update strategy to adopt at compile time. Developers don't need to rewrite code into special syntax like `<Show>/<For>` or `{#if}`; native `if/for` works directly.
 
+#### Control-flow scopes and cleanup
+
+- JSX-driven conditions/lists are automatically scoped: when a branch unmounts, its effects/memos are disposed.
+- Simple plain `if` blocks that only set up reactive primitives are auto-wrapped with `runInScope` for cleanup when the condition flips.
+- More complex plain JS control flow (nested conditionals/loops) is **still not auto-scoped**. Creating `createEffect/createMemo/createSelector` inside such blocks can leak unless you manage cleanup.
+- The compiler now emits a warning (`FICT-R004`) when it sees these reactive primitives inside non-JSX control flow that cannot be auto-scoped.
+- Use explicit scopes to manage lifetime:
+
+```ts
+import { createScope, runInScope, onCleanup } from 'fict'
+
+// Manual scope
+const scope = createScope()
+scope.run(() => {
+  /* createEffect/createMemo here */
+})
+onCleanup(scope.stop)
+
+// Flag-driven scope
+runInScope(
+  () => show,
+  () => {
+    createEffect(() => {
+      /* ... */
+    })
+  },
+)
+```
+
+**Pitfall vs. fix**
+
+```tsx
+// 🚫 Not cleaned up when the condition flips
+function Counter() {
+  let count = $state(0)
+  if (count > 0) {
+    createEffect(() => console.log('count > 0:', count))
+  }
+  return <button onClick={() => count++}>Inc</button>
+}
+
+// ✅ Scoped by predicate
+function CounterScoped() {
+  let count = $state(0)
+  runInScope(
+    () => count > 0,
+    () => {
+      createEffect(() => console.log('count > 0:', count))
+    },
+  )
+  return <button onClick={() => count++}>Inc</button>
+}
+```
+
 ---
 
 ## Part 5: How the Compiler Works
@@ -326,7 +380,7 @@ Plain JS/TS + JSX/TSX (compiled)
        ↓
   ┌─────────────────┐
   │ Reactive Scopes │  Reactive Scope Analysis + Region Grouping
-  └────────┬────────┘
+  └─────────────────┘
        ↓
   ┌─────────┐
   │ Codegen │  Fine-grained DOM Operations + bindings

@@ -61,6 +61,7 @@ export enum DiagnosticCode {
   FICT_R001 = 'FICT-R001', // Region boundary crossing
   FICT_R002 = 'FICT-R002', // Scope escape detected
   FICT_R003 = 'FICT-R003', // Non-memoizable expression
+  FICT_R004 = 'FICT-R004', // Reactive creation inside non-JSX control flow
 
   // Performance (FICT-X*)
   FICT_X001 = 'FICT-X001', // Object recreation on each render
@@ -101,6 +102,8 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
   [DiagnosticCode.FICT_R001]: 'Expression crosses reactive region boundary.',
   [DiagnosticCode.FICT_R002]: 'Scope escape detected, value may not be tracked.',
   [DiagnosticCode.FICT_R003]: 'Expression cannot be memoized automatically.',
+  [DiagnosticCode.FICT_R004]:
+    'Reactive creation inside non-JSX control flow will not auto-dispose; wrap it in createScope/runInScope or move it into JSX-managed regions.',
 
   [DiagnosticCode.FICT_X001]: 'Object is recreated on each render, consider memoizing.',
   [DiagnosticCode.FICT_X002]: 'Array is recreated on each render, consider memoizing.',
@@ -138,6 +141,7 @@ export const DiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = 
   [DiagnosticCode.FICT_R001]: DiagnosticSeverity.Info,
   [DiagnosticCode.FICT_R002]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_R003]: DiagnosticSeverity.Info,
+  [DiagnosticCode.FICT_R004]: DiagnosticSeverity.Warning,
 
   [DiagnosticCode.FICT_X001]: DiagnosticSeverity.Hint,
   [DiagnosticCode.FICT_X002]: DiagnosticSeverity.Hint,

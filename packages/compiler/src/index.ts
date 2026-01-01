@@ -62,6 +62,10 @@ function isInsideNestedFunction(path: BabelCore.NodePath): boolean {
   return false
 }
 
+function isInsideJSX(path: BabelCore.NodePath): boolean {
+  return !!path.findParent(p => p.isJSXElement?.() || p.isJSXFragment?.())
+}
+
 function emitWarning(
   node: BabelCore.types.Node,
   code: string,
@@ -656,6 +660,23 @@ function createHIREntrypointVisitor(
             }
             const callee = callPath.node.callee
             const calleeId = t.isIdentifier(callee) ? callee.name : null
+            if (
+              calleeId &&
+              (calleeId === 'createEffect' ||
+                calleeId === 'createMemo' ||
+                calleeId === 'createSelector') &&
+              fictImports.has(calleeId) &&
+              (isInsideLoop(callPath) || isInsideConditional(callPath)) &&
+              !isInsideJSX(callPath)
+            ) {
+              emitWarning(
+                callPath.node,
+                'FICT-R004',
+                'Reactive creation inside non-JSX control flow will not auto-dispose; wrap it in createScope/runInScope or move it into JSX-managed regions.',
+                options,
+                fileName,
+              )
+            }
             const allowedStateCallees = new Set([
               '$effect',
               '$memo',
