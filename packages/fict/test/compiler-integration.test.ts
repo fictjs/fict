@@ -618,6 +618,351 @@ describe('compiler + fict integration', () => {
     dispose()
   })
 
+  // ===== Props Destructuring Patterns Tests =====
+
+  it('keeps props reactive with post-declaration destructuring inside function body', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Child(props) {
+        const { count, label } = props
+        const doubled = count * 2
+        return (
+          <div>
+            <span data-testid="count">{count}</span>
+            <span data-testid="label">{label}</span>
+            <span data-testid="doubled">{doubled}</span>
+            <button data-testid="inc" onClick={() => props.onInc()}>Inc</button>
+          </div>
+        )
+      }
+
+      function App() {
+        let count = $state(0)
+        return (
+          <Child
+            count={count}
+            label={"Count is " + count}
+            onInc={() => count++}
+          />
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const countEl = () => container.querySelector('[data-testid="count"]')?.textContent
+    const labelEl = () => container.querySelector('[data-testid="label"]')?.textContent
+    const doubledEl = () => container.querySelector('[data-testid="doubled"]')?.textContent
+    const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+    expect(countEl()).toBe('0')
+    expect(labelEl()).toBe('Count is 0')
+    expect(doubledEl()).toBe('0')
+
+    incBtn().click()
+    await tick()
+    expect(countEl()).toBe('1')
+    expect(labelEl()).toBe('Count is 1')
+    expect(doubledEl()).toBe('2')
+
+    incBtn().click()
+    await tick()
+    expect(countEl()).toBe('2')
+    expect(labelEl()).toBe('Count is 2')
+    expect(doubledEl()).toBe('4')
+
+    dispose()
+  })
+
+  it('keeps props reactive with destructuring default values', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Child({ count = 0, label = 'default' }) {
+        return (
+          <div>
+            <span data-testid="count">{count}</span>
+            <span data-testid="label">{label}</span>
+          </div>
+        )
+      }
+
+      function App() {
+        let showLabel = $state(false)
+        let count = $state(5)
+        return (
+          <div>
+            <Child count={count} label={showLabel ? 'visible' : undefined} />
+            <button data-testid="toggle" onClick={() => showLabel = !showLabel}>Toggle</button>
+            <button data-testid="inc" onClick={() => count++}>Inc</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const countEl = () => container.querySelector('[data-testid="count"]')?.textContent
+    const labelEl = () => container.querySelector('[data-testid="label"]')?.textContent
+    const toggleBtn = () => container.querySelector('[data-testid="toggle"]') as HTMLButtonElement
+    const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+    expect(countEl()).toBe('5')
+    expect(labelEl()).toBe('default')
+
+    incBtn().click()
+    await tick()
+    expect(countEl()).toBe('6')
+
+    toggleBtn().click()
+    await tick()
+    expect(labelEl()).toBe('visible')
+
+    dispose()
+  })
+
+  it('keeps props reactive with aliased destructuring', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Child({ count: myCount, label: myLabel }) {
+        const doubled = myCount * 2
+        return (
+          <div>
+            <span data-testid="count">{myCount}</span>
+            <span data-testid="label">{myLabel}</span>
+            <span data-testid="doubled">{doubled}</span>
+          </div>
+        )
+      }
+
+      function App() {
+        let count = $state(0)
+        return (
+          <div>
+            <Child count={count} label={"Value: " + count} />
+            <button data-testid="inc" onClick={() => count++}>Inc</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const countEl = () => container.querySelector('[data-testid="count"]')?.textContent
+    const labelEl = () => container.querySelector('[data-testid="label"]')?.textContent
+    const doubledEl = () => container.querySelector('[data-testid="doubled"]')?.textContent
+    const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+    expect(countEl()).toBe('0')
+    expect(labelEl()).toBe('Value: 0')
+    expect(doubledEl()).toBe('0')
+
+    incBtn().click()
+    await tick()
+    expect(countEl()).toBe('1')
+    expect(labelEl()).toBe('Value: 1')
+    expect(doubledEl()).toBe('2')
+
+    incBtn().click()
+    await tick()
+    expect(countEl()).toBe('2')
+    expect(labelEl()).toBe('Value: 2')
+    expect(doubledEl()).toBe('4')
+
+    dispose()
+  })
+
+  it('keeps props reactive with rest spread and specific props', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Child({ id, ...rest }) {
+        return (
+          <div>
+            <span data-testid="id">{id}</span>
+            <span data-testid="label">{rest.label}</span>
+            <span data-testid="count">{rest.count}</span>
+          </div>
+        )
+      }
+
+      function App() {
+        let count = $state(0)
+        return (
+          <div>
+            <Child id="item-1" label={"Count: " + count} count={count} />
+            <button data-testid="inc" onClick={() => count++}>Inc</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const idEl = () => container.querySelector('[data-testid="id"]')?.textContent
+    const labelEl = () => container.querySelector('[data-testid="label"]')?.textContent
+    const countEl = () => container.querySelector('[data-testid="count"]')?.textContent
+    const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+    expect(idEl()).toBe('item-1')
+    expect(labelEl()).toBe('Count: 0')
+    expect(countEl()).toBe('0')
+
+    incBtn().click()
+    await tick()
+    expect(idEl()).toBe('item-1')
+    expect(labelEl()).toBe('Count: 1')
+    expect(countEl()).toBe('1')
+
+    incBtn().click()
+    await tick()
+    expect(labelEl()).toBe('Count: 2')
+    expect(countEl()).toBe('2')
+
+    dispose()
+  })
+
+  it('keeps props reactive with nested object property access', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Child({ user }) {
+        // Accessing nested properties from destructured prop
+        const greeting = "Hello, " + user.name
+        return (
+          <div>
+            <span data-testid="name">{user.name}</span>
+            <span data-testid="age">{user.age}</span>
+            <span data-testid="greeting">{greeting}</span>
+          </div>
+        )
+      }
+
+      function App() {
+        let user = $state({ name: 'Alice', age: 25 })
+        return (
+          <div>
+            <Child user={user} />
+            <button data-testid="update" onClick={() => user = { name: 'Bob', age: 30 }}>Update</button>
+            <button data-testid="inc-age" onClick={() => user = { ...user, age: user.age + 1 }}>Inc Age</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const nameEl = () => container.querySelector('[data-testid="name"]')?.textContent
+    const ageEl = () => container.querySelector('[data-testid="age"]')?.textContent
+    const greetingEl = () => container.querySelector('[data-testid="greeting"]')?.textContent
+    const updateBtn = () => container.querySelector('[data-testid="update"]') as HTMLButtonElement
+    const incAgeBtn = () => container.querySelector('[data-testid="inc-age"]') as HTMLButtonElement
+
+    expect(nameEl()).toBe('Alice')
+    expect(ageEl()).toBe('25')
+    expect(greetingEl()).toBe('Hello, Alice')
+
+    incAgeBtn().click()
+    await tick()
+    expect(nameEl()).toBe('Alice')
+    expect(ageEl()).toBe('26')
+
+    updateBtn().click()
+    await tick()
+    expect(nameEl()).toBe('Bob')
+    expect(ageEl()).toBe('30')
+    expect(greetingEl()).toBe('Hello, Bob')
+
+    dispose()
+  })
+
+  it('keeps props reactive when destructuring function props used as event handlers', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Child({ count, onIncrement, onDecrement }) {
+        return (
+          <div>
+            <span data-testid="count">{count}</span>
+            <button data-testid="inc" onClick={onIncrement}>+</button>
+            <button data-testid="dec" onClick={onDecrement}>-</button>
+          </div>
+        )
+      }
+
+      function App() {
+        let count = $state(0)
+        return (
+          <Child
+            count={count}
+            onIncrement={() => count++}
+            onDecrement={() => count--}
+          />
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const countEl = () => container.querySelector('[data-testid="count"]')?.textContent
+    const incBtn = () => container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+    const decBtn = () => container.querySelector('[data-testid="dec"]') as HTMLButtonElement
+
+    expect(countEl()).toBe('0')
+
+    incBtn().click()
+    await tick()
+    expect(countEl()).toBe('1')
+
+    incBtn().click()
+    await tick()
+    expect(countEl()).toBe('2')
+
+    decBtn().click()
+    await tick()
+    expect(countEl()).toBe('1')
+
+    dispose()
+  })
+
   it('isolates context per render root (no state leakage across mounts)', async () => {
     const source = `
       import { $state, render } from 'fict'
