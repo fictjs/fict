@@ -497,7 +497,7 @@ function UserProfile() {
 
 - Module-level `$state` (and any derived values that depend on it) produce a **hard compilation error**.
 - Derived values defined in a component still compile to memos when they feed reactive sinks.
-- `$store` does not require compiler transformation; it works via runtime Proxy.
+- `$store` uses runtime Proxy for deep reactivity, but **derived values consuming `$store` are automatically memoized** by the compiler, just like `$state` derivations.
 
 - When reading at import side:
   - In JSX / effect: Use as memo node;

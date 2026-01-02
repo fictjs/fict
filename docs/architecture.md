@@ -626,6 +626,17 @@ The compiler tracks property access paths:
 
 Updates notify only the specific paths that changed.
 
+#### Automatic Memoization
+
+Derived expressions consuming `$store` are **automatically memoized** by the compiler, just like `$state` derivations:
+
+```ts
+const fullName = store.user.firstName + ' ' + store.user.lastName
+// Compiles to: const fullName = useMemo(() => store.user.firstName + ' ' + store.user.lastName)
+```
+
+This provides the same DX as `$state` while leveraging path-level Proxy tracking.
+
 #### When to use $store vs $state
 
 | Scenario                   | Recommended          |

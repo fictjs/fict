@@ -333,6 +333,9 @@ import { $store, resource, lazy, untrack } from 'fict/plus'
 let user = $store({ name: 'Alice', address: { city: 'London' } })
 user.address.city = 'Paris' // fine-grained update
 
+// Derived values are auto-memoized, just like $state
+const greeting = `Hello, ${user.name}` // auto-derived
+
 // Escape hatch for black-box functions
 const result = untrack(() => externalLib.compute(count))
 ```
