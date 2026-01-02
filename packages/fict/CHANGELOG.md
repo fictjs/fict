@@ -1,5 +1,14 @@
 # fict
 
+## 0.0.8
+
+### Patch Changes
+
+- fix store
+- Updated dependencies
+  - @fictjs/runtime@0.0.8
+  - @fictjs/vite-plugin@0.0.8
+
 ## 0.0.7
 
 ### Patch Changes
