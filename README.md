@@ -50,8 +50,7 @@ Fict gives you:
 
 ```bash
 npm install fict
-# yarn add fict
-# pnpm add fict
+npm install -D @fictjs/vite-plugin  # Vite users
 ```
 
 **Counter App:**
@@ -330,15 +329,32 @@ function Profile({ id }) {
 import { $store, resource, lazy, untrack } from 'fict/plus'
 
 // Deep reactivity with path-level tracking
-let user = $store({ name: 'Alice', address: { city: 'London' } })
+const user = $store({ name: 'Alice', address: { city: 'London' } })
 user.address.city = 'Paris' // fine-grained update
 
 // Derived values are auto-memoized, just like $state
 const greeting = `Hello, ${user.name}` // auto-derived
 
+// Method chains are also auto-memoized
+const store = $store({ items: [1, 2, 3, 4, 5] })
+const doubled = store.items.filter(n => n > 2).map(n => n * 2) // auto-memoized
+
+// Dynamic property access works with runtime tracking
+const value = store[props.key] // reactive, updates when key or store changes
+
 // Escape hatch for black-box functions
 const result = untrack(() => externalLib.compute(count))
 ```
+
+**`$store` vs `$state`:**
+
+| Feature        | `$state`                   | `$store`                 |
+| -------------- | -------------------------- | ------------------------ |
+| Depth          | Shallow                    | Deep (nested objects)    |
+| Access         | Direct value               | Proxy-based              |
+| Mutations      | Reassignment               | Direct property mutation |
+| Derived values | Auto-memoized              | Auto-memoized            |
+| Best for       | Primitives, simple objects | Complex nested state     |
 
 ---
 

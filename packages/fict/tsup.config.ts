@@ -13,5 +13,5 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   treeshake: true,
-  external: ['@fictjs/runtime', '@fictjs/vite-plugin', 'vite'],
+  external: ['@fictjs/runtime'],
 })

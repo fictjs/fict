@@ -65,10 +65,10 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@fictjs/runtime": "workspace:*",
-    "@fictjs/vite-plugin": "workspace:*"
+    "@fictjs/runtime": "workspace:*"
   },
   "devDependencies": {
+    "@fictjs/vite-plugin": "workspace:*",
     "tsup": "^8.5.1",
     "vite": "^7.3.0"
   }
