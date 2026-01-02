@@ -368,16 +368,15 @@ No resident memo node is established; instead, it is calculated on demand when t
 
 ---
 
-## 5. Fine-grained DOM pipeline (preview)
+## 5. Fine-grained DOM pipeline
 
-The compiler refactor described in [`docs/compiler-fine-grained-plan.md`](./compiler-fine-grained-plan.md) is landing in phases. As of the current build:
+Fict uses fine-grained DOM updates as the only rendering mode:
 
 - Runtime helper layer (`bindText`, `bindClass`, `bindStyle`, `moveMarkerBlock`, `createVersionedSignal`, etc.) is in place.
 - Fine-grained runtime execution is **the only mode**; `render()` annotates the container with `data-fict-fine-grained="1"` for debugging and monitoring.
 - End-to-end scenarios (counter, keyed lists, nested conditionals, primitives) verify the fine-grained implementation.
-- The compiler work (IR + JSX subset) is documented in [`docs/fine-grained-jsx-subset.md`](./fine-grained-jsx-subset.md) and [`docs/fine-grained-ir.md`](./fine-grained-ir.md).
 
-Legacy mode infrastructure was removed on 2025-12-05; the architecture is now fully unified around fine-grained updates.
+The architecture is fully unified around fine-grained updates.
 
 ---
 
@@ -593,9 +592,9 @@ This matches developer intuition while optimizing for performance.
 
 ---
 
-## 10. Advanced: $store / resource / Escape Hatches (Conceptual)
+## 10. Advanced: $store / resource / Escape Hatches
 
-This part covers advanced capabilities that might appear in `fict/plus` in the future, not part of the minimal mental surface area.
+This part covers advanced capabilities available in `fict/plus`, not part of the minimal mental surface area.
 
 ### 9.1 $store: Path-level reactivity
 
@@ -698,7 +697,9 @@ function WeirdComponent() {
 }
 ```
 
-### 9.4 Error boundaries (Planned)
+### 9.4 Error boundaries
+
+> For detailed API reference, see [error-boundary.md](./error-boundary.md).
 
 ```tsx
 import { ErrorBoundary } from 'fict'
@@ -918,51 +919,6 @@ This means:
 | Incremental DOM patching            | Preserves identity/state/events    | Limited attribute patching (simple props only) |
 
 **Bottom Line**: Keyed lists prioritize **correctness and developer ergonomics** over raw performance. For performance-critical scenarios, use the optimization strategies documented above.
-
----
-
-## 11. DevTools Specification (Draft)
-
-### Core Features
-
-1. **Dependency Graph Viewer**
-   - Visualize: Sources → Memos → Effects/Bindings
-   - Click any node to see its dependencies and dependents
-
-2. **"Why did this update?" Panel**
-   - Select any DOM element or effect
-   - Shows the chain: which $state changed → which memos recomputed → this update
-
-3. **Update Timeline**
-   - Flame graph of updates over time
-   - Highlight "hot" nodes (frequent recomputation)
-
-4. **Warnings Panel**
-   - "This memo is coarse-grained because of dynamic key access"
-   - "This function was treated as a black box"
-   - Click to jump to source location
-
-5. **State Inspector**
-   - View current values of all $state
-   - Edit values to test reactivity
-
----
-
-## 12. Technical Risks and Boundaries
-
-To fully land this set of things in reality, there are still many hard problems to solve:
-
-- Static analysis only works for a "reasonable subset" of JS; extremely dynamic code needs to fall back to conservative mode;
-- Deep reactivity ($store) requires careful shape analysis and Proxy overhead trade-offs;
-- Dependency boundaries of async effects, race condition cancellation, and behavior under SSR/Hydration need to be very clear;
-- When compiled code differs significantly from source code, debugging experience relies on high-quality source maps and DevTools.
-
-Fict's current stage is more like:
-
-> "We design a set of **Fiction-first + Compiler-driven** UI semantics clearly,
-> and then prove the engineering feasibility of this design through iteration."
-
-If you are interested in these low-level details, welcome to participate directly in the implementation, or challenge the semantic design itself in issues.
 
 ---
 

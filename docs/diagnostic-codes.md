@@ -96,17 +96,21 @@ items = [...items, 4]
 **Fix:**
 
 - Keep state within component scope
-- Use `$derived` for computed values that need to be shared
-- Pass callbacks that read state instead of state itself
+- Pass explicit getter functions that read state instead of state itself
+- Use `$store` from `fict/plus` for shared global state
 
 ```js
 // Risky — state escapes
 export const count = $state(0) // FICT-S002
 
-// Better — export accessor
+// Better — export accessors
 let count = $state(0)
 export const getCount = () => count
 export const setCount = v => (count = v)
+
+// Or use $store for shared global state
+import { $store } from 'fict/plus'
+export const appState = $store({ count: 0 })
 ```
 
 ---

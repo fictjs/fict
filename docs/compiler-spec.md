@@ -628,9 +628,7 @@ Compiler should:
 
 ---
 
-## 14. **Boundaries**: When "Not To Be Smart"
-
-15. **Appendix**: Formal Semantics (v1.0)
+## 14. Boundaries: When "Not To Be Smart"
 
 Fict's principle is:
 

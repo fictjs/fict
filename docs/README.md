@@ -1,10 +1,11 @@
 # Fict Documentation
 
-This folder holds design documents and specifications for the Fict project.
+This folder holds documentation for the Fict project.
 
 ## Getting Started
 
-- `reactivity-semantics.md` — **Start here!** Semantic rules for Fict reactivity (sink-driven memoization, closures, call-site expansion)
+- `fict.md` — **Start here!** Core design philosophy, technical overview, and how the compiler works
+- `reactivity-semantics.md` — Semantic rules for Fict reactivity (memoization, closures, call-site expansion)
 - `diagnostic-codes.md` — Complete reference for compiler warnings and errors with fixes
 
 ## Core Specs
@@ -19,12 +20,9 @@ This folder holds design documents and specifications for the Fict project.
 
 ## Technical Details
 
-- `fine-grained-jsx-subset.md` — Fine-grained DOM rendering specifics
-- `scheduler.md` — Scheduler and batching implementation
-- `cycle-protection.md` — Cycle detection in reactive graphs
-- `error-boundary.md` — Error boundary implementation
+- `scheduler.md` — Multi-priority scheduler and transition APIs
+- `error-boundary.md` — Error boundary runtime semantics
 
 ## Tooling
 
 - `eslint-rules.md` — ESLint plugin rules
-- `diagnostic-codes.md` — Compiler diagnostic reference
