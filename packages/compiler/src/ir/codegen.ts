@@ -3012,6 +3012,9 @@ function getDependencyPathFromNode(
     if ((node as any).computed) {
       if (t.isStringLiteral(property) || t.isNumericLiteral(property)) {
         propName = String((property as any).value)
+      } else {
+        // Dynamic computed property - fall back to tracking the base object
+        return objectPath
       }
     } else if (t.isIdentifier(property)) {
       propName = property.name
@@ -3174,10 +3177,15 @@ function replaceIdentifiersWithOverrides(
     !skipCurrentNode &&
     (t.isMemberExpression(node) || t.isOptionalMemberExpression(node as any))
   ) {
+    const propertyNode = (node as any).property as BabelCore.types.Node
+    const isDynamicComputed =
+      ((node as any).computed ?? false) &&
+      !t.isStringLiteral(propertyNode) &&
+      !t.isNumericLiteral(propertyNode)
     const path = getDependencyPathFromNode(node, t)
     const normalized = path ? normalizeDependencyKey(path) : null
     const override = (normalized && overrides[normalized]) || (path ? overrides[path] : undefined)
-    if (override && !isCallTarget) {
+    if (override && !isCallTarget && !isDynamicComputed) {
       const replacement = override()
       Object.assign(node, replacement)
       return
@@ -5349,9 +5357,12 @@ export function lowerHIRWithRegions(
           decl.init &&
           t.isCallExpression(decl.init) &&
           t.isIdentifier(decl.init.callee) &&
-          decl.init.callee.name === '$state'
+          (decl.init.callee.name === '$state' || decl.init.callee.name === '$store')
         ) {
           ctx.trackedVars.add(decl.id.name)
+          if (decl.init.callee.name === '$store') {
+            ctx.storeVars?.add(decl.id.name)
+          }
         }
       }
     }

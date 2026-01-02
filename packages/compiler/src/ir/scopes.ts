@@ -422,7 +422,9 @@ function collectExprReads(
     case 'CallExpression': {
       const isMacroCallee =
         expr.callee.kind === 'Identifier' &&
-        (expr.callee.name === '$state' || expr.callee.name === '$effect')
+        (expr.callee.name === '$state' ||
+          expr.callee.name === '$effect' ||
+          expr.callee.name === '$store')
 
       if (!isMacroCallee) {
         collectExprReads(expr.callee, into, paths, bound)

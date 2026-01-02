@@ -2373,6 +2373,61 @@ describe('compiler + fict integration', () => {
     dispose()
   })
 
+  it('keeps $store dynamic property access reactive across keys and mutations', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+      import { $store } from 'fict/plus'
+
+      function App() {
+        let key = $state('a')
+        const store = $store({ map: { a: 1, b: 2 } })
+
+        const swap = () => { key = key === 'a' ? 'b' : 'a' }
+        const bumpA = () => { store.map.a = store.map.a + 1 }
+
+        return (
+          <div>
+            <p data-testid="value">{store.map[key]}</p>
+            <button data-testid="swap" onClick={swap}>Swap</button>
+            <button data-testid="inc-a" onClick={bumpA}>Inc A</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const read = () => container.querySelector('[data-testid="value"]')?.textContent
+    const swap = container.querySelector('[data-testid="swap"]') as HTMLButtonElement
+    const incA = container.querySelector('[data-testid="inc-a"]') as HTMLButtonElement
+
+    expect(read()).toBe('1')
+
+    incA.click()
+    await tick()
+    expect(read()).toBe('2')
+
+    swap.click()
+    await tick()
+    expect(read()).toBe('2')
+
+    swap.click()
+    await tick()
+    expect(read()).toBe('2')
+
+    incA.click()
+    await tick()
+    expect(read()).toBe('3')
+
+    dispose()
+  })
+
   it('handles component children and events without [object Object] leakage', async () => {
     const source = `
       import { $state, render } from 'fict'
