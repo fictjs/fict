@@ -427,19 +427,40 @@ function createHIREntrypointVisitor(
     Program: {
       exit(path) {
         const fileName = (path.hub as any)?.file?.opts?.filename || '<unknown>'
-        const isComponentLike = (fnPath: BabelCore.NodePath<BabelCore.types.Function>): boolean => {
-          const name =
-            fnPath.isFunctionDeclaration() && fnPath.node.id
+        const isHookName = (name: string | undefined): boolean => !!name && /^use[A-Z]/.test(name)
+        const getFunctionName = (
+          fnPath: BabelCore.NodePath<BabelCore.types.Function>,
+        ): string | undefined => {
+          return fnPath.isFunctionDeclaration() && fnPath.node.id
+            ? fnPath.node.id.name
+            : fnPath.isFunctionExpression() && fnPath.node.id
               ? fnPath.node.id.name
-              : fnPath.isFunctionExpression() && fnPath.node.id
-                ? fnPath.node.id.name
-                : fnPath.parentPath.isVariableDeclarator() &&
-                    t.isIdentifier(fnPath.parentPath.node.id) &&
-                    fnPath.parentPath.node.init === fnPath.node
-                  ? fnPath.parentPath.node.id.name
-                  : undefined
+              : fnPath.parentPath.isVariableDeclarator() &&
+                  t.isIdentifier(fnPath.parentPath.node.id) &&
+                  fnPath.parentPath.node.init === fnPath.node
+                ? fnPath.parentPath.node.id.name
+                : undefined
+        }
+        const isComponentDefinition = (
+          fnPath: BabelCore.NodePath<BabelCore.types.Function>,
+        ): boolean => {
+          const name = getFunctionName(fnPath)
+          return (name && isComponentName(name)) || functionHasJSX(fnPath)
+        }
+        const isHookDefinition = (
+          fnPath: BabelCore.NodePath<BabelCore.types.Function>,
+        ): boolean => {
+          const name = getFunctionName(fnPath)
+          return isHookName(name)
+        }
+        const isComponentOrHookDefinition = (
+          fnPath: BabelCore.NodePath<BabelCore.types.Function>,
+        ): boolean => isComponentDefinition(fnPath) || isHookDefinition(fnPath)
+        const isComponentLike = (fnPath: BabelCore.NodePath<BabelCore.types.Function>): boolean => {
+          const name = getFunctionName(fnPath)
           return (
             (name && isComponentName(name)) ||
+            isHookName(name) ||
             functionHasJSX(fnPath) ||
             functionUsesStateLike(fnPath, t)
           )
@@ -610,6 +631,12 @@ function createHIREntrypointVisitor(
                   'Destructuring $state is not supported. Use a simple identifier.',
                 )
               }
+              const ownerComponent = varPath.getFunctionParent()
+              if (!ownerComponent || !isComponentOrHookDefinition(ownerComponent as any)) {
+                throw varPath.buildCodeFrameError(
+                  '$state() must be declared inside a component or hook function body',
+                )
+              }
               stateVars.add(varPath.node.id.name)
               if (isInsideLoop(varPath) || isInsideConditional(varPath)) {
                 throw varPath.buildCodeFrameError(
@@ -661,6 +688,12 @@ function createHIREntrypointVisitor(
           },
           CallExpression(callPath) {
             if (isStateCall(callPath.node, t)) {
+              const ownerComponent = callPath.getFunctionParent()
+              if (!ownerComponent || !isComponentOrHookDefinition(ownerComponent as any)) {
+                throw callPath.buildCodeFrameError(
+                  '$state() must be declared inside a component or hook function body',
+                )
+              }
               if (isInsideLoop(callPath) || isInsideConditional(callPath)) {
                 throw callPath.buildCodeFrameError(
                   '$state() cannot be declared inside loops or conditionals',
@@ -707,6 +740,41 @@ function createHIREntrypointVisitor(
                 fileName,
               )
             }
+            if (calleeId && isHookName(calleeId)) {
+              const binding = callPath.scope.getBinding(calleeId)
+              const bindingPath = binding?.path
+              const bindingIsHook =
+                (!bindingPath && isHookName(calleeId)) ||
+                bindingPath?.isImportSpecifier() ||
+                bindingPath?.isImportDefaultSpecifier() ||
+                (bindingPath?.isFunctionDeclaration() &&
+                  isHookDefinition(bindingPath as unknown as BabelCore.NodePath<any>)) ||
+                (bindingPath?.isVariableDeclarator() &&
+                  (() => {
+                    const init = (bindingPath as any).get?.('init') as
+                      | BabelCore.NodePath<BabelCore.types.Function>
+                      | undefined
+                    return init ? isHookDefinition(init as any) : false
+                  })())
+
+              if (bindingIsHook) {
+                const ownerFunction = callPath.getFunctionParent()
+                if (!ownerFunction || !isComponentOrHookDefinition(ownerFunction as any)) {
+                  throw callPath.buildCodeFrameError(
+                    `${calleeId}() must be called inside a component or hook (useX)`,
+                  )
+                }
+                if (
+                  isInsideLoop(callPath) ||
+                  isInsideConditional(callPath) ||
+                  isInsideNestedFunction(callPath)
+                ) {
+                  throw callPath.buildCodeFrameError(
+                    `${calleeId}() must be called at the top level of a component or hook (no loops/conditions/nested functions)`,
+                  )
+                }
+              }
+            }
             const allowedStateCallees = new Set([
               '$effect',
               '$memo',
@@ -751,6 +819,80 @@ function createHIREntrypointVisitor(
                   column: loc ? loc.column + 1 : 0,
                 })
               }
+            }
+          },
+        })
+
+        // Validate alias reassignments now that state variables are known
+        const aliasStack: Set<string>[] = [new Set()]
+        const currentAliasSet = () => aliasStack[aliasStack.length - 1]
+        const rhsUsesState = (exprPath: BabelCore.NodePath | null | undefined): boolean => {
+          if (!exprPath) return false
+          if (
+            exprPath.isIdentifier() &&
+            t.isIdentifier(exprPath.node) &&
+            stateVars.has(exprPath.node.name)
+          ) {
+            return true
+          }
+          let usesState = false
+          exprPath.traverse({
+            Identifier(idPath: BabelCore.NodePath<BabelCore.types.Identifier>) {
+              if (stateVars.has(idPath.node.name)) {
+                usesState = true
+                idPath.stop()
+              }
+            },
+          })
+          return usesState
+        }
+        if (process.env.FICT_DEBUG_ALIAS) {
+          // Useful for debugging alias validation without affecting normal output
+
+          console.log('[fict] alias check state vars', Array.from(stateVars))
+        }
+        path.traverse({
+          Function: {
+            enter() {
+              aliasStack.push(new Set())
+            },
+            exit() {
+              aliasStack.pop()
+            },
+          },
+          VariableDeclarator(varPath) {
+            const aliasSet = currentAliasSet()
+            if (
+              aliasSet &&
+              t.isIdentifier(varPath.node.id) &&
+              rhsUsesState(varPath.get('init') as any)
+            ) {
+              if (process.env.FICT_DEBUG_ALIAS) {
+                console.log('[fict] alias add from decl', varPath.node.id.name)
+              }
+              aliasSet.add(varPath.node.id.name)
+            }
+          },
+          AssignmentExpression(assignPath) {
+            const aliasSet = currentAliasSet()
+            if (!aliasSet) return
+            if (!t.isIdentifier(assignPath.node.left)) return
+            const targetName = assignPath.node.left.name
+            const rightPath = assignPath.get('right') as BabelCore.NodePath | null
+            if (rhsUsesState(rightPath)) {
+              if (process.env.FICT_DEBUG_ALIAS) {
+                console.log('[fict] alias add from assign', targetName)
+              }
+              aliasSet.add(targetName)
+              return
+            }
+            if (aliasSet.has(targetName)) {
+              if (process.env.FICT_DEBUG_ALIAS) {
+                console.log('[fict] alias reassignment detected', targetName)
+              }
+              throw assignPath.buildCodeFrameError(
+                `Alias reassignment is not supported for "${targetName}"`,
+              )
             }
           },
         })
@@ -801,7 +943,9 @@ function createHIREntrypointVisitor(
         path.node.body = lowered.program.body
         path.node.directives = lowered.program.directives
 
-        path.scope.crawl()
+        if (!process.env.FICT_SKIP_SCOPE_CRAWL) {
+          path.scope.crawl()
+        }
         stripMacroImports(path as any, t)
       },
     },

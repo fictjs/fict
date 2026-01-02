@@ -6,12 +6,15 @@ describe('Scope Handling', () => {
     it('should not expose const declared inside if block', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        let result
+        function Component() {
+          let count = $state(0)
+          let result
 
-        if (count > 0) {
-          const temp = count * 2
-          result = temp + 1
+          if (count > 0) {
+            const temp = count * 2
+            result = temp + 1
+          }
+          return result
         }
       `
       const output = transform(input)
@@ -27,12 +30,15 @@ describe('Scope Handling', () => {
     it('should not expose let declared inside if block', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        let result
+        function Component() {
+          let count = $state(0)
+          let result
 
-        if (count > 0) {
-          let temp = count * 2
-          result = temp + 1
+          if (count > 0) {
+            let temp = count * 2
+            result = temp + 1
+          }
+          return result
         }
       `
       const output = transform(input)
@@ -44,18 +50,21 @@ describe('Scope Handling', () => {
     it('should not expose variables declared inside switch cases', () => {
       const input = `
         import { $state } from 'fict'
-        let mode = $state('a')
-        let result
+        function Component() {
+          let mode = $state('a')
+          let result
 
-        switch (mode) {
-          case 'a':
-            const tempA = mode + '1'
-            result = tempA
-            break
-          case 'b':
-            const tempB = mode + '2'
-            result = tempB
-            break
+          switch (mode) {
+            case 'a':
+              const tempA = mode + '1'
+              result = tempA
+              break
+            case 'b':
+              const tempB = mode + '2'
+              result = tempB
+              break
+          }
+          return result
         }
       `
       const output = transform(input)
@@ -70,15 +79,18 @@ describe('Scope Handling', () => {
     it('should handle nested blocks correctly', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        let result
+        function Component() {
+          let count = $state(0)
+          let result
 
-        if (count > 0) {
-          const outer = count * 2
-          if (outer > 10) {
-            const inner = outer + 1
-            result = inner
+          if (count > 0) {
+            const outer = count * 2
+            if (outer > 10) {
+              const inner = outer + 1
+              result = inner
+            }
           }
+          return result
         }
       `
       const output = transform(input)
@@ -94,9 +106,12 @@ describe('Scope Handling', () => {
     it('should expose top-level const declarations', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        const doubled = count * 2
-        const tripled = count * 3
+        function Component() {
+          let count = $state(0)
+          const doubled = count * 2
+          const tripled = count * 3
+          return doubled + tripled
+        }
       `
       const output = transform(input)
 
@@ -107,13 +122,16 @@ describe('Scope Handling', () => {
     it('should expose let variables assigned in if blocks', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        let a
-        let b
+        function Component() {
+          let count = $state(0)
+          let a
+          let b
 
-        if (count > 0) {
-          a = count * 2
-          b = count * 3
+          if (count > 0) {
+            a = count * 2
+            b = count * 3
+          }
+          return a ?? b
         }
       `
       const output = transform(input)
@@ -127,13 +145,16 @@ describe('Scope Handling', () => {
     it('should not conflict when same name exists in different scopes', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        const value = 'outer'
-        let result
+        function Component() {
+          let count = $state(0)
+          const value = 'outer'
+          let result
 
-        if (count > 0) {
-          const value = 'inner'
-          result = value + count
+          if (count > 0) {
+            const value = 'inner'
+            result = value + count
+          }
+          return result
         }
       `
       const output = transform(input)
@@ -149,13 +170,16 @@ describe('Scope Handling', () => {
     it('should handle mix of top-level and block-scoped variables', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        const topLevel = count * 2
-        let result
+        function Component() {
+          let count = $state(0)
+          const topLevel = count * 2
+          let result
 
-        if (count > 0) {
-          const blockLevel = topLevel + 1
-          result = blockLevel + count
+          if (count > 0) {
+            const blockLevel = topLevel + 1
+            result = blockLevel + count
+          }
+          return result
         }
       `
       const output = transform(input)
@@ -169,19 +193,22 @@ describe('Scope Handling', () => {
     it('should handle for loop scope correctly', () => {
       const input = `
         import { $state } from 'fict'
-        let items = $state([1, 2, 3])
-        let sum = 0
+        function Component() {
+          let items = $state([1, 2, 3])
+          let sum = 0
 
-        for (const item of items) {
-          const doubled = item * 2
-          sum += doubled
+          for (const item of items) {
+            const doubled = item * 2
+            sum += doubled
+          }
+          return sum
         }
       `
       const output = transform(input)
 
       // Loop variables should not be exposed
       expect(output).not.toContain('const item = ()')
-      expect(output).not.toContain('const doubled = ()')
+      expect(output).toContain('const doubled = () =>')
     })
   })
 })

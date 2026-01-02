@@ -7,7 +7,7 @@ describe('fast paths', () => {
     const output = transformCommonJS(`
       import { $state } from 'fict'
 
-      export function useCounter() {
+      export function Counter() {
         const count = $state(0)
         const doubled = count * 2
         return { count, doubled }

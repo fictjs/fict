@@ -5,8 +5,11 @@ describe('Condition hoisting respects function scope', () => {
   it('does not hoist conditions inside arrow function bodies', () => {
     const input = `
       import { $state } from 'fict'
-      const count = $state(0)
-      const handler = () => (count > 0 ? 'yes' : 'no')
+      function Component() {
+        const count = $state(0)
+        const handler = () => (count > 0 ? 'yes' : 'no')
+        return handler
+      }
     `
     const output = transform(input)
     // Should not generate hoisted __fictCond for the inner arrow
@@ -18,9 +21,12 @@ describe('Condition hoisting respects function scope', () => {
   it('hoists region-level conditions but not nested callbacks', () => {
     const input = `
       import { $state } from 'fict'
-      const count = $state(0)
-      const label = count > 0 ? 'pos' : 'neg'
-      const list = [1,2,3].map(n => (count > n ? n : -n))
+      function Component() {
+        const count = $state(0)
+        const label = count > 0 ? 'pos' : 'neg'
+        const list = [1,2,3].map(n => (count > n ? n : -n))
+        return { label, list }
+      }
     `
     const output = transform(input)
     // Region-level condition is captured inside memo (with double quotes in HIR)

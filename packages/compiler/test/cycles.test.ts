@@ -11,9 +11,12 @@ describe('Error/Cycle Protection', () => {
   it('detects simple cycle: a -> b -> a', () => {
     const source = `
       import { $state } from 'fict'
-      const count = $state(0)
-      const a = count + b
-      const b = count + a
+      function Component() {
+        const count = $state(0)
+        const a = count + b
+        const b = count + a
+        return a + b
+      }
     `
     // Should throw compiler error
     expect(() => run(source)).toThrow(/Detected cyclic derived dependency/)
@@ -22,8 +25,11 @@ describe('Error/Cycle Protection', () => {
   it('detects self-reference: a -> a', () => {
     const source = `
       import { $state } from 'fict'
-      const count = $state(0)
-      const a = count + a
+      function Component() {
+        const count = $state(0)
+        const a = count + a
+        return a
+      }
     `
     expect(() => run(source)).toThrow(/Detected cyclic derived dependency/)
   })
@@ -31,10 +37,13 @@ describe('Error/Cycle Protection', () => {
   it('detects long cycle: a -> b -> c -> a', () => {
     const source = `
       import { $state } from 'fict'
-      const count = $state(0)
-      const a = count + b
-      const b = c + 1
-      const c = a + 1
+      function Component() {
+        const count = $state(0)
+        const a = count + b
+        const b = c + 1
+        const c = a + 1
+        return a + b + c
+      }
     `
     expect(() => run(source)).toThrow(/Detected cyclic derived dependency/)
   })
@@ -42,11 +51,14 @@ describe('Error/Cycle Protection', () => {
   it('allows linear dependencies: a -> b -> c', () => {
     const source = `
       import { $state } from 'fict'
-      const count = $state(0)
-      const a = count + 1
-      const b = a + 1
-      const c = b + 1
-      console.log(c)
+      function Component() {
+        const count = $state(0)
+        const a = count + 1
+        const b = a + 1
+        const c = b + 1
+        console.log(c)
+        return c
+      }
     `
     const output = run(source)
     expect(output).toContain('const c =')

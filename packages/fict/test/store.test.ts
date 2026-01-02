@@ -1,5 +1,5 @@
 import { createEffect } from '@fictjs/runtime'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { $store } from '../src/store'
 
@@ -10,7 +10,46 @@ const tick = () =>
       : Promise.resolve().then(resolve),
   )
 
+// Module-scope $store - this is ALLOWED (unlike $state which must be inside component)
+const moduleStore = $store({ count: 0, user: { name: 'Alice' } })
+
 describe('$store', () => {
+  describe('module-scope store (allowed)', () => {
+    beforeEach(() => {
+      // Reset between tests
+      moduleStore.count = 0
+      moduleStore.user.name = 'Alice'
+    })
+
+    it('should work at module scope unlike $state', async () => {
+      const fn = vi.fn()
+
+      createEffect(() => {
+        fn(moduleStore.count)
+      })
+
+      expect(fn).toHaveBeenCalledWith(0)
+
+      moduleStore.count++
+      await tick()
+      expect(fn).toHaveBeenCalledWith(1)
+      expect(fn).toHaveBeenCalledTimes(2)
+    })
+
+    it('should allow nested property access at module scope', async () => {
+      const fn = vi.fn()
+
+      createEffect(() => {
+        fn(moduleStore.user.name)
+      })
+
+      expect(fn).toHaveBeenCalledWith('Alice')
+
+      moduleStore.user.name = 'Bob'
+      await tick()
+      expect(fn).toHaveBeenCalledWith('Bob')
+    })
+  })
   it('should be reactive for direct properties', async () => {
     const state = $store({ count: 0 })
     const fn = vi.fn()

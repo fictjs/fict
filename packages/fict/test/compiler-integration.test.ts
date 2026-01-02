@@ -147,17 +147,19 @@ describe('compiler + fict integration', () => {
     const source = `
       import { $state, render } from 'fict'
 
-      export function mount(el: HTMLElement) {
+      function Counter() {
         let count = $state(0)
-
         const increment = () => count++
-
-        return render(() => (
+        return (
           <div>
             <p data-testid="count">Count: {count}</p>
             <button data-testid="inc" onClick={increment}>Increment</button>
           </div>
-        ), el)
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <Counter />, el)
       }
     `
 
@@ -187,7 +189,7 @@ describe('compiler + fict integration', () => {
       import { $state, render } from 'fict'
 
       const useCounter = () => {
-        const count = $state(0)
+        let count = $state(0)
         const double = count * 2
         return { count, double }
       }
@@ -237,7 +239,7 @@ describe('compiler + fict integration', () => {
       import { $state, render } from 'fict'
 
       const useCounter = () => {
-        const count = $state(0)
+        let count = $state(0)
         return count
       }
 
@@ -281,7 +283,7 @@ describe('compiler + fict integration', () => {
       import { $state, render } from 'fict'
 
       const useCounter = () => {
-        const count = $state(0)
+        let count = $state(0)
         const double = count * 2
         return { count, double }
       }
@@ -331,7 +333,7 @@ describe('compiler + fict integration', () => {
       import { $state, render } from 'fict'
 
       const useCounter = () => {
-        const count = $state(0)
+        let count = $state(0)
         const double = count * 2
         return { count, double }
       }
@@ -388,7 +390,7 @@ describe('compiler + fict integration', () => {
         const incrementWithEvent = (e?: MouseEvent) => {
           count += (e?.detail as number | undefined) ?? 1
         }
-        return { count, increment, incrementWithEvent }
+        return { count: () => count, increment, incrementWithEvent }
       }
     `
 
@@ -405,7 +407,7 @@ describe('compiler + fict integration', () => {
         const { count, increment, incrementWithEvent } = useCounter()
         return (
           <div>
-            <p data-testid="count">Count: {count}</p>
+            <p data-testid="count">Count: {count()}</p>
             <button data-testid="inc" onClick={increment}>Increment</button>
             <button data-testid="inc-event" onClick={incrementWithEvent}>Increment with event</button>
           </div>
@@ -1825,7 +1827,7 @@ describe('compiler + fict integration', () => {
         )
       }
 
-      export function mount(el: HTMLElement) {
+      function App() {
         let userId = $state(1)
         let userName = $state('Alicia')
         bump = () => {
@@ -1835,7 +1837,11 @@ describe('compiler + fict integration', () => {
 
         // Built once outside the render effect (compiler can't see inside the IIFE body)
         const payload = (() => ({ id: userId(), label: userName() }))()
-        return render(() => <Row {...payload} />, el)
+        return <Row {...payload} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
       }
     `
 
@@ -1853,7 +1859,7 @@ describe('compiler + fict integration', () => {
         )
       }
 
-      export function mount(el: HTMLElement) {
+      function App() {
         let userId = $state(1)
         let userName = $state('Alicia')
         bump = () => {
@@ -1866,7 +1872,11 @@ describe('compiler + fict integration', () => {
           id: prop(() => userId()),
           label: prop(() => userName()),
         })
-        return render(() => <Row {...payload} />, el)
+        return <Row {...payload} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
       }
     `
 
@@ -1916,12 +1926,16 @@ describe('compiler + fict integration', () => {
         return <span className="value">{props.value}</span>
       }
 
-      export function mount(el: HTMLElement) {
+      function App() {
         let count = $state(0)
         bump = () => { count = count + 1 }
 
         // Parent view does not read count directly; prop getter should keep child reactive
-        return render(() => <Child value={prop(() => count())} />, el)
+        return <Child value={prop(() => count())} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
       }
     `
 
@@ -1953,7 +1967,7 @@ describe('compiler + fict integration', () => {
         )
       }
 
-      export function mount(el: HTMLElement) {
+      function App() {
         let count = $state(0)
         const defaults = { extra: 'x' }
         bump = () => { count = count + 1 }
@@ -1963,15 +1977,16 @@ describe('compiler + fict integration', () => {
         // Built once but with reactive getter
         const reactive = { count: prop(() => count()) }
 
-        return render(
-          () => (
-            <>
-              <Counter data-testid="naive" {...mergeProps(defaults, snapshot)} />
-              <Counter data-testid="wrapped" {...mergeProps(defaults, reactive)} />
-            </>
-          ),
-          el,
+        return (
+          <>
+            <Counter data-testid="naive" {...mergeProps(defaults, snapshot)} />
+            <Counter data-testid="wrapped" {...mergeProps(defaults, reactive)} />
+          </>
         )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
       }
     `
 
@@ -2021,15 +2036,16 @@ describe('compiler + fict integration', () => {
         )
       }
 
-      export function mount(el: HTMLElement) {
+      function App() {
         let count = $state(0)
         const onInc = () => count++
 
-        getCallCount = () => callCount
+        return <Child value={heavy(count)} onInc={onInc} />
+      }
 
-        return render(() => (
-          <Child value={heavy(count)} onInc={onInc} />
-        ), el)
+      export function mount(el: HTMLElement) {
+        getCallCount = () => callCount
+        return render(() => <App />, el)
       }
     `
 
@@ -2077,11 +2093,15 @@ describe('compiler + fict integration', () => {
         )
       }
 
-      export function mount(el: HTMLElement) {
+      function App() {
         let count = $state(0)
-        return render(() => (
+        return (
           <Child {...{ label: 'hello' }} {...{ count, onInc: () => count++ }} />
-        ), el)
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
       }
     `
 
@@ -2126,7 +2146,7 @@ describe('compiler + fict integration', () => {
         )
       }
 
-      export function mount(el: HTMLElement) {
+      function App() {
         let count = $state(1)
         bump = () => { count = count + 1 }
 
@@ -2137,10 +2157,11 @@ describe('compiler + fict integration', () => {
           return acc
         })
 
-        return render(
-          () => <Pair raw={heavy(count)} memo={memo} />,
-          el,
-        )
+        return <Pair raw={heavy(count)} memo={memo} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
       }
     `
 
@@ -2195,7 +2216,7 @@ describe('compiler + fict integration', () => {
         )
       }
 
-      export function mount(el: HTMLElement) {
+      function App() {
         let theme = $state('light')
         let userName = $state('Alicia')
         bump = () => {
@@ -2203,27 +2224,28 @@ describe('compiler + fict integration', () => {
           userName = 'Charlie'
         }
 
-        return render(
-          () => (
-            <>
-              <Dashboard
-                data-testid="naive"
-                {...{
-                  theme: theme(),
-                  user: userName(),
-                  staticFlag: true,
-                }}
-              />
-              <Dashboard
-                data-testid="wrapped"
-                theme={prop(() => theme())}
-                user={prop(() => userName())}
-                staticFlag={true}
-              />
-            </>
-          ),
-          el,
+        return (
+          <>
+            <Dashboard
+              data-testid="naive"
+              {...{
+                theme: theme(),
+                user: userName(),
+                staticFlag: true,
+              }}
+            />
+            <Dashboard
+              data-testid="wrapped"
+              theme={prop(() => theme())}
+              user={prop(() => userName())}
+              staticFlag={true}
+            />
+          </>
         )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
       }
     `
 
@@ -2253,63 +2275,45 @@ describe('compiler + fict integration', () => {
     const storeSource = `
       import { $state } from 'fict'
 
-      export let count = $state(0)
-      export const double = count * 2
-      export const inc = () => count(count() + 1)
+      export function Store() {
+        let count = $state(0)
+        const double = count * 2
+        const inc = () => count++
+        return (
+          <div>
+            <p data-testid="count">Count: {count}</p>
+            <p data-testid="double">Double: {double}</p>
+            <button data-testid="inc" onClick={inc}>Increment</button>
+          </div>
+        )
+      }
     `
 
     const appSource = `
       import { render } from 'fict'
-      import { count, double, inc } from './store'
+      import { Store } from './store'
+
+      function App() {
+        return <Store />
+      }
 
       export function mount(el: HTMLElement) {
-        return render(() => (
-          <div>
-            <p data-testid="count">Count: {count()}</p>
-            <p data-testid="double">Double: {double()}</p>
-            <button data-testid="inc" onClick={inc}>Increment</button>
-          </div>
-        ), el)
+        return render(() => <App />, el)
       }
     `
 
-    const moduleCache: Record<string, any> = {}
-    const evalModule = (code: string, id: string) => {
-      const mod = { exports: {} as any }
-      const wrapped = new Function('require', 'module', 'exports', code)
-      wrapped(
-        (reqId: string) => {
-          if (reqId === '@fictjs/runtime') return runtime
-          if (reqId === '@fictjs/runtime/jsx-runtime') return runtimeJsx
-          if (reqId === 'fict') return fict
-          if (moduleCache[reqId]) return moduleCache[reqId]
-          throw new Error('Unresolved module: ' + reqId)
-        },
-        mod,
-        mod.exports,
-      )
-      moduleCache[id] = mod.exports
-      return mod.exports
-    }
+    const storeModule = compileAndLoad<{
+      Store: () => { count: () => number; double: () => number; inc: () => void }
+    }>(storeSource)
+    const app = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(appSource, {
+      './store': storeModule,
+    })
 
-    const storeCode = transformCommonJS(storeSource, {}, 'store.tsx')
-    if (process.env.DEBUG_TEMPLATE_OUTPUT) {
-      // eslint-disable-next-line no-console
-      console.warn('STORE MODULE\n', storeCode)
-    }
-    evalModule(storeCode, './store')
-
-    const appCode = transformCommonJS(appSource, {}, 'app.tsx')
-    if (process.env.DEBUG_TEMPLATE_OUTPUT) {
-      // eslint-disable-next-line no-console
-      console.warn('APP MODULE\n', appCode)
-    }
-    const app = evalModule(appCode, './app') as { mount: (el: HTMLElement) => () => void }
     const dispose = app.mount(container)
     await tick()
     if (process.env.DEBUG_TEMPLATE_OUTPUT) {
       // eslint-disable-next-line no-console
-      console.warn('HTML AFTER MOUNT\n', container.innerHTML)
+      console.warn('CROSS MODULE HTML\n', container.outerHTML)
     }
 
     const readCount = () => container.querySelector('[data-testid="count"]')?.textContent

@@ -28,7 +28,10 @@ describe('R001: $state source identification', () => {
   it('transforms let $state declaration', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let count = $state(0)
+      function Component() {
+        let count = $state(0)
+        return count
+      }
     `)
     expect(output).toContain('__fictUseSignal')
     expect(output).toContain('__fictUseSignal(__fictCtx, 0)')
@@ -37,7 +40,10 @@ describe('R001: $state source identification', () => {
   it('transforms const $state declaration', () => {
     const output = transform(`
       import { $state } from 'fict'
-      const user = $state({ name: 'John' })
+      function Component() {
+        const user = $state({ name: 'John' })
+        return user
+      }
     `)
     expect(output).toContain('__fictUseSignal')
     // Object literals may be formatted across multiple lines
@@ -47,8 +53,11 @@ describe('R001: $state source identification', () => {
   it('rewrites read to signal call', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let count = $state(0)
-      console.log(count)
+      function Component() {
+        let count = $state(0)
+        console.log(count)
+        return count
+      }
     `)
     expect(output).toContain('console.log(count())')
   })
@@ -56,8 +65,11 @@ describe('R001: $state source identification', () => {
   it('rewrites write to signal call', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let count = $state(0)
-      count = 5
+      function Component() {
+        let count = $state(0)
+        count = 5
+        return count
+      }
     `)
     expect(output).toContain('count(5)')
   })
@@ -65,8 +77,11 @@ describe('R001: $state source identification', () => {
   it('rewrites compound assignment', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let count = $state(0)
-      count += 5
+      function Component() {
+        let count = $state(0)
+        count += 5
+        return count
+      }
     `)
     expect(output).toContain('count(count() + 5)')
   })
@@ -74,9 +89,12 @@ describe('R001: $state source identification', () => {
   it('rewrites increment/decrement', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let count = $state(0)
-      count++
-      --count
+      function Component() {
+        let count = $state(0)
+        count++
+        --count
+        return count
+      }
     `)
     expect(output).toContain('count(count() + 1)')
     expect(output).toContain('count(count() - 1)')
@@ -91,9 +109,11 @@ describe('R002: Derived expression collection', () => {
   it('identifies direct state reads as derived', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let count = $state(0)
-      const doubled = count * 2
-      return <div>{doubled}</div>
+      function Component() {
+        let count = $state(0)
+        const doubled = count * 2
+        return <div>{doubled}</div>
+      }
     `)
     expect(output).toContain('__fictUseMemo')
   })
@@ -101,9 +121,11 @@ describe('R002: Derived expression collection', () => {
   it('identifies indirect state reads as derived', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let user = $state({ profile: { name: 'John' } })
-      const name = user.profile.name
-      return <div>{name}</div>
+      function Component() {
+        let user = $state({ profile: { name: 'John' } })
+        const name = user.profile.name
+        return <div>{name}</div>
+      }
     `)
     expect(output).toContain('__fictUseMemo')
   })
@@ -111,10 +133,12 @@ describe('R002: Derived expression collection', () => {
   it('identifies template literal with state as derived', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let firstName = $state('John')
-      let lastName = $state('Doe')
-      const fullName = \`\${firstName} \${lastName}\`
-      return <div>{fullName}</div>
+      function Component() {
+        let firstName = $state('John')
+        let lastName = $state('Doe')
+        const fullName = \`\${firstName} \${lastName}\`
+        return <div>{fullName}</div>
+      }
     `)
     expect(output).toContain('__fictUseMemo')
   })
@@ -122,10 +146,12 @@ describe('R002: Derived expression collection', () => {
   it('identifies conditional expression as derived', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let isValid = $state(false)
-      let isSubmitting = $state(false)
-      const canSubmit = isValid && !isSubmitting
-      return <button disabled={!canSubmit}>Submit</button>
+      function Component() {
+        let isValid = $state(false)
+        let isSubmitting = $state(false)
+        const canSubmit = isValid && !isSubmitting
+        return <button disabled={!canSubmit}>Submit</button>
+      }
     `)
     expect(output).toContain('__fictUseMemo')
   })
@@ -189,8 +215,10 @@ describe('R006: JSX dynamic binding', () => {
   it('creates binding for dynamic prop', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let disabled = $state(false)
-      return <button disabled={disabled}>Click</button>
+      function Component() {
+        let disabled = $state(false)
+        return <button disabled={disabled}>Click</button>
+      }
     `)
     expect(output).toContain('disabled')
     // Dynamic props are wrapped in arrow function for reactivity
@@ -200,8 +228,10 @@ describe('R006: JSX dynamic binding', () => {
   it('creates binding for dynamic children', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let text = $state('Hello')
-      return <span>{text}</span>
+      function Component() {
+        let text = $state('Hello')
+        return <span>{text}</span>
+      }
     `)
     expect(output).toContain('bindText')
   })
@@ -209,8 +239,10 @@ describe('R006: JSX dynamic binding', () => {
   it('handles event handlers', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let count = $state(0)
-      return <button onClick={() => count++}>+</button>
+      function Component() {
+        let count = $state(0)
+        return <button onClick={() => count++}>+</button>
+      }
     `)
     // Fine-grained DOM converts onClick to $$click (delegated) or bindEvent (non-delegated)
     expect(output).toMatch(/\$\$click|bindEvent.*click|onClick/)
@@ -219,9 +251,11 @@ describe('R006: JSX dynamic binding', () => {
   it('handles multiple dynamic props', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let value = $state('')
-      let disabled = $state(false)
-      return <input value={value} disabled={disabled} />
+      function Component() {
+        let value = $state('')
+        let disabled = $state(false)
+        return <input value={value} disabled={disabled} />
+      }
     `)
     expect(output).toContain('value')
     expect(output).toContain('disabled')
@@ -236,8 +270,11 @@ describe('R007: $effect semantics', () => {
   it('transforms $effect to createEffect', () => {
     const output = transform(`
       import { $state, $effect } from 'fict'
-      let count = $state(0)
-      $effect(() => console.log(count))
+      function Component() {
+        let count = $state(0)
+        $effect(() => console.log(count))
+        return null
+      }
     `)
     expect(output).toContain('__fictUseEffect')
     expect(output).toContain('() => console.log(count())')
@@ -246,10 +283,13 @@ describe('R007: $effect semantics', () => {
   it('handles async $effect', () => {
     const output = transform(`
       import { $state, $effect } from 'fict'
-      let url = $state('/api')
-      $effect(async () => {
-        const res = await fetch(url)
-      })
+      function Component() {
+        let url = $state('/api')
+        $effect(async () => {
+          const res = await fetch(url)
+        })
+        return null
+      }
     `)
     expect(output).toContain('__fictUseEffect')
     expect(output).toContain('async')
@@ -258,11 +298,14 @@ describe('R007: $effect semantics', () => {
   it('preserves cleanup return', () => {
     const output = transform(`
       import { $state, $effect } from 'fict'
-      let count = $state(0)
-      $effect(() => {
-        console.log(count)
-        return () => console.log('cleanup')
-      })
+      function Component() {
+        let count = $state(0)
+        $effect(() => {
+          console.log(count)
+          return () => console.log('cleanup')
+        })
+        return null
+      }
     `)
     expect(output).toContain('return () => console.log("cleanup")')
   })
@@ -270,9 +313,12 @@ describe('R007: $effect semantics', () => {
   it('effect with multiple state dependencies', () => {
     const output = transform(`
       import { $state, $effect } from 'fict'
-      let a = $state(1)
-      let b = $state(2)
-      $effect(() => console.log(a + b))
+      function Component() {
+        let a = $state(1)
+        let b = $state(2)
+        $effect(() => console.log(a + b))
+        return null
+      }
     `)
     expect(output).toContain('a() + b()')
   })
@@ -286,9 +332,12 @@ describe('R008: Conservative downgrade edge cases', () => {
   it('warns on spread into state', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let user = $state({ name: 'John' })
-      const extra = { age: 30 }
-      Object.assign(user, extra)
+      function Component() {
+        let user = $state({ name: 'John' })
+        const extra = { age: 30 }
+        Object.assign(user, extra)
+        return null
+      }
     `)
     // Some implementations may warn, others may not
     expect(warnings).toBeDefined()
@@ -297,8 +346,11 @@ describe('R008: Conservative downgrade edge cases', () => {
   it('handles state with array methods', () => {
     const { output } = transformWithWarnings(`
       import { $state } from 'fict'
-      let items = $state([1, 2, 3])
-      items.push(4)
+      function Component() {
+        let items = $state([1, 2, 3])
+        items.push(4)
+        return null
+      }
     `)
     // Compiler handles array mutations - output should transform correctly
     expect(output).toContain('__fictUseSignal')
@@ -307,8 +359,11 @@ describe('R008: Conservative downgrade edge cases', () => {
   it('handles safe array methods', () => {
     const { output, warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let items = $state([1, 2, 3])
-      const mapped = items.map(x => x * 2)
+      function Component() {
+        let items = $state([1, 2, 3])
+        const mapped = items.map(x => x * 2)
+        return mapped
+      }
     `)
     expect(output).toContain('items')
     // Safe methods should not produce mutation warnings
@@ -318,9 +373,12 @@ describe('R008: Conservative downgrade edge cases', () => {
   it('handles state in for-in loop', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let obj = $state({ a: 1, b: 2 })
-      for (const key in obj) {
-        console.log(key)
+      function Component() {
+        let obj = $state({ a: 1, b: 2 })
+        for (const key in obj) {
+          console.log(key)
+        }
+        return null
       }
     `)
     // May or may not warn depending on implementation
@@ -515,8 +573,11 @@ describe('R014: State formal semantics', () => {
   it('destructuring from state creates snapshot', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let user = $state({ name: 'John', age: 30 })
-      const { name, age } = user
+      function Component() {
+        let user = $state({ name: 'John', age: 30 })
+        const { name, age } = user
+        return <div>{name}{age}</div>
+      }
     `)
     // Destructuring loses reactivity - may warn
     expect(warnings).toBeDefined()
@@ -527,9 +588,12 @@ describe('R015: Derived formal semantics', () => {
   it('derived used in reactive sink becomes memo', () => {
     const output = transform(`
       import { $state, $effect } from 'fict'
-      let count = $state(0)
-      const doubled = count * 2
-      $effect(() => console.log(doubled))
+      function Component() {
+        let count = $state(0)
+        const doubled = count * 2
+        $effect(() => console.log(doubled))
+        return null
+      }
     `)
     expect(output).toContain('__fictUseMemo')
   })
@@ -537,9 +601,12 @@ describe('R015: Derived formal semantics', () => {
   it('derived in event handler is event-only usage', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let count = $state(0)
-      const doubled = count * 2
-      const onClick = () => alert(doubled)
+      function Component() {
+        let count = $state(0)
+        const doubled = count * 2
+        const onClick = () => alert(doubled)
+        return onClick
+      }
     `)
     // Current implementation uses getter for event-only derived
     expect(output).toContain('doubled')
@@ -550,10 +617,13 @@ describe('R015: Derived formal semantics', () => {
   it('snapshot vs live value in closures', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let count = $state(0)
-      const snap = count
-      const onClick = () => console.log(count)
-      const onSnap = () => console.log(snap)
+      function Component() {
+        let count = $state(0)
+        const snap = count
+        const onClick = () => console.log(count)
+        const onSnap = () => console.log(snap)
+        return [onClick, onSnap]
+      }
     `)
     // Live value: count() reads current state value
     expect(output).toContain('count()')
@@ -569,11 +639,14 @@ describe('R016: Loop semantics', () => {
   it('loop-internal derived treated as fresh each iteration', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let items = $state([1, 2, 3])
-      const result = items.map(item => {
-        const doubled = item * 2
-        return doubled
-      })
+      function Component() {
+        let items = $state([1, 2, 3])
+        const result = items.map(item => {
+          const doubled = item * 2
+          return doubled
+        })
+        return result
+      }
     `)
     // Loop-internal derived should not create memo
     expect(output).toBeDefined()
@@ -582,8 +655,10 @@ describe('R016: Loop semantics', () => {
   it('JSX map generates keyed list', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let items = $state([{ id: 1, name: 'A' }])
-      return <ul>{items.map(item => <li key={item.id}>{item.name}</li>)}</ul>
+      function Component() {
+        let items = $state([{ id: 1, name: 'A' }])
+        return <ul>{items.map(item => <li key={item.id}>{item.name}</li>)}</ul>
+      }
     `)
     // Non-fine-grained mode uses insert instead of createList
     expect(output).toContain('insert')
@@ -595,8 +670,11 @@ describe('R017: Ambiguity resolution', () => {
   it('function parameter shadows outer state', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let count = $state(0)
-      const onClick = (count) => console.log(count)
+      function Component() {
+        let count = $state(0)
+        const onClick = (count) => console.log(count)
+        return onClick
+      }
     `)
     // Inner count should not be rewritten to count()
     expect(output).toMatch(/\(?count\)? => console\.log\(count\)/)
@@ -604,76 +682,58 @@ describe('R017: Ambiguity resolution', () => {
   })
 
   it('block-scoped variable shadows outer state', () => {
-    const output = transform(`
-      import { $state } from 'fict'
-      let count = $state(0)
-      {
-        const count = 5
-        console.log(count)
-      }
-    `)
-    // Block-scoped count declaration preserved
-    expect(output).toContain('const count = 5')
-    // Note: Current implementation may still add () to shadowed variable
-    // This verifies the block structure is preserved
-    expect(output).toContain('console.log(count')
+    expect(() =>
+      transform(`
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          {
+            const count = 5
+            console.log(count)
+          }
+          return null
+        }
+      `),
+    ).toThrow(/Duplicate declaration|component or hook function body/)
   })
 })
 
 // ============================================================================
-// Cross-Module Derived Values
+// Cross-Module Derived Values (now rejected)
 // ============================================================================
 
 describe('Cross-module derived values', () => {
-  it('exported state is reactive', () => {
-    const output = transform(`
+  it('rejects exporting state from module scope', () => {
+    const input = `
       import { $state } from 'fict'
       export let count = $state(0)
-    `)
-    expect(output).toContain('__fictUseSignal')
-    expect(output).toContain('export')
+    `
+    expect(() => transform(input)).toThrow(
+      'must be declared inside a component or hook function body',
+    )
   })
 
-  it('exported derived is memo', () => {
-    const output = transform(`
+  it('rejects exporting derived from module scope', () => {
+    const input = `
       import { $state } from 'fict'
       let count = $state(0)
       export const doubled = count * 2
-    `)
-    expect(output).toContain('__fictUseMemo')
+    `
+    expect(() => transform(input)).toThrow(
+      'must be declared inside a component or hook function body',
+    )
   })
 
-  it('re-exported derived maintains memo', () => {
-    const output = transform(`
+  it('rejects re-exporting derived values based on module-level state', () => {
+    const input = `
       import { $state } from 'fict'
       let count = $state(0)
       const doubled = count * 2
       export { doubled as multiplied }
-    `)
-    expect(output).toContain('__fictUseMemo')
-  })
-
-  it('default export of derived is memo', () => {
-    const output = transform(`
-      import { $state } from 'fict'
-      let count = $state(0)
-      const doubled = count * 2
-      export default doubled
-    `)
-    expect(output).toContain('__fictUseMemo')
-  })
-
-  it('module-level getter with event-only usage still produces memo', () => {
-    const output = transform(`
-      import { $state } from 'fict'
-      export let count = $state(0)
-      export const doubled = count * 2
-      export function onClick() {
-        console.log(doubled)
-      }
-    `)
-    // Module-level always memo for cross-module consistency
-    expect(output).toContain('__fictUseMemo')
+    `
+    expect(() => transform(input)).toThrow(
+      'must be declared inside a component or hook function body',
+    )
   })
 })
 
@@ -686,7 +746,9 @@ describe('Fine-grained DOM generation', () => {
     const output = transform(
       `
       import { $state } from 'fict'
-      return <div>Hello</div>
+      function Component() {
+        return <div>Hello</div>
+      }
     `,
       { fineGrainedDom: true },
     )
@@ -698,8 +760,10 @@ describe('Fine-grained DOM generation', () => {
     const output = transform(
       `
       import { $state } from 'fict'
-      let name = $state('World')
-      return <div>Hello {name}</div>
+      function Component() {
+        let name = $state('World')
+        return <div>Hello {name}</div>
+      }
     `,
       { fineGrainedDom: true },
     )
@@ -711,8 +775,10 @@ describe('Fine-grained DOM generation', () => {
     const output = transform(
       `
       import { $state } from 'fict'
-      let id = $state('my-div')
-      return <div id={id}>Content</div>
+      function Component() {
+        let id = $state('my-div')
+        return <div id={id}>Content</div>
+      }
     `,
       { fineGrainedDom: true },
     )
@@ -723,8 +789,10 @@ describe('Fine-grained DOM generation', () => {
     const output = transform(
       `
       import { $state } from 'fict'
-      let items = $state([{ id: 1 }])
-      return <ul>{items.map(item => <li key={item.id}>{item.id}</li>)}</ul>
+      function Component() {
+        let items = $state([{ id: 1 }])
+        return <ul>{items.map(item => <li key={item.id}>{item.id}</li>)}</ul>
+      }
     `,
       { fineGrainedDom: true },
     )
@@ -735,8 +803,10 @@ describe('Fine-grained DOM generation', () => {
     const output = transform(
       `
       import { $state } from 'fict'
-      let show = $state(true)
-      return <div>{show ? <span>Yes</span> : <span>No</span>}</div>
+      function Component() {
+        let show = $state(true)
+        return <div>{show ? <span>Yes</span> : <span>No</span>}</div>
+      }
     `,
       { fineGrainedDom: true },
     )
@@ -778,7 +848,9 @@ describe('Error cases', () => {
           }
         }
       `),
-    ).toThrow(/no nested functions|cannot be declared inside nested functions/)
+    ).toThrow(
+      /component or hook function body|no nested functions|cannot be declared inside nested functions/,
+    )
   })
 
   it('throws on $state in conditional', () => {

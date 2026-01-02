@@ -21,8 +21,11 @@ describe('Spec rule coverage', () => {
   it('throws when $state is declared inside conditional blocks', () => {
     const input = `
         import { $state } from 'fict'
-        if (true) {
-          const s = $state(0)
+        function Component() {
+          if (true) {
+            const s = $state(0)
+          }
+          return null
         }
       `
     expect(() => transform(input)).toThrow(
@@ -79,7 +82,10 @@ describe('Spec rule coverage', () => {
   it('rewrites destructured props that shadow tracked names inside JSX', () => {
     const input = `
       import { $state } from 'fict'
-      const count = $state(0)
+      function Parent() {
+        const count = $state(0)
+        return <Child count={count} />
+      }
       function Child({ count }) {
         return <div>{count}</div>
       }
@@ -98,8 +104,11 @@ describe('Spec rule coverage', () => {
     const input = `
       import { $state } from 'fict'
       const key = 'city'
-      let user = $state({ addr: { city: 'Paris' } })
-      user.addr[key] = 'London'
+      function Component() {
+        let user = $state({ addr: { city: 'Paris' } })
+        user.addr[key] = 'London'
+        return <div />
+      }
     `
     transform(input, {
       onWarn: warning => warnings.push(warning),
@@ -238,60 +247,37 @@ describe('Spec rule coverage', () => {
     expect(r004.length).toBeGreaterThan(0)
   })
 
-  it('detects cyclic derived dependencies', () => {
+  it('detects cyclic derived dependencies inside components', () => {
     const input = `
       import { $state } from 'fict'
-      let source = $state(0)
-      const a = b + source
-      const b = a + 1
+      function Component() {
+        let source = $state(0)
+        const a = b + source
+        const b = a + 1
+        return <div>{a}</div>
+      }
     `
     expect(() => transform(input, { dev: true })).toThrow(/cyclic derived dependency/i)
   })
 
-  it('keeps module-level derived values as memos even for event usage', () => {
+  it('throws when $state is declared at module scope', () => {
     const input = `
       import { $state } from 'fict'
-      let count = $state(1)
-      export const doubled = count * 2
-      export const click = () => console.log(doubled)
+      const count = $state(1)
     `
-    const output = transform(input)
-    // Module-level exported derived should be a memo accessor
-    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
-    expect(output).toContain('console.log(doubled')
+    expect(() => transform(input)).toThrow(
+      'must be declared inside a component or hook function body',
+    )
   })
 
-  it('keeps exported via export clause derived values as memos', () => {
+  it('throws when exporting module-level $state', () => {
     const input = `
       import { $state } from 'fict'
-      let count = $state(1)
-      const doubled = count * 2
-      export { doubled }
+      export const count = $state(1)
     `
-    const output = transform(input)
-    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
-  })
-
-  it('keeps default exported derived values as memos', () => {
-    const input = `
-      import { $state } from 'fict'
-      let count = $state(1)
-      const doubled = count * 2
-      export default doubled
-    `
-    const output = transform(input)
-    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
-  })
-
-  it('keeps export-as derived values as memos', () => {
-    const input = `
-      import { $state } from 'fict'
-      let count = $state(1)
-      const doubled = count * 2
-      export { doubled as renamed }
-    `
-    const output = transform(input)
-    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
+    expect(() => transform(input)).toThrow(
+      'must be declared inside a component or hook function body',
+    )
   })
 
   it('aliasing state inside component stays reactive via memo', () => {
@@ -313,8 +299,11 @@ describe('Spec rule coverage', () => {
   it('closure always reads live value (getter)', () => {
     const input = `
       import { $state } from 'fict'
-      let count = $state(0)
-      const onClick = () => console.log(count)
+      function Component() {
+        let count = $state(0)
+        const onClick = () => console.log(count)
+        return onClick
+      }
     `
     const output = transform(input)
     // Should rewrite count to count() inside the function
@@ -324,12 +313,15 @@ describe('Spec rule coverage', () => {
   it('event handler reads latest derived value', () => {
     const input = `
       import { $state } from 'fict'
-      let count = $state(0)
-      const doubled = count * 2
-      const onClick = () => console.log(doubled)
+      function Component() {
+        let count = $state(0)
+        const doubled = count * 2
+        const onClick = () => console.log(doubled)
+        return onClick
+      }
     `
     const output = transform(input)
-    // Module-level derived uses memo accessor; handler reads current value
+    // Derived uses memo accessor; handler reads current value
     expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
     expect(output).toContain('console.log(doubled')
   })
@@ -343,9 +335,12 @@ describe('Rule H: Conservative downgrade and warning', () => {
   it('warns on dynamic property access (obj[key]) with runtime key', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let data = $state({ a: 1, b: 2 })
-      const key = 'a'
-      const value = data[key]
+      function Component() {
+        let data = $state({ a: 1, b: 2 })
+        const key = 'a'
+        const value = data[key]
+        return value
+      }
     `)
     expect(warnings.some(w => w.code === 'FICT-H')).toBe(true)
     expect(
@@ -356,8 +351,11 @@ describe('Rule H: Conservative downgrade and warning', () => {
   it('does not warn on static property access (obj["literal"])', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let data = $state({ a: 1 })
-      const value = data["a"]
+      function Component() {
+        let data = $state({ a: 1 })
+        const value = data["a"]
+        return value
+      }
     `)
     expect(warnings.filter(w => w.code === 'FICT-H').length).toBe(0)
   })
@@ -365,8 +363,11 @@ describe('Rule H: Conservative downgrade and warning', () => {
   it('does not warn on numeric index access (arr[0])', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let items = $state([1, 2, 3])
-      const first = items[0]
+      function Component() {
+        let items = $state([1, 2, 3])
+        const first = items[0]
+        return first
+      }
     `)
     expect(warnings.filter(w => w.code === 'FICT-H').length).toBe(0)
   })
@@ -374,9 +375,12 @@ describe('Rule H: Conservative downgrade and warning', () => {
   it('warns on dynamic element access write', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let data = $state({ a: 1 })
-      const key = 'a'
-      data[key] = 2
+      function Component() {
+        let data = $state({ a: 1 })
+        const key = 'a'
+        data[key] = 2
+        return data
+      }
     `)
     // FICT-M for nested mutation, and potentially FICT-H for dynamic path
     expect(warnings.some(w => w.code === 'FICT-M')).toBe(true)
@@ -386,8 +390,11 @@ describe('Rule H: Conservative downgrade and warning', () => {
   it('warns when state object is passed to unknown function', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let user = $state({ name: 'John' })
-      someExternalFunction(user)
+      function Component() {
+        let user = $state({ name: 'John' })
+        someExternalFunction(user)
+        return null
+      }
     `)
     expect(warnings.some(w => w.code === 'FICT-H')).toBe(true)
     expect(warnings.some(w => w.message.includes('black box'))).toBe(true)
@@ -396,8 +403,11 @@ describe('Rule H: Conservative downgrade and warning', () => {
   it('does not warn when state is passed to console.log', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let user = $state({ name: 'John' })
-      console.log(user)
+      function Component() {
+        let user = $state({ name: 'John' })
+        console.log(user)
+        return null
+      }
     `)
     expect(
       warnings.filter(w => w.code === 'FICT-H' && w.message.includes('black box')).length,
@@ -407,8 +417,11 @@ describe('Rule H: Conservative downgrade and warning', () => {
   it('does not warn when state is passed to JSON.stringify', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let data = $state({ x: 1 })
-      const json = JSON.stringify(data)
+      function Component() {
+        let data = $state({ x: 1 })
+        const json = JSON.stringify(data)
+        return json
+      }
     `)
     expect(
       warnings.filter(w => w.code === 'FICT-H' && w.message.includes('black box')).length,
@@ -418,41 +431,42 @@ describe('Rule H: Conservative downgrade and warning', () => {
   it('warns when state property is passed to unknown method', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let user = $state({ profile: { name: 'John' } })
-      processProfile(user.profile)
+      function Component() {
+        let user = $state({ profile: { name: 'John' } })
+        processProfile(user.profile)
+        return null
+      }
     `)
     expect(warnings.some(w => w.code === 'FICT-H')).toBe(true)
   })
 })
 
 // ============================================================================
-// Rule I: Cross-Module Derivation
+// Rule I: Component-only state placement
 // ============================================================================
 
-describe('Rule I: Cross-module derivation', () => {
-  it('module-level exported derived values compile to memo (not getter)', () => {
-    const output = transform(`
+describe('Rule I: Component-only state placement', () => {
+  it('rejects module-level $state declarations', () => {
+    const input = `
       import { $state } from 'fict'
-      export let count = $state(0)
-      export const doubled = count * 2
-    `)
-    // Cross-module derived must always be memo accessor
-    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
+      const count = $state(0)
+    `
+    expect(() => transform(input)).toThrow(
+      'must be declared inside a component or hook function body',
+    )
   })
 
-  it('event-only usage at module level still produces memo', () => {
-    const output = transform(`
+  it('rejects exported module-level $state declarations', () => {
+    const input = `
       import { $state } from 'fict'
-      export let count = $state(0)
-      export const doubled = count * 2
-      export const handler = () => console.log(doubled)
-    `)
-    // Even with event-only usage, module-level derived should be memo accessor
-    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
-    expect(output).toContain('console.log(doubled')
+      export const count = $state(0)
+    `
+    expect(() => transform(input)).toThrow(
+      'must be declared inside a component or hook function body',
+    )
   })
 
-  it('non-exported function-scoped derived can be getter', () => {
+  it('keeps component-scoped derived values memoized for event usage', () => {
     const output = transform(`
       import { $state } from 'fict'
       function Component() {
@@ -466,14 +480,49 @@ describe('Rule I: Cross-module derivation', () => {
     expect(output).toContain('console.log(doubled()')
   })
 
-  it('re-exports maintain memo status', () => {
+  it('allows hook-style useX definitions with $state when invoked inside a component', () => {
     const output = transform(`
       import { $state } from 'fict'
-      let count = $state(0)
-      const doubled = count * 2
-      export { doubled }
+      function useCounter() {
+        let count = $state(0)
+        return { count }
+      }
+      function Component() {
+        const { count } = useCounter()
+        return <div>{count}</div>
+      }
     `)
-    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
+    expect(output).toContain('__fictUseSignal')
+    expect(output).toContain('useCounter')
+  })
+
+  it('throws when hook-style useX is called outside components/hooks', () => {
+    const input = `
+      import { $state } from 'fict'
+      function useCounter() {
+        let count = $state(0)
+        return count
+      }
+      const value = useCounter()
+    `
+    expect(() => transform(input)).toThrow(/must be called inside a component or hook/)
+  })
+
+  it('throws when hook-style useX is called conditionally', () => {
+    const input = `
+      import { $state } from 'fict'
+      function useCounter() {
+        let count = $state(0)
+        return count
+      }
+      function Component() {
+        if (true) {
+          return useCounter()
+        }
+        return null
+      }
+    `
+    expect(() => transform(input)).toThrow(/top level of a component or hook/)
   })
 })
 
@@ -485,9 +534,12 @@ describe('Rule K: Circular dependency detection', () => {
   it('detects direct circular dependency (a -> b -> a)', () => {
     const input = `
       import { $state } from 'fict'
-      let source = $state(0)
-      const a = b + source
-      const b = a + 1
+      function Component() {
+        let source = $state(0)
+        const a = b + source
+        const b = a + 1
+        return <div>{a}</div>
+      }
     `
     expect(() => transform(input)).toThrow(/cyclic derived dependency/i)
     expect(() => transform(input)).toThrow(/a -> b -> a/)
@@ -496,10 +548,13 @@ describe('Rule K: Circular dependency detection', () => {
   it('detects longer cycle chains (a -> b -> c -> a)', () => {
     const input = `
       import { $state } from 'fict'
-      let source = $state(0)
-      const a = c + source
-      const b = a + 1
-      const c = b + 1
+      function Component() {
+        let source = $state(0)
+        const a = c + source
+        const b = a + 1
+        const c = b + 1
+        return <div>{a} {b} {c}</div>
+      }
     `
     expect(() => transform(input)).toThrow(/cyclic derived dependency/i)
   })
@@ -507,10 +562,13 @@ describe('Rule K: Circular dependency detection', () => {
   it('does not throw for valid derived chain', () => {
     const input = `
       import { $state } from 'fict'
-      let source = $state(0)
-      const a = source + 1
-      const b = a + 1
-      const c = b + 1
+      function Component() {
+        let source = $state(0)
+        const a = source + 1
+        const b = a + 1
+        const c = b + 1
+        return <div>{a} {b} {c}</div>
+      }
     `
     expect(() => transform(input)).not.toThrow()
   })
@@ -518,9 +576,12 @@ describe('Rule K: Circular dependency detection', () => {
   it('cycle error includes location info', () => {
     const input = `
       import { $state } from 'fict'
-      let source = $state(0)
-      const a = b + source
-      const b = a + 1
+      function Component() {
+        let source = $state(0)
+        const a = b + source
+        const b = a + 1
+        return <div>{a}</div>
+      }
     `
     // Error should include cycle info (format may vary)
     expect(() => transform(input)).toThrow(/cyclic derived dependency|a -> b/i)
@@ -535,8 +596,11 @@ describe('Rule M: Deep modification warning', () => {
   it('warns on nested property assignment (user.addr.city = ...)', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let user = $state({ addr: { city: 'London' } })
-      user.addr.city = 'Paris'
+      function Component() {
+        let user = $state({ addr: { city: 'London' } })
+        user.addr.city = 'Paris'
+        return null
+      }
     `)
     expect(warnings.some(w => w.code === 'FICT-M')).toBe(true)
     expect(warnings.some(w => w.message.includes('Direct mutation of nested property'))).toBe(true)
@@ -548,8 +612,11 @@ describe('Rule M: Deep modification warning', () => {
   it('warns on nested property increment (user.count++)', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let user = $state({ count: 0 })
-      user.count++
+      function Component() {
+        let user = $state({ count: 0 })
+        user.count++
+        return null
+      }
     `)
     expect(warnings.some(w => w.code === 'FICT-M')).toBe(true)
   })
@@ -557,8 +624,11 @@ describe('Rule M: Deep modification warning', () => {
   it('warns on array element mutation (arr[0].x = ...)', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let items = $state([{ value: 1 }])
-      items[0].value = 2
+      function Component() {
+        let items = $state([{ value: 1 }])
+        items[0].value = 2
+        return null
+      }
     `)
     expect(warnings.some(w => w.code === 'FICT-M')).toBe(true)
   })
@@ -566,8 +636,11 @@ describe('Rule M: Deep modification warning', () => {
   it('does not warn on top-level reassignment (user = { ... })', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let user = $state({ name: 'John' })
-      user = { name: 'Jane' }
+      function Component() {
+        let user = $state({ name: 'John' })
+        user = { name: 'Jane' }
+        return null
+      }
     `)
     expect(warnings.filter(w => w.code === 'FICT-M').length).toBe(0)
   })
@@ -575,8 +648,11 @@ describe('Rule M: Deep modification warning', () => {
   it('warning includes line and column info', () => {
     const { warnings } = transformWithWarnings(`
       import { $state } from 'fict'
-      let user = $state({ x: 1 })
-      user.x = 2
+      function Component() {
+        let user = $state({ x: 1 })
+        user.x = 2
+        return null
+      }
     `)
     const mutationWarning = warnings.find(w => w.code === 'FICT-M')
     expect(mutationWarning).toBeDefined()
@@ -593,8 +669,11 @@ describe('Rule A: $state placement constraints', () => {
   it('throws when $state declared in for loop', () => {
     const input = `
       import { $state } from 'fict'
-      for (let i = 0; i < 10; i++) {
-        let count = $state(0)
+      function Component() {
+        for (let i = 0; i < 10; i++) {
+          let count = $state(0)
+        }
+        return null
       }
     `
     expect(() => transform(input)).toThrow('cannot be declared inside loops')
@@ -603,9 +682,12 @@ describe('Rule A: $state placement constraints', () => {
   it('throws when $state declared in while loop', () => {
     const input = `
       import { $state } from 'fict'
-      while (true) {
-        let count = $state(0)
-        break
+      function Component() {
+        while (true) {
+          let count = $state(0)
+          break
+        }
+        return null
       }
     `
     expect(() => transform(input)).toThrow('cannot be declared inside loops')
@@ -615,8 +697,11 @@ describe('Rule A: $state placement constraints', () => {
     const input = `
       import { $state } from 'fict'
       const items = [1, 2, 3]
-      for (const item of items) {
-        let count = $state(item)
+      function Component() {
+        for (const item of items) {
+          let count = $state(item)
+        }
+        return null
       }
     `
     expect(() => transform(input)).toThrow('cannot be declared inside loops')
@@ -625,9 +710,12 @@ describe('Rule A: $state placement constraints', () => {
   it('throws when $state declared in do-while loop', () => {
     const input = `
       import { $state } from 'fict'
-      do {
-        let count = $state(0)
-      } while (false)
+      function Component() {
+        do {
+          let count = $state(0)
+        } while (false)
+        return null
+      }
     `
     expect(() => transform(input)).toThrow('cannot be declared inside loops')
   })
@@ -635,9 +723,12 @@ describe('Rule A: $state placement constraints', () => {
   it('throws when $state declared in if block', () => {
     const input = `
         import { $state } from 'fict'
-        let x
-        if (true) {
-          x = $state(0)
+        function Component() {
+          let x
+          if (true) {
+            x = $state(0)
+          }
+          return x
         }
       `
     // This should throw for invalid $state placement
@@ -647,11 +738,14 @@ describe('Rule A: $state placement constraints', () => {
   it('throws when $state declared in switch case', () => {
     const input = `
         import { $state } from 'fict'
-        let x
-        switch (true) {
-          case true:
-            x = $state(0)
-            break
+        function Component() {
+          let x
+          switch (true) {
+            case true:
+              x = $state(0)
+              break
+          }
+          return x
         }
       `
     // This should throw for invalid $state placement
@@ -669,13 +763,15 @@ describe('Rule A: $state placement constraints', () => {
     expect(() => transform(input)).not.toThrow()
   })
 
-  it('allows $state at module top-level', () => {
+  it('rejects $state at module top-level', () => {
     const input = `
       import { $state } from 'fict'
       let count = $state(0)
       export { count }
     `
-    expect(() => transform(input)).not.toThrow()
+    expect(() => transform(input)).toThrow(
+      'must be declared inside a component or hook function body',
+    )
   })
 })
 

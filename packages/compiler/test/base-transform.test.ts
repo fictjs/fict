@@ -7,11 +7,13 @@ describe('createFictPlugin (HIR)', () => {
     it('rewrites $state to useSignal', () => {
       const output = transform(`
         import { $state } from 'fict'
-        let count = $state(0)
+        function Component() {
+          let count = $state(0)
+          return count
+        }
       `)
 
-      expect(output).toContain('__fictPushContext')
-      expect(output).toContain('__fictPopContext')
+      expect(output).toContain('__fictUseContext')
       expect(output).toContain('__fictUseSignal(__fictCtx, 0)')
       expect(output).not.toContain('$state')
     })
@@ -19,8 +21,11 @@ describe('createFictPlugin (HIR)', () => {
     it('rewrites derived const to useMemo', () => {
       const output = transform(`
         import { $state } from 'fict'
-        let count = $state(0)
-        const doubled = count * 2
+        function Component() {
+          let count = $state(0)
+          const doubled = count * 2
+          return doubled
+        }
       `)
 
       expect(output).toContain(`__fictUseMemo(__fictCtx, () => count() * 2`)
@@ -31,7 +36,10 @@ describe('createFictPlugin (HIR)', () => {
       expect(() =>
         transform(`
           import { $state } from 'fict'
-          const [a] = $state(0)
+          function Component() {
+            const [a] = $state(0)
+            return a
+          }
         `),
       ).toThrow(/Destructuring \$state is not supported/)
     })
@@ -40,8 +48,10 @@ describe('createFictPlugin (HIR)', () => {
       expect(() =>
         transform(`
           import { $state } from 'fict'
-          for (let i = 0; i < 3; i++) {
-            let x = $state(i)
+          function Component() {
+            for (let i = 0; i < 3; i++) {
+              let x = $state(i)
+            }
           }
         `),
       ).toThrow('$state() cannot be declared inside loops or conditionals')
@@ -49,10 +59,12 @@ describe('createFictPlugin (HIR)', () => {
       expect(() =>
         transform(`
           import { $state } from 'fict'
-          let i = 0
-          while (i < 3) {
-            let x = $state(i)
-            i++
+          function Component() {
+            let i = 0
+            while (i < 3) {
+              let x = $state(i)
+              i++
+            }
           }
         `),
       ).toThrow('$state() cannot be declared inside loops or conditionals')
@@ -62,8 +74,10 @@ describe('createFictPlugin (HIR)', () => {
       expect(() =>
         transform(`
           import { $state } from 'fict'
-          if (true) {
-            let x = $state(1)
+          function Component() {
+            if (true) {
+              let x = $state(1)
+            }
           }
         `),
       ).toThrow('$state() cannot be declared inside loops or conditionals')
@@ -73,8 +87,10 @@ describe('createFictPlugin (HIR)', () => {
       expect(() =>
         transform(`
           import { $effect } from 'fict'
-          if (true) {
-            $effect(() => {})
+          function Component() {
+            if (true) {
+              $effect(() => {})
+            }
           }
         `),
       ).toThrow('$effect() cannot be called inside loops or conditionals')
@@ -82,8 +98,10 @@ describe('createFictPlugin (HIR)', () => {
       expect(() =>
         transform(`
           import { $effect } from 'fict'
-          for (let i=0; i<3; i++) {
-            $effect(() => {})
+          function Component() {
+            for (let i=0; i<3; i++) {
+              $effect(() => {})
+            }
           }
         `),
       ).toThrow('$effect() cannot be called inside loops or conditionals')
@@ -92,10 +110,13 @@ describe('createFictPlugin (HIR)', () => {
     it('rewrites $effect to useEffect', () => {
       const output = transform(`
         import { $state, $effect } from 'fict'
-        let count = $state(0)
-        $effect(() => {
-          console.log(count)
-        })
+        function Component() {
+          let count = $state(0)
+          $effect(() => {
+            console.log(count)
+          })
+          return null
+        }
       `)
 
       expect(output).toContain(`__fictUseEffect(__fictCtx`)
@@ -107,12 +128,15 @@ describe('createFictPlugin (HIR)', () => {
     it('transforms assignment operators', () => {
       const output = transform(`
         import { $state } from 'fict'
-        let count = $state(0)
-        count = 5
-        count += 1
-        count -= 2
-        count *= 3
-        count /= 4
+        function Component() {
+          let count = $state(0)
+          count = 5
+          count += 1
+          count -= 2
+          count *= 3
+          count /= 4
+          return count
+        }
       `)
 
       expect(output).toContain(`count(5)`)
@@ -125,10 +149,13 @@ describe('createFictPlugin (HIR)', () => {
     it('transforms self-referential assignments like count = count + 1', () => {
       const output = transform(`
         import { $state } from 'fict'
-        let count = $state(0)
-        count = count + 1
-        count = count - 1
-        count = count * 2
+        function Component() {
+          let count = $state(0)
+          count = count + 1
+          count = count - 1
+          count = count * 2
+          return count
+        }
       `)
 
       expect(output).toContain(`count(count() + 1)`)
@@ -139,14 +166,17 @@ describe('createFictPlugin (HIR)', () => {
     it('transforms assignments inside arrow function block bodies', () => {
       const output = transform(`
         import { $state } from 'fict'
-        let count = $state(0)
-        const handler = () => {
-          count = 5
-          count = count + 1
+        function Component() {
+          let count = $state(0)
+          const handler = () => {
+            count = 5
+            count = count + 1
+          }
+          return handler
         }
       `)
 
-      expect(output).toContain(`function handler()`)
+      expect(output).toContain(`const handler = () =>`)
       expect(output).toContain(`count(5)`)
       expect(output).toContain(`count(count() + 1)`)
     })
@@ -154,11 +184,14 @@ describe('createFictPlugin (HIR)', () => {
     it('transforms increment/decrement operators', () => {
       const output = transform(`
         import { $state } from 'fict'
-        let count = $state(0)
-        count++
-        count--
-        ++count
-        --count
+        function Component() {
+          let count = $state(0)
+          count++
+          count--
+          ++count
+          --count
+          return count
+        }
       `)
 
       expect(output).toContain(`count(count() + 1)`)
@@ -170,8 +203,11 @@ describe('createFictPlugin (HIR)', () => {
     it('wraps reactive values in JSX children', () => {
       const output = transform(`
         import { $state } from 'fict'
-        let count = $state(0)
-        const view = () => <div>{count}</div>
+        function Component() {
+          let count = $state(0)
+          const view = () => <div>{count}</div>
+          return view()
+        }
       `)
 
       expect(output).toContain('bindText')
@@ -181,7 +217,10 @@ describe('createFictPlugin (HIR)', () => {
     it('does not wrap static values in JSX children', () => {
       const output = transform(`
         import { $state } from 'fict'
-        const view = () => <div>{"static"}</div>
+        function Component() {
+          const view = () => <div>{"static"}</div>
+          return view()
+        }
       `)
 
       expect(output).toContain(`"static"`)
@@ -191,8 +230,11 @@ describe('createFictPlugin (HIR)', () => {
     it('wraps complex expressions that depend on state', () => {
       const output = transform(`
         import { $state } from 'fict'
-        let count = $state(0)
-        const view = () => <div>{count > 0 ? 'positive' : 'zero'}</div>
+        function Component() {
+          let count = $state(0)
+          const view = () => <div>{count > 0 ? 'positive' : 'zero'}</div>
+          return view()
+        }
       `)
 
       expect(output).toContain('bindText')
@@ -228,9 +270,11 @@ describe('createFictPlugin (HIR)', () => {
       expect(() =>
         transform(`
           import { $state } from 'fict'
-          let count = $state(0)
-          let alias = count
-          alias = 1
+          function Component() {
+            let count = $state(0)
+            let alias = count
+            alias = 1
+          }
         `),
       ).toThrow(/Alias reassignment is not supported/)
     })
@@ -240,11 +284,14 @@ describe('createFictPlugin (HIR)', () => {
     it('rewrites tracked reads inside bindings and effects', () => {
       const output = transform(`
         import { $state, $effect } from 'fict'
-        let count = $state(0)
-        $effect(() => {
-          document.title = \`Count: \${count}\`
-        })
-        const View = () => <div>{count}</div>
+        function Component() {
+          let count = $state(0)
+          $effect(() => {
+            document.title = \`Count: \${count}\`
+          })
+          const View = () => <div>{count}</div>
+          return View
+        }
       `)
 
       expect(output).toContain('document.title = `Count: ${count()}`')

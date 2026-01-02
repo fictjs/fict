@@ -19,11 +19,13 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('transforms $state declarations to createSignal', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
+        function Component() {
+          let count = $state(0)
+          return count
+        }
       `
       const output = transform(input)
-      expect(output).toContain('__fictPushContext')
-      expect(output).toContain('__fictPopContext')
+      expect(output).toContain('__fictUseContext')
       expect(output).toContain('__fictUseSignal(__fictCtx, 0)')
       expect(output).not.toContain('$state')
     })
@@ -31,8 +33,11 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('transforms state reads to getter calls', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        console.log(count)
+        function Component() {
+          let count = $state(0)
+          console.log(count)
+          return count
+        }
       `
       const output = transform(input)
       expect(output).toContain('count()')
@@ -41,8 +46,11 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('transforms state writes to setter calls', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        count = 5
+        function Component() {
+          let count = $state(0)
+          count = 5
+          return count
+        }
       `
       const output = transform(input)
       expect(output).toContain('count(5)')
@@ -51,8 +59,11 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('transforms compound assignments', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        count += 1
+        function Component() {
+          let count = $state(0)
+          count += 1
+          return count
+        }
       `
       const output = transform(input)
       expect(output).toContain('count(count() + 1)')
@@ -61,9 +72,12 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('transforms increment/decrement operators', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        count++
-        count--
+        function Component() {
+          let count = $state(0)
+          count++
+          count--
+          return count
+        }
       `
       const output = transform(input)
       expect(output).toContain('count(count() + 1)')
@@ -75,8 +89,11 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('creates memo for derived const', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        const doubled = count * 2
+        function Component() {
+          let count = $state(0)
+          const doubled = count * 2
+          return doubled
+        }
       `
       const output = transform(input)
       // Memo is created with an ID parameter for tracking
@@ -125,8 +142,11 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('does not memo function expressions', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        const handler = () => console.log(count)
+        function Component() {
+          let count = $state(0)
+          const handler = () => console.log(count)
+          return handler
+        }
       `
       const output = transform(input)
       expect(output).not.toContain('__fictMemo')
@@ -152,13 +172,16 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('creates getter for plain function-only usage (non-JSX handler)', () => {
       const input = `
         import { $state } from 'fict'
-        function useLog() {
+        function Component() {
           let count = $state(0)
           const doubled = count * 2
-          function log() {
-            return doubled
+          function useLog() {
+            function log() {
+              return doubled
+            }
+            return log
           }
-          return log
+          return useLog
         }
       `
       const output = transform(input)
@@ -172,10 +195,12 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('transforms $effect to createEffect', () => {
       const input = `
         import { $state, $effect } from 'fict'
-        let count = $state(0)
-        $effect(() => {
-          console.log(count)
-        })
+        function Component() {
+          let count = $state(0)
+          $effect(() => {
+            console.log(count)
+          })
+        }
       `
       const output = transform(input)
       expect(output).toContain('__fictUseEffect(__fictCtx, () => {')
@@ -187,8 +212,11 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('handles parameter shadowing', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        const fn = (count) => count + 1
+        function Component() {
+          let count = $state(0)
+          const fn = (count) => count + 1
+          return fn
+        }
       `
       const output = transform(input)
       // Inner count should not be transformed
@@ -199,8 +227,11 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('handles destructuring parameter shadowing', () => {
       const input = `
         import { $state } from 'fict'
-        let value = $state(0)
-        const fn = ({ value }) => value + 1
+        function Component() {
+          let value = $state(0)
+          const fn = ({ value }) => value + 1
+          return fn
+        }
       `
       const output = transform(input)
       // Inner value should not be transformed
@@ -210,8 +241,11 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('handles array destructuring shadowing', () => {
       const input = `
         import { $state } from 'fict'
-        let x = $state(0)
-        const fn = ([x]) => x + 1
+        function Component() {
+          let x = $state(0)
+          const fn = ([x]) => x + 1
+          return fn
+        }
       `
       const output = transform(input)
       expect(output).toContain('x + 1')
@@ -222,8 +256,11 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('wraps reactive JSX children', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        const el = <div>{count}</div>
+        function Component() {
+          let count = $state(0)
+          const el = <div>{count}</div>
+          return el
+        }
       `
       const output = transform(input)
       expect(output).toContain('() => count()')
@@ -232,8 +269,11 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('wraps reactive JSX attributes', () => {
       const input = `
         import { $state } from 'fict'
-        let disabled = $state(false)
-        const el = <button disabled={disabled}>Click</button>
+        function Component() {
+          let disabled = $state(false)
+          const el = <button disabled={disabled}>Click</button>
+          return el
+        }
       `
       const output = transform(input)
       expect(output).toContain('() => disabled()')
@@ -242,8 +282,11 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('does not wrap event handlers', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        const el = <button onClick={() => count++}>Click</button>
+        function Component() {
+          let count = $state(0)
+          const el = <button onClick={() => count++}>Click</button>
+          return el
+        }
       `
       const output = transform(input)
       // Event handler should not be wrapped in an additional arrow function
@@ -256,8 +299,11 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('does not wrap key attribute', () => {
       const input = `
         import { $state } from 'fict'
-        let id = $state('1')
-        const el = <div key={id}>Content</div>
+        function Component() {
+          let id = $state('1')
+          const el = <div key={id}>Content</div>
+          return el
+        }
       `
       const output = transform(input)
       // key attribute should get the reactive value but not be wrapped in arrow function
@@ -365,8 +411,11 @@ describe('Fict Compiler - Basic Transforms', () => {
     it('transforms shorthand property assignments', () => {
       const input = `
         import { $state } from 'fict'
-        let count = $state(0)
-        const obj = { count }
+        function Component() {
+          let count = $state(0)
+          const obj = { count }
+          return obj
+        }
       `
       const output = transform(input)
       expect(output).toContain('count: count()')
@@ -378,8 +427,11 @@ describe('Fict Compiler - Error Cases', () => {
   it('throws error for $state in loop', () => {
     const input = `
         import { $state } from 'fict'
-        for (let i = 0; i < 10; i++) {
-          let count = $state(0)
+        function Component() {
+          for (let i = 0; i < 10; i++) {
+            let count = $state(0)
+          }
+          return null
         }
       `
     expect(() => transform(input)).toThrow('cannot be declared inside loops')
@@ -388,8 +440,12 @@ describe('Fict Compiler - Error Cases', () => {
   it('throws error for $state in while loop', () => {
     const input = `
         import { $state } from 'fict'
-        while (true) {
-          let count = $state(0)
+        function Component() {
+          while (true) {
+            let count = $state(0)
+            break
+          }
+          return null
         }
       `
     expect(() => transform(input)).toThrow('cannot be declared inside loops')

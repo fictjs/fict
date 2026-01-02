@@ -36,7 +36,7 @@ describe('semantic validation', () => {
       }
     `
     expect(() => transform(source)).toThrow(
-      /no nested functions|cannot be declared inside nested functions/,
+      /component or hook function body|no nested functions|cannot be declared inside nested functions/,
     )
   })
 
@@ -66,7 +66,10 @@ describe('semantic validation', () => {
   it('throws when $state assignment target is not an identifier', () => {
     const source = `
       import { $state } from 'fict'
-      const [x] = $state(0)
+      function App() {
+        const [x] = $state(0)
+        return x
+      }
     `
     expect(() => transform(source)).toThrow(/Destructuring \$state is not supported/)
   })
@@ -84,8 +87,11 @@ describe('semantic validation', () => {
   it('throws on spread/object left assignment of reactive', () => {
     const source = `
       import { $state } from 'fict'
-      let count = $state(0)
-      ;[count] = [1]
+      function App() {
+        let count = $state(0)
+        ;[count] = [1]
+        return count
+      }
     `
     // This should throw or at least transform the destructuring assignment to setter calls
     // Note: The current implementation may not support this case
@@ -97,11 +103,14 @@ describe('semantic validation', () => {
   it('throws when derived is reassigned inside a branch', () => {
     const source = `
       import { $state } from 'fict'
-      const count = $state(0)
-      const doubled = count * 2
+      function App() {
+        const count = $state(0)
+        const doubled = count * 2
 
-      if (count > 0) {
-        doubled = 3
+        if (count > 0) {
+          doubled = 3
+        }
+        return doubled
       }
     `
     expect(() => transform(source)).toThrow()
@@ -110,9 +119,12 @@ describe('semantic validation', () => {
   it('throws when writing to a destructured state alias', () => {
     const source = `
       import { $state } from 'fict'
-      const state = $state({ count: 0 })
-      const { count } = state
-      count++
+      function App() {
+        const state = $state({ count: 0 })
+        const { count } = state
+        count++
+        return count
+      }
     `
     expect(() => transform(source)).toThrow(/destructured state alias/)
   })

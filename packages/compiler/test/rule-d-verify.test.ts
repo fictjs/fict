@@ -11,14 +11,17 @@ describe('Rule D Verification', () => {
   it('groups related derived values into a single region', () => {
     const input = `
       import { $state } from 'fict'
-      let count = $state(0)
-      let heading
-      let extra
+      function Component() {
+        let count = $state(0)
+        let heading
+        let extra
 
-      if (count > 0) {
-        const noun = count > 1 ? 'Videos' : 'Video'
-        heading = \`\${count} \${noun}\`
-        extra = count * 10
+        if (count > 0) {
+          const noun = count > 1 ? 'Videos' : 'Video'
+          heading = \`\${count} \${noun}\`
+          extra = count * 10
+        }
+        return heading + extra
       }
     `
     const output = transform(input)
@@ -35,10 +38,13 @@ describe('Rule D Verification', () => {
   it('groups derived values that include ternary control flow', () => {
     const input = `
       import { $state } from 'fict'
-      let count = $state(0)
-      const doubled = count * 2
-      const heading = count > 0 ? \`\${count} items\` : 'none'
-      const summary = count > 1 ? doubled + 1 : doubled - 1
+      function Component() {
+        let count = $state(0)
+        const doubled = count * 2
+        const heading = count > 0 ? \`\${count} items\` : 'none'
+        const summary = count > 1 ? doubled + 1 : doubled - 1
+        return heading + summary
+      }
     `
     const output = transform(input)
 
@@ -54,9 +60,8 @@ describe('Rule D Verification', () => {
   it('preserves region grouping before early returns', () => {
     const input = `
       import { $state } from 'fict'
-      const count = $state(0)
-
-      export function view() {
+      export function View() {
+        const count = $state(0)
         const doubled = count * 2
         const tripled = doubled + count
         if (count > 5) {
@@ -86,13 +91,16 @@ describe('Rule D Verification', () => {
   it('caches conditional evaluation for lazy branches', () => {
     const input = `
       import { $state } from 'fict'
-      let count = $state(0)
-      let heading
-      let detail
+      function Component() {
+        let count = $state(0)
+        let heading
+        let detail
 
-      if (count > 1) {
-        heading = count * 2
-        detail = heading + 1
+        if (count > 1) {
+          heading = count * 2
+          detail = heading + 1
+        }
+        return heading + detail
       }
     `
     const output = transformWithOptions(input, { lazyConditional: true })
@@ -105,22 +113,25 @@ describe('Rule D Verification', () => {
   it('groups derived values assigned inside switch branches', () => {
     const input = `
       import { $state } from 'fict'
-      let count = $state(0)
-      let label
-      let bonus
+      function Component() {
+        let count = $state(0)
+        let label
+        let bonus
 
-      switch (count) {
-        case 0:
-          label = 'zero'
-          bonus = count + 1
-          break
-        case 1:
-          label = 'one'
-          bonus = count + 2
-          break
-        default:
-          label = 'many'
-          bonus = count * 2
+        switch (count) {
+          case 0:
+            label = 'zero'
+            bonus = count + 1
+            break
+          case 1:
+            label = 'one'
+            bonus = count + 2
+            break
+          default:
+            label = 'many'
+            bonus = count * 2
+        }
+        return label + bonus
       }
     `
 

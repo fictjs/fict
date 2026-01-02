@@ -6,7 +6,7 @@ describe('loop break/continue fix verification', () => {
     it('should handle break inside do-while body', () => {
       const source = `
         import { $state } from 'fict'
-        function test() {
+        function Component() {
           let i = $state(0)
           do {
             if (i > 5) break
@@ -21,7 +21,7 @@ describe('loop break/continue fix verification', () => {
     it('should handle continue inside do-while body (simple)', () => {
       const source = `
         import { $state } from 'fict'
-        function test() {
+        function Component() {
           let i = $state(0)
           do {
             i++
@@ -38,7 +38,7 @@ describe('loop break/continue fix verification', () => {
     it('should handle break inside while body', () => {
       const source = `
         import { $state } from 'fict'
-        function test() {
+        function Component() {
           let i = $state(0)
           while (i < 10) {
             if (i > 5) break
@@ -53,7 +53,7 @@ describe('loop break/continue fix verification', () => {
     it('should handle continue inside while body', () => {
       const source = `
         import { $state } from 'fict'
-        function test() {
+        function Component() {
           let i = $state(0)
           while (i < 10) {
             i++
@@ -70,7 +70,7 @@ describe('loop break/continue fix verification', () => {
     it('should handle break inside for body', () => {
       const source = `
         import { $state } from 'fict'
-        function test() {
+        function Component() {
           let sum = $state(0)
           for (let i = 0; i < 10; i++) {
             if (i > 5) break
@@ -85,7 +85,7 @@ describe('loop break/continue fix verification', () => {
     it('should handle continue inside for body', () => {
       const source = `
         import { $state } from 'fict'
-        function test() {
+        function Component() {
           let sum = $state(0)
           for (let i = 0; i < 10; i++) {
             if (i === 3) continue

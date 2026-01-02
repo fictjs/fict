@@ -49,7 +49,7 @@ const y = $state({ foo: 1 })
 Constraints:
 
 - `$state` must be imported from `'fict'` (or subsequent official packages).
-- Calls must appear at the **top level** of a module / component function body.
+- Calls must appear at the **immediate top level of a component or hook (`useX`) function body**. Module scope is **illegal**.
 - `$state` **cannot** be called inside loops (`for`, `while`, `do-while`) or conditional branches (`if`, `switch`, ternary). This is a **hard compilation error**.
   - Rationale: Signals must be topologically stable; dynamic creation of signals inside control flow breaks the static graph and is often a bug (e.g., recreating state on every render if it were allowed).
 
@@ -445,39 +445,59 @@ Developers can locally turn off Fict's smart behavior via escape hatches like `u
 
 ---
 
-## 9. Rule I: Cross-Module Derivation
+## 9. Rule I: Component-Scoped State vs. Module-Scoped Store
 
-When a derived value is defined in module scope and used across modules:
+### `$state` — Component-Only
+
+Module-level `$state` is **forbidden**. `$state` must be created inside a component or hook (`useX`) body so ownership and disposal follow that component. This ensures:
+
+- Automatic cleanup when the component unmounts
+- Clear ownership semantics
+- No accidental global state leakage
+
+Hook-style helpers named `useX` may create `$state`, but they must be invoked at the top level of a component or another `useX` helper (not inside loops/conditionals) so the compiler can attach them to the correct render context.
+
+Shared logic should be expressed as helpers that receive state from the caller rather than creating state themselves (e.g., `useCounter(count)` that derives from a passed-in signal).
+
+### `$store` — Module-Level Allowed (from `fict/plus`)
+
+For **global/shared state** use cases, `$store` from `fict/plus` **is allowed at module scope**:
 
 ```ts
-// store.ts
-export let count = $state(0)
-export const doubled = count * 2
+// store.ts — Module-level $store is VALID
+import { $store } from 'fict/plus'
 
-// A.ts
-import { doubled } from './store'
-$effect(() => console.log(doubled))
+export const globalState = $store({
+  user: { name: 'Alice', address: { city: 'London' } },
+  theme: 'dark'
+})
 
-// B.ts
-import { doubled } from './store'
-const click = () => console.log(doubled)
+// Component.tsx — Use the module-level store
+import { globalState } from './store'
+
+function UserProfile() {
+  // Direct mutation is reactive
+  const updateCity = () => globalState.user.address.city = 'Paris'
+  return <div>{globalState.user.address.city}</div>
+}
 ```
 
-To ensure consistency:
+### Key Differences
 
-- Module-level derivation **always compiles to memo**;
+| Aspect          | `$state`                          | `$store`                  |
+| --------------- | --------------------------------- | ------------------------- |
+| Import          | `'fict'`                          | `'fict/plus'`             |
+| Module scope    | ❌ **Forbidden** (compiler error) | ✅ **Allowed**            |
+| Reactivity type | Signal (getter/setter)            | Proxy (deep reactive)     |
+| Nested mutation | ⚠️ Requires immutable update      | ✅ Direct mutation works  |
+| Lifecycle       | Follows component                 | Manual / module singleton |
+| Best for        | Component-local state             | Shared/global stores      |
 
-- Exported as a getter:
+### Notes
 
-  ```ts
-  const $__doubled = createMemo(() => $__count.get() * 2)
-  export const doubled = {
-    get value() {
-      return $__doubled()
-    },
-  }
-  // Or export function directly: export const doubled = () => $__doubled()
-  ```
+- Module-level `$state` (and any derived values that depend on it) produce a **hard compilation error**.
+- Derived values defined in a component still compile to memos when they feed reactive sinks.
+- `$store` does not require compiler transformation; it works via runtime Proxy.
 
 - When reading at import side:
   - In JSX / effect: Use as memo node;
@@ -637,7 +657,7 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
 
 ### 15.1 State Semantics
 
-1.  **Top-Level Only**: `$state(v)` defines a storage cell. It is valid **only** at module scope or the immediate top level of a component function body.
+1.  **Top-Level Only**: `$state(v)` defines a storage cell. It is valid **only** at the immediate top level of a component or hook (`useX`) function body (never at module scope).
     - **Illegal**: Inside `if`, `for`, `while`, `do`, `switch`, ternary. (Compiler Error)
     - **Illegal**: Inside nested functions/callbacks (including event handlers). (Compiler Error)
 

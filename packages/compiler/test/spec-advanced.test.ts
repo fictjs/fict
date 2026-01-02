@@ -192,13 +192,16 @@ describe('Async Effect Dependency Tracking Boundary', () => {
   it('tracks dependency reads before await', () => {
     const output = transform(`
       import { $state, $effect } from 'fict'
-      let url = $state('/api')
-      $effect(async () => {
-        const endpoint = url // Read before await
-        const res = await fetch(endpoint)
-        const data = await res.json()
-        console.log(data)
-      })
+      function Component() {
+        let url = $state('/api')
+        $effect(async () => {
+          const endpoint = url // Read before await
+          const res = await fetch(endpoint)
+          const data = await res.json()
+          console.log(data)
+        })
+        return null
+      }
     `)
     // The url signal should be tracked (read before await)
     expect(output).toContain('__fictUseEffect')
@@ -208,21 +211,24 @@ describe('Async Effect Dependency Tracking Boundary', () => {
   it('compiles effect with cleanup before await', () => {
     const output = transform(`
       import { $state, $effect } from 'fict'
-      let url = $state('/api')
-      $effect(async () => {
-        const controller = new AbortController()
-        const signal = controller.signal
-        const endpoint = url
+      function Component() {
+        let url = $state('/api')
+        $effect(async () => {
+          const controller = new AbortController()
+          const signal = controller.signal
+          const endpoint = url
 
-        try {
-          const res = await fetch(endpoint, { signal })
-          console.log(await res.json())
-        } catch (e) {
-          // Cancelled
-        }
+          try {
+            const res = await fetch(endpoint, { signal })
+            console.log(await res.json())
+          } catch (e) {
+            // Cancelled
+          }
 
-        return () => controller.abort()
-      })
+          return () => controller.abort()
+        })
+        return null
+      }
     `)
     expect(output).toContain('__fictUseEffect')
     expect(output).toContain('controller.abort()')
@@ -231,18 +237,21 @@ describe('Async Effect Dependency Tracking Boundary', () => {
   it('handles multiple awaits in effect', () => {
     const output = transform(`
       import { $state, $effect } from 'fict'
-      let userId = $state('123')
-      let includeDetails = $state(true)
+      function Component() {
+        let userId = $state('123')
+        let includeDetails = $state(true)
 
-      $effect(async () => {
-        // Both reads happen before first await - should be tracked
-        const id = userId
-        const detailed = includeDetails
+        $effect(async () => {
+          // Both reads happen before first await - should be tracked
+          const id = userId
+          const detailed = includeDetails
 
-        const user = await fetchUser(id)
-        const details = detailed ? await fetchDetails(id) : null
-        console.log(user, details)
-      })
+          const user = await fetchUser(id)
+          const details = detailed ? await fetchDetails(id) : null
+          console.log(user, details)
+        })
+        return null
+      }
     `)
     expect(output).toContain('userId()')
     expect(output).toContain('includeDetails()')
@@ -257,13 +266,16 @@ describe('untrack Escape Hatch', () => {
   it('allows untrack import to pass through', () => {
     const output = transform(`
       import { $state, $effect, untrack } from 'fict'
-      let count = $state(0)
+      function Component() {
+        let count = $state(0)
 
-      $effect(() => {
-        // Read inside untrack should not create dependency
-        const value = untrack(() => count)
-        console.log('Current:', value)
-      })
+        $effect(() => {
+          // Read inside untrack should not create dependency
+          const value = untrack(() => count)
+          console.log('Current:', value)
+        })
+        return null
+      }
     `)
     // untrack should be imported and used as-is
     expect(output).toContain('untrack')
@@ -273,16 +285,19 @@ describe('untrack Escape Hatch', () => {
   it('transforms signal inside untrack callback', () => {
     const output = transform(`
       import { $state, $effect, untrack } from 'fict'
-      let count = $state(0)
-      let other = $state(1)
+      function Component() {
+        let count = $state(0)
+        let other = $state(1)
 
-      $effect(() => {
-        // count inside untrack - no tracking
-        // other outside untrack - tracked
-        const tracked = other
-        const untracked = untrack(() => count)
-        console.log(tracked, untracked)
-      })
+        $effect(() => {
+          // count inside untrack - no tracking
+          // other outside untrack - tracked
+          const tracked = other
+          const untracked = untrack(() => count)
+          console.log(tracked, untracked)
+        })
+        return null
+      }
     `)
     expect(output).toContain('other()')
     // count inside untrack callback should still be called as getter

@@ -8,6 +8,7 @@
 import type * as BabelCore from '@babel/core'
 
 import { RUNTIME_ALIASES } from '../constants'
+import { debugEnabled } from '../debug'
 import type { RegionMetadata } from '../fine-grained-dom'
 
 import type { CodegenContext, RegionInfo } from './codegen'
@@ -19,7 +20,6 @@ import {
   propagateHookResultAlias,
   resolveHookMemberValue,
 } from './codegen'
-import { debugEnabled } from '../debug'
 import type { BlockId, HIRFunction, Expression, Instruction } from './hir'
 import { getSSABaseName, HIRError } from './hir'
 import type { ReactiveScope, ReactiveScopeResult } from './scopes'
@@ -1699,6 +1699,7 @@ function wrapInMemo(
     outputNamesOverride ?? Array.from(region.declarations).map(name => deSSAVarName(name))
   // Remove duplicates that may result from de-versioning (e.g., count_1 and count_2 both become count)
   const uniqueOutputNames = [...new Set(outputNames)]
+  const bindableOutputs = uniqueOutputNames.filter(name => !declaredVars.has(name))
 
   if (debugEnabled('region')) {
     console.log('Region memo', region.id, {
@@ -1773,10 +1774,10 @@ function wrapInMemo(
       ctx.aliasVars?.has(name) ||
       ctx.storeVars?.has(name)
 
-    const getterOutputs = uniqueOutputNames.filter(
+    const getterOutputs = bindableOutputs.filter(
       name => ctx.trackedVars.has(name) && !isAccessorOutput(name),
     )
-    const directOutputs = uniqueOutputNames.filter(name => !getterOutputs.includes(name))
+    const directOutputs = bindableOutputs.filter(name => !getterOutputs.includes(name))
 
     if (debugEnabled('region')) {
       console.log('Region debug', {

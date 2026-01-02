@@ -5,27 +5,28 @@ import { transform } from './test-utils'
 
 describe('Cross-Module Reactivity', () => {
   describe('Store Module (Exports)', () => {
-    it('exports state as signal accessor', () => {
+    it('rejects exporting module-level state', () => {
       const source = `
         import { $state } from 'fict'
         export let count = $state(0)
       `
-      const output = transform(source)
-      expect(output).toContain('export const count = __fictUseSignal(__fictCtx, 0)')
+      expect(() => transform(source)).toThrow(
+        'must be declared inside a component or hook function body',
+      )
     })
 
-    it('exports derived value as memo accessor', () => {
+    it('rejects exporting module-level derived value', () => {
       const source = `
         import { $state } from 'fict'
         const count = $state(0)
         export const double = count * 2
       `
-      const output = transform(source)
-      // Expecting standard JS export of the variable holding the memo
-      expect(output).toContain('export const double = __fictUseMemo(__fictCtx, () => count() * 2')
+      expect(() => transform(source)).toThrow(
+        'must be declared inside a component or hook function body',
+      )
     })
 
-    it('re-exports state (valid JS)', () => {
+    it('re-exports state (valid JS) is untouched', () => {
       const source = `
         export { count } from './store'
       `

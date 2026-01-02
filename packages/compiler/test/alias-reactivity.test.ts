@@ -6,9 +6,12 @@ describe('Alias-Safe Reactive Lowering', () => {
     it('treats direct alias as memo accessor', () => {
       const source = `
         import { $state } from 'fict'
-        const count = $state(0)
-        const alias = count
-        console.log(alias)
+        function Component() {
+          const count = $state(0)
+          const alias = count
+          console.log(alias)
+          return alias
+        }
       `
       const output = transform(source)
       expect(output).toContain('__fictUseMemo')
@@ -19,10 +22,13 @@ describe('Alias-Safe Reactive Lowering', () => {
     it('treats post-declaration alias as memo accessor', () => {
       const source = `
         import { $state } from 'fict'
-        let count = $state(0)
-        let alias
-        alias = count
-        console.log(alias)
+        function Component() {
+          let count = $state(0)
+          let alias
+          alias = count
+          console.log(alias)
+          return alias
+        }
       `
       const output = transform(source)
       expect(output).toContain('__fictUseMemo')
@@ -33,9 +39,12 @@ describe('Alias-Safe Reactive Lowering', () => {
     it('disallows reassignment of reactive alias', () => {
       const source = `
         import { $state } from 'fict'
-        let count = $state(0)
-        let alias = count
-        alias = 1
+        function Component() {
+          let count = $state(0)
+          let alias = count
+          alias = 1
+          return alias
+        }
       `
       expect(() => transform(source)).toThrow(/Alias reassignment is not supported/)
     })
@@ -43,10 +52,13 @@ describe('Alias-Safe Reactive Lowering', () => {
     it('disallows reassignment after post-declaration alias', () => {
       const source = `
         import { $state } from 'fict'
-        let count = $state(0)
-        let alias
-        alias = count
-        alias = 1
+        function Component() {
+          let count = $state(0)
+          let alias
+          alias = count
+          alias = 1
+          return alias
+        }
       `
       expect(() => transform(source)).toThrow(/Alias reassignment is not supported/)
     })
@@ -67,42 +79,38 @@ describe('Alias-Safe Reactive Lowering', () => {
   })
 
   describe('Exported State', () => {
-    it('exports state variable as-is (accessor)', () => {
+    it('rejects exporting state variable as module singleton', () => {
       const source = `
         import { $state } from 'fict'
         export const count = $state(0)
       `
-      const output = transform(source)
-      expect(output).toContain('export const count = __fictUseSignal(__fictCtx, 0)')
+      expect(() => transform(source)).toThrow('component or hook function body')
     })
 
-    it('exports let state variable as-is', () => {
+    it('rejects exporting let state variable as module singleton', () => {
       const source = `
         import { $state } from 'fict'
         export let count = $state(0)
       `
-      const output = transform(source)
-      expect(output).toContain('export const count = __fictUseSignal(__fictCtx, 0)')
+      expect(() => transform(source)).toThrow('component or hook function body')
     })
 
-    it('exports derived value as getter', () => {
+    it('rejects exporting derived value from module-level state', () => {
       const source = `
         import { $state } from 'fict'
         const count = $state(0)
         export const double = count * 2
       `
-      const output = transform(source)
-      expect(output).toContain('export const double = __fictUseMemo(__fictCtx, () => count() * 2')
+      expect(() => transform(source)).toThrow('component or hook function body')
     })
 
-    it('exports alias as memo accessor', () => {
+    it('rejects exporting alias of module-level state', () => {
       const source = `
         import { $state } from 'fict'
         const count = $state(0)
         export const alias = count
       `
-      const output = transform(source)
-      expect(output).toContain('__fictUseMemo(__fictCtx, () => count()')
+      expect(() => transform(source)).toThrow('component or hook function body')
     })
   })
 

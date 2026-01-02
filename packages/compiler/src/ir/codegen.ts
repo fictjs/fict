@@ -2,8 +2,10 @@ import type * as BabelCore from '@babel/core'
 
 import { DelegatedEvents, RUNTIME_ALIASES, RUNTIME_HELPERS, RUNTIME_MODULE } from '../constants'
 import { debugEnabled } from '../debug'
+import { applyRegionMetadata, shouldMemoizeRegion, type RegionMetadata } from '../fine-grained-dom'
 import type { FictCompilerOptions } from '../types'
 
+import { convertStatementsToHIRFunction } from './build-hir'
 import {
   HIRError,
   type BasicBlock,
@@ -21,6 +23,7 @@ import {
   lowerStructuredNodeWithoutRegions,
   type Region,
 } from './regions'
+import { generateRegions, generateRegionCode, regionToMetadata } from './regions'
 import type { ReactiveScopeResult } from './scopes'
 import { analyzeCFG } from './ssa'
 import { structurizeCFG, structurizeCFGWithDiagnostics, type StructuredNode } from './structurize'
@@ -5312,11 +5315,7 @@ function lowerInstructionWithScopes(
 // Region-Based Codegen (P0 Integration)
 // ============================================================================
 
-import { convertStatementsToHIRFunction } from './build-hir'
 import { analyzeReactiveScopesWithSSA } from './scopes'
-import { generateRegions, generateRegionCode, regionToMetadata } from './regions'
-
-import { applyRegionMetadata, shouldMemoizeRegion, type RegionMetadata } from '../fine-grained-dom'
 
 /**
  * Lower HIR to Babel AST with full region-based reactive scope analysis.

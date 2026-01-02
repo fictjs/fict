@@ -7,8 +7,10 @@ describe('fict vite-plugin', () => {
     const plugin = fict()
     const sample = `
       import { $state } from 'fict'
-      let count = $state(0)
-      const Button = () => <button>{count}</button>
+      function Button() {
+        let count = $state(0)
+        return <button>{count}</button>
+      }
     `
 
     const mockContext = {
@@ -36,8 +38,10 @@ describe('fict vite-plugin', () => {
     const plugin = fict()
     const sample = `
       import { $state } from 'fict'
-      let count = $state(0)
-      const Button = () => <button>{count}</button>
+      function Button() {
+        let count = $state(0)
+        return <button>{count}</button>
+      }
     `
 
     const mockContext = {

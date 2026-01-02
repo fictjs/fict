@@ -1,4 +1,5 @@
 import { debugEnabled } from '../debug'
+
 import type { BasicBlock, BlockId, HIRFunction, HIRProgram, Identifier, Instruction } from './hir'
 import { makeSSAName, getSSABaseName } from './hir'
 
