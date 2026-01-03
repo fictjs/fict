@@ -339,7 +339,7 @@ function formatTextValue(value: unknown): string {
 // ============================================================================
 
 /** Attribute setter function type */
-export type AttributeSetter = (el: HTMLElement, key: string, value: unknown) => void
+export type AttributeSetter = (el: Element, key: string, value: unknown) => void
 
 /**
  * Create a reactive attribute binding on an element.
@@ -354,7 +354,7 @@ export type AttributeSetter = (el: HTMLElement, key: string, value: unknown) => 
  * ```
  */
 export function createAttributeBinding(
-  el: HTMLElement,
+  el: Element,
   key: string,
   value: MaybeReactive<unknown>,
   setter: AttributeSetter,
@@ -373,7 +373,7 @@ export function createAttributeBinding(
 /**
  * Bind a reactive value to an element's attribute.
  */
-export function bindAttribute(el: HTMLElement, key: string, getValue: () => unknown): Cleanup {
+export function bindAttribute(el: Element, key: string, getValue: () => unknown): Cleanup {
   let prevValue: unknown = undefined
   return createRenderEffect(() => {
     const value = getValue()
@@ -393,7 +393,7 @@ export function bindAttribute(el: HTMLElement, key: string, getValue: () => unkn
 /**
  * Bind a reactive value to an element's property.
  */
-export function bindProperty(el: HTMLElement, key: string, getValue: () => unknown): Cleanup {
+export function bindProperty(el: Element, key: string, getValue: () => unknown): Cleanup {
   // Keep behavior aligned with the legacy createElement+applyProps path in `dom.ts`,
   // where certain keys must behave like DOM properties and nullish clears should
   // reset to sensible defaults (e.g. value -> '', checked -> false).
@@ -430,18 +430,19 @@ export function bindProperty(el: HTMLElement, key: string, getValue: () => unkno
  * Apply styles to an element, supporting reactive style objects/strings.
  */
 export function createStyleBinding(
-  el: HTMLElement,
+  el: Element,
   value: MaybeReactive<string | Record<string, string | number> | null | undefined>,
 ): void {
+  const target = el as Element & { style: CSSStyleDeclaration }
   if (isReactive(value)) {
     let prev: unknown
     createRenderEffect(() => {
       const next = (value as () => unknown)()
-      applyStyle(el, next, prev)
+      applyStyle(target, next, prev)
       prev = next
     })
   } else {
-    applyStyle(el, value, undefined)
+    applyStyle(target, value, undefined)
   }
 }
 
@@ -449,13 +450,14 @@ export function createStyleBinding(
  * Bind a reactive style value to an existing element.
  */
 export function bindStyle(
-  el: HTMLElement,
+  el: Element,
   getValue: () => string | Record<string, string | number> | null | undefined,
 ): Cleanup {
+  const target = el as Element & { style: CSSStyleDeclaration }
   let prev: unknown
   return createRenderEffect(() => {
     const next = getValue()
-    applyStyle(el, next, prev)
+    applyStyle(target, next, prev)
     prev = next
   })
 }
@@ -463,7 +465,11 @@ export function bindStyle(
 /**
  * Apply a style value to an element
  */
-function applyStyle(el: HTMLElement, value: unknown, prev: unknown): void {
+function applyStyle(
+  el: Element & { style: CSSStyleDeclaration },
+  value: unknown,
+  prev: unknown,
+): void {
   if (typeof value === 'string') {
     el.style.cssText = value
   } else if (value && typeof value === 'object') {
@@ -525,7 +531,7 @@ function isUnitlessStyleProperty(prop: string): boolean {
  * Apply class to an element, supporting reactive class values.
  */
 export function createClassBinding(
-  el: HTMLElement,
+  el: Element,
   value: MaybeReactive<string | Record<string, boolean> | null | undefined>,
 ): void {
   if (isReactive(value)) {
@@ -543,7 +549,7 @@ export function createClassBinding(
  * Bind a reactive class value to an existing element.
  */
 export function bindClass(
-  el: HTMLElement,
+  el: Element,
   getValue: () => string | Record<string, boolean> | null | undefined,
 ): Cleanup {
   let prev: Record<string, boolean> = {}
@@ -556,7 +562,7 @@ export function bindClass(
 /**
  * Toggle a class key (supports space-separated class names)
  */
-function toggleClassKey(node: HTMLElement, key: string, value: boolean): void {
+function toggleClassKey(node: Element, key: string, value: boolean): void {
   const classNames = key.trim().split(/\s+/)
   for (let i = 0, len = classNames.length; i < len; i++) {
     node.classList.toggle(classNames[i]!, value)
@@ -567,7 +573,7 @@ function toggleClassKey(node: HTMLElement, key: string, value: boolean): void {
  * Apply a class value to an element using classList.toggle for efficient updates.
  * Returns the new prev state for tracking.
  */
-function applyClass(el: HTMLElement, value: unknown, prev: unknown): Record<string, boolean> {
+function applyClass(el: Element, value: unknown, prev: unknown): Record<string, boolean> {
   const prevState = (prev && typeof prev === 'object' ? prev : {}) as Record<string, boolean>
 
   // Handle string value - full replacement
@@ -620,7 +626,7 @@ function applyClass(el: HTMLElement, value: unknown, prev: unknown): Record<stri
  * Exported classList function for direct use (compatible with dom-expressions)
  */
 export function classList(
-  node: HTMLElement,
+  node: Element,
   value: Record<string, boolean> | null | undefined,
   prev: Record<string, boolean> = {},
 ): Record<string, boolean> {
@@ -654,11 +660,12 @@ interface ManagedBlock<T = unknown> {
  * @param createElementFn - Optional function to create DOM elements (when marker is provided)
  */
 export function insert(
-  parent: HTMLElement | DocumentFragment,
+  parent: ParentNode & Node,
   getValue: () => FictNode,
   markerOrCreateElement?: Node | CreateElementFn,
   createElementFn?: CreateElementFn,
 ): Cleanup {
+  const hostRoot = getCurrentRoot()
   let marker: Node
   let ownsMarker = false
   let createFn: CreateElementFn | undefined = createElementFn
@@ -736,7 +743,7 @@ export function insert(
     }
     clearCurrentNodes()
 
-    const root = createRootContext()
+    const root = createRootContext(hostRoot)
     const prev = pushRoot(root)
     let nodes: Node[] = []
     try {
@@ -794,15 +801,16 @@ export function insert(
  * ```
  */
 export function createChildBinding(
-  parent: HTMLElement | DocumentFragment,
+  parent: ParentNode & Node,
   getValue: () => FictNode,
   createElementFn: CreateElementFn,
 ): BindingHandle {
   const marker = document.createComment('fict:child')
   parent.appendChild(marker)
+  const hostRoot = getCurrentRoot()
 
   const dispose = createRenderEffect(() => {
-    const root = createRootContext()
+    const root = createRootContext(hostRoot)
     const prev = pushRoot(root)
     let nodes: Node[] = []
     let handledError = false
@@ -857,10 +865,10 @@ export function createChildBinding(
 // Event Delegation System
 // ============================================================================
 
-// Extend HTMLElement/Document type to support event delegation
+// Extend Element/Document type to support event delegation
 declare global {
-  interface HTMLElement {
-    _$host?: HTMLElement
+  interface Element {
+    _$host?: Element
     [key: `$$${string}`]: EventListener | [EventListener, unknown] | undefined
     [key: `$$${string}Data`]: unknown
   }
@@ -912,7 +920,7 @@ export function clearDelegatedEvents(doc: Document = window.document): void {
  * Walks up the DOM tree to find and call handlers stored as $$eventName properties.
  */
 function globalEventHandler(e: Event): void {
-  let node = e.target as HTMLElement | null
+  let node = e.target as Element | null
   const key = `$$${e.type}` as const
   const dataKey = `${key}Data` as `$$${string}Data`
   const oriTarget = e.target
@@ -958,7 +966,7 @@ function globalEventHandler(e: Event): void {
     if (
       shadowHost &&
       typeof shadowHost !== 'string' &&
-      !(shadowHost as HTMLElement)._$host &&
+      !(shadowHost as Element)._$host &&
       node.contains(e.target as Node)
     ) {
       retarget(shadowHost as EventTarget)
@@ -971,7 +979,7 @@ function globalEventHandler(e: Event): void {
     while (handleNode() && node) {
       node = (node._$host ||
         node.parentNode ||
-        (node as unknown as ShadowRoot).host) as HTMLElement | null
+        (node as unknown as ShadowRoot).host) as Element | null
     }
   }
 
@@ -988,7 +996,7 @@ function globalEventHandler(e: Event): void {
     const path = e.composedPath()
     retarget(path[0] as EventTarget)
     for (let i = 0; i < path.length - 2; i++) {
-      node = path[i] as HTMLElement
+      node = path[i] as Element
       if (!handleNode()) break
       // Handle portal event bubbling
       if (node._$host) {
@@ -1020,7 +1028,7 @@ function globalEventHandler(e: Event): void {
  * @param delegate - Whether to use delegation (auto-detected based on event name)
  */
 export function addEventListener(
-  node: HTMLElement,
+  node: Element,
   name: string,
   handler: EventListener | [EventListener, unknown] | null | undefined,
   delegate?: boolean,
@@ -1066,7 +1074,7 @@ export function addEventListener(
  * ```
  */
 export function bindEvent(
-  el: HTMLElement,
+  el: Element,
   eventName: string,
   handler: EventListenerOrEventListenerObject | null | undefined,
   options?: boolean | AddEventListenerOptions,
@@ -1153,7 +1161,7 @@ export function bindEvent(
  * bindRef(el, () => props.ref)
  * ```
  */
-export function bindRef(el: HTMLElement, ref: unknown): Cleanup {
+export function bindRef(el: Element, ref: unknown): Cleanup {
   if (ref == null) return () => {}
 
   // Handle reactive refs (getters)
@@ -1164,10 +1172,10 @@ export function bindRef(el: HTMLElement, ref: unknown): Cleanup {
 
     if (typeof refValue === 'function') {
       // Callback ref: call with element
-      ;(refValue as (el: HTMLElement) => void)(el)
+      ;(refValue as (el: Element) => void)(el)
     } else if (typeof refValue === 'object' && 'current' in refValue) {
       // Ref object: set current property
-      ;(refValue as { current: HTMLElement | null }).current = el
+      ;(refValue as { current: Element | null }).current = el
     }
   }
 
@@ -1187,7 +1195,7 @@ export function bindRef(el: HTMLElement, ref: unknown): Cleanup {
     const nullifyCleanup = () => {
       const currentRef = getRef()
       if (currentRef && typeof currentRef === 'object' && 'current' in currentRef) {
-        ;(currentRef as { current: HTMLElement | null }).current = null
+        ;(currentRef as { current: Element | null }).current = null
       }
     }
     registerRootCleanup(nullifyCleanup)
@@ -1202,7 +1210,7 @@ export function bindRef(el: HTMLElement, ref: unknown): Cleanup {
   const cleanup = () => {
     const refValue = getRef()
     if (refValue && typeof refValue === 'object' && 'current' in refValue) {
-      ;(refValue as { current: HTMLElement | null }).current = null
+      ;(refValue as { current: Element | null }).current = null
     }
   }
   registerRootCleanup(cleanup)
@@ -1231,7 +1239,7 @@ export function bindRef(el: HTMLElement, ref: unknown): Cleanup {
  * ```
  */
 export function spread(
-  node: HTMLElement,
+  node: Element,
   props: Record<string, unknown> = {},
   isSVG = false,
   skipChildren = false,
@@ -1248,7 +1256,7 @@ export function spread(
   // Handle ref
   createRenderEffect(() => {
     if (typeof props.ref === 'function') {
-      ;(props.ref as (el: HTMLElement) => void)(node)
+      ;(props.ref as (el: Element) => void)(node)
     }
   })
 
@@ -1272,7 +1280,7 @@ export function spread(
  * @param skipRef - Whether to skip ref handling
  */
 export function assign(
-  node: HTMLElement,
+  node: Element,
   props: Record<string, unknown>,
   isSVG = false,
   skipChildren = false,
@@ -1307,7 +1315,7 @@ export function assign(
  * Assign a single prop to a node.
  */
 function assignProp(
-  node: HTMLElement,
+  node: Element,
   prop: string,
   value: unknown,
   prev: unknown,
@@ -1317,7 +1325,7 @@ function assignProp(
 ): unknown {
   // Style handling
   if (prop === 'style') {
-    applyStyle(node, value, prev)
+    applyStyle(node as Element & { style: CSSStyleDeclaration }, value, prev)
     return value
   }
 
@@ -1332,7 +1340,7 @@ function assignProp(
   // Ref handling
   if (prop === 'ref') {
     if (!skipRef && typeof value === 'function') {
-      ;(value as (el: HTMLElement) => void)(node)
+      ;(value as (el: Element) => void)(node)
     }
     return value
   }
@@ -1472,6 +1480,7 @@ export function createConditional(
   const endMarker = document.createComment('fict:cond:end')
   const fragment = document.createDocumentFragment()
   fragment.append(startMarker, endMarker)
+  const hostRoot = getCurrentRoot()
 
   let currentNodes: Node[] = []
   let currentRoot: RootContext | null = null
@@ -1513,7 +1522,7 @@ export function createConditional(
       return
     }
 
-    const root = createRootContext()
+    const root = createRootContext(hostRoot)
     const prev = pushRoot(root)
     let handledError = false
     try {
@@ -1594,6 +1603,7 @@ export function createList<T>(
   const endMarker = document.createComment('fict:list:end')
   const fragment = document.createDocumentFragment()
   fragment.append(startMarker, endMarker)
+  const hostRoot = getCurrentRoot()
 
   const nodeMap = new Map<string | number, ManagedBlock<T>>()
   let pendingItems: T[] | null = null
@@ -1621,7 +1631,7 @@ export function createList<T>(
         if (!getKey && previousValue !== item) {
           destroyRoot(existing.root)
           removeBlockNodes(existing)
-          block = mountBlock(item, i, renderItem, parent, endMarker, createElementFn)
+          block = mountBlock(item, i, renderItem, parent, endMarker, createElementFn, hostRoot)
         } else {
           const previousIndex = existing.index()
           existing.value(item)
@@ -1635,7 +1645,7 @@ export function createList<T>(
           block = needsRerender ? rerenderBlock(existing, createElementFn) : existing
         }
       } else {
-        block = mountBlock(item, i, renderItem, parent, endMarker, createElementFn)
+        block = mountBlock(item, i, renderItem, parent, endMarker, createElementFn, hostRoot)
       }
 
       newNodeMap.set(key, block)
@@ -1699,7 +1709,11 @@ export function createList<T>(
  * createShow(container, () => $visible())
  * ```
  */
-export function createShow(el: HTMLElement, condition: () => boolean, displayValue?: string): void {
+export function createShow(
+  el: Element & { style: CSSStyleDeclaration },
+  condition: () => boolean,
+  displayValue?: string,
+): void {
   const originalDisplay = displayValue ?? el.style.display
   createRenderEffect(() => {
     el.style.display = condition() ? originalDisplay : 'none'
@@ -1723,7 +1737,7 @@ export function createShow(el: HTMLElement, condition: () => boolean, displayVal
  * ```
  */
 export function createPortal(
-  container: HTMLElement,
+  container: ParentNode & Node,
   render: () => FictNode,
   createElementFn: CreateElementFn,
 ): BindingHandle {
@@ -1749,7 +1763,7 @@ export function createPortal(
     }
 
     // Create new content
-    const root = createRootContext()
+    const root = createRootContext(parentRoot)
     const prev = pushRoot(root)
     let handledError = false
     try {
@@ -1824,6 +1838,7 @@ function mountBlock<T>(
   parent: ParentNode & Node,
   anchor: Node,
   createElementFn: CreateElementFn,
+  hostRoot?: RootContext | undefined,
 ): ManagedBlock<T> {
   const start = document.createComment('fict:block:start')
   const end = document.createComment('fict:block:end')
@@ -1835,7 +1850,7 @@ function mountBlock<T>(
     return valueSig()
   }) as T
   const renderCurrent = () => renderItem(valueProxy, indexSig())
-  const root = createRootContext()
+  const root = createRootContext(hostRoot)
   const prev = pushRoot(root)
   const nodes: Node[] = [start]
   let handledError = false
@@ -1981,7 +1996,7 @@ function patchElement(el: Element, output: FictNode): boolean {
           if (key === 'class' || key === 'className') {
             el.setAttribute('class', value === false || value === null ? '' : String(value))
           } else if (key === 'style' && typeof value === 'string') {
-            ;(el as HTMLElement).style.cssText = value
+            ;(el as Element & { style: CSSStyleDeclaration }).style.cssText = value
           } else if (value === false || value === null || value === undefined) {
             el.removeAttribute(key)
           } else if (value === true) {

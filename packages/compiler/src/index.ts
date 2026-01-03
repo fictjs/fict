@@ -4,7 +4,7 @@ import { declare } from '@babel/helper-plugin-utils'
 import { SAFE_FUNCTIONS } from './constants'
 import { buildHIR } from './ir/build-hir'
 import { lowerHIRWithRegions } from './ir/codegen'
-import type { FictCompilerOptions } from './types'
+import type { CompilerWarning, FictCompilerOptions } from './types'
 import { getRootIdentifier, isEffectCall, isStateCall } from './utils'
 
 export type { FictCompilerOptions, CompilerWarning } from './types'
@@ -66,16 +66,73 @@ function isInsideJSX(path: BabelCore.NodePath): boolean {
   return !!path.findParent(p => p.isJSXElement?.() || p.isJSXFragment?.())
 }
 
+type WarningSink = (warning: CompilerWarning) => void
+
+interface SuppressionDirective {
+  line: number
+  nextLine: boolean
+  codes?: Set<string>
+}
+
+function parseSuppressionCodes(raw?: string): Set<string> | undefined {
+  if (!raw) return undefined
+  const codes = raw
+    .split(/[,\s]+/)
+    .map(c => c.trim())
+    .filter(Boolean)
+  return codes.length > 0 ? new Set(codes) : undefined
+}
+
+function parseSuppressions(
+  comments: readonly BabelCore.types.Comment[] | null | undefined,
+): SuppressionDirective[] {
+  if (!comments) return []
+  const suppressions: SuppressionDirective[] = []
+  for (const comment of comments) {
+    const match = comment.value.match(/fict-ignore(-next-line)?(?:\s+(.+))?/i)
+    if (!match || !comment.loc) continue
+    suppressions.push({
+      line: comment.loc.start.line,
+      nextLine: !!match[1],
+      codes: parseSuppressionCodes(match[2]),
+    })
+  }
+  return suppressions
+}
+
+function shouldSuppressWarning(
+  suppressions: SuppressionDirective[],
+  code: string,
+  line: number,
+): boolean {
+  return suppressions.some(entry => {
+    const targetLine = entry.nextLine ? entry.line + 1 : entry.line
+    if (targetLine !== line) return false
+    if (!entry.codes || entry.codes.size === 0) return true
+    return entry.codes.has(code)
+  })
+}
+
+function createWarningDispatcher(
+  onWarn: FictCompilerOptions['onWarn'],
+  suppressions: SuppressionDirective[],
+): WarningSink {
+  if (!onWarn) return () => {}
+  return warning => {
+    if (shouldSuppressWarning(suppressions, warning.code, warning.line)) return
+    onWarn(warning)
+  }
+}
+
 function emitWarning(
   node: BabelCore.types.Node,
   code: string,
   message: string,
-  options: FictCompilerOptions,
+  warn: WarningSink,
   fileName: string,
 ): void {
-  if (!options.onWarn) return
   const loc = node.loc?.start
-  options.onWarn({
+  warn({
     code,
     message,
     fileName,
@@ -190,10 +247,10 @@ function runWarningPass(
   programPath: BabelCore.NodePath<BabelCore.types.Program>,
   stateVars: Set<string>,
   derivedVars: Set<string>,
-  options: FictCompilerOptions,
+  warn: WarningSink,
+  fileName: string,
   t: typeof BabelCore.types,
 ): void {
-  const fileName = (programPath.hub as any)?.file?.opts?.filename || '<unknown>'
   const isStateRoot = (expr: BabelCore.types.Expression): boolean => {
     const root = getRootIdentifier(expr, t)
     return !!(root && stateVars.has(root.name))
@@ -210,7 +267,7 @@ function runWarningPass(
             path.node,
             'FICT-M',
             'Direct mutation of nested property detected; use immutable update or $store helpers',
-            options,
+            warn,
             fileName,
           )
           if (isDynamicPropertyAccess(left as any, t)) {
@@ -218,7 +275,7 @@ function runWarningPass(
               path.node,
               'FICT-H',
               'Dynamic property access widens dependency tracking',
-              options,
+              warn,
               fileName,
             )
           }
@@ -233,7 +290,7 @@ function runWarningPass(
             path.node,
             'FICT-M',
             'Direct mutation of nested property detected; use immutable update or $store helpers',
-            options,
+            warn,
             fileName,
           )
           if (isDynamicPropertyAccess(arg as any, t)) {
@@ -241,7 +298,7 @@ function runWarningPass(
               path.node,
               'FICT-H',
               'Dynamic property access widens dependency tracking',
-              options,
+              warn,
               fileName,
             )
           }
@@ -257,7 +314,7 @@ function runWarningPass(
           path.node,
           'FICT-H',
           'Dynamic property access widens dependency tracking',
-          options,
+          warn,
           fileName,
         )
       }
@@ -286,7 +343,7 @@ function runWarningPass(
           path.node,
           'FICT-R005',
           `Function captures reactive variable(s): ${Array.from(captured).join(', ')}. Pass them as parameters or memoize explicitly to avoid hidden dependencies.`,
-          options,
+          warn,
           fileName,
         )
       }
@@ -326,7 +383,7 @@ function runWarningPass(
               path.node,
               'FICT-E001',
               'Effect has no reactive reads; it will run once. Consider removing $effect or adding dependencies.',
-              options,
+              warn,
               fileName,
             )
           }
@@ -356,7 +413,7 @@ function runWarningPass(
             arg,
             'FICT-H',
             'State value passed to unknown function (black box); dependency tracking may be imprecise',
-            options,
+            warn,
             fileName,
           )
           break
@@ -372,7 +429,7 @@ function runWarningPass(
           path.node,
           'FICT-H',
           'Dynamic property access widens dependency tracking',
-          options,
+          warn,
           fileName,
         )
       }
@@ -427,6 +484,11 @@ function createHIREntrypointVisitor(
     Program: {
       exit(path) {
         const fileName = (path.hub as any)?.file?.opts?.filename || '<unknown>'
+        const comments =
+          ((path.hub as any)?.file?.ast as BabelCore.types.File | undefined)?.comments || []
+        const suppressions = parseSuppressions(comments)
+        const warn = createWarningDispatcher(options.onWarn, suppressions)
+        const optionsWithWarnings: FictCompilerOptions = { ...options, onWarn: warn }
         const isHookName = (name: string | undefined): boolean => !!name && /^use[A-Z]/.test(name)
         const getFunctionName = (
           fnPath: BabelCore.NodePath<BabelCore.types.Function>,
@@ -468,6 +530,84 @@ function createHIREntrypointVisitor(
         const memoHasSideEffects = (
           fn: BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression,
         ): boolean => {
+          const pureCalls = new Set(
+            Array.from(SAFE_FUNCTIONS).filter(
+              name => !name.startsWith('console.') && name !== 'Math.random',
+            ),
+          )
+          const effectfulCalls = new Set([
+            '$effect',
+            'render',
+            'fetch',
+            'setTimeout',
+            'setInterval',
+            'clearTimeout',
+            'clearInterval',
+            'requestAnimationFrame',
+            'cancelAnimationFrame',
+          ])
+          const getCalleeName = (
+            callee: BabelCore.types.Expression | BabelCore.types.V8IntrinsicIdentifier,
+          ): string | null => {
+            if (t.isIdentifier(callee)) return callee.name
+            if (
+              t.isMemberExpression(callee) &&
+              !callee.computed &&
+              t.isIdentifier(callee.property) &&
+              t.isIdentifier(callee.object)
+            ) {
+              return `${callee.object.name}.${callee.property.name}`
+            }
+            return null
+          }
+          const mutatingMemberProps = new Set([
+            'push',
+            'pop',
+            'splice',
+            'shift',
+            'unshift',
+            'sort',
+            'reverse',
+            'set',
+            'add',
+            'delete',
+            'append',
+            'appendChild',
+            'remove',
+            'removeChild',
+            'setAttribute',
+            'dispatchEvent',
+            'replaceChildren',
+            'replaceWith',
+          ])
+          const isEffectfulCall = (node: BabelCore.types.CallExpression): boolean => {
+            const name = getCalleeName(node.callee)
+            if (!name) return true
+            if (pureCalls.has(name)) return false
+            if (effectfulCalls.has(name)) return true
+            if (
+              name.startsWith('console.') ||
+              name.startsWith('document.') ||
+              name.startsWith('window.')
+            ) {
+              return true
+            }
+            if (
+              t.isMemberExpression(node.callee) &&
+              !node.callee.computed &&
+              t.isIdentifier(node.callee.property)
+            ) {
+              const prop = node.callee.property.name
+              if (mutatingMemberProps.has(prop)) return true
+              if (
+                t.isIdentifier(node.callee.object) &&
+                (node.callee.object.name === 'document' || node.callee.object.name === 'window')
+              ) {
+                return true
+              }
+            }
+            return false
+          }
           const checkNode = (node: BabelCore.types.Node | null | undefined): boolean => {
             if (!node) return false
             if (
@@ -478,13 +618,10 @@ function createHIREntrypointVisitor(
             ) {
               return true
             }
-            if (
-              t.isCallExpression(node) &&
-              ((t.isIdentifier(node.callee) && node.callee.name === '$effect') ||
-                (t.isIdentifier(node.callee) && node.callee.name === 'render'))
-            ) {
+            if (t.isCallExpression(node) && isEffectfulCall(node)) {
               return true
             }
+            if (t.isAwaitExpression(node)) return true
             if (t.isExpressionStatement(node)) return checkNode(node.expression)
             if (t.isBlockStatement(node)) return node.body.some(stmt => checkNode(stmt))
             if (t.isReturnStatement(node)) return checkNode(node.argument as any)
@@ -514,7 +651,7 @@ function createHIREntrypointVisitor(
               fnPath.node,
               'FICT-C004',
               'Component has no return statement and will render nothing.',
-              options,
+              warn,
               fileName,
             )
           },
@@ -534,7 +671,7 @@ function createHIREntrypointVisitor(
               init,
               'FICT-C004',
               'Component has no return statement and will render nothing.',
-              options,
+              warn,
               fileName,
             )
           },
@@ -603,7 +740,7 @@ function createHIREntrypointVisitor(
             }
             if (hasKey || hasUnknownSpread) return
 
-            options.onWarn?.({
+            warn({
               code: 'FICT-J002',
               message: 'Missing key prop in list rendering.',
               fileName,
@@ -682,7 +819,7 @@ function createHIREntrypointVisitor(
               fnPath.node,
               'FICT-C003',
               'Components should not be defined inside other components. Move this definition to module scope to preserve identity and performance.',
-              options,
+              warn,
               fileName,
             )
           },
@@ -736,7 +873,7 @@ function createHIREntrypointVisitor(
                 callPath.node,
                 'FICT-R004',
                 'Reactive creation inside non-JSX control flow will not auto-dispose; wrap it in createScope/runInScope or move it into JSX-managed regions.',
-                options,
+                warn,
                 fileName,
               )
             }
@@ -789,7 +926,7 @@ function createHIREntrypointVisitor(
                 (!calleeId || !allowedStateCallees.has(calleeId))
               ) {
                 const loc = arg.loc?.start ?? callPath.node.loc?.start
-                options.onWarn?.({
+                warn({
                   code: 'FICT-S002',
                   message:
                     'State variable is passed as an argument; this passes a value snapshot and may escape component scope.',
@@ -811,7 +948,7 @@ function createHIREntrypointVisitor(
                 memoHasSideEffects(firstArg)
               ) {
                 const loc = firstArg.loc?.start ?? callPath.node.loc?.start
-                options.onWarn?.({
+                warn({
                   code: 'FICT-M003',
                   message: 'Memo should not contain side effects.',
                   fileName,
@@ -934,11 +1071,11 @@ function createHIREntrypointVisitor(
         }
 
         // Emit conservative warnings for mutation/dynamic access
-        runWarningPass(path as any, stateVars, derivedVars, options, t)
+        runWarningPass(path as any, stateVars, derivedVars, warn, fileName, t)
 
         const fileAst = t.file(path.node)
         const hir = buildHIR(fileAst)
-        const lowered = lowerHIRWithRegions(hir, t, options)
+        const lowered = lowerHIRWithRegions(hir, t, optionsWithWarnings)
 
         path.node.body = lowered.program.body
         path.node.directives = lowered.program.directives

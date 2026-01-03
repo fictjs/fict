@@ -31,6 +31,27 @@ import { structurizeCFG, structurizeCFGWithDiagnostics, type StructuredNode } fr
 const HOOK_SLOT_BASE = 1000
 const HOOK_NAME_PREFIX = 'use'
 
+const cloneLoc = (loc?: BabelCore.types.SourceLocation | null) =>
+  loc === undefined
+    ? undefined
+    : loc === null
+      ? null
+      : {
+          start: { ...loc.start },
+          end: { ...loc.end },
+          filename: loc.filename,
+          identifierName: loc.identifierName,
+        }
+
+function setNodeLoc<T extends { loc?: BabelCore.types.SourceLocation | null }>(
+  node: T,
+  loc?: BabelCore.types.SourceLocation | null,
+): T {
+  if (loc === undefined) return node
+  node.loc = cloneLoc(loc) ?? null
+  return node
+}
+
 /**
  * Region metadata for fine-grained DOM integration.
  * This is the HIR codegen equivalent of RegionMetadata from fine-grained-dom.ts.
@@ -1692,10 +1713,9 @@ function lowerFunction(
     )
   }
 
-  const result = t.functionDeclaration(
-    t.identifier(fn.name ?? 'fn'),
-    params,
-    t.blockStatement(statements),
+  const result = setNodeLoc(
+    t.functionDeclaration(t.identifier(fn.name ?? 'fn'), params, t.blockStatement(statements)),
+    fn.loc,
   )
   ctx.trackedVars = prevTracked
   return result
@@ -1736,6 +1756,13 @@ function lowerInstruction(
   ctx: CodegenContext,
 ): BabelCore.types.Statement | null {
   const { t } = ctx
+  const applyLoc = <T extends BabelCore.types.Statement | null>(stmt: T): T => {
+    if (!stmt) return stmt
+    const baseLoc =
+      instr.loc ??
+      (instr.kind === 'Assign' || instr.kind === 'Expression' ? instr.value.loc : undefined)
+    return setNodeLoc(stmt, baseLoc) as T
+  }
   if (instr.kind === 'Assign') {
     const baseName = deSSAVarName(instr.target.name)
 
@@ -1746,12 +1773,14 @@ function lowerInstruction(
     if (isFunctionDecl) {
       const loweredFn = lowerExpression(instr.value, ctx)
       if (t.isFunctionExpression(loweredFn)) {
-        return t.functionDeclaration(
-          t.identifier(baseName),
-          loweredFn.params as BabelCore.types.Identifier[],
-          loweredFn.body as BabelCore.types.BlockStatement,
-          loweredFn.generator ?? false,
-          loweredFn.async ?? false,
+        return applyLoc(
+          t.functionDeclaration(
+            t.identifier(baseName),
+            loweredFn.params as BabelCore.types.Identifier[],
+            loweredFn.body as BabelCore.types.BlockStatement,
+            loweredFn.generator ?? false,
+            loweredFn.async ?? false,
+          ),
         )
       }
     }
@@ -1767,12 +1796,16 @@ function lowerInstruction(
         ctx.memoVars?.add(baseName)
       }
       if (declKind) {
-        return t.variableDeclaration(declKind, [
-          t.variableDeclarator(t.identifier(baseName), hookMember.member),
-        ])
+        return applyLoc(
+          t.variableDeclaration(declKind, [
+            t.variableDeclarator(t.identifier(baseName), hookMember.member),
+          ]),
+        )
       }
-      return t.expressionStatement(
-        t.assignmentExpression('=', t.identifier(baseName), hookMember.member),
+      return applyLoc(
+        t.expressionStatement(
+          t.assignmentExpression('=', t.identifier(baseName), hookMember.member),
+        ),
       )
     }
     if (
@@ -1790,16 +1823,24 @@ function lowerInstruction(
       }
     }
     if (ctx.signalVars?.has(baseName)) {
-      return t.expressionStatement(
-        t.callExpression(t.identifier(baseName), [lowerTrackedExpression(instr.value, ctx)]),
+      return applyLoc(
+        t.expressionStatement(
+          t.callExpression(t.identifier(baseName), [lowerTrackedExpression(instr.value, ctx)]),
+        ),
       )
     }
-    return t.expressionStatement(
-      t.assignmentExpression('=', t.identifier(baseName), lowerTrackedExpression(instr.value, ctx)),
+    return applyLoc(
+      t.expressionStatement(
+        t.assignmentExpression(
+          '=',
+          t.identifier(baseName),
+          lowerTrackedExpression(instr.value, ctx),
+        ),
+      ),
     )
   }
   if (instr.kind === 'Expression') {
-    return t.expressionStatement(lowerTrackedExpression(instr.value, ctx))
+    return applyLoc(t.expressionStatement(lowerTrackedExpression(instr.value, ctx)))
   }
   if (instr.kind === 'Phi') {
     // Phi nodes are typically eliminated in SSA-out pass; emit comment for debugging
@@ -1810,6 +1851,12 @@ function lowerInstruction(
 
 function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.types.Statement[] {
   const { t } = ctx
+  const baseLoc =
+    block.terminator.loc ??
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ((block.terminator as any).argument?.loc as BabelCore.types.SourceLocation | undefined)
+  const applyLoc = (stmts: BabelCore.types.Statement[]): BabelCore.types.Statement[] =>
+    stmts.map(stmt => setNodeLoc(stmt, baseLoc))
   switch (block.terminator.kind) {
     case 'Return': {
       const prevRegion = ctx.currentRegion
@@ -1824,14 +1871,14 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
       }
       ctx.inReturn = false
       ctx.currentRegion = prevRegion
-      return [t.returnStatement(retExpr)]
+      return applyLoc([t.returnStatement(retExpr)])
     }
     case 'Throw':
-      return [t.throwStatement(lowerTrackedExpression(block.terminator.argument, ctx))]
+      return applyLoc([t.throwStatement(lowerTrackedExpression(block.terminator.argument, ctx))])
     case 'Jump':
-      return [t.expressionStatement(t.stringLiteral(`jump ${block.terminator.target}`))]
+      return applyLoc([t.expressionStatement(t.stringLiteral(`jump ${block.terminator.target}`))])
     case 'Branch':
-      return [
+      return applyLoc([
         t.ifStatement(
           lowerTrackedExpression(block.terminator.test, ctx),
           t.blockStatement([
@@ -1841,9 +1888,9 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
             t.expressionStatement(t.stringLiteral(`goto ${block.terminator.alternate}`)),
           ]),
         ),
-      ]
+      ])
     case 'Switch':
-      return [
+      return applyLoc([
         t.switchStatement(
           lowerTrackedExpression(block.terminator.discriminant, ctx),
           block.terminator.cases.map(({ test, target }) =>
@@ -1852,30 +1899,30 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
             ]),
           ),
         ),
-      ]
+      ])
     case 'ForOf': {
       const term = block.terminator
       const varKind = term.variableKind ?? 'const'
       const leftPattern = term.pattern ? term.pattern : t.identifier(term.variable)
-      return [
+      return applyLoc([
         t.forOfStatement(
           t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)]),
           lowerExpression(term.iterable, ctx),
           t.blockStatement([t.expressionStatement(t.stringLiteral(`body ${term.body}`))]),
         ),
-      ]
+      ])
     }
     case 'ForIn': {
       const term = block.terminator
       const varKind = term.variableKind ?? 'const'
       const leftPattern = term.pattern ? term.pattern : t.identifier(term.variable)
-      return [
+      return applyLoc([
         t.forInStatement(
           t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)]),
           lowerExpression(term.object, ctx),
           t.blockStatement([t.expressionStatement(t.stringLiteral(`body ${term.body}`))]),
         ),
-      ]
+      ])
     }
     case 'Try': {
       const term = block.terminator
@@ -1897,20 +1944,20 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
               t.expressionStatement(t.stringLiteral(`finally ${term.finallyBlock}`)),
             ])
           : null
-      return [t.tryStatement(tryBlock, catchClause, finallyBlock)]
+      return applyLoc([t.tryStatement(tryBlock, catchClause, finallyBlock)])
     }
     case 'Unreachable':
-      return []
+      return applyLoc([])
     case 'Break':
-      return [
+      return applyLoc([
         t.breakStatement(block.terminator.label ? t.identifier(block.terminator.label) : null),
-      ]
+      ])
     case 'Continue':
-      return [
+      return applyLoc([
         t.continueStatement(block.terminator.label ? t.identifier(block.terminator.label) : null),
-      ]
+      ])
     default:
-      return []
+      return applyLoc([])
   }
 }
 
@@ -2077,7 +2124,7 @@ export function lowerExpression(
   ctx.expressionDepth = depth
 
   try {
-    return lowerExpressionImpl(expr, ctx, isAssigned)
+    return setNodeLoc(lowerExpressionImpl(expr, ctx, isAssigned), expr.loc)
   } finally {
     ctx.expressionDepth = depth - 1
   }
@@ -5252,7 +5299,10 @@ function lowerFunctionWithScopes(
     statements.push(...lowerTerminator(block, ctx))
   }
 
-  return t.functionDeclaration(t.identifier(fn.name ?? 'fn'), params, t.blockStatement(statements))
+  return setNodeLoc(
+    t.functionDeclaration(t.identifier(fn.name ?? 'fn'), params, t.blockStatement(statements)),
+    fn.loc,
+  )
 }
 
 /**
@@ -5263,6 +5313,13 @@ function lowerInstructionWithScopes(
   ctx: CodegenContext,
 ): BabelCore.types.Statement | null {
   const { t } = ctx
+  const applyLoc = <T extends BabelCore.types.Statement | null>(stmt: T): T => {
+    if (!stmt) return stmt
+    const baseLoc =
+      instr.loc ??
+      (instr.kind === 'Assign' || instr.kind === 'Expression' ? instr.value.loc : undefined)
+    return setNodeLoc(stmt, baseLoc) as T
+  }
 
   if (instr.kind === 'Assign') {
     const targetName = instr.target.name
@@ -5274,12 +5331,14 @@ function lowerInstructionWithScopes(
     if (isFunctionDecl) {
       const loweredFn = lowerExpression(instr.value, ctx)
       if (t.isFunctionExpression(loweredFn)) {
-        return t.functionDeclaration(
-          t.identifier(targetBase),
-          loweredFn.params as BabelCore.types.Identifier[],
-          loweredFn.body as BabelCore.types.BlockStatement,
-          loweredFn.generator ?? false,
-          loweredFn.async ?? false,
+        return applyLoc(
+          t.functionDeclaration(
+            t.identifier(targetBase),
+            loweredFn.params as BabelCore.types.Identifier[],
+            loweredFn.body as BabelCore.types.BlockStatement,
+            loweredFn.generator ?? false,
+            loweredFn.async ?? false,
+          ),
         )
       }
     }
@@ -5290,33 +5349,39 @@ function lowerInstructionWithScopes(
     if (ctx.trackedVars.has(targetBase)) {
       // Wrap in memo if it depends on other tracked vars
       ctx.helpersUsed.add('useMemo')
-      return t.variableDeclaration('const', [
-        t.variableDeclarator(
-          t.identifier(targetName),
-          t.callExpression(t.identifier('__fictUseMemo'), [
-            t.arrowFunctionExpression([], valueExpr),
-          ]),
-        ),
-      ])
+      return applyLoc(
+        t.variableDeclaration('const', [
+          t.variableDeclarator(
+            t.identifier(targetName),
+            t.callExpression(t.identifier('__fictUseMemo'), [
+              t.arrowFunctionExpression([], valueExpr),
+            ]),
+          ),
+        ]),
+      )
     }
 
     // Check if this is a declaration or just an assignment
     if (declKind) {
       // Actual declaration - emit variableDeclaration
-      return t.variableDeclaration(declKind, [
-        t.variableDeclarator(t.identifier(targetName), valueExpr),
-      ])
+      return applyLoc(
+        t.variableDeclaration(declKind, [
+          t.variableDeclarator(t.identifier(targetName), valueExpr),
+        ]),
+      )
     } else {
       // Pure assignment (e.g. api = {...}) - emit assignmentExpression to update existing variable
-      return t.expressionStatement(t.assignmentExpression('=', t.identifier(targetName), valueExpr))
+      return applyLoc(
+        t.expressionStatement(t.assignmentExpression('=', t.identifier(targetName), valueExpr)),
+      )
     }
   }
 
   if (instr.kind === 'Expression') {
-    return t.expressionStatement(lowerExpression(instr.value, ctx))
+    return applyLoc(t.expressionStatement(lowerExpression(instr.value, ctx)))
   }
 
-  return null
+  return applyLoc(null)
 }
 
 // ============================================================================
@@ -6183,10 +6248,9 @@ function lowerFunctionWithRegions(
 
   // De-version param names for clean output
   const params = finalParams
-  const funcDecl = t.functionDeclaration(
-    t.identifier(fn.name ?? 'fn'),
-    params,
-    t.blockStatement(statements),
+  const funcDecl = setNodeLoc(
+    t.functionDeclaration(t.identifier(fn.name ?? 'fn'), params, t.blockStatement(statements)),
+    fn.loc,
   )
   ctx.needsCtx = prevNeedsCtx
   ctx.shadowedNames = prevShadowed

@@ -4,6 +4,7 @@ import {
   createRootContext,
   destroyRoot,
   flushOnMount,
+  getCurrentRoot,
   pushRoot,
   popRoot,
   registerErrorHandler,
@@ -24,6 +25,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   fragment.appendChild(marker)
 
   const currentView = createSignal<FictNode | null>(props.children ?? null)
+  const hostRoot = getCurrentRoot()
 
   let cleanup: (() => void) | undefined
   let activeNodes: Node[] = []
@@ -52,7 +54,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       return
     }
 
-    const root = createRootContext()
+    const root = createRootContext(hostRoot)
     const prev = pushRoot(root)
     let nodes: Node[] = []
     try {

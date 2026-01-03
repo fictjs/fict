@@ -2,6 +2,7 @@ import { signal, batch, type SignalAccessor } from './signal'
 
 const PROXY = Symbol('fict:store-proxy')
 const TARGET = Symbol('fict:store-target')
+const ITERATE_KEY = Symbol('fict:iterate')
 
 // ============================================================================
 // Store (Deep Proxy)
@@ -57,22 +58,43 @@ function wrap<T>(value: T): T {
       // Recursively wrap objects
       return wrap(value)
     },
+    has(target, prop) {
+      const result = Reflect.has(target, prop)
+      track(target, prop)
+      return result
+    },
+    ownKeys(target) {
+      track(target, ITERATE_KEY)
+      return Reflect.ownKeys(target)
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      track(target, prop)
+      return Reflect.getOwnPropertyDescriptor(target, prop)
+    },
     set(target, prop, value, receiver) {
       if (prop === PROXY || prop === TARGET) return false
 
+      const hadKey = Object.prototype.hasOwnProperty.call(target, prop)
       const oldValue = Reflect.get(target, prop, receiver)
       if (oldValue === value) return true
 
       const result = Reflect.set(target, prop, value, receiver)
       if (result) {
         trigger(target, prop)
+        if (!hadKey) {
+          trigger(target, ITERATE_KEY)
+        }
       }
       return result
     },
     deleteProperty(target, prop) {
+      const hadKey = Object.prototype.hasOwnProperty.call(target, prop)
       const result = Reflect.deleteProperty(target, prop)
       if (result) {
         trigger(target, prop)
+        if (hadKey) {
+          trigger(target, ITERATE_KEY)
+        }
       }
       return result
     },
@@ -99,7 +121,9 @@ function track(target: object, prop: string | symbol) {
 
   let s = signals.get(prop)
   if (!s) {
-    s = signal(getLastValue(target, prop))
+    const initial =
+      prop === ITERATE_KEY ? (Reflect.ownKeys(target).length as number) : getLastValue(target, prop)
+    s = signal(initial)
     signals.set(prop, s)
   }
   s() // subscribe
@@ -110,7 +134,11 @@ function trigger(target: object, prop: string | symbol) {
   if (signals) {
     const s = signals.get(prop)
     if (s) {
-      s(getLastValue(target, prop)) // notify with new value
+      if (prop === ITERATE_KEY) {
+        s(Reflect.ownKeys(target).length)
+      } else {
+        s(getLastValue(target, prop)) // notify with new value
+      }
     }
   }
 }

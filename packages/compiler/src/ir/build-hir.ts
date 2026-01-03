@@ -35,6 +35,10 @@ interface BlockBuilder {
 
 let destructuringTempCounter = 0
 
+const getLoc = (node?: BabelCore.types.Node | null): BabelCore.types.SourceLocation | null => {
+  return node?.loc ?? null
+}
+
 function normalizeVarKind(
   kind: BabelCore.types.VariableDeclaration['kind'],
 ): 'const' | 'let' | 'var' {
@@ -382,6 +386,7 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
         convertFunction(name, stmt.params, stmt.body.body, {
           noMemo: programNoMemo,
           directives: stmt.body.directives,
+          loc: getLoc(stmt),
         }),
       )
       continue
@@ -398,6 +403,7 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
           convertFunction(name, decl.params, decl.body.body, {
             noMemo: programNoMemo,
             directives: decl.body.directives,
+            loc: getLoc(decl),
           }),
         )
         // We'll recreate the export in codegen
@@ -419,9 +425,11 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
               ? convertFunction(name, params, body.body, {
                   noMemo: programNoMemo,
                   directives: body.directives,
+                  loc: getLoc(v.init ?? v),
                 })
               : convertFunction(name, params, [t.returnStatement(body as any)], {
                   noMemo: programNoMemo,
+                  loc: getLoc(v.init ?? v),
                 })
             fnHIR.meta = { ...(fnHIR.meta ?? {}), fromExpression: true, isArrow, hasExpressionBody }
             functions.push(fnHIR)
@@ -451,6 +459,7 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
           convertFunction(name, decl.params, decl.body.body, {
             noMemo: programNoMemo,
             directives: decl.body.directives,
+            loc: getLoc(decl),
           }),
         )
         postamble.push({ kind: 'ExportDefault', name })
@@ -479,6 +488,7 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
             ? convertFunction(name, params, body.body, {
                 noMemo: programNoMemo,
                 directives: body.directives,
+                loc: getLoc(decl.init ?? decl),
               })
             : convertFunction(
                 name,
@@ -486,6 +496,7 @@ export function buildHIR(ast: BabelCore.types.File): HIRProgram {
                 [t.returnStatement(body as BabelCore.types.Expression)],
                 {
                   noMemo: programNoMemo,
+                  loc: getLoc(decl.init ?? decl),
                 },
               )
           fnHIR.meta = { ...(fnHIR.meta ?? {}), fromExpression: true, isArrow, hasExpressionBody }
@@ -510,7 +521,11 @@ function convertFunction(
   name: string | undefined,
   params: BabelCore.types.Node[],
   body: BabelCore.types.Statement[],
-  options?: { noMemo?: boolean; directives?: BabelCore.types.Directive[] | null },
+  options?: {
+    noMemo?: boolean
+    directives?: BabelCore.types.Directive[] | null
+    loc?: BabelCore.types.SourceLocation | null
+  },
 ): HIRFunction {
   const paramIds: HIdentifier[] = []
   for (const p of params) {
@@ -1153,6 +1168,7 @@ function convertFunction(
     params: paramIds,
     blocks,
     meta: hasNoMemo ? { noMemo: true } : undefined,
+    loc: options?.loc ?? null,
   }
 }
 
@@ -1164,7 +1180,7 @@ export function convertStatementsToHIRFunction(
   name: string,
   statements: BabelCore.types.Statement[],
 ): HIRFunction {
-  return convertFunction(name, [], statements)
+  return convertFunction(name, [], statements, { loc: getLoc(statements[0]) })
 }
 
 function convertAssignmentValue(expr: BabelCore.types.AssignmentExpression): Expression {
@@ -1856,14 +1872,15 @@ function processStatement(
 }
 
 function convertExpression(node: BabelCore.types.Expression): Expression {
-  if (t.isIdentifier(node)) return { kind: 'Identifier', name: node.name }
+  const loc = getLoc(node)
+  if (t.isIdentifier(node)) return { kind: 'Identifier', name: node.name, loc }
   if (
     t.isStringLiteral(node) ||
     t.isNumericLiteral(node) ||
     t.isBooleanLiteral(node) ||
     t.isNullLiteral(node)
   )
-    return { kind: 'Literal', value: (node as any).value ?? null } as HLiteral
+    return { kind: 'Literal', value: (node as any).value ?? null, loc } as HLiteral
   if (t.isCallExpression(node)) {
     const call: HCallExpression = {
       kind: 'CallExpression',
@@ -1871,6 +1888,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       arguments: node.arguments
         .map(arg => (t.isExpression(arg) ? convertExpression(arg) : undefined))
         .filter(Boolean) as Expression[],
+      loc,
     }
     return call
   }
@@ -1892,6 +1910,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
         property,
         computed: node.computed,
         optional: node.optional ?? true,
+        loc,
       }
       return optionalMember
     }
@@ -1902,6 +1921,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       property,
       computed: node.computed,
       optional: false,
+      loc,
     }
     return member
   }
@@ -1911,6 +1931,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       operator: node.operator,
       left: convertExpression(node.left as BabelCore.types.Expression),
       right: convertExpression(node.right as BabelCore.types.Expression),
+      loc,
     }
     return bin
   }
@@ -1920,6 +1941,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       operator: node.operator,
       argument: convertExpression(node.argument as BabelCore.types.Expression),
       prefix: node.prefix,
+      loc,
     }
     return un
   }
@@ -1929,6 +1951,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       operator: node.operator as HLogicalExpression['operator'],
       left: convertExpression(node.left as BabelCore.types.Expression),
       right: convertExpression(node.right as BabelCore.types.Expression),
+      loc,
     }
     return log
   }
@@ -1938,6 +1961,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       test: convertExpression(node.test as BabelCore.types.Expression),
       consequent: convertExpression(node.consequent as BabelCore.types.Expression),
       alternate: convertExpression(node.alternate as BabelCore.types.Expression),
+      loc,
     }
     return cond
   }
@@ -1951,12 +1975,14 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
             return {
               kind: 'SpreadElement',
               argument: convertExpression(el.argument as BabelCore.types.Expression),
+              loc: getLoc(el),
             } as HSpreadElement
           }
           if (t.isExpression(el)) return convertExpression(el)
           return undefined
         })
         .filter(Boolean) as Expression[],
+      loc,
     }
     return arr
   }
@@ -1970,6 +1996,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
             return {
               kind: 'SpreadElement',
               argument: convertExpression(prop.argument as BabelCore.types.Expression),
+              loc: getLoc(prop),
             } as HSpreadElement
           }
           if (t.isObjectMethod(prop)) {
@@ -1991,6 +2018,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
               kind: 'Property',
               key: keyExpr,
               value: convertExpression(fnExpr),
+              loc: getLoc(prop),
             }
           }
           if (!t.isObjectProperty(prop) || prop.computed) return undefined
@@ -2005,9 +2033,12 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
             kind: 'Property',
             key: keyExpr,
             value: convertExpression(prop.value),
+            shorthand: prop.shorthand && t.isIdentifier(prop.value),
+            loc: getLoc(prop),
           }
         })
         .filter(Boolean) as HObjectExpression['properties'],
+      loc,
     }
     return obj
   }
@@ -2024,19 +2055,21 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       if (t.isJSXText(child)) {
         const text = child.value
         if (text.trim()) {
-          children.push({ kind: 'text', value: text })
+          children.push({ kind: 'text', value: text, loc: getLoc(child) })
         }
       } else if (t.isJSXExpressionContainer(child)) {
         if (!t.isJSXEmptyExpression(child.expression)) {
           children.push({
             kind: 'expression',
             value: convertExpression(child.expression as BabelCore.types.Expression),
+            loc: getLoc(child),
           })
         }
       } else if (t.isJSXElement(child)) {
         children.push({
           kind: 'element',
           value: convertJSXElement(child),
+          loc: getLoc(child),
         })
       } else if (t.isJSXFragment(child)) {
         // Nested fragment - flatten its children
@@ -2044,19 +2077,21 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
           if (t.isJSXText(fragChild)) {
             const text = fragChild.value
             if (text.trim()) {
-              children.push({ kind: 'text', value: text })
+              children.push({ kind: 'text', value: text, loc: getLoc(fragChild) })
             }
           } else if (t.isJSXExpressionContainer(fragChild)) {
             if (!t.isJSXEmptyExpression(fragChild.expression)) {
               children.push({
                 kind: 'expression',
                 value: convertExpression(fragChild.expression as BabelCore.types.Expression),
+                loc: getLoc(fragChild),
               })
             }
           } else if (t.isJSXElement(fragChild)) {
             children.push({
               kind: 'element',
               value: convertJSXElement(fragChild),
+              loc: getLoc(fragChild),
             })
           }
         }
@@ -2065,10 +2100,11 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     // Return as JSXElement with Fragment type
     return {
       kind: 'JSXElement',
-      tagName: { kind: 'Identifier', name: 'Fragment' } as HIdentifier,
+      tagName: { kind: 'Identifier', name: 'Fragment', loc: getLoc(node) } as HIdentifier,
       isComponent: true,
       attributes: [],
       children,
+      loc: getLoc(node),
     } as HJSXElementExpression
   }
 
@@ -2078,6 +2114,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       const nested = convertFunction(undefined, node.params, node.body.body, {
         noMemo: hasNoMemoDirectiveInStatements(node.body.body),
         directives: node.body.directives,
+        loc: getLoc(node),
       })
       const arrow: HArrowFunctionExpression = {
         kind: 'ArrowFunction',
@@ -2085,6 +2122,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
         body: nested.blocks,
         isExpression: false,
         isAsync: node.async,
+        loc,
       }
       return arrow
     } else {
@@ -2102,6 +2140,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
         body: convertExpression(node.body as BabelCore.types.Expression),
         isExpression: true,
         isAsync: node.async,
+        loc,
       }
       return arrow
     }
@@ -2112,6 +2151,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     const nested = convertFunction(undefined, node.params, node.body.body, {
       noMemo: hasNoMemoDirectiveInStatements(node.body.body),
       directives: node.body.directives,
+      loc: getLoc(node),
     })
     const fn: HFunctionExpression = {
       kind: 'FunctionExpression',
@@ -2119,6 +2159,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       params: nested.params,
       body: nested.blocks,
       isAsync: node.async,
+      loc,
     }
     return fn
   }
@@ -2130,6 +2171,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       operator: node.operator,
       left: convertExpression(node.left as BabelCore.types.Expression),
       right: convertExpression(node.right as BabelCore.types.Expression),
+      loc,
     }
     return assign
   }
@@ -2141,6 +2183,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       operator: node.operator as '++' | '--',
       argument: convertExpression(node.argument as BabelCore.types.Expression),
       prefix: node.prefix,
+      loc,
     }
     return update
   }
@@ -2151,6 +2194,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       kind: 'TemplateLiteral',
       quasis: node.quasis.map(q => q.value.cooked ?? q.value.raw),
       expressions: node.expressions.map(e => convertExpression(e as BabelCore.types.Expression)),
+      loc,
     }
     return template
   }
@@ -2160,6 +2204,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     return {
       kind: 'AwaitExpression',
       argument: convertExpression(node.argument as BabelCore.types.Expression),
+      loc,
     }
   }
 
@@ -2171,6 +2216,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       arguments: node.arguments
         .map(arg => (t.isExpression(arg) ? convertExpression(arg) : undefined))
         .filter(Boolean) as Expression[],
+      loc,
     }
   }
 
@@ -2179,6 +2225,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     return {
       kind: 'SequenceExpression',
       expressions: node.expressions.map(e => convertExpression(e)),
+      loc,
     }
   }
 
@@ -2188,6 +2235,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       kind: 'YieldExpression',
       argument: node.argument ? convertExpression(node.argument) : null,
       delegate: node.delegate,
+      loc,
     }
   }
 
@@ -2200,6 +2248,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
         .map(arg => (t.isExpression(arg) ? convertExpression(arg) : undefined))
         .filter(Boolean) as Expression[],
       optional: node.optional,
+      loc,
     }
   }
 
@@ -2214,7 +2263,9 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
         expressions: node.quasi.expressions.map(e =>
           convertExpression(e as BabelCore.types.Expression),
         ),
+        loc: getLoc(node.quasi),
       },
+      loc,
     }
   }
 
@@ -2225,21 +2276,22 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       name: node.id?.name,
       superClass: node.superClass ? convertExpression(node.superClass) : undefined,
       body: node.body.body, // Store as Babel AST for now
+      loc,
     }
   }
 
   // This Expression
   if (t.isThisExpression(node)) {
-    return { kind: 'ThisExpression' }
+    return { kind: 'ThisExpression', loc }
   }
 
   // Super Expression
   if (t.isSuper(node)) {
-    return { kind: 'SuperExpression' }
+    return { kind: 'SuperExpression', loc }
   }
 
   // Fallback for unsupported expressions
-  const fallback: HLiteral = { kind: 'Literal', value: undefined }
+  const fallback: HLiteral = { kind: 'Literal', value: undefined, loc }
   return fallback
 }
 
@@ -2253,7 +2305,7 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
     const firstChar = name[0]
     if (firstChar && firstChar === firstChar.toUpperCase()) {
       // Component
-      tagName = { kind: 'Identifier', name } as HIdentifier
+      tagName = { kind: 'Identifier', name, loc: getLoc(opening.name) } as HIdentifier
       isComponent = true
     } else {
       // Intrinsic element
@@ -2275,12 +2327,13 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
         value: null,
         isSpread: true,
         spreadExpr: convertExpression(attr.argument as BabelCore.types.Expression),
+        loc: getLoc(attr),
       })
     } else if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name)) {
       let value: Expression | null = null
       if (attr.value) {
         if (t.isStringLiteral(attr.value)) {
-          value = { kind: 'Literal', value: attr.value.value } as HLiteral
+          value = { kind: 'Literal', value: attr.value.value, loc: getLoc(attr.value) } as HLiteral
         } else if (
           t.isJSXExpressionContainer(attr.value) &&
           !t.isJSXEmptyExpression(attr.value.expression)
@@ -2291,6 +2344,7 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
       attributes.push({
         name: attr.name.name,
         value,
+        loc: getLoc(attr),
       })
     }
   }
@@ -2300,19 +2354,21 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
     if (t.isJSXText(child)) {
       const text = child.value
       if (text.trim()) {
-        children.push({ kind: 'text', value: text })
+        children.push({ kind: 'text', value: text, loc: getLoc(child) })
       }
     } else if (t.isJSXExpressionContainer(child)) {
       if (!t.isJSXEmptyExpression(child.expression)) {
         children.push({
           kind: 'expression',
           value: convertExpression(child.expression as BabelCore.types.Expression),
+          loc: getLoc(child),
         })
       }
     } else if (t.isJSXElement(child)) {
       children.push({
         kind: 'element',
         value: convertJSXElement(child),
+        loc: getLoc(child),
       })
     } else if (t.isJSXFragment(child)) {
       // Flatten fragment children
@@ -2320,19 +2376,21 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
         if (t.isJSXText(fragChild)) {
           const text = fragChild.value
           if (text.trim()) {
-            children.push({ kind: 'text', value: text })
+            children.push({ kind: 'text', value: text, loc: getLoc(fragChild) })
           }
         } else if (t.isJSXExpressionContainer(fragChild)) {
           if (!t.isJSXEmptyExpression(fragChild.expression)) {
             children.push({
               kind: 'expression',
               value: convertExpression(fragChild.expression as BabelCore.types.Expression),
+              loc: getLoc(fragChild),
             })
           }
         } else if (t.isJSXElement(fragChild)) {
           children.push({
             kind: 'element',
             value: convertJSXElement(fragChild),
+            loc: getLoc(fragChild),
           })
         }
       }
@@ -2345,20 +2403,26 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
     isComponent,
     attributes,
     children,
+    loc: getLoc(node),
   }
 }
 
 function convertJSXMemberExpr(node: BabelCore.types.JSXMemberExpression): Expression {
   let object: Expression
   if (t.isJSXIdentifier(node.object)) {
-    object = { kind: 'Identifier', name: node.object.name } as HIdentifier
+    object = { kind: 'Identifier', name: node.object.name, loc: getLoc(node.object) } as HIdentifier
   } else {
     object = convertJSXMemberExpr(node.object)
   }
   return {
     kind: 'MemberExpression',
     object,
-    property: { kind: 'Identifier', name: node.property.name } as HIdentifier,
+    property: {
+      kind: 'Identifier',
+      name: node.property.name,
+      loc: getLoc(node.property),
+    } as HIdentifier,
     computed: false,
+    loc: getLoc(node),
   }
 }

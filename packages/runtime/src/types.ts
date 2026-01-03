@@ -128,15 +128,15 @@ export interface DOMEventHandlers {
 // ============================================================================
 
 /** Ref callback type */
-export type RefCallback<T extends HTMLElement = HTMLElement> = (element: T) => void
+export type RefCallback<T extends Element = HTMLElement> = (element: T) => void
 
 /** Ref object type (for future use with createRef) */
-export interface RefObject<T extends HTMLElement = HTMLElement> {
+export interface RefObject<T extends Element = HTMLElement> {
   current: T | null
 }
 
 /** Ref type that can be either callback or object */
-export type Ref<T extends HTMLElement = HTMLElement> = RefCallback<T> | RefObject<T>
+export type Ref<T extends Element = HTMLElement> = RefCallback<T> | RefObject<T>
 
 // ============================================================================
 // Style Types

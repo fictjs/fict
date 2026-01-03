@@ -7,6 +7,7 @@ import {
   ErrorBoundary,
   Fragment,
   createEffect,
+  createKeyedList,
 } from '../src/index'
 
 const nextTick = () => Promise.resolve()
@@ -208,5 +209,88 @@ describe('ErrorBoundary', () => {
     expect(container.textContent).toBe('oops')
     expect(order[0]).toBe('fallback')
     expect(order[1]).toBeDefined()
+  })
+
+  it('captures errors from dynamic child bindings during updates', async () => {
+    const container = document.createElement('div')
+    const show = createSignal(false)
+
+    const ThrowingChild = () => {
+      throw new Error('dynamic boom')
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'dyn-fallback',
+          children: {
+            type: 'div',
+            props: {
+              children: () =>
+                show()
+                  ? { type: ThrowingChild, props: {} }
+                  : { type: 'span', props: { children: 'ok' } },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    await nextTick()
+    expect(container.textContent).toBe('ok')
+
+    show(true)
+    await nextTick()
+
+    expect(container.textContent).toBe('dyn-fallback')
+
+    dispose()
+  })
+
+  it('captures errors from keyed list blocks created after updates', async () => {
+    const container = document.createElement('div')
+    // Attach to document.body for isConnected check in performDiff
+    document.body.appendChild(container)
+    const items = createSignal([{ id: 1, label: 'safe' }])
+
+    const List = () =>
+      createKeyedList(
+        () => items(),
+        item => item.id,
+        itemSig => {
+          const value = itemSig()
+          if (value.id === 2) {
+            throw new Error('list boom')
+          }
+          const span = document.createElement('span')
+          span.textContent = value.label
+          return [span]
+        },
+      )
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'list-fallback',
+          children: { type: List, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await nextTick()
+    expect(container.textContent).toBe('safe')
+
+    items([{ id: 2, label: 'boom' }])
+    await nextTick()
+
+    expect(container.textContent).toBe('list-fallback')
+
+    dispose()
+    // Clean up from document.body
+    document.body.removeChild(container)
   })
 })

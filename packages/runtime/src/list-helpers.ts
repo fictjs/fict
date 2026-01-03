@@ -11,6 +11,7 @@ import {
   createRootContext,
   destroyRoot,
   flushOnMount,
+  getCurrentRoot,
   popRoot,
   pushRoot,
   type RootContext,
@@ -243,6 +244,16 @@ export function createKeyedListContainer<T = unknown>(): KeyedListContainer<T> {
     container.nextBlocks.clear()
 
     // Remove nodes (including markers)
+    // Check if markers are still in DOM before using Range
+    if (!startMarker.parentNode || !endMarker.parentNode) {
+      // Markers already removed, nothing to do
+      container.currentNodes = []
+      container.nextNodes = []
+      container.orderedBlocks.length = 0
+      container.nextOrderedBlocks.length = 0
+      container.orderedIndexByKey.clear()
+      return
+    }
     const range = document.createRange()
     range.setStartBefore(startMarker)
     range.setEndAfter(endMarker)
@@ -292,6 +303,7 @@ export function createKeyedBlock<T>(
   index: number,
   render: (item: Signal<T>, index: Signal<number>, key: string | number) => Node[],
   needsIndex = true,
+  hostRoot?: RootContext,
 ): KeyedBlock<T> {
   // Use versioned signal for all item types; avoid diffing proxy overhead for objects
   const itemSig = createVersionedSignalAccessor(item)
@@ -303,7 +315,7 @@ export function createKeyedBlock<T>(
         index = next as number
         return index
       }) as Signal<number>)
-  const root = createRootContext()
+  const root = createRootContext(hostRoot)
   const prevRoot = pushRoot(root)
 
   // Isolate child effects from the outer effect (e.g., performDiff) by clearing activeSub.
@@ -399,6 +411,7 @@ function createFineGrainedKeyedList<T>(
   needsIndex: boolean,
 ): KeyedListBinding {
   const container = createKeyedListContainer<T>()
+  const hostRoot = getCurrentRoot()
   const fragment = document.createDocumentFragment()
   fragment.append(container.startMarker, container.endMarker)
   let pendingItems: T[] | null = null
@@ -491,7 +504,7 @@ function createFineGrainedKeyedList<T>(
           }
 
           // Create new block
-          block = createKeyedBlock(key, item, index, renderItem, needsIndex)
+          block = createKeyedBlock(key, item, index, renderItem, needsIndex, hostRoot)
         }
 
         const resolvedBlock = block!

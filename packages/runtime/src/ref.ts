@@ -20,6 +20,6 @@ import type { RefObject } from './types'
  * }
  * ```
  */
-export function createRef<T extends HTMLElement = HTMLElement>(): RefObject<T> {
+export function createRef<T extends Element = HTMLElement>(): RefObject<T> {
   return { current: null }
 }

@@ -1,3 +1,5 @@
+import type { SourceLocation } from '@babel/types'
+
 /**
  * High-level Intermediate Representation (HIR) scaffolding.
  *
@@ -59,6 +61,10 @@ export type HIRErrorCode =
 
 export type BlockId = number
 
+export interface SourceInfo {
+  loc?: SourceLocation | null
+}
+
 /**
  * SSA naming constants and utilities.
  * Using a unique separator '$$ssa' to avoid conflicts with user variable names.
@@ -98,19 +104,19 @@ export function isSSAName(name: string): boolean {
 
 /** Terminator of a basic block */
 export type Terminator =
-  | { kind: 'Return'; argument?: Expression }
-  | { kind: 'Throw'; argument: Expression }
-  | { kind: 'Jump'; target: BlockId }
-  | { kind: 'Branch'; test: Expression; consequent: BlockId; alternate: BlockId }
-  | {
+  | ({ kind: 'Return'; argument?: Expression } & SourceInfo)
+  | ({ kind: 'Throw'; argument: Expression } & SourceInfo)
+  | ({ kind: 'Jump'; target: BlockId } & SourceInfo)
+  | ({ kind: 'Branch'; test: Expression; consequent: BlockId; alternate: BlockId } & SourceInfo)
+  | ({
       kind: 'Switch'
       discriminant: Expression
       cases: { test?: Expression; target: BlockId }[]
-    }
-  | { kind: 'Unreachable' }
-  | { kind: 'Break'; target: BlockId; label?: string }
-  | { kind: 'Continue'; target: BlockId; label?: string }
-  | {
+    } & SourceInfo)
+  | ({ kind: 'Unreachable' } & SourceInfo)
+  | ({ kind: 'Break'; target: BlockId; label?: string } & SourceInfo)
+  | ({ kind: 'Continue'; target: BlockId; label?: string } & SourceInfo)
+  | ({
       kind: 'ForOf'
       variable: string
       /** Variable declaration kind (const, let, var) */
@@ -120,8 +126,8 @@ export type Terminator =
       iterable: Expression
       body: BlockId
       exit: BlockId
-    }
-  | {
+    } & SourceInfo)
+  | ({
       kind: 'ForIn'
       variable: string
       /** Variable declaration kind (const, let, var) */
@@ -131,30 +137,30 @@ export type Terminator =
       object: Expression
       body: BlockId
       exit: BlockId
-    }
-  | {
+    } & SourceInfo)
+  | ({
       kind: 'Try'
       tryBlock: BlockId
       catchBlock?: BlockId
       catchParam?: string
       finallyBlock?: BlockId
       exit: BlockId
-    }
+    } & SourceInfo)
 
 /** Instruction interfaces for proper type narrowing */
-export interface AssignInstruction {
+export interface AssignInstruction extends SourceInfo {
   kind: 'Assign'
   target: Identifier
   value: Expression
   declarationKind?: 'const' | 'let' | 'var' | 'function'
 }
 
-export interface ExpressionInstruction {
+export interface ExpressionInstruction extends SourceInfo {
   kind: 'Expression'
   value: Expression
 }
 
-export interface PhiInstruction {
+export interface PhiInstruction extends SourceInfo {
   kind: 'Phi'
   variable: string
   target: Identifier
@@ -204,23 +210,23 @@ export type Expression =
   | SuperExpression
   | OptionalMemberExpression
 
-export interface Identifier {
+export interface Identifier extends SourceInfo {
   kind: 'Identifier'
   name: string
 }
 
-export interface Literal {
+export interface Literal extends SourceInfo {
   kind: 'Literal'
   value: string | number | boolean | null | undefined
 }
 
-export interface CallExpression {
+export interface CallExpression extends SourceInfo {
   kind: 'CallExpression'
   callee: Expression
   arguments: Expression[]
 }
 
-export interface MemberExpression {
+export interface MemberExpression extends SourceInfo {
   kind: 'MemberExpression'
   object: Expression
   property: Expression
@@ -333,52 +339,52 @@ export function pathToString(path: DependencyPath): string {
   return result
 }
 
-export interface BinaryExpression {
+export interface BinaryExpression extends SourceInfo {
   kind: 'BinaryExpression'
   operator: string
   left: Expression
   right: Expression
 }
 
-export interface UnaryExpression {
+export interface UnaryExpression extends SourceInfo {
   kind: 'UnaryExpression'
   operator: string
   argument: Expression
   prefix: boolean
 }
 
-export interface ConditionalExpression {
+export interface ConditionalExpression extends SourceInfo {
   kind: 'ConditionalExpression'
   test: Expression
   consequent: Expression
   alternate: Expression
 }
 
-export interface LogicalExpression {
+export interface LogicalExpression extends SourceInfo {
   kind: 'LogicalExpression'
   operator: '&&' | '||' | '??'
   left: Expression
   right: Expression
 }
 
-export interface ArrayExpression {
+export interface ArrayExpression extends SourceInfo {
   kind: 'ArrayExpression'
   elements: Expression[]
 }
 
-export interface ObjectProperty {
+export interface ObjectProperty extends SourceInfo {
   kind: 'Property'
   key: Identifier | Literal
   value: Expression
   shorthand?: boolean
 }
 
-export interface ObjectExpression {
+export interface ObjectExpression extends SourceInfo {
   kind: 'ObjectExpression'
   properties: (ObjectProperty | SpreadElement)[]
 }
 
-export interface JSXElementExpression {
+export interface JSXElementExpression extends SourceInfo {
   kind: 'JSXElement'
   tagName: string | Expression // string for intrinsic, Expression for component
   isComponent: boolean
@@ -386,7 +392,7 @@ export interface JSXElementExpression {
   children: JSXChild[]
 }
 
-export interface JSXAttribute {
+export interface JSXAttribute extends SourceInfo {
   name: string
   value: Expression | null // null means boolean attribute
   isSpread?: boolean
@@ -394,11 +400,11 @@ export interface JSXAttribute {
 }
 
 export type JSXChild =
-  | { kind: 'text'; value: string }
-  | { kind: 'expression'; value: Expression }
-  | { kind: 'element'; value: JSXElementExpression }
+  | { kind: 'text'; value: string; loc?: SourceLocation | null }
+  | { kind: 'expression'; value: Expression; loc?: SourceLocation | null }
+  | { kind: 'element'; value: JSXElementExpression; loc?: SourceLocation | null }
 
-export interface ArrowFunctionExpression {
+export interface ArrowFunctionExpression extends SourceInfo {
   kind: 'ArrowFunction'
   params: Identifier[]
   body: Expression | BasicBlock[]
@@ -406,7 +412,7 @@ export interface ArrowFunctionExpression {
   isAsync?: boolean
 }
 
-export interface FunctionExpression {
+export interface FunctionExpression extends SourceInfo {
   kind: 'FunctionExpression'
   name?: string
   params: Identifier[]
@@ -414,82 +420,82 @@ export interface FunctionExpression {
   isAsync?: boolean
 }
 
-export interface AssignmentExpression {
+export interface AssignmentExpression extends SourceInfo {
   kind: 'AssignmentExpression'
   operator: string
   left: Expression
   right: Expression
 }
 
-export interface UpdateExpression {
+export interface UpdateExpression extends SourceInfo {
   kind: 'UpdateExpression'
   operator: '++' | '--'
   argument: Expression
   prefix: boolean
 }
 
-export interface TemplateLiteral {
+export interface TemplateLiteral extends SourceInfo {
   kind: 'TemplateLiteral'
   quasis: string[]
   expressions: Expression[]
 }
 
-export interface SpreadElement {
+export interface SpreadElement extends SourceInfo {
   kind: 'SpreadElement'
   argument: Expression
 }
 
-export interface AwaitExpression {
+export interface AwaitExpression extends SourceInfo {
   kind: 'AwaitExpression'
   argument: Expression
 }
 
-export interface NewExpression {
+export interface NewExpression extends SourceInfo {
   kind: 'NewExpression'
   callee: Expression
   arguments: Expression[]
 }
 
-export interface SequenceExpression {
+export interface SequenceExpression extends SourceInfo {
   kind: 'SequenceExpression'
   expressions: Expression[]
 }
 
-export interface YieldExpression {
+export interface YieldExpression extends SourceInfo {
   kind: 'YieldExpression'
   argument: Expression | null
   delegate: boolean
 }
 
-export interface OptionalCallExpression {
+export interface OptionalCallExpression extends SourceInfo {
   kind: 'OptionalCallExpression'
   callee: Expression
   arguments: Expression[]
   optional: boolean
 }
 
-export interface TaggedTemplateExpression {
+export interface TaggedTemplateExpression extends SourceInfo {
   kind: 'TaggedTemplateExpression'
   tag: Expression
   quasi: TemplateLiteral
 }
 
-export interface ClassExpression {
+export interface ClassExpression extends SourceInfo {
   kind: 'ClassExpression'
   name?: string
   superClass?: Expression
   body: any[] // ClassBody methods - stored as Babel AST for now
 }
 
-export interface ThisExpression {
+export interface ThisExpression extends SourceInfo {
   kind: 'ThisExpression'
 }
 
-export interface SuperExpression {
+export interface SuperExpression extends SourceInfo {
   kind: 'SuperExpression'
 }
 
-export interface OptionalMemberExpression {
+export interface OptionalMemberExpression extends SourceInfo {
   kind: 'OptionalMemberExpression'
   object: Expression
   property: Expression
@@ -503,7 +509,7 @@ export interface BasicBlock {
   terminator: Terminator
 }
 
-export interface HIRFunction {
+export interface HIRFunction extends SourceInfo {
   name?: string
   params: Identifier[]
   blocks: BasicBlock[]

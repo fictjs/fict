@@ -210,6 +210,9 @@ importers:
       '@fictjs/runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@jridgewell/trace-mapping':
+        specifier: ^0.3.31
+        version: 0.3.31
       '@types/babel__core':
         specifier: ^7.20.5
         version: 7.20.5

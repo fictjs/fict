@@ -214,6 +214,22 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
   })
 
+  it('warns when memo contains side-effectful calls (FICT-M003)', () => {
+    const warnings: CompilerWarning[] = []
+    transform(
+      `
+        import { $memo } from 'fict'
+        const value = $memo(() => {
+          console.log('side')
+          fetch('/api')
+          return 1
+        })
+      `,
+      { onWarn: w => warnings.push(w) },
+    )
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+  })
+
   it('warns when passing state as function argument (FICT-S002)', () => {
     const warnings: CompilerWarning[] = []
     const input = `
