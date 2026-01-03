@@ -4128,6 +4128,301 @@ describe('compiler + fict integration', () => {
       dispose()
     })
 
+    it('keeps list map callback params as raw primitives (no proxy)', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let scores = $state([98.5, 100, 59])
+
+          return (
+            <div>
+              <ul>
+                {scores.map((score, idx) => {
+                  const isNumber = typeof score === 'number'
+                  const isPerfect = score === 100
+                  return (
+                    <li data-testid={'score-' + idx}>
+                      <span data-testid={'type-' + idx}>{String(isNumber)}</span>
+                      <span data-testid={'perfect-' + idx}>{String(isPerfect)}</span>
+                      <span data-testid={'val-' + idx}>{score.toFixed(1)}</span>
+                    </li>
+                  )
+                })}
+              </ul>
+              <button
+                data-testid="bump"
+                onClick={() => {
+                  scores = scores.map((s, i) => (i === 1 ? s - 1 : s))
+                }}
+              >
+                Bump
+              </button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const read = (kind: string, idx: number) =>
+        container.querySelector(`[data-testid="${kind}-${idx}"]`)?.textContent
+      const bumpBtn = () => container.querySelector('[data-testid="bump"]') as HTMLButtonElement
+
+      expect(read('type', 0)).toBe('true')
+      expect(read('type', 1)).toBe('true')
+      expect(read('type', 2)).toBe('true')
+
+      expect(read('perfect', 0)).toBe('false')
+      expect(read('perfect', 1)).toBe('true')
+      expect(read('perfect', 2)).toBe('false')
+
+      expect(read('val', 0)).toBe('98.5')
+      expect(read('val', 1)).toBe('100.0')
+      expect(read('val', 2)).toBe('59.0')
+
+      bumpBtn().click()
+      await tick()
+
+      expect(read('type', 1)).toBe('true')
+      expect(read('perfect', 1)).toBe('false')
+      expect(read('val', 1)).toBe('99.0')
+
+      dispose()
+    })
+
+    it('renders map result stored outside JSX without losing items or type checks', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        export function App() {
+          let scores = $state([98.5, 100, 59])
+          const items = scores.map((score, idx) => {
+            const isPerfect = score === 100
+            const isNumber = typeof score === 'number'
+            return (
+              <li data-testid={'row-' + idx} style={{ color: isPerfect ? 'gold' : 'black' }}>
+                <span data-testid={'type-' + idx}>{String(isNumber)}</span>
+                <span data-testid={'perfect-' + idx}>{String(isPerfect)}</span>
+                <span data-testid={'val-' + idx}>{score.toFixed(1)}</span>
+              </li>
+            )
+          })
+
+          return (
+            <div>
+              <ul>{items}</ul>
+              <button
+                data-testid="bump"
+                onClick={() => {
+                  scores = scores.map((s, i) => (i === 1 ? s - 1 : s + 0))
+                }}
+              >
+                Bump
+              </button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const read = (kind: string, idx: number) =>
+        container.querySelector(`[data-testid="${kind}-${idx}"]`)?.textContent
+      const bumpBtn = () => container.querySelector('[data-testid="bump"]') as HTMLButtonElement
+
+      expect(container.querySelectorAll('li').length).toBe(3)
+      expect(read('type', 1)).toBe('true')
+      expect(read('perfect', 1)).toBe('true')
+      expect(read('val', 1)).toBe('100.0')
+
+      bumpBtn().click()
+      await tick()
+
+      expect(container.querySelectorAll('li').length).toBe(3)
+      expect(read('type', 1)).toBe('true')
+      expect(read('perfect', 1)).toBe('false')
+      expect(read('val', 1)).toBe('99.0')
+
+      dispose()
+    })
+
+    it('renders map returned from inner helper function without losing items', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        export function App() {
+          let scores = $state([98.5, 100, 59])
+
+          const renderScores = (values: number[]) =>
+            values.map((score, idx) => {
+              const isNumber = typeof score === 'number'
+              const isPerfect = score === 100
+              return (
+                <li data-testid={'row-' + idx} style={{ color: isPerfect ? 'gold' : 'black' }}>
+                  <span data-testid={'type-' + idx}>{String(isNumber)}</span>
+                  <span data-testid={'perfect-' + idx}>{String(isPerfect)}</span>
+                  <span data-testid={'val-' + idx}>{score.toFixed(1)}</span>
+                </li>
+              )
+            })
+
+          return (
+            <div>
+              <ul>{renderScores(scores)}</ul>
+              <button
+                data-testid="bump"
+                onClick={() => {
+                  scores = scores.map((s, i) => (i === 0 ? s + 1 : s))
+                }}
+              >
+                Bump
+              </button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const read = (kind: string, idx: number) =>
+        container.querySelector(`[data-testid="${kind}-${idx}"]`)?.textContent
+      const bumpBtn = () => container.querySelector('[data-testid="bump"]') as HTMLButtonElement
+
+      expect(container.querySelectorAll('li').length).toBe(3)
+      expect(read('val', 0)).toBe('98.5')
+      expect(read('perfect', 1)).toBe('true')
+
+      bumpBtn().click()
+      await tick()
+
+      expect(read('val', 0)).toBe('99.5')
+      expect(read('perfect', 1)).toBe('true')
+
+      dispose()
+    })
+
+    it('renders JSX arrays built via reduce inside helper and stays reactive', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        export function App() {
+          let scores = $state([98.5, 100, 59])
+
+          const renderScores = (values: number[]) =>
+            values.reduce((acc, score, idx) => {
+              const isNumber = typeof score === 'number'
+              const isPerfect = score === 100
+              acc.push(
+                <li data-testid={'row-' + idx} style={{ color: isPerfect ? 'gold' : 'black' }}>
+                  <span data-testid={'type-' + idx}>{String(isNumber)}</span>
+                  <span data-testid={'perfect-' + idx}>{String(isPerfect)}</span>
+                  <span data-testid={'val-' + idx}>{score.toFixed(1)}</span>
+                </li>,
+              )
+              return acc
+            }, [] as JSX.Element[])
+
+          return (
+            <div>
+              <ul>{renderScores(scores)}</ul>
+              <button
+                data-testid="bump"
+                onClick={() => {
+                  scores = scores.map((s, i) => (i === 2 ? s + 1 : s))
+                }}
+              >
+                Bump
+              </button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const read = (kind: string, idx: number) =>
+        container.querySelector(`[data-testid="${kind}-${idx}"]`)?.textContent
+      const bumpBtn = () => container.querySelector('[data-testid="bump"]') as HTMLButtonElement
+
+      expect(container.querySelectorAll('li').length).toBe(3)
+      expect(read('val', 2)).toBe('59.0')
+      expect(read('perfect', 1)).toBe('true')
+
+      bumpBtn().click()
+      await tick()
+
+      expect(read('val', 2)).toBe('60.0')
+      expect(read('perfect', 1)).toBe('true')
+
+      dispose()
+    })
+
+    it('handles helper map returning primitive strings (no JSX) and updates text', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        export function App() {
+          let scores = $state([1, 2, 3])
+
+          const labels = () => scores.map(score => \`\${score}-pt\`)
+
+          return (
+            <div>
+              <ul data-testid="list">{labels()}</ul>
+              <button data-testid="bump" onClick={() => (scores = scores.map(s => s + 1))}>
+                Bump
+              </button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const list = () => container.querySelector('[data-testid="list"]') as HTMLElement
+      const bumpBtn = () => container.querySelector('[data-testid="bump"]') as HTMLButtonElement
+
+      expect(list().textContent?.replace(/\\s+/g, '')).toBe('1-pt2-pt3-pt')
+
+      bumpBtn().click()
+      await tick()
+
+      expect(list().textContent?.replace(/\\s+/g, '')).toBe('2-pt3-pt4-pt')
+
+      dispose()
+    })
+
     it('handles $state in nested getter (higher-order function)', async () => {
       const source = `
         import { $state, render } from 'fict'

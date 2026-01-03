@@ -201,7 +201,7 @@ function removeBlockRange(block: MarkerBlock): void {
   }
 }
 
-function createVersionedSignalAccessor<T>(initialValue: T): Signal<T> {
+export function createVersionedSignalAccessor<T>(initialValue: T): Signal<T> {
   let current = initialValue
   let version = 0
   const track = createSignal(version)

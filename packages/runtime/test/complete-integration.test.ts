@@ -434,8 +434,9 @@ describe('Complete Integration Tests', () => {
         item => {
           const div = document.createElement('div')
           createEffect(() => {
-            div.textContent = String(item)
-            onCleanup(() => cleanupLog.push(item as number))
+            const value = item()
+            div.textContent = String(value)
+            onCleanup(() => cleanupLog.push(value))
           })
           return div
         },
@@ -769,21 +770,22 @@ describe('Complete Integration Tests', () => {
         const list = createList(
           () => todos(),
           todo => {
+            const value = todo()
             const li = document.createElement('li')
-            li.dataset.id = String(todo.id)
+            li.dataset.id = String(value.id)
 
             const checkbox = document.createElement('input')
             checkbox.type = 'checkbox'
-            checkbox.checked = todo.done
+            checkbox.checked = value.done
 
             const span = document.createElement('span')
-            span.textContent = todo.text
+            span.textContent = value.text
 
             const delBtn = document.createElement('button')
             delBtn.className = 'delete'
             delBtn.textContent = 'X'
             delBtn.onclick = () => {
-              todos(todos().filter(t => t.id !== todo.id))
+              todos(todos().filter(t => t.id !== value.id))
             }
 
             li.append(checkbox, span, delBtn)

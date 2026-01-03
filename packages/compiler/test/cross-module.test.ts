@@ -59,15 +59,11 @@ describe('Cross-Module Reactivity', () => {
       `
       const output = transform(source, { fineGrainedDom: true })
 
-      // Should verify that the compiler allows the function call to pass through
-      // and binds it as a reactive text node.
-      // Since 'count' is not a local $state, the compiler sees it as a function call expression.
-      // In fine-grained mode, expressions that are functions might need special handling
-      // OR standard handling if they return a value.
-
-      // If 'count()' is an expression, 'emitDynamicTextChild' will wrap it in a getter?
-      expect(output).toContain('bindText')
-      expect(output).toMatch(/bindText.*count\(\)/)
+      // The call should flow through unchanged and be bound reactively.
+      // We now treat call expressions as dynamic children (not plain text) to avoid
+      // misclassifying helpers that return arrays/JSX. Verify the insert path.
+      expect(output).toContain('insert')
+      expect(output).toMatch(/count\(\)/)
     })
 
     it('compiles usage of imported symbol in effect', () => {

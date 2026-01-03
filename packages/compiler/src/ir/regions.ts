@@ -1712,11 +1712,17 @@ function wrapInMemo(
     // No outputs - just execute for side effects
     ctx.helpersUsed.add('useEffect')
     ctx.needsCtx = true
-    const effectCall = t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
+    const effectCallArgs: BabelCore.types.Expression[] = [
       t.identifier('__fictCtx'),
       t.arrowFunctionExpression([], t.blockStatement(bodyStatements)),
-      t.numericLiteral(reserveHookSlot(ctx)),
-    ])
+    ]
+    {
+      const slot = reserveHookSlot(ctx)
+      if (slot >= 0) {
+        effectCallArgs.push(t.numericLiteral(slot))
+      }
+    }
+    const effectCall = t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), effectCallArgs)
     statements.push(t.expressionStatement(effectCall))
   } else {
     ctx.helpersUsed.add('useMemo')
@@ -1755,11 +1761,15 @@ function wrapInMemo(
 
     const memoBody = t.blockStatement([...bodyStatements, t.returnStatement(returnObj)])
 
-    const memoCall = t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), [
+    const slot = reserveHookSlot(ctx)
+    const memoArgs: BabelCore.types.Expression[] = [
       t.identifier('__fictCtx'),
       t.arrowFunctionExpression([], memoBody),
-      t.numericLiteral(reserveHookSlot(ctx)),
-    ])
+    ]
+    if (slot >= 0) {
+      memoArgs.push(t.numericLiteral(slot))
+    }
+    const memoCall = t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), memoArgs)
 
     const regionVarName = `__region_${region.id}`
 
@@ -1833,7 +1843,10 @@ function wrapInMemo(
           t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
             t.identifier('__fictCtx'),
             t.arrowFunctionExpression([], effectBody),
-            t.numericLiteral(reserveHookSlot(ctx)),
+            (() => {
+              const slot = reserveHookSlot(ctx)
+              return slot >= 0 ? t.numericLiteral(slot) : t.identifier('undefined')
+            })(),
           ]),
         ),
       )
@@ -2135,11 +2148,15 @@ function generateLazyConditionalMemo(
 
   const regionVarName = `__region_${region.id}`
 
-  const memoCall = t.callExpression(t.identifier('__fictUseMemo'), [
+  const slotForMemo = reserveHookSlot(ctx)
+  const memoArgs: BabelCore.types.Expression[] = [
     t.identifier('__fictCtx'),
     t.arrowFunctionExpression([], t.blockStatement(memoBody)),
-    t.numericLiteral(reserveHookSlot(ctx)),
-  ])
+  ]
+  if (slotForMemo >= 0) {
+    memoArgs.push(t.numericLiteral(slotForMemo))
+  }
+  const memoCall = t.callExpression(t.identifier('__fictUseMemo'), memoArgs)
 
   statements.push(
     t.variableDeclaration('const', [t.variableDeclarator(t.identifier(regionVarName), memoCall)]),
@@ -2170,6 +2187,9 @@ function generateLazyConditionalMemo(
  * Handles SSA name de-versioning
  */
 function reserveHookSlot(ctx: CodegenContext): number {
+  if (ctx.dynamicHookSlotDepth && ctx.dynamicHookSlotDepth > 0) {
+    return -1
+  }
   const slot = ctx.nextHookSlot ?? 0
   ctx.nextHookSlot = slot + 1
   return slot
@@ -2269,7 +2289,10 @@ function instructionToStatement(
         t.arrowFunctionExpression([], expr),
       ]
       if (inRegionMemo) {
-        args.push(t.numericLiteral(reserveHookSlot(ctx)))
+        const slot = reserveHookSlot(ctx)
+        if (slot >= 0) {
+          args.push(t.numericLiteral(slot))
+        }
       }
       ctx.helpersUsed.add('useMemo')
       ctx.needsCtx = true

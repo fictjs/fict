@@ -344,6 +344,29 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('item().label')
     })
 
+    it('rewrites unkeyed list callback params to signal getters', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Scores() {
+          let scores = $state([98.5, 100])
+          return (
+            <ul>
+              {scores.map((score, idx) => {
+                const isPerfect = score === 100
+                const scoreType = typeof score
+                return <li data-idx={idx}>{scoreType}:{isPerfect ? 'yes' : 'no'}:{score}</li>
+              })}
+            </ul>
+          )
+        }
+      `
+      const output = transformWithOptions(input)
+      expect(output).toContain('createList')
+      expect(output).toContain('score() === 100')
+      expect(output).toContain('typeof score()')
+      expect(output).toContain('idx()')
+    })
+
     it('lowers conditional branches to fine-grained DOM operations', () => {
       const input = `
         import { $state } from 'fict'

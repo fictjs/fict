@@ -38,6 +38,7 @@ import {
 } from './lifecycle'
 import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 import { computed, createSignal, untrack, type Signal } from './signal'
+import { createVersionedSignalAccessor } from './list-helpers'
 import type { Cleanup, FictNode } from './types'
 
 // ============================================================================
@@ -66,10 +67,8 @@ interface ManagedBlock<T = unknown> {
   root: RootContext
   value: Signal<T>
   index: Signal<number>
-  version: Signal<number>
   start: Comment
   end: Comment
-  valueProxy: T
   renderCurrent: () => FictNode
 }
 
@@ -165,7 +164,7 @@ export function unwrapPrimitive<T>(value: T): T {
   return value
 }
 
-function createValueProxy<T>(read: () => T): T {
+function _createValueProxy<T>(read: () => T): T {
   const getPrimitivePrototype = (value: unknown): Record<PropertyKey, unknown> | undefined => {
     switch (typeof value) {
       case 'string':
@@ -637,19 +636,6 @@ export function classList(
 // Child/Insert Binding (Dynamic Children)
 // ============================================================================
 
-/** Managed child node with its dispose function */
-interface ManagedBlock<T = unknown> {
-  nodes: Node[]
-  root: RootContext
-  value: Signal<T>
-  index: Signal<number>
-  version: Signal<number>
-  start: Comment
-  end: Comment
-  valueProxy: T
-  renderCurrent: () => FictNode
-}
-
 /**
  * Insert reactive content into a parent element.
  * This is a simpler API than createChildBinding for basic cases.
@@ -755,7 +741,15 @@ export function insert(
         if (value.every(v => v instanceof Node)) {
           newNode = value as Node[]
         } else {
-          newNode = createFn ? createFn(value) : document.createTextNode(String(value))
+          if (createFn) {
+            const mapped: Node[] = []
+            for (const item of value) {
+              mapped.push(...toNodeArray(createFn(item as any)))
+            }
+            newNode = mapped
+          } else {
+            newNode = document.createTextNode(String(value))
+          }
         }
       } else {
         newNode = createFn ? createFn(value) : document.createTextNode(String(value))
@@ -1592,10 +1586,11 @@ export type KeyFn<T> = (item: T, index: number) => string | number
 
 /**
  * Create a reactive list rendering binding with optional keying.
+ * The render callback receives signal accessors for the item and index.
  */
 export function createList<T>(
   items: () => T[],
-  renderItem: (item: T, index: number) => FictNode,
+  renderItem: (item: Signal<T>, index: Signal<number>) => FictNode,
   createElementFn: CreateElementFn,
   getKey?: KeyFn<T>,
 ): BindingHandle {
@@ -1636,10 +1631,6 @@ export function createList<T>(
           const previousIndex = existing.index()
           existing.value(item)
           existing.index(i)
-
-          if (previousValue === item) {
-            bumpBlockVersion(existing)
-          }
 
           const needsRerender = getKey ? true : previousValue !== item || previousIndex !== i
           block = needsRerender ? rerenderBlock(existing, createElementFn) : existing
@@ -1834,7 +1825,7 @@ export function createPortal(
 function mountBlock<T>(
   initialValue: T,
   initialIndex: number,
-  renderItem: (item: T, index: number) => FictNode,
+  renderItem: (item: Signal<T>, index: Signal<number>) => FictNode,
   parent: ParentNode & Node,
   anchor: Node,
   createElementFn: CreateElementFn,
@@ -1842,14 +1833,9 @@ function mountBlock<T>(
 ): ManagedBlock<T> {
   const start = document.createComment('fict:block:start')
   const end = document.createComment('fict:block:end')
-  const valueSig = createSignal<T>(initialValue)
+  const valueSig = createVersionedSignalAccessor<T>(initialValue)
   const indexSig = createSignal<number>(initialIndex)
-  const versionSig = createSignal(0)
-  const valueProxy = createValueProxy(() => {
-    versionSig()
-    return valueSig()
-  }) as T
-  const renderCurrent = () => renderItem(valueProxy, indexSig())
+  const renderCurrent = () => renderItem(valueSig, indexSig)
   const root = createRootContext(hostRoot)
   const prev = pushRoot(root)
   const nodes: Node[] = [start]
@@ -1888,10 +1874,8 @@ function mountBlock<T>(
     root,
     value: valueSig,
     index: indexSig,
-    version: versionSig,
     start,
     end,
-    valueProxy,
     renderCurrent,
   }
 }
@@ -2151,10 +2135,6 @@ function removeBlockNodes<T>(block: ManagedBlock<T>): void {
     if (cursor === end) break
     cursor = next
   }
-}
-
-function bumpBlockVersion<T>(block: ManagedBlock<T>): void {
-  block.version(block.version() + 1)
 }
 
 // DOM utility functions are imported from './node-ops' to avoid duplication

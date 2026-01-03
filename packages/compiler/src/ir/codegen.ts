@@ -131,14 +131,24 @@ export function applyRegionToContext(
 }
 
 function reserveHookSlot(ctx: CodegenContext): number {
+  if (ctx.dynamicHookSlotDepth && ctx.dynamicHookSlotDepth > 0) {
+    return -1
+  }
   const slot = ctx.nextHookSlot ?? HOOK_SLOT_BASE
   ctx.nextHookSlot = slot + 1
   return slot
 }
 
 function expressionContainsJSX(expr: any): boolean {
+  if (Array.isArray(expr)) {
+    return expr.some(item => expressionContainsJSX(item))
+  }
   if (!expr || typeof expr !== 'object') return false
   if (expr.kind === 'JSXElement') return true
+
+  if (Array.isArray((expr as any).instructions)) {
+    return (expr as any).instructions.some((i: any) => expressionContainsJSX(i?.value ?? i))
+  }
 
   switch (expr.kind) {
     case 'CallExpression':
@@ -156,8 +166,28 @@ function expressionContainsJSX(expr: any): boolean {
       )
     case 'ArrowFunction':
       return expressionContainsJSX(expr.body as Expression)
+    case 'FunctionExpression':
+      if (Array.isArray((expr as any).body)) {
+        return (expr as any).body.some((block: any) =>
+          block.instructions?.some((i: any) => expressionContainsJSX(i.value)),
+        )
+      }
+      return false
     default:
       return false
+  }
+}
+
+function withNoMemoAndDynamicHooks<T>(ctx: CodegenContext, fn: () => T): T {
+  const prevNoMemo = ctx.noMemo
+  const prevDynamic = ctx.dynamicHookSlotDepth ?? 0
+  ctx.noMemo = true
+  ctx.dynamicHookSlotDepth = prevDynamic + 1
+  try {
+    return fn()
+  } finally {
+    ctx.noMemo = prevNoMemo
+    ctx.dynamicHookSlotDepth = prevDynamic
   }
 }
 
@@ -351,6 +381,8 @@ export interface CodegenContext {
   inListRender?: boolean
   /** Next explicit slot index for nested memo hooks */
   nextHookSlot?: number
+  /** Disable numbered hook slots within dynamic iteration contexts */
+  dynamicHookSlotDepth?: number
   /**
    * Rule L: Getter cache for sync blocks.
    * Maps getter expression keys to their cached variable names.
@@ -2296,10 +2328,27 @@ function lowerExpressionImpl(
         isIIFE
           ? withNonReactiveScope(ctx, () => lowerExpression(expr.callee, ctx))
           : lowerExpression(expr.callee, ctx)
-      return t.callExpression(
-        lowerCallee(),
-        expr.arguments.map(a => lowerExpression(a, ctx)),
-      )
+      const isIteratingMethod =
+        expr.callee.kind === 'MemberExpression' &&
+        ((expr.callee.property.kind === 'Identifier' &&
+          ['map', 'reduce', 'forEach', 'filter', 'flatMap', 'some', 'every', 'find'].includes(
+            expr.callee.property.name,
+          )) ||
+          (expr.callee.property.kind === 'Literal' &&
+            ['map', 'reduce', 'forEach', 'filter', 'flatMap', 'some', 'every', 'find'].includes(
+              String(expr.callee.property.value),
+            )))
+      const loweredArgs = expr.arguments.map((a, idx) => {
+        if (
+          idx === 0 &&
+          isIteratingMethod &&
+          (a.kind === 'ArrowFunction' || a.kind === 'FunctionExpression')
+        ) {
+          return withNoMemoAndDynamicHooks(ctx, () => lowerExpression(a, ctx))
+        }
+        return lowerExpression(a, ctx)
+      })
+      return t.callExpression(lowerCallee(), loweredArgs)
     }
 
     case 'MemberExpression':
@@ -3514,12 +3563,12 @@ function isStaticValue(expr: Expression | null): expr is Expression & { kind: 'L
   return expr.kind === 'Literal'
 }
 
-function isComponentLikeCallee(expr: Expression): boolean {
+function _isComponentLikeCallee(expr: Expression): boolean {
   if (expr.kind === 'Identifier') {
     return expr.name[0] === expr.name[0]?.toUpperCase()
   }
   if (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') {
-    return isComponentLikeCallee(expr.object)
+    return _isComponentLikeCallee(expr.object)
   }
   return false
 }
@@ -3552,15 +3601,12 @@ function isLikelyTextExpression(expr: Expression, ctx: CodegenContext): boolean 
         ok = false
         return
       case 'CallExpression':
-      case 'OptionalCallExpression': {
-        if (isComponentLikeCallee(node.callee)) {
-          ok = false
-          return
-        }
-        visit(node.callee, true)
-        node.arguments.forEach(arg => visit(arg))
+      case 'OptionalCallExpression':
+        // Calls can produce non-text values (arrays, JSX, DOM nodes). Treat them
+        // conservatively as dynamic children so they get inserted rather than
+        // bound to a text node.
+        ok = false
         return
-      }
       case 'MemberExpression':
       case 'OptionalMemberExpression':
         visit(node.object, true)
@@ -4160,7 +4206,12 @@ function lowerIntrinsicElement(
       t.arrowFunctionExpression([], body),
     ]
     if (ctx.isComponentFn) {
-      memoArgs.push(t.numericLiteral(reserveHookSlot(ctx)))
+      {
+        const slot = reserveHookSlot(ctx)
+        if (slot >= 0) {
+          memoArgs.push(t.numericLiteral(slot))
+        }
+      }
     }
     return t.callExpression(t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), memoArgs), [])
   }
@@ -4872,15 +4923,18 @@ function emitListChild(
   ctx.hoistedTemplates = prevHoistedTemplates
   ctx.hoistedTemplateStatements = prevHoistedTemplateStatements
 
-  if (
-    isKeyed &&
-    (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr))
-  ) {
-    const firstParam = callbackExpr.params[0]
+  if (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) {
+    const [firstParam, secondParam] = callbackExpr.params
+    const overrides: RegionOverrideMap = {}
+
     if (t.isIdentifier(firstParam)) {
-      const overrides: RegionOverrideMap = {
-        [firstParam.name]: () => t.callExpression(t.identifier(firstParam.name), []),
-      }
+      overrides[firstParam.name] = () => t.callExpression(t.identifier(firstParam.name), [])
+    }
+    if (t.isIdentifier(secondParam)) {
+      overrides[secondParam.name] = () => t.callExpression(t.identifier(secondParam.name), [])
+    }
+
+    if (Object.keys(overrides).length > 0) {
       if (t.isBlockStatement(callbackExpr.body)) {
         replaceIdentifiersWithOverrides(callbackExpr.body, overrides, t, callbackExpr.type, 'body')
       } else {

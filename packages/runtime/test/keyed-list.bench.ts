@@ -58,7 +58,8 @@ describe('Keyed List Performance Benchmarks', () => {
         () => items(),
         item => {
           const li = document.createElement('li')
-          li.textContent = item.name
+          const value = item()
+          li.textContent = value.name
           return li
         },
         createElement,
@@ -104,7 +105,8 @@ describe('Keyed List Performance Benchmarks', () => {
         () => items(),
         item => {
           const li = document.createElement('li')
-          li.textContent = item.name
+          const value = item()
+          li.textContent = value.name
           return li
         },
         createElement,
@@ -154,7 +156,8 @@ describe('Keyed List Performance Benchmarks', () => {
         () => items(),
         item => {
           const li = document.createElement('li')
-          li.textContent = item.name
+          const value = item()
+          li.textContent = value.name
           return li
         },
         createElement,
@@ -204,7 +207,8 @@ describe('Keyed List Performance Benchmarks', () => {
         () => items(),
         item => {
           const li = document.createElement('li')
-          li.textContent = item.name
+          const value = item()
+          li.textContent = value.name
           return li
         },
         createElement,
@@ -254,7 +258,8 @@ describe('Keyed List Performance Benchmarks', () => {
         () => items(),
         item => {
           const li = document.createElement('li')
-          li.textContent = item.name
+          const value = item()
+          li.textContent = value.name
           return li
         },
         createElement,
@@ -319,9 +324,10 @@ describe('Keyed List Performance Benchmarks', () => {
         item => {
           const li = document.createElement('li')
           const span = document.createElement('span')
+          const value = item()
 
           // Static content (non-keyed list recreates on update)
-          span.textContent = `${item.name}: ${item.value.toFixed(2)}`
+          span.textContent = `${value.name}: ${value.value.toFixed(2)}`
 
           li.appendChild(span)
           return li
@@ -383,7 +389,8 @@ describe('Keyed List Performance Benchmarks', () => {
         () => items(),
         item => {
           const li = document.createElement('li')
-          li.textContent = item.name
+          const value = item()
+          li.textContent = value.name
           return li
         },
         createElement,

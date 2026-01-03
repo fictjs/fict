@@ -414,7 +414,7 @@ describe('Reactive DOM Binding', () => {
 
       const { marker, dispose } = createList(
         () => items(),
-        item => item,
+        item => item(),
         createElement,
         item => item,
       )
@@ -430,7 +430,7 @@ describe('Reactive DOM Binding', () => {
 
       const { marker, dispose } = createList(
         () => items(),
-        item => item,
+        item => item(),
         createElement,
         item => item,
       )
@@ -460,8 +460,9 @@ describe('Reactive DOM Binding', () => {
       const { marker, dispose } = createList(
         () => items(),
         item => {
-          renderCounts.set(item.id, (renderCounts.get(item.id) || 0) + 1)
-          return item.text
+          const value = item()
+          renderCounts.set(value.id, (renderCounts.get(value.id) || 0) + 1)
+          return value.text
         },
         createElement,
         item => item.id,
@@ -495,16 +496,19 @@ describe('Reactive DOM Binding', () => {
 
       const { marker, dispose } = createList(
         () => items(),
-        item => ({
-          type: Fragment,
-          props: {
-            children: [
-              item.text,
-              { type: 'span', props: { children: item.text.toUpperCase() }, key: undefined },
-            ],
-          },
-          key: undefined,
-        }),
+        item => {
+          const value = item()
+          return {
+            type: Fragment,
+            props: {
+              children: [
+                value.text,
+                { type: 'span', props: { children: value.text.toUpperCase() }, key: undefined },
+              ],
+            },
+            key: undefined,
+          }
+        },
         createElement,
         item => item.id,
       )
@@ -534,10 +538,11 @@ describe('Reactive DOM Binding', () => {
       const { marker, dispose } = createList(
         () => items(),
         item => {
+          const value = item()
           onDestroy(() => {
-            cleanups.push(`destroy-${item}`)
+            cleanups.push(`destroy-${value}`)
           })
-          return { type: 'span', props: { children: item }, key: undefined }
+          return { type: 'span', props: { children: value }, key: undefined }
         },
         createElement,
       )
@@ -567,11 +572,12 @@ describe('Reactive DOM Binding', () => {
       const { marker, dispose } = createList(
         () => items(),
         item => {
-          renders.push(`render-${item.id}`)
+          const value = item()
+          renders.push(`render-${value.id}`)
           onDestroy(() => {
-            cleanups.push(`destroy-${item.id}`)
+            cleanups.push(`destroy-${value.id}`)
           })
-          return { type: 'span', props: { children: item.text }, key: undefined }
+          return { type: 'span', props: { children: value.text }, key: undefined }
         },
         createElement,
         item => item.id,
@@ -611,8 +617,9 @@ describe('Reactive DOM Binding', () => {
         item => {
           const div = document.createElement('div')
           createEffect(() => {
-            effectRuns.push(item.name)
-            div.textContent = item.name
+            const value = item()
+            effectRuns.push(value.name)
+            div.textContent = value.name
           })
           return div
         },
@@ -643,7 +650,7 @@ describe('Reactive DOM Binding', () => {
         item => {
           const span = document.createElement('span')
           createEffect(() => {
-            span.textContent = String(item)
+            span.textContent = String(item())
           })
           return span
         },
@@ -673,30 +680,33 @@ describe('Reactive DOM Binding', () => {
 
       const { marker, dispose } = createList(
         () => items(),
-        item => ({
-          type: Fragment,
-          props: {
-            children: [
-              {
-                type: 'input',
-                props: {
-                  'data-id': `input-${item.id}`,
-                  value: String(item.text),
+        item => {
+          const value = item()
+          return {
+            type: Fragment,
+            props: {
+              children: [
+                {
+                  type: 'input',
+                  props: {
+                    'data-id': `input-${value.id}`,
+                    value: String(value.text),
+                  },
+                  key: undefined,
                 },
-                key: undefined,
-              },
-              {
-                type: 'span',
-                props: {
-                  'data-span-id': `span-${item.id}`,
-                  children: item.text.toUpperCase(),
+                {
+                  type: 'span',
+                  props: {
+                    'data-span-id': `span-${value.id}`,
+                    children: value.text.toUpperCase(),
+                  },
+                  key: undefined,
                 },
-                key: undefined,
-              },
-            ],
-          },
-          key: undefined,
-        }),
+              ],
+            },
+            key: undefined,
+          }
+        },
         createElement,
         item => item.id,
       )
@@ -720,7 +730,7 @@ describe('Reactive DOM Binding', () => {
       dispose()
     })
 
-    it('unwrapPrimitive extracts raw values from keyed primitive proxies', async () => {
+    it('handles primitive keyed items without proxy wrapping', async () => {
       const items = createSignal([1, 2, 3])
       const typeResults: string[] = []
       const equalityResults: boolean[] = []
@@ -730,17 +740,17 @@ describe('Reactive DOM Binding', () => {
       const { marker, dispose } = createList(
         () => items(),
         item => {
-          // Proxied primitive behavior
-          typeResults.push(typeof item)
-          equalityResults.push(item === 1)
+          const value = item()
+          typeResults.push(typeof value)
+          equalityResults.push(value === 1)
 
           // Unwrapped primitive behavior
-          const raw = unwrapPrimitive(item)
+          const raw = unwrapPrimitive(value)
           unwrappedTypeResults.push(typeof raw)
           unwrappedEqualityResults.push(raw === 1)
 
           const div = document.createElement('div')
-          div.textContent = String(item)
+          div.textContent = String(value)
           return div
         },
         createElement,
@@ -748,11 +758,11 @@ describe('Reactive DOM Binding', () => {
       )
       container.appendChild(marker)
 
-      // Proxied values return 'object' and fail strict equality
-      expect(typeResults).toEqual(['object', 'object', 'object'])
-      expect(equalityResults).toEqual([false, false, false])
+      // Values are raw primitives and equality behaves as expected
+      expect(typeResults).toEqual(['number', 'number', 'number'])
+      expect(equalityResults).toEqual([true, false, false])
 
-      // Unwrapped values return correct type and pass strict equality
+      // unwrapPrimitive is now a no-op for primitives
       expect(unwrappedTypeResults).toEqual(['number', 'number', 'number'])
       expect(unwrappedEqualityResults).toEqual([true, false, false])
 
