@@ -404,11 +404,11 @@ The compiler detects this automatically. You don't need to think about it — wr
 
 ### Benchmark Summary (Geometric Mean)
 
-| Metric             | Solid | Vue Vapor | Svelte 5 | Fict | React Compiler |
-| :----------------- | :---- | :-------- | :------- | :--- | :------------- |
-| **CPU (Duration)** | 1.03  | 1.01      | 1.05     | 1.09 | 1.45           |
-| **Memory**         | 1.00  | 1.28      | 1.27     | 1.40 | 2.26           |
-| **Size / Load**    | 1.00  | 2.72      | 2.37     | 4.92 | 10.06          |
+| Metric             | Vue Vapor | Solid | Svelte 5 | Fict | React Compiler |
+| :----------------- | :-------- | :---- | :------- | :--- | :------------- |
+| **CPU (Duration)** | 1.01      | 1.04  | 1.05     | 1.09 | 1.45           |
+| **Memory**         | 1.24      | 1.00  | 1.20     | 1.22 | 2.08           |
+| **Size / Load**    | 2.62      | 1.00  | 2.23     | 2.23 | 9.65           |
 
 _Lower is better. Baseline relative to best performer in each category._
 
