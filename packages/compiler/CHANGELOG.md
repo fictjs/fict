@@ -1,5 +1,11 @@
 # @fictjs/compiler
 
+## 0.0.10
+
+### Patch Changes
+
+- fix issue and improve perf
+
 ## 0.0.9
 
 ### Patch Changes

@@ -1,5 +1,13 @@
 # fict
 
+## 0.0.10
+
+### Patch Changes
+
+- fix issue and improve perf
+- Updated dependencies
+  - @fictjs/runtime@0.0.10
+
 ## 0.0.9
 
 ### Patch Changes
