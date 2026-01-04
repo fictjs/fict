@@ -5653,4 +5653,290 @@ describe('compiler + fict integration', () => {
       dispose()
     })
   })
+
+  /**
+   * Regression Tests for Performance Optimization Semantic Safety
+   *
+   * These tests prevent semantic regressions from performance optimizations
+   * at the compiler integration level.
+   */
+  describe('performance optimization regression tests', () => {
+    it('keyed list onMount fires correctly for each component', async () => {
+      const source = `
+        import { $state, onMount, render } from 'fict'
+
+        export const mountedValues: number[] = []
+
+        function ListItem({ value }: { value: number }) {
+          onMount(() => {
+            mountedValues.push(value)
+          })
+          return <li data-value={value}>{value}</li>
+        }
+
+        function App() {
+          return (
+            <ul data-testid="list">
+              <ListItem value={1} />
+              <ListItem value={2} />
+              <ListItem value={3} />
+            </ul>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        mountedValues: number[]
+      }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      // All items should have their onMount called
+      expect(mod.mountedValues.length).toBe(3)
+      expect(mod.mountedValues).toContain(1)
+      expect(mod.mountedValues).toContain(2)
+      expect(mod.mountedValues).toContain(3)
+
+      // Verify elements are in the DOM
+      const list = container.querySelector('[data-testid="list"]')
+      expect(list?.children.length).toBe(3)
+
+      dispose()
+    })
+
+    it('ErrorBoundary recovers and allows subsequent renders after component error', async () => {
+      const source = `
+        import { $state, render, ErrorBoundary } from 'fict'
+
+        function ThrowingComponent() {
+          throw new Error('Component error')
+        }
+
+        function App() {
+          let shouldThrow = $state(true)
+          let resetKey = $state(0)
+
+          function MaybeThrow() {
+            if (shouldThrow) {
+              throw new Error('Component error')
+            }
+            return <span data-testid="good">good</span>
+          }
+
+          return (
+            <div>
+              <button data-testid="reset" onClick={() => { shouldThrow = false; resetKey = resetKey + 1 }}>Reset</button>
+              <ErrorBoundary fallback={<span data-testid="fallback">error</span>} resetKeys={() => resetKey}>
+                <MaybeThrow />
+              </ErrorBoundary>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      // Should show fallback after error
+      expect(container.querySelector('[data-testid="fallback"]')?.textContent).toBe('error')
+
+      // Reset to recover
+      const resetBtn = container.querySelector('[data-testid="reset"]') as HTMLButtonElement
+      resetBtn.click()
+      await tick()
+
+      expect(container.querySelector('[data-testid="good"]')?.textContent).toBe('good')
+      expect(container.querySelector('[data-testid="fallback"]')).toBeNull()
+
+      dispose()
+    })
+
+    it('createSelector stops updating after component unmount', async () => {
+      const source = `
+        import { $state, $effect, createSelector, render } from 'fict'
+
+        export let effectRunsAfterUnmount = 0
+        export let unmountComplete = false
+
+        function SelectorChild({ source }: { source: () => string }) {
+          const isSelected = createSelector(source)
+
+          $effect(() => {
+            const result = isSelected('x')
+            if (unmountComplete) {
+              effectRunsAfterUnmount++
+            }
+          })
+
+          return <span>selector</span>
+        }
+
+        function App() {
+          let source = $state('x')
+          let show = $state(true)
+
+          return (
+            <div>
+              <button data-testid="toggle" onClick={() => show = !show}>Toggle</button>
+              <button data-testid="update" onClick={() => source = source === 'x' ? 'y' : 'z'}>Update</button>
+              {show && <SelectorChild source={() => source} />}
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+
+        export function markUnmountComplete() {
+          unmountComplete = true
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        effectRunsAfterUnmount: number
+        unmountComplete: boolean
+        markUnmountComplete: () => void
+      }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      // Unmount the selector component
+      const toggleBtn = container.querySelector('[data-testid="toggle"]') as HTMLButtonElement
+      toggleBtn.click()
+      await tick()
+
+      // Mark unmount complete
+      mod.markUnmountComplete()
+
+      // Update source after unmount
+      const updateBtn = container.querySelector('[data-testid="update"]') as HTMLButtonElement
+      updateBtn.click()
+      await tick()
+      updateBtn.click()
+      await tick()
+
+      // Selector should not respond repeatedly after unmount
+      expect(mod.effectRunsAfterUnmount).toBeLessThanOrEqual(1)
+
+      dispose()
+    })
+
+    it('handles click events bubbling from Text node targets', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        export let clickCount = 0
+
+        function App() {
+          return (
+            <div data-testid="wrapper" onClick={() => clickCount++}>
+              Click this text
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        clickCount: number
+      }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const wrapper = container.querySelector('[data-testid="wrapper"]') as HTMLElement
+      const textNode = wrapper.firstChild as Text
+
+      expect(textNode).toBeInstanceOf(Text)
+
+      // Dispatch click from text node
+      let noError = true
+      try {
+        const event = new MouseEvent('click', { bubbles: true, cancelable: true })
+        textNode.dispatchEvent(event)
+      } catch {
+        noError = false
+      }
+
+      expect(noError).toBe(true)
+      expect(mod.clickCount).toBe(1)
+
+      dispose()
+    })
+
+    it('effect count remains stable after conditional clear and show', async () => {
+      const source = `
+        import { $state, onMount, render } from 'fict'
+
+        export let mountRuns = 0
+
+        function Item({ id }: { id: number }) {
+          onMount(() => {
+            mountRuns++
+          })
+          return <li>{id}</li>
+        }
+
+        function App() {
+          let show = $state(true)
+
+          return (
+            <div>
+              <button data-testid="toggle" onClick={() => show = !show}>Toggle</button>
+              <ul>
+                {show && <><Item id={1} /><Item id={2} /></>}
+              </ul>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        mountRuns: number
+      }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const initialRuns = mod.mountRuns
+      expect(initialRuns).toBe(2) // 2 items
+
+      const toggleBtn = container.querySelector('[data-testid="toggle"]') as HTMLButtonElement
+
+      // Toggle off and on multiple times
+      toggleBtn.click()
+      await tick()
+      toggleBtn.click()
+      await tick()
+      toggleBtn.click()
+      await tick()
+      toggleBtn.click()
+      await tick()
+
+      // Each toggle on adds 2 mounts (not accumulating exponentially)
+      // Initial: 2, Toggle1: +2 = 4, Toggle2: +2 = 6
+      expect(mod.mountRuns).toBeLessThanOrEqual(8)
+
+      dispose()
+    })
+  })
 })
