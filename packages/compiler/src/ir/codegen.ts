@@ -2242,11 +2242,7 @@ function lowerExpressionImpl(
               }
       const declared = new Set(paramIds.map(p => p.name))
       return lowerStructuredNodeWithoutRegions(structured, t, ctx, declared)
-    } catch (e) {
-      console.log(
-        '[DEBUG] Structurization failed, falling back to lowerBlocksToStatements via lowerInstruction',
-        e,
-      )
+    } catch {
       return lowerBlocksToStatements(blocks)
     }
   }
