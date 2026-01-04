@@ -191,6 +191,25 @@ describe('Fict Compiler - Basic Transforms', () => {
     })
   })
 
+  describe('Event handler safety', () => {
+    it('does not wrap event handlers with useEffect for tracked reads', () => {
+      const input = `
+        import { $state } from 'fict'
+        function App() {
+          let rows = $state([{ id: 1 }])
+          let selected = $state(1)
+          const remove = (id) => {
+            rows(rows().filter(row => row.id !== id))
+            if (selected() === id) selected(null)
+          }
+          return <button onClick={() => remove(1)}>Remove</button>
+        }
+      `
+      const output = transform(input)
+      expect(output).not.toContain('__fictUseEffect(__fictCtx')
+    })
+  })
+
   describe('$effect transformations', () => {
     it('transforms $effect to createEffect', () => {
       const input = `

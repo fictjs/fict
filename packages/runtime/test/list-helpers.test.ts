@@ -1,7 +1,14 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 
 import { createEffect } from '../src/effect'
-import { createRootContext, flushOnMount, onDestroy, popRoot, pushRoot } from '../src/lifecycle'
+import {
+  createRootContext,
+  flushOnMount,
+  onDestroy,
+  onMount,
+  popRoot,
+  pushRoot,
+} from '../src/lifecycle'
 import {
   moveNodesBefore,
   removeNodes,
@@ -355,6 +362,7 @@ describe('List Helpers', () => {
       )
 
       container.appendChild(listBinding.marker)
+      listBinding.flush?.()
 
       await tick()
 
@@ -382,6 +390,7 @@ describe('List Helpers', () => {
       )
 
       container.appendChild(listBinding.marker)
+      listBinding.flush?.()
 
       await tick()
 
@@ -413,6 +422,7 @@ describe('List Helpers', () => {
       )
 
       container.appendChild(listBinding.marker)
+      listBinding.flush?.()
 
       await tick()
 
@@ -449,6 +459,7 @@ describe('List Helpers', () => {
       )
 
       container.appendChild(listBinding.marker)
+      listBinding.flush?.()
 
       await tick()
 
@@ -483,6 +494,7 @@ describe('List Helpers', () => {
       )
 
       container.appendChild(listBinding.marker)
+      listBinding.flush?.()
 
       await tick()
 
@@ -529,6 +541,7 @@ describe('List Helpers', () => {
       )
 
       container.appendChild(listBinding.marker)
+      listBinding.flush?.()
 
       await tick()
 
@@ -571,6 +584,7 @@ describe('List Helpers', () => {
       )
 
       container.appendChild(listBinding.marker)
+      listBinding.flush?.()
 
       await tick()
 
@@ -603,6 +617,7 @@ describe('List Helpers', () => {
       )
 
       container.appendChild(listBinding.marker)
+      listBinding.flush?.()
 
       await tick()
 
@@ -612,6 +627,67 @@ describe('List Helpers', () => {
       listBinding.dispose()
 
       expect(container.children.length).toBe(0)
+    })
+
+    it('defers keyed list diffing until markers are mounted', async () => {
+      const calls: number[] = []
+      const items = createSignal([1, 2, 3])
+
+      const list = createKeyedList(
+        () => {
+          calls.push(1)
+          return items()
+        },
+        item => item,
+        itemSig => {
+          const text = document.createTextNode('')
+          createEffect(() => {
+            text.textContent = String(itemSig())
+          })
+          return [text]
+        },
+      )
+
+      expect(calls.length).toBe(0)
+
+      container.appendChild(list.marker)
+      list.flush?.()
+      await tick()
+      expect(calls.length).toBe(1)
+
+      items([3, 4])
+      await tick()
+      expect(calls.length).toBe(2)
+
+      list.dispose()
+    })
+
+    it('runs keyed block onMount after DOM insertion', async () => {
+      const mounts: boolean[] = []
+      const items = createSignal([{ id: 1 }])
+
+      const list = createKeyedList(
+        () => items(),
+        item => item.id,
+        itemSig => {
+          const div = document.createElement('div')
+          onMount(() => {
+            mounts.push(div.isConnected)
+          })
+          createEffect(() => {
+            div.textContent = String(itemSig().id)
+          })
+          return [div]
+        },
+      )
+
+      container.appendChild(list.marker)
+      list.flush?.()
+      await tick()
+
+      expect(mounts).toEqual([true])
+
+      list.dispose()
     })
   })
 })

@@ -1,6 +1,14 @@
 import { describe, it, expect } from 'vitest'
 
-import { batch, createEffect, createMemo, createSignal, onCleanup } from '../src/index'
+import {
+  batch,
+  createEffect,
+  createMemo,
+  createSelector,
+  createSignal,
+  onCleanup,
+  render,
+} from '../src/index'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -161,5 +169,33 @@ describe('signal runtime robustness', () => {
     // After microtask: only one batched run
     await tick()
     expect(effectRuns).toBe(2)
+  })
+
+  it('cleans up selector effects with the owning root', async () => {
+    const selected = createSignal(1)
+    let select: ((key: number) => boolean) | undefined
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    const dispose = render(() => {
+      select = createSelector(() => selected())
+      // Prime selector entries
+      select!(1)
+      select!(2)
+      return document.createTextNode('')
+    }, container)
+
+    expect(select!(1)).toBe(true)
+    expect(select!(2)).toBe(false)
+
+    dispose()
+    selected(2)
+    await tick()
+
+    // Selector should no longer respond after disposal
+    expect(select!(1)).toBe(true)
+    expect(select!(2)).toBe(false)
+
+    container.remove()
   })
 })

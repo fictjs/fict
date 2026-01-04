@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import {
   createSignal,
@@ -19,6 +19,7 @@ import {
   insert,
   createShow,
   createPortal,
+  bindEvent,
   onDestroy,
   unwrapPrimitive,
   isReactive,
@@ -1047,6 +1048,22 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('Static: Dynamic: 42')
 
       teardown()
+    })
+  })
+
+  describe('delegated events', () => {
+    it('handles delegated events from text node targets', () => {
+      const handler = vi.fn()
+      const button = document.createElement('button')
+      const text = document.createTextNode('click')
+      button.appendChild(text)
+
+      bindEvent(button, 'click', handler)
+      container.appendChild(button)
+
+      text.dispatchEvent(new Event('click', { bubbles: true }))
+
+      expect(handler).toHaveBeenCalledTimes(1)
     })
   })
 })

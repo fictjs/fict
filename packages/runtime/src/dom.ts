@@ -143,10 +143,20 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
   if (typeof node === 'object' && node !== null && !(node instanceof Node)) {
     // Handle BindingHandle (createList, createConditional, etc)
     if ('marker' in node) {
-      const handle = node as { marker: unknown; dispose?: () => void }
+      const handle = node as { marker: unknown; dispose?: () => void; flush?: () => void }
       // Register dispose cleanup if available
       if (typeof handle.dispose === 'function') {
         registerRootCleanup(handle.dispose)
+      }
+      if (typeof handle.flush === 'function') {
+        const runFlush = () => handle.flush && handle.flush()
+        if (typeof queueMicrotask === 'function') {
+          queueMicrotask(runFlush)
+        } else {
+          Promise.resolve()
+            .then(runFlush)
+            .catch(() => undefined)
+        }
       }
       return createElement(handle.marker as FictNode)
     }
@@ -210,20 +220,20 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
           })
 
     const props = createPropsProxy(baseProps)
+    // Create a fresh hook context for this component instance.
+    // This preserves slot state across re-renders driven by __fictRender.
+    __fictPushContext()
     try {
-      // Create a fresh hook context for this component instance.
-      // This preserves slot state across re-renders driven by __fictRender.
-      __fictPushContext()
       const rendered = vnode.type(props)
-      __fictPopContext()
       return createElementWithContext(rendered as FictNode, namespace)
     } catch (err) {
-      __fictPopContext()
       if (handleSuspend(err as any)) {
         return document.createComment('fict:suspend')
       }
       handleError(err, { source: 'render', componentName: vnode.type.name })
       throw err
+    } finally {
+      __fictPopContext()
     }
   }
 

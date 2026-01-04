@@ -61,7 +61,8 @@ export function createRenderEffect(fn: Effect): () => void {
         cleanup = maybeCleanup
       }
     } catch (err) {
-      if (handleError(err, { source: 'effect' }, rootForError)) {
+      const handled = handleError(err, { source: 'effect' }, rootForError)
+      if (handled) {
         return
       }
       throw err

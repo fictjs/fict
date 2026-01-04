@@ -19,7 +19,7 @@ import {
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import reconcileArrays from './reconcile'
 import { batch } from './scheduler'
-import { createSignal, setActiveSub, type Signal } from './signal'
+import { createSignal, flush, setActiveSub, type Signal } from './signal'
 import type { FictNode } from './types'
 
 // Re-export shared DOM helpers for compiler-generated code
@@ -339,7 +339,6 @@ export function createKeyedBlock<T>(
   } finally {
     setActiveSub(prevSub)
     popRoot(prevRoot)
-    flushOnMount(root)
   }
 
   return {
@@ -414,16 +413,31 @@ function createFineGrainedKeyedList<T>(
   const hostRoot = getCurrentRoot()
   const fragment = document.createDocumentFragment()
   fragment.append(container.startMarker, container.endMarker)
-  let pendingItems: T[] | null = null
   let disposed = false
+  let effectDispose: (() => void) | undefined
+  let connectObserver: MutationObserver | null = null
+  let effectStarted = false
+  let startScheduled = false
+
+  const getConnectedParent = (): (ParentNode & Node) | null => {
+    const endParent = container.endMarker.parentNode
+    const startParent = container.startMarker.parentNode
+    if (
+      endParent &&
+      startParent &&
+      endParent === startParent &&
+      (endParent as Node).nodeType !== 11
+    ) {
+      return endParent as ParentNode & Node
+    }
+    return null
+  }
 
   const performDiff = () => {
     if (disposed) return
-
+    const parent = getConnectedParent()
+    if (!parent) return
     batch(() => {
-      const newItems = pendingItems || getItems()
-      pendingItems = null
-
       const oldBlocks = container.blocks
       const newBlocks = container.nextBlocks
       const prevOrderedBlocks = container.orderedBlocks
@@ -432,20 +446,8 @@ function createFineGrainedKeyedList<T>(
       newBlocks.clear()
       nextOrderedBlocks.length = 0
       orderedIndexByKey.clear()
-
-      const endParent = container.endMarker.parentNode
-      const startParent = container.startMarker.parentNode
-      const parent =
-        endParent && startParent && endParent === startParent && (endParent as Node).isConnected
-          ? (endParent as ParentNode & Node)
-          : null
-
-      // If markers aren't mounted yet, store items and retry in microtask
-      if (!parent) {
-        pendingItems = newItems
-        queueMicrotask(performDiff)
-        return
-      }
+      const createdBlocks: KeyedBlock<T>[] = []
+      const newItems = getItems()
 
       if (newItems.length === 0) {
         if (oldBlocks.size > 0) {
@@ -505,6 +507,7 @@ function createFineGrainedKeyedList<T>(
 
           // Create new block
           block = createKeyedBlock(key, item, index, renderItem, needsIndex, hostRoot)
+          createdBlocks.push(block)
         }
 
         const resolvedBlock = block!
@@ -568,6 +571,11 @@ function createFineGrainedKeyedList<T>(
         container.nextBlocks = oldBlocks
         container.orderedBlocks = nextOrderedBlocks
         container.nextOrderedBlocks = prevOrderedBlocks
+        for (const block of createdBlocks) {
+          if (newBlocks.get(block.key) === block) {
+            flushOnMount(block.root)
+          }
+        }
         return
       }
 
@@ -608,24 +616,95 @@ function createFineGrainedKeyedList<T>(
       container.nextBlocks = oldBlocks
       container.orderedBlocks = nextOrderedBlocks
       container.nextOrderedBlocks = prevOrderedBlocks
+      for (const block of createdBlocks) {
+        if (newBlocks.get(block.key) === block) {
+          flushOnMount(block.root)
+        }
+      }
     })
   }
 
-  const effectDispose = createRenderEffect(performDiff)
+  const disconnectObserver = () => {
+    connectObserver?.disconnect()
+    connectObserver = null
+  }
+
+  const ensureEffectStarted = (): boolean => {
+    if (disposed || effectStarted) return effectStarted
+    const parent = getConnectedParent()
+    if (!parent) return false
+    const start = () => {
+      effectDispose = createRenderEffect(performDiff)
+      effectStarted = true
+    }
+    if (hostRoot) {
+      const prev = pushRoot(hostRoot)
+      try {
+        start()
+      } finally {
+        popRoot(prev)
+      }
+    } else {
+      start()
+    }
+    return true
+  }
+
+  const waitForConnection = () => {
+    if (connectObserver || typeof MutationObserver === 'undefined') return
+    connectObserver = new MutationObserver(() => {
+      if (disposed) return
+      if (getConnectedParent()) {
+        disconnectObserver()
+        if (ensureEffectStarted()) {
+          flush()
+        }
+      }
+    })
+    connectObserver.observe(document, { childList: true, subtree: true })
+  }
+
+  const scheduleStart = () => {
+    if (startScheduled || disposed || effectStarted) return
+    startScheduled = true
+    const run = () => {
+      startScheduled = false
+      if (!ensureEffectStarted()) {
+        waitForConnection()
+      }
+    }
+    if (typeof queueMicrotask === 'function') {
+      queueMicrotask(run)
+    } else {
+      Promise.resolve()
+        .then(run)
+        .catch(() => undefined)
+    }
+  }
+
+  scheduleStart()
 
   return {
-    marker: fragment,
+    get marker() {
+      scheduleStart()
+      return fragment
+    },
     startMarker: container.startMarker,
     endMarker: container.endMarker,
     // Flush pending items - call after markers are inserted into DOM
     flush: () => {
-      if (pendingItems !== null) {
-        performDiff()
+      if (disposed) return
+      scheduleStart()
+      if (ensureEffectStarted()) {
+        flush()
+      } else {
+        waitForConnection()
       }
     },
     dispose: () => {
       disposed = true
       effectDispose?.()
+      disconnectObserver()
       container.dispose()
     },
   }

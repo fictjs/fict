@@ -36,9 +36,9 @@ import {
   registerRootCleanup,
   type RootContext,
 } from './lifecycle'
+import { createVersionedSignalAccessor } from './list-helpers'
 import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 import { computed, createSignal, untrack, type Signal } from './signal'
-import { createVersionedSignalAccessor } from './list-helpers'
 import type { Cleanup, FictNode } from './types'
 
 // ============================================================================
@@ -914,11 +914,21 @@ export function clearDelegatedEvents(doc: Document = window.document): void {
  * Walks up the DOM tree to find and call handlers stored as $$eventName properties.
  */
 function globalEventHandler(e: Event): void {
-  let node = e.target as Element | null
+  const asNode = (value: unknown): Node | null =>
+    value && typeof (value as Node).nodeType === 'number' ? (value as Node) : null
+  const asElement = (value: unknown): Element | null => {
+    const n = asNode(value)
+    if (!n) return null
+    if (n.nodeType === 1) return n as Element
+    return (n as ChildNode).parentElement
+  }
+
+  let node = asElement(e.target)
   const key = `$$${e.type}` as const
   const dataKey = `${key}Data` as `$$${string}Data`
   const oriTarget = e.target
   const oriCurrentTarget = e.currentTarget
+  let lastHandled: Element | null = null
 
   // Retarget helper for shadow DOM and portals
   const retarget = (value: EventTarget) =>
@@ -961,7 +971,10 @@ function globalEventHandler(e: Event): void {
       shadowHost &&
       typeof shadowHost !== 'string' &&
       !(shadowHost as Element)._$host &&
-      node.contains(e.target as Node)
+      (() => {
+        const targetNode = asNode(e.target)
+        return targetNode ? node.contains(targetNode) : false
+      })()
     ) {
       retarget(shadowHost as EventTarget)
     }
@@ -971,9 +984,7 @@ function globalEventHandler(e: Event): void {
   // Walk up tree helper
   const walkUpTree = (): void => {
     while (handleNode() && node) {
-      node = (node._$host ||
-        node.parentNode ||
-        (node as unknown as ShadowRoot).host) as Element | null
+      node = asElement(node._$host || node.parentNode || (node as unknown as ShadowRoot).host)
     }
   }
 
@@ -990,8 +1001,11 @@ function globalEventHandler(e: Event): void {
     const path = e.composedPath()
     retarget(path[0] as EventTarget)
     for (let i = 0; i < path.length - 2; i++) {
-      node = path[i] as Element
+      const nextNode = asElement(path[i] as EventTarget)
+      if (!nextNode || nextNode === lastHandled) continue
+      node = nextNode
       if (!handleNode()) break
+      lastHandled = node
       // Handle portal event bubbling
       if (node._$host) {
         node = node._$host

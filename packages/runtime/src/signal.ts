@@ -1057,10 +1057,20 @@ export function endBatch(): void {
  */
 export function batch<T>(fn: () => T): T {
   ++batchDepth
+  let _error: unknown
+  let hasError = false
   try {
     return fn()
+  } catch (e) {
+    _error = e
+    hasError = true
+    throw e
   } finally {
-    if (--batchDepth === 0) flush()
+    --batchDepth
+    // Only flush if no error occurred to avoid interfering with error propagation
+    if (!hasError && batchDepth === 0) {
+      flush()
+    }
   }
 }
 /**
@@ -1253,7 +1263,7 @@ export function createSelector<T>(
   let current = source()
   const observers = new Map<T, SignalAccessor<boolean>>()
 
-  effect(() => {
+  const dispose = effect(() => {
     const next = source()
     if (equalityFn(current, next)) return
 
@@ -1264,6 +1274,10 @@ export function createSelector<T>(
     if (nextSig) nextSig(true)
 
     current = next
+  })
+  registerRootCleanup(() => {
+    dispose()
+    observers.clear()
   })
 
   return (key: T) => {

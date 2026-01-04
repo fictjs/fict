@@ -840,9 +840,11 @@ function lowerNodeWithRegionContext(
         t.blockStatement(conseqStmts),
         altStmts ? t.blockStatement(altStmts) : null,
       )
+      const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
       const shouldWrapEffect =
         ctx.wrapTrackedExpressions !== false &&
         !ctx.inRegionMemo &&
+        !inNonReactiveScope &&
         expressionUsesTracked(node.test, ctx) &&
         !statementHasEarlyExit(ifStmt, t)
       if (shouldWrapEffect) {
@@ -1146,18 +1148,20 @@ function lowerStructuredNodeForRegion(
     }
 
     case 'if': {
-      const consequent = lowerStructuredNodeForRegion(
-        node.consequent,
-        region,
-        t,
-        ctx,
-        declaredVars,
-        regionCtx,
-        skipInstructions,
-      )
-      const alternate = node.alternate
-        ? lowerStructuredNodeForRegion(
-            node.alternate,
+      const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
+      const baseShouldWrapEffect =
+        ctx.wrapTrackedExpressions !== false &&
+        !ctx.inRegionMemo &&
+        !inNonReactiveScope &&
+        expressionUsesTracked(node.test, ctx)
+      const lowerChild = (
+        child: StructuredNode | null | undefined,
+        forceNonReactive: boolean,
+      ): BabelCore.types.Statement[] => {
+        if (!child) return []
+        if (!forceNonReactive) {
+          return lowerStructuredNodeForRegion(
+            child,
             region,
             t,
             ctx,
@@ -1165,18 +1169,48 @@ function lowerStructuredNodeForRegion(
             regionCtx,
             skipInstructions,
           )
-        : []
+        }
+        const prevDepth = ctx.nonReactiveScopeDepth ?? 0
+        ctx.nonReactiveScopeDepth = prevDepth + 1
+        try {
+          return lowerStructuredNodeForRegion(
+            child,
+            region,
+            t,
+            ctx,
+            declaredVars,
+            regionCtx,
+            skipInstructions,
+          )
+        } finally {
+          ctx.nonReactiveScopeDepth = prevDepth
+        }
+      }
+
+      let consequent = lowerChild(node.consequent, baseShouldWrapEffect)
+      let alternate = node.alternate ? lowerChild(node.alternate, baseShouldWrapEffect) : []
       if (consequent.length === 0 && alternate.length === 0) return []
-      const ifStmt = t.ifStatement(
-        lowerExpressionWithDeSSA(node.test, ctx),
-        t.blockStatement(consequent),
-        alternate.length > 0 ? t.blockStatement(alternate) : null,
-      )
-      const shouldWrapEffect =
-        ctx.wrapTrackedExpressions !== false &&
-        !ctx.inRegionMemo &&
-        expressionUsesTracked(node.test, ctx) &&
-        !statementHasEarlyExit(ifStmt, t)
+      const buildIfStmt = (
+        cons: BabelCore.types.Statement[],
+        alt: BabelCore.types.Statement[],
+      ): BabelCore.types.IfStatement =>
+        t.ifStatement(
+          lowerExpressionWithDeSSA(node.test, ctx),
+          t.blockStatement(cons),
+          alt.length > 0 ? t.blockStatement(alt) : null,
+        )
+
+      let ifStmt = buildIfStmt(consequent, alternate)
+      const shouldWrapEffect = baseShouldWrapEffect && !statementHasEarlyExit(ifStmt, t)
+
+      if (!shouldWrapEffect && baseShouldWrapEffect) {
+        // Re-lower without the non-reactive guard to preserve previous behavior
+        consequent = lowerChild(node.consequent, false)
+        alternate = node.alternate ? lowerChild(node.alternate, false) : []
+        if (consequent.length === 0 && alternate.length === 0) return []
+        ifStmt = buildIfStmt(consequent, alternate)
+      }
+
       if (shouldWrapEffect) {
         ctx.helpersUsed.add('useEffect')
         ctx.needsCtx = true
@@ -2558,8 +2592,11 @@ function instructionToStatement(
       ctx.trackedVars.has(deSSAVarName(dep)),
     )
     const usesTracked = expressionUsesTracked(instr.value, ctx)
+    const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
     const shouldWrapExpr =
-      ctx.wrapTrackedExpressions !== false && (usesTracked || hasTrackedControlDep)
+      ctx.wrapTrackedExpressions !== false &&
+      !inNonReactiveScope &&
+      (usesTracked || hasTrackedControlDep)
     if (shouldWrapExpr) {
       ctx.helpersUsed.add('useEffect')
       ctx.needsCtx = true
