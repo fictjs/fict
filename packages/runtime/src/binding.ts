@@ -38,6 +38,7 @@ import {
 } from './lifecycle'
 import { createVersionedSignalAccessor } from './list-helpers'
 import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
+import { batch } from './scheduler'
 import { computed, createSignal, untrack, type Signal } from './signal'
 import type { Cleanup, FictNode } from './types'
 
@@ -552,8 +553,18 @@ export function bindClass(
   getValue: () => string | Record<string, boolean> | null | undefined,
 ): Cleanup {
   let prev: Record<string, boolean> = {}
+  let prevString: string | undefined
   return createRenderEffect(() => {
     const next = getValue()
+    // P2-1: Short-circuit for string values to avoid DOM writes when unchanged
+    if (typeof next === 'string') {
+      if (next === prevString) return
+      prevString = next
+      el.className = next
+      prev = {}
+      return
+    }
+    prevString = undefined
     prev = applyClass(el, next, prev)
   })
 }
@@ -957,12 +968,15 @@ function globalEventHandler(e: Event): void {
       const rawData = (node as any)[dataKey] as unknown
       const hasData = rawData !== undefined
       const resolvedNodeData = hasData ? resolveData(rawData) : undefined
-      if (typeof handler === 'function') {
-        callEventHandler(handler, e, node, hasData ? resolvedNodeData : undefined)
-      } else if (Array.isArray(handler)) {
-        const tupleData = resolveData(handler[1])
-        callEventHandler(handler[0], e, node, tupleData)
-      }
+      // P2-3: Wrap event handler calls in batch for synchronous flush & reduced microtasks
+      batch(() => {
+        if (typeof handler === 'function') {
+          callEventHandler(handler, e, node, hasData ? resolvedNodeData : undefined)
+        } else if (Array.isArray(handler)) {
+          const tupleData = resolveData(handler[1])
+          callEventHandler(handler[0], e, node, tupleData)
+        }
+      })
       if (e.cancelBubble) return false
     }
     // Handle shadow DOM host retargeting

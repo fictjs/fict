@@ -451,10 +451,15 @@ function createFineGrainedKeyedList<T>(
 
       if (newItems.length === 0) {
         if (oldBlocks.size > 0) {
+          // Destroy all block roots first
           for (const block of oldBlocks.values()) {
             destroyRoot(block.root)
-            removeNodes(block.nodes)
           }
+          // Use Range.deleteContents for efficient bulk DOM removal
+          const range = document.createRange()
+          range.setStartAfter(container.startMarker)
+          range.setEndBefore(container.endMarker)
+          range.deleteContents()
         }
         oldBlocks.clear()
         newBlocks.clear()
@@ -474,8 +479,9 @@ function createFineGrainedKeyedList<T>(
       // Phase 1: Build new blocks map (reuse or create)
       newItems.forEach((item, index) => {
         const key = keyFn(item, index)
-        const existed = oldBlocks.has(key)
+        // Micro-optimization: single Map.get instead of has+get
         let block = oldBlocks.get(key)
+        const existed = block !== undefined
 
         if (block) {
           if (block.rawItem !== item) {
@@ -488,46 +494,30 @@ function createFineGrainedKeyedList<T>(
           }
         }
 
-        // If newBlocks already has this key (duplicate key case), clean up the previous block
-        const existingBlock = newBlocks.get(key)
-        if (existingBlock && existingBlock !== block) {
-          destroyRoot(existingBlock.root)
-          removeNodes(existingBlock.nodes)
-        }
-
         if (block) {
+          // Reusing existing block from oldBlocks
           newBlocks.set(key, block)
           oldBlocks.delete(key)
         } else {
+          // If newBlocks already has this key (duplicate key case), clean up the previous block
           const existingBlock = newBlocks.get(key)
           if (existingBlock) {
             destroyRoot(existingBlock.root)
             removeNodes(existingBlock.nodes)
           }
-
           // Create new block
           block = createKeyedBlock(key, item, index, renderItem, needsIndex, hostRoot)
           createdBlocks.push(block)
         }
 
-        const resolvedBlock = block!
+        const resolvedBlock = block
 
         newBlocks.set(key, resolvedBlock)
 
+        // Micro-optimization: single Map.get instead of checking position multiple times
         const position = orderedIndexByKey.get(key)
         if (position !== undefined) {
           appendCandidate = false
-        }
-        if (appendCandidate) {
-          if (index < prevCount) {
-            if (!prevOrderedBlocks[index] || prevOrderedBlocks[index]!.key !== key) {
-              appendCandidate = false
-            }
-          } else if (existed) {
-            appendCandidate = false
-          }
-        }
-        if (position !== undefined) {
           const prior = nextOrderedBlocks[position]
           if (prior && prior !== resolvedBlock) {
             destroyRoot(prior.root)
@@ -535,6 +525,15 @@ function createFineGrainedKeyedList<T>(
           }
           nextOrderedBlocks[position] = resolvedBlock
         } else {
+          if (appendCandidate) {
+            if (index < prevCount) {
+              if (!prevOrderedBlocks[index] || prevOrderedBlocks[index]!.key !== key) {
+                appendCandidate = false
+              }
+            } else if (existed) {
+              appendCandidate = false
+            }
+          }
           orderedIndexByKey.set(key, nextOrderedBlocks.length)
           nextOrderedBlocks.push(resolvedBlock)
         }

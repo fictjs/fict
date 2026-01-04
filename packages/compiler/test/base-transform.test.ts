@@ -224,7 +224,9 @@ describe('createFictPlugin (HIR)', () => {
       `)
 
       expect(output).toContain(`"static"`)
-      expect(output).toContain(`bindText`)
+      // P1-1: Static text uses direct assignment instead of bindText
+      expect(output).not.toContain(`bindText`)
+      expect(output).toContain(`.data = String`)
     })
 
     it('wraps complex expressions that depend on state', () => {

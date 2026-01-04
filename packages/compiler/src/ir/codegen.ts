@@ -2165,7 +2165,7 @@ export function lowerExpression(
 function lowerExpressionImpl(
   expr: Expression,
   ctx: CodegenContext,
-  isAssigned = false,
+  _isAssigned = false,
 ): BabelCore.types.Expression {
   const { t } = ctx
   const mapParams = (params: { name: string }[]) =>
@@ -2486,15 +2486,12 @@ function lowerExpressionImpl(
     case 'ArrowFunction': {
       const paramIds = mapParams(expr.params)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
-      return withFunctionScope(shadowed, () => {
-        // If assigned to a variable (event handler), create non-reactive scope to avoid memo leaks
-        if (isAssigned) {
-          ctx.nonReactiveScopeDepth = (ctx.nonReactiveScopeDepth ?? 0) + 1
-        }
+      // Arrow functions are always reactivity boundaries - prevent statements inside
+      // from being wrapped in $effect/__fictUseEffect (like FunctionExpression)
+      return withNonReactiveScope(ctx, () =>
+        withFunctionScope(shadowed, () => {
+          let fn: BabelCore.types.ArrowFunctionExpression
 
-        let fn: BabelCore.types.ArrowFunctionExpression
-
-        try {
           if (expr.isExpression && !Array.isArray(expr.body)) {
             // Rule L: Enable getter caching for sync arrow functions with expression body
             const { result: bodyExpr, cacheDeclarations } = withGetterCache(ctx, () =>
@@ -2523,12 +2520,8 @@ function lowerExpressionImpl(
           }
           fn.async = expr.isAsync ?? false
           return fn
-        } finally {
-          if (isAssigned) {
-            ctx.nonReactiveScopeDepth = (ctx.nonReactiveScopeDepth ?? 0) - 1
-          }
-        }
-      })
+        }),
+      )
     }
 
     case 'FunctionExpression': {
@@ -4170,16 +4163,30 @@ function lowerIntrinsicElement(
         t.expressionStatement(lowerDomExpression(binding.expr, ctx, containingRegion)),
       )
     } else if (binding.type === 'text' && binding.expr) {
-      ctx.helpersUsed.add('bindText')
       const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
-      statements.push(
-        t.expressionStatement(
-          t.callExpression(t.identifier(RUNTIME_ALIASES.bindText), [
-            targetId,
-            t.arrowFunctionExpression([], valueExpr),
-          ]),
-        ),
-      )
+      // P1-1: Only use bindText for reactive expressions; static text uses direct assignment
+      if (isExpressionReactive(binding.expr, ctx)) {
+        ctx.helpersUsed.add('bindText')
+        statements.push(
+          t.expressionStatement(
+            t.callExpression(t.identifier(RUNTIME_ALIASES.bindText), [
+              targetId,
+              t.arrowFunctionExpression([], valueExpr),
+            ]),
+          ),
+        )
+      } else {
+        // Static text: direct assignment - no effect needed
+        statements.push(
+          t.expressionStatement(
+            t.assignmentExpression(
+              '=',
+              t.memberExpression(targetId, t.identifier('data')),
+              t.callExpression(t.identifier('String'), [valueExpr]),
+            ),
+          ),
+        )
+      }
     } else if (binding.type === 'child' && binding.expr) {
       // Child binding (dynamic expression at placeholder)
       emitHIRChildBinding(targetId, binding.expr, statements, ctx, containingRegion)
@@ -4609,10 +4616,19 @@ function getTrackedCallIdentifier(
 function rewriteSelectorExpression(
   expr: BabelCore.types.Expression,
   itemParamName: string,
+  keyParamName: string | null,
   getSelectorId: (name: string) => BabelCore.types.Identifier,
   ctx: CodegenContext,
 ): { expr: BabelCore.types.Expression; changed: boolean } {
   const { t } = ctx
+
+  // P1-3: Check if expression uses either itemParamName or keyParamName
+  const usesParamIdentifier = (e: BabelCore.types.Expression): boolean => {
+    if (expressionUsesIdentifier(e, itemParamName, t)) return true
+    if (keyParamName && expressionUsesIdentifier(e, keyParamName, t)) return true
+    return false
+  }
+
   if (t.isBinaryExpression(expr) && (expr.operator === '===' || expr.operator === '==')) {
     const leftTracked = getTrackedCallIdentifier(
       expr.left as BabelCore.types.Expression,
@@ -4624,7 +4640,8 @@ function rewriteSelectorExpression(
       ctx,
       itemParamName,
     )
-    if (leftTracked && expressionUsesIdentifier(expr.right, itemParamName, t)) {
+    // P1-3: Support both itemParamName (row) and keyParamName (__key) for selector matching
+    if (leftTracked && usesParamIdentifier(expr.right as BabelCore.types.Expression)) {
       return {
         expr: t.callExpression(getSelectorId(leftTracked), [
           expr.right as BabelCore.types.Expression,
@@ -4632,7 +4649,7 @@ function rewriteSelectorExpression(
         changed: true,
       }
     }
-    if (rightTracked && expressionUsesIdentifier(expr.left, itemParamName, t)) {
+    if (rightTracked && usesParamIdentifier(expr.left as BabelCore.types.Expression)) {
       return {
         expr: t.callExpression(getSelectorId(rightTracked), [
           expr.left as BabelCore.types.Expression,
@@ -4644,7 +4661,7 @@ function rewriteSelectorExpression(
 
   let changed = false
   const rewrite = (node: BabelCore.types.Expression): BabelCore.types.Expression => {
-    const result = rewriteSelectorExpression(node, itemParamName, getSelectorId, ctx)
+    const result = rewriteSelectorExpression(node, itemParamName, keyParamName, getSelectorId, ctx)
     if (result.changed) changed = true
     return result.expr
   }
@@ -4716,6 +4733,7 @@ function rewriteSelectorExpression(
 function applySelectorHoist(
   callbackExpr: BabelCore.types.Expression,
   itemParamName: string | null,
+  keyParamName: string | null,
   statements: BabelCore.types.Statement[],
   ctx: CodegenContext,
 ): void {
@@ -4738,7 +4756,14 @@ function applySelectorHoist(
     if (t.isBlockStatement(fn.body)) {
       for (const stmt of fn.body.body) {
         if (t.isReturnStatement(stmt) && stmt.argument && t.isExpression(stmt.argument)) {
-          const result = rewriteSelectorExpression(stmt.argument, itemParamName, getSelectorId, ctx)
+          // P1-3: Pass keyParamName for __key recognition
+          const result = rewriteSelectorExpression(
+            stmt.argument,
+            itemParamName,
+            keyParamName,
+            getSelectorId,
+            ctx,
+          )
           if (result.changed) {
             stmt.argument = result.expr
           }
@@ -4747,7 +4772,14 @@ function applySelectorHoist(
       return
     }
     if (t.isExpression(fn.body)) {
-      const result = rewriteSelectorExpression(fn.body, itemParamName, getSelectorId, ctx)
+      // P1-3: Pass keyParamName for __key recognition
+      const result = rewriteSelectorExpression(
+        fn.body,
+        itemParamName,
+        keyParamName,
+        getSelectorId,
+        ctx,
+      )
       if (result.changed) {
         fn.body = result.expr
       }
@@ -4949,7 +4981,15 @@ function emitListChild(
           ? callbackExpr.params[0].name
           : null
         : null
-    applySelectorHoist(callbackExpr as BabelCore.types.Expression, itemParamName, statements, ctx)
+    // P1-3: Pass keyParamName (__key) to recognize selector patterns like `__key === selected()`
+    const keyParamName = ctx.listKeyParamName ?? null
+    applySelectorHoist(
+      callbackExpr as BabelCore.types.Expression,
+      itemParamName,
+      keyParamName,
+      statements,
+      ctx,
+    )
   }
   if (isKeyed && keyExpr) {
     let keyExprAst = lowerExpression(keyExpr, ctx)
