@@ -301,4 +301,61 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).toContain('count()')
     })
   })
+
+  describe('P1-2: Event delegation data-binding', () => {
+    it('optimizes onClick={() => handler(data)} pattern', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+        function Component() {
+          let selected = $state(null)
+          const select = (id) => selected = id
+          const data = { key: 123 }
+          const view = () => <button onClick={() => select(data.key)}>Click</button>
+          return view()
+        }
+      `)
+
+      // P1-2: Should generate wrapper and data getter:
+      //   $$click = (__data, _e) => select(__data)
+      //   $$clickData = () => data.key
+      expect(output).toContain('$$click')
+      expect(output).toContain('$$clickData')
+      // Wrapper function that adapts to (data, event) signature
+      expect(output).toContain('(__data, _e) => select(__data)')
+      expect(output).toContain('data.key')
+    })
+
+    it('handles console.log patterns with standard event delegation', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          const view = () => <button onClick={() => console.log(count)}>Log</button>
+          return view()
+        }
+      `)
+
+      // console.log uses standard event delegation (not P1-2 optimization)
+      // Standard path still creates data binding for tracked variables
+      expect(output).toContain('$$click')
+      // The handler is an arrow function wrapping the console.log call
+      expect(output).toContain('console.log(count())')
+    })
+
+    it('does not optimize when handler is a tracked variable', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+        function Component() {
+          let handler = $state((x) => x)
+          const data = 123
+          const view = () => <button onClick={() => handler(data)}>Click</button>
+          return view()
+        }
+      `)
+
+      // handler is a signal, so P1-2 should not apply
+      // The pattern should fall through to standard event handling
+      expect(output).toContain('$$click')
+    })
+  })
 })

@@ -24,6 +24,7 @@ import {
   unwrapPrimitive,
   isReactive,
   unwrap,
+  callEventHandler,
 } from '../src/index'
 
 const tick = () =>
@@ -1064,6 +1065,65 @@ describe('Reactive DOM Binding', () => {
       text.dispatchEvent(new Event('click', { bubbles: true }))
 
       expect(handler).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('callEventHandler', () => {
+    it('passes only event when no data is provided', () => {
+      const mockEvent = new Event('click')
+      const receivedArgs: unknown[] = []
+      const handler = (...args: unknown[]) => {
+        receivedArgs.push(...args)
+      }
+
+      callEventHandler(handler, mockEvent, null)
+
+      expect(receivedArgs.length).toBe(1)
+      expect(receivedArgs[0]).toBe(mockEvent)
+    })
+
+    it('passes (data, event) when data is provided', () => {
+      const mockEvent = new Event('click')
+      const receivedArgs: unknown[] = []
+      const handler = (...args: unknown[]) => {
+        receivedArgs.push(...args)
+      }
+
+      callEventHandler(handler, mockEvent, null, 'testData')
+
+      expect(receivedArgs.length).toBe(2)
+      expect(receivedArgs[0]).toBe('testData')
+      expect(receivedArgs[1]).toBe(mockEvent)
+    })
+
+    it('supports [handler, data] tuple pattern with (data, event) signature', () => {
+      const mockEvent = new Event('click')
+      let receivedData: unknown
+      let receivedEvent: unknown
+      const handler = (data: unknown, e: Event) => {
+        receivedData = data
+        receivedEvent = e
+      }
+
+      // Simulate the tuple pattern: onClick={[handler, itemId]}
+      callEventHandler(handler, mockEvent, null, 123)
+
+      expect(receivedData).toBe(123)
+      expect(receivedEvent).toBe(mockEvent)
+    })
+
+    it('allows handler to access event methods like stopPropagation', () => {
+      const mockEvent = new Event('click', { bubbles: true, cancelable: true })
+      let eventReceived: Event | null = null
+      const handler = (data: unknown, e: Event) => {
+        eventReceived = e
+        e.stopPropagation()
+      }
+
+      callEventHandler(handler, mockEvent, null, 'data')
+
+      expect(eventReceived).toBe(mockEvent)
+      expect(mockEvent.cancelBubble).toBe(true)
     })
   })
 })
