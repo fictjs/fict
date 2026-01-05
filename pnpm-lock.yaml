@@ -155,6 +155,25 @@ importers:
         specifier: ^5.2.0
         version: 5.2.2(webpack-cli@6.0.1)(webpack@5.104.1)
 
+  examples/todos:
+    dependencies:
+      '@fictjs/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@fictjs/vite-plugin':
+        specifier: workspace:*
+        version: link:../../packages/vite-plugin
+      fict:
+        specifier: workspace:*
+        version: link:../../packages/fict
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.0
+        version: 7.3.0(@types/node@25.0.3)(jiti@2.6.1)(terser@5.44.1)(yaml@2.8.2)
+
   packages/babel-preset:
     dependencies:
       '@babel/plugin-syntax-jsx':
