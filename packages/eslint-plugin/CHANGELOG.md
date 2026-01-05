@@ -1,5 +1,11 @@
 # @fictjs/eslint-plugin
 
+## 0.0.11
+
+### Patch Changes
+
+- fix effect cleanup
+
 ## 0.0.10
 
 ### Patch Changes

@@ -4729,6 +4729,9 @@ function extractDelegatedEventDataFromHIR(
 
   // Check if data uses any handler params
   const dataExpr = bodyExpr.arguments[0]
+  if (!dataExpr) {
+    return null
+  }
   if (hirExpressionUsesIdentifiers(dataExpr, paramNames)) {
     return null
   }
