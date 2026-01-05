@@ -96,6 +96,10 @@ export interface EffectNode extends BaseNode {
   deps: Link | undefined
   /** Last dependency link */
   depsTail: Link | undefined
+  /** Optional cleanup runner to be called before checkDirty */
+  runCleanup?: () => void
+  /** Devtools ID */
+  __id?: number | undefined
 }
 
 /**
@@ -202,6 +206,8 @@ const enqueueMicrotask =
     : (fn: () => void) => {
         Promise.resolve().then(fn)
       }
+// Flag to indicate cleanup is running - signal reads should return currentValue without updating
+let inCleanup = false
 export const ReactiveFlags = {
   None: 0,
   Mutable,
@@ -735,7 +741,16 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
  */
 function runEffect(e: EffectNode): void {
   const flags = e.flags
-  if (flags & Dirty || (flags & Pending && e.deps && checkDirty(e.deps, e))) {
+  // Run cleanup BEFORE checkDirty so cleanup sees previous signal values
+  if (flags & Dirty) {
+    if (e.runCleanup) {
+      inCleanup = true
+      try {
+        e.runCleanup()
+      } finally {
+        inCleanup = false
+      }
+    }
     ++cycle
     effectRunDevtools(e)
     e.depsTail = undefined
@@ -751,6 +766,36 @@ function runEffect(e: EffectNode): void {
       activeSub = prevSub
       e.flags = Watching
       throw err
+    }
+  } else if (flags & Pending && e.deps) {
+    // Run cleanup before checkDirty which commits signal values
+    if (e.runCleanup) {
+      inCleanup = true
+      try {
+        e.runCleanup()
+      } finally {
+        inCleanup = false
+      }
+    }
+    if (checkDirty(e.deps, e)) {
+      ++cycle
+      effectRunDevtools(e)
+      e.depsTail = undefined
+      e.flags = WatchingRunning
+      const prevSub = activeSub
+      activeSub = e
+      try {
+        e.fn()
+        activeSub = prevSub
+        e.flags = Watching
+        purgeDeps(e)
+      } catch (err) {
+        activeSub = prevSub
+        e.flags = Watching
+        throw err
+      }
+    } else {
+      e.flags = Watching
     }
   } else {
     e.flags = Watching
@@ -870,7 +915,8 @@ function signalOper<T>(this: SignalNode<T>, value?: T): T | void {
   }
 
   const flags = this.flags
-  if (flags & Dirty) {
+  // During cleanup, don't update signal - return currentValue as-is
+  if (flags & Dirty && !inCleanup) {
     if (updateSignal(this)) {
       const subs = this.subs
       if (subs !== undefined) shallowPropagate(subs)
@@ -976,6 +1022,44 @@ export function effect(fn: () => void): EffectDisposer {
 
   return effectOper.bind(e) as EffectDisposer
 }
+
+/**
+ * Create a reactive effect with a custom cleanup runner
+ * The cleanup runner is called BEFORE signal values are committed, allowing
+ * cleanup functions to access the previous values of signals.
+ * @param fn - The effect function
+ * @param cleanupRunner - Function to run cleanups before signal value commit
+ * @returns An effect disposer function
+ */
+export function effectWithCleanup(fn: () => void, cleanupRunner: () => void): EffectDisposer {
+  const e: EffectNode = {
+    fn,
+    subs: undefined,
+    subsTail: undefined,
+    deps: undefined,
+    depsTail: undefined,
+    flags: WatchingRunning,
+    runCleanup: cleanupRunner,
+    __id: undefined as number | undefined,
+  }
+
+  registerEffectDevtools(e)
+
+  const prevSub = activeSub
+  if (prevSub !== undefined) link(e, prevSub, 0)
+  activeSub = e
+
+  try {
+    effectRunDevtools(e)
+    fn()
+  } finally {
+    activeSub = prevSub
+    e.flags &= ~Running
+  }
+
+  return effectOper.bind(e) as EffectDisposer
+}
+
 function effectOper(this: EffectNode): void {
   disposeNode(this)
 }

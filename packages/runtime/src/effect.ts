@@ -5,7 +5,7 @@ import {
   runCleanupList,
   withEffectCleanups,
 } from './lifecycle'
-import { effect } from './signal'
+import { effectWithCleanup } from './signal'
 import type { Cleanup } from './types'
 
 export type Effect = () => void | Cleanup
@@ -14,8 +14,14 @@ export function createEffect(fn: Effect): () => void {
   let cleanups: Cleanup[] = []
   const rootForError = getCurrentRoot()
 
-  const run = () => {
+  // Cleanup runner - called by runEffect BEFORE signal values are committed
+  const doCleanup = () => {
     runCleanupList(cleanups)
+    cleanups = []
+  }
+
+  const run = () => {
+    // Note: cleanups are now run by signal.ts runEffect before this function is called
     const bucket: Cleanup[] = []
     withEffectCleanups(bucket, () => {
       try {
@@ -33,7 +39,7 @@ export function createEffect(fn: Effect): () => void {
     cleanups = bucket
   }
 
-  const disposeEffect = effect(run)
+  const disposeEffect = effectWithCleanup(run, doCleanup)
   const teardown = () => {
     runCleanupList(cleanups)
     disposeEffect()
@@ -50,11 +56,16 @@ export function createRenderEffect(fn: Effect): () => void {
   let cleanup: Cleanup | undefined
   const rootForError = getCurrentRoot()
 
-  const run = () => {
+  // Cleanup runner - called by runEffect BEFORE signal values are committed
+  const doCleanup = () => {
     if (cleanup) {
       cleanup()
       cleanup = undefined
     }
+  }
+
+  const run = () => {
+    // Note: cleanups are now run by signal.ts runEffect before this function is called
     try {
       const maybeCleanup = fn()
       if (typeof maybeCleanup === 'function') {
@@ -69,7 +80,7 @@ export function createRenderEffect(fn: Effect): () => void {
     }
   }
 
-  const disposeEffect = effect(run)
+  const disposeEffect = effectWithCleanup(run, doCleanup)
   const teardown = () => {
     if (cleanup) {
       cleanup()

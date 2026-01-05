@@ -5938,5 +5938,54 @@ describe('compiler + fict integration', () => {
 
       dispose()
     })
+
+    it('$effect cleanup receives previous value, not current value', async () => {
+      const source = `
+        import { $state, $effect, render } from 'fict'
+
+        export const logs: string[] = []
+
+        function Counter() {
+          let count = $state(0)
+
+          $effect(() => {
+            logs.push('current ' + count)
+            return () => {
+              logs.push('prev ' + count)
+            }
+          })
+
+          return <button data-testid="inc" onClick={() => count++}>{count}</button>
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <Counter />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        logs: string[]
+      }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      // Initial effect run
+      expect(mod.logs).toEqual(['current 0'])
+
+      const incBtn = container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+
+      // First increment: cleanup should see prev value (0), then effect sees current (1)
+      incBtn.click()
+      await tick()
+      expect(mod.logs).toEqual(['current 0', 'prev 0', 'current 1'])
+
+      // Second increment: cleanup sees prev (1), effect sees current (2)
+      incBtn.click()
+      await tick()
+      expect(mod.logs).toEqual(['current 0', 'prev 0', 'current 1', 'prev 1', 'current 2'])
+
+      dispose()
+    })
   })
 })
