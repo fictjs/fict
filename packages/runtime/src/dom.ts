@@ -431,10 +431,18 @@ function applyRef(el: Element, value: unknown): void {
     refFn(el)
 
     // Match React behavior: call ref(null) on unmount
-    if (getCurrentRoot()) {
+    const root = getCurrentRoot()
+    if (root) {
       registerRootCleanup(() => {
         refFn(null)
       })
+    } else if (process.env.NODE_ENV !== 'production') {
+      // BUG-017 FIX: Warn when ref is used outside a root context
+      console.warn(
+        '[fict] Ref applied outside of a root context. ' +
+          'The ref cleanup (setting to null) will not run automatically. ' +
+          'Consider using createRoot() or ensure the element is created within a component.',
+      )
     }
   } else if (value && typeof value === 'object' && 'current' in value) {
     // Object ref
@@ -442,10 +450,18 @@ function applyRef(el: Element, value: unknown): void {
     refObj.current = el
 
     // Auto-cleanup on unmount
-    if (getCurrentRoot()) {
+    const root = getCurrentRoot()
+    if (root) {
       registerRootCleanup(() => {
         refObj.current = null
       })
+    } else if (process.env.NODE_ENV !== 'production') {
+      // BUG-017 FIX: Warn when ref is used outside a root context
+      console.warn(
+        '[fict] Ref applied outside of a root context. ' +
+          'The ref cleanup (setting to null) will not run automatically. ' +
+          'Consider using createRoot() or ensure the element is created within a component.',
+      )
     }
   }
 }

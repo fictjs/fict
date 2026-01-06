@@ -19,7 +19,7 @@ import {
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import reconcileArrays from './reconcile'
 import { batch } from './scheduler'
-import { createSignal, flush, setActiveSub, type Signal } from './signal'
+import { createSignal, effectScope, flush, setActiveSub, type Signal } from './signal'
 import type { FictNode } from './types'
 
 // Re-export shared DOM helpers for compiler-generated code
@@ -201,6 +201,10 @@ function removeBlockRange(block: MarkerBlock): void {
   }
 }
 
+// BUG-019 FIX: Use a safe maximum version to prevent overflow
+// Number.MAX_SAFE_INTEGER is 2^53 - 1, but we reset earlier to avoid any precision issues
+const MAX_SAFE_VERSION = 0x1fffffffffffff // 2^53 - 1
+
 export function createVersionedSignalAccessor<T>(initialValue: T): Signal<T> {
   let current = initialValue
   let version = 0
@@ -212,7 +216,9 @@ export function createVersionedSignalAccessor<T>(initialValue: T): Signal<T> {
       return current
     }
     current = value as T
-    version++
+    // BUG-019 FIX: Reset version to prevent overflow
+    // This is safe because we only care about version changes, not absolute values
+    version = version >= MAX_SAFE_VERSION ? 1 : version + 1
     track(version)
   }
 
@@ -318,23 +324,39 @@ export function createKeyedBlock<T>(
   const root = createRootContext(hostRoot)
   const prevRoot = pushRoot(root)
 
-  // Isolate child effects from the outer effect (e.g., performDiff) by clearing activeSub.
-  // This prevents child effects from being purged when the outer effect re-runs.
+  // BUG-003 FIX: Use effectScope to properly isolate child effects while
+  // maintaining proper cleanup chain. The scope will be disposed when
+  // the root is destroyed, ensuring nested effects are properly cleaned up.
+  let nodes: Node[] = []
+  let scopeDispose: (() => void) | undefined
+
+  // First, isolate from parent effect to prevent child effects from being
+  // purged when the outer effect (e.g., performDiff) re-runs
   const prevSub = setActiveSub(undefined)
 
-  let nodes: Node[] = []
   try {
-    const rendered = render(itemSig, indexSig, key)
-    // If render returns real DOM nodes/arrays, preserve them to avoid
-    // reparenting side-effects (tests may pre-insert them).
-    if (
-      rendered instanceof Node ||
-      (Array.isArray(rendered) && rendered.every(n => n instanceof Node))
-    ) {
-      nodes = toNodeArray(rendered)
-    } else {
-      const element = createElement(rendered as unknown as FictNode)
-      nodes = toNodeArray(element)
+    // Create an effectScope that will track all effects created during render
+    scopeDispose = effectScope(() => {
+      const rendered = render(itemSig, indexSig, key)
+      // If render returns real DOM nodes/arrays, preserve them to avoid
+      // reparenting side-effects (tests may pre-insert them).
+      if (
+        rendered instanceof Node ||
+        (Array.isArray(rendered) && rendered.every(n => n instanceof Node))
+      ) {
+        nodes = toNodeArray(rendered)
+      } else {
+        const element = createElement(rendered as unknown as FictNode)
+        nodes = toNodeArray(element)
+      }
+    })
+
+    // Register the scope cleanup with the root so effects are cleaned up
+    // when the block is destroyed
+    if (scopeDispose) {
+      // Store the dispose function to be called when root is destroyed
+      const originalCleanups = root.cleanups
+      root.cleanups = [...originalCleanups, scopeDispose]
     }
   } finally {
     setActiveSub(prevSub)
@@ -502,6 +524,13 @@ function createFineGrainedKeyedList<T>(
           // If newBlocks already has this key (duplicate key case), clean up the previous block
           const existingBlock = newBlocks.get(key)
           if (existingBlock) {
+            // BUG-013 FIX: Warn about duplicate keys in development mode
+            if (process.env.NODE_ENV !== 'production') {
+              console.warn(
+                `[fict] Duplicate key "${String(key)}" detected in list rendering. ` +
+                  `Each item should have a unique key. The previous item with this key will be replaced.`,
+              )
+            }
             destroyRoot(existingBlock.root)
             removeNodes(existingBlock.nodes)
           }

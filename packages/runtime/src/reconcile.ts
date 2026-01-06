@@ -21,6 +21,10 @@
  * @param a - The old array of nodes (currently in DOM)
  * @param b - The new array of nodes (target state)
  *
+ * **Note:** This function may mutate the input array `a` during the swap
+ * optimization (step 5a). If you need to preserve the original array,
+ * pass a shallow copy: `reconcileArrays(parent, [...oldNodes], newNodes)`.
+ *
  * @example
  * ```ts
  * const oldNodes = [node1, node2, node3]

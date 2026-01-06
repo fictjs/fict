@@ -208,6 +208,13 @@ const enqueueMicrotask =
       }
 // Flag to indicate cleanup is running - signal reads should return currentValue without updating
 let inCleanup = false
+
+// BUG-014 FIX: Use Symbol markers for type detection instead of function.name
+// This ensures type detection works correctly even after minification
+const SIGNAL_MARKER = Symbol.for('fict:signal')
+const COMPUTED_MARKER = Symbol.for('fict:computed')
+const EFFECT_MARKER = Symbol.for('fict:effect')
+const EFFECT_SCOPE_MARKER = Symbol.for('fict:effectScope')
 export const ReactiveFlags = {
   None: 0,
   Mutable,
@@ -572,13 +579,23 @@ function checkDirty(firstLink: Link, sub: ReactiveNode): boolean {
         dirty = true
       }
     } else if ((depFlags & MutablePending) === MutablePending) {
-      if (link.nextSub !== undefined || link.prevSub !== undefined) {
-        stack = { value: link, prev: stack }
+      // BUG-002 FIX: Check if dep.deps exists before traversing
+      if (!dep.deps) {
+        // No dependencies to check, skip this node
+        const nextDep = link.nextDep
+        if (nextDep !== undefined) {
+          link = nextDep
+          continue
+        }
+      } else {
+        if (link.nextSub !== undefined || link.prevSub !== undefined) {
+          stack = { value: link, prev: stack }
+        }
+        link = dep.deps
+        sub = dep
+        ++checkDepth
+        continue
       }
-      link = dep.deps!
-      sub = dep
-      ++checkDepth
-      continue
     }
 
     if (!dirty) {
@@ -688,8 +705,13 @@ function disposeNode(node: ReactiveNode): void {
   node.depsTail = undefined
   node.flags = 0
   purgeDeps(node)
-  const sub = node.subs
-  if (sub !== undefined) unlink(sub, node)
+  // BUG-001 FIX: Unlink ALL subscribers, not just the first one
+  let sub = node.subs
+  while (sub !== undefined) {
+    const next = sub.nextSub
+    unlink(sub, node)
+    sub = next
+  }
 }
 /**
  * Update a signal node
@@ -897,7 +919,10 @@ export function signal<T>(initialValue: T): SignalAccessor<T> {
     __id: undefined as number | undefined,
   }
   registerSignalDevtools(initialValue, s)
-  return signalOper.bind(s) as SignalAccessor<T>
+  const accessor = signalOper.bind(s) as SignalAccessor<T> & Record<symbol, boolean>
+  // BUG-014 FIX: Add Symbol marker for type detection
+  accessor[SIGNAL_MARKER] = true
+  return accessor as SignalAccessor<T>
 }
 function signalOper<T>(this: SignalNode<T>, value?: T): T | void {
   if (arguments.length > 0) {
@@ -953,7 +978,10 @@ export function computed<T>(getter: (oldValue?: T) => T): ComputedAccessor<T> {
     flags: 0,
     getter,
   }
-  const bound = (computedOper as (this: ComputedNode<T>) => T).bind(c)
+  const bound = (computedOper as (this: ComputedNode<T>) => T).bind(c) as ComputedAccessor<T> &
+    Record<symbol, boolean>
+  // BUG-014 FIX: Add Symbol marker for type detection
+  bound[COMPUTED_MARKER] = true
   return bound as ComputedAccessor<T>
 }
 function computedOper<T>(this: ComputedNode<T>): T {
@@ -1020,7 +1048,10 @@ export function effect(fn: () => void): EffectDisposer {
     e.flags &= ~Running
   }
 
-  return effectOper.bind(e) as EffectDisposer
+  const disposer = effectOper.bind(e) as EffectDisposer & Record<symbol, boolean>
+  // BUG-014 FIX: Add Symbol marker for type detection
+  disposer[EFFECT_MARKER] = true
+  return disposer as EffectDisposer
 }
 
 /**
@@ -1057,7 +1088,10 @@ export function effectWithCleanup(fn: () => void, cleanupRunner: () => void): Ef
     e.flags &= ~Running
   }
 
-  return effectOper.bind(e) as EffectDisposer
+  const disposer = effectOper.bind(e) as EffectDisposer & Record<symbol, boolean>
+  // BUG-014 FIX: Add Symbol marker for type detection
+  disposer[EFFECT_MARKER] = true
+  return disposer as EffectDisposer
 }
 
 function effectOper(this: EffectNode): void {
@@ -1084,7 +1118,10 @@ export function effectScope(fn: () => void): EffectScopeDisposer {
     activeSub = prevSub
   }
 
-  return effectScopeOper.bind(e) as EffectScopeDisposer
+  const disposer = effectScopeOper.bind(e) as EffectScopeDisposer & Record<symbol, boolean>
+  // BUG-014 FIX: Add Symbol marker for type detection
+  disposer[EFFECT_SCOPE_MARKER] = true
+  return disposer as EffectScopeDisposer
 }
 function effectScopeOper(this: EffectScopeNode): void {
   disposeNode(this)
@@ -1203,14 +1240,17 @@ export function untrack<T>(fn: () => T): T {
 export function peek<T>(accessor: () => T): T {
   return untrack(accessor)
 }
-// Type detection - Fixed: using Function.name
+// BUG-014 FIX: Type detection using Symbol markers instead of function.name
+// This ensures correct detection even after minification
 /**
  * Check if a function is a signal accessor
  * @param fn - The function to check
  * @returns True if the function is a signal accessor
  */
 export function isSignal(fn: unknown): fn is SignalAccessor<unknown> {
-  return typeof fn === 'function' && fn.name === 'bound signalOper'
+  return (
+    typeof fn === 'function' && (fn as unknown as Record<symbol, boolean>)[SIGNAL_MARKER] === true
+  )
 }
 /**
  * Check if a function is a computed accessor
@@ -1218,7 +1258,9 @@ export function isSignal(fn: unknown): fn is SignalAccessor<unknown> {
  * @returns True if the function is a computed accessor
  */
 export function isComputed(fn: unknown): fn is ComputedAccessor<unknown> {
-  return typeof fn === 'function' && fn.name === 'bound computedOper'
+  return (
+    typeof fn === 'function' && (fn as unknown as Record<symbol, boolean>)[COMPUTED_MARKER] === true
+  )
 }
 /**
  * Check if a function is an effect disposer
@@ -1226,7 +1268,9 @@ export function isComputed(fn: unknown): fn is ComputedAccessor<unknown> {
  * @returns True if the function is an effect disposer
  */
 export function isEffect(fn: unknown): fn is EffectDisposer {
-  return typeof fn === 'function' && fn.name === 'bound effectOper'
+  return (
+    typeof fn === 'function' && (fn as unknown as Record<symbol, boolean>)[EFFECT_MARKER] === true
+  )
 }
 /**
  * Check if a function is an effect scope disposer
@@ -1234,7 +1278,10 @@ export function isEffect(fn: unknown): fn is EffectDisposer {
  * @returns True if the function is an effect scope disposer
  */
 export function isEffectScope(fn: unknown): fn is EffectScopeDisposer {
-  return typeof fn === 'function' && fn.name === 'bound effectScopeOper'
+  return (
+    typeof fn === 'function' &&
+    (fn as unknown as Record<symbol, boolean>)[EFFECT_SCOPE_MARKER] === true
+  )
 }
 // ============================================================================
 // Transition Context (for priority scheduling)

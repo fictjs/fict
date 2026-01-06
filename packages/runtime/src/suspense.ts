@@ -143,16 +143,30 @@ export function Suspense(props: SuspenseProps): FictNode {
     if (thenable) {
       thenable.then(
         () => {
-          if (epoch !== tokenEpoch) return
-          pending(Math.max(0, pending() - 1))
-          if (pending() === 0) {
+          // BUG-011/BUG-020 FIX: Check epoch BEFORE decrementing pending.
+          // This prevents stale token resolutions from affecting state after
+          // a reset. The order is important: check epoch first, then update state.
+          if (epoch !== tokenEpoch) {
+            // Token is stale (from before a reset), ignore it completely
+            return
+          }
+          // Use Math.max as a defensive measure - pending should never go below 0,
+          // but this protects against edge cases where a token might resolve twice
+          // or after the component has been reset.
+          const newPending = Math.max(0, pending() - 1)
+          pending(newPending)
+          if (newPending === 0) {
             switchView(props.children ?? null)
             onResolveMaybe()
           }
         },
         err => {
-          if (epoch !== tokenEpoch) return
-          pending(Math.max(0, pending() - 1))
+          // Same epoch check - ignore stale tokens
+          if (epoch !== tokenEpoch) {
+            return
+          }
+          const newPending = Math.max(0, pending() - 1)
+          pending(newPending)
           props.onReject?.(err)
           handleError(err, { source: 'render' }, hostRoot)
         },

@@ -124,10 +124,8 @@ export function mergeProps<T extends Record<string, unknown>>(
 
   return new Proxy({} as Record<string, unknown>, {
     get(_, prop) {
-      // Symbol properties (like Symbol.iterator) should return undefined
-      if (typeof prop === 'symbol') {
-        return undefined
-      }
+      // BUG-015 FIX: Support Symbol properties - search sources like string properties
+      // Only return undefined if no source has this Symbol property
       // Search sources in reverse order (last wins)
       for (let i = validSources.length - 1; i >= 0; i--) {
         const src = validSources[i]!
@@ -136,6 +134,7 @@ export function mergeProps<T extends Record<string, unknown>>(
 
         const value = (raw as Record<string | symbol, unknown>)[prop]
         // Preserve prop getters - let child component's createPropsProxy unwrap lazily
+        // Note: For Symbol properties, we still wrap in getter if source is dynamic
         if (typeof src === 'function' && !isPropGetter(value)) {
           return __fictProp(() => {
             const latest = resolveSource(src)
