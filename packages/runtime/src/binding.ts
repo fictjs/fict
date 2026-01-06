@@ -1124,7 +1124,9 @@ export function bindEvent(
         const fn = resolveHandler()
         callEventHandler(fn as EventListenerOrEventListenerObject, args[0] as Event, el)
       } catch (err) {
-        handleError(err, { source: 'event', eventName }, rootRef)
+        if (!handleError(err, { source: 'event', eventName }, rootRef)) {
+          throw err
+        }
       }
     }
 

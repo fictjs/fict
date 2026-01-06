@@ -54,6 +54,7 @@ type NamespaceContext = 'svg' | 'mathml' | null
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const MATHML_NS = 'http://www.w3.org/1998/Math/MathML'
+const isDev = typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
 
 // ============================================================================
 // Main Render Function
@@ -436,7 +437,7 @@ function applyRef(el: Element, value: unknown): void {
       registerRootCleanup(() => {
         refFn(null)
       })
-    } else if (process.env.NODE_ENV !== 'production') {
+    } else if (isDev) {
       // BUG-017 FIX: Warn when ref is used outside a root context
       console.warn(
         '[fict] Ref applied outside of a root context. ' +
@@ -455,7 +456,7 @@ function applyRef(el: Element, value: unknown): void {
       registerRootCleanup(() => {
         refObj.current = null
       })
-    } else if (process.env.NODE_ENV !== 'production') {
+    } else if (isDev) {
       // BUG-017 FIX: Warn when ref is used outside a root context
       console.warn(
         '[fict] Ref applied outside of a root context. ' +

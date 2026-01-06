@@ -25,6 +25,8 @@ import type { FictNode } from './types'
 // Re-export shared DOM helpers for compiler-generated code
 export { insertNodesBefore, removeNodes, toNodeArray }
 
+const isDev = typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -525,7 +527,7 @@ function createFineGrainedKeyedList<T>(
           const existingBlock = newBlocks.get(key)
           if (existingBlock) {
             // BUG-013 FIX: Warn about duplicate keys in development mode
-            if (process.env.NODE_ENV !== 'production') {
+            if (isDev) {
               console.warn(
                 `[fict] Duplicate key "${String(key)}" detected in list rendering. ` +
                   `Each item should have a unique key. The previous item with this key will be replaced.`,

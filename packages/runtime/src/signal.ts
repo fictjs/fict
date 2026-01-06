@@ -709,7 +709,7 @@ function disposeNode(node: ReactiveNode): void {
   let sub = node.subs
   while (sub !== undefined) {
     const next = sub.nextSub
-    unlink(sub, node)
+    unlink(sub)
     sub = next
   }
 }

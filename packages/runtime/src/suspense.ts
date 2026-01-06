@@ -103,7 +103,9 @@ export function Suspense(props: SuspenseProps): FictNode {
       popRoot(prev)
       flushOnMount(root)
       destroyRoot(root)
-      handleError(err, { source: 'render' })
+      if (!handleError(err, { source: 'render' }, hostRoot)) {
+        throw err
+      }
       return
     }
     popRoot(prev)
@@ -168,7 +170,9 @@ export function Suspense(props: SuspenseProps): FictNode {
           const newPending = Math.max(0, pending() - 1)
           pending(newPending)
           props.onReject?.(err)
-          handleError(err, { source: 'render' }, hostRoot)
+          if (!handleError(err, { source: 'render' }, hostRoot)) {
+            throw err
+          }
         },
       )
       return true
