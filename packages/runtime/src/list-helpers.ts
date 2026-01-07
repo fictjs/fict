@@ -25,7 +25,10 @@ import type { FictNode } from './types'
 // Re-export shared DOM helpers for compiler-generated code
 export { insertNodesBefore, removeNodes, toNodeArray }
 
-const isDev = typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
+const isDev =
+  typeof __DEV__ !== 'undefined'
+    ? __DEV__
+    : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
 
 // ============================================================================
 // Types
@@ -356,9 +359,7 @@ export function createKeyedBlock<T>(
     // Register the scope cleanup with the root so effects are cleaned up
     // when the block is destroyed
     if (scopeDispose) {
-      // Store the dispose function to be called when root is destroyed
-      const originalCleanups = root.cleanups
-      root.cleanups = [...originalCleanups, scopeDispose]
+      root.cleanups.push(scopeDispose)
     }
   } finally {
     setActiveSub(prevSub)
@@ -401,6 +402,107 @@ export function isNodeBetweenMarkers(
     current = current.nextSibling
   }
   return false
+}
+
+function reorderBySwap<T>(
+  parent: ParentNode & Node,
+  first: KeyedBlock<T>,
+  second: KeyedBlock<T>,
+): boolean {
+  if (first === second) return false
+  const firstNodes = first.nodes
+  const secondNodes = second.nodes
+  if (firstNodes.length === 0 || secondNodes.length === 0) return false
+  const lastFirst = firstNodes[firstNodes.length - 1]!
+  const lastSecond = secondNodes[secondNodes.length - 1]!
+  const afterFirst = lastFirst.nextSibling
+  const afterSecond = lastSecond.nextSibling
+  moveNodesBefore(parent, firstNodes, afterSecond)
+  moveNodesBefore(parent, secondNodes, afterFirst)
+  return true
+}
+
+function getLISIndices(sequence: number[]): number[] {
+  const predecessors = new Array<number>(sequence.length)
+  const result: number[] = []
+
+  for (let i = 0; i < sequence.length; i++) {
+    const value = sequence[i]!
+    if (value < 0) {
+      predecessors[i] = -1
+      continue
+    }
+
+    let low = 0
+    let high = result.length
+    while (low < high) {
+      const mid = (low + high) >> 1
+      if (sequence[result[mid]!]! < value) {
+        low = mid + 1
+      } else {
+        high = mid
+      }
+    }
+
+    predecessors[i] = low > 0 ? result[low - 1]! : -1
+    if (low === result.length) {
+      result.push(i)
+    } else {
+      result[low] = i
+    }
+  }
+
+  const lis: number[] = new Array(result.length)
+  let k = result.length > 0 ? result[result.length - 1]! : -1
+  for (let i = result.length - 1; i >= 0; i--) {
+    lis[i] = k
+    k = predecessors[k]!
+  }
+  return lis
+}
+
+function reorderByLIS<T>(
+  parent: ParentNode & Node,
+  endMarker: Comment,
+  prev: KeyedBlock<T>[],
+  next: KeyedBlock<T>[],
+): boolean {
+  const positions = new Map<KeyedBlock<T>, number>()
+  for (let i = 0; i < prev.length; i++) {
+    positions.set(prev[i]!, i)
+  }
+
+  const sequence = new Array<number>(next.length)
+  for (let i = 0; i < next.length; i++) {
+    const position = positions.get(next[i]!)
+    if (position === undefined) return false
+    sequence[i] = position
+  }
+
+  const lisIndices = getLISIndices(sequence)
+  if (lisIndices.length === sequence.length) return true
+
+  const inLIS = new Array<boolean>(sequence.length).fill(false)
+  for (let i = 0; i < lisIndices.length; i++) {
+    inLIS[lisIndices[i]!] = true
+  }
+
+  let anchor: Node | null = endMarker
+  let moved = false
+  for (let i = next.length - 1; i >= 0; i--) {
+    const block = next[i]!
+    const nodes = block.nodes
+    if (nodes.length === 0) continue
+    if (inLIS[i]) {
+      anchor = nodes[0]!
+      continue
+    }
+    moveNodesBefore(parent, nodes, anchor)
+    anchor = nodes[0]!
+    moved = true
+  }
+
+  return moved
 }
 
 // ============================================================================
@@ -467,10 +569,6 @@ function createFineGrainedKeyedList<T>(
       const prevOrderedBlocks = container.orderedBlocks
       const nextOrderedBlocks = container.nextOrderedBlocks
       const orderedIndexByKey = container.orderedIndexByKey
-      newBlocks.clear()
-      nextOrderedBlocks.length = 0
-      orderedIndexByKey.clear()
-      const createdBlocks: KeyedBlock<T>[] = []
       const newItems = getItems()
 
       if (newItems.length === 0) {
@@ -497,8 +595,45 @@ function createFineGrainedKeyedList<T>(
       }
 
       const prevCount = prevOrderedBlocks.length
+      if (prevCount > 0 && newItems.length === prevCount && orderedIndexByKey.size === prevCount) {
+        let stableOrder = true
+        const seen = new Set<string | number>()
+        for (let i = 0; i < prevCount; i++) {
+          const item = newItems[i]!
+          const key = keyFn(item, i)
+          if (seen.has(key) || prevOrderedBlocks[i]!.key !== key) {
+            stableOrder = false
+            break
+          }
+          seen.add(key)
+        }
+        if (stableOrder) {
+          for (let i = 0; i < prevCount; i++) {
+            const item = newItems[i]!
+            const block = prevOrderedBlocks[i]!
+            if (block.rawItem !== item) {
+              block.rawItem = item
+              block.item(item)
+            }
+            if (needsIndex && block.rawIndex !== i) {
+              block.rawIndex = i
+              block.index(i)
+            }
+          }
+          return
+        }
+      }
+
+      newBlocks.clear()
+      nextOrderedBlocks.length = 0
+      orderedIndexByKey.clear()
+      const createdBlocks: KeyedBlock<T>[] = []
       let appendCandidate = prevCount > 0 && newItems.length >= prevCount
       const appendedBlocks: KeyedBlock<T>[] = []
+      let mismatchCount = 0
+      let mismatchFirst = -1
+      let mismatchSecond = -1
+      let hasDuplicateKey = false
 
       // Phase 1: Build new blocks map (reuse or create)
       newItems.forEach((item, index) => {
@@ -549,6 +684,7 @@ function createFineGrainedKeyedList<T>(
         const position = orderedIndexByKey.get(key)
         if (position !== undefined) {
           appendCandidate = false
+          hasDuplicateKey = true
           const prior = nextOrderedBlocks[position]
           if (prior && prior !== resolvedBlock) {
             destroyRoot(prior.root)
@@ -565,8 +701,20 @@ function createFineGrainedKeyedList<T>(
               appendCandidate = false
             }
           }
-          orderedIndexByKey.set(key, nextOrderedBlocks.length)
+          const nextIndex = nextOrderedBlocks.length
+          orderedIndexByKey.set(key, nextIndex)
           nextOrderedBlocks.push(resolvedBlock)
+          if (
+            mismatchCount < 3 &&
+            (nextIndex >= prevCount || prevOrderedBlocks[nextIndex] !== resolvedBlock)
+          ) {
+            if (mismatchCount === 0) {
+              mismatchFirst = nextIndex
+            } else if (mismatchCount === 1) {
+              mismatchSecond = nextIndex
+            }
+            mismatchCount++
+          }
         }
 
         if (appendCandidate && index >= prevCount) {
@@ -618,8 +766,41 @@ function createFineGrainedKeyedList<T>(
         oldBlocks.clear()
       }
 
+      const canReorderInPlace =
+        createdBlocks.length === 0 &&
+        oldBlocks.size === 0 &&
+        nextOrderedBlocks.length === prevOrderedBlocks.length
+
+      let skipReconcile = false
+      let updateNodeBuffer = true
+
+      if (canReorderInPlace && nextOrderedBlocks.length > 0 && !hasDuplicateKey) {
+        if (mismatchCount === 0) {
+          skipReconcile = true
+          updateNodeBuffer = false
+        } else if (
+          mismatchCount === 2 &&
+          prevOrderedBlocks[mismatchFirst] === nextOrderedBlocks[mismatchSecond] &&
+          prevOrderedBlocks[mismatchSecond] === nextOrderedBlocks[mismatchFirst]
+        ) {
+          if (
+            reorderBySwap(
+              parent,
+              prevOrderedBlocks[mismatchFirst]!,
+              prevOrderedBlocks[mismatchSecond]!,
+            )
+          ) {
+            skipReconcile = true
+          }
+        } else if (
+          reorderByLIS(parent, container.endMarker, prevOrderedBlocks, nextOrderedBlocks)
+        ) {
+          skipReconcile = true
+        }
+      }
+
       // Phase 3: Reconcile DOM with buffered node arrays
-      if (newBlocks.size > 0 || container.currentNodes.length > 0) {
+      if (!skipReconcile && (newBlocks.size > 0 || container.currentNodes.length > 0)) {
         const prevNodes = container.currentNodes
         const nextNodes = container.nextNodes
         nextNodes.length = 0
@@ -637,6 +818,20 @@ function createFineGrainedKeyedList<T>(
         reconcileArrays(parent, prevNodes, nextNodes)
 
         // Swap buffers to reuse arrays on next diff
+        container.currentNodes = nextNodes
+        container.nextNodes = prevNodes
+      } else if (skipReconcile && updateNodeBuffer) {
+        const prevNodes = container.currentNodes
+        const nextNodes = container.nextNodes
+        nextNodes.length = 0
+        nextNodes.push(container.startMarker)
+        for (let i = 0; i < nextOrderedBlocks.length; i++) {
+          const nodes = nextOrderedBlocks[i]!.nodes
+          for (let j = 0; j < nodes.length; j++) {
+            nextNodes.push(nodes[j]!)
+          }
+        }
+        nextNodes.push(container.endMarker)
         container.currentNodes = nextNodes
         container.nextNodes = prevNodes
       }

@@ -54,7 +54,10 @@ type NamespaceContext = 'svg' | 'mathml' | null
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const MATHML_NS = 'http://www.w3.org/1998/Math/MathML'
-const isDev = typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
+const isDev =
+  typeof __DEV__ !== 'undefined'
+    ? __DEV__
+    : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
 
 // ============================================================================
 // Main Render Function

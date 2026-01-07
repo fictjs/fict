@@ -325,13 +325,21 @@ export function createReactiveSystem({
           dirty = true
         }
       } else if ((depFlags & MutablePending) === MutablePending) {
-        if (link.nextSub !== undefined || link.prevSub !== undefined) {
-          stack = { value: link, prev: stack }
+        if (!dep.deps) {
+          const nextDep = link.nextDep
+          if (nextDep !== undefined) {
+            link = nextDep
+            continue
+          }
+        } else {
+          if (link.nextSub !== undefined || link.prevSub !== undefined) {
+            stack = { value: link, prev: stack }
+          }
+          link = dep.deps
+          sub = dep
+          ++checkDepth
+          continue
         }
-        link = dep.deps!
-        sub = dep
-        ++checkDepth
-        continue
       }
 
       if (!dirty) {
