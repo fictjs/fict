@@ -31,12 +31,12 @@ function Counter() {
 - Not pitching “better React/Vue/Svelte”; Fict is a different mental model (compile-time reactivity on plain JS).
 - The gain: less code, lower cognitive overhead. Performance is surgical by design, but we’re not selling unproven speed charts.
 
-| Pain Point        | React                          | Solid                         | Svelte 5                  | Fict          |
-| ----------------- | ------------------------------ | ----------------------------- | ------------------------- | ------------- |
-| State syntax      | `useState()` + setter          | `createSignal()` + `()` calls | `$state()`                | `$state()`    |
-| Derived values    | `useMemo` + deps (or Compiler) | `createMemo()`                | `$derived()`              | **automatic** |
-| Props destructure | ✅                             | ❌ (props) breaks reactivity  | ✅ (`$props()` semantics) | ✅            |
-| Control flow      | native JS                      | typically `<Show>/<For>`      | `{#if}/{#each}`           | native JS     |
+| Pain Point        | React                          | Vue 3                                                                         | Solid                         | Svelte 5                  | Fict          |
+| ----------------- | ------------------------------ | ----------------------------------------------------------------------------- | ----------------------------- | ------------------------- | ------------- |
+| State syntax      | `useState()` + setter          | `ref()` + `.value` (JS) / template auto-unwrap / or `reactive()`              | `createSignal()` + `()` calls | `$state()`                | `$state()`    |
+| Derived values    | `useMemo` + deps (or Compiler) | `computed()`                                                                  | `createMemo()`                | `$derived()`              | **automatic** |
+| Props destructure | ✅                             | ⚠️ (usually breaks; `<script setup>` / Vue 3.5+ `defineProps` destructure OK) | ❌ (breaks reactivity)        | ✅ (`$props()` semantics) | ✅            |
+| Control flow      | native JS                      | template: `v-if`/`v-for`; render/JSX: native JS                               | typically `<Show>/<For>`      | `{#if}/{#each}`           | native JS     |
 
 Fict gives you:
 
