@@ -1,5 +1,11 @@
 # @fictjs/testing-library
 
+## 0.0.12
+
+### Patch Changes
+
+- fix perf
+
 ## 0.0.11
 
 ### Patch Changes
