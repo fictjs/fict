@@ -38,5 +38,6 @@
       "@fictjs/testing-library": ["packages/testing-library/src"]
     }
   },
+  "include": ["packages/runtime/src/dev.d.ts"],
   "exclude": ["node_modules", "dist", "coverage"]
 }
