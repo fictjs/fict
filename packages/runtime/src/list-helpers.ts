@@ -206,7 +206,6 @@ function removeBlockRange(block: MarkerBlock): void {
   }
 }
 
-// BUG-019 FIX: Use a safe maximum version to prevent overflow
 // Number.MAX_SAFE_INTEGER is 2^53 - 1, but we reset earlier to avoid any precision issues
 const MAX_SAFE_VERSION = 0x1fffffffffffff // 2^53 - 1
 
@@ -221,7 +220,6 @@ export function createVersionedSignalAccessor<T>(initialValue: T): Signal<T> {
       return current
     }
     current = value as T
-    // BUG-019 FIX: Reset version to prevent overflow
     // This is safe because we only care about version changes, not absolute values
     version = version >= MAX_SAFE_VERSION ? 1 : version + 1
     track(version)
@@ -328,8 +326,6 @@ export function createKeyedBlock<T>(
       }) as Signal<number>)
   const root = createRootContext(hostRoot)
   const prevRoot = pushRoot(root)
-
-  // BUG-003 FIX: Use effectScope to properly isolate child effects while
   // maintaining proper cleanup chain. The scope will be disposed when
   // the root is destroyed, ensuring nested effects are properly cleaned up.
   let nodes: Node[] = []
@@ -661,7 +657,6 @@ function createFineGrainedKeyedList<T>(
           // If newBlocks already has this key (duplicate key case), clean up the previous block
           const existingBlock = newBlocks.get(key)
           if (existingBlock) {
-            // BUG-013 FIX: Warn about duplicate keys in development mode
             if (isDev) {
               console.warn(
                 `[fict] Duplicate key "${String(key)}" detected in list rendering. ` +

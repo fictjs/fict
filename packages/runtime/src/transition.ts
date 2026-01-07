@@ -71,7 +71,6 @@ export function useTransition(): [() => boolean, (fn: () => void) => void] {
   const pending = signal(false)
 
   const start = (fn: () => void) => {
-    // BUG-016 FIX: Set pending inside the transition to ensure consistent state.
     // Both pending(true) and pending(false) are now low-priority updates,
     // preventing the race condition where isPending() could be inconsistent
     // with the actual transition execution state.

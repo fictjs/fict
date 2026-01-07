@@ -124,7 +124,6 @@ export function mergeProps<T extends Record<string, unknown>>(
 
   return new Proxy({} as Record<string, unknown>, {
     get(_, prop) {
-      // BUG-015 FIX: Support Symbol properties - search sources like string properties
       // Only return undefined if no source has this Symbol property
       // Search sources in reverse order (last wins)
       for (let i = validSources.length - 1; i >= 0; i--) {

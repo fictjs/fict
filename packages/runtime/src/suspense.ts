@@ -145,7 +145,6 @@ export function Suspense(props: SuspenseProps): FictNode {
     if (thenable) {
       thenable.then(
         () => {
-          // BUG-011/BUG-020 FIX: Check epoch BEFORE decrementing pending.
           // This prevents stale token resolutions from affecting state after
           // a reset. The order is important: check epoch first, then update state.
           if (epoch !== tokenEpoch) {

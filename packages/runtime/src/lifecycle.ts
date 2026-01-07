@@ -237,7 +237,6 @@ export function handleError(err: unknown, info?: ErrorInfo, startRoot?: RootCont
       }
     }
   }
-  // BUG-006 FIX: Return false instead of throwing to match function signature.
   // The caller (e.g., runCleanupList) can decide whether to rethrow.
   // This makes the API consistent: handleError always returns a boolean
   // indicating whether the error was handled.

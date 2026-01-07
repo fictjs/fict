@@ -47,7 +47,7 @@ const tick = () =>
       : Promise.resolve().then(resolve),
   )
 
-describe('BUG-001: disposeNode should unlink ALL subscribers', () => {
+describe('disposeNode should unlink ALL subscribers', () => {
   it('disposes computed with multiple effect subscribers correctly', async () => {
     const source = signal(1)
     const derived = computed(() => source() * 2)
@@ -124,7 +124,7 @@ describe('BUG-001: disposeNode should unlink ALL subscribers', () => {
   })
 })
 
-describe('BUG-002: checkDirty should handle missing dep.deps', () => {
+describe('checkDirty should handle missing dep.deps', () => {
   it('handles computed without dependencies', async () => {
     // A computed that doesn't track any reactive dependencies
     const constantComputed = computed(() => 42)
@@ -163,7 +163,7 @@ describe('BUG-002: checkDirty should handle missing dep.deps', () => {
   })
 })
 
-describe('BUG-003: effectScope isolation in keyed list', () => {
+describe('effectScope isolation in keyed list', () => {
   let container: HTMLElement
 
   beforeEach(() => {
@@ -257,7 +257,7 @@ describe('BUG-003: effectScope isolation in keyed list', () => {
   })
 })
 
-describe('BUG-005: ErrorBoundary recursion guard', () => {
+describe('ErrorBoundary recursion guard', () => {
   let container: HTMLElement
 
   beforeEach(() => {
@@ -362,7 +362,7 @@ describe('BUG-005: ErrorBoundary recursion guard', () => {
   })
 })
 
-describe('BUG-006: handleError return value', () => {
+describe('handleError return value', () => {
   it('returns false when no error handler handles the error', () => {
     const root = createRootContext()
     const prev = pushRoot(root)
@@ -390,7 +390,7 @@ describe('BUG-006: handleError return value', () => {
   })
 })
 
-describe('BUG-011/020: Suspense epoch check order', () => {
+describe('Suspense epoch check order', () => {
   let container: HTMLElement
 
   beforeEach(() => {
@@ -491,7 +491,7 @@ describe('BUG-011/020: Suspense epoch check order', () => {
   })
 })
 
-describe('BUG-014: Symbol marker type detection', () => {
+describe('Symbol marker type detection', () => {
   it('isSignal detects signal after minification simulation', () => {
     const s = signal(1)
 
@@ -549,7 +549,7 @@ describe('BUG-014: Symbol marker type detection', () => {
   })
 })
 
-describe('BUG-015: mergeProps Symbol support', () => {
+describe('mergeProps Symbol support', () => {
   it('supports Symbol properties in merged props', () => {
     const sym = Symbol('test')
     const merged = mergeProps({ [sym]: 'value1' }, { other: 'value2' })
@@ -593,7 +593,7 @@ describe('BUG-015: mergeProps Symbol support', () => {
   })
 })
 
-describe('BUG-016: useTransition pending consistency', () => {
+describe('useTransition pending consistency', () => {
   it('isPending reflects correct state during transition', async () => {
     const states: boolean[] = []
     const value = createSignal(0)
@@ -645,7 +645,7 @@ describe('BUG-016: useTransition pending consistency', () => {
   })
 })
 
-describe('BUG-019: version overflow protection', () => {
+describe('version overflow protection', () => {
   it('versioned signal handles version near max safe integer', async () => {
     const accessor = createVersionedSignalAccessor('initial')
 

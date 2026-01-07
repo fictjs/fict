@@ -72,7 +72,6 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       if (renderingFallback) {
         throw err
       }
-      // BUG-005 FIX: Use try-catch instead of try-finally to properly handle
       // nested errors. If fallback rendering also throws, we should NOT reset
       // the flag until we're sure no more recursion is happening.
       renderingFallback = true

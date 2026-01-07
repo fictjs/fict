@@ -208,8 +208,6 @@ const enqueueMicrotask =
       }
 // Flag to indicate cleanup is running - signal reads should return currentValue without updating
 let inCleanup = false
-
-// BUG-014 FIX: Use Symbol markers for type detection instead of function.name
 // This ensures type detection works correctly even after minification
 const SIGNAL_MARKER = Symbol.for('fict:signal')
 const COMPUTED_MARKER = Symbol.for('fict:computed')
@@ -587,7 +585,6 @@ function checkDirty(firstLink: Link, sub: ReactiveNode): boolean {
         dirty = true
       }
     } else if ((depFlags & MutablePending) === MutablePending) {
-      // BUG-002 FIX: Check if dep.deps exists before traversing
       if (!dep.deps) {
         // No dependencies to check, skip this node
         const nextDep = link.nextDep
@@ -713,7 +710,6 @@ function disposeNode(node: ReactiveNode): void {
   node.depsTail = undefined
   node.flags = 0
   purgeDeps(node)
-  // BUG-001 FIX: Unlink ALL subscribers, not just the first one
   let sub = node.subs
   while (sub !== undefined) {
     const next = sub.nextSub
@@ -928,7 +924,6 @@ export function signal<T>(initialValue: T): SignalAccessor<T> {
   }
   registerSignalDevtools(initialValue, s)
   const accessor = signalOper.bind(s) as SignalAccessor<T> & Record<symbol, boolean>
-  // BUG-014 FIX: Add Symbol marker for type detection
   accessor[SIGNAL_MARKER] = true
   return accessor as SignalAccessor<T>
 }
@@ -988,7 +983,6 @@ export function computed<T>(getter: (oldValue?: T) => T): ComputedAccessor<T> {
   }
   const bound = (computedOper as (this: ComputedNode<T>) => T).bind(c) as ComputedAccessor<T> &
     Record<symbol, boolean>
-  // BUG-014 FIX: Add Symbol marker for type detection
   bound[COMPUTED_MARKER] = true
   return bound as ComputedAccessor<T>
 }
@@ -1057,7 +1051,6 @@ export function effect(fn: () => void): EffectDisposer {
   }
 
   const disposer = effectOper.bind(e) as EffectDisposer & Record<symbol, boolean>
-  // BUG-014 FIX: Add Symbol marker for type detection
   disposer[EFFECT_MARKER] = true
   return disposer as EffectDisposer
 }
@@ -1097,7 +1090,6 @@ export function effectWithCleanup(fn: () => void, cleanupRunner: () => void): Ef
   }
 
   const disposer = effectOper.bind(e) as EffectDisposer & Record<symbol, boolean>
-  // BUG-014 FIX: Add Symbol marker for type detection
   disposer[EFFECT_MARKER] = true
   return disposer as EffectDisposer
 }
@@ -1127,7 +1119,6 @@ export function effectScope(fn: () => void): EffectScopeDisposer {
   }
 
   const disposer = effectScopeOper.bind(e) as EffectScopeDisposer & Record<symbol, boolean>
-  // BUG-014 FIX: Add Symbol marker for type detection
   disposer[EFFECT_SCOPE_MARKER] = true
   return disposer as EffectScopeDisposer
 }
@@ -1248,7 +1239,6 @@ export function untrack<T>(fn: () => T): T {
 export function peek<T>(accessor: () => T): T {
   return untrack(accessor)
 }
-// BUG-014 FIX: Type detection using Symbol markers instead of function.name
 // This ensures correct detection even after minification
 /**
  * Check if a function is a signal accessor

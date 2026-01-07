@@ -441,7 +441,6 @@ function applyRef(el: Element, value: unknown): void {
         refFn(null)
       })
     } else if (isDev) {
-      // BUG-017 FIX: Warn when ref is used outside a root context
       console.warn(
         '[fict] Ref applied outside of a root context. ' +
           'The ref cleanup (setting to null) will not run automatically. ' +
@@ -460,7 +459,6 @@ function applyRef(el: Element, value: unknown): void {
         refObj.current = null
       })
     } else if (isDev) {
-      // BUG-017 FIX: Warn when ref is used outside a root context
       console.warn(
         '[fict] Ref applied outside of a root context. ' +
           'The ref cleanup (setting to null) will not run automatically. ' +
