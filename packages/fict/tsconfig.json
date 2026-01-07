@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src"],
+  "include": ["src", "../runtime/src/dev.d.ts"],
   "exclude": ["node_modules", "dist", "coverage", "e2e"]
 }

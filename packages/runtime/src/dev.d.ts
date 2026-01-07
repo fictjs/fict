@@ -1,1 +1,5 @@
-declare const __DEV__: boolean
+export {}
+
+declare global {
+  const __DEV__: boolean | undefined
+}
