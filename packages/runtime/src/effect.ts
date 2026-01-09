@@ -8,6 +8,10 @@ import {
 import { effectWithCleanup } from './signal'
 import type { Cleanup } from './types'
 
+/**
+ * Effect callback run synchronously; async callbacks are not tracked after the first await.
+ * TypeScript will reject `async () => {}` here—split async work or read signals before awaiting.
+ */
 export type Effect = () => void | Cleanup
 
 export function createEffect(fn: Effect): () => void {

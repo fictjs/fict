@@ -47,6 +47,21 @@ describe('enterSSA', () => {
     expect(printed).toMatch(/x\$\$ssa1/)
     expect(printed).toMatch(/x\$\$ssa2/)
   })
+
+  it('does not strip user-supplied $$ssa-like suffixes', () => {
+    const ast = parseFile(`
+      function Foo() {
+        let value$$ssa1 = 1
+        value$$ssa1 = value$$ssa1 + 1
+        return value$$ssa1
+      }
+    `)
+    const hir = buildHIR(ast)
+    const ssa = enterSSA(hir)
+    const printed = printHIR(ssa)
+    expect(printed).toMatch(/value\$\$ssa1\$\$ssa1/)
+    expect(printed).toMatch(/value\$\$ssa1\$\$ssa2/)
+  })
 })
 
 // ============================================================================

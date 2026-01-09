@@ -4,6 +4,7 @@ import { DelegatedEvents, RUNTIME_ALIASES, RUNTIME_HELPERS, RUNTIME_MODULE } fro
 import { debugEnabled } from '../debug'
 import { applyRegionMetadata, shouldMemoizeRegion, type RegionMetadata } from '../fine-grained-dom'
 import type { FictCompilerOptions } from '../types'
+import { DiagnosticCode, reportDiagnostic } from '../validation'
 
 import { convertStatementsToHIRFunction } from './build-hir'
 import {
@@ -6328,6 +6329,7 @@ function lowerFunctionWithRegions(
       let supported = true
       let usesUseProp = false
       let usesPropsRest = false
+      let warnedNested = false
 
       for (const prop of pattern.properties) {
         if (t.isObjectProperty(prop) && !prop.computed) {
@@ -6338,8 +6340,18 @@ function lowerFunctionWithRegions(
               : t.isNumericLiteral(prop.key)
                 ? String(prop.key.value)
                 : null
-          if (!keyName || !t.isIdentifier(prop.value)) {
+          if (!keyName) {
+            reportDiagnostic(ctx, DiagnosticCode.FICT_P003, prop)
             supported = false
+            warnedNested = true
+            break
+          }
+          if (!t.isIdentifier(prop.value)) {
+            supported = false
+            if (!warnedNested) {
+              reportDiagnostic(ctx, DiagnosticCode.FICT_P004, prop)
+              warnedNested = true
+            }
             break
           }
           excludeKeys.push(t.stringLiteral(keyName))
@@ -6384,6 +6396,10 @@ function lowerFunctionWithRegions(
         }
 
         supported = false
+        if (!warnedNested) {
+          reportDiagnostic(ctx, DiagnosticCode.FICT_P004, prop)
+          warnedNested = true
+        }
         break
       }
 

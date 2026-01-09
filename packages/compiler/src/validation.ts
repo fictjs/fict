@@ -7,7 +7,7 @@
 
 import type * as BabelCore from '@babel/core'
 
-import type { TransformContext } from './types'
+import type { FictCompilerOptions, TransformContext } from './types'
 
 // ============================================================================
 // Diagnostic Codes
@@ -31,6 +31,7 @@ export enum DiagnosticCode {
   FICT_P001 = 'FICT-P001', // Props destructuring fallback
   FICT_P002 = 'FICT-P002', // Array rest in props destructuring
   FICT_P003 = 'FICT-P003', // Computed property in props pattern
+  FICT_P004 = 'FICT-P004', // Nested props destructuring fallback
 
   // State-related (FICT-S*)
   FICT_S001 = 'FICT-S001', // State variable mutation outside component
@@ -78,6 +79,8 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
   [DiagnosticCode.FICT_P002]:
     'Array rest in props destructuring falls back to non-reactive binding.',
   [DiagnosticCode.FICT_P003]: 'Computed property in props pattern cannot be made reactive.',
+  [DiagnosticCode.FICT_P004]:
+    'Nested props destructuring falls back to non-reactive binding; access props directly or use useProp.',
 
   [DiagnosticCode.FICT_S001]: 'State variable mutation detected outside component scope.',
   [DiagnosticCode.FICT_S002]: 'State variable escaped to external scope, may cause memory leaks.',
@@ -120,6 +123,7 @@ export const DiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = 
   [DiagnosticCode.FICT_P001]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_P002]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_P003]: DiagnosticSeverity.Warning,
+  [DiagnosticCode.FICT_P004]: DiagnosticSeverity.Warning,
 
   [DiagnosticCode.FICT_S001]: DiagnosticSeverity.Error,
   [DiagnosticCode.FICT_S002]: DiagnosticSeverity.Warning,
@@ -195,19 +199,26 @@ export function createDiagnostic(
   }
 }
 
+/** Context type for diagnostics - compatible with both TransformContext and CodegenContext */
+export interface DiagnosticContext {
+  file?: { opts?: { filename?: string | null } }
+  options?: Pick<FictCompilerOptions, 'onWarn'>
+}
+
 /**
  * Report a diagnostic through the context
  */
 export function reportDiagnostic(
-  ctx: TransformContext,
+  ctx: DiagnosticContext,
   code: DiagnosticCode,
   node: BabelCore.types.Node,
   context?: Record<string, unknown>,
 ): void {
-  const diagnostic = createDiagnostic(code, node, ctx.file.opts.filename || '<unknown>', context)
+  const fileName = ctx.file?.opts?.filename || '<unknown>'
+  const diagnostic = createDiagnostic(code, node, fileName, context)
 
   // Use existing warning mechanism
-  if (ctx.options.onWarn) {
+  if (ctx.options?.onWarn) {
     ctx.options.onWarn({
       code: diagnostic.code,
       message: diagnostic.message,

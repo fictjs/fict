@@ -73,6 +73,7 @@ export interface SourceInfo {
  */
 export const SSA_SEPARATOR = '$$ssa'
 export const SSA_PATTERN = /\$\$ssa\d+$/
+const GENERATED_SSA_NAMES = new Set<string>()
 
 /**
  * Create an SSA-versioned variable name.
@@ -80,7 +81,9 @@ export const SSA_PATTERN = /\$\$ssa\d+$/
  * @param version - The SSA version number
  */
 export function makeSSAName(baseName: string, version: number): string {
-  return `${baseName}${SSA_SEPARATOR}${version}`
+  const name = `${baseName}${SSA_SEPARATOR}${version}`
+  GENERATED_SSA_NAMES.add(name)
+  return name
 }
 
 /**
@@ -91,7 +94,12 @@ export function makeSSAName(baseName: string, version: number): string {
 export function getSSABaseName(name: string): string {
   // Skip internal names that start with __ (these are compiler-generated)
   if (name.startsWith('__')) return name
-  return name.replace(SSA_PATTERN, '')
+  if (GENERATED_SSA_NAMES.has(name)) {
+    return name.replace(SSA_PATTERN, '')
+  }
+  // If the name already contains the SSA pattern but wasn't generated here,
+  // treat it as a user-defined identifier to avoid collisions.
+  return SSA_PATTERN.test(name) ? name : name
 }
 
 /**
@@ -99,7 +107,7 @@ export function getSSABaseName(name: string): string {
  * @param name - The variable name to check
  */
 export function isSSAName(name: string): boolean {
-  return SSA_PATTERN.test(name)
+  return GENERATED_SSA_NAMES.has(name) || SSA_PATTERN.test(name)
 }
 
 /** Terminator of a basic block */

@@ -171,6 +171,25 @@ describe('signal runtime robustness', () => {
     expect(effectRuns).toBe(2)
   })
 
+  it('flushes pending updates even when batch throws', () => {
+    const count = createSignal(0)
+    const seen: number[] = []
+    createEffect(() => {
+      seen.push(count())
+    })
+
+    expect(seen).toEqual([0])
+
+    expect(() =>
+      batch(() => {
+        count(1)
+        throw new Error('boom')
+      }),
+    ).toThrow('boom')
+
+    expect(seen).toEqual([0, 1])
+  })
+
   it('cleans up selector effects with the owning root', async () => {
     const selected = createSignal(1)
     let select: ((key: number) => boolean) | undefined

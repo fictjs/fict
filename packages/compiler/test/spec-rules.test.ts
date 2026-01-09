@@ -99,6 +99,17 @@ describe('Spec rule coverage', () => {
     expect(output).toContain('bindText')
   })
 
+  it('emits warning for nested props destructuring fallback', () => {
+    const { output, warnings } = transformWithWarnings(`
+      import { $state } from 'fict'
+      function Child({ user: { name } }) {
+        return <div>{name}</div>
+      }
+    `)
+    expect(output).toContain('function Child(__props')
+    expect(warnings.some(w => w.code === 'FICT-P004')).toBe(true)
+  })
+
   it('emits warnings for deep mutations and dynamic property access', () => {
     const warnings: any[] = []
     const input = `

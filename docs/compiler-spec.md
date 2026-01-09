@@ -423,6 +423,7 @@ Rules:
 - Dependency collection only happens during the "initial synchronous execution phase", i.e., parts before `await`;
 - Reads after `await` will not append dependencies (consistent with most frameworks);
 - If precise control of async lifecycle is needed, rewrite to explicit cleanup pattern.
+- TypeScript signatures only accept synchronous callbacks for `$effect`; using `async` will surface a type error to nudge you toward splitting work or moving reads before the first `await`.
 
 ---
 

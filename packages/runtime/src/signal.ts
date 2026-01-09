@@ -1177,21 +1177,28 @@ export function endBatch(): void {
  */
 export function batch<T>(fn: () => T): T {
   ++batchDepth
-  let _error: unknown
-  let hasError = false
+  let result!: T
+  let error: unknown
   try {
-    return fn()
+    result = fn()
   } catch (e) {
-    _error = e
-    hasError = true
-    throw e
+    error = e
   } finally {
     --batchDepth
-    // Only flush if no error occurred to avoid interfering with error propagation
-    if (!hasError && batchDepth === 0) {
-      flush()
+    if (batchDepth === 0) {
+      try {
+        flush()
+      } catch (flushErr) {
+        if (error === undefined) {
+          error = flushErr
+        }
+      }
     }
   }
+  if (error !== undefined) {
+    throw error
+  }
+  return result
 }
 /**
  * Get the current active subscriber
