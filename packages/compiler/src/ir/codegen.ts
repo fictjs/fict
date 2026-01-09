@@ -6331,77 +6331,117 @@ function lowerFunctionWithRegions(
       let usesPropsRest = false
       let warnedNested = false
 
-      for (const prop of pattern.properties) {
-        if (t.isObjectProperty(prop) && !prop.computed) {
-          const keyName = t.isIdentifier(prop.key)
-            ? prop.key.name
-            : t.isStringLiteral(prop.key)
-              ? prop.key.value
-              : t.isNumericLiteral(prop.key)
-                ? String(prop.key.value)
-                : null
-          if (!keyName) {
-            reportDiagnostic(ctx, DiagnosticCode.FICT_P003, prop)
-            supported = false
-            warnedNested = true
-            break
-          }
-          if (!t.isIdentifier(prop.value)) {
+      const memberExprForKey = (
+        base: BabelCore.types.Expression,
+        key: string,
+      ): BabelCore.types.MemberExpression => t.memberExpression(base, t.identifier(key), false)
+
+      const buildDestructure = (
+        objectPattern: BabelCore.types.ObjectPattern,
+        baseExpr: BabelCore.types.Expression,
+        allowRest: boolean,
+      ): void => {
+        for (const prop of objectPattern.properties) {
+          if (t.isObjectProperty(prop) && !prop.computed) {
+            const keyName = t.isIdentifier(prop.key)
+              ? prop.key.name
+              : t.isStringLiteral(prop.key)
+                ? prop.key.value
+                : t.isNumericLiteral(prop.key)
+                  ? String(prop.key.value)
+                  : null
+            if (!keyName) {
+              reportDiagnostic(ctx, DiagnosticCode.FICT_P003, prop)
+              supported = false
+              warnedNested = true
+              break
+            }
+            if (allowRest) {
+              excludeKeys.push(t.stringLiteral(keyName))
+            }
+            const member = memberExprForKey(baseExpr, keyName)
+            const value = prop.value
+
+            if (t.isIdentifier(value)) {
+              const shouldUseProp = !calledIdentifiers.has(value.name)
+              if (shouldUseProp) {
+                usesUseProp = true
+                propsPlanAliases.add(value.name)
+              }
+              stmts.push(
+                t.variableDeclaration('const', [
+                  t.variableDeclarator(
+                    t.identifier(value.name),
+                    shouldUseProp
+                      ? t.callExpression(t.identifier(RUNTIME_ALIASES.useProp), [
+                          t.arrowFunctionExpression([], member),
+                        ])
+                      : member,
+                  ),
+                ]),
+              )
+              continue
+            }
+
+            if (t.isObjectPattern(value)) {
+              buildDestructure(value, member, false)
+              if (!supported) break
+              continue
+            }
+
+            if (t.isAssignmentPattern(value) && t.isIdentifier(value.left)) {
+              const shouldUseProp = !calledIdentifiers.has(value.left.name)
+              if (shouldUseProp) {
+                usesUseProp = true
+                propsPlanAliases.add(value.left.name)
+              }
+              const baseInit = t.logicalExpression('??', member, value.right)
+              const init = shouldUseProp
+                ? t.callExpression(t.identifier(RUNTIME_ALIASES.useProp), [
+                    t.arrowFunctionExpression([], baseInit),
+                  ])
+                : baseInit
+              stmts.push(
+                t.variableDeclaration('const', [
+                  t.variableDeclarator(t.identifier(value.left.name), init),
+                ]),
+              )
+              continue
+            }
+
             supported = false
             if (!warnedNested) {
               reportDiagnostic(ctx, DiagnosticCode.FICT_P004, prop)
               warnedNested = true
             }
             break
-          }
-          excludeKeys.push(t.stringLiteral(keyName))
-          const member = t.memberExpression(t.identifier('__props'), t.identifier(keyName), false)
-          if (!calledIdentifiers.has(prop.value.name)) {
-            usesUseProp = true
-            propsPlanAliases.add(prop.value.name)
+          } else if (t.isRestElement(prop) && allowRest && t.isIdentifier(prop.argument)) {
+            usesPropsRest = true
             stmts.push(
               t.variableDeclaration('const', [
                 t.variableDeclarator(
-                  t.identifier(prop.value.name),
-                  t.callExpression(t.identifier(RUNTIME_ALIASES.useProp), [
-                    t.arrowFunctionExpression([], member),
+                  t.identifier(prop.argument.name),
+                  t.callExpression(t.identifier(RUNTIME_ALIASES.propsRest), [
+                    baseExpr,
+                    t.arrayExpression(excludeKeys),
                   ]),
                 ),
               ]),
             )
+            continue
           } else {
-            stmts.push(
-              t.variableDeclaration('const', [
-                t.variableDeclarator(t.identifier(prop.value.name), member),
-              ]),
-            )
+            supported = false
+            if (!warnedNested) {
+              reportDiagnostic(ctx, DiagnosticCode.FICT_P004, prop as BabelCore.types.Node)
+              warnedNested = true
+            }
+            break
           }
-          continue
         }
-
-        if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) {
-          usesPropsRest = true
-          stmts.push(
-            t.variableDeclaration('const', [
-              t.variableDeclarator(
-                t.identifier(prop.argument.name),
-                t.callExpression(t.identifier(RUNTIME_ALIASES.propsRest), [
-                  t.identifier('__props'),
-                  t.arrayExpression(excludeKeys),
-                ]),
-              ),
-            ]),
-          )
-          continue
-        }
-
-        supported = false
-        if (!warnedNested) {
-          reportDiagnostic(ctx, DiagnosticCode.FICT_P004, prop)
-          warnedNested = true
-        }
-        break
       }
+
+      // Build destructuring for top-level pattern
+      buildDestructure(pattern, t.identifier('__props'), true)
 
       if (supported) {
         propsDestructurePlan = {

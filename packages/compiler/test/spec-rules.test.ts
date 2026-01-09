@@ -42,11 +42,9 @@ describe('Spec rule coverage', () => {
       }
     `
     const output = transform(input)
-    // HIR uses __props destructuring pattern
     expect(output).toContain('function Greeting(__props')
-    expect(output).toContain('= __props')
-    expect(output).toContain('name')
-    expect(output).toContain('age = 18')
+    expect(output).toContain('useProp(() => __props.name)')
+    expect(output).toContain('useProp(() => __props.age ?? 18)')
     expect(output).toContain('__fictUseMemo')
   })
 
@@ -99,7 +97,7 @@ describe('Spec rule coverage', () => {
     expect(output).toContain('bindText')
   })
 
-  it('emits warning for nested props destructuring fallback', () => {
+  it('keeps nested props destructuring reactive', () => {
     const { output, warnings } = transformWithWarnings(`
       import { $state } from 'fict'
       function Child({ user: { name } }) {
@@ -107,7 +105,8 @@ describe('Spec rule coverage', () => {
       }
     `)
     expect(output).toContain('function Child(__props')
-    expect(warnings.some(w => w.code === 'FICT-P004')).toBe(true)
+    expect(output).toContain('useProp(() => __props.user.name)')
+    expect(warnings.some(w => w.code === 'FICT-P004')).toBe(false)
   })
 
   it('emits warnings for deep mutations and dynamic property access', () => {

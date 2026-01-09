@@ -138,6 +138,73 @@ describe('compiler + fict integration', () => {
     document.body.appendChild(container)
   })
 
+  it('keeps destructured props with defaults reactive (integration)', async () => {
+    const source = `
+      import { render, $state } from 'fict'
+      function Child({ count = 0, increment }) {
+        return (
+          <div>
+            <div data-testid="value">{count}</div>
+            <button data-testid="inc" onClick={increment}>inc</button>
+          </div>
+        )
+      }
+      function Parent() {
+        let count = $state(undefined)
+        const increment = () => {
+          const current = count ?? 0
+          count = current + 1
+        }
+        return <Child count={count} increment={increment} />
+      }
+      export function mount(el) {
+        return render(() => <Parent />, el)
+      }
+    `
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    const read = () => container.querySelector('[data-testid="value"]')?.textContent
+    const inc = container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+    expect(read()).toBe('0')
+    inc.click()
+    await tick()
+    expect(read()).toBe('1')
+    dispose()
+  })
+
+  it('keeps nested props destructuring reactive (integration)', async () => {
+    const source = `
+      import { render, $state } from 'fict'
+      function Child({ user: { name }, update }) {
+        return (
+          <div>
+            <div data-testid="name">{name}</div>
+            <button data-testid="rename" onClick={update}>rename</button>
+          </div>
+        )
+      }
+      function Parent() {
+        let user = $state({ name: 'Alice' })
+        const update = () => {
+          user = { name: user.name + '!' }
+        }
+        return <Child user={user} update={update} />
+      }
+      export function mount(el) {
+        return render(() => <Parent />, el)
+      }
+    `
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    const nameEl = container.querySelector('[data-testid="name"]')
+    expect(nameEl?.textContent).toBe('Alice')
+    const rename = container.querySelector('[data-testid="rename"]') as HTMLButtonElement
+    rename.click()
+    await tick()
+    expect(nameEl?.textContent).toBe('Alice!')
+    dispose()
+  })
+
   afterEach(() => {
     container.remove()
     document.title = ''

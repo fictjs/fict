@@ -181,9 +181,9 @@ describe('R005: Props destructuring', () => {
         return <div>{count}</div>
       }
     `)
-    // Default value handling - compiler uses undefined checks
-    expect(output).toContain('count = 0')
-    expect(output).toContain('__props') //expect(output).toMatch(/=== undefined \? 0|undefined.*0/)
+    // Default value handling uses reactive getter with nullish coalescing
+    expect(output).toContain('useProp(() => __props.count ?? 0)')
+    expect(output).toContain('__props')
   })
 
   it('handles nested destructuring', () => {
@@ -194,6 +194,8 @@ describe('R005: Props destructuring', () => {
       }
     `)
     expect(output).toContain('__props')
+    expect(output).toContain('useProp(() => __props.user.name)')
+    expect(output).toContain('useProp(() => __props.user.age ?? 18)')
   })
 
   it('handles rest props', () => {
