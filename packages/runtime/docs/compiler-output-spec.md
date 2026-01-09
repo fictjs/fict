@@ -28,171 +28,7 @@ const el = (
 )
 ```
 
-### Expected Output (Target)
-
-```typescript
-import {
-  createSignal as __fictSignal,
-  createEffect as __fictEffect,
-  createKeyedListContainer,
-  createKeyedBlock,
-  moveNodesBefore,
-  removeNodes,
-  getFirstNodeAfter,
-} from '@fictjs/runtime'
-
-let [items, setItems] = __fictSignal([
-  { id: 1, name: 'Alice' },
-  { id: 2, name: 'Bob' },
-  { id: 3, name: 'Charlie' },
-])
-
-const el = document.createElement('ul')
-
-// Create list container
-const __listContainer = createKeyedListContainer()
-el.appendChild(__listContainer.startMarker)
-el.appendChild(__listContainer.endMarker)
-
-// Effect to manage list updates
-__fictEffect(() => {
-  const newItems = items()
-  const oldBlocks = __listContainer.blocks
-  const newBlocks = new Map()
-
-  // Build new blocks map
-  newItems.forEach((item, index) => {
-    const key = item.id
-    let block = oldBlocks.get(key)
-
-    if (block) {
-      // Reuse existing block - update signals
-      block.item(item)
-      block.index(index)
-      newBlocks.set(key, block)
-      oldBlocks.delete(key)
-    } else {
-      // Create new block
-      block = createKeyedBlock(key, item, index, (itemSig, indexSig) => {
-        const li = document.createElement('li')
-        __fictEffect(() => {
-          li.textContent = itemSig().name
-        })
-        return [li]
-      })
-      newBlocks.set(key, block)
-    }
-  })
-
-  // Remove old blocks
-  for (const block of oldBlocks.values()) {
-    destroyRoot(block.root)
-    removeNodes(block.nodes)
-  }
-
-  // Reorder DOM nodes
-  let anchor = getFirstNodeAfter(__listContainer.startMarker)
-  for (const [key] of newBlocks) {
-    const block = newBlocks.get(key)!
-    const firstNode = block.nodes[0]
-
-    if (firstNode !== anchor) {
-      moveNodesBefore(el, block.nodes, anchor)
-    }
-
-    // Move anchor past this block's nodes
-    anchor = block.nodes[block.nodes.length - 1].nextSibling
-  }
-
-  __listContainer.blocks = newBlocks
-})
-```
-
-## Simplified Output (Phase 1 - Runtime Helper)
-
-For Phase 1, we can create a higher-level runtime helper that encapsulates this logic:
-
-### New Runtime Helper: `createKeyedList`
-
-```typescript
-// In runtime/src/list-helpers.ts
-export function createKeyedList<T>(
-  getItems: () => T[],
-  keyFn: (item: T, index: number) => string | number,
-  renderItem: (itemSig: Signal<T>, indexSig: Signal<number>) => Node[],
-): KeyedListBinding {
-  const container = createKeyedListContainer<T>()
-
-  const updateEffect = createEffect(() => {
-    const newItems = getItems()
-    const oldBlocks = container.blocks
-    const newBlocks = new Map<string | number, KeyedBlock<T>>()
-
-    // Keyed diff algorithm
-    newItems.forEach((item, index) => {
-      const key = keyFn(item, index)
-      let block = oldBlocks.get(key)
-
-      if (block) {
-        // Reuse and update
-        block.item(item)
-        block.index(index)
-        newBlocks.set(key, block)
-        oldBlocks.delete(key)
-      } else {
-        // Create new
-        block = createKeyedBlock(key, item, index, renderItem)
-        newBlocks.set(key, block)
-
-        // Insert into DOM (initially at end)
-        insertNodesBefore(container.endMarker.parentNode!, block.nodes, container.endMarker)
-      }
-    })
-
-    // Remove old blocks
-    for (const block of oldBlocks.values()) {
-      destroyRoot(block.root)
-      removeNodes(block.nodes)
-    }
-
-    // Reorder DOM to match new order
-    if (container.endMarker.parentNode) {
-      let anchor: Node | null = getFirstNodeAfter(container.startMarker)
-
-      for (const key of Array.from(newBlocks.keys())) {
-        const block = newBlocks.get(key)!
-        const firstNode = block.nodes[0]
-
-        if (firstNode !== anchor) {
-          moveNodesBefore(container.endMarker.parentNode, block.nodes, anchor)
-        }
-
-        // Move anchor to after this block
-        anchor = block.nodes[block.nodes.length - 1].nextSibling
-      }
-    }
-
-    container.blocks = newBlocks
-  })
-
-  return {
-    startMarker: container.startMarker,
-    endMarker: container.endMarker,
-    dispose: () => {
-      updateEffect.dispose?.()
-      container.dispose()
-    },
-  }
-}
-
-export interface KeyedListBinding {
-  startMarker: Comment
-  endMarker: Comment
-  dispose: () => void
-}
-```
-
-### Compiler Output Using createKeyedList
+### Expected Output
 
 ```typescript
 import {
@@ -219,11 +55,15 @@ const __list = createKeyedList(
     })
     return [li]
   },
+  false,
 )
 
-el.appendChild(__list.startMarker)
-el.appendChild(__list.endMarker)
+el.appendChild(__list.marker)
+__list.flush?.()
 ```
+
+The compiler emits the final boolean argument to indicate whether the map callback uses an index
+parameter. The runtime uses it to skip unnecessary index writes.
 
 ## Key Extraction Rules
 
@@ -320,58 +160,22 @@ const __list = createKeyedList(
 ## Type Definitions
 
 ```typescript
-// Shapes used by createKeyedList
-export interface KeyedBlock<T = unknown> {
-  key: string | number
-  nodes: Node[]
-  root: RootContext
-  item: Signal<T>
-  index: Signal<number>
-}
-
-export interface KeyedListContainer<T = unknown> {
-  startMarker: Comment
-  endMarker: Comment
-  blocks: Map<string | number, KeyedBlock<T>>
-  dispose: () => void
-}
-
 export interface KeyedListBinding {
+  marker: DocumentFragment
   startMarker: Comment
   endMarker: Comment
+  flush?: () => void
   dispose: () => void
 }
 
 // Compiler-generated code uses these:
 type KeyFn<T> = (item: T, index: number) => string | number
-type RenderItemFn<T> = (itemSig: Signal<T>, indexSig: Signal<number>) => Node[]
+type RenderItemFn<T> = (
+  itemSig: Signal<T>,
+  indexSig: Signal<number>,
+  key: string | number,
+) => Node[]
 ```
-
-## Compiler Implementation Phases
-
-### Phase 1: Runtime Helper (Week 2)
-
-1. Implement `createKeyedList` helper in runtime
-2. Export it from index.ts
-3. Write comprehensive tests
-
-### Phase 2: Compiler Detection (Week 6)
-
-1. Detect `.map()` calls in JSX with `key` attributes
-2. Extract key expression from `key={...}`
-3. Generate `createKeyedList` calls
-
-### Phase 3: Optimization (Week 7)
-
-1. Inline simple key functions
-2. Optimize known patterns (e.g., `key={item}` for primitives)
-3. Warn on missing keys
-
-### Phase 4: Advanced Features (Week 8)
-
-1. Handle conditional items within lists
-2. Support nested lists
-3. Optimize with fallback to index when appropriate
 
 ## Testing Strategy
 

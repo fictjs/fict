@@ -692,7 +692,7 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
 
 ### 15.4 Loop Semantics
 
-1.  **Keyed List**: `items.map(item => ...)` inside JSX is lowered to keyed list block helpers (`createKeyedListContainer`, `createKeyedBlock`, `moveMarkerBlock`).
+1.  **Keyed List**: `items.map(item => ...)` inside JSX is lowered to `createKeyedList(getItems, keyFn, renderItem)`. When no `key` prop is present, the compiler falls back to index keys and emits `FICT-J002`.
 2.  **No State in Loop**: As per 15.1, you cannot create new `$state` sources inside a loop.
 3.  **Derived in Loop**:
     - `for (let item of list) { const label = item.name; ... }`

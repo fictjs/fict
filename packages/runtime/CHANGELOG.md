@@ -1,5 +1,11 @@
 # @fictjs/runtime
 
+## Unreleased
+
+### Breaking Changes
+
+- remove list-container helper exports (`createKeyedListContainer`, `createKeyedBlock`, `moveMarkerBlock`, `destroyMarkerBlock`, `getFirstNodeAfter`) from the public runtime API; use `createKeyedList` instead.
+
 ## 0.0.12
 
 ### Patch Changes

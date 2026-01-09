@@ -36,11 +36,6 @@ export const RUNTIME_HELPERS = {
   callEventHandler: 'callEventHandler',
   bindRef: 'bindRef',
   toNodeArray: 'toNodeArray',
-  createKeyedListContainer: 'createKeyedListContainer',
-  createKeyedBlock: 'createKeyedBlock',
-  moveMarkerBlock: 'moveMarkerBlock',
-  destroyMarkerBlock: 'destroyMarkerBlock',
-  getFirstNodeAfter: 'getFirstNodeAfter',
   template: 'template',
   delegateEvents: 'delegateEvents',
 } as const
@@ -77,11 +72,6 @@ export const RUNTIME_ALIASES = {
   callEventHandler: 'callEventHandler',
   bindRef: 'bindRef',
   toNodeArray: 'toNodeArray',
-  createKeyedListContainer: 'createKeyedListContainer',
-  createKeyedBlock: 'createKeyedBlock',
-  moveMarkerBlock: 'moveMarkerBlock',
-  destroyMarkerBlock: 'destroyMarkerBlock',
-  getFirstNodeAfter: 'getFirstNodeAfter',
   template: 'template',
   delegateEvents: 'delegateEvents',
 } as const

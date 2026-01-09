@@ -372,7 +372,7 @@ No resident memo node is established; instead, it is calculated on demand when t
 
 Fict uses fine-grained DOM updates as the only rendering mode:
 
-- Runtime helper layer (`bindText`, `bindClass`, `bindStyle`, `moveMarkerBlock`, `createVersionedSignal`, etc.) is in place.
+- Runtime helper layer (`bindText`, `bindClass`, `bindStyle`, `createKeyedList`, `createVersionedSignal`, etc.) is in place.
 - Fine-grained runtime execution is **the only mode**; `render()` annotates the container with `data-fict-fine-grained="1"` for debugging and monitoring.
 - End-to-end scenarios (counter, keyed lists, nested conditionals, primitives) verify the fine-grained implementation.
 

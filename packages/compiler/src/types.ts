@@ -43,7 +43,6 @@ export interface HelperUsage {
   effect: boolean
   createElement: boolean
   conditional: boolean
-  list: boolean
   keyedList: boolean
   insert: boolean
   onDestroy: boolean
@@ -55,11 +54,6 @@ export interface HelperUsage {
   bindEvent?: boolean
   bindRef?: boolean
   toNodeArray?: boolean
-  createKeyedListContainer: boolean
-  createKeyedBlock: boolean
-  moveMarkerBlock: boolean
-  destroyMarkerBlock: boolean
-  getFirstNodeAfter: boolean
   useContext: boolean
   useSignal: boolean
   useMemo: boolean
@@ -110,7 +104,6 @@ export function createHelperUsage(): HelperUsage {
     fragment: false,
     createElement: false,
     conditional: false,
-    list: false,
     keyedList: false,
     insert: false,
     onDestroy: false,
@@ -121,11 +114,6 @@ export function createHelperUsage(): HelperUsage {
     bindStyle: false,
     bindEvent: false,
     toNodeArray: false,
-    createKeyedListContainer: false,
-    createKeyedBlock: false,
-    moveMarkerBlock: false,
-    destroyMarkerBlock: false,
-    getFirstNodeAfter: false,
     template: false,
     propGetter: false,
     propsRest: false,

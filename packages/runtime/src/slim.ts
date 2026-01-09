@@ -32,17 +32,7 @@ export {
 } from './binding'
 
 // Keyed list helpers (fine-grained DOM)
-export {
-  createKeyedListContainer,
-  createKeyedList,
-  createKeyedBlock,
-  moveMarkerBlock,
-  destroyMarkerBlock,
-  insertNodesBefore,
-  removeNodes,
-  toNodeArray,
-  getFirstNodeAfter,
-} from './list-helpers'
+export { createKeyedList, insertNodesBefore, removeNodes, toNodeArray } from './list-helpers'
 
 // Minimal hooks surface for builds that rely on hook helpers
 export {

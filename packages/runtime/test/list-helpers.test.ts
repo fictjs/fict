@@ -1,25 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 
 import { createEffect } from '../src/effect'
-import {
-  createRootContext,
-  flushOnMount,
-  onDestroy,
-  onMount,
-  popRoot,
-  pushRoot,
-} from '../src/lifecycle'
+import { onMount } from '../src/lifecycle'
 import {
   moveNodesBefore,
   removeNodes,
   insertNodesBefore,
-  moveMarkerBlock,
-  destroyMarkerBlock,
-  createKeyedListContainer,
-  createKeyedBlock,
   createKeyedList,
   toNodeArray,
-  getFirstNodeAfter,
   isNodeBetweenMarkers,
 } from '../src/list-helpers'
 import { createSignal } from '../src/signal'
@@ -123,158 +111,6 @@ describe('List Helpers', () => {
 
       expect(container.textContent).toBe('12anchor')
     })
-
-    it('moveMarkerBlock repositions marker ranges without recreating nodes', () => {
-      const before = document.createElement('div')
-      before.textContent = 'before'
-      const after = document.createElement('div')
-      after.textContent = 'after'
-      const start = document.createComment('start')
-      const child = document.createElement('span')
-      child.textContent = 'X'
-      const end = document.createComment('end')
-
-      container.append(before, start, child, end, after)
-
-      moveMarkerBlock(container, { start, end }, before)
-
-      expect(container.firstChild).toBe(start)
-      expect(container.childNodes[1]).toBe(child)
-      expect(container.childNodes[2]).toBe(end)
-    })
-
-    it('destroyMarkerBlock removes nodes and flushes root', () => {
-      const start = document.createComment('start')
-      const text = document.createTextNode('payload')
-      const end = document.createComment('end')
-      container.append(start, text, end)
-
-      const root = createRootContext()
-      const prev = pushRoot(root)
-      let destroyed = 0
-      onDestroy(() => {
-        destroyed++
-      })
-      popRoot(prev)
-      flushOnMount(root)
-
-      destroyMarkerBlock({ start, end, root })
-
-      expect(container.contains(text)).toBe(false)
-      expect(container.contains(start)).toBe(false)
-      expect(container.contains(end)).toBe(false)
-      expect(destroyed).toBe(1)
-    })
-  })
-
-  describe('KeyedListContainer', () => {
-    it('creates container with markers', () => {
-      const listContainer = createKeyedListContainer()
-
-      expect(listContainer.startMarker).toBeInstanceOf(Comment)
-      expect(listContainer.endMarker).toBeInstanceOf(Comment)
-      expect(listContainer.blocks).toBeInstanceOf(Map)
-      expect(typeof listContainer.dispose).toBe('function')
-    })
-
-    it('dispose cleans up all blocks', () => {
-      const listContainer = createKeyedListContainer<{ id: number; name: string }>()
-
-      container.appendChild(listContainer.startMarker)
-      container.appendChild(listContainer.endMarker)
-
-      // Create some blocks
-      const block1 = createKeyedBlock(1, { id: 1, name: 'Alice' }, 0, (itemSig, _indexSig) => {
-        const div = document.createElement('div')
-        createEffect(() => {
-          div.textContent = itemSig().name
-        })
-        container.insertBefore(div, listContainer.endMarker)
-        return [div]
-      })
-
-      const block2 = createKeyedBlock(2, { id: 2, name: 'Bob' }, 1, (itemSig, _indexSig) => {
-        const div = document.createElement('div')
-        createEffect(() => {
-          div.textContent = itemSig().name
-        })
-        container.insertBefore(div, listContainer.endMarker)
-        return [div]
-      })
-
-      listContainer.blocks.set(1, block1)
-      listContainer.blocks.set(2, block2)
-
-      expect(container.children.length).toBe(2)
-
-      // Dispose
-      listContainer.dispose()
-
-      expect(listContainer.blocks.size).toBe(0)
-      expect(container.children.length).toBe(0)
-    })
-  })
-
-  describe('createKeyedBlock', () => {
-    it('creates block with signals and nodes', async () => {
-      const block = createKeyedBlock('key1', { id: 1, name: 'Alice' }, 0, (itemSig, indexSig) => {
-        const div = document.createElement('div')
-        createEffect(() => {
-          div.textContent = `${itemSig().name}-${indexSig()}`
-        })
-        return [div]
-      })
-
-      expect(block.key).toBe('key1')
-      expect(block.nodes.length).toBe(1)
-      expect(block.nodes[0]).toBeInstanceOf(HTMLDivElement)
-      expect((block.nodes[0] as HTMLDivElement).textContent).toBe('Alice-0')
-
-      // Update signals
-      block.item({ id: 1, name: 'Bob' })
-      block.index(5)
-      await tick()
-
-      expect((block.nodes[0] as HTMLDivElement).textContent).toBe('Bob-5')
-    })
-
-    it('supports multiple nodes in a block', () => {
-      const block = createKeyedBlock('key1', { id: 1, name: 'Alice' }, 0, (itemSig, indexSig) => {
-        const div1 = document.createElement('div')
-        const div2 = document.createElement('div')
-
-        createEffect(() => {
-          div1.textContent = itemSig().name
-          div2.textContent = String(indexSig())
-        })
-
-        return [div1, div2]
-      })
-
-      expect(block.nodes.length).toBe(2)
-      expect((block.nodes[0] as HTMLDivElement).textContent).toBe('Alice')
-      expect((block.nodes[1] as HTMLDivElement).textContent).toBe('0')
-    })
-
-    it('bumps version when assigning same reference', async () => {
-      const user = { id: 1, name: 'Alice' }
-      const block = createKeyedBlock('key1', user, 0, itemSig => {
-        const div = document.createElement('div')
-        createEffect(() => {
-          div.textContent = itemSig().name
-        })
-        return [div]
-      })
-
-      const div = block.nodes[0] as HTMLDivElement
-      expect(div.textContent).toBe('Alice')
-
-      user.name = 'Carol'
-      block.item(user)
-      await tick()
-
-      expect(div.textContent).toBe('Carol')
-    })
   })
 
   describe('Utilities', () => {
@@ -305,23 +141,6 @@ describe('List Helpers', () => {
       const result = toNodeArray(frag)
 
       expect(result).toEqual([div1, div2])
-    })
-
-    it('getFirstNodeAfter returns next sibling', () => {
-      const marker = document.createComment('marker')
-      const div = document.createElement('div')
-
-      container.appendChild(marker)
-      container.appendChild(div)
-
-      expect(getFirstNodeAfter(marker)).toBe(div)
-    })
-
-    it('getFirstNodeAfter returns null if no sibling', () => {
-      const marker = document.createComment('marker')
-      container.appendChild(marker)
-
-      expect(getFirstNodeAfter(marker)).toBe(null)
     })
 
     it('isNodeBetweenMarkers detects node between markers', () => {

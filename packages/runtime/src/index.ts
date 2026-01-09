@@ -159,21 +159,11 @@ export {
   moveNodesBefore,
   removeNodes,
   insertNodesBefore,
-  moveMarkerBlock,
-  destroyMarkerBlock,
-  // Keyed list container
-  createKeyedListContainer,
-  // Block creation
-  createKeyedBlock,
   // High-level list binding (for compiler-generated code)
   createKeyedList,
   // Utilities
   toNodeArray,
-  getFirstNodeAfter,
   isNodeBetweenMarkers,
   // Types
-  type KeyedBlock,
-  type KeyedListContainer,
   type KeyedListBinding,
-  type MarkerBlock,
 } from './list-helpers'

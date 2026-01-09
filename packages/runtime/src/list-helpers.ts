@@ -37,7 +37,7 @@ const isDev =
 /**
  * A keyed block represents a single item in a list with its associated DOM nodes and state
  */
-export interface KeyedBlock<T = unknown> {
+interface KeyedBlock<T = unknown> {
   /** Unique key for this block */
   key: string | number
   /** DOM nodes belonging to this block */
@@ -57,7 +57,7 @@ export interface KeyedBlock<T = unknown> {
 /**
  * Container for managing keyed list blocks
  */
-export interface KeyedListContainer<T = unknown> {
+interface KeyedListContainer<T = unknown> {
   /** Start marker comment node */
   startMarker: Comment
   /** End marker comment node */
@@ -101,15 +101,6 @@ type FineGrainedRenderItem<T> = (
   indexSig: Signal<number>,
   key: string | number,
 ) => Node[]
-
-/**
- * A block identified by start/end comment markers.
- */
-export interface MarkerBlock {
-  start: Comment
-  end: Comment
-  root?: RootContext
-}
 
 // ============================================================================
 // DOM Manipulation Primitives
@@ -162,50 +153,6 @@ export function moveNodesBefore(parent: Node, nodes: Node[], anchor: Node | null
  *
  * @param nodes - Array of nodes to remove
  */
-/**
- * Move an entire marker-delimited block (including markers) before the anchor.
- */
-export function moveMarkerBlock(parent: Node, block: MarkerBlock, anchor: Node | null): void {
-  const nodes = collectBlockNodes(block)
-  if (nodes.length === 0) return
-  moveNodesBefore(parent, nodes, anchor)
-}
-
-/**
- * Destroy a marker-delimited block, removing nodes and destroying the associated root.
- */
-export function destroyMarkerBlock(block: MarkerBlock): void {
-  if (block.root) {
-    destroyRoot(block.root)
-  }
-  removeBlockRange(block)
-}
-
-function collectBlockNodes(block: MarkerBlock): Node[] {
-  const nodes: Node[] = []
-  let cursor: Node | null = block.start
-  while (cursor) {
-    nodes.push(cursor)
-    if (cursor === block.end) {
-      break
-    }
-    cursor = cursor.nextSibling
-  }
-  return nodes
-}
-
-function removeBlockRange(block: MarkerBlock): void {
-  let cursor: Node | null = block.start
-  while (cursor) {
-    const next: Node | null = cursor.nextSibling
-    cursor.parentNode?.removeChild(cursor)
-    if (cursor === block.end) {
-      break
-    }
-    cursor = next
-  }
-}
-
 // Number.MAX_SAFE_INTEGER is 2^53 - 1, but we reset earlier to avoid any precision issues
 const MAX_SAFE_VERSION = 0x1fffffffffffff // 2^53 - 1
 
@@ -238,7 +185,7 @@ export function createVersionedSignalAccessor<T>(initialValue: T): Signal<T> {
  *
  * @returns Container object with markers, blocks map, and dispose function
  */
-export function createKeyedListContainer<T = unknown>(): KeyedListContainer<T> {
+function createKeyedListContainer<T = unknown>(): KeyedListContainer<T> {
   const startMarker = document.createComment('fict:list:start')
   const endMarker = document.createComment('fict:list:end')
 
@@ -306,7 +253,7 @@ export function createKeyedListContainer<T = unknown>(): KeyedListContainer<T> {
  * @param render - Function that creates the DOM nodes and sets up bindings
  * @returns New KeyedBlock
  */
-export function createKeyedBlock<T>(
+function createKeyedBlock<T>(
   key: string | number,
   item: T,
   index: number,
@@ -376,13 +323,6 @@ export function createKeyedBlock<T>(
 // ============================================================================
 // Utilities
 // ============================================================================
-
-/**
- * Find the first node after the start marker (for getting current anchor)
- */
-export function getFirstNodeAfter(marker: Comment): Node | null {
-  return marker.nextSibling
-}
 
 /**
  * Check if a node is between two markers
