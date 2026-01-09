@@ -24,7 +24,6 @@ import {
 import { createRenderEffect } from './effect'
 import { Fragment } from './jsx'
 import {
-  clearRoot,
   createRootContext,
   destroyRoot,
   flushOnMount,
@@ -39,7 +38,7 @@ import {
 import { createKeyedList } from './list-helpers'
 import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 import { batch } from './scheduler'
-import { computed, createSignal, untrack, type Signal } from './signal'
+import { computed, untrack, type Signal } from './signal'
 import type { Cleanup, FictNode } from './types'
 
 // ============================================================================
@@ -1893,7 +1892,7 @@ function patchNode(currentNode: Node | null, nextOutput: FictNode): boolean {
   return false
 }
 
-function isFragmentVNode(
+function _isFragmentVNode(
   value: unknown,
 ): value is { type: typeof Fragment; props?: { children?: FictNode | FictNode[] } } {
   return (
@@ -1924,7 +1923,7 @@ function normalizeChildren(
   return result
 }
 
-function patchFragmentChildren(
+function _patchFragmentChildren(
   nodes: Node[],
   children: FictNode | FictNode[] | undefined,
 ): boolean {
