@@ -90,7 +90,7 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toContain('user()')
     })
 
-    it('handles list without key (fallback to old createList)', () => {
+    it('handles list without key via keyed list with index keys', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {
@@ -100,10 +100,10 @@ describe('Fict Compiler - Control Flow', () => {
         }
       `
       const output = runTransform(input)
-      // Non-fine-grained mode uses insert instead of __fictList
-      expect(output).toContain('insert')
-      // Should NOT use keyed list helpers
-      expect(output).not.toContain('createKeyedListContainer')
+      expect(output).toContain('createKeyedList')
+      expect(output).toContain('() => items()')
+      // Index signal should be threaded through when requested
+      expect(output).toContain('__index')
     })
 
     it('handles array map with index', () => {

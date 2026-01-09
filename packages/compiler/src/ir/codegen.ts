@@ -3224,6 +3224,10 @@ function replaceIdentifiersWithOverrides(
     parentKey === 'callee' &&
     (parentKind === 'CallExpression' || parentKind === 'OptionalCallExpression')
 
+  if (parentKind === 'VariableDeclarator' && parentKey === 'id') {
+    return
+  }
+
   const collectParamNames = (params: BabelCore.types.Function['params']): Set<string> => {
     const names = new Set<string>()
     const addName = (n: string | undefined) => {
@@ -5111,7 +5115,7 @@ function emitListChild(
   if (isKeyed) {
     ctx.helpersUsed.add('keyedList')
   } else {
-    ctx.helpersUsed.add('list')
+    ctx.helpersUsed.add('keyedList')
     ctx.helpersUsed.add('createElement')
   }
 
@@ -5167,6 +5171,19 @@ function emitListChild(
     }
 
     if (Object.keys(overrides).length > 0) {
+      if (t.isBlockStatement(callbackExpr.body)) {
+        for (const stmt of callbackExpr.body.body) {
+          if (!t.isVariableDeclaration(stmt)) continue
+          for (const decl of stmt.declarations) {
+            if (!t.isIdentifier(decl.id) || !decl.init) continue
+            const replacement = t.cloneNode(decl.init, true) as BabelCore.types.Expression
+            replaceIdentifiersWithOverrides(replacement, overrides, t, callbackExpr.type, 'body')
+            overrides[decl.id.name] = () =>
+              t.cloneNode(replacement, true) as BabelCore.types.Expression
+          }
+        }
+      }
+
       if (t.isBlockStatement(callbackExpr.body)) {
         replaceIdentifiersWithOverrides(callbackExpr.body, overrides, t, callbackExpr.type, 'body')
       } else {
@@ -5272,14 +5289,36 @@ function emitListChild(
     // Insert hoisted template declarations before list call
     statements.push(...hoistedStatements)
 
+    const itemParamName =
+      t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)
+        ? t.isIdentifier(callbackExpr.params[0])
+          ? callbackExpr.params[0].name
+          : '__item'
+        : '__item'
+    const indexParamName =
+      t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)
+        ? t.isIdentifier(callbackExpr.params[1])
+          ? callbackExpr.params[1].name
+          : '__index'
+        : '__index'
+    const hasIndexParam =
+      (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) &&
+      callbackExpr.params.length >= 2
+
+    const keyFn = t.arrowFunctionExpression(
+      [t.identifier(itemParamName), t.identifier(indexParamName)],
+      t.identifier(indexParamName),
+    )
+
     statements.push(
       t.variableDeclaration('const', [
         t.variableDeclarator(
           listId,
-          t.callExpression(t.identifier(RUNTIME_ALIASES.list), [
+          t.callExpression(t.identifier(RUNTIME_ALIASES.keyedList), [
             t.arrowFunctionExpression([], arrayExpr),
+            keyFn,
             callbackExpr,
-            t.identifier(RUNTIME_ALIASES.createElement),
+            t.booleanLiteral(hasIndexParam),
           ]),
         ),
       ]),

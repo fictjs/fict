@@ -740,143 +740,23 @@ When the list updates:
 1. **Unkeyed lists**: Items with different references are destroyed and remounted (destructive update)
 2. **Keyed lists**: Items are matched by key, signals are updated, and DOM is patched in-place (preserving identity)
 
-### 10.2 Primitive Value Proxies
+### 10.2 Fine-Grained Lists (Keyed and Unkeyed)
 
-#### Behavior
+- **Compiler output**: All mapped JSX now lowers to `createKeyedList`. When no explicit `key` is provided, the compiler falls back to `keyFn: (_, i) => i` and warns with `FICT-J002`.
+- **Per-item signals**: Each block owns an item signal and (optionally) an index signal. Effects inside the block subscribe to those signals, so only changed items rerun.
+- **Reconciliation**: Keys drive identity; DOM nodes are moved when order changes and reused when keys stay the same. Unkeyed lists still keep item order via the synthetic index key.
+- **Mutation model**: Item updates are detected via reference equality. If you mutate objects in place without changing their reference, block effects will not rerun—prefer immutable updates or replace the item to trigger the setter.
 
-Each keyed block wraps its item value in a proxy that:
+### 10.3 Performance Guidance
 
-- For **objects**: Transparently forwards all property access to the live signal value
-- For **primitives** (number, string, boolean, etc.): Implements `Symbol.toPrimitive`, `valueOf`, `toString`, and exposes native prototype methods
+- **Changed items only**: When keys and references are stable, unchanged items skip work. Reorders rely on DOM moves instead of destroy/remount.
+- **Immutable updates recommended**: Return new objects when a row changes. For primitives, set a new value to trigger the item signal.
+- **Large lists**: Continue to favor virtualized rendering or memoized rows for very large datasets; the fine-grained path minimizes but does not eliminate per-item overhead (signals + root per block).
 
-This ensures that code like `item.toFixed(2)` or `item.toLowerCase()` works naturally.
+### 10.4 Primitive Values
 
-#### ⚠️ Important Limitations
-
-**DO NOT rely on type checks:**
-
-```ts
-createList(
-  () => [1, 2, 3],
-  item => {
-    // ❌ Wrong - Returns 'object', not 'number'
-    if (typeof item === 'number') {
-    }
-
-    // ❌ Wrong - Reference inequality
-    if (item === 1) {
-    }
-
-    // ✅ Correct - Coercion triggers proxy
-    if (item == 1) {
-    }
-    if (Number(item) === 1) {
-    }
-
-    // ✅ Correct - Use prototype methods naturally
-    const formatted = item.toFixed(2) // Works!
-  },
-  item => item,
-)
-```
-
-**Rationale**: This trade-off preserves the natural JavaScript API for primitives while maintaining reactivity. The alternative (creating new primitives on each read) would break reference equality everywhere and lose reactivity.
-
-#### Helper Function (Optional)
-
-For advanced use cases requiring the raw value:
-
-```ts
-import { unwrapPrimitive } from 'fict/runtime'
-
-const rawValue = unwrapPrimitive(item) // Returns actual primitive
-```
-
-### 10.3 Keyed Blocks Always Rerender
-
-#### Current Behavior
-
-When a keyed list updates, **all matched blocks execute `rerenderBlock`** even if their value and index are unchanged.
-
-```ts
-const items = [
-  { id: 1, name: 'Alice' },
-  { id: 2, name: 'Bob' },
-  { id: 3, name: 'Charlie' },
-]
-
-// Later: Only item 2 changed
-setItems([
-  items[0], // Same reference
-  { ...items[1], name: 'Robert' }, // New reference
-  items[2], // Same reference
-])
-
-// Current: All 3 items rerender
-// Rationale: Guarantees effects/DOM stay synchronized
-```
-
-#### Why This Design?
-
-1. **Same-reference mutations are detectable**: If `items[0]` is mutated in-place, the rerender ensures effects see the new values
-2. **Effects always run**: `createEffect` subscriptions inside blocks are guaranteed to see updates
-3. **Version bumping works**: When value reference is identical, `versionSig` is bumped to trigger proxy reads
-
-#### Performance Considerations
-
-For **large lists (100+ items)** with frequent updates, this can be expensive. Mitigation strategies:
-
-1. **Use immutable updates**: Only changed items should have new references
-2. **Memoize expensive renders**: Wrap list items in `memo()` components
-3. **Virtual scrolling**: Only render visible items
-4. **Optimize `rerenderBlock` fast paths**: The runtime tries to patch text/elements in-place when possible
-
-#### Example: Optimizing Large Lists
-
-```tsx
-// ❌ Potentially slow for large lists
-createList(
-  () => hugeArray, // 1000+ items
-  item => <ExpensiveComponent item={item} />,
-  createElement,
-  item => item.id,
-)
-
-// ✅ Better: Memoize expensive components
-const MemoizedItem = memo(ExpensiveComponent)
-createList(
-  () => hugeArray,
-  item => <MemoizedItem item={item} />,
-  createElement,
-  item => item.id,
-)
-
-// ✅ Best: Virtual scrolling for very large lists
-createList(
-  () => visibleItems, // Only render visible slice
-  item => <Item item={item} />,
-  createElement,
-  item => item.id,
-)
-```
-
-#### Future: Configurable Strategy?
-
-A potential future enhancement could add an option:
-
-```ts
-createList(items, renderItem, createElement, getKey, {
-  rerenderStrategy: 'always' | 'on-change', // Default: 'always'
-})
-```
-
-Where `'on-change'` would skip rerender when `value` and `index` are unchanged. However, this requires users to guarantee immutable updates or manually trigger version bumps for mutations.
-
-### 10.4 Primitive Proxies Are Internal Only
-
-#### Scope
-
-The `PRIMITIVE_PROXY` symbol is recognized by `createElement` **only during keyed-block mounting**. This is an internal implementation detail.
+- `createKeyedList` no longer wraps primitives in proxies; `typeof item()` and strict equality work as expected.
+- `unwrapPrimitive` remains as a no-op compatibility helper for code that previously used primitive proxies.
 
 #### ⚠️ Do Not Use Outside Lists
 

@@ -674,6 +674,10 @@ function replaceIdentifiers(
     parentKey === 'callee' &&
     (parentKind === 'CallExpression' || parentKind === 'OptionalCallExpression')
 
+  if (parentKind === 'VariableDeclarator' && parentKey === 'id') {
+    return
+  }
+
   // Replace member expressions when the full path matches (property-level deps)
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node as any)) {
     const path = getMemberPath(node as any, t)
@@ -1290,8 +1294,40 @@ export function createListBinding(
   const params = mapCallback.params
   let body = mapCallback.body
 
-  if (t.isBlockStatement(body)) {
-    const returnStmt = body.body.find(s =>
+  // Create mapper overrides for params
+  const overrides: IdentifierOverrideMap = {}
+  let paramNodes = params
+
+  if (params.length > 0 && t.isIdentifier(params[0])) {
+    const originalName = params[0].name
+    // Use the name expected by tests (__fgValueSig) or preserve if we want.
+    // The test expects __fgValueSig().label, so we must rename or ensure usage matches.
+    // The previous implementation used item.label which failed.
+    const newName = '__fgValueSig'
+
+    overrides[originalName] = () => t.callExpression(t.identifier(newName), [])
+
+    // Replace the first parameter with the new name
+    paramNodes = [t.identifier(newName), ...params.slice(1)]
+  }
+
+  // Collect simple derived bindings declared inside the callback so they stay reactive
+  if (t.isBlockStatement(mapCallback.body)) {
+    for (const stmt of mapCallback.body.body) {
+      if (!t.isVariableDeclaration(stmt)) continue
+      for (const decl of stmt.declarations) {
+        if (!t.isIdentifier(decl.id) || !decl.init || t.isTSAnyKeyword(decl.init)) continue
+        const transformedInit = transformExpressionForFineGrained(
+          decl.init as BabelCore.types.Expression,
+          ctx,
+          t,
+          overrides,
+        )
+        overrides[decl.id.name] = () => t.cloneNode(transformedInit, true) as any
+      }
+    }
+
+    const returnStmt = mapCallback.body.body.find(s =>
       t.isReturnStatement(s),
     ) as BabelCore.types.ReturnStatement
     if (returnStmt) {
@@ -1319,25 +1355,39 @@ export function createListBinding(
     }
   }
 
-  // Create mapper overrides for params
-  const overrides: IdentifierOverrideMap = {}
-  let paramNodes = params
+  // Collect simple derived bindings declared inside the callback so they stay reactive
+  if (t.isBlockStatement(mapCallback.body)) {
+    for (const stmt of mapCallback.body.body) {
+      if (!t.isVariableDeclaration(stmt)) continue
+      for (const decl of stmt.declarations) {
+        if (!t.isIdentifier(decl.id) || !decl.init || t.isTSAnyKeyword(decl.init)) continue
+        const transformedInit = transformExpressionForFineGrained(
+          decl.init as BabelCore.types.Expression,
+          ctx,
+          t,
+          overrides,
+        )
+        overrides[decl.id.name] = () => t.cloneNode(transformedInit, true) as any
+      }
+    }
 
-  if (params.length > 0 && t.isIdentifier(params[0])) {
-    const originalName = params[0].name
-    // Use the name expected by tests (__fgValueSig) or preserve if we want.
-    // The test expects __fgValueSig().label, so we must rename or ensure usage matches.
-    // The previous implementation used item.label which failed.
-    const newName = '__fgValueSig'
-
-    overrides[originalName] = () => t.callExpression(t.identifier(newName), [])
-
-    // Replace the first parameter with the new name
-    paramNodes = [t.identifier(newName), ...params.slice(1)]
+    const returnStmt = mapCallback.body.body.find(s =>
+      t.isReturnStatement(s),
+    ) as BabelCore.types.ReturnStatement
+    if (returnStmt) {
+      body = returnStmt.argument as BabelCore.types.Expression
+    }
   }
 
+  if (!t.isJSXElement(body)) {
+    return null
+  }
+
+  const jsxBody = t.cloneNode(body, true) as BabelCore.types.JSXElement
+  replaceIdentifiers(jsxBody, overrides, t)
+
   // Transform mapper body
-  const transformedBody = transformFineGrainedJsx(body, ctx, t, overrides)
+  const transformedBody = transformFineGrainedJsx(jsxBody, ctx, t)
   if (!transformedBody) return null
 
   if (keyAttr) {
@@ -1392,11 +1442,24 @@ export function createListBinding(
         column: loc ? loc.column + 1 : 0,
       })
     }
-    // Unkeyed List
-    ctx.helpersUsed.list = true
-    return t.callExpression(t.identifier(RUNTIME_ALIASES.list), [
+    // Unkeyed List - use keyed list with index key to enable fine-grained updates
+    ctx.helpersUsed.keyedList = true
+    ctx.helpersUsed.createElement = true
+
+    const itemParamName = params[0] && t.isIdentifier(params[0]) ? params[0].name : '__item'
+    const indexParamName = params[1] && t.isIdentifier(params[1]) ? params[1].name : '__index'
+    const hasIndexParam = params.length > 1
+
+    const keyFn = t.arrowFunctionExpression(
+      [t.identifier(itemParamName), t.identifier(indexParamName)],
+      t.identifier(indexParamName),
+    )
+
+    return t.callExpression(t.identifier(RUNTIME_ALIASES.keyedList), [
       t.arrowFunctionExpression([], transformedArray),
-      t.arrowFunctionExpression(params as any, transformedBody),
+      keyFn,
+      t.arrowFunctionExpression(paramNodes as any, transformedBody),
+      t.booleanLiteral(hasIndexParam),
     ])
   }
 }

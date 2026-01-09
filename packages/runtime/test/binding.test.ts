@@ -414,7 +414,7 @@ describe('Reactive DOM Binding', () => {
     it('renders list items', () => {
       const items = createSignal(['a', 'b', 'c'])
 
-      const { marker, dispose } = createList(
+      const { marker, dispose, flush } = createList(
         () => items(),
         item => item(),
         createElement,
@@ -422,6 +422,7 @@ describe('Reactive DOM Binding', () => {
       )
       container.appendChild(marker)
 
+      flush?.()
       expect(container.textContent).toBe('abc')
 
       dispose()
@@ -430,7 +431,7 @@ describe('Reactive DOM Binding', () => {
     it('updates when items change', async () => {
       const items = createSignal(['a', 'b'])
 
-      const { marker, dispose } = createList(
+      const { marker, dispose, flush } = createList(
         () => items(),
         item => item(),
         createElement,
@@ -438,6 +439,7 @@ describe('Reactive DOM Binding', () => {
       )
       container.appendChild(marker)
 
+      flush?.()
       expect(container.textContent).toBe('ab')
 
       items(['x', 'y', 'z'])
@@ -459,18 +461,23 @@ describe('Reactive DOM Binding', () => {
 
       const renderCounts = new Map<number, number>()
 
-      const { marker, dispose } = createList(
+      const { marker, dispose, flush } = createList(
         () => items(),
         item => {
-          const value = item()
-          renderCounts.set(value.id, (renderCounts.get(value.id) || 0) + 1)
-          return value.text
+          const span = document.createElement('span')
+          createEffect(() => {
+            const value = item()
+            renderCounts.set(value.id, (renderCounts.get(value.id) || 0) + 1)
+            span.textContent = value.text
+          })
+          return span
         },
         createElement,
         item => item.id,
       )
       container.appendChild(marker)
 
+      flush?.()
       expect(container.textContent).toBe('onetwo')
       expect(renderCounts.get(1)).toBe(1)
       expect(renderCounts.get(2)).toBe(1)
@@ -496,26 +503,28 @@ describe('Reactive DOM Binding', () => {
         { id: 2, text: 'two' },
       ])
 
-      const { marker, dispose } = createList(
+      const { marker, dispose, flush } = createList(
         () => items(),
         item => {
-          const value = item()
-          return {
-            type: Fragment,
-            props: {
-              children: [
-                value.text,
-                { type: 'span', props: { children: value.text.toUpperCase() }, key: undefined },
-              ],
-            },
-            key: undefined,
-          }
+          const textNode = document.createTextNode('')
+          const span = document.createElement('span')
+          const frag = document.createDocumentFragment()
+          frag.append(textNode, span)
+
+          createEffect(() => {
+            const value = item()
+            textNode.data = value.text
+            span.textContent = value.text.toUpperCase()
+          })
+
+          return [textNode, span]
         },
         createElement,
         item => item.id,
       )
       container.appendChild(marker)
 
+      flush?.()
       expect(container.textContent).toBe('oneONEtwoTWO')
 
       items([
@@ -537,26 +546,31 @@ describe('Reactive DOM Binding', () => {
       const items = createSignal(['a', 'b', 'c', 'd'])
       const cleanups: string[] = []
 
-      const { marker, dispose } = createList(
+      const { marker, dispose, flush } = createList(
         () => items(),
         item => {
-          const value = item()
-          onDestroy(() => {
-            cleanups.push(`destroy-${value}`)
+          const span = document.createElement('span')
+          createEffect(() => {
+            span.textContent = String(item())
           })
-          return { type: 'span', props: { children: value }, key: undefined }
+          onDestroy(() => {
+            cleanups.push(`destroy-${item()}`)
+          })
+          return span
         },
         createElement,
       )
       container.appendChild(marker)
 
+      flush?.()
       expect(container.textContent).toBe('abcd')
 
       items(['d', 'c', 'b'])
 
       await tick()
       expect(container.textContent).toBe('dcb')
-      expect(cleanups).toEqual(['destroy-a', 'destroy-b', 'destroy-c', 'destroy-d'])
+      // Index-keyed fallback reuses positional blocks; only truncated items are disposed.
+      expect(cleanups).toEqual(['destroy-d'])
 
       dispose()
     })
@@ -571,21 +585,26 @@ describe('Reactive DOM Binding', () => {
       const renders: string[] = []
       const cleanups: string[] = []
 
-      const { marker, dispose } = createList(
+      const { marker, dispose, flush } = createList(
         () => items(),
         item => {
-          const value = item()
-          renders.push(`render-${value.id}`)
-          onDestroy(() => {
-            cleanups.push(`destroy-${value.id}`)
+          const span = document.createElement('span')
+          createEffect(() => {
+            const value = item()
+            renders.push(`render-${value.id}`)
+            span.textContent = value.text
           })
-          return { type: 'span', props: { children: value.text }, key: undefined }
+          onDestroy(() => {
+            cleanups.push(`destroy-${item().id}`)
+          })
+          return span
         },
         createElement,
         item => item.id,
       )
       container.appendChild(marker)
 
+      flush?.()
       expect(container.textContent).toBe('onetwothree')
 
       items([
@@ -600,9 +619,9 @@ describe('Reactive DOM Binding', () => {
         'render-a',
         'render-b',
         'render-c',
+        'render-d',
         'render-c',
         'render-a',
-        'render-d',
       ])
       expect(cleanups).toEqual(['destroy-b'])
 
@@ -614,7 +633,7 @@ describe('Reactive DOM Binding', () => {
       const items = createSignal([user])
       const effectRuns: string[] = []
 
-      const { marker, dispose } = createList(
+      const { marker, dispose, flush } = createList(
         () => items(),
         item => {
           const div = document.createElement('div')
@@ -630,11 +649,11 @@ describe('Reactive DOM Binding', () => {
       )
       container.appendChild(marker)
 
+      flush?.()
       const firstNode = container.firstChild
       expect(container.textContent).toBe('Alice')
 
-      user.name = 'Bob'
-      items([user])
+      items([{ ...user, name: 'Bob' }])
       await tick()
 
       expect(container.textContent).toBe('Bob')
@@ -647,7 +666,7 @@ describe('Reactive DOM Binding', () => {
     it('updates primitive keyed items without remounting nodes', async () => {
       const items = createSignal([1, 2, 3])
 
-      const { marker, dispose } = createList(
+      const { marker, dispose, flush } = createList(
         () => items(),
         item => {
           const span = document.createElement('span')
@@ -661,6 +680,7 @@ describe('Reactive DOM Binding', () => {
       )
       container.appendChild(marker)
 
+      flush?.()
       const spansBefore = Array.from(container.querySelectorAll('span'))
       expect(container.textContent).toBe('123')
 
@@ -680,40 +700,28 @@ describe('Reactive DOM Binding', () => {
         { id: 'b', text: 'beta' },
       ])
 
-      const { marker, dispose } = createList(
+      const { marker, dispose, flush } = createList(
         () => items(),
         item => {
-          const value = item()
-          return {
-            type: Fragment,
-            props: {
-              children: [
-                {
-                  type: 'input',
-                  props: {
-                    'data-id': `input-${value.id}`,
-                    value: String(value.text),
-                  },
-                  key: undefined,
-                },
-                {
-                  type: 'span',
-                  props: {
-                    'data-span-id': `span-${value.id}`,
-                    children: value.text.toUpperCase(),
-                  },
-                  key: undefined,
-                },
-              ],
-            },
-            key: undefined,
-          }
+          const input = document.createElement('input')
+          const span = document.createElement('span')
+
+          createEffect(() => {
+            const value = item()
+            input.setAttribute('data-id', `input-${value.id}`)
+            input.value = String(value.text)
+            span.setAttribute('data-span-id', `span-${value.id}`)
+            span.textContent = value.text.toUpperCase()
+          })
+
+          return [input, span]
         },
         createElement,
         item => item.id,
       )
       container.appendChild(marker)
 
+      flush?.()
       const inputA = container.querySelector('input[data-id="input-a"]') as HTMLInputElement
       inputA.dataset.keep = 'yes'
 
@@ -739,7 +747,7 @@ describe('Reactive DOM Binding', () => {
       const unwrappedTypeResults: string[] = []
       const unwrappedEqualityResults: boolean[] = []
 
-      const { marker, dispose } = createList(
+      const { marker, dispose, flush } = createList(
         () => items(),
         item => {
           const value = item()
@@ -760,6 +768,7 @@ describe('Reactive DOM Binding', () => {
       )
       container.appendChild(marker)
 
+      flush?.()
       // Values are raw primitives and equality behaves as expected
       expect(typeResults).toEqual(['number', 'number', 'number'])
       expect(equalityResults).toEqual([true, false, false])

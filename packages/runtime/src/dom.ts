@@ -143,7 +143,7 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
     return document.createTextNode('')
   }
 
-  // Primitive proxy produced by keyed list binding
+  // Legacy primitive proxy support (kept for backward compatibility)
   if (typeof node === 'object' && node !== null && !(node instanceof Node)) {
     // Handle BindingHandle (createList, createConditional, etc)
     if ('marker' in node) {

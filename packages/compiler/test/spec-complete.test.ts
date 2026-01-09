@@ -662,9 +662,8 @@ describe('R016: Loop semantics', () => {
         return <ul>{items.map(item => <li key={item.id}>{item.name}</li>)}</ul>
       }
     `)
-    // Non-fine-grained mode uses insert instead of createList
-    expect(output).toContain('insert')
-    expect(output).not.toContain('createKeyedListContainer')
+    expect(output).toContain('createKeyedList')
+    expect(output).toContain('() => items()')
   })
 })
 

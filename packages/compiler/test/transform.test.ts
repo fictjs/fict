@@ -380,7 +380,7 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transformWithOptions(input)
-      expect(output).toContain('createList')
+      expect(output).toContain('createKeyedList')
       expect(output).toContain('score() === 100')
       expect(output).toContain('typeof score()')
       expect(output).toContain('idx()')

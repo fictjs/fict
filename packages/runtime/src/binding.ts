@@ -36,7 +36,7 @@ import {
   registerRootCleanup,
   type RootContext,
 } from './lifecycle'
-import { createVersionedSignalAccessor } from './list-helpers'
+import { createKeyedList } from './list-helpers'
 import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 import { batch } from './scheduler'
 import { computed, createSignal, untrack, type Signal } from './signal'
@@ -63,16 +63,6 @@ export interface BindingHandle {
 }
 
 /** Managed child node with its dispose function */
-interface ManagedBlock<T = unknown> {
-  nodes: Node[]
-  root: RootContext
-  value: Signal<T>
-  index: Signal<number>
-  start: Comment
-  end: Comment
-  renderCurrent: () => FictNode
-}
-
 // ============================================================================
 // Utility Functions
 // ============================================================================
@@ -1608,15 +1598,19 @@ export function createConditional(
 }
 
 // ============================================================================
-// List Rendering
+// List Rendering (fine-grained shim)
 // ============================================================================
 
 /** Key extractor function type */
 export type KeyFn<T> = (item: T, index: number) => string | number
 
 /**
- * Create a reactive list rendering binding with optional keying.
- * The render callback receives signal accessors for the item and index.
+ * Legacy createList API now delegates to fine-grained keyed list with index keys by default.
+ * Maintains signature compatibility while providing per-item signals.
+ *
+ * Note: When used directly (outside `createElement`), call `flush?.()` after
+ * inserting the returned marker into the DOM to kick off the initial render.
+ * The JSX/runtime path invokes `flush` for you.
  */
 export function createList<T>(
   items: () => T[],
@@ -1624,97 +1618,17 @@ export function createList<T>(
   createElementFn: CreateElementFn,
   getKey?: KeyFn<T>,
 ): BindingHandle {
-  const startMarker = document.createComment('fict:list:start')
-  const endMarker = document.createComment('fict:list:end')
-  const fragment = document.createDocumentFragment()
-  fragment.append(startMarker, endMarker)
-  const hostRoot = getCurrentRoot()
-
-  const nodeMap = new Map<string | number, ManagedBlock<T>>()
-  let pendingItems: T[] | null = null
-
-  const runListUpdate = () => {
-    const arr = items()
-    const parent = startMarker.parentNode as (ParentNode & Node) | null
-    if (!parent) {
-      pendingItems = arr
-      return
-    }
-    pendingItems = null
-
-    const newNodeMap = new Map<string | number, ManagedBlock<T>>()
-    const blocks: ManagedBlock<T>[] = []
-
-    for (let i = 0; i < arr.length; i++) {
-      const item = arr[i]! as T
-      const key = getKey ? getKey(item, i) : i
-      const existing = nodeMap.get(key)
-
-      let block: ManagedBlock<T>
-      if (existing) {
-        const previousValue = existing.value()
-        if (!getKey && previousValue !== item) {
-          destroyRoot(existing.root)
-          removeBlockNodes(existing)
-          block = mountBlock(item, i, renderItem, parent, endMarker, createElementFn, hostRoot)
-        } else {
-          const previousIndex = existing.index()
-          existing.value(item)
-          existing.index(i)
-
-          const needsRerender = getKey ? true : previousValue !== item || previousIndex !== i
-          block = needsRerender ? rerenderBlock(existing, createElementFn) : existing
-        }
-      } else {
-        block = mountBlock(item, i, renderItem, parent, endMarker, createElementFn, hostRoot)
-      }
-
-      newNodeMap.set(key, block)
-      blocks.push(block)
-    }
-
-    for (const [key, managed] of nodeMap) {
-      if (!newNodeMap.has(key)) {
-        destroyRoot(managed.root)
-        removeBlockNodes(managed)
-      }
-    }
-
-    let anchor: Node = endMarker
-    for (let i = blocks.length - 1; i >= 0; i--) {
-      const block = blocks[i]!
-      insertNodesBefore(parent, block.nodes, anchor)
-      if (block.nodes.length > 0) {
-        anchor = block.nodes[0]!
-      }
-    }
-
-    nodeMap.clear()
-    for (const [k, v] of newNodeMap) {
-      nodeMap.set(k, v)
-    }
+  const keyFn = getKey ?? ((_, idx) => idx)
+  const renderWrapper = (itemSig: Signal<T>, indexSig: Signal<number>): Node[] => {
+    const output = renderItem(itemSig, indexSig)
+    const node =
+      output instanceof Node ? output : (createElementFn(output as FictNode) as unknown as Node)
+    return toNodeArray(node)
   }
-
-  const dispose = createRenderEffect(runListUpdate)
-
-  return {
-    marker: fragment,
-    flush: () => {
-      if (pendingItems !== null) {
-        runListUpdate()
-      }
-    },
-    dispose: () => {
-      dispose()
-      for (const [, managed] of nodeMap) {
-        destroyRoot(managed.root)
-        removeBlockNodes(managed)
-      }
-      nodeMap.clear()
-      startMarker.parentNode?.removeChild(startMarker)
-      endMarker.parentNode?.removeChild(endMarker)
-    },
-  }
+  const { marker, dispose, flush } = createKeyedList(items, keyFn, renderWrapper, true)
+  const handle: BindingHandle = { marker, dispose }
+  if (flush) handle.flush = flush
+  return handle
 }
 
 // ============================================================================
@@ -1846,131 +1760,6 @@ export function createPortal(
     marker,
     dispose: portalDispose,
   }
-}
-
-// ============================================================================
-// Internal helpers
-// ============================================================================
-
-function mountBlock<T>(
-  initialValue: T,
-  initialIndex: number,
-  renderItem: (item: Signal<T>, index: Signal<number>) => FictNode,
-  parent: ParentNode & Node,
-  anchor: Node,
-  createElementFn: CreateElementFn,
-  hostRoot?: RootContext | undefined,
-): ManagedBlock<T> {
-  const start = document.createComment('fict:block:start')
-  const end = document.createComment('fict:block:end')
-  const valueSig = createVersionedSignalAccessor<T>(initialValue)
-  const indexSig = createSignal<number>(initialIndex)
-  const renderCurrent = () => renderItem(valueSig, indexSig)
-  const root = createRootContext(hostRoot)
-  const prev = pushRoot(root)
-  const nodes: Node[] = [start]
-  let handledError = false
-  try {
-    const output = renderCurrent()
-    if (output != null && output !== false) {
-      const el = createElementFn(output)
-      const rendered = toNodeArray(el)
-      nodes.push(...rendered)
-    }
-    nodes.push(end)
-    insertNodesBefore(parent, nodes, anchor)
-  } catch (err) {
-    if (handleSuspend(err as any, root)) {
-      handledError = true
-      nodes.push(end)
-      insertNodesBefore(parent, nodes, anchor)
-    } else if (handleError(err, { source: 'renderChild' }, root)) {
-      handledError = true
-      nodes.push(end)
-      insertNodesBefore(parent, nodes, anchor)
-    } else {
-      throw err
-    }
-  } finally {
-    popRoot(prev)
-    if (!handledError) {
-      flushOnMount(root)
-    } else {
-      destroyRoot(root)
-    }
-  }
-  return {
-    nodes,
-    root,
-    value: valueSig,
-    index: indexSig,
-    start,
-    end,
-    renderCurrent,
-  }
-}
-
-function rerenderBlock<T>(
-  block: ManagedBlock<T>,
-  createElementFn: CreateElementFn,
-): ManagedBlock<T> {
-  const currentContent = block.nodes.slice(1, Math.max(1, block.nodes.length - 1))
-  const currentNode = currentContent.length === 1 ? currentContent[0] : null
-
-  clearRoot(block.root)
-
-  const prev = pushRoot(block.root)
-  let nextOutput: FictNode
-  let handledError = false
-  try {
-    nextOutput = block.renderCurrent()
-  } catch (err) {
-    if (handleSuspend(err as any, block.root)) {
-      handledError = true
-      popRoot(prev)
-      destroyRoot(block.root)
-      block.nodes = [block.start, block.end]
-      return block
-    }
-    if (handleError(err, { source: 'renderChild' }, block.root)) {
-      handledError = true
-      popRoot(prev)
-      destroyRoot(block.root)
-      block.nodes = [block.start, block.end]
-      return block
-    }
-    throw err
-  } finally {
-    if (!handledError) {
-      popRoot(prev)
-    }
-  }
-
-  if (isFragmentVNode(nextOutput) && currentContent.length > 0) {
-    const patched = patchFragmentChildren(currentContent, nextOutput.props?.children)
-    if (patched) {
-      block.nodes = [block.start, ...currentContent, block.end]
-      return block
-    }
-  }
-
-  if (currentNode && patchNode(currentNode, nextOutput)) {
-    block.nodes = [block.start, currentNode, block.end]
-    return block
-  }
-
-  clearContent(block)
-
-  if (nextOutput != null && nextOutput !== false) {
-    const newNodes = toNodeArray(
-      nextOutput instanceof Node ? nextOutput : (createElementFn(nextOutput) as Node),
-    )
-    insertNodesBefore(block.start.parentNode as ParentNode & Node, newNodes, block.end)
-    block.nodes = [block.start, ...newNodes, block.end]
-  } else {
-    block.nodes = [block.start, block.end]
-  }
-  return block
 }
 
 function patchElement(el: Element, output: FictNode): boolean {
@@ -2149,22 +1938,6 @@ function patchFragmentChildren(
     }
   }
   return true
-}
-
-function clearContent<T>(block: ManagedBlock<T>): void {
-  const nodes = block.nodes.slice(1, Math.max(1, block.nodes.length - 1))
-  removeNodes(nodes)
-}
-
-function removeBlockNodes<T>(block: ManagedBlock<T>): void {
-  let cursor: Node | null = block.start
-  const end = block.end
-  while (cursor) {
-    const next: Node | null = cursor.nextSibling
-    cursor.parentNode?.removeChild(cursor)
-    if (cursor === end) break
-    cursor = next
-  }
 }
 
 // DOM utility functions are imported from './node-ops' to avoid duplication

@@ -396,13 +396,7 @@ export type RenderItemFn<T> = (itemSig: Signal<T>, indexSig: Signal<number>) => 
 
 ## Migration Path
 
-Existing code using the old `createList` helper will continue to work. The compiler will:
-
-1. Detect `key` attribute presence
-2. If present: use new `createKeyedList`
-3. If absent: use old `createList` (or warn and fallback)
-
-This allows gradual migration and backwards compatibility.
+Existing code using the old `createList` helper will continue to work, but the compiler now always emits `createKeyedList` for mapped JSX. When no explicit key is provided, it falls back to an index-based key function (and surfaces `FICT-J002` to encourage explicit keys). `createList` remains as a compatibility shim that delegates to `createKeyedList`.
 
 ## Performance Considerations
 
@@ -415,11 +409,7 @@ This allows gradual migration and backwards compatibility.
 
 ### Compared to Full Rebuild
 
-Old approach with `createList` (full rebuild):
-
-- Any change: O(n) destroy + O(n) create = O(2n)
-
-New approach with `createKeyedList`:
+Fine-grained keyed list (`createKeyedList`, used for keyed and unkeyed lists alike):
 
 - Reorder: O(n) moves
 - Update: O(0) (signals update existing nodes)
