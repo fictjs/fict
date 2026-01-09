@@ -27,7 +27,6 @@ export {
   bindEvent,
   bindRef,
   createConditional,
-  createList,
   delegateEvents,
   clearDelegatedEvents,
 } from './binding'

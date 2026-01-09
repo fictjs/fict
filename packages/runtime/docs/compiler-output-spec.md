@@ -320,7 +320,7 @@ const __list = createKeyedList(
 ## Type Definitions
 
 ```typescript
-// Already defined in list-helpers.ts
+// Shapes used by createKeyedList
 export interface KeyedBlock<T = unknown> {
   key: string | number
   nodes: Node[]
@@ -343,8 +343,8 @@ export interface KeyedListBinding {
 }
 
 // Compiler-generated code uses these:
-export type KeyFn<T> = (item: T, index: number) => string | number
-export type RenderItemFn<T> = (itemSig: Signal<T>, indexSig: Signal<number>) => Node[]
+type KeyFn<T> = (item: T, index: number) => string | number
+type RenderItemFn<T> = (itemSig: Signal<T>, indexSig: Signal<number>) => Node[]
 ```
 
 ## Compiler Implementation Phases
@@ -396,7 +396,7 @@ export type RenderItemFn<T> = (itemSig: Signal<T>, indexSig: Signal<number>) => 
 
 ## Migration Path
 
-Existing code using the old `createList` helper will continue to work, but the compiler now always emits `createKeyedList` for mapped JSX. When no explicit key is provided, it falls back to an index-based key function (and surfaces `FICT-J002` to encourage explicit keys). `createList` remains as a compatibility shim that delegates to `createKeyedList`.
+Compiler output always uses `createKeyedList` for mapped JSX. When no explicit key is provided, it falls back to an index-based key function (and surfaces `FICT-J002` to encourage explicit keys). The legacy `createList` helper has been removed; hand-written code should call `createKeyedList` directly.
 
 ## Performance Considerations
 

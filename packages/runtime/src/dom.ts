@@ -145,7 +145,7 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
 
   // Legacy primitive proxy support (kept for backward compatibility)
   if (typeof node === 'object' && node !== null && !(node instanceof Node)) {
-    // Handle BindingHandle (createList, createConditional, etc)
+    // Handle BindingHandle (list/conditional bindings, etc)
     if ('marker' in node) {
       const handle = node as { marker: unknown; dispose?: () => void; flush?: () => void }
       // Register dispose cleanup if available

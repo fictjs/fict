@@ -35,10 +35,9 @@ import {
   registerRootCleanup,
   type RootContext,
 } from './lifecycle'
-import { createKeyedList } from './list-helpers'
 import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 import { batch } from './scheduler'
-import { computed, untrack, type Signal } from './signal'
+import { computed, untrack } from './signal'
 import type { Cleanup, FictNode } from './types'
 
 // ============================================================================
@@ -132,14 +131,14 @@ const PRIMITIVE_PROXY_RAW_VALUE = Symbol('fict:primitive-proxy:raw-value')
  *
  * @example
  * ```ts
- * createList(
+ * createKeyedList(
  *   () => [1, 2, 3],
+ *   item => item,
  *   (item) => {
  *     const raw = unwrapPrimitive(item)
  *     typeof raw === 'number'  // true
  *     raw === 1  // true (for first item)
- *   },
- *   item => item
+ *   }
  * )
  * ```
  */
@@ -1594,40 +1593,6 @@ export function createConditional(
       endMarker.parentNode?.removeChild(endMarker)
     },
   }
-}
-
-// ============================================================================
-// List Rendering (fine-grained shim)
-// ============================================================================
-
-/** Key extractor function type */
-export type KeyFn<T> = (item: T, index: number) => string | number
-
-/**
- * Legacy createList API now delegates to fine-grained keyed list with index keys by default.
- * Maintains signature compatibility while providing per-item signals.
- *
- * Note: When used directly (outside `createElement`), call `flush?.()` after
- * inserting the returned marker into the DOM to kick off the initial render.
- * The JSX/runtime path invokes `flush` for you.
- */
-export function createList<T>(
-  items: () => T[],
-  renderItem: (item: Signal<T>, index: Signal<number>) => FictNode,
-  createElementFn: CreateElementFn,
-  getKey?: KeyFn<T>,
-): BindingHandle {
-  const keyFn = getKey ?? ((_, idx) => idx)
-  const renderWrapper = (itemSig: Signal<T>, indexSig: Signal<number>): Node[] => {
-    const output = renderItem(itemSig, indexSig)
-    const node =
-      output instanceof Node ? output : (createElementFn(output as FictNode) as unknown as Node)
-    return toNodeArray(node)
-  }
-  const { marker, dispose, flush } = createKeyedList(items, keyFn, renderWrapper, true)
-  const handle: BindingHandle = { marker, dispose }
-  if (flush) handle.flush = flush
-  return handle
 }
 
 // ============================================================================

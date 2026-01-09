@@ -15,7 +15,6 @@ import {
   bindStyle,
   bindClass,
   createConditional,
-  createList,
   insert,
   createShow,
   createPortal,
@@ -25,6 +24,8 @@ import {
   isReactive,
   unwrap,
   callEventHandler,
+  createKeyedList,
+  toNodeArray,
 } from '../src/index'
 
 const tick = () =>
@@ -32,6 +33,23 @@ const tick = () =>
     typeof queueMicrotask === 'function'
       ? queueMicrotask(resolve)
       : Promise.resolve().then(resolve),
+  )
+
+const createKeyedListBinding = <T>(
+  items: () => T[],
+  renderItem: (item: any, index: any) => any,
+  getKey?: (item: T, index: number) => string | number,
+) =>
+  createKeyedList(
+    items,
+    getKey ?? ((_, idx) => idx),
+    (itemSig, indexSig) => {
+      const output = renderItem(itemSig, indexSig)
+      const node =
+        output instanceof Node ? output : (createElement(output as any) as unknown as Node)
+      return toNodeArray(node)
+    },
+    true,
   )
 
 describe('Reactive DOM Binding', () => {
@@ -410,14 +428,13 @@ describe('Reactive DOM Binding', () => {
     })
   })
 
-  describe('createList', () => {
+  describe('createKeyedList', () => {
     it('renders list items', () => {
       const items = createSignal(['a', 'b', 'c'])
 
-      const { marker, dispose, flush } = createList(
+      const { marker, dispose, flush } = createKeyedListBinding(
         () => items(),
         item => item(),
-        createElement,
         item => item,
       )
       container.appendChild(marker)
@@ -431,10 +448,9 @@ describe('Reactive DOM Binding', () => {
     it('updates when items change', async () => {
       const items = createSignal(['a', 'b'])
 
-      const { marker, dispose, flush } = createList(
+      const { marker, dispose, flush } = createKeyedListBinding(
         () => items(),
         item => item(),
-        createElement,
         item => item,
       )
       container.appendChild(marker)
@@ -461,7 +477,7 @@ describe('Reactive DOM Binding', () => {
 
       const renderCounts = new Map<number, number>()
 
-      const { marker, dispose, flush } = createList(
+      const { marker, dispose, flush } = createKeyedListBinding(
         () => items(),
         item => {
           const span = document.createElement('span')
@@ -472,7 +488,6 @@ describe('Reactive DOM Binding', () => {
           })
           return span
         },
-        createElement,
         item => item.id,
       )
       container.appendChild(marker)
@@ -503,7 +518,7 @@ describe('Reactive DOM Binding', () => {
         { id: 2, text: 'two' },
       ])
 
-      const { marker, dispose, flush } = createList(
+      const { marker, dispose, flush } = createKeyedListBinding(
         () => items(),
         item => {
           const textNode = document.createTextNode('')
@@ -519,7 +534,6 @@ describe('Reactive DOM Binding', () => {
 
           return [textNode, span]
         },
-        createElement,
         item => item.id,
       )
       container.appendChild(marker)
@@ -546,7 +560,7 @@ describe('Reactive DOM Binding', () => {
       const items = createSignal(['a', 'b', 'c', 'd'])
       const cleanups: string[] = []
 
-      const { marker, dispose, flush } = createList(
+      const { marker, dispose, flush } = createKeyedListBinding(
         () => items(),
         item => {
           const span = document.createElement('span')
@@ -558,7 +572,6 @@ describe('Reactive DOM Binding', () => {
           })
           return span
         },
-        createElement,
       )
       container.appendChild(marker)
 
@@ -585,7 +598,7 @@ describe('Reactive DOM Binding', () => {
       const renders: string[] = []
       const cleanups: string[] = []
 
-      const { marker, dispose, flush } = createList(
+      const { marker, dispose, flush } = createKeyedListBinding(
         () => items(),
         item => {
           const span = document.createElement('span')
@@ -599,7 +612,6 @@ describe('Reactive DOM Binding', () => {
           })
           return span
         },
-        createElement,
         item => item.id,
       )
       container.appendChild(marker)
@@ -633,7 +645,7 @@ describe('Reactive DOM Binding', () => {
       const items = createSignal([user])
       const effectRuns: string[] = []
 
-      const { marker, dispose, flush } = createList(
+      const { marker, dispose, flush } = createKeyedListBinding(
         () => items(),
         item => {
           const div = document.createElement('div')
@@ -644,7 +656,6 @@ describe('Reactive DOM Binding', () => {
           })
           return div
         },
-        createElement,
         item => item.id,
       )
       container.appendChild(marker)
@@ -666,7 +677,7 @@ describe('Reactive DOM Binding', () => {
     it('updates primitive keyed items without remounting nodes', async () => {
       const items = createSignal([1, 2, 3])
 
-      const { marker, dispose, flush } = createList(
+      const { marker, dispose, flush } = createKeyedListBinding(
         () => items(),
         item => {
           const span = document.createElement('span')
@@ -675,7 +686,6 @@ describe('Reactive DOM Binding', () => {
           })
           return span
         },
-        createElement,
         (_item, index) => index,
       )
       container.appendChild(marker)
@@ -700,7 +710,7 @@ describe('Reactive DOM Binding', () => {
         { id: 'b', text: 'beta' },
       ])
 
-      const { marker, dispose, flush } = createList(
+      const { marker, dispose, flush } = createKeyedListBinding(
         () => items(),
         item => {
           const input = document.createElement('input')
@@ -716,7 +726,6 @@ describe('Reactive DOM Binding', () => {
 
           return [input, span]
         },
-        createElement,
         item => item.id,
       )
       container.appendChild(marker)
@@ -747,7 +756,7 @@ describe('Reactive DOM Binding', () => {
       const unwrappedTypeResults: string[] = []
       const unwrappedEqualityResults: boolean[] = []
 
-      const { marker, dispose, flush } = createList(
+      const { marker, dispose, flush } = createKeyedListBinding(
         () => items(),
         item => {
           const value = item()
@@ -763,7 +772,6 @@ describe('Reactive DOM Binding', () => {
           div.textContent = String(value)
           return div
         },
-        createElement,
         item => item,
       )
       container.appendChild(marker)

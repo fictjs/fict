@@ -18,7 +18,8 @@ import {
   batch,
   bindText,
   createConditional,
-  createList,
+  createKeyedList,
+  toNodeArray,
 } from '../src'
 
 const tick = () =>
@@ -26,6 +27,23 @@ const tick = () =>
     typeof queueMicrotask === 'function'
       ? queueMicrotask(resolve)
       : Promise.resolve().then(resolve),
+  )
+
+const createKeyedListBinding = <T>(
+  items: () => T[],
+  renderItem: (item: any, index: any) => any,
+  getKey?: (item: T, index: number) => string | number,
+) =>
+  createKeyedList(
+    items,
+    getKey ?? ((_, idx) => idx),
+    (itemSig, indexSig) => {
+      const output = renderItem(itemSig, indexSig)
+      const node =
+        output instanceof Node ? output : (createElement(output as any) as unknown as Node)
+      return toNodeArray(node)
+    },
+    true,
   )
 
 describe('Complete Integration Tests', () => {
@@ -429,7 +447,7 @@ describe('Complete Integration Tests', () => {
       const items = createSignal([1, 2, 3])
       const cleanupLog: number[] = []
 
-      const { marker, dispose } = createList(
+      const { marker, dispose } = createKeyedListBinding(
         () => items(),
         item => {
           const div = document.createElement('div')
@@ -440,7 +458,6 @@ describe('Complete Integration Tests', () => {
           })
           return div
         },
-        createElement,
         (_, i) => i,
       )
 
@@ -767,7 +784,7 @@ describe('Complete Integration Tests', () => {
           nextId(nextId() + 1)
         }
 
-        const list = createList(
+        const list = createKeyedListBinding(
           () => todos(),
           todo => {
             const value = todo()
@@ -791,7 +808,6 @@ describe('Complete Integration Tests', () => {
             li.append(checkbox, span, delBtn)
             return li
           },
-          createElement,
           t => t.id,
         )
 

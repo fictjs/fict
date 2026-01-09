@@ -2,8 +2,6 @@
 
 import { bench, describe } from 'vitest'
 
-import { createList } from '../src/binding'
-import { createElement } from '../src/dom'
 import { createKeyedList } from '../src/list-helpers'
 import { createSignal, type Signal } from '../src/signal'
 
@@ -50,19 +48,19 @@ describe('Keyed List Performance Benchmarks', () => {
       listBinding.dispose()
     })
 
-    bench('non-keyed list - initial render', async () => {
+    bench('index-keyed list - initial render', async () => {
       const container = document.createElement('div')
       const items = createSignal(generateItems(1000))
 
-      const listBinding = createList(
+      const listBinding = createKeyedList(
         () => items(),
-        item => {
+        (_item, index) => index,
+        (itemSig: Signal<Item>) => {
           const li = document.createElement('li')
-          const value = item()
+          const value = itemSig()
           li.textContent = value.name
-          return li
+          return [li]
         },
-        createElement,
       )
 
       container.appendChild(listBinding.marker)
@@ -97,19 +95,19 @@ describe('Keyed List Performance Benchmarks', () => {
       listBinding.dispose()
     })
 
-    bench('non-keyed list - prepend', async () => {
+    bench('index-keyed list - prepend', async () => {
       const container = document.createElement('div')
       const items = createSignal(generateItems(1000))
 
-      const listBinding = createList(
+      const listBinding = createKeyedList(
         () => items(),
-        item => {
+        (_item, index) => index,
+        (itemSig: Signal<Item>) => {
           const li = document.createElement('li')
-          const value = item()
+          const value = itemSig()
           li.textContent = value.name
-          return li
+          return [li]
         },
-        createElement,
       )
 
       container.appendChild(listBinding.marker)
@@ -148,19 +146,19 @@ describe('Keyed List Performance Benchmarks', () => {
       listBinding.dispose()
     })
 
-    bench('non-keyed list - append', async () => {
+    bench('index-keyed list - append', async () => {
       const container = document.createElement('div')
       const items = createSignal(generateItems(1000))
 
-      const listBinding = createList(
+      const listBinding = createKeyedList(
         () => items(),
-        item => {
+        (_item, index) => index,
+        (itemSig: Signal<Item>) => {
           const li = document.createElement('li')
-          const value = item()
+          const value = itemSig()
           li.textContent = value.name
-          return li
+          return [li]
         },
-        createElement,
       )
 
       container.appendChild(listBinding.marker)
@@ -199,19 +197,19 @@ describe('Keyed List Performance Benchmarks', () => {
       listBinding.dispose()
     })
 
-    bench('non-keyed list - remove middle', async () => {
+    bench('index-keyed list - remove middle', async () => {
       const container = document.createElement('div')
       const items = createSignal(generateItems(1000))
 
-      const listBinding = createList(
+      const listBinding = createKeyedList(
         () => items(),
-        item => {
+        (_item, index) => index,
+        (itemSig: Signal<Item>) => {
           const li = document.createElement('li')
-          const value = item()
+          const value = itemSig()
           li.textContent = value.name
-          return li
+          return [li]
         },
-        createElement,
       )
 
       container.appendChild(listBinding.marker)
@@ -250,19 +248,19 @@ describe('Keyed List Performance Benchmarks', () => {
       listBinding.dispose()
     })
 
-    bench('non-keyed list - reverse order', async () => {
+    bench('index-keyed list - reverse order', async () => {
       const container = document.createElement('div')
       const items = createSignal(generateItems(1000))
 
-      const listBinding = createList(
+      const listBinding = createKeyedList(
         () => items(),
-        item => {
+        (_item, index) => index,
+        (itemSig: Signal<Item>) => {
           const li = document.createElement('li')
-          const value = item()
+          const value = itemSig()
           li.textContent = value.name
-          return li
+          return [li]
         },
-        createElement,
       )
 
       container.appendChild(listBinding.marker)
@@ -315,24 +313,24 @@ describe('Keyed List Performance Benchmarks', () => {
       listBinding.dispose()
     })
 
-    bench('non-keyed list - update all properties', async () => {
+    bench('index-keyed list - update all properties', async () => {
       const container = document.createElement('div')
       const items = createSignal(generateItems(100))
 
-      const listBinding = createList(
+      const listBinding = createKeyedList(
         () => items(),
-        item => {
+        (_item, index) => index,
+        (itemSig: Signal<Item>) => {
           const li = document.createElement('li')
           const span = document.createElement('span')
-          const value = item()
+          const value = itemSig()
 
-          // Static content (non-keyed list recreates on update)
+          // Static content (index-keyed list recreates on update)
           span.textContent = `${value.name}: ${value.value.toFixed(2)}`
 
           li.appendChild(span)
-          return li
+          return [li]
         },
-        createElement,
       )
 
       container.appendChild(listBinding.marker)
@@ -381,19 +379,19 @@ describe('Keyed List Performance Benchmarks', () => {
       listBinding.dispose()
     })
 
-    bench('non-keyed list - mixed operations', async () => {
+    bench('index-keyed list - mixed operations', async () => {
       const container = document.createElement('div')
       const items = createSignal(generateItems(500))
 
-      const listBinding = createList(
+      const listBinding = createKeyedList(
         () => items(),
-        item => {
+        (_item, index) => index,
+        (itemSig: Signal<Item>) => {
           const li = document.createElement('li')
-          const value = item()
+          const value = itemSig()
           li.textContent = value.name
-          return li
+          return [li]
         },
-        createElement,
       )
 
       container.appendChild(listBinding.marker)

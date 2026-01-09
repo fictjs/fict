@@ -101,7 +101,6 @@ export {
   isReactive,
   // Advanced bindings
   createConditional,
-  createList,
   createPortal,
   createShow,
   // Utility functions
@@ -129,13 +128,7 @@ export { default as reconcileArrays } from './reconcile'
 // Types
 // ============================================================================
 
-export type {
-  MaybeReactive,
-  BindingHandle,
-  KeyFn,
-  CreateElementFn,
-  AttributeSetter,
-} from './binding'
+export type { MaybeReactive, BindingHandle, CreateElementFn, AttributeSetter } from './binding'
 
 export type {
   FictNode,
