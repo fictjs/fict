@@ -731,7 +731,6 @@ Recent runtime changes introduced a managed-block implementation for keyed lists
 Each item in a keyed list gets its own `ManagedBlock<T>` containing:
 
 - **Signals**: `valueSig`, `indexSig`, `versionSig` for tracking item state
-- **Value Proxy**: A reactive wrapper that always reads from the live signal
 - **DOM Markers**: `start`/`end` comment nodes defining block boundaries
 - **Root Context**: Preserved across updates to maintain component lifecycle
 
@@ -755,23 +754,7 @@ When the list updates:
 
 ### 10.4 Primitive Values
 
-- `createKeyedList` no longer wraps primitives in proxies; `typeof item()` and strict equality work as expected.
-- `unwrapPrimitive` remains as a no-op compatibility helper for code that previously used primitive proxies.
-
-#### ⚠️ Do Not Use Outside Lists
-
-```ts
-// ❌ Wrong - Won't update reactively
-const count = createSignal(0)
-const proxy = createValueProxy(() => count())
-return createElement(proxy)  // Creates static text node!
-
-// ✅ Correct - Use standard bindings
-const count = createSignal(0)
-return <div>{count}</div>  // Uses reactive text binding
-```
-
-**Rationale**: Primitive proxies are designed specifically for the keyed-list update flow. Using them elsewhere bypasses the standard binding system and creates non-reactive DOM.
+- `createKeyedList` always yields raw primitives; `typeof item()` and strict equality work as expected.
 
 ### 10.5 Incremental DOM Updates
 

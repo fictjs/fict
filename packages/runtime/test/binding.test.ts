@@ -20,7 +20,6 @@ import {
   createPortal,
   bindEvent,
   onDestroy,
-  unwrapPrimitive,
   isReactive,
   unwrap,
   callEventHandler,
@@ -753,8 +752,6 @@ describe('Reactive DOM Binding', () => {
       const items = createSignal([1, 2, 3])
       const typeResults: string[] = []
       const equalityResults: boolean[] = []
-      const unwrappedTypeResults: string[] = []
-      const unwrappedEqualityResults: boolean[] = []
 
       const { marker, dispose, flush } = createKeyedListBinding(
         () => items(),
@@ -762,11 +759,6 @@ describe('Reactive DOM Binding', () => {
           const value = item()
           typeResults.push(typeof value)
           equalityResults.push(value === 1)
-
-          // Unwrapped primitive behavior
-          const raw = unwrapPrimitive(value)
-          unwrappedTypeResults.push(typeof raw)
-          unwrappedEqualityResults.push(raw === 1)
 
           const div = document.createElement('div')
           div.textContent = String(value)
@@ -781,21 +773,7 @@ describe('Reactive DOM Binding', () => {
       expect(typeResults).toEqual(['number', 'number', 'number'])
       expect(equalityResults).toEqual([true, false, false])
 
-      // unwrapPrimitive is now a no-op for primitives
-      expect(unwrappedTypeResults).toEqual(['number', 'number', 'number'])
-      expect(unwrappedEqualityResults).toEqual([true, false, false])
-
       dispose()
-    })
-
-    it('unwrapPrimitive passes through non-proxy values unchanged', () => {
-      expect(unwrapPrimitive(42)).toBe(42)
-      expect(unwrapPrimitive('hello')).toBe('hello')
-      expect(unwrapPrimitive(true)).toBe(true)
-      expect(unwrapPrimitive(null)).toBe(null)
-      expect(unwrapPrimitive(undefined)).toBe(undefined)
-      const obj = { foo: 'bar' }
-      expect(unwrapPrimitive(obj)).toBe(obj)
     })
   })
 

@@ -20,7 +20,6 @@ import {
   createChildBinding,
   bindEvent,
   isReactive,
-  PRIMITIVE_PROXY,
   type MaybeReactive,
   type AttributeSetter,
   type BindingHandle,
@@ -143,7 +142,6 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
     return document.createTextNode('')
   }
 
-  // Legacy primitive proxy support (kept for backward compatibility)
   if (typeof node === 'object' && node !== null && !(node instanceof Node)) {
     // Handle BindingHandle (list/conditional bindings, etc)
     if ('marker' in node) {
@@ -163,14 +161,6 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
         }
       }
       return createElement(handle.marker as FictNode)
-    }
-
-    const nodeRecord = node as unknown as Record<PropertyKey, unknown>
-    if (nodeRecord[PRIMITIVE_PROXY]) {
-      const primitiveGetter = nodeRecord[Symbol.toPrimitive]
-      const value =
-        typeof primitiveGetter === 'function' ? primitiveGetter.call(node, 'default') : node
-      return document.createTextNode(value == null || value === false ? '' : String(value))
     }
   }
 
