@@ -35,8 +35,8 @@ function Counter() {
 | ----------------- | ------------------------------ | ---------------------------------------------------------------- | ----------------------------- | ------------------------- | ------------- |
 | State syntax      | `useState()` + setter          | `ref()` + `.value` (JS) / template auto-unwrap / or `reactive()` | `createSignal()` + `()` calls | `$state()`                | `$state()`    |
 | Derived values    | `useMemo` + deps (or Compiler) | `computed()`                                                     | `createMemo()`                | `$derived()`              | **automatic** |
-| Props destructure | ✅                             | ⚠️ (usually breaks;                                              | ❌ (breaks reactivity)        | ✅ (`$props()` semantics) | ✅            |
-| Control flow      | native JS                      | typically: `v-if`/`v-for`;                                       | typically `<Show>/<For>`      | `{#if}/{#each}`           | native JS     |
+| Props destructure | ✅                             | ⚠️ usually breaks reactivity                                     | ❌ (breaks reactivity)        | ✅ (`$props()` semantics) | ✅            |
+| Control flow      | native JS                      | typically `v-if`/`v-for`                                         | typically `<Show>/<For>`      | `{#if}/{#each}`           | native JS     |
 
 Fict gives you:
 
