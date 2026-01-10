@@ -487,8 +487,11 @@ function createHIREntrypointVisitor(
         const comments =
           ((path.hub as any)?.file?.ast as BabelCore.types.File | undefined)?.comments || []
         const suppressions = parseSuppressions(comments)
-        const warn = createWarningDispatcher(options.onWarn, suppressions)
-        const optionsWithWarnings: FictCompilerOptions = { ...options, onWarn: warn }
+        const dev = options.dev !== false
+        const warn = dev ? createWarningDispatcher(options.onWarn, suppressions) : () => {}
+        const optionsWithWarnings: FictCompilerOptions = dev
+          ? { ...options, onWarn: warn }
+          : { ...options, onWarn: undefined }
         const isHookName = (name: string | undefined): boolean => !!name && /^use[A-Z]/.test(name)
         const getFunctionName = (
           fnPath: BabelCore.NodePath<BabelCore.types.Function>,
@@ -1071,7 +1074,9 @@ function createHIREntrypointVisitor(
         }
 
         // Emit conservative warnings for mutation/dynamic access
-        runWarningPass(path as any, stateVars, derivedVars, warn, fileName, t)
+        if (dev) {
+          runWarningPass(path as any, stateVars, derivedVars, warn, fileName, t)
+        }
 
         const fileAst = t.file(path.node)
         const hir = buildHIR(fileAst)
@@ -1096,6 +1101,8 @@ export const createFictPlugin = declare(
     const normalizedOptions: FictCompilerOptions = {
       ...options,
       fineGrainedDom: options.fineGrainedDom ?? true,
+      dev:
+        options.dev ?? (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'),
     }
 
     return {

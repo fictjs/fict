@@ -13,6 +13,9 @@ function runTransform(
   extraPlugins: PluginItem[] = [],
 ): string {
   const mergedOptions: FictCompilerOptions = { ...options }
+  if (mergedOptions.dev === undefined) {
+    mergedOptions.dev = true
+  }
 
   const result = transformSync(source, {
     filename,

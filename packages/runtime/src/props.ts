@@ -122,38 +122,46 @@ export function mergeProps<T extends Record<string, unknown>>(
     return unwrapProps(value as T)
   }
 
+  const hasProp = (prop: string | symbol) => {
+    for (const src of validSources) {
+      const raw = resolveSource(src)
+      if (raw && prop in raw) {
+        return true
+      }
+    }
+    return false
+  }
+
+  const readProp = (prop: string | symbol) => {
+    // Only return undefined if no source has this Symbol property
+    // Search sources in reverse order (last wins)
+    for (let i = validSources.length - 1; i >= 0; i--) {
+      const src = validSources[i]!
+      const raw = resolveSource(src)
+      if (!raw || !(prop in raw)) continue
+
+      const value = (raw as Record<string | symbol, unknown>)[prop]
+      // Preserve prop getters - let child component's createPropsProxy unwrap lazily
+      // Note: For Symbol properties, we still wrap in getter if source is dynamic
+      if (typeof src === 'function' && !isPropGetter(value)) {
+        return __fictProp(() => {
+          const latest = resolveSource(src)
+          if (!latest || !(prop in latest)) return undefined
+          return (latest as Record<string | symbol, unknown>)[prop]
+        })
+      }
+      return value
+    }
+    return undefined
+  }
+
   return new Proxy({} as Record<string, unknown>, {
     get(_, prop) {
-      // Only return undefined if no source has this Symbol property
-      // Search sources in reverse order (last wins)
-      for (let i = validSources.length - 1; i >= 0; i--) {
-        const src = validSources[i]!
-        const raw = resolveSource(src)
-        if (!raw || !(prop in raw)) continue
-
-        const value = (raw as Record<string | symbol, unknown>)[prop]
-        // Preserve prop getters - let child component's createPropsProxy unwrap lazily
-        // Note: For Symbol properties, we still wrap in getter if source is dynamic
-        if (typeof src === 'function' && !isPropGetter(value)) {
-          return __fictProp(() => {
-            const latest = resolveSource(src)
-            if (!latest || !(prop in latest)) return undefined
-            return (latest as Record<string | symbol, unknown>)[prop]
-          })
-        }
-        return value
-      }
-      return undefined
+      return readProp(prop)
     },
 
     has(_, prop) {
-      for (const src of validSources) {
-        const raw = resolveSource(src)
-        if (raw && prop in raw) {
-          return true
-        }
-      }
-      return false
+      return hasProp(prop)
     },
 
     ownKeys() {
@@ -170,21 +178,12 @@ export function mergeProps<T extends Record<string, unknown>>(
     },
 
     getOwnPropertyDescriptor(_, prop) {
-      for (let i = validSources.length - 1; i >= 0; i--) {
-        const raw = resolveSource(validSources[i]!)
-        if (raw && prop in raw) {
-          return {
-            enumerable: true,
-            configurable: true,
-            get: () => {
-              const value = (raw as Record<string | symbol, unknown>)[prop]
-              // Preserve prop getters - let child component's createPropsProxy unwrap lazily
-              return value
-            },
-          }
-        }
+      if (!hasProp(prop)) return undefined
+      return {
+        enumerable: true,
+        configurable: true,
+        get: () => readProp(prop),
       }
-      return undefined
     },
   })
 }

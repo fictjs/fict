@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { createEffect, createStore } from '../src/index'
+import { createDiffingSignal } from '../src/store'
 
 const tick = () => Promise.resolve()
 
@@ -84,7 +85,7 @@ describe('createStore reconciliation', () => {
     expect(seen[seen.length - 1]).toEqual([1, 99, 3])
   })
 
-  it('gracefully handles primitive replacement attempt', async () => {
+  it('allows replacing nested objects with primitives', async () => {
     const [state, setState] = createStore<{ value: { nested: number } | number }>({
       value: { nested: 42 },
     })
@@ -97,10 +98,51 @@ describe('createStore reconciliation', () => {
     await tick()
     expect((observedValue as any).nested).toBe(42)
 
-    // Try to replace object with primitive - reconcile should handle gracefully
-    // Note: reconcile() returns early when value is primitive, so this tests that path
+    // Replace nested object with primitive value
     setState(() => ({ value: 100 }))
     await tick()
     expect(state.value).toBe(100)
+  })
+
+  it('throws when replacing store with primitive', () => {
+    const [, setState] = createStore<{ value: number }>({ value: 1 })
+
+    expect(() => setState(() => 1 as any)).toThrow(
+      '[Fict] Cannot replace store with primitive value',
+    )
+  })
+})
+
+describe('createDiffingSignal reactivity', () => {
+  it('tracks key iteration updates', async () => {
+    const [read, write] = createDiffingSignal<{ foo?: number; bar?: number }>({ foo: 1 })
+    const seen: string[][] = []
+
+    createEffect(() => {
+      seen.push(Object.keys(read()))
+    })
+
+    await tick()
+    expect(seen[seen.length - 1]).toEqual(['foo'])
+
+    write({ foo: 1, bar: 2 })
+    await tick()
+    expect(seen[seen.length - 1]).toContain('bar')
+  })
+
+  it('tracks "in" checks for key presence', async () => {
+    const [read, write] = createDiffingSignal<{ foo?: number; bar?: number }>({ foo: 1 })
+    const seen: boolean[] = []
+
+    createEffect(() => {
+      seen.push('bar' in read())
+    })
+
+    await tick()
+    expect(seen[seen.length - 1]).toBe(false)
+
+    write({ foo: 1, bar: 2 })
+    await tick()
+    expect(seen[seen.length - 1]).toBe(true)
   })
 })

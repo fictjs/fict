@@ -1,9 +1,27 @@
+/**
+ * @fileoverview Compiler Constants for Runtime Integration
+ *
+ * IMPORTANT: These constants define the contract between the compiler
+ * and runtime. Any changes here must be synchronized with @fictjs/runtime.
+ *
+ * API Stability: Tier 2 (Internal Stable)
+ * - RUNTIME_HELPERS names/signatures must remain stable for v1.x
+ * - Compiled code depends on these helper names
+ * - Changes require runtime version bump and migration guide
+ *
+ * @see docs/api-freeze-v1.md for full API stability policy
+ */
+
 // ============================================================================
 // Runtime Constants
 // ============================================================================
 
 export const RUNTIME_MODULE = '@fictjs/runtime'
 
+/**
+ * Runtime helper function names used by compiler-generated code.
+ * @internal These names are part of the compiler-runtime ABI contract.
+ */
 export const RUNTIME_HELPERS = {
   signal: 'createSignal',
   createSelector: 'createSelector',

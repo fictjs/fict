@@ -152,7 +152,13 @@ function getLastValue(target: any, prop: string | symbol) {
  */
 function reconcile(target: any, value: any) {
   if (target === value) return
-  if (value === null || typeof value !== 'object') return // Should replace?
+  if (value === null || typeof value !== 'object') {
+    throw new Error(
+      `[Fict] Cannot replace store with primitive value: ${String(
+        value,
+      )}. setStore should return an object/array to merge.`,
+    )
+  }
 
   const realTarget = unwrap(target)
   const realValue = unwrap(value)
@@ -165,6 +171,11 @@ function reconcile(target: any, value: any) {
     } else if (realTarget[key] !== realValue[key]) {
       target[key] = realValue[key] // Triggers proxy trap
     }
+  }
+
+  // Fix array length if needed
+  if (Array.isArray(target) && target.length !== realValue.length) {
+    target.length = realValue.length
   }
 }
 
@@ -180,6 +191,29 @@ function reconcile(target: any, value: any) {
 export function createDiffingSignal<T extends object>(initialValue: T) {
   let currentValue = unwrap(initialValue)
   const signals = new Map<string | symbol, SignalAccessor<any>>()
+  let iterateSignal: SignalAccessor<number> | undefined
+
+  const getPropSignal = (prop: string | symbol) => {
+    let s = signals.get(prop)
+    if (!s) {
+      s = signal((currentValue as any)[prop])
+      signals.set(prop, s)
+    }
+    return s
+  }
+
+  const trackIterate = () => {
+    if (!iterateSignal) {
+      iterateSignal = signal(Reflect.ownKeys(currentValue).length)
+    }
+    iterateSignal()
+  }
+
+  const updateIterate = (value: T) => {
+    if (iterateSignal) {
+      iterateSignal(Reflect.ownKeys(value).length)
+    }
+  }
 
   // The stable proxy we return
   const proxy = new Proxy({} as T, {
@@ -188,16 +222,20 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
       if (prop === TARGET) return currentValue
 
       // Subscribe to property
-      let s = signals.get(prop)
-      if (!s) {
-        // Initialize signal with current property value
-        s = signal((currentValue as any)[prop])
-        signals.set(prop, s)
-      }
+      const s = getPropSignal(prop)
       return s()
     },
     ownKeys() {
+      trackIterate()
       return Reflect.ownKeys(currentValue)
+    },
+    has(target, prop) {
+      getPropSignal(prop)()
+      return Reflect.has(currentValue, prop)
+    },
+    getOwnPropertyDescriptor(target, prop) {
+      getPropSignal(prop)()
+      return Reflect.getOwnPropertyDescriptor(currentValue, prop)
     },
   })
 
@@ -215,6 +253,7 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
         const newVal = (next as any)[prop]
         s(newVal)
       }
+      updateIterate(next)
       return
     }
 
@@ -228,6 +267,7 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
         s(newVal)
       }
     }
+    updateIterate(next)
 
     // Note: If new properties appeared that weren't tracked, we don't care
     // because no one is listening.
