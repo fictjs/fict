@@ -39,5 +39,9 @@ tester.run('no-state-outside-component', rule as any, {
       code: `import { $state } from 'fict'; function Component() { function inner() { const count = $state(0); } return null; }`,
       errors: [{ messageId: 'topLevel' }],
     },
+    {
+      code: `import { $state } from 'fict'; function Component() { const state = { count: $state(0) }; return <div>{state.count}</div>; }`,
+      errors: [{ messageId: 'declarationOnly' }],
+    },
   ],
 })

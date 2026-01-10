@@ -75,6 +75,13 @@ const isInConditional = (ancestors: Node[]): boolean =>
     ].includes((ancestor as any).type),
   )
 
+const isDirectStateDeclaration = (node: Node, ancestors: Node[]): boolean => {
+  const parent = ancestors[ancestors.length - 1] as any
+  if (!parent || parent.type !== 'VariableDeclarator') return false
+  if (parent.init !== node) return false
+  return parent.id?.type === 'Identifier'
+}
+
 const rule: Rule.RuleModule = {
   meta: {
     type: 'problem',
@@ -90,6 +97,8 @@ const rule: Rule.RuleModule = {
         '$state should only be used inside a component function (PascalCase or JSX-returning) or a hook (useX).',
       topLevel:
         '$state must be at the top level of the component or hook body (not inside conditionals or nested functions).',
+      declarationOnly:
+        '$state() must be assigned directly to a variable (e.g. let count = $state(0)).',
     },
     schema: [],
   },
@@ -99,6 +108,10 @@ const rule: Rule.RuleModule = {
         if (node.callee.type !== 'Identifier' || node.callee.name !== '$state') return
 
         const ancestors = context.sourceCode.getAncestors(node)
+        if (!isDirectStateDeclaration(node, ancestors)) {
+          context.report({ node, messageId: 'declarationOnly' })
+          return
+        }
         const functionAncestors = ancestors.filter((ancestor: Node) =>
           ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(
             (ancestor as any).type,

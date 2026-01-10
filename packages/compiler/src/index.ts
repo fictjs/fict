@@ -828,6 +828,22 @@ function createHIREntrypointVisitor(
           },
           CallExpression(callPath) {
             if (isStateCall(callPath.node, t)) {
+              const parentPath = callPath.parentPath
+              const isVariableDeclarator =
+                parentPath?.isVariableDeclarator() && parentPath.node.init === callPath.node
+
+              if (!isVariableDeclarator) {
+                throw callPath.buildCodeFrameError(
+                  '$state() must be assigned directly to a variable (e.g. let count = $state(0)). For object state, consider using $store from fict/plus.',
+                )
+              }
+
+              if (!t.isIdentifier(parentPath.node.id)) {
+                throw callPath.buildCodeFrameError(
+                  'Destructuring $state is not supported. Use a simple identifier.',
+                )
+              }
+
               const ownerComponent = callPath.getFunctionParent()
               if (!ownerComponent || !isComponentOrHookDefinition(ownerComponent as any)) {
                 throw callPath.buildCodeFrameError(

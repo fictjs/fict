@@ -74,6 +74,39 @@ describe('semantic validation', () => {
     expect(() => transform(source)).toThrow(/Destructuring \$state is not supported/)
   })
 
+  it('throws when $state is not assigned directly to a variable', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const state = { count: $state(0) }
+        return state.count
+      }
+    `
+    expect(() => transform(source)).toThrow(/assigned directly to a variable/)
+  })
+
+  it('throws when $state is used in array literal', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const arr = [$state(0)]
+        return arr[0]
+      }
+    `
+    expect(() => transform(source)).toThrow(/assigned directly to a variable/)
+  })
+
+  it('throws when $state is used as function argument', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        console.log($state(0))
+        return null
+      }
+    `
+    expect(() => transform(source)).toThrow(/assigned directly to a variable/)
+  })
+
   it('throws when assigning to $state call result', () => {
     const source = `
       import { $state } from 'fict'
