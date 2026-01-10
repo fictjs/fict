@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/babel-preset",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "description": "Babel preset for Fict - includes TypeScript, JSX, and Fict compiler",
   "publishConfig": {
     "access": "public",

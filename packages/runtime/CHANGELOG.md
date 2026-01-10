@@ -1,5 +1,11 @@
 # @fictjs/runtime
 
+## 0.0.13
+
+### Patch Changes
+
+- fix dev mode
+
 ## Unreleased
 
 ### Breaking Changes
