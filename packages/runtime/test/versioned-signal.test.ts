@@ -44,4 +44,42 @@ describe('createVersionedSignal', () => {
     expect(runs).toBe(2)
     expect(counter.peekValue()).toBe(5)
   })
+
+  it('peekValue does not track dependencies', async () => {
+    const counter = createVersionedSignal(10)
+    let runs = 0
+
+    createEffect(() => {
+      // Use peekValue - should NOT track
+      counter.peekValue()
+      runs++
+    })
+
+    expect(runs).toBe(1)
+
+    // Writing should NOT cause effect to re-run since peekValue doesn't track
+    counter.write(20)
+    await tick()
+    expect(runs).toBe(1)
+    expect(counter.peekValue()).toBe(20)
+  })
+
+  it('peekVersion does not track dependencies', async () => {
+    const counter = createVersionedSignal(0)
+    let runs = 0
+
+    createEffect(() => {
+      // Use peekVersion - should NOT track
+      counter.peekVersion()
+      runs++
+    })
+
+    expect(runs).toBe(1)
+
+    // Force should NOT cause effect to re-run since peekVersion doesn't track
+    counter.force()
+    await tick()
+    expect(runs).toBe(1)
+    expect(counter.peekVersion()).toBe(1)
+  })
 })

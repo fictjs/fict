@@ -1,4 +1,4 @@
-import { createSignal } from './signal'
+import { createSignal, untrack } from './signal'
 
 export interface VersionedSignalOptions<T> {
   equals?: (prev: T, next: T) => boolean
@@ -52,7 +52,7 @@ export function createVersionedSignal<T>(
     force: () => {
       bumpVersion()
     },
-    peekVersion: () => version(),
-    peekValue: () => value(),
+    peekVersion: () => untrack(() => version()),
+    peekValue: () => untrack(() => value()),
   }
 }
