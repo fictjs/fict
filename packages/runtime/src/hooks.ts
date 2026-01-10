@@ -2,6 +2,11 @@ import { createEffect } from './effect'
 import { createMemo } from './memo'
 import { createSignal, type SignalAccessor, type ComputedAccessor } from './signal'
 
+const isDev =
+  typeof __DEV__ !== 'undefined'
+    ? __DEV__
+    : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
+
 interface HookContext {
   slots: unknown[]
   cursor: number
@@ -12,7 +17,10 @@ const ctxStack: HookContext[] = []
 
 function assertRenderContext(ctx: HookContext, hookName: string): void {
   if (!ctx.rendering) {
-    throw new Error(`${hookName} can only be used during render execution`)
+    const message = isDev
+      ? `${hookName} can only be used during render execution`
+      : 'FICT:E_HOOK_RENDER'
+    throw new Error(message)
   }
 }
 

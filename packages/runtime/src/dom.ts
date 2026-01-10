@@ -24,14 +24,7 @@ import {
   type AttributeSetter,
   type BindingHandle,
 } from './binding'
-import {
-  Properties,
-  ChildProperties,
-  Aliases,
-  getPropAlias,
-  SVGElements,
-  SVGNamespace,
-} from './constants'
+import { Properties, ChildProperties, getPropAlias, SVGElements, SVGNamespace } from './constants'
 import { __fictPushContext, __fictPopContext } from './hooks'
 import { Fragment } from './jsx'
 import {
@@ -127,7 +120,7 @@ function resolveNamespace(tagName: string, namespace: NamespaceContext): Namespa
   if (tagName === 'math') return 'mathml'
   if (namespace === 'mathml') return 'mathml'
   if (namespace === 'svg') return 'svg'
-  if (SVGElements.has(tagName)) return 'svg'
+  if (isDev && SVGElements.has(tagName)) return 'svg'
   return null
 }
 
@@ -549,7 +542,13 @@ function applyProps(el: Element, props: Record<string, unknown>, isSVG = false):
     }
 
     // Child properties (innerHTML, textContent, etc.)
-    if (ChildProperties.has(key)) {
+    if (
+      (isDev && ChildProperties.has(key)) ||
+      key === 'innerHTML' ||
+      key === 'textContent' ||
+      key === 'innerText' ||
+      key === 'children'
+    ) {
       createAttributeBinding(el, key, value as MaybeReactive<unknown>, setProperty)
       continue
     }
@@ -573,13 +572,18 @@ function applyProps(el: Element, props: Record<string, unknown>, isSVG = false):
     }
 
     // Check for property alias (element-specific mappings)
-    const propAlias = !isSVG ? getPropAlias(key, tagName) : undefined
+    const propAlias = !isSVG && isDev ? getPropAlias(key, tagName) : undefined
+    const isProperty = !isSVG
+      ? isDev
+        ? Properties.has(key)
+        : key in (el as unknown as Record<string, unknown>)
+      : false
 
     // Handle properties and element-specific attributes
-    if (propAlias || (!isSVG && Properties.has(key)) || (isCE && !isSVG)) {
+    if (propAlias || isProperty || (isCE && !isSVG)) {
       const propName = propAlias || key
       // Custom elements use toPropertyName conversion
-      if (isCE && !Properties.has(key)) {
+      if (isCE && !isProperty && !propAlias) {
         createAttributeBinding(
           el,
           toPropertyName(propName),
@@ -606,7 +610,7 @@ function applyProps(el: Element, props: Record<string, unknown>, isSVG = false):
 
     // Regular attributes (potentially reactive)
     // Apply alias mapping (className -> class, htmlFor -> for)
-    const attrName = Aliases[key] || key
+    const attrName = key === 'htmlFor' ? 'for' : key
     createAttributeBinding(el, attrName, value as MaybeReactive<unknown>, setAttribute)
   }
 }

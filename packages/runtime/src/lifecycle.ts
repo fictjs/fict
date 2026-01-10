@@ -1,6 +1,11 @@
 import { enterRootGuard, exitRootGuard } from './cycle-guard'
 import type { Cleanup, ErrorInfo, SuspenseToken } from './types'
 
+const isDev =
+  typeof __DEV__ !== 'undefined'
+    ? __DEV__
+    : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
+
 type LifecycleFn = () => void | Cleanup
 
 export interface RootContext {
@@ -169,7 +174,10 @@ function runLifecycle(fn: LifecycleFn): void {
 
 export function registerErrorHandler(fn: ErrorHandler): void {
   if (!currentRoot) {
-    throw new Error('registerErrorHandler must be called within a root')
+    const message = isDev
+      ? 'registerErrorHandler must be called within a root'
+      : 'FICT:E_ROOT_HANDLER'
+    throw new Error(message)
   }
   if (!currentRoot.errorHandlers) {
     currentRoot.errorHandlers = []
@@ -185,7 +193,10 @@ export function registerErrorHandler(fn: ErrorHandler): void {
 
 export function registerSuspenseHandler(fn: SuspenseHandler): void {
   if (!currentRoot) {
-    throw new Error('registerSuspenseHandler must be called within a root')
+    const message = isDev
+      ? 'registerSuspenseHandler must be called within a root'
+      : 'FICT:E_ROOT_SUSPENSE'
+    throw new Error(message)
   }
   if (!currentRoot.suspenseHandlers) {
     currentRoot.suspenseHandlers = []

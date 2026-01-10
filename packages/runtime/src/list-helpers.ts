@@ -120,7 +120,8 @@ export function moveNodesBefore(parent: Node, nodes: Node[], anchor: Node | null
   for (let i = nodes.length - 1; i >= 0; i--) {
     const node = nodes[i]!
     if (!node || !(node instanceof Node)) {
-      throw new Error('Invalid node in moveNodesBefore')
+      const message = isDev ? 'Invalid node in moveNodesBefore' : 'FICT:E_NODE'
+      throw new Error(message)
     }
     // Only move if not already in correct position
     if (node.nextSibling !== anchor) {

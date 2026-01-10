@@ -19,7 +19,6 @@ import {
   ChildProperties,
   getPropAlias,
   SVGNamespace,
-  Aliases,
 } from './constants'
 import { createRenderEffect } from './effect'
 import { Fragment } from './jsx'
@@ -39,6 +38,11 @@ import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 import { batch } from './scheduler'
 import { computed, untrack } from './signal'
 import type { Cleanup, FictNode } from './types'
+
+const isDev =
+  typeof __DEV__ !== 'undefined'
+    ? __DEV__
+    : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
 
 // ============================================================================
 // Type Definitions
@@ -362,9 +366,9 @@ function applyStyle(
   }
 }
 
-function isUnitlessStyleProperty(prop: string): boolean {
-  return UnitlessStyles.has(prop)
-}
+const isUnitlessStyleProperty = isDev
+  ? (prop: string): boolean => UnitlessStyles.has(prop)
+  : (prop: string): boolean => prop === 'opacity' || prop === 'zIndex'
 
 // ============================================================================
 // Class Binding
@@ -950,7 +954,7 @@ export function bindEvent(
   // Optimization: Global Event Delegation
   // If the event is delegatable and no special options (capture, passive) are used,
   // we attach the handler to the element property and rely on the global listener.
-  if (DelegatedEvents.has(eventName) && !options) {
+  if (isDev && DelegatedEvents.has(eventName) && !options) {
     const key = `$$${eventName}`
 
     // Ensure global delegation is active for this event
@@ -1231,7 +1235,7 @@ function assignProp(
   // Standard event handling: onClick, onInput, etc.
   if (prop.slice(0, 2) === 'on') {
     const eventName = prop.slice(2).toLowerCase()
-    const shouldDelegate = DelegatedEvents.has(eventName)
+    const shouldDelegate = isDev && DelegatedEvents.has(eventName)
     if (!shouldDelegate && prev) {
       const handler = Array.isArray(prev) ? prev[0] : prev
       node.removeEventListener(eventName, handler as EventListener)
@@ -1275,13 +1279,20 @@ function assignProp(
 
   // Property handling (for non-SVG elements)
   if (!isSVG) {
-    const propAlias = getPropAlias(prop, node.tagName)
-    const isProperty = Properties.has(prop)
-    const isChildProp = ChildProperties.has(prop)
+    const propAlias = isDev ? getPropAlias(prop, node.tagName) : undefined
+    const isProperty = isDev
+      ? Properties.has(prop)
+      : prop in (node as unknown as Record<string, unknown>)
+    const isChildProp = isDev
+      ? ChildProperties.has(prop)
+      : prop === 'innerHTML' ||
+        prop === 'textContent' ||
+        prop === 'innerText' ||
+        prop === 'children'
 
     if (propAlias || isProperty || isChildProp || isCE) {
       const propName = propAlias || prop
-      if (isCE && !isProperty && !isChildProp) {
+      if (isCE && !isProperty && !isChildProp && !propAlias) {
         ;(node as unknown as Record<string, unknown>)[toPropertyName(propName)] = value
       } else {
         ;(node as unknown as Record<string, unknown>)[propName] = value
@@ -1302,7 +1313,7 @@ function assignProp(
   }
 
   // Default: set as attribute
-  const attrName = Aliases[prop] || prop
+  const attrName = prop === 'htmlFor' ? 'for' : prop
   if (value == null) node.removeAttribute(attrName)
   else node.setAttribute(attrName, String(value))
   return value

@@ -13,16 +13,6 @@ export default defineConfig([
     },
   },
   {
-    entry: { slim: 'src/slim.ts' },
-    format: ['cjs', 'esm'],
-    dts: true,
-    sourcemap: true,
-    treeshake: true,
-    define: {
-      __DEV__: 'false',
-    },
-  },
-  {
     entry: ['src/jsx-runtime.ts'],
     format: ['cjs', 'esm'],
     dts: true,

@@ -2,6 +2,11 @@ import { beginFlushGuard, beforeEffectRunGuard, endFlushGuard } from './cycle-gu
 import { getDevtoolsHook } from './devtools'
 import { registerRootCleanup } from './lifecycle'
 
+const isDev =
+  typeof __DEV__ !== 'undefined'
+    ? __DEV__
+    : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
@@ -1342,43 +1347,51 @@ export default {
 }
 export const $state = signal as <T>(value: T) => T
 
-let devtoolsSignalId = 0
-let devtoolsEffectId = 0
-
 interface DevtoolsIdentifiable {
   __id?: number
 }
 
-function registerSignalDevtools(value: unknown, node: SignalNode): number | undefined {
-  const hook = getDevtoolsHook()
-  if (!hook) return undefined
-  const id = ++devtoolsSignalId
-  hook.registerSignal(id, value)
-  ;(node as SignalNode & DevtoolsIdentifiable).__id = id
-  return id
-}
+let registerSignalDevtools: (value: unknown, node: SignalNode) => number | undefined = () =>
+  undefined
+let updateSignalDevtools: (node: SignalNode, value: unknown) => void = () => {}
+let registerEffectDevtools: (node: EffectNode) => number | undefined = () => undefined
+let effectRunDevtools: (node: EffectNode) => void = () => {}
 
-function updateSignalDevtools(node: SignalNode, value: unknown): void {
-  const hook = getDevtoolsHook()
-  if (!hook) return
-  const id = (node as SignalNode & DevtoolsIdentifiable).__id
-  if (id) hook.updateSignal(id, value)
-}
+if (isDev) {
+  let devtoolsSignalId = 0
+  let devtoolsEffectId = 0
 
-function registerEffectDevtools(node: EffectNode): number | undefined {
-  const hook = getDevtoolsHook()
-  if (!hook) return undefined
-  const id = ++devtoolsEffectId
-  hook.registerEffect(id)
-  ;(node as EffectNode & DevtoolsIdentifiable).__id = id
-  return id
-}
+  registerSignalDevtools = (value, node) => {
+    const hook = getDevtoolsHook()
+    if (!hook) return undefined
+    const id = ++devtoolsSignalId
+    hook.registerSignal(id, value)
+    ;(node as SignalNode & DevtoolsIdentifiable).__id = id
+    return id
+  }
 
-function effectRunDevtools(node: EffectNode): void {
-  const hook = getDevtoolsHook()
-  if (!hook) return
-  const id = (node as EffectNode & DevtoolsIdentifiable).__id
-  if (id) hook.effectRun(id)
+  updateSignalDevtools = (node, value) => {
+    const hook = getDevtoolsHook()
+    if (!hook) return
+    const id = (node as SignalNode & DevtoolsIdentifiable).__id
+    if (id) hook.updateSignal(id, value)
+  }
+
+  registerEffectDevtools = node => {
+    const hook = getDevtoolsHook()
+    if (!hook) return undefined
+    const id = ++devtoolsEffectId
+    hook.registerEffect(id)
+    ;(node as EffectNode & DevtoolsIdentifiable).__id = id
+    return id
+  }
+
+  effectRunDevtools = node => {
+    const hook = getDevtoolsHook()
+    if (!hook) return
+    const id = (node as EffectNode & DevtoolsIdentifiable).__id
+    if (id) hook.effectRun(id)
+  }
 }
 
 // ============================================================================
