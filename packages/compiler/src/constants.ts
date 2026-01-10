@@ -12,6 +12,8 @@
  * @see docs/api-freeze-v1.md for full API stability policy
  */
 
+import { DelegatedEventNames } from '../../runtime/src/delegated-events'
+
 // ============================================================================
 // Runtime Constants
 // ============================================================================
@@ -102,30 +104,7 @@ export const NON_REACTIVE_ATTRS = new Set(['key', 'ref'])
  * These events bubble and are commonly used across many elements.
  * Must match the runtime's DelegatedEvents set.
  */
-export const DelegatedEvents = new Set<string>([
-  'beforeinput',
-  'click',
-  'dblclick',
-  'contextmenu',
-  'focusin',
-  'focusout',
-  'input',
-  'keydown',
-  'keyup',
-  'mousedown',
-  'mousemove',
-  'mouseout',
-  'mouseover',
-  'mouseup',
-  'pointerdown',
-  'pointermove',
-  'pointerout',
-  'pointerover',
-  'pointerup',
-  'touchend',
-  'touchmove',
-  'touchstart',
-])
+export const DelegatedEvents = new Set<string>([...DelegatedEventNames])
 
 // Functions that are known to be safe (read-only, won't mutate passed objects)
 export const SAFE_FUNCTIONS = new Set([

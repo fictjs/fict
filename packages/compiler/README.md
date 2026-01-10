@@ -15,3 +15,17 @@ yarn add -D @fictjs/compiler
 ```
 
 You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
+
+## Options
+
+```ts
+createFictPlugin({
+  dev: true,
+  onWarn(warning) {
+    console.warn(warning)
+  },
+})
+```
+
+- `dev` (default: `NODE_ENV !== 'production' && NODE_ENV !== 'test'`): enables compiler warnings/diagnostics. Set to `false` to silence warnings.
+- `onWarn`: custom warning handler (only called when `dev` is enabled).

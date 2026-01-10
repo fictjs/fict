@@ -5,6 +5,8 @@
  * Borrowed from dom-expressions for comprehensive DOM support.
  */
 
+import { DelegatedEventNames } from './delegated-events'
+
 const isDev =
   typeof __DEV__ !== 'undefined'
     ? __DEV__
@@ -262,32 +264,7 @@ export const $$EVENTS = '_$FICT_DELEGATE'
  * Events that should use event delegation for performance
  * These events bubble and are commonly used across many elements
  */
-const delegatedEvents = isDev
-  ? [
-      'beforeinput',
-      'click',
-      'dblclick',
-      'contextmenu',
-      'focusin',
-      'focusout',
-      'input',
-      'keydown',
-      'keyup',
-      'mousedown',
-      'mousemove',
-      'mouseout',
-      'mouseover',
-      'mouseup',
-      'pointerdown',
-      'pointermove',
-      'pointerout',
-      'pointerover',
-      'pointerup',
-      'touchend',
-      'touchmove',
-      'touchstart',
-    ]
-  : []
+const delegatedEvents = isDev ? DelegatedEventNames : []
 
 export const DelegatedEvents = new Set<string>(delegatedEvents)
 
