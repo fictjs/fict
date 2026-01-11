@@ -240,7 +240,7 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).toContain('props.double()')
   })
 
-  it('wraps complex prop expressions with useProp for caching', () => {
+  it('wraps complex prop expressions with prop for caching', () => {
     const ast = parseFile(`
       function Parent() {
         let count = $state(0)
@@ -251,8 +251,7 @@ describe('tracked reads/writes in HIR codegen', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    expect(code).toContain('useProp')
-    expect(code).toContain('useProp(() => count() * 2 + count())')
+    expect(code).toContain('prop(() => count() * 2 + count())')
   })
 
   it('lowers props rest destructuring to runtime helper', () => {

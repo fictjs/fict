@@ -177,14 +177,13 @@ $state ──▶ memo ──▶ binding
 Fict keeps props reactive even when they are reshaped before reaching JSX:
 
 - **Destructuring**: Compiler rewrites `({ value })` (and nested/default patterns) into lazy getters backed by the original props source. Derived values built from these getters become memos or getters—no stale snapshots.
-- **Spread into components**: Object literals, const objects (even nested spreads or `useMemo` factories) are scanned and reactive entries are wrapped with lazy getters/`useProp` automatically before spreading into child components. This keeps props lazy without forcing DOM insert bindings.
+- **Spread into components**: Object literals, const objects (even nested spreads or `useMemo` factories) are scanned and reactive entries are wrapped with lazy getters/`prop` automatically before spreading into child components. This keeps props lazy without forcing DOM insert bindings.
 - **Manual merge**: `mergeProps(a, b, { c })` merges props while preserving getters; later sources override earlier ones. Compiler emits this automatically when needed; explicit calls are only for truly dynamic shapes you build at runtime.
 - **Known limit**: If a spread argument is a runtime-dynamic object whose shape is unknown (e.g., function return with dynamic keys), the compiler cannot safely rewrite its fields. In such cases, mark reactive fields yourself or call `mergeProps` explicitly.
 - **Public helpers** (rarely needed):
-  - `prop(() => value)` for rare manual wrapping needs (e.g., truly dynamic objects). Most cases are handled automatically.
-  - `useProp(() => expensive())` when you want an explicitly memoized, auto-unwrapped getter for heavy work you control.
+  - `prop(() => value)` for rare manual wrapping needs (e.g., truly dynamic objects). `prop` memoizes and auto-unwraps when passed through props.
 
-### 2.5.1 When to use prop / mergeProps / useProp (pre-compiled code)
+### 2.5.1 When to use prop / mergeProps (pre-compiled code)
 
 The compiler already wraps destructuring/rest/spread/children for you. Manual helpers are only needed in corner cases:
 
@@ -202,7 +201,7 @@ The compiler already wraps destructuring/rest/spread/children for you. Manual he
 - **Heavy computations you explicitly want memoized**:
 
   ```ts
-  const data = useProp(() => expensiveFilter(list, filter))
+  const data = prop(() => expensiveFilter(list, filter))
   return <Table data={data} />
   ```
 
@@ -215,7 +214,7 @@ The compiler already wraps destructuring/rest/spread/children for you. Manual he
   return <Dashboard {...mergeProps(getSettings())} />
   ```
 
-- **Interop / escape hatches**: when passing third-party objects or functions where the compiler cannot safely inject getters, annotate the reactive parts with `prop`/`useProp` or wrap with `mergeProps`.
+- **Interop / escape hatches**: when passing third-party objects or functions where the compiler cannot safely inject getters, annotate the reactive parts with `prop` or wrap with `mergeProps`.
 
 For everyday props/destructuring/spread patterns, rely on the compiler’s automatic wrapping; no manual helpers required.
 
@@ -299,6 +298,36 @@ The compiler does two things:
    - Plain event/closure
 
 2. At write positions, convert to update calls on the internal signal, triggering dependency updates.
+
+### 3.3 When to Use `createSignal` Instead of `$state`
+
+`$state` is a compiler macro that **can only be used at the top level of component or Hook function bodies**. For the following scenarios, use the underlying runtime function `createSignal`:
+
+1. **Module-level shared state**:
+
+   ```ts
+   // store.ts - Create shared state at module top level
+   import { createSignal } from 'fict'
+   export const [count, setCount] = createSignal(0)
+   ```
+
+2. **Custom Hook returning a signal**:
+
+   ```ts
+   export function useCounter(initial = 0) {
+     const [count, setCount] = createSignal(initial)
+     return { count, setCount, increment: () => setCount(c => c + 1) }
+   }
+   ```
+
+3. **Non-Fict environments (tests, utility libraries)**:
+   ```ts
+   import { createSignal, createEffect } from 'fict'
+   const [value, setValue] = createSignal(0)
+   createEffect(() => console.log(value()))
+   ```
+
+> **Note**: For global state, also consider using `$store` (from `fict/plus`), which supports deep reactivity and allows module-level declarations.
 
 ---
 

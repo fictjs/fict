@@ -24,10 +24,7 @@
 export * from '@fictjs/runtime'
 
 // Re-export commonly used advanced APIs for convenience
-export { createSelector, createScope, runInScope, useProp } from '@fictjs/runtime/advanced'
-
-// Re-export prop helper for marking reactive props
-export { __fictProp as prop } from '@fictjs/runtime/internal'
+export { createSelector, createScope, runInScope } from '@fictjs/runtime/advanced'
 
 // ============================================================================
 // Convenience Aliases

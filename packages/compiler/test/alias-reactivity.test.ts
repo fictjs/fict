@@ -134,7 +134,7 @@ describe('Alias-Safe Reactive Lowering', () => {
   })
 
   describe('Component props destructuring', () => {
-    it('keeps destructured props reactive via useProp + memo', () => {
+    it('keeps destructured props reactive via prop + memo', () => {
       const source = `
         import { $state, render } from 'fict'
 
@@ -163,9 +163,9 @@ describe('Alias-Safe Reactive Lowering', () => {
       `
 
       const output = transform(source)
-      expect(output).toContain('const count = useProp(() => __props.count)')
+      expect(output).toContain('const count = prop(() => __props.count)')
       expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
-      expect(output).not.toContain('const update = useProp')
+      expect(output).not.toContain('const update = prop')
     })
   })
 })

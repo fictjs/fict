@@ -99,7 +99,7 @@ The callee receives a plain value. Reactivity is handled by the caller expanding
 
 ## Rule 4: Props Destructuring Stays Reactive
 
-Destructured props are automatically converted to reactive getters via `useProp`.
+Destructured props are automatically converted to reactive getters via `prop`.
 
 ```js
 // Source
@@ -114,8 +114,8 @@ function Component({ count, name }) {
 
 // Compiled (conceptual)
 function Component(__props) {
-  const count = useProp(() => __props.count)
-  const name = useProp(() => __props.name)
+  const count = prop(() => __props.count)
+  const name = prop(() => __props.name)
   const doubled = memo(() => count() * 2)
   // ...
 }
@@ -224,7 +224,7 @@ return items.map(item => <Li key={item.id}>{item.name}</Li>)
 | Pattern                | Support | Notes                               |
 | ---------------------- | ------- | ----------------------------------- |
 | `const x = count`      | ✅      | Memo accessor (`x()`)               |
-| `const { x } = props`  | ✅      | Auto-converted to useProp getter    |
+| `const { x } = props`  | ✅      | Auto-converted to prop getter       |
 | `obj.a.b.c`            | ⚠️      | Coarse tracking for `$state` object |
 | `obj[dynamicKey]`      | ⚠️      | Coarse tracking (whole object)      |
 | `compute(count)`       | ✅      | Expanded at call site               |

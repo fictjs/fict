@@ -2082,7 +2082,7 @@ describe('compiler + fict integration', () => {
     dispose()
   })
 
-  it('props: compiler auto-wraps derived prop with useProp to avoid recompute', async () => {
+  it('props: compiler auto-wraps derived prop with prop to avoid recompute', async () => {
     const source = `
       import { $state, render } from 'fict'
 
@@ -2192,9 +2192,9 @@ describe('compiler + fict integration', () => {
 
     dispose()
   })
-  it('props: heavy computation memoized with useProp vs raw', async () => {
+  it('props: heavy computation memoized with prop vs raw', async () => {
     const source = `
-      import { $state, render, useProp } from 'fict'
+      import { $state, render, prop } from 'fict'
       export let bump: () => void
       export let rawCalls = 0
       export let memoCalls = 0
@@ -2219,7 +2219,7 @@ describe('compiler + fict integration', () => {
         let count = $state(1)
         bump = () => { count = count + 1 }
 
-        const memo = useProp(() => {
+        const memo = prop(() => {
           memoCalls++
           let acc = 0
           for (let i = 0; i < 2000; i++) acc += count + i

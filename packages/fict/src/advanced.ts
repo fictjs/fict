@@ -35,7 +35,6 @@ export {
   // Utilities
   isReactive,
   unwrap,
-  useProp,
 
   // Debugging & DevTools
   getDevtoolsHook,

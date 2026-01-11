@@ -1505,12 +1505,12 @@ function computeReactiveAccessors(
             tracked.add(target)
             changed = true
           }
-          // Check if this is a reactive object call (mergeProps, prop) - should not be added to memo
+          // Check if this is a reactive object call (mergeProps) - should not be added to memo
           // These return objects/getters, not accessor functions
           const isReactiveObjectCall =
             instr.value.kind === 'CallExpression' &&
             instr.value.callee.kind === 'Identifier' &&
-            ['mergeProps', 'prop'].includes(instr.value.callee.name)
+            ['mergeProps'].includes(instr.value.callee.name)
           if (hasDataDep && !isSignal(target) && !isStore(target) && !isReactiveObjectCall) {
             memo.add(target)
           }
@@ -2450,8 +2450,8 @@ function lowerExpressionImpl(
             usesTracked && ctx.t.isExpression(valueExprRaw)
               ? (() => {
                   if (shouldMemoProp) {
-                    ctx.helpersUsed.add('useProp')
-                    return t.callExpression(t.identifier(RUNTIME_ALIASES.useProp), [
+                    ctx.helpersUsed.add('prop')
+                    return t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [
                       t.arrowFunctionExpression([], valueExprRaw),
                     ])
                   }
@@ -5522,8 +5522,8 @@ function buildPropsObject(
             : usesTracked && t.isExpression(lowered)
               ? (() => {
                   if (useMemoProp) {
-                    ctx.helpersUsed.add('useProp')
-                    return t.callExpression(t.identifier(RUNTIME_ALIASES.useProp), [
+                    ctx.helpersUsed.add('prop')
+                    return t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [
                       t.arrowFunctionExpression(
                         [],
                         trackedExpr ?? (lowered as BabelCore.types.Expression),
@@ -6265,7 +6265,7 @@ function lowerFunctionWithRegions(
   const propsPlanAliases = new Set<string>()
   let propsDestructurePlan: {
     statements: BabelCore.types.Statement[]
-    usesUseProp: boolean
+    usesProp: boolean
     usesPropsRest: boolean
   } | null = null
 
@@ -6366,7 +6366,7 @@ function lowerFunctionWithRegions(
       const stmts: BabelCore.types.Statement[] = []
       const excludeKeys: BabelCore.types.Expression[] = []
       let supported = true
-      let usesUseProp = false
+      let usesProp = false
       let usesPropsRest = false
       let warnedNested = false
 
@@ -6402,17 +6402,17 @@ function lowerFunctionWithRegions(
             const value = prop.value
 
             if (t.isIdentifier(value)) {
-              const shouldUseProp = !calledIdentifiers.has(value.name)
-              if (shouldUseProp) {
-                usesUseProp = true
+              const shouldWrapProp = !calledIdentifiers.has(value.name)
+              if (shouldWrapProp) {
+                usesProp = true
                 propsPlanAliases.add(value.name)
               }
               stmts.push(
                 t.variableDeclaration('const', [
                   t.variableDeclarator(
                     t.identifier(value.name),
-                    shouldUseProp
-                      ? t.callExpression(t.identifier(RUNTIME_ALIASES.useProp), [
+                    shouldWrapProp
+                      ? t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [
                           t.arrowFunctionExpression([], member),
                         ])
                       : member,
@@ -6429,14 +6429,14 @@ function lowerFunctionWithRegions(
             }
 
             if (t.isAssignmentPattern(value) && t.isIdentifier(value.left)) {
-              const shouldUseProp = !calledIdentifiers.has(value.left.name)
-              if (shouldUseProp) {
-                usesUseProp = true
+              const shouldWrapProp = !calledIdentifiers.has(value.left.name)
+              if (shouldWrapProp) {
+                usesProp = true
                 propsPlanAliases.add(value.left.name)
               }
               const baseInit = t.logicalExpression('??', member, value.right)
-              const init = shouldUseProp
-                ? t.callExpression(t.identifier(RUNTIME_ALIASES.useProp), [
+              const init = shouldWrapProp
+                ? t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [
                     t.arrowFunctionExpression([], baseInit),
                   ])
                 : baseInit
@@ -6485,7 +6485,7 @@ function lowerFunctionWithRegions(
       if (supported) {
         propsDestructurePlan = {
           statements: stmts,
-          usesUseProp,
+          usesProp,
           usesPropsRest,
         }
         propsPlanAliases.forEach(name => {
@@ -6607,8 +6607,8 @@ function lowerFunctionWithRegions(
       // Add destructuring statement at start of function
       const pattern = rawParam.type === 'AssignmentPattern' ? rawParam.left : rawParam
       if (propsDestructurePlan) {
-        if (propsDestructurePlan.usesUseProp) {
-          ctx.helpersUsed.add('useProp')
+        if (propsDestructurePlan.usesProp) {
+          ctx.helpersUsed.add('prop')
         }
         if (propsDestructurePlan.usesPropsRest) {
           ctx.helpersUsed.add('propsRest')

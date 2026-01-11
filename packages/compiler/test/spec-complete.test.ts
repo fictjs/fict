@@ -170,7 +170,7 @@ describe('R005: Props destructuring', () => {
       }
     `)
     expect(output).toContain('__props')
-    expect(output).toContain('useProp(() => __props.name)')
+    expect(output).toContain('prop(() => __props.name)')
     expect(output).toContain('name()')
   })
 
@@ -182,7 +182,7 @@ describe('R005: Props destructuring', () => {
       }
     `)
     // Default value handling uses reactive getter with nullish coalescing
-    expect(output).toContain('useProp(() => __props.count ?? 0)')
+    expect(output).toContain('prop(() => __props.count ?? 0)')
     expect(output).toContain('__props')
   })
 
@@ -194,8 +194,8 @@ describe('R005: Props destructuring', () => {
       }
     `)
     expect(output).toContain('__props')
-    expect(output).toContain('useProp(() => __props.user.name)')
-    expect(output).toContain('useProp(() => __props.user.age ?? 18)')
+    expect(output).toContain('prop(() => __props.user.name)')
+    expect(output).toContain('prop(() => __props.user.age ?? 18)')
   })
 
   it('handles rest props', () => {

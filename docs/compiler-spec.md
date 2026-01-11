@@ -337,9 +337,9 @@ export function Greeting({ name, age = 18, onClick }: Props) {
 
 5. Rest/merge helpers (runtime) exist for edge cases:
    - `mergeProps(...sources)` merges multiple props objects, preserving getters and override order (later wins). The compiler will emit it only when needed; call it yourself only for truly dynamic/unknown shapes built at runtime.
-   - `prop` / `useProp` are public helpers for rare needs:
+   - `prop` is the public helper for rare needs:
      - Mark specific reactive fields on a dynamic object the compiler cannot inspect.
-     - Memoize a heavy computation you explicitly control (`useProp(() => expensive())`).
+     - Memoize a heavy computation you explicitly control (`prop(() => expensive())`).
      - Preserve laziness when spreading/merging runtime-built objects with unknown keys.
 
 ---

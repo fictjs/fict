@@ -2302,17 +2302,17 @@ function instructionToStatement(
     const inRegionMemo = ctx.inRegionMemo ?? false
     const isFunctionValue =
       instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression'
-    // Detect accessor-returning calls ($memo, createMemo, useProp) - these return accessors and should be added to memoVars
+    // Detect accessor-returning calls ($memo, createMemo, prop/useProp) - these return accessors and should be added to memoVars
     const isAccessorReturningCall =
       instr.value.kind === 'CallExpression' &&
       instr.value.callee.kind === 'Identifier' &&
-      ['$memo', 'createMemo', 'useProp'].includes(instr.value.callee.name)
-    // Detect reactive object calls (mergeProps, prop) - these return objects/getters, not accessors
+      ['$memo', 'createMemo', 'prop', 'useProp'].includes(instr.value.callee.name)
+    // Detect reactive object calls (mergeProps) - these return objects/getters, not accessors
     // They should NOT be wrapped in __fictUseMemo AND should NOT be added to memoVars
     const isReactiveObjectCall =
       instr.value.kind === 'CallExpression' &&
       instr.value.callee.kind === 'Identifier' &&
-      ['mergeProps', 'prop'].includes(instr.value.callee.name)
+      ['mergeProps'].includes(instr.value.callee.name)
     // Combined check for skipping memo wrapping
     const isMemoReturningCall = isAccessorReturningCall || isReactiveObjectCall
     const lowerAssignedValue = (forceAssigned = false) =>

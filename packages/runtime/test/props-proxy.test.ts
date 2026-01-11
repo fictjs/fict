@@ -1,9 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
-import { createElement, createSignal, mergeProps, render } from '../src/index'
+import { createElement, createSignal, mergeProps, prop, render } from '../src/index'
 import { __fictProp, __fictPropsRest, bindText, spread, createPropsProxy } from '../src/internal'
-// prop is an alias for __fictProp
-const prop = __fictProp
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -140,7 +138,7 @@ describe('Props proxy', () => {
     expect(merged.foo).toBe(15)
   })
 
-  it('allows manual wrapping via public prop alias for dynamic objects', () => {
+  it('allows manual wrapping via prop for dynamic objects', () => {
     let count = createSignal(1)
     const dyn = () => ({ value: prop(() => count()) })
     // mergeProps preserves getters - wrap in createPropsProxy to auto-unwrap
@@ -206,7 +204,7 @@ describe('Props proxy', () => {
   })
 })
 
-describe('useProp', () => {
+describe('prop', () => {
   let container: HTMLElement
 
   beforeEach(() => {
@@ -219,12 +217,10 @@ describe('useProp', () => {
   })
 
   it('memoizes expensive computations', async () => {
-    const { useProp } = await import('../src/advanced')
-
     let computeCount = 0
     const base = createSignal(10)
 
-    const memoized = useProp(() => {
+    const memoized = prop(() => {
       computeCount++
       return base() * 2
     })
@@ -247,9 +243,7 @@ describe('useProp', () => {
     expect(computeCount).toBe(2)
   })
 
-  it('auto-unwraps useProp when passed through props', async () => {
-    const { useProp } = await import('../src/advanced')
-
+  it('auto-unwraps prop when passed through props', async () => {
     const Child = (props: Record<string, unknown>) => {
       const span = document.createElement('span')
       const text = document.createTextNode('')
@@ -260,7 +254,7 @@ describe('useProp', () => {
 
     const Parent = () => {
       const base = createSignal(1)
-      const memoized = useProp(() => base() * 10)
+      const memoized = prop(() => base() * 10)
       return {
         type: Child,
         props: { data: memoized },

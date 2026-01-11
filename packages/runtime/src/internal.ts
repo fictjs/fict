@@ -36,7 +36,7 @@ export {
 // Props Helpers (Compiler-generated code)
 // ============================================================================
 
-export { __fictProp, __fictPropsRest, createPropsProxy, mergeProps, useProp } from './props'
+export { __fictProp, __fictPropsRest, createPropsProxy, mergeProps, prop, useProp } from './props'
 
 // ============================================================================
 // DOM Bindings (Compiler-generated code)

@@ -68,7 +68,7 @@ export { Suspense, createSuspenseToken } from './suspense'
 // Props Utilities (Public)
 // ============================================================================
 
-export { mergeProps } from './props'
+export { prop, mergeProps } from './props'
 
 // ============================================================================
 // Types

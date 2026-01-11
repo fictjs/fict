@@ -536,7 +536,7 @@ function Child(__props) {
   const __ctx = __fictUseContext()
 
   // Destructured props automatically wrapped as getters
-  const count = useProp(() => __props.count)
+  const count = prop(() => __props.count)
   const update = __props.update // Function type not wrapped
 
   // Derived values automatically become memos
@@ -638,7 +638,7 @@ Fict's compiler is much more complex than Solid's. More code means more potentia
 ### Known Escape Hatches / Mitigation
 
 - Explicit `$memo` / `$effect`: When automatic inference doesn't meet expectations, manually declare derivation or side-effect boundaries.
-- `useProp/mergeProps` helpers: Manually maintain reactivity when props access patterns are special.
+- `prop/mergeProps` helpers: Manually maintain reactivity when props access patterns are special.
 - Control Flow Degradation: Scenarios that cannot be statically analyzed are handed over to the re-execution model, prioritizing correctness.
 
 ### Why I still think it's worth it

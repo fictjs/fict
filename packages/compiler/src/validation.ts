@@ -80,7 +80,7 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
     'Array rest in props destructuring falls back to non-reactive binding.',
   [DiagnosticCode.FICT_P003]: 'Computed property in props pattern cannot be made reactive.',
   [DiagnosticCode.FICT_P004]:
-    'Nested props destructuring falls back to non-reactive binding; access props directly or use useProp.',
+    'Nested props destructuring falls back to non-reactive binding; access props directly or use prop.',
 
   [DiagnosticCode.FICT_S001]: 'State variable mutation detected outside component scope.',
   [DiagnosticCode.FICT_S002]: 'State variable escaped to external scope, may cause memory leaks.',

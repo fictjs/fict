@@ -43,8 +43,8 @@ describe('Spec rule coverage', () => {
     `
     const output = transform(input)
     expect(output).toContain('function Greeting(__props')
-    expect(output).toContain('useProp(() => __props.name)')
-    expect(output).toContain('useProp(() => __props.age ?? 18)')
+    expect(output).toContain('prop(() => __props.name)')
+    expect(output).toContain('prop(() => __props.age ?? 18)')
     expect(output).toContain('__fictUseMemo')
   })
 
@@ -92,7 +92,7 @@ describe('Spec rule coverage', () => {
     // Check that state is transformed and props are accessed
     expect(output).toContain('__fictUseSignal')
     // Props destructuring uses reactive getters
-    expect(output).toContain('useProp(() => __props.count)')
+    expect(output).toContain('prop(() => __props.count)')
     expect(output).toContain('count()')
     expect(output).toContain('bindText')
   })
@@ -105,7 +105,7 @@ describe('Spec rule coverage', () => {
       }
     `)
     expect(output).toContain('function Child(__props')
-    expect(output).toContain('useProp(() => __props.user.name)')
+    expect(output).toContain('prop(() => __props.user.name)')
     expect(warnings.some(w => w.code === 'FICT-P004')).toBe(false)
   })
 

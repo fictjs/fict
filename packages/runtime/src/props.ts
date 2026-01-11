@@ -1,5 +1,8 @@
 import { createMemo } from './memo'
 
+const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production'
+let warnedUseProp = false
+
 const propGetters = new WeakSet<(...args: unknown[]) => unknown>()
 const rawToProxy = new WeakMap<object, object>()
 const proxyToRaw = new WeakMap<object, object>()
@@ -191,19 +194,33 @@ export function mergeProps<T extends Record<string, unknown>>(
 export type PropGetter<T> = (() => T) & { __fictProp: true }
 /**
  * Memoize a prop getter to cache expensive computations.
- * Use when prop expressions involve heavy calculations.
+ * Use when prop expressions involve heavy calculations or you need lazy, reactive props.
  *
  * @example
  * ```tsx
- * // Without useProp - recomputes on every access
+ * // Without prop - recomputes on every access
  * <Child data={expensiveComputation(list, filter)} />
  *
- * // With useProp - cached until dependencies change, auto-unwrapped by props proxy
- * const memoizedData = useProp(() => expensiveComputation(list, filter))
+ * // With prop - cached until dependencies change, auto-unwrapped by props proxy
+ * const memoizedData = prop(() => expensiveComputation(list, filter))
  * <Child data={memoizedData} />
  * ```
  */
-export function useProp<T>(getter: () => T): PropGetter<T> {
+export function prop<T>(getter: () => T): PropGetter<T> {
+  if (isPropGetter(getter)) {
+    return getter as PropGetter<T>
+  }
   // Wrap in prop so component props proxy auto-unwraps when passed down.
   return __fictProp(createMemo(getter)) as PropGetter<T>
+}
+
+/**
+ * @deprecated Use prop() instead. This alias will be removed in v1.0.
+ */
+export function useProp<T>(getter: () => T): PropGetter<T> {
+  if (isDev && !warnedUseProp) {
+    warnedUseProp = true
+    console.warn('[fict] useProp() is deprecated. Use prop() instead.')
+  }
+  return prop(getter)
 }
