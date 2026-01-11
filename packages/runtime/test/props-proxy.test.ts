@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
-import { createElement, createSignal, mergeProps, prop, render } from '../src/index'
+import { createElement, mergeProps, prop, render } from '../src/index'
+import { createSignal } from '../src/advanced'
 import { __fictProp, __fictPropsRest, bindText, spread, createPropsProxy } from '../src/internal'
 
 const tick = () =>

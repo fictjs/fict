@@ -171,7 +171,7 @@ function Dashboard() {
 In Fict's fine-grained model, component functions execute only once, so Provider's value is captured at mount time. For reactive context values, pass a signal or store as the value:
 
 ```tsx
-import { createContext, useContext, createSignal } from 'fict'
+import { createContext, useContext, createSignal } from 'fict/advanced'
 
 // Create context that holds a signal
 const CounterContext = createContext({

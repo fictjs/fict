@@ -25,17 +25,11 @@
 // ============================================================================
 
 /**
- * createSignal is also exported from ./advanced as an explicit escape hatch.
+ * Note: createSignal is exported from ./advanced as an escape hatch.
  * For most use cases, prefer:
  * - $state: For component-local state (compiler-transformed, safe scoping)
  * - $store: For cross-component shared state with deep reactivity
- *
- * Use createSignal when you need:
- * - A simple scalar value shared across components
- * - Library-level primitives
- * - Fine-grained control over reactivity
  */
-export { createSignal, type Signal } from './signal'
 export { createMemo, type Memo } from './memo'
 export { createEffect, type Effect } from './effect'
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
-import { createSignal, createEffect } from '../src/index'
+import { createEffect } from '../src/index'
+import { createSignal } from '../src/advanced'
 
 describe('devtools hook integration', () => {
   let original: unknown

@@ -1,4 +1,5 @@
-import { Suspense, createSignal, createRoot, render } from '@fictjs/runtime'
+import { Suspense, createRoot, render } from '@fictjs/runtime'
+import { createSignal } from '@fictjs/runtime/advanced'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 import { resource } from '../src/resource'

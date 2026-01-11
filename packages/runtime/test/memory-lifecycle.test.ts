@@ -7,7 +7,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import {
-  createSignal,
   createMemo,
   createEffect,
   render,
@@ -16,6 +15,7 @@ import {
   onDestroy,
   onCleanup,
 } from '../src/index'
+import { createSignal } from '../src/advanced'
 import { createKeyedList, createConditional } from '../src/internal'
 
 const tick = () =>

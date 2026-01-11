@@ -8,7 +8,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import {
-  createSignal,
   createEffect,
   onMount,
   onCleanup,
@@ -17,7 +16,7 @@ import {
   ErrorBoundary,
   createRoot,
 } from '../src/index'
-import { createSelector } from '../src/advanced'
+import { createSelector, createSignal } from '../src/advanced'
 import {
   createKeyedList,
   __fictPushContext,

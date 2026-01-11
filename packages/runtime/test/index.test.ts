@@ -3,7 +3,6 @@ import { describe, it, expect } from 'vitest'
 import {
   createEffect,
   createMemo,
-  createSignal,
   onCleanup,
   onDestroy,
   onMount,
@@ -14,7 +13,7 @@ import {
   Fragment,
   createRoot,
 } from '../src/index'
-import { setCycleProtectionOptions } from '../src/advanced'
+import { setCycleProtectionOptions, createSignal } from '../src/advanced'
 import { bindText, bindAttribute, bindProperty, insert } from '../src/internal'
 
 const tick = () =>

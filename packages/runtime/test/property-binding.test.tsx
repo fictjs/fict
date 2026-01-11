@@ -1,7 +1,8 @@
 /** @jsxImportSource @fictjs/runtime */
 import { describe, it, expect } from 'vitest'
 
-import { createSignal, render } from '../src/index'
+import { render } from '../src/index'
+import { createSignal } from '../src/advanced'
 
 const tick = () =>
   new Promise<void>(resolve =>

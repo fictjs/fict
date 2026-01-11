@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { jsx as _jsx, jsxs as _jsxs } from '../../runtime/src/jsx-runtime'
-import { createSignal, createMemo, render } from '../src/index'
+import { createMemo, render } from '../src/index'
+import { createSignal } from '../src/advanced'
 
 const tick = () =>
   new Promise<void>(resolve =>

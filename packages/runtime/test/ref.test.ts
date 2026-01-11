@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
-import { createSignal, onMount, createRef, render, createElement } from '../src/index'
+import { onMount, createRef, render, createElement } from '../src/index'
+import { createSignal } from '../src/advanced'
 import { createConditional } from '../src/internal'
 
 const tick = () =>

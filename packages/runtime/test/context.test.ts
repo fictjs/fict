@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
-import { createContext, useContext, hasContext, createSignal, render, Fragment } from '../src/index'
+import { createContext, useContext, hasContext, render, Fragment } from '../src/index'
+import { createSignal } from '../src/advanced'
 
 const tick = () => Promise.resolve()
 

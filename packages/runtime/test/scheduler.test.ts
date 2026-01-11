@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
-import { createSignal, createEffect, batch } from '../src/index'
+import { createEffect, batch } from '../src/index'
+import { createSignal } from '../src/advanced'
 import { startTransition, useTransition, useDeferredValue } from '../src/scheduler'
 
 const tick = () =>

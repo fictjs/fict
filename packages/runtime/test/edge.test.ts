@@ -5,7 +5,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import {
-  createSignal,
   createMemo,
   createEffect,
   batch,
@@ -18,7 +17,7 @@ import {
   useTransition,
   startTransition,
 } from '../src/index'
-import { effectScope } from '../src/advanced'
+import { effectScope, createSignal } from '../src/advanced'
 import { createPropsProxy, createKeyedList } from '../src/internal'
 import {
   isSignal,

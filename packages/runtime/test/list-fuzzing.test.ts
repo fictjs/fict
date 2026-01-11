@@ -6,7 +6,8 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
-import { createSignal, createEffect, onCleanup } from '../src/index'
+import { createEffect, onCleanup } from '../src/index'
+import { createSignal } from '../src/advanced'
 import { createKeyedList } from '../src/internal'
 
 const tick = () =>

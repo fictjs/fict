@@ -307,13 +307,14 @@ The compiler does two things:
 
    ```ts
    // store.ts - Create shared state at module top level
-   import { createSignal } from 'fict'
+   import { createSignal } from 'fict/advanced'
    export const [count, setCount] = createSignal(0)
    ```
 
 2. **Custom Hook returning a signal**:
 
    ```ts
+   import { createSignal } from 'fict/advanced'
    export function useCounter(initial = 0) {
      const [count, setCount] = createSignal(initial)
      return { count, setCount, increment: () => setCount(c => c + 1) }
@@ -322,7 +323,8 @@ The compiler does two things:
 
 3. **Non-Fict environments (tests, utility libraries)**:
    ```ts
-   import { createSignal, createEffect } from 'fict'
+   import { createEffect } from 'fict'
+   import { createSignal } from 'fict/advanced'
    const [value, setValue] = createSignal(0)
    createEffect(() => console.log(value()))
    ```

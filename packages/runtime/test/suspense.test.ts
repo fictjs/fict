@@ -1,13 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
-import {
-  Suspense,
-  createSuspenseToken,
-  createSignal,
-  render,
-  ErrorBoundary,
-  Fragment,
-} from '../src/index'
+import { Suspense, createSuspenseToken, render, ErrorBoundary, Fragment } from '../src/index'
+import { createSignal } from '../src/advanced'
 
 const tick = () => Promise.resolve()
 

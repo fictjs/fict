@@ -1,14 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-import {
-  createSignal,
-  createEffect,
-  createRoot,
-  render,
-  createElement,
-  Fragment,
-  onDestroy,
-} from '../src/index'
+import { createEffect, createRoot, render, createElement, Fragment, onDestroy } from '../src/index'
+import { createSignal } from '../src/advanced'
 import {
   createTextBinding,
   createChildBinding,

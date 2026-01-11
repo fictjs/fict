@@ -222,9 +222,6 @@ function useCounter(initial: number): {
 ## Import Paths
 
 ```tsx
-// Recommended: explicit advanced import
+// Import from advanced (createSignal is an escape hatch API)
 import { createSignal } from 'fict/advanced'
-
-// Also available from core (for backwards compatibility)
-import { createSignal } from 'fict'
 ```

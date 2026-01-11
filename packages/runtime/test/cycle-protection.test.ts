@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 
-import { createEffect, createSignal } from '../src'
+import { createEffect } from '../src'
+import { createSignal } from '../src/advanced'
 import { resetCycleProtectionStateForTests, setCycleProtectionOptions } from '../src/cycle-guard'
 import { createRootContext, popRoot, pushRoot } from '../src/lifecycle'
 

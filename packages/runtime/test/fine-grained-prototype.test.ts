@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
-import { createSignal } from '../src/index'
+import { createSignal } from '../src/advanced'
 import { bindClass, bindStyle, bindText } from '../src/internal'
 
 const tick = () =>
