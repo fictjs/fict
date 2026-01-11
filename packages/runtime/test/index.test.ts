@@ -13,12 +13,9 @@ import {
   createElement,
   Fragment,
   createRoot,
-  bindText,
-  bindAttribute,
-  bindProperty,
-  insert,
-  setCycleProtectionOptions,
 } from '../src/index'
+import { setCycleProtectionOptions } from '../src/advanced'
+import { bindText, bindAttribute, bindProperty, insert } from '../src/internal'
 
 const tick = () =>
   new Promise<void>(resolve =>

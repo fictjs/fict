@@ -10,16 +10,20 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import {
   createSignal,
   createEffect,
-  createKeyedList,
   onMount,
   onCleanup,
   render,
   createElement,
   ErrorBoundary,
-  createSelector,
+  createRoot,
 } from '../src/index'
-import { __fictPushContext, __fictPopContext, __fictResetContext } from '../src/hooks'
-import { createRoot } from '../src/lifecycle'
+import { createSelector } from '../src/advanced'
+import {
+  createKeyedList,
+  __fictPushContext,
+  __fictPopContext,
+  __fictResetContext,
+} from '../src/internal'
 
 const tick = () =>
   new Promise<void>(resolve =>

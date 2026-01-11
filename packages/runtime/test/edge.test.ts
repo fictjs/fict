@@ -8,7 +8,6 @@ import {
   createSignal,
   createMemo,
   createEffect,
-  effectScope,
   batch,
   onCleanup,
   render,
@@ -16,11 +15,11 @@ import {
   Suspense,
   createSuspenseToken,
   mergeProps,
-  createPropsProxy,
   useTransition,
   startTransition,
-  createKeyedList,
 } from '../src/index'
+import { effectScope } from '../src/advanced'
+import { createPropsProxy, createKeyedList } from '../src/internal'
 import {
   isSignal,
   isComputed,

@@ -1,14 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
-import {
-  batch,
-  createEffect,
-  createMemo,
-  createSelector,
-  createSignal,
-  onCleanup,
-  render,
-} from '../src/index'
+import { batch, createEffect, createMemo, createSignal, onCleanup, render } from '../src/index'
+import { createSelector } from '../src/advanced'
 
 const tick = () =>
   new Promise<void>(resolve =>

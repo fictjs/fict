@@ -16,11 +16,8 @@ import {
   onDestroy,
   onCleanup,
   batch,
-  bindText,
-  createConditional,
-  createKeyedList,
-  toNodeArray,
 } from '../src'
+import { bindText, createConditional, createKeyedList, toNodeArray } from '../src/internal'
 
 const tick = () =>
   new Promise<void>(resolve =>

@@ -1,14 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
-import {
-  bindEvent,
-  createSignal,
-  render,
-  ErrorBoundary,
-  Fragment,
-  createEffect,
-  createKeyedList,
-} from '../src/index'
+import { createSignal, render, ErrorBoundary, Fragment, createEffect } from '../src/index'
+import { bindEvent, createKeyedList } from '../src/internal'
 
 const nextTick = () => Promise.resolve()
 

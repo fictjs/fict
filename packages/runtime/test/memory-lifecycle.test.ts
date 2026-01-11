@@ -15,9 +15,8 @@ import {
   onMount,
   onDestroy,
   onCleanup,
-  createKeyedList,
-  createConditional,
 } from '../src/index'
+import { createKeyedList, createConditional } from '../src/internal'
 
 const tick = () =>
   new Promise<void>(resolve =>

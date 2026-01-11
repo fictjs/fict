@@ -1,17 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
-import {
-  __fictProp,
-  __fictPropsRest,
-  prop,
-  bindText,
-  createElement,
-  createSignal,
-  mergeProps,
-  render,
-  spread,
-  createPropsProxy,
-} from '../src/index'
+import { createElement, createSignal, mergeProps, render } from '../src/index'
+import { __fictProp, __fictPropsRest, bindText, spread, createPropsProxy } from '../src/internal'
+// prop is an alias for __fictProp
+const prop = __fictProp
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -227,7 +219,7 @@ describe('useProp', () => {
   })
 
   it('memoizes expensive computations', async () => {
-    const { useProp } = await import('../src/index')
+    const { useProp } = await import('../src/advanced')
 
     let computeCount = 0
     const base = createSignal(10)
@@ -256,7 +248,7 @@ describe('useProp', () => {
   })
 
   it('auto-unwraps useProp when passed through props', async () => {
-    const { useProp } = await import('../src/index')
+    const { useProp } = await import('../src/advanced')
 
     const Child = (props: Record<string, unknown>) => {
       const span = document.createElement('span')

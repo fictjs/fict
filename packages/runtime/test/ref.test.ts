@@ -1,13 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
-import {
-  createSignal,
-  onMount,
-  createRef,
-  createConditional,
-  render,
-  createElement,
-} from '../src/index'
+import { createSignal, onMount, createRef, render, createElement } from '../src/index'
+import { createConditional } from '../src/internal'
 
 const tick = () =>
   new Promise<void>(resolve =>

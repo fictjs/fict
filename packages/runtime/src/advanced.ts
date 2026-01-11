@@ -63,3 +63,19 @@ export { setCycleProtectionOptions } from './cycle-guard'
 // ============================================================================
 
 export { createRenderEffect } from './effect'
+
+// ============================================================================
+// DOM Constants (for library authors building custom renderers)
+// ============================================================================
+
+export {
+  Properties,
+  ChildProperties,
+  Aliases,
+  getPropAlias,
+  BooleanAttributes,
+  SVGElements,
+  SVGNamespace,
+  DelegatedEvents,
+  UnitlessStyles,
+} from './constants'

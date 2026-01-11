@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
-import { createEffect, createVersionedSignal } from '../src/index'
+import { createEffect } from '../src/index'
+import { createVersionedSignal } from '../src/advanced'
 
 const tick = () =>
   new Promise<void>(resolve =>

@@ -7,25 +7,29 @@ import {
   render,
   createElement,
   Fragment,
+  onDestroy,
+} from '../src/index'
+import {
   createTextBinding,
   createChildBinding,
   createAttributeBinding,
   createStyleBinding,
   createClassBinding,
+  createShow,
+  isReactive,
+  unwrap,
+} from '../src/advanced'
+import {
   bindStyle,
   bindClass,
   createConditional,
-  insert,
-  createShow,
   createPortal,
+  insert,
   bindEvent,
-  onDestroy,
-  isReactive,
-  unwrap,
   callEventHandler,
   createKeyedList,
   toNodeArray,
-} from '../src/index'
+} from '../src/internal'
 
 const tick = () =>
   new Promise<void>(resolve =>

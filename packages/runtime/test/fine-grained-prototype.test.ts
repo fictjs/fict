@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
-import { bindClass, bindStyle, bindText, createSignal } from '../src/index'
+import { createSignal } from '../src/index'
+import { bindClass, bindStyle, bindText } from '../src/internal'
 
 const tick = () =>
   new Promise<void>(resolve =>

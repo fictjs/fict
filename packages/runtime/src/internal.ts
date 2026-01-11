@@ -53,6 +53,7 @@ export {
   bindRef,
   insert,
   createConditional,
+  createPortal,
   spread,
   assign,
   classList,
