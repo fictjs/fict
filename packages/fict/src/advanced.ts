@@ -43,4 +43,15 @@ export {
 
   // Low-level Primitives
   createRenderEffect,
+
+  // Context API (for subtree scoping / SSR isolation / multi-instance)
+  createContext,
+  useContext,
+  hasContext,
+  type Context,
+  type ProviderProps,
+
+  // Cross-component Signal (escape hatch for scalar/lightweight values)
+  createSignal,
+  type Signal,
 } from '@fictjs/runtime/advanced'

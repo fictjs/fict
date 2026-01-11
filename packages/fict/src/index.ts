@@ -6,15 +6,27 @@
  * ## Recommended Import Pattern (v1.0+)
  *
  * ```typescript
- * // Core public API
- * import { $store, createSignal, render } from 'fict'
+ * // Core public API (most users need only this)
+ * // Use $state in components (compiler-transformed)
+ * // Use $store for cross-component shared state
+ * import { $store, render } from 'fict'
  *
  * // Async utilities
  * import { resource, lazy } from 'fict/plus'
  *
- * // Advanced APIs
- * import { createScope, createSelector } from 'fict/advanced'
+ * // Advanced APIs (escape hatches, library authors)
+ * import { createSignal, createContext, createScope } from 'fict/advanced'
  * ```
+ *
+ * ## State Management Guide
+ *
+ * | Use Case | API |
+ * |----------|-----|
+ * | Component-local state | `$state` (compiler-transformed) |
+ * | Derived values / side effects | JS + auto-derived + `$effect` |
+ * | Cross-component (large objects, deep mutation) | `$store` |
+ * | Cross-component (scalar/lightweight, library-level) | `createSignal` (advanced) |
+ * | Cross-component (subtree scope, SSR isolation) | `Context` (advanced) |
  *
  * @public
  * @packageDocumentation

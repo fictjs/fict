@@ -61,9 +61,11 @@ export default defineConfig({
           ],
         },
         {
-          text: 'Advanced (fict/plus)',
+          text: 'Advanced (fict/advanced)',
           items: [
             { text: '$store', link: '/api/store' },
+            { text: 'createSignal', link: '/api/signal' },
+            { text: 'Context', link: '/api/context' },
             { text: 'resource', link: '/api/resource' },
             { text: 'transition', link: '/api/transition' },
           ],

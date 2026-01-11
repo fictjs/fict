@@ -7,10 +7,10 @@
  *
  * ```typescript
  * // Core public API (most users need only this)
- * import { createSignal, createEffect, render } from '@fictjs/runtime'
+ * import { createEffect, render } from '@fictjs/runtime'
  *
- * // Advanced APIs (power users)
- * import { createScope, createSelector } from '@fictjs/runtime/advanced'
+ * // Advanced APIs (power users, escape hatches)
+ * import { createSignal, createContext, createScope } from '@fictjs/runtime/advanced'
  *
  * // Internal APIs (compiler/library authors only)
  * import { bindText, __fictUseSignal } from '@fictjs/runtime/internal'
@@ -24,6 +24,17 @@
 // Core Reactive Primitives
 // ============================================================================
 
+/**
+ * createSignal is also exported from ./advanced as an explicit escape hatch.
+ * For most use cases, prefer:
+ * - $state: For component-local state (compiler-transformed, safe scoping)
+ * - $store: For cross-component shared state with deep reactivity
+ *
+ * Use createSignal when you need:
+ * - A simple scalar value shared across components
+ * - Library-level primitives
+ * - Fine-grained control over reactivity
+ */
 export { createSignal, type Signal } from './signal'
 export { createMemo, type Memo } from './memo'
 export { createEffect, type Effect } from './effect'
@@ -62,6 +73,7 @@ export { createElement, render } from './dom'
 export { createPortal } from './binding'
 export { ErrorBoundary } from './error-boundary'
 export { Suspense, createSuspenseToken } from './suspense'
+export { createContext, useContext, hasContext, type Context, type ProviderProps } from './context'
 
 // ============================================================================
 // Props Utilities (Public)
