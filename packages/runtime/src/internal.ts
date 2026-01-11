@@ -13,6 +13,7 @@
 // ============================================================================
 
 export { createSignal, createSelector } from './signal'
+export { createStore, type Store } from './store'
 export { createMemo } from './memo'
 export { createEffect } from './effect'
 export { Fragment } from './jsx'

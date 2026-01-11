@@ -25,7 +25,6 @@
 // ============================================================================
 
 export { createSignal, type Signal } from './signal'
-export { createStore, type Store } from './store'
 export { createMemo, type Memo } from './memo'
 export { createEffect, type Effect } from './effect'
 

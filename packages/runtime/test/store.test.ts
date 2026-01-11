@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { createEffect, createStore } from '../src/index'
+import { createEffect } from '../src/index'
+import { createStore } from '../src/internal'
 import { createDiffingSignal } from '../src/store'
 
 const tick = () => Promise.resolve()
