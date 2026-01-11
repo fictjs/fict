@@ -1,8 +1,5 @@
 import { createMemo } from './memo'
 
-const isDev = typeof __DEV__ !== 'undefined' ? __DEV__ : process.env.NODE_ENV !== 'production'
-let warnedUseProp = false
-
 const propGetters = new WeakSet<(...args: unknown[]) => unknown>()
 const rawToProxy = new WeakMap<object, object>()
 const proxyToRaw = new WeakMap<object, object>()
@@ -212,15 +209,4 @@ export function prop<T>(getter: () => T): PropGetter<T> {
   }
   // Wrap in prop so component props proxy auto-unwraps when passed down.
   return __fictProp(createMemo(getter)) as PropGetter<T>
-}
-
-/**
- * @deprecated Use prop() instead. This alias will be removed in v1.0.
- */
-export function useProp<T>(getter: () => T): PropGetter<T> {
-  if (isDev && !warnedUseProp) {
-    warnedUseProp = true
-    console.warn('[fict] useProp() is deprecated. Use prop() instead.')
-  }
-  return prop(getter)
 }
