@@ -2,6 +2,7 @@ import { writeFileSync } from 'node:fs'
 import { createRequire } from 'module'
 
 import * as runtime from '@fictjs/runtime'
+import * as runtimeInternal from '@fictjs/runtime/internal'
 import * as runtimeJsx from '@fictjs/runtime/jsx-runtime'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
@@ -26,6 +27,7 @@ function compileAndLoad<TModule extends Record<string, any>>(source: string): TM
   const wrapped = new Function('require', 'module', 'exports', output)
   wrapped(
     (id: string) => {
+      if (id === '@fictjs/runtime/internal') return runtimeInternal
       if (id === '@fictjs/runtime') return runtime
       if (id === '@fictjs/runtime/jsx-runtime') return runtimeJsx
       if (id === 'fict') return fict

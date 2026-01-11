@@ -7,6 +7,7 @@ import { transformCommonJS } from '../../compiler/test/test-utils'
 
 const dynamicRequire = createRequire(import.meta.url)
 const runtime = dynamicRequire('@fictjs/runtime')
+const runtimeInternal = dynamicRequire('@fictjs/runtime/internal')
 const runtimeJsx = dynamicRequire('@fictjs/runtime/jsx-runtime')
 const fict = dynamicRequire('fict')
 const fictPlus = dynamicRequire('fict/plus')
@@ -34,6 +35,7 @@ function compileAndLoad<TModule extends Record<string, any>>(
   wrapped(
     (id: string) => {
       if (Object.prototype.hasOwnProperty.call(deps, id)) return deps[id]
+      if (id === '@fictjs/runtime/internal') return runtimeInternal
       if (id === '@fictjs/runtime') return runtime
       if (id === '@fictjs/runtime/jsx-runtime') return runtimeJsx
       if (id === 'fict') return fict

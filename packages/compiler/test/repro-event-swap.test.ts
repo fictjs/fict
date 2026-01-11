@@ -3,6 +3,8 @@
 import { createRequire } from 'module'
 
 import * as runtime from '@fictjs/runtime'
+import * as runtimeInternal from '@fictjs/runtime/internal'
+import { clearDelegatedEvents, __fictResetContext } from '@fictjs/runtime/internal'
 import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 
 import { type FictCompilerOptions } from '../src/index'
@@ -18,15 +20,13 @@ function compileAndLoad<TModule extends Record<string, any>>(
   const output = transformCommonJS(source, options)
 
   const module: { exports: any } = { exports: {} }
-  const prelude =
-    "const __fictRuntime = require('@fictjs/runtime');" +
-    'const { __fictUseContext, __fictUseSignal, __fictUseMemo, __fictUseEffect, createSignal: __fictSignal, createMemo: __fictMemo, createEffect: __fictEffect, createConditional: __fictConditional, createKeyedList: __fictKeyedList, insert: __fictInsert, createElement: __fictCreateElement, onDestroy: __fictOnDestroy, bindText: __fictBindText, bindAttribute: __fictBindAttribute, bindClass: __fictBindClass, bindStyle: __fictBindStyle, bindEvent: __fictBindEvent, toNodeArray: __fictToNodeArray, delegateEvents: delegateEvents } = __fictRuntime;'
-
   const dynamicRequire = createRequire(import.meta.url)
 
-  const wrapped = new Function('require', 'module', 'exports', `${prelude}\n${output}`)
+  // Compiled code now imports directly from '@fictjs/runtime/internal'
+  const wrapped = new Function('require', 'module', 'exports', output)
   wrapped(
     (id: string) => {
+      if (id === '@fictjs/runtime/internal') return runtimeInternal
       if (id === 'fict') return runtime
       if (id === '@fictjs/runtime') return runtime
       return dynamicRequire(id)
@@ -46,11 +46,17 @@ async function flushUpdates(): Promise<void> {
 describe('dynamic event handlers', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
+    // Reset runtime state before each test
+    clearDelegatedEvents()
+    __fictResetContext()
   })
   afterEach(() => {
     HTMLElement.prototype.addEventListener = originalAdd
     HTMLElement.prototype.removeEventListener = originalRemove
     document.body.innerHTML = ''
+    // Reset runtime state between tests
+    clearDelegatedEvents()
+    __fictResetContext()
   })
 
   it('swaps event handlers when state changes', async () => {

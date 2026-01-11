@@ -18,7 +18,11 @@ import { DelegatedEventNames } from '../../runtime/src/delegated-events'
 // Runtime Constants
 // ============================================================================
 
-export const RUNTIME_MODULE = '@fictjs/runtime'
+/**
+ * The runtime module path for compiler-generated imports.
+ * Uses the internal subpath to access compiler-dependent APIs.
+ */
+export const RUNTIME_MODULE = '@fictjs/runtime/internal'
 
 /**
  * Runtime helper function names used by compiler-generated code.

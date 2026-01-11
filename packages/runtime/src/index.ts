@@ -1,36 +1,53 @@
 /**
- * @fileoverview Fict Runtime Public API
+ * @fileoverview Fict Runtime - Complete API
  *
- * This module exports all public APIs for the Fict reactive UI framework.
+ * This module exports the complete API for the Fict reactive UI framework.
  *
- * API Stability Tiers:
- * - @public (Tier 1): Frozen public API, guaranteed stable across v1.x
- * - @internal (Tier 2): Compiler-dependent helpers, signature-stable
- * - @advanced (Tier 3): Advanced use cases, best-effort stability
- * - @experimental (Tier 4): May change without notice
+ * ## Recommended Import Pattern (v1.0+)
+ *
+ * For new projects, we recommend using layered imports:
+ *
+ * ```typescript
+ * // Core public API (most users need only this)
+ * import { createSignal, createEffect, render } from '@fictjs/runtime'
+ *
+ * // Advanced APIs (power users)
+ * import { createScope, createSelector } from '@fictjs/runtime/advanced'
+ *
+ * // Internal APIs (compiler/library authors only)
+ * import { __fictProp, bindText } from '@fictjs/runtime/internal'
+ * ```
+ *
+ * ## API Categories
+ *
+ * - **Public API (Tier 1)**: Core primitives, lifecycle, rendering
+ * - **Advanced API (Tier 3)**: Scopes, selectors, bindings, devtools
+ * - **Internal API (Tier 2)**: Compiler helpers, low-level bindings
  *
  * @packageDocumentation
  */
 
 // ============================================================================
-// Core Reactive Primitives
+// Core Reactive Primitives (Public API - Tier 1)
 // ============================================================================
 
-/**
- * @public Core reactive primitives - Tier 1 frozen API
- */
-export { createSignal, createSelector, type Signal, $state } from './signal'
+export { createSignal, createSelector, type Signal } from './signal'
 export { effectScope } from './signal'
 export { createStore, type Store } from './store'
-export { createMemo, type Memo, $memo } from './memo'
-export { createEffect, createRenderEffect, type Effect, $effect } from './effect'
+export { createMemo, type Memo } from './memo'
+export { createEffect, createRenderEffect, type Effect } from './effect'
 export { createScope, runInScope, type ReactiveScope } from './scope'
+export {
+  createVersionedSignal,
+  type VersionedSignal,
+  type VersionedSignalOptions,
+} from './versioned-signal'
 
-/**
- * @internal Compiler hook helpers - Tier 2, signature-stable
- * These are used by compiler-generated code and must maintain
- * backward compatibility for compiled user code.
- */
+// ============================================================================
+// Internal Hook Helpers (Internal API - Tier 2)
+// Used by compiler-generated code
+// ============================================================================
+
 export {
   __fictUseContext,
   __fictPushContext,
@@ -42,17 +59,10 @@ export {
   __fictResetContext,
 } from './hooks'
 
-/** @public Versioned signal - Tier 1 frozen API */
-export {
-  createVersionedSignal,
-  type VersionedSignal,
-  type VersionedSignalOptions,
-} from './versioned-signal'
+// ============================================================================
+// Props Helpers
+// ============================================================================
 
-/**
- * @internal Props helpers - Tier 2, compiler-dependent
- * __fictProp and __fictPropsRest are used by compiler for reactive prop access
- */
 export {
   __fictProp,
   __fictProp as prop,
@@ -63,66 +73,52 @@ export {
 } from './props'
 
 // ============================================================================
-// Lifecycle
+// Lifecycle (Public API - Tier 1)
 // ============================================================================
 
-/** @public Lifecycle hooks - Tier 1 frozen API */
 export { onMount, onDestroy, onCleanup, createRoot } from './lifecycle'
 
-/** @public Ref utilities - Tier 1 frozen API */
+// ============================================================================
+// Ref (Public API - Tier 1)
+// ============================================================================
+
 export { createRef } from './ref'
 
 // ============================================================================
-// Scheduler / Utilities
+// Scheduler / Utilities (Public API - Tier 1)
 // ============================================================================
 
-/** @public Scheduler utilities - Tier 1 frozen API */
 export { batch, untrack } from './scheduler'
-
-/** @advanced Cycle protection configuration - Tier 3 */
 export { setCycleProtectionOptions } from './cycle-guard'
-
-/** @public Transition API for priority scheduling - Tier 1 frozen API */
 export { startTransition, useTransition, useDeferredValue } from './scheduler'
 
 // ============================================================================
-// JSX Runtime
+// JSX Runtime (Public API - Tier 1)
 // ============================================================================
 
-/** @public JSX types and Fragment - Tier 1 frozen API */
 export type { JSX } from './jsx'
 export { Fragment } from './jsx'
 
 // ============================================================================
-// DOM Rendering
+// DOM Rendering (Public API - Tier 1)
 // ============================================================================
 
-/** @public DOM rendering - Tier 1 frozen API */
 export { createElement, render, template } from './dom'
 export { ErrorBoundary } from './error-boundary'
 export { Suspense, createSuspenseToken } from './suspense'
 
 // ============================================================================
-// Reactive DOM Bindings
+// Reactive DOM Bindings (Internal/Advanced API)
 // ============================================================================
 
-/**
- * @advanced High-level binding factories - Tier 3
- * These return BindingHandle for manual lifecycle control
- */
 export {
+  // High-level binding factories (Advanced API - Tier 3)
   createTextBinding,
   createChildBinding,
   createAttributeBinding,
   createStyleBinding,
   createClassBinding,
-} from './binding'
-
-/**
- * @internal Low-level binding helpers - Tier 2, compiler-dependent
- * Used by compiler-generated code for DOM updates
- */
-export {
+  // Low-level binding helpers (Internal API - Tier 2)
   bindText,
   bindAttribute,
   bindStyle,
@@ -132,34 +128,27 @@ export {
   bindProperty,
   bindRef,
   insert,
+  // Event delegation (Internal API - Tier 2)
+  delegateEvents,
+  clearDelegatedEvents,
+  addEventListener,
+  // Spread props (Internal API - Tier 2)
+  spread,
+  assign,
+  classList,
+  // Utilities (Advanced API - Tier 3)
+  isReactive,
+  // Advanced bindings (Internal API - Tier 2)
+  createConditional,
+  createPortal,
+  createShow,
+  unwrap,
 } from './binding'
 
-/**
- * @internal Event delegation - Tier 2, compiler-dependent
- * delegateEvents is called at module initialization by compiler
- */
-export { delegateEvents, clearDelegatedEvents, addEventListener } from './binding'
+// ============================================================================
+// Constants (Advanced API - Tier 3)
+// ============================================================================
 
-/**
- * @internal Spread and assign - Tier 2
- */
-export { spread, assign, classList } from './binding'
-
-/**
- * @advanced Utility functions - Tier 3
- */
-export { isReactive, unwrap } from './binding'
-
-/**
- * @internal Advanced bindings - Tier 2, compiler-dependent
- * createConditional is used by compiler for control flow
- */
-export { createConditional, createPortal, createShow } from './binding'
-
-/**
- * @advanced DOM constants - Tier 3
- * Reference data for DOM handling, may be useful for advanced integrations
- */
 export {
   Properties,
   ChildProperties,
@@ -172,17 +161,16 @@ export {
   UnitlessStyles,
 } from './constants'
 
-/** @advanced Reconcile algorithm - Tier 3 */
+// ============================================================================
+// Reconciliation (Internal API)
+// ============================================================================
+
 export { default as reconcileArrays } from './reconcile'
 
 // ============================================================================
-// Types
+// Types (Public API - Tier 1)
 // ============================================================================
 
-/**
- * @public Type definitions - Tier 1 frozen API
- * These types are part of the public API contract
- */
 export type { MaybeReactive, BindingHandle, CreateElementFn, AttributeSetter } from './binding'
 
 export type {
@@ -203,20 +191,16 @@ export type {
   SuspenseToken,
 } from './types'
 
-/**
- * @advanced Devtools hook - Tier 3
- * For browser extension and debugging integration
- */
+// ============================================================================
+// Devtools (Advanced API - Tier 3)
+// ============================================================================
+
 export { getDevtoolsHook, type FictDevtoolsHook } from './devtools'
 
 // ============================================================================
-// List Helpers (for compiler-generated code)
+// List Helpers (Internal API - Tier 2)
 // ============================================================================
 
-/**
- * @internal List helpers - Tier 2, compiler-dependent
- * createKeyedList and toNodeArray are used by compiler for array rendering
- */
 export {
   moveNodesBefore,
   removeNodes,
