@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/compiler",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "description": "Babel plugin for Fict Compiler",
   "publishConfig": {
     "access": "public",
