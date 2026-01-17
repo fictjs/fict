@@ -73,7 +73,10 @@ export function onDestroy(fn: () => void): void
 export function onCleanup(fn: () => void): void
 
 // Root context
-export function createRoot<T>(fn: () => T): { value: T; dispose: () => void }
+export function createRoot<T>(
+  fn: () => T,
+  options?: { inherit?: boolean },
+): { value: T; dispose: () => void }
 ```
 
 ### 1.3 DOM Rendering
@@ -140,7 +143,7 @@ export interface ReactiveScope {
 export function mergeProps<T extends object[]>(...sources: T): MergedProps<T>
 
 // Mark reactive prop getter (with memoization)
-export function prop<T>(getter: () => T): () => T
+export function prop<T>(getter: () => T, options?: { unwrap?: boolean }): () => T
 ```
 
 > **Simplified**: Props utilities are reduced to two core functions:

@@ -395,7 +395,7 @@ function SelectableList() {
 
 ### onMount
 
-Run after the component mounts.
+Run after the component mounts and its DOM is connected.
 
 ```typescript
 function onMount(fn: () => void | (() => void)): void
@@ -423,6 +423,9 @@ function Chart() {
   return <canvas ref={el => (canvasRef = el)} />
 }
 ```
+
+> Note: `onMount` is deferred for nodes rendered into detached containers or fragments until
+> they are inserted into the document.
 
 ---
 
@@ -491,8 +494,16 @@ function Subscription() {
 Create an isolated reactive root context.
 
 ```typescript
-function createRoot<T>(fn: () => T): { value: T; dispose: () => void }
+function createRoot<T>(
+  fn: () => T,
+  options?: { inherit?: boolean },
+): { value: T; dispose: () => void }
 ```
+
+**Notes:**
+
+- By default, `createRoot` is isolated and does not inherit error/suspense handlers.
+- Use `{ inherit: true }` to link to the current root when you need boundary propagation.
 
 **Example:**
 
@@ -920,8 +931,13 @@ Mark a reactive getter and cache it (rare). Use when the compiler cannot detect 
 ```typescript
 import { prop } from 'fict'
 
-function prop<T>(getter: () => T): () => T
+function prop<T>(getter: () => T, options?: { unwrap?: boolean }): () => T
 ```
+
+**Notes:**
+
+- If the getter returns another prop getter, `prop()` unwraps it by default.
+- Use `{ unwrap: false }` when you need to pass a prop getter through as a value.
 
 **When to use:**
 
@@ -955,6 +971,18 @@ function DataTable({ list, filter }: Props) {
   const memoizedData = prop(() => expensiveFilter(list, filter))
 
   return <Table data={memoizedData} />
+}
+```
+
+**Example 3: Forward a prop getter**
+
+```tsx
+import { prop } from 'fict'
+
+function Wrapper(props: { getValue: () => number }) {
+  // Pass the getter through as-is
+  const forwarded = prop(() => props.getValue, { unwrap: false })
+  return <Child getValue={forwarded} />
 }
 ```
 
