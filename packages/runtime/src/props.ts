@@ -199,9 +199,14 @@ export function mergeProps<T extends Record<string, unknown>>(
 }
 
 export type PropGetter<T> = (() => T) & { __fictProp: true }
+
+export interface PropOptions {
+  unwrap?: boolean
+}
 /**
  * Memoize a prop getter to cache expensive computations.
  * Use when prop expressions involve heavy calculations or you need lazy, reactive props.
+ * Set { unwrap: false } to keep nested prop getters as values.
  *
  * @example
  * ```tsx
@@ -213,17 +218,18 @@ export type PropGetter<T> = (() => T) & { __fictProp: true }
  * <Child data={memoizedData} />
  * ```
  */
-export function prop<T>(getter: () => T): PropGetter<T> {
+export function prop<T>(getter: () => T, options?: PropOptions): PropGetter<T> {
   if (isPropGetter(getter)) {
     return getter as PropGetter<T>
   }
   // Capture getter to avoid type narrowing from isPropGetter guard
   const fn: () => T = getter
+  const unwrap = options?.unwrap !== false
   // Wrap in prop so component props proxy auto-unwraps when passed down.
   return __fictProp(
     createMemo(() => {
       const value = fn()
-      if (isPropGetter(value)) {
+      if (unwrap && isPropGetter(value)) {
         return (value as () => T)()
       }
       return value

@@ -53,24 +53,29 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
     config(userConfig) {
       const userOptimize = userConfig.optimizeDeps
-      const hasExplicitOptimize =
-        !!userOptimize &&
-        (userOptimize.noDiscovery === true ||
-          Array.isArray(userOptimize.include) ||
-          Array.isArray(userOptimize.exclude))
+      const hasUserOptimize = !!userOptimize
+      const hasDisabledOptimize =
+        hasUserOptimize && (userOptimize as { disabled?: boolean }).disabled === true
+      const include = new Set(userOptimize?.include ?? [])
+      const exclude = new Set(userOptimize?.exclude ?? [])
+      if (!exclude.has('@fictjs/runtime')) {
+        include.add('@fictjs/runtime')
+      }
       return {
         esbuild: {
           // Disable esbuild JSX handling for .tsx/.jsx files
           // Our plugin will handle the full transformation
           include: /\.(ts|js|mts|mjs|cjs)$/,
         },
-        ...(hasExplicitOptimize
-          ? {}
+        ...(hasDisabledOptimize
+          ? { optimizeDeps: userOptimize }
           : {
-              optimizeDeps: {
-                // Ensure @fictjs/runtime is pre-bundled
-                include: ['@fictjs/runtime'],
-              },
+              optimizeDeps: hasUserOptimize
+                ? { ...userOptimize, include: Array.from(include) }
+                : {
+                    // Ensure @fictjs/runtime is pre-bundled
+                    include: ['@fictjs/runtime'],
+                  },
             }),
       }
     },

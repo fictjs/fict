@@ -25,7 +25,7 @@ export function createScope(): ReactiveScope {
 
   const run = <T>(fn: () => T): T => {
     stop()
-    const { dispose: rootDispose, value } = createRoot(fn)
+    const { dispose: rootDispose, value } = createRoot(fn, { inherit: true })
     dispose = rootDispose
     return value
   }

@@ -481,6 +481,39 @@ describe('List Helpers', () => {
       list.dispose()
     })
 
+    it('defers keyed list diffing until container is connected', async () => {
+      const calls: number[] = []
+      const items = createSignal([1, 2, 3])
+      const detached = document.createElement('div')
+
+      const list = createKeyedList(
+        () => {
+          calls.push(1)
+          return items()
+        },
+        item => item,
+        itemSig => {
+          const text = document.createTextNode('')
+          createEffect(() => {
+            text.textContent = String(itemSig())
+          })
+          return [text]
+        },
+      )
+
+      detached.appendChild(list.marker)
+      list.flush?.()
+      await tick()
+      expect(calls.length).toBe(0)
+
+      document.body.appendChild(detached)
+      await tick()
+      expect(calls.length).toBe(1)
+
+      list.dispose()
+      detached.remove()
+    })
+
     it('runs keyed block onMount after DOM insertion', async () => {
       const mounts: boolean[] = []
       const items = createSignal([{ id: 1 }])

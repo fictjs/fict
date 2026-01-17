@@ -15,6 +15,7 @@ import {
 } from '../src/index'
 import { setCycleProtectionOptions, createSignal } from '../src/advanced'
 import { bindText, bindAttribute, bindProperty, insert } from '../src/internal'
+import { registerErrorHandler } from '../src/lifecycle'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -126,6 +127,51 @@ describe('fict runtime', () => {
     expect(root.value).toBe(42)
     root.dispose()
     expect(cleaned).toBe(1)
+  })
+
+  it('isolates createRoot by default', () => {
+    const calls: string[] = []
+    let caught: unknown
+
+    createRoot(() => {
+      registerErrorHandler(() => {
+        calls.push('parent')
+        return true
+      })
+      try {
+        createRoot(() => {
+          createEffect(() => {
+            throw new Error('boom')
+          })
+        })
+      } catch (err) {
+        caught = err
+      }
+    })
+
+    expect(calls).toEqual([])
+    expect(caught).toBeInstanceOf(Error)
+  })
+
+  it('inherits error handlers when createRoot inherit is true', () => {
+    const calls: string[] = []
+
+    createRoot(() => {
+      registerErrorHandler(() => {
+        calls.push('parent')
+        return true
+      })
+      createRoot(
+        () => {
+          createEffect(() => {
+            throw new Error('boom')
+          })
+        },
+        { inherit: true },
+      )
+    })
+
+    expect(calls).toEqual(['parent'])
   })
 
   it('creates fragments and keeps falsy numeric children', () => {

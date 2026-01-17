@@ -17,6 +17,10 @@ export interface RootContext {
   suspenseHandlers?: SuspenseHandler[]
 }
 
+export interface CreateRootOptions {
+  inherit?: boolean
+}
+
 type ErrorHandler = (err: unknown, info?: ErrorInfo) => boolean | void
 type SuspenseHandler = (token: SuspenseToken | PromiseLike<unknown>) => boolean | void
 
@@ -111,8 +115,12 @@ export function destroyRoot(root: RootContext): void {
   }
 }
 
-export function createRoot<T>(fn: () => T): { dispose: () => void; value: T } {
-  const root = createRootContext()
+export function createRoot<T>(
+  fn: () => T,
+  options?: CreateRootOptions,
+): { dispose: () => void; value: T } {
+  const parent = options?.inherit ? currentRoot : undefined
+  const root = createRootContext(parent)
   const prev = pushRoot(root)
   let value: T
   try {
