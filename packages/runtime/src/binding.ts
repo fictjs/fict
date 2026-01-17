@@ -952,9 +952,10 @@ export function bindEvent(
   const rootRef = getCurrentRoot()
 
   // Optimization: Global Event Delegation
-  // If the event is delegatable and no special options (capture, passive) are used,
+  // If the event is delegatable and no options were provided,
   // we attach the handler to the element property and rely on the global listener.
-  if (isDev && DelegatedEvents.has(eventName) && !options) {
+  const shouldDelegate = options == null && DelegatedEvents.has(eventName)
+  if (shouldDelegate) {
     const key = `$$${eventName}`
 
     // Ensure global delegation is active for this event
@@ -1235,7 +1236,7 @@ function assignProp(
   // Standard event handling: onClick, onInput, etc.
   if (prop.slice(0, 2) === 'on') {
     const eventName = prop.slice(2).toLowerCase()
-    const shouldDelegate = isDev && DelegatedEvents.has(eventName)
+    const shouldDelegate = DelegatedEvents.has(eventName)
     if (!shouldDelegate && prev) {
       const handler = Array.isArray(prev) ? prev[0] : prev
       node.removeEventListener(eventName, handler as EventListener)

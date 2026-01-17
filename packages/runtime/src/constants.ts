@@ -263,10 +263,9 @@ export const $$EVENTS = '_$FICT_DELEGATE'
 /**
  * Events that should use event delegation for performance
  * These events bubble and are commonly used across many elements
+ * Note: This must match the compiler's DelegatedEvents set
  */
-const delegatedEvents = isDev ? DelegatedEventNames : []
-
-export const DelegatedEvents = new Set<string>(delegatedEvents)
+export const DelegatedEvents = new Set<string>(DelegatedEventNames)
 
 // ============================================================================
 // SVG Support

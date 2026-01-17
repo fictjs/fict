@@ -90,7 +90,7 @@ export { $store } from './store'
  *
  * @public
  */
-export function $state<T>(initialValue: T): T {
+export function $state<T>(_initialValue: T): T {
   // This function is never called at runtime - the compiler transforms it
   throw new Error('$state() is a compiler macro and should be transformed at compile time')
 }
@@ -108,7 +108,7 @@ export function $state<T>(initialValue: T): T {
  *
  * @public
  */
-export function $effect(fn: () => void | (() => void)): void {
+export function $effect(_fn: () => void | (() => void)): void {
   // This function is never called at runtime - the compiler transforms it
   throw new Error('$effect() is a compiler macro and should be transformed at compile time')
 }
