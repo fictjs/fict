@@ -325,8 +325,9 @@ function Profile({ id }) {
 
 ### `fict/plus` — Advanced APIs
 
-```tsx
-import { $store, resource, lazy, untrack } from 'fict/plus'
+````tsx
+import { $store, resource, lazy } from 'fict/plus'
+import { untrack } from 'fict'
 
 // Deep reactivity with path-level tracking
 const user = $store({ name: 'Alice', address: { city: 'London' } })
@@ -367,7 +368,7 @@ When does a component re-execute vs just update DOM?
 ```tsx
 let count = $state(0)
 return <div>{count}</div> // Only the text node updates
-```
+````
 
 **Control flow reads → Component re-executes:**
 
@@ -427,7 +428,8 @@ _Lower is better. Baseline relative to best performer in each category._
 - [x] Compiler with HIR/SSA
 - [x] Stable `$state` / `$effect` semantics
 - [x] Automatic derived value inference
-- [x] `$store`, `resource`, `lazy`, `transition` in `fict/plus`
+- [x] `$store`, `resource`, `lazy` in `fict/plus`
+- [x] `startTransition`, `useTransition`, `useDeferredValue` in `fict`
 - [x] Vite plugin
 - [x] ESLint plugin
 - [ ] Support sourcemap

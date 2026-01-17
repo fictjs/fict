@@ -17,21 +17,22 @@ pnpm add -D @fictjs/eslint-plugin
 
 ## Rules (recommended)
 
-| Rule                               | Diagnostic     | Level | What it catches                                   |
-| ---------------------------------- | -------------- | ----- | ------------------------------------------------- |
-| `no-state-in-loop`                 | error          | P0    | `$state` declared inside loops                    |
-| `no-state-destructure-write`       | error          | P0    | Writes to destructured `$state` aliases           |
-| `no-nested-components`             | FICT-C003      | P0    | Components defined inside components              |
-| `require-list-key`                 | FICT-J002      | P0    | `.map()` returning JSX without `key`              |
-| `no-direct-mutation`               | warn           | P1    | Deep mutations on `$state` objects                |
-| `no-empty-effect`                  | FICT-E001      | warn  | `$effect` with no reactive reads                  |
-| `no-inline-functions`              | FICT-X003      | warn  | Inline functions in JSX props (perf footgun)      |
-| `no-memo-side-effects`             | FICT-M003      | warn  | Side effects inside `$memo` callbacks             |
-| `require-component-return`         | FICT-C004      | warn  | Component functions missing a return              |
-| `no-unsafe-props-spread`           | FICT-P005      | warn  | JSX spreads with dynamic or unsafe sources        |
-| `no-unsupported-props-destructure` | FICT-P001–P004 | warn  | Props destructuring patterns that lose reactivity |
-| `no-computed-props-key`            | FICT-P003      | warn  | Computed keys in props destructuring              |
-| `no-third-party-props-spread`      | FICT-P005      | warn  | Spreads of third-party objects into props         |
+| Rule                               | Diagnostic     | Level | What it catches                                         |
+| ---------------------------------- | -------------- | ----- | ------------------------------------------------------- |
+| `no-state-in-loop`                 | error          | P0    | `$state` declared inside loops                          |
+| `no-state-destructure-write`       | error          | P0    | Writes to destructured `$state` aliases                 |
+| `no-state-outside-component`       | FICT-S002      | P0    | `$state` declared at module level or outside components |
+| `no-nested-components`             | FICT-C003      | P0    | Components defined inside components                    |
+| `require-list-key`                 | FICT-J002      | P0    | `.map()` returning JSX without `key`                    |
+| `no-direct-mutation`               | warn           | P1    | Deep mutations on `$state` objects                      |
+| `no-empty-effect`                  | FICT-E001      | warn  | `$effect` with no reactive reads                        |
+| `no-inline-functions`              | FICT-X003      | warn  | Inline functions in JSX props (perf footgun)            |
+| `no-memo-side-effects`             | FICT-M003      | warn  | Side effects inside `$memo` callbacks                   |
+| `require-component-return`         | FICT-C004      | warn  | Component functions missing a return                    |
+| `no-unsafe-props-spread`           | FICT-P005      | warn  | JSX spreads with dynamic or unsafe sources              |
+| `no-unsupported-props-destructure` | FICT-P001–P004 | warn  | Props destructuring patterns that lose reactivity       |
+| `no-computed-props-key`            | FICT-P003      | warn  | Computed keys in props destructuring                    |
+| `no-third-party-props-spread`      | FICT-P005      | warn  | Spreads of third-party objects into props               |
 
 ## Notes
 

@@ -41,7 +41,6 @@ export type Memo<T> = () => T
 
 // Effects
 export function createEffect(fn: () => void | Cleanup): Cleanup
-export function createRenderEffect(fn: () => void | Cleanup): Cleanup
 export type Effect = () => void | Cleanup
 
 // Scheduling control
@@ -85,10 +84,9 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
 
 // Element creation (normally compiler-generated)
 export function createElement(node: FictNode): Node
-
-// Template optimization
-export function template(html: string): () => Node
 ```
+
+> **Note**: `template(html: string): () => Node` is exported from `@fictjs/runtime/internal` for compiler use only.
 
 ### 1.4 Components
 
@@ -411,6 +409,12 @@ export function createSelector<T, U = T>(
   source: () => T,
   fn?: (a: U, b: T) => boolean,
 ): (key: U) => boolean
+
+// Effect scope - collect effects for batch disposal
+export function effectScope<T>(fn: () => T): { value: T; stop: () => void }
+
+// Render effect - synchronous effect for DOM updates
+export function createRenderEffect(fn: () => void | Cleanup): () => void
 ```
 
 > **Note**: `createSignal` is an escape-hatch API, only for:
