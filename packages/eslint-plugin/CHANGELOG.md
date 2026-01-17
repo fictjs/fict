@@ -1,5 +1,11 @@
 # @fictjs/eslint-plugin
 
+## 0.0.15
+
+### Patch Changes
+
+- fix props
+
 ## 0.0.14
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/ssr",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "description": "Fict server-side rendering",
   "publishConfig": {
     "access": "public",
