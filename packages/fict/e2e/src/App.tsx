@@ -2,6 +2,7 @@ import {
   createContext,
   useContext,
   ErrorBoundary,
+  Suspense,
   $memo,
   $store,
   prop,
@@ -10,6 +11,7 @@ import {
   onCleanup,
   $state,
 } from 'fict'
+import { lazy, resource } from 'fict/plus'
 
 // ============================================================================
 // 1. Basic Reactivity Test
@@ -522,6 +524,104 @@ function MemoTest() {
 }
 
 // ============================================================================
+// 13. Suspense + Lazy Loading Test
+// ============================================================================
+
+// Simulated lazy component - returns after delay
+const LazyComponent = lazy(
+  () =>
+    new Promise<{ default: () => any }>(resolve => {
+      setTimeout(() => {
+        resolve({
+          default: () => <div id="lazy-content">Lazy component loaded!</div>,
+        })
+      }, 100)
+    }),
+)
+
+function SuspenseLazyTest() {
+  let showLazy = $state(false)
+
+  return (
+    <section id="suspense-lazy-test">
+      <h2>Suspense + Lazy Loading</h2>
+      <button id="load-lazy" onClick={() => (showLazy = true)}>
+        Load Lazy Component
+      </button>
+      <div id="lazy-container">
+        {showLazy && (
+          <Suspense fallback={<div id="lazy-loading">Loading...</div>}>
+            <LazyComponent />
+          </Suspense>
+        )}
+      </div>
+    </section>
+  )
+}
+
+// ============================================================================
+// 14. Resource (Async Data Fetching) Test
+// ============================================================================
+
+// Simulated API resource
+const userResource = resource<{ name: string; email: string }, string>({
+  fetch: async (_, userId: string) => {
+    await new Promise(r => setTimeout(r, 100))
+    return {
+      name: `User ${userId}`,
+      email: `user${userId}@example.com`,
+    }
+  },
+  key: ['user'],
+})
+
+function ResourceTest() {
+  let userId = $state('1')
+  let showData = $state(false)
+
+  const handleLoad = () => {
+    showData = true
+  }
+
+  const handleChangeUser = () => {
+    userId = userId === '1' ? '2' : '1'
+  }
+
+  return (
+    <section id="resource-test">
+      <h2>Resource (Async Data)</h2>
+      <button id="load-resource" onClick={handleLoad}>
+        Load User Data
+      </button>
+      <button id="change-user" onClick={handleChangeUser}>
+        Switch User (Current: {userId})
+      </button>
+      <div id="resource-container">
+        {showData && (
+          <Suspense fallback={<div id="resource-loading">Fetching user...</div>}>
+            <UserDisplay userId={userId} />
+          </Suspense>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function UserDisplay(props: { userId: string }) {
+  const result = userResource.read(() => props.userId)
+
+  return (
+    <div id="user-data">
+      <p id="user-name">Name: {result.data?.name ?? 'N/A'}</p>
+      <p id="user-email">Email: {result.data?.email ?? 'N/A'}</p>
+      <button id="refresh-resource" onClick={() => result.refresh()}>
+        Refresh
+      </button>
+    </div>
+  )
+}
+
+// ============================================================================
 // Main App
 // ============================================================================
 export function App() {
@@ -551,6 +651,10 @@ export function App() {
       <EffectTest />
       <hr />
       <MemoTest />
+      <hr />
+      <SuspenseLazyTest />
+      <hr />
+      <ResourceTest />
     </div>
   )
 }

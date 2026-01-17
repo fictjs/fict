@@ -271,4 +271,179 @@ describe('prop', () => {
     expect(container.textContent).toBe('10')
     dispose()
   })
+
+  it('handles nested prop getters with unwrap option', () => {
+    const inner = createSignal(5)
+    const outer = prop(() => prop(() => inner()))
+
+    // Default unwrap: true - should unwrap nested getter
+    expect(outer()).toBe(5)
+
+    inner(10)
+    expect(outer()).toBe(10)
+  })
+
+  it('preserves nested prop getters with unwrap: false', () => {
+    const inner = createSignal(5)
+    const innerProp = prop(() => inner())
+    const outer = prop(() => innerProp, { unwrap: false })
+
+    // With unwrap: false, outer returns the inner prop getter
+    const result = outer()
+    expect(typeof result).toBe('function')
+  })
+
+  it('handles already-prop-wrapped input idempotently', () => {
+    const base = createSignal(1)
+    const memoized = prop(() => base())
+    const wrapped = prop(memoized)
+
+    // Should return same reference when already wrapped
+    expect(wrapped).toBe(memoized)
+  })
+})
+
+describe('mergeProps advanced', () => {
+  it('handles dynamic source functions', () => {
+    const value = createSignal(1)
+    const dynamicSource = () => ({ a: value() })
+
+    const merged = createPropsProxy(mergeProps(dynamicSource))
+
+    expect(merged.a).toBe(1)
+    value(2)
+    expect(merged.a).toBe(2)
+  })
+
+  it('handles multiple dynamic sources with override order', () => {
+    const first = createSignal(1)
+    const second = createSignal(10)
+
+    const merged = createPropsProxy(
+      mergeProps(
+        () => ({ value: first() }),
+        () => ({ value: second() }),
+      ),
+    )
+
+    expect(merged.value).toBe(10) // Last wins
+    second(20)
+    expect(merged.value).toBe(20)
+  })
+
+  it('handles Symbol keys correctly', () => {
+    const sym = Symbol('test')
+    const merged = mergeProps({ [sym]: 'value' })
+
+    expect(merged[sym]).toBe('value')
+    expect(sym in merged).toBe(true)
+
+    const keys = Reflect.ownKeys(merged)
+    expect(keys).toContain(sym)
+  })
+
+  it('handles dynamic source with Symbol keys', () => {
+    const sym = Symbol('dynamic')
+    const value = createSignal('initial')
+    const dynamicSource = () => ({ [sym]: value() })
+
+    const merged = createPropsProxy(mergeProps(dynamicSource))
+
+    expect(merged[sym]).toBe('initial')
+    value('updated')
+    expect(merged[sym]).toBe('updated')
+  })
+
+  it('preserves null/undefined values correctly', () => {
+    const merged = mergeProps({ a: null, b: undefined, c: 0, d: '' })
+
+    expect(merged.a).toBe(null)
+    expect(merged.b).toBe(undefined)
+    expect(merged.c).toBe(0)
+    expect(merged.d).toBe('')
+    expect('b' in merged).toBe(true)
+  })
+
+  it('handles mixed static and dynamic sources', () => {
+    const dynamic = createSignal(100)
+
+    const merged = createPropsProxy(
+      mergeProps({ static: 'value' }, () => ({ dynamic: dynamic() }), { override: true }),
+    )
+
+    expect(merged.static).toBe('value')
+    expect(merged.dynamic).toBe(100)
+    expect(merged.override).toBe(true)
+
+    dynamic(200)
+    expect(merged.dynamic).toBe(200)
+  })
+
+  it('returns empty object when no valid sources', () => {
+    const merged = mergeProps(null, undefined)
+    expect(Object.keys(merged).length).toBe(0)
+  })
+
+  it('returns source directly for single static source', () => {
+    const source = { a: 1, b: 2 }
+    const merged = mergeProps(source)
+
+    expect(merged).toBe(source)
+  })
+})
+
+describe('__fictPropsRest advanced', () => {
+  it('excludes multiple keys correctly', () => {
+    const base = { a: 1, b: 2, c: 3, d: 4 }
+    const rest = __fictPropsRest(base, ['a', 'c'])
+
+    expect('a' in rest).toBe(false)
+    expect('c' in rest).toBe(false)
+    expect(rest.b).toBe(2)
+    expect(rest.d).toBe(4)
+  })
+
+  it('preserves prop getters in rest object', () => {
+    const count = createSignal(0)
+    const base = {
+      excluded: 'skip',
+      count: __fictProp(() => count()),
+    }
+
+    const rest = __fictPropsRest(base, ['excluded'])
+
+    expect('excluded' in rest).toBe(false)
+    expect(rest.count).toBe(0)
+
+    count(5)
+    expect(rest.count).toBe(5)
+  })
+
+  it('handles Symbol keys in exclusion', () => {
+    const sym = Symbol('excluded')
+    const base = { [sym]: 'secret', visible: 'public' }
+
+    const rest = __fictPropsRest(base, [sym])
+
+    expect(sym in rest).toBe(false)
+    expect(rest.visible).toBe('public')
+  })
+
+  it('handles empty exclusion list', () => {
+    const base = { a: 1, b: 2 }
+    const rest = __fictPropsRest(base, [])
+
+    expect(rest.a).toBe(1)
+    expect(rest.b).toBe(2)
+  })
+
+  it('unwraps props proxy before processing', () => {
+    const count = createSignal(1)
+    const base = createPropsProxy({ value: __fictProp(() => count()) })
+    const rest = __fictPropsRest(base, [])
+
+    expect(rest.value).toBe(1)
+    count(2)
+    expect(rest.value).toBe(2)
+  })
 })

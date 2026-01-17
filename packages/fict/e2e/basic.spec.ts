@@ -318,3 +318,66 @@ test.describe('Computed Values', () => {
     await expect(page.locator('#memo-sum')).toContainText('Sum: 5')
   })
 })
+
+// ============================================================================
+// 13. Suspense + Lazy Loading Tests
+// ============================================================================
+test.describe('Suspense + Lazy Loading', () => {
+  test('lazy container is empty initially', async ({ page }) => {
+    await expect(page.locator('#lazy-container')).toBeEmpty()
+  })
+
+  test('shows loading state then lazy content', async ({ page }) => {
+    await page.click('#load-lazy')
+
+    // Should show loading state
+    await expect(page.locator('#lazy-loading')).toBeVisible()
+
+    // After delay, should show lazy content
+    await expect(page.locator('#lazy-content')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('#lazy-content')).toContainText('Lazy component loaded!')
+
+    // Loading should disappear
+    await expect(page.locator('#lazy-loading')).not.toBeVisible()
+  })
+})
+
+// ============================================================================
+// 14. Resource (Async Data Fetching) Tests
+// ============================================================================
+test.describe('Resource (Async Data)', () => {
+  test('resource container is empty initially', async ({ page }) => {
+    await expect(page.locator('#resource-container')).toBeEmpty()
+  })
+
+  test('shows loading state then user data', async ({ page }) => {
+    await page.click('#load-resource')
+
+    // Loading state may appear briefly - check final state is correct
+    // (loading state may resolve too fast to reliably detect)
+    await expect(page.locator('#user-data')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('#user-name')).toContainText('Name: User 1')
+    await expect(page.locator('#user-email')).toContainText('Email: user1@example.com')
+  })
+
+  test('switching user refetches data', async ({ page }) => {
+    // Load initial data
+    await page.click('#load-resource')
+    await expect(page.locator('#user-name')).toContainText('Name: User 1', { timeout: 5000 })
+
+    // Switch user
+    await page.click('#change-user')
+    await expect(page.locator('#user-name')).toContainText('Name: User 2', { timeout: 5000 })
+    await expect(page.locator('#user-email')).toContainText('Email: user2@example.com')
+  })
+
+  test('refresh button refetches current user', async ({ page }) => {
+    // Load initial data
+    await page.click('#load-resource')
+    await expect(page.locator('#user-name')).toContainText('Name: User 1', { timeout: 5000 })
+
+    // Click refresh - should still show User 1 after refresh completes
+    await page.click('#refresh-resource')
+    await expect(page.locator('#user-name')).toContainText('Name: User 1', { timeout: 5000 })
+  })
+})

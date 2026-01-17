@@ -28,6 +28,8 @@ export default defineConfig({
   },
   resolve: {
     alias: [
+      { find: 'fict/plus', replacement: path.resolve(__dirname, '../src/plus.ts') },
+      { find: 'fict/advanced', replacement: path.resolve(__dirname, '../src/advanced.ts') },
       { find: 'fict', replacement: path.resolve(__dirname, '../src/index.ts') },
       {
         find: '@fictjs/runtime/jsx-runtime',
