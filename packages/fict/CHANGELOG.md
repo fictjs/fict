@@ -1,5 +1,16 @@
 # fict
 
+## 0.1.0
+
+### Minor Changes
+
+- fix some issue
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.1.0
+
 ## 0.0.15
 
 ### Patch Changes

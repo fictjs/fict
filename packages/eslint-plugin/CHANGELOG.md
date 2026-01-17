@@ -1,5 +1,11 @@
 # @fictjs/eslint-plugin
 
+## 0.1.0
+
+### Minor Changes
+
+- fix some issue
+
 ## 0.0.15
 
 ### Patch Changes

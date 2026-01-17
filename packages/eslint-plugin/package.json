@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/eslint-plugin",
-  "version": "0.0.15",
+  "version": "0.1.0",
   "description": "ESLint plugin for Fict",
   "publishConfig": {
     "access": "public",
