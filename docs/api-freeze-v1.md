@@ -62,7 +62,7 @@ export function useDeferredValue<T>(value: () => T): () => T
 export function $store<T extends object>(initialValue: T): T
 ```
 
-> **Note**: `createStore` (shallow reactivity) has moved to internal. Regular users only need `$store`.
+> **Note**: `createStore` is internal and returns `[store, setStore]` with reconcile-based updates. Regular users only need `$store`.
 
 ### 1.2 Lifecycle
 
@@ -743,19 +743,19 @@ export const $memo = createMemo
 
 ### `@fictjs/runtime/internal` (Compiler/Internal Use)
 
-| Export              | Category   | Tier | Notes                                       |
-| ------------------- | ---------- | ---- | ------------------------------------------- |
-| `createStore`       | Reactivity | 2    | Shallow reactive; users should use `$store` |
-| `createPropsProxy`  | Props      | 2    | Internal props proxy                        |
-| `Properties`        | Constants  | 2    | DOM property list                           |
-| `ChildProperties`   | Constants  | 2    | Child property list                         |
-| `Aliases`           | Constants  | 2    | Attribute alias map                         |
-| `getPropAlias`      | Constants  | 2    | Get attribute alias                         |
-| `BooleanAttributes` | Constants  | 2    | Boolean attribute list                      |
-| `SVGElements`       | Constants  | 2    | SVG element list                            |
-| `SVGNamespace`      | Constants  | 2    | SVG namespace                               |
-| `DelegatedEvents`   | Constants  | 2    | Delegated event list                        |
-| `UnitlessStyles`    | Constants  | 2    | Unitless style list                         |
+| Export              | Category   | Tier | Notes                                               |
+| ------------------- | ---------- | ---- | --------------------------------------------------- |
+| `createStore`       | Reactivity | 2    | Deep proxy + setStore reconciliation; internal-only |
+| `createPropsProxy`  | Props      | 2    | Internal props proxy                                |
+| `Properties`        | Constants  | 2    | DOM property list                                   |
+| `ChildProperties`   | Constants  | 2    | Child property list                                 |
+| `Aliases`           | Constants  | 2    | Attribute alias map                                 |
+| `getPropAlias`      | Constants  | 2    | Get attribute alias                                 |
+| `BooleanAttributes` | Constants  | 2    | Boolean attribute list                              |
+| `SVGElements`       | Constants  | 2    | SVG element list                                    |
+| `SVGNamespace`      | Constants  | 2    | SVG namespace                                       |
+| `DelegatedEvents`   | Constants  | 2    | Delegated event list                                |
+| `UnitlessStyles`    | Constants  | 2    | Unitless style list                                 |
 
 ### `fict/jsx-runtime`
 
@@ -798,7 +798,7 @@ export const $memo = createMemo
 
 /**
  * Create a deep reactive proxy object.
- * Unlike createStore, $store returns the proxy directly with no setter.
+ * Unlike createStore (internal), $store returns the proxy directly with no setter.
  */
 export function $store<T extends object>(initialValue: T): T
 

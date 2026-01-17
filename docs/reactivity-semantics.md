@@ -137,7 +137,7 @@ Destructuring props **does not** create snapshots. Each destructured field becom
 | `obj[dynamicKey]`       | Coarse (tracks whole obj) |
 | `Reflect.get(obj, key)` | Coarse (tracks whole obj) |
 
-Shape analysis may narrow dependency bookkeeping for compiler memos, but invalidation still happens at the whole-signal level. For per-property tracking, use store-style proxies (e.g., `createStore`) rather than `$state` objects.
+Shape analysis may narrow dependency bookkeeping for compiler memos, but invalidation still happens at the whole-signal level. For per-property tracking, use store-style proxies (e.g., `$store`; internal `createStore` also provides this) rather than `$state` objects. `$store` is the public API for direct mutation, while `createStore` is internal and provides `setStore` reconciliation.
 
 ---
 
