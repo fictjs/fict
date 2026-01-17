@@ -73,3 +73,42 @@ export { createMemo as $memo } from '@fictjs/runtime'
  * @public
  */
 export { $store } from './store'
+
+// ============================================================================
+// Compiler Macros (transformed at compile time)
+// ============================================================================
+
+/**
+ * Compiler macro for reactive state.
+ * This is transformed at compile time and should never be called at runtime.
+ *
+ * @example
+ * ```tsx
+ * let count = $state(0)
+ * count++ // Reactive update
+ * ```
+ *
+ * @public
+ */
+export function $state<T>(initialValue: T): T {
+  // This function is never called at runtime - the compiler transforms it
+  throw new Error('$state() is a compiler macro and should be transformed at compile time')
+}
+
+/**
+ * Compiler macro for reactive effects.
+ * This is transformed at compile time and should never be called at runtime.
+ *
+ * @example
+ * ```tsx
+ * $effect(() => {
+ *   console.log('count changed:', count)
+ * })
+ * ```
+ *
+ * @public
+ */
+export function $effect(fn: () => void | (() => void)): void {
+  // This function is never called at runtime - the compiler transforms it
+  throw new Error('$effect() is a compiler macro and should be transformed at compile time')
+}

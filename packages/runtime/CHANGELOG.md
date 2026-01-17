@@ -18,8 +18,6 @@
 
 - fix dev mode
 
-## Unreleased
-
 ### Breaking Changes
 
 - remove list-container helper exports (`createKeyedListContainer`, `createKeyedBlock`, `moveMarkerBlock`, `destroyMarkerBlock`, `getFirstNodeAfter`) from the public runtime API; use `createKeyedList` instead.
