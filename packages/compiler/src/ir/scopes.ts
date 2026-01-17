@@ -433,6 +433,9 @@ function collectExprReads(
       expr.arguments?.forEach((a: any) => collectExprReads(a, into, paths, bound))
       return
     }
+    case 'SpreadElement':
+      collectExprReads(expr.argument, into, paths, bound)
+      return
     case 'MemberExpression':
     case 'OptionalMemberExpression': {
       // Extract full dependency path for optional chain analysis

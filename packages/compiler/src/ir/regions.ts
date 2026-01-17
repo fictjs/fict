@@ -436,11 +436,17 @@ function containsJSXExpr(expr: any): boolean {
     case 'ArrayExpression':
       return expr.elements?.some((el: any) => containsJSXExpr(el)) ?? false
     case 'ObjectExpression':
-      return expr.properties?.some((p: any) => containsJSXExpr(p.value)) ?? false
+      return (
+        expr.properties?.some((p: any) =>
+          p.kind === 'SpreadElement' ? containsJSXExpr(p.argument) : containsJSXExpr(p.value),
+        ) ?? false
+      )
     case 'ConditionalExpression':
       return containsJSXExpr(expr.consequent) || containsJSXExpr(expr.alternate)
     case 'ArrowFunction':
       return containsJSXExpr(expr.body)
+    case 'SpreadElement':
+      return containsJSXExpr(expr.argument)
     default:
       return false
   }
@@ -487,6 +493,8 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
       })
     case 'TemplateLiteral':
       return expr.expressions.some(e => expressionUsesTracked(e as Expression, ctx))
+    case 'SpreadElement':
+      return expressionUsesTracked(expr.argument as Expression, ctx)
     default:
       return false
   }

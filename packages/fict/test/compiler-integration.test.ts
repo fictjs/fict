@@ -2082,6 +2082,217 @@ describe('compiler + fict integration', () => {
     dispose()
   })
 
+  it('props: spreads ignore null and undefined sources', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+      export let bump: () => void
+
+      function Child(props: any) {
+        return <span className="value">{props.count}</span>
+      }
+
+      function App() {
+        let count = $state(0)
+        bump = () => { count = count + 1 }
+        return <Child {...null} {...undefined} {...{ count }} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void; bump: () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const read = () => container.querySelector('.value')?.textContent
+    expect(read()).toBe('0')
+
+    mod.bump()
+    await tick()
+    expect(read()).toBe('1')
+
+    dispose()
+  })
+
+  it('props: nested mergeProps keeps reactive fields', async () => {
+    const source = `
+      import { $state, render, prop, mergeProps } from 'fict'
+      export let bump: () => void
+
+      function Child(props: any) {
+        return (
+          <div>
+            <span className="count">{props.count}</span>
+            <span className="extra">{props.extra}</span>
+          </div>
+        )
+      }
+
+      function App() {
+        let count = $state(0)
+        bump = () => { count = count + 1 }
+        const defaults = { extra: 'x' }
+        const nested = mergeProps({ count: prop(() => count()) })
+
+        return <Child {...mergeProps(defaults, nested)} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void; bump: () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const read = () => ({
+      count: container.querySelector('.count')?.textContent,
+      extra: container.querySelector('.extra')?.textContent,
+    })
+
+    expect(read()).toEqual({ count: '0', extra: 'x' })
+
+    mod.bump()
+    await tick()
+    expect(read()).toEqual({ count: '1', extra: 'x' })
+
+    dispose()
+  })
+
+  it('props: mixed accessor and plain values in spread stay reactive', async () => {
+    const source = `
+      import { $state, render, prop } from 'fict'
+      export let bump: () => void
+
+      function Child(props: any) {
+        return (
+          <div>
+            <span className="count">{props.count}</span>
+            <span className="label">{props.label}</span>
+          </div>
+        )
+      }
+
+      function App() {
+        let count = $state(0)
+        bump = () => { count = count + 1 }
+        const mixed = { count: prop(() => count()), label: 'hello' }
+        return <Child {...mixed} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void; bump: () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const read = () => ({
+      count: container.querySelector('.count')?.textContent,
+      label: container.querySelector('.label')?.textContent,
+    })
+
+    expect(read()).toEqual({ count: '0', label: 'hello' })
+
+    mod.bump()
+    await tick()
+    expect(read()).toEqual({ count: '1', label: 'hello' })
+
+    dispose()
+  })
+
+  it('props: mergeProps ignores nullish sources', async () => {
+    const source = `
+      import { $state, render, prop, mergeProps } from 'fict'
+      export let bump: () => void
+
+      function Child(props: any) {
+        return (
+          <div>
+            <span className="count">{props.count}</span>
+            <span className="label">{props.label}</span>
+          </div>
+        )
+      }
+
+      function App() {
+        let count = $state(0)
+        bump = () => { count = count + 1 }
+        return <Child {...mergeProps(null, undefined, { label: 'ready' }, { count: prop(() => count()) })} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void; bump: () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const read = () => ({
+      count: container.querySelector('.count')?.textContent,
+      label: container.querySelector('.label')?.textContent,
+    })
+
+    expect(read()).toEqual({ count: '0', label: 'ready' })
+
+    mod.bump()
+    await tick()
+    expect(read()).toEqual({ count: '1', label: 'ready' })
+
+    dispose()
+  })
+
+  it('props: mergeProps supports spread args', async () => {
+    const source = `
+      import { $state, render, prop, mergeProps } from 'fict'
+      export let bump: () => void
+
+      function Child(props: any) {
+        return (
+          <div>
+            <span className="count">{props.count}</span>
+            <span className="label">{props.label}</span>
+          </div>
+        )
+      }
+
+      function App() {
+        let count = $state(0)
+        bump = () => { count = count + 1 }
+        const parts = [null, undefined, { label: 'ready' }, { count: prop(() => count()) }]
+        return <Child {...mergeProps(...parts)} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void; bump: () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const read = () => ({
+      count: container.querySelector('.count')?.textContent,
+      label: container.querySelector('.label')?.textContent,
+    })
+
+    expect(read()).toEqual({ count: '0', label: 'ready' })
+
+    mod.bump()
+    await tick()
+    expect(read()).toEqual({ count: '1', label: 'ready' })
+
+    dispose()
+  })
+
   it('props: compiler auto-wraps derived prop with prop to avoid recompute', async () => {
     const source = `
       import { $state, render } from 'fict'

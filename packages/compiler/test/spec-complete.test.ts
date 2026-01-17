@@ -207,6 +207,28 @@ describe('R005: Props destructuring', () => {
     `)
     expect(output).toContain('__props')
   })
+
+  it('auto merges spread props for components', () => {
+    const output = transform(`
+      function Parent(props) {
+        return <Child {...props} id="next" />
+      }
+    `)
+    expect(output).toContain('mergeProps')
+    expect(output).toContain('props')
+    expect(output).toContain('id')
+  })
+})
+
+describe('R005: Props spread diagnostics', () => {
+  it('warns on dynamic props spread', () => {
+    const { warnings } = transformWithWarnings(`
+      function Parent(props) {
+        return <Child {...props()} />
+      }
+    `)
+    expect(warnings.some(w => w.code === 'FICT-P005')).toBe(true)
+  })
 })
 
 // ============================================================================

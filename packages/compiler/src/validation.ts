@@ -32,6 +32,7 @@ export enum DiagnosticCode {
   FICT_P002 = 'FICT-P002', // Array rest in props destructuring
   FICT_P003 = 'FICT-P003', // Computed property in props pattern
   FICT_P004 = 'FICT-P004', // Nested props destructuring fallback
+  FICT_P005 = 'FICT-P005', // Dynamic props spread
 
   // State-related (FICT-S*)
   FICT_S001 = 'FICT-S001', // State variable mutation outside component
@@ -81,6 +82,8 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
   [DiagnosticCode.FICT_P003]: 'Computed property in props pattern cannot be made reactive.',
   [DiagnosticCode.FICT_P004]:
     'Nested props destructuring falls back to non-reactive binding; access props directly or use prop.',
+  [DiagnosticCode.FICT_P005]:
+    'Dynamic props spread may not stay reactive; consider explicit props or mergeProps(() => source).',
 
   [DiagnosticCode.FICT_S001]: 'State variable mutation detected outside component scope.',
   [DiagnosticCode.FICT_S002]: 'State variable escaped to external scope, may cause memory leaks.',
@@ -124,6 +127,7 @@ export const DiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = 
   [DiagnosticCode.FICT_P002]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_P003]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_P004]: DiagnosticSeverity.Warning,
+  [DiagnosticCode.FICT_P005]: DiagnosticSeverity.Warning,
 
   [DiagnosticCode.FICT_S001]: DiagnosticSeverity.Error,
   [DiagnosticCode.FICT_S002]: DiagnosticSeverity.Warning,
@@ -176,12 +180,16 @@ export interface Diagnostic {
   context?: Record<string, unknown>
 }
 
+interface DiagnosticNode {
+  loc?: BabelCore.types.SourceLocation | null
+}
+
 /**
  * Create a diagnostic from a node
  */
 export function createDiagnostic(
   code: DiagnosticCode,
-  node: BabelCore.types.Node,
+  node: DiagnosticNode,
   fileName: string,
   context?: Record<string, unknown>,
 ): Diagnostic {
@@ -211,7 +219,7 @@ export interface DiagnosticContext {
 export function reportDiagnostic(
   ctx: DiagnosticContext,
   code: DiagnosticCode,
-  node: BabelCore.types.Node,
+  node: DiagnosticNode,
   context?: Record<string, unknown>,
 ): void {
   const fileName = ctx.file?.opts?.filename || '<unknown>'

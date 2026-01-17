@@ -1873,6 +1873,27 @@ function processStatement(
 
 function convertExpression(node: BabelCore.types.Expression): Expression {
   const loc = getLoc(node)
+  const convertCallArguments = (
+    args: (
+      | BabelCore.types.Expression
+      | BabelCore.types.SpreadElement
+      | BabelCore.types.ArgumentPlaceholder
+    )[],
+  ): Expression[] =>
+    args
+      .map(arg => {
+        if (t.isSpreadElement(arg)) {
+          return {
+            kind: 'SpreadElement',
+            argument: convertExpression(arg.argument as BabelCore.types.Expression),
+            loc: getLoc(arg),
+          } as HSpreadElement
+        }
+        if (t.isExpression(arg)) return convertExpression(arg)
+        return undefined
+      })
+      .filter(Boolean) as Expression[]
+
   if (t.isIdentifier(node)) return { kind: 'Identifier', name: node.name, loc }
   if (
     t.isStringLiteral(node) ||
@@ -1885,9 +1906,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     const call: HCallExpression = {
       kind: 'CallExpression',
       callee: convertExpression(node.callee as BabelCore.types.Expression),
-      arguments: node.arguments
-        .map(arg => (t.isExpression(arg) ? convertExpression(arg) : undefined))
-        .filter(Boolean) as Expression[],
+      arguments: convertCallArguments(node.arguments),
       loc,
     }
     return call
@@ -2213,9 +2232,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     return {
       kind: 'NewExpression',
       callee: convertExpression(node.callee as BabelCore.types.Expression),
-      arguments: node.arguments
-        .map(arg => (t.isExpression(arg) ? convertExpression(arg) : undefined))
-        .filter(Boolean) as Expression[],
+      arguments: convertCallArguments(node.arguments),
       loc,
     }
   }
@@ -2244,9 +2261,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     return {
       kind: 'OptionalCallExpression',
       callee: convertExpression(node.callee as BabelCore.types.Expression),
-      arguments: node.arguments
-        .map(arg => (t.isExpression(arg) ? convertExpression(arg) : undefined))
-        .filter(Boolean) as Expression[],
+      arguments: convertCallArguments(node.arguments),
       optional: node.optional,
       loc,
     }

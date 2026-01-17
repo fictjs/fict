@@ -18,6 +18,7 @@ import {
   type JSXChild,
   type JSXElementExpression,
 } from './hir'
+import { buildPropsExpression } from './props-plan'
 import {
   deSSAVarName,
   expressionUsesTracked,
@@ -340,6 +341,12 @@ export interface CodegenContext {
   t: typeof BabelCore.types
   /** Compiler options (for feature toggles like lazyConditional). */
   options?: FictCompilerOptions
+  /** Module-level declared names for helper shadowing checks. */
+  moduleDeclaredNames?: Set<string>
+  /** Module-level runtime helper imports (e.g., from 'fict'). */
+  moduleRuntimeNames?: Set<string>
+  /** Local (function-scope) declared names for helper shadowing checks. */
+  localDeclaredNames?: Set<string>
   /** Tracks which runtime helpers are used */
   helpersUsed: Set<string>
   /** Counter for generating unique identifiers */
@@ -445,6 +452,9 @@ export interface CodegenContext {
 export function createCodegenContext(t: typeof BabelCore.types): CodegenContext {
   return {
     t,
+    moduleDeclaredNames: new Set(),
+    moduleRuntimeNames: new Set(),
+    localDeclaredNames: new Set(),
     helpersUsed: new Set(),
     tempCounter: 0,
     trackedVars: new Set(),
@@ -1994,16 +2004,10 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
   }
 }
 
-/**
- * Attach runtime helper imports used during codegen.
- */
-function attachHelperImports(
-  ctx: CodegenContext,
+function collectDeclaredNames(
   body: BabelCore.types.Statement[],
   t: typeof BabelCore.types,
-): BabelCore.types.Statement[] {
-  if (ctx.helpersUsed.size === 0) return body
-
+): Set<string> {
   const declared = new Set<string>()
   const addPatternNames = (pattern: BabelCore.types.LVal | BabelCore.types.PatternLike): void => {
     if (t.isIdentifier(pattern)) {
@@ -2078,6 +2082,105 @@ function attachHelperImports(
       declared.add(stmt.declaration.name)
     }
   }
+
+  return declared
+}
+
+function collectRuntimeImportNames(
+  body: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): Set<string> {
+  const runtimeModules = new Set([RUNTIME_MODULE, '@fictjs/runtime', 'fict'])
+  const imported = new Set<string>()
+
+  for (const stmt of body) {
+    if (!t.isImportDeclaration(stmt)) continue
+    if (!runtimeModules.has(stmt.source.value)) continue
+    for (const spec of stmt.specifiers) {
+      imported.add(spec.local.name)
+    }
+  }
+
+  return imported
+}
+
+function collectLocalDeclaredNames(
+  params: { name: string }[],
+  blocks: BasicBlock[] | null | undefined,
+  t: typeof BabelCore.types,
+): Set<string> {
+  const declared = new Set<string>()
+  const addPatternNames = (pattern: BabelCore.types.LVal | BabelCore.types.PatternLike): void => {
+    if (t.isIdentifier(pattern)) {
+      declared.add(deSSAVarName(pattern.name))
+      return
+    }
+    if (t.isAssignmentPattern(pattern)) {
+      addPatternNames(pattern.left as BabelCore.types.PatternLike)
+      return
+    }
+    if (t.isRestElement(pattern)) {
+      addPatternNames(pattern.argument as BabelCore.types.PatternLike)
+      return
+    }
+    if (t.isObjectPattern(pattern)) {
+      for (const prop of pattern.properties) {
+        if (t.isRestElement(prop)) {
+          addPatternNames(prop.argument as BabelCore.types.PatternLike)
+        } else if (t.isObjectProperty(prop)) {
+          addPatternNames(prop.value as BabelCore.types.PatternLike)
+        }
+      }
+      return
+    }
+    if (t.isArrayPattern(pattern)) {
+      for (const el of pattern.elements) {
+        if (!el) continue
+        if (t.isPatternLike(el)) addPatternNames(el as BabelCore.types.PatternLike)
+      }
+    }
+  }
+
+  params.forEach(param => declared.add(deSSAVarName(param.name)))
+
+  if (!blocks) return declared
+
+  for (const block of blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind !== 'Assign') continue
+      const target = deSSAVarName(instr.target.name)
+      const isFunctionDecl =
+        instr.value.kind === 'FunctionExpression' &&
+        !!instr.value.name &&
+        deSSAVarName(instr.value.name) === target
+      if (instr.declarationKind || isFunctionDecl) {
+        declared.add(target)
+      }
+    }
+    const term = block.terminator
+    if (term.kind === 'ForOf' || term.kind === 'ForIn') {
+      declared.add(deSSAVarName(term.variable))
+      if (term.pattern) {
+        addPatternNames(term.pattern as BabelCore.types.PatternLike)
+      }
+    } else if (term.kind === 'Try' && term.catchParam) {
+      declared.add(deSSAVarName(term.catchParam))
+    }
+  }
+
+  return declared
+}
+
+/**
+ * Attach runtime helper imports used during codegen.
+ */
+function attachHelperImports(
+  ctx: CodegenContext,
+  body: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): BabelCore.types.Statement[] {
+  if (ctx.helpersUsed.size === 0) return body
+  const declared = collectDeclaredNames(body, t)
 
   const specifiers: BabelCore.types.ImportSpecifier[] = []
 
@@ -2171,11 +2274,32 @@ function lowerExpressionImpl(
   const { t } = ctx
   const mapParams = (params: { name: string }[]) =>
     params.map(p => t.identifier(deSSAVarName(p.name)))
-  const withFunctionScope = <T>(paramNames: Set<string>, fn: () => T): T => {
+  const lowerArgsAsExpressions = (args: Expression[]): BabelCore.types.Expression[] =>
+    args.map(arg =>
+      arg.kind === 'SpreadElement'
+        ? lowerExpression(arg.argument as Expression, ctx)
+        : lowerExpression(arg, ctx),
+    )
+  const lowerCallArguments = (
+    args: Expression[],
+    mapArg?: (arg: Expression, idx: number) => BabelCore.types.Expression,
+  ): (BabelCore.types.Expression | BabelCore.types.SpreadElement)[] =>
+    args.map((arg, idx) => {
+      if (arg.kind === 'SpreadElement') {
+        return t.spreadElement(lowerExpression(arg.argument as Expression, ctx))
+      }
+      return mapArg ? mapArg(arg, idx) : lowerExpression(arg, ctx)
+    })
+  const withFunctionScope = <T>(
+    paramNames: Set<string>,
+    fn: () => T,
+    localDeclared?: Set<string>,
+  ): T => {
     const prevTracked = ctx.trackedVars
     const prevAlias = ctx.aliasVars
     const prevExternal = ctx.externalTracked
     const prevShadowed = ctx.shadowedNames
+    const prevLocalDeclared = ctx.localDeclaredNames
     const scoped = new Set(ctx.trackedVars)
     paramNames.forEach(n => scoped.delete(deSSAVarName(n)))
     ctx.trackedVars = scoped
@@ -2184,11 +2308,19 @@ function lowerExpressionImpl(
     const shadowed = new Set(prevShadowed ?? [])
     paramNames.forEach(n => shadowed.add(deSSAVarName(n)))
     ctx.shadowedNames = shadowed
+    const localNames = new Set(prevLocalDeclared ?? [])
+    if (localDeclared) {
+      for (const name of localDeclared) {
+        localNames.add(deSSAVarName(name))
+      }
+    }
+    ctx.localDeclaredNames = localNames
     const result = fn()
     ctx.trackedVars = prevTracked
     ctx.aliasVars = prevAlias
     ctx.externalTracked = prevExternal
     ctx.shadowedNames = prevShadowed
+    ctx.localDeclaredNames = prevLocalDeclared
     return result
   }
   const lowerBlocksToStatements = (blocks: BasicBlock[]): BabelCore.types.Statement[] => {
@@ -2268,7 +2400,7 @@ function lowerExpressionImpl(
         ctx.needsCtx = true
         return t.callExpression(t.identifier(RUNTIME_ALIASES.useSignal), [
           t.identifier('__fictCtx'),
-          ...expr.arguments.map(a => lowerExpression(a, ctx)),
+          ...lowerCallArguments(expr.arguments),
         ])
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '$effect') {
@@ -2276,7 +2408,7 @@ function lowerExpressionImpl(
         ctx.needsCtx = true
         return t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
           t.identifier('__fictCtx'),
-          ...expr.arguments.map(arg =>
+          ...lowerCallArguments(expr.arguments, arg =>
             arg.kind === 'ArrowFunction' || arg.kind === 'FunctionExpression'
               ? withNonReactiveScope(ctx, () => lowerExpression(arg, ctx))
               : lowerExpression(arg, ctx),
@@ -2285,7 +2417,7 @@ function lowerExpressionImpl(
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '__forOf') {
         ctx.needsForOfHelper = true
-        const [iterable, cb] = expr.arguments.map(a => lowerExpression(a, ctx))
+        const [iterable, cb] = lowerArgsAsExpressions(expr.arguments)
         return t.callExpression(t.identifier('__fictForOf'), [
           iterable ?? t.identifier('undefined'),
           cb ?? t.arrowFunctionExpression([], t.identifier('undefined')),
@@ -2293,7 +2425,7 @@ function lowerExpressionImpl(
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '__forIn') {
         ctx.needsForInHelper = true
-        const [obj, cb] = expr.arguments.map(a => lowerExpression(a, ctx))
+        const [obj, cb] = lowerArgsAsExpressions(expr.arguments)
         return t.callExpression(t.identifier('__fictForIn'), [
           obj ?? t.identifier('undefined'),
           cb ?? t.arrowFunctionExpression([], t.identifier('undefined')),
@@ -2301,12 +2433,12 @@ function lowerExpressionImpl(
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '__fictPropsRest') {
         ctx.helpersUsed.add('propsRest')
-        const args = expr.arguments.map(a => lowerExpression(a, ctx))
+        const args = lowerCallArguments(expr.arguments)
         return t.callExpression(t.identifier(RUNTIME_ALIASES.propsRest), args)
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === 'mergeProps') {
         ctx.helpersUsed.add('mergeProps')
-        const args = expr.arguments.map(a => lowerExpression(a, ctx))
+        const args = lowerCallArguments(expr.arguments)
         return t.callExpression(t.identifier(RUNTIME_ALIASES.mergeProps), args)
       }
       const isIIFE =
@@ -2318,7 +2450,7 @@ function lowerExpressionImpl(
       const calleeIsSignalLike =
         !!calleeName && (ctx.signalVars?.has(calleeName) || ctx.storeVars?.has(calleeName))
       if (calleeIsMemoAccessor && !calleeIsSignalLike && expr.arguments.length > 0) {
-        const loweredArgs = expr.arguments.map(a => lowerExpression(a, ctx))
+        const loweredArgs = lowerCallArguments(expr.arguments)
         return t.callExpression(t.callExpression(t.identifier(calleeName), []), loweredArgs)
       }
       const lowerCallee = () =>
@@ -2335,7 +2467,7 @@ function lowerExpressionImpl(
             ['map', 'reduce', 'forEach', 'filter', 'flatMap', 'some', 'every', 'find'].includes(
               String(expr.callee.property.value),
             )))
-      const loweredArgs = expr.arguments.map((a, idx) => {
+      const loweredArgs = lowerCallArguments(expr.arguments, (a, idx) => {
         if (
           idx === 0 &&
           isIteratingMethod &&
@@ -2487,70 +2619,84 @@ function lowerExpressionImpl(
     case 'ArrowFunction': {
       const paramIds = mapParams(expr.params)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
+      const localDeclared = collectLocalDeclaredNames(
+        expr.params,
+        Array.isArray(expr.body) ? (expr.body as BasicBlock[]) : null,
+        t,
+      )
       // Arrow functions are always reactivity boundaries - prevent statements inside
       // from being wrapped in $effect/__fictUseEffect (like FunctionExpression)
       return withNonReactiveScope(ctx, () =>
-        withFunctionScope(shadowed, () => {
-          let fn: BabelCore.types.ArrowFunctionExpression
+        withFunctionScope(
+          shadowed,
+          () => {
+            let fn: BabelCore.types.ArrowFunctionExpression
 
-          if (expr.isExpression && !Array.isArray(expr.body)) {
-            // Rule L: Enable getter caching for sync arrow functions with expression body
-            const { result: bodyExpr, cacheDeclarations } = withGetterCache(ctx, () =>
-              lowerTrackedExpression(expr.body as Expression, ctx),
-            )
-            if (cacheDeclarations.length > 0) {
-              // Need to convert to block body to include cache declarations
+            if (expr.isExpression && !Array.isArray(expr.body)) {
+              // Rule L: Enable getter caching for sync arrow functions with expression body
+              const { result: bodyExpr, cacheDeclarations } = withGetterCache(ctx, () =>
+                lowerTrackedExpression(expr.body as Expression, ctx),
+              )
+              if (cacheDeclarations.length > 0) {
+                // Need to convert to block body to include cache declarations
+                fn = t.arrowFunctionExpression(
+                  paramIds,
+                  t.blockStatement([...cacheDeclarations, t.returnStatement(bodyExpr)]),
+                )
+              } else {
+                fn = t.arrowFunctionExpression(paramIds, bodyExpr)
+              }
+            } else if (Array.isArray(expr.body)) {
+              // Rule L: Enable getter caching for sync arrow functions with block body
+              const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
+                lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
+              )
               fn = t.arrowFunctionExpression(
                 paramIds,
-                t.blockStatement([...cacheDeclarations, t.returnStatement(bodyExpr)]),
+                t.blockStatement([...cacheDeclarations, ...stmts]),
               )
             } else {
-              fn = t.arrowFunctionExpression(paramIds, bodyExpr)
+              fn = t.arrowFunctionExpression(paramIds, t.blockStatement([]))
             }
-          } else if (Array.isArray(expr.body)) {
-            // Rule L: Enable getter caching for sync arrow functions with block body
-            const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
-              lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
-            )
-            fn = t.arrowFunctionExpression(
-              paramIds,
-              t.blockStatement([...cacheDeclarations, ...stmts]),
-            )
-          } else {
-            fn = t.arrowFunctionExpression(paramIds, t.blockStatement([]))
-          }
-          fn.async = expr.isAsync ?? false
-          return fn
-        }),
+            fn.async = expr.isAsync ?? false
+            return fn
+          },
+          localDeclared,
+        ),
       )
     }
 
     case 'FunctionExpression': {
       const paramIds = mapParams(expr.params)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
+      const localDeclared = collectLocalDeclaredNames(expr.params, expr.body as BasicBlock[], t)
       return withNonReactiveScope(ctx, () =>
-        withFunctionScope(shadowed, () => {
-          let fn: BabelCore.types.FunctionExpression
-          if (Array.isArray(expr.body)) {
-            // Rule L: Enable getter caching for sync function expressions
-            const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
-              lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
-            )
-            fn = t.functionExpression(
-              expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
-              paramIds,
-              t.blockStatement([...cacheDeclarations, ...stmts]),
-            )
-          } else {
-            fn = t.functionExpression(
-              expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
-              paramIds,
-              t.blockStatement([]),
-            )
-          }
-          fn.async = expr.isAsync ?? false
-          return fn
-        }),
+        withFunctionScope(
+          shadowed,
+          () => {
+            let fn: BabelCore.types.FunctionExpression
+            if (Array.isArray(expr.body)) {
+              // Rule L: Enable getter caching for sync function expressions
+              const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
+                lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
+              )
+              fn = t.functionExpression(
+                expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
+                paramIds,
+                t.blockStatement([...cacheDeclarations, ...stmts]),
+              )
+            } else {
+              fn = t.functionExpression(
+                expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
+                paramIds,
+                t.blockStatement([]),
+              )
+            }
+            fn.async = expr.isAsync ?? false
+            return fn
+          },
+          localDeclared,
+        ),
       )
     }
 
@@ -2724,10 +2870,7 @@ function lowerExpressionImpl(
       return t.awaitExpression(lowerExpression(expr.argument, ctx))
 
     case 'NewExpression':
-      return t.newExpression(
-        lowerExpression(expr.callee, ctx),
-        expr.arguments.map(a => lowerExpression(a, ctx)),
-      )
+      return t.newExpression(lowerExpression(expr.callee, ctx), lowerCallArguments(expr.arguments))
 
     case 'SequenceExpression':
       return t.sequenceExpression(expr.expressions.map(e => lowerExpression(e, ctx)))
@@ -2741,7 +2884,7 @@ function lowerExpressionImpl(
     case 'OptionalCallExpression':
       return t.optionalCallExpression(
         lowerExpression(expr.callee, ctx),
-        expr.arguments.map(a => lowerExpression(a, ctx)),
+        lowerCallArguments(expr.arguments),
         expr.optional,
       )
 
@@ -2947,39 +3090,24 @@ function lowerJSXElement(
 
     // Component - create VNode {type, props} for runtime createElement
     ctx.helpersUsed.add('createElement')
-    const propsObj = buildPropsObject(jsx.attributes, ctx)
     const children = jsx.children.map(c => lowerJSXChild(c, ctx))
+    const propsExpr = buildPropsExpression(jsx.attributes, children, ctx, {
+      lowerDomExpression,
+      lowerTrackedExpression,
+      expressionUsesTracked,
+      deSSAVarName,
+    })
 
     const componentRef =
       typeof jsx.tagName === 'string'
         ? t.identifier(jsx.tagName)
         : lowerExpression(jsx.tagName, ctx)
 
-    // Build props with children included
-    const propsWithChildren: BabelCore.types.ObjectProperty[] = []
-
-    // Add existing props
-    if (propsObj && t.isObjectExpression(propsObj)) {
-      propsWithChildren.push(...(propsObj.properties as BabelCore.types.ObjectProperty[]))
-    }
-
-    // Add children if present
-    if (children.length === 1 && children[0]) {
-      propsWithChildren.push(t.objectProperty(t.identifier('children'), children[0]))
-    } else if (children.length > 1) {
-      propsWithChildren.push(
-        t.objectProperty(t.identifier('children'), t.arrayExpression(children)),
-      )
-    }
-
     // Create VNode: { type: Component, props: {...} }
     // Return VNode object directly - runtime render()/insert() will call createElement on it
     return t.objectExpression([
       t.objectProperty(t.identifier('type'), componentRef),
-      t.objectProperty(
-        t.identifier('props'),
-        propsWithChildren.length > 0 ? t.objectExpression(propsWithChildren) : t.nullLiteral(),
-      ),
+      t.objectProperty(t.identifier('props'), propsExpr ?? t.nullLiteral()),
     ])
   }
 
@@ -5416,147 +5544,6 @@ function lowerJSXChild(child: JSXChild, ctx: CodegenContext): BabelCore.types.Ex
 }
 
 /**
- * Build props object from JSX attributes
- */
-function buildPropsObject(
-  attributes: JSXElementExpression['attributes'],
-  ctx: CodegenContext,
-): BabelCore.types.Expression | null {
-  const { t } = ctx
-  const prevPropsContext = ctx.inPropsContext
-  ctx.inPropsContext = true
-
-  try {
-    if (attributes.length === 0) return null
-
-    const properties: BabelCore.types.ObjectProperty[] = []
-    const spreads: BabelCore.types.SpreadElement[] = []
-    const toPropKey = (name: string) =>
-      /^[a-zA-Z_$][\w$]*$/.test(name) ? t.identifier(name) : t.stringLiteral(name)
-    const isAccessorName = (name: string): boolean =>
-      (ctx.memoVars?.has(name) ?? false) ||
-      (ctx.signalVars?.has(name) ?? false) ||
-      (ctx.aliasVars?.has(name) ?? false)
-
-    const wrapAccessorSource = (node: BabelCore.types.Expression): BabelCore.types.Expression => {
-      if (t.isCallExpression(node) && t.isIdentifier(node.callee) && node.arguments.length === 0) {
-        const baseName = deSSAVarName(node.callee.name)
-        if (isAccessorName(baseName)) {
-          // Keep accessor lazy so mergeProps can re-evaluate per access
-          return t.arrowFunctionExpression([], node)
-        }
-      }
-      if (t.isIdentifier(node)) {
-        const baseName = deSSAVarName(node.name)
-        if (isAccessorName(baseName)) {
-          return t.arrowFunctionExpression([], t.callExpression(t.identifier(baseName), []))
-        }
-      }
-      return node
-    }
-
-    for (const attr of attributes) {
-      if (attr.isSpread && attr.spreadExpr) {
-        let spreadExpr = lowerDomExpression(attr.spreadExpr, ctx)
-        if (t.isCallExpression(spreadExpr)) {
-          const callExpr = spreadExpr
-          const rewrittenArgs = callExpr.arguments.map(arg =>
-            t.isExpression(arg) ? wrapAccessorSource(arg) : arg,
-          )
-          if (rewrittenArgs.some((arg, idx) => arg !== callExpr.arguments[idx])) {
-            spreadExpr = t.callExpression(callExpr.callee, rewrittenArgs as any)
-          }
-        }
-        spreadExpr = wrapAccessorSource(spreadExpr)
-        spreads.push(t.spreadElement(spreadExpr))
-      } else if (attr.value) {
-        const isFunctionLike =
-          attr.value.kind === 'ArrowFunction' || attr.value.kind === 'FunctionExpression'
-        const prevPropsCtx: boolean | undefined = ctx.inPropsContext
-        // Avoid treating function bodies as props context to prevent wrapping internal values
-        if (isFunctionLike) {
-          ctx.inPropsContext = false
-        }
-        const lowered = lowerDomExpression(attr.value, ctx)
-        if (isFunctionLike) {
-          ctx.inPropsContext = prevPropsCtx
-        }
-        const baseIdent =
-          attr.value.kind === 'Identifier' ? deSSAVarName(attr.value.name) : undefined
-        const isAccessorBase =
-          baseIdent &&
-          ((ctx.memoVars?.has(baseIdent) ?? false) ||
-            (ctx.signalVars?.has(baseIdent) ?? false) ||
-            (ctx.aliasVars?.has(baseIdent) ?? false))
-        const isStoreBase = baseIdent ? (ctx.storeVars?.has(baseIdent) ?? false) : false
-        const alreadyGetter =
-          isFunctionLike ||
-          (baseIdent
-            ? isStoreBase ||
-              (ctx.memoVars?.has(baseIdent) ?? false) ||
-              (ctx.aliasVars?.has(baseIdent) ?? false)
-            : false)
-        const usesTracked =
-          (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
-          expressionUsesTracked(attr.value, ctx) &&
-          !alreadyGetter
-        const trackedExpr = usesTracked
-          ? (lowerTrackedExpression(attr.value as Expression, ctx) as BabelCore.types.Expression)
-          : null
-        const useMemoProp =
-          usesTracked &&
-          trackedExpr &&
-          t.isExpression(trackedExpr) &&
-          !t.isIdentifier(trackedExpr) &&
-          !t.isMemberExpression(trackedExpr) &&
-          !t.isLiteral(trackedExpr)
-        const valueExpr =
-          !isFunctionLike && isAccessorBase && baseIdent
-            ? (() => {
-                // Preserve accessor laziness for signals/memos passed as props
-                ctx.helpersUsed.add('propGetter')
-                return t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
-                  t.arrowFunctionExpression([], t.callExpression(t.identifier(baseIdent), [])),
-                ])
-              })()
-            : usesTracked && t.isExpression(lowered)
-              ? (() => {
-                  if (useMemoProp) {
-                    ctx.helpersUsed.add('prop')
-                    return t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [
-                      t.arrowFunctionExpression(
-                        [],
-                        trackedExpr ?? (lowered as BabelCore.types.Expression),
-                      ),
-                    ])
-                  }
-                  ctx.helpersUsed.add('propGetter')
-                  return t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
-                    t.arrowFunctionExpression(
-                      [],
-                      trackedExpr ?? (lowered as BabelCore.types.Expression),
-                    ),
-                  ])
-                })()
-              : lowered
-        properties.push(t.objectProperty(toPropKey(attr.name), valueExpr))
-      } else {
-        // Boolean attribute
-        properties.push(t.objectProperty(toPropKey(attr.name), t.booleanLiteral(true)))
-      }
-    }
-
-    if (spreads.length > 0) {
-      return t.objectExpression([...spreads, ...properties])
-    }
-
-    return t.objectExpression(properties)
-  } finally {
-    ctx.inPropsContext = prevPropsContext
-  }
-}
-
-/**
  * Normalize attribute name from JSX to DOM
  */
 function _normalizeAttrName(name: string): string {
@@ -5745,6 +5732,8 @@ export function lowerHIRWithRegions(
   let topLevelCtxInjected = false
   const emittedFunctionNames = new Set<string>()
   const originalBody = (program.originalBody ?? []) as BabelCore.types.Statement[]
+  ctx.moduleDeclaredNames = collectDeclaredNames(originalBody, t)
+  ctx.moduleRuntimeNames = collectRuntimeImportNames(originalBody, t)
 
   // Pre-mark top-level tracked variables so nested functions can treat captured signals as reactive
   for (const stmt of originalBody) {
@@ -6242,6 +6231,12 @@ function lowerFunctionWithRegions(
   const functionShadowed = new Set(prevShadowed ?? [])
   shadowedParams.forEach(n => functionShadowed.add(n))
   ctx.shadowedNames = functionShadowed
+  const prevLocalDeclared = ctx.localDeclaredNames
+  const localDeclared = new Set(prevLocalDeclared ?? [])
+  for (const name of collectLocalDeclaredNames(fn.params, fn.blocks, t)) {
+    localDeclared.add(name)
+  }
+  ctx.localDeclaredNames = localDeclared
   const prevExternalTracked = ctx.externalTracked
   const inheritedTracked = new Set(ctx.trackedVars)
   ctx.externalTracked = inheritedTracked
@@ -6369,6 +6364,74 @@ function lowerFunctionWithRegions(
       let usesProp = false
       let usesPropsRest = false
       let warnedNested = false
+      const reportedPatternNodes = new Set<BabelCore.types.Node>()
+
+      const reportPatternDiagnostic = (node: BabelCore.types.Node, code: DiagnosticCode): void => {
+        if (reportedPatternNodes.has(node)) return
+        reportedPatternNodes.add(node)
+        reportDiagnostic(ctx, code, node)
+      }
+
+      const reportPropsPatternIssues = (
+        objectPattern: BabelCore.types.ObjectPattern,
+        allowRest: boolean,
+      ): void => {
+        for (const prop of objectPattern.properties) {
+          if (t.isObjectProperty(prop)) {
+            if (prop.computed) {
+              reportPatternDiagnostic(prop, DiagnosticCode.FICT_P003)
+              continue
+            }
+            const keyName = t.isIdentifier(prop.key)
+              ? prop.key.name
+              : t.isStringLiteral(prop.key)
+                ? prop.key.value
+                : t.isNumericLiteral(prop.key)
+                  ? String(prop.key.value)
+                  : null
+            if (!keyName) {
+              reportPatternDiagnostic(prop, DiagnosticCode.FICT_P003)
+              continue
+            }
+
+            const value = prop.value
+            if (t.isIdentifier(value)) {
+              continue
+            }
+            if (t.isObjectPattern(value)) {
+              reportPropsPatternIssues(value, false)
+              continue
+            }
+            if (t.isAssignmentPattern(value)) {
+              if (t.isIdentifier(value.left)) {
+                continue
+              }
+              reportPatternDiagnostic(prop, DiagnosticCode.FICT_P004)
+              continue
+            }
+            if (t.isArrayPattern(value)) {
+              const hasRest = value.elements.some(el => t.isRestElement(el))
+              reportPatternDiagnostic(
+                value,
+                hasRest ? DiagnosticCode.FICT_P002 : DiagnosticCode.FICT_P001,
+              )
+              continue
+            }
+
+            reportPatternDiagnostic(prop, DiagnosticCode.FICT_P004)
+            continue
+          }
+
+          if (t.isRestElement(prop)) {
+            if (!allowRest || !t.isIdentifier(prop.argument)) {
+              reportPatternDiagnostic(prop, DiagnosticCode.FICT_P004)
+            }
+            continue
+          }
+
+          reportPatternDiagnostic(prop as BabelCore.types.Node, DiagnosticCode.FICT_P004)
+        }
+      }
 
       const memberExprForKey = (
         base: BabelCore.types.Expression,
@@ -6381,7 +6444,13 @@ function lowerFunctionWithRegions(
         allowRest: boolean,
       ): void => {
         for (const prop of objectPattern.properties) {
-          if (t.isObjectProperty(prop) && !prop.computed) {
+          if (t.isObjectProperty(prop)) {
+            if (prop.computed) {
+              reportPatternDiagnostic(prop, DiagnosticCode.FICT_P003)
+              supported = false
+              warnedNested = true
+              break
+            }
             const keyName = t.isIdentifier(prop.key)
               ? prop.key.name
               : t.isStringLiteral(prop.key)
@@ -6390,7 +6459,7 @@ function lowerFunctionWithRegions(
                   ? String(prop.key.value)
                   : null
             if (!keyName) {
-              reportDiagnostic(ctx, DiagnosticCode.FICT_P003, prop)
+              reportPatternDiagnostic(prop, DiagnosticCode.FICT_P003)
               supported = false
               warnedNested = true
               break
@@ -6428,29 +6497,48 @@ function lowerFunctionWithRegions(
               continue
             }
 
-            if (t.isAssignmentPattern(value) && t.isIdentifier(value.left)) {
-              const shouldWrapProp = !calledIdentifiers.has(value.left.name)
-              if (shouldWrapProp) {
-                usesProp = true
-                propsPlanAliases.add(value.left.name)
+            if (t.isAssignmentPattern(value)) {
+              if (t.isIdentifier(value.left)) {
+                const shouldWrapProp = !calledIdentifiers.has(value.left.name)
+                if (shouldWrapProp) {
+                  usesProp = true
+                  propsPlanAliases.add(value.left.name)
+                }
+                const baseInit = t.logicalExpression('??', member, value.right)
+                const init = shouldWrapProp
+                  ? t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [
+                      t.arrowFunctionExpression([], baseInit),
+                    ])
+                  : baseInit
+                stmts.push(
+                  t.variableDeclaration('const', [
+                    t.variableDeclarator(t.identifier(value.left.name), init),
+                  ]),
+                )
+                continue
               }
-              const baseInit = t.logicalExpression('??', member, value.right)
-              const init = shouldWrapProp
-                ? t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [
-                    t.arrowFunctionExpression([], baseInit),
-                  ])
-                : baseInit
-              stmts.push(
-                t.variableDeclaration('const', [
-                  t.variableDeclarator(t.identifier(value.left.name), init),
-                ]),
+              supported = false
+              if (!warnedNested) {
+                reportPatternDiagnostic(prop, DiagnosticCode.FICT_P004)
+                warnedNested = true
+              }
+              break
+            }
+
+            if (t.isArrayPattern(value)) {
+              const hasRest = value.elements.some(el => t.isRestElement(el))
+              reportPatternDiagnostic(
+                value,
+                hasRest ? DiagnosticCode.FICT_P002 : DiagnosticCode.FICT_P001,
               )
-              continue
+              supported = false
+              warnedNested = true
+              break
             }
 
             supported = false
             if (!warnedNested) {
-              reportDiagnostic(ctx, DiagnosticCode.FICT_P004, prop)
+              reportPatternDiagnostic(prop, DiagnosticCode.FICT_P004)
               warnedNested = true
             }
             break
@@ -6471,13 +6559,15 @@ function lowerFunctionWithRegions(
           } else {
             supported = false
             if (!warnedNested) {
-              reportDiagnostic(ctx, DiagnosticCode.FICT_P004, prop as BabelCore.types.Node)
+              reportPatternDiagnostic(prop as BabelCore.types.Node, DiagnosticCode.FICT_P004)
               warnedNested = true
             }
             break
           }
         }
       }
+
+      reportPropsPatternIssues(pattern, true)
 
       // Build destructuring for top-level pattern
       buildDestructure(pattern, t.identifier('__props'), true)
@@ -6537,6 +6627,7 @@ function lowerFunctionWithRegions(
   if (!hasJSX && !hasTrackedValues) {
     ctx.needsCtx = prevNeedsCtx
     ctx.shadowedNames = prevShadowed
+    ctx.localDeclaredNames = prevLocalDeclared
     ctx.trackedVars = prevTracked
     ctx.externalTracked = prevExternalTracked
     ctx.signalVars = prevSignalVars
@@ -6642,6 +6733,7 @@ function lowerFunctionWithRegions(
   )
   ctx.needsCtx = prevNeedsCtx
   ctx.shadowedNames = prevShadowed
+  ctx.localDeclaredNames = prevLocalDeclared
   ctx.trackedVars = prevTracked
   ctx.externalTracked = prevExternalTracked
   ctx.signalVars = prevSignalVars
