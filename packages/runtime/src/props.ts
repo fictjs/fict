@@ -1,5 +1,6 @@
 import { createMemo } from './memo'
 
+const PROP_GETTER_MARKER = Symbol.for('fict:prop-getter')
 const propGetters = new WeakSet<(...args: unknown[]) => unknown>()
 const rawToProxy = new WeakMap<object, object>()
 const proxyToRaw = new WeakMap<object, object>()
@@ -12,12 +13,21 @@ const proxyToRaw = new WeakMap<object, object>()
 export function __fictProp<T>(getter: () => T): () => T {
   if (typeof getter === 'function' && getter.length === 0) {
     propGetters.add(getter)
+    if (Object.isExtensible(getter)) {
+      try {
+        ;(getter as (() => T) & { [PROP_GETTER_MARKER]?: boolean })[PROP_GETTER_MARKER] = true
+      } catch {
+        // Ignore marker failures on non-standard function objects.
+      }
+    }
   }
   return getter
 }
 
 function isPropGetter(value: unknown): value is () => unknown {
-  return typeof value === 'function' && propGetters.has(value as (...args: unknown[]) => unknown)
+  if (typeof value !== 'function') return false
+  const fn = value as (() => unknown) & { [PROP_GETTER_MARKER]?: boolean }
+  return propGetters.has(fn as (...args: unknown[]) => unknown) || fn[PROP_GETTER_MARKER] === true
 }
 
 export function createPropsProxy<T extends Record<string, unknown>>(props: T): T {
@@ -207,6 +217,16 @@ export function prop<T>(getter: () => T): PropGetter<T> {
   if (isPropGetter(getter)) {
     return getter as PropGetter<T>
   }
+  // Capture getter to avoid type narrowing from isPropGetter guard
+  const fn: () => T = getter
   // Wrap in prop so component props proxy auto-unwraps when passed down.
-  return __fictProp(createMemo(getter)) as PropGetter<T>
+  return __fictProp(
+    createMemo(() => {
+      const value = fn()
+      if (isPropGetter(value)) {
+        return (value as () => T)()
+      }
+      return value
+    }),
+  ) as PropGetter<T>
 }

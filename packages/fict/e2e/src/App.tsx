@@ -4,6 +4,7 @@ import {
   ErrorBoundary,
   $memo,
   $store,
+  prop,
   createEffect,
   onMount,
   onCleanup,
@@ -316,29 +317,51 @@ function ContextTest() {
 // ============================================================================
 // 8. ErrorBoundary Test
 // ============================================================================
-function ThrowingComponent({ shouldThrow }: { shouldThrow: boolean }) {
-  if (shouldThrow) {
+function ThrowingComponent(props: { shouldThrow: boolean }) {
+  if (props.shouldThrow) {
     throw new Error('Intentional error for testing')
   }
+  createEffect(() => {
+    if (props.shouldThrow) {
+      throw new Error('Intentional error for testing')
+    }
+  })
   return <span id="no-error">No error occurred</span>
 }
 
 function ErrorBoundaryTest() {
   let showChild = $state(true)
   let shouldThrow = $state(false)
+  let remountTimer: ReturnType<typeof setTimeout> | undefined
+
+  const scheduleRemount = () => {
+    if (remountTimer !== undefined) {
+      clearTimeout(remountTimer)
+    }
+    remountTimer = setTimeout(() => {
+      showChild = true
+      remountTimer = undefined
+    }, 0)
+  }
 
   const triggerError = () => {
     shouldThrow = true
+    showChild = false
+    scheduleRemount()
   }
 
   const reset = () => {
     showChild = false
     shouldThrow = false
-    // Re-mount after a tick
-    setTimeout(() => {
-      showChild = true
-    }, 0)
+    scheduleRemount()
   }
+
+  onCleanup(() => {
+    if (remountTimer !== undefined) {
+      clearTimeout(remountTimer)
+      remountTimer = undefined
+    }
+  })
 
   return (
     <section id="error-boundary-test">
@@ -354,7 +377,7 @@ function ErrorBoundaryTest() {
           <ErrorBoundary
             fallback={err => <div id="error-fallback">Error: {(err as Error).message}</div>}
           >
-            <ThrowingComponent shouldThrow={shouldThrow} />
+            <ThrowingComponent shouldThrow={prop(() => shouldThrow)} />
           </ErrorBoundary>
         )}
       </div>
@@ -442,12 +465,12 @@ function LifecycleTest() {
       <button id="remove-lifecycle-child" onClick={removeChild}>
         Remove Child
       </button>
+      <pre id="lifecycle-log"></pre>
       <div id="lifecycle-children">
         {children.map((id: number) => (
           <LifecycleChild key={id} id={id} />
         ))}
       </div>
-      <pre id="lifecycle-log"></pre>
     </section>
   )
 }

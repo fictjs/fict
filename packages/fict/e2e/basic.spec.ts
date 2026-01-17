@@ -209,8 +209,7 @@ test.describe('Context API', () => {
 // 8. Error Boundary Tests
 // ============================================================================
 test.describe('Error Boundary', () => {
-  test.skip('renders children when no error', async ({ page }) => {
-    // TODO: Investigate why initial ErrorBoundary child render doesn't work in E2E
+  test('renders children when no error', async ({ page }) => {
     await expect(page.locator('#no-error')).toBeVisible({ timeout: 2000 })
   })
 

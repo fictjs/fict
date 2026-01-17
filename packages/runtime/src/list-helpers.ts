@@ -491,7 +491,9 @@ function createFineGrainedKeyedList<T>(
       endParent === startParent &&
       (endParent as Node).nodeType !== 11
     ) {
-      return endParent as ParentNode & Node
+      const parentNode = endParent as ParentNode & Node
+      if ('isConnected' in parentNode && !parentNode.isConnected) return null
+      return parentNode
     }
     return null
   }

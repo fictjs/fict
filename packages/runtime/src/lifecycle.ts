@@ -25,7 +25,7 @@ let currentEffectCleanups: Cleanup[] | undefined
 const globalErrorHandlers = new WeakMap<RootContext, ErrorHandler[]>()
 const globalSuspenseHandlers = new WeakMap<RootContext, SuspenseHandler[]>()
 
-export function createRootContext(parent: RootContext | undefined = currentRoot): RootContext {
+export function createRootContext(parent?: RootContext): RootContext {
   return { parent, cleanups: [], destroyCallbacks: [] }
 }
 
