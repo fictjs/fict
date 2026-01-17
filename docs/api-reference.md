@@ -1424,6 +1424,65 @@ type EventHandler<E extends Event = Event> = (event: E) => void
 
 ---
 
+## List Rendering
+
+Fict uses fine-grained keyed list reconciliation for efficient list updates.
+
+### Keys
+
+When rendering arrays, provide a unique `key` prop for each item:
+
+```tsx
+function TodoList() {
+  let todos = $state([
+    { id: 1, text: 'Learn Fict' },
+    { id: 2, text: 'Build app' },
+  ])
+
+  return (
+    <ul>
+      {todos.map(todo => (
+        <li key={todo.id}>{todo.text}</li>
+      ))}
+    </ul>
+  )
+}
+```
+
+**Key Requirements:**
+
+| Requirement | Description                                                    |
+| ----------- | -------------------------------------------------------------- |
+| **Unique**  | Keys must be unique within the same list                       |
+| **Stable**  | Use stable identifiers (e.g., database IDs), not array indices |
+| **Type**    | Keys can be strings or numbers                                 |
+
+**Duplicate Key Behavior:**
+
+If duplicate keys are detected in the same list:
+
+1. **Development mode**: A console warning is logged
+2. **Behavior**: The last item with a duplicate key replaces the previous one
+3. **Impact**: This may cause unexpected UI behavior and state loss
+
+```tsx
+// ⚠️ Bad: Duplicate keys
+{
+  items.map(item => (
+    <li key={item.category}>{item.name}</li> // Multiple items may share category
+  ))
+}
+
+// ✅ Good: Unique keys
+{
+  items.map(item => <li key={item.id}>{item.name}</li>)
+}
+```
+
+> **Warning**: Always ensure keys are unique. Duplicate keys can cause items to be unexpectedly removed or replaced, leading to data loss and incorrect rendering.
+
+---
+
 ## Full Example: Todo App
 
 ```tsx

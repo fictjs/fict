@@ -126,13 +126,21 @@ export function resource<T, Args = void>(
       : undefined
   }
 
-  const startFetch = (entry: ResourceEntry<T, Args>, key: unknown, args: Args) => {
+  const startFetch = (
+    entry: ResourceEntry<T, Args>,
+    key: unknown,
+    args: Args,
+    isRevalidating = false,
+  ) => {
     entry.controller?.abort()
     entry.inFlight = undefined
     const controller = new AbortController()
     entry.controller = controller
     entry.status = 'pending'
-    entry.loading(true)
+    // For stale-while-revalidate: don't show loading if we already have data to display
+    if (!isRevalidating) {
+      entry.loading(true)
+    }
     entry.error(undefined)
     entry.generation += 1
     const currentGen = entry.generation
@@ -229,8 +237,12 @@ export function resource<T, Args = void>(
         const versionChanged = entry.lastVersion !== currentVersion
         const resetToken = readResetToken()
         const resetChanged = entry.lastReset !== resetToken
+        // For stale-while-revalidate: if we have cached data, don't treat expired as requiring immediate refetch
+        // We'll handle the revalidation separately to show stale data without loading state
+        const canUseStaleData =
+          resolvedCacheOptions.staleWhileRevalidate && entry.hasValue && expired
         const shouldRefetch =
-          expired ||
+          (expired && !canUseStaleData) ||
           argsChanged ||
           versionChanged ||
           resetChanged ||
@@ -250,18 +262,10 @@ export function resource<T, Args = void>(
             entry.expiresAt = Date.now() - 1
           }
           startFetch(entry, key, args as Args)
-        } else if (
-          entry.inFlight === undefined &&
-          resolvedCacheOptions.staleWhileRevalidate &&
-          expired &&
-          entry.hasValue
-        ) {
-          // stale-while-revalidate: return stale data but refresh.
-          startFetch(entry, key, args as Args)
-        }
-
-        if (resolvedCacheOptions.staleWhileRevalidate && entry.hasValue && expired) {
-          entry.loading(true)
+        } else if (canUseStaleData && entry.inFlight === undefined) {
+          // stale-while-revalidate: return stale data immediately, refresh in background
+          // Pass isRevalidating=true to avoid showing loading state
+          startFetch(entry, key, args as Args, true)
         }
       })
 

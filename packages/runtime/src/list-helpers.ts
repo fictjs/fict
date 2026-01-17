@@ -135,8 +135,17 @@ export function moveNodesBefore(parent: Node, nodes: Node[], anchor: Node | null
           try {
             const clone = parent.ownerDocument.importNode(node, true)
             parent.insertBefore(clone, anchor)
-            // Note: Cloning during move breaks references in KeyedBlock.nodes
-            // This is a worst-case fallback for tests.
+            // Update the nodes array with the clone to maintain correct references.
+            // This ensures future operations (like removal or reordering) work correctly.
+            nodes[i] = clone
+            if (isDev) {
+              console.warn(
+                `[fict] Node cloning fallback triggered during list reordering. ` +
+                  `This may indicate cross-document node insertion. ` +
+                  `The node reference has been updated to the clone.`,
+              )
+            }
+            anchor = clone
             continue
           } catch {
             // Clone fallback failed

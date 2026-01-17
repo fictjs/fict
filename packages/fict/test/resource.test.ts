@@ -259,6 +259,55 @@ describe('resource', () => {
     expect(fetcher).toHaveBeenCalledTimes(2)
   })
 
+  it('stale-while-revalidate does not show loading state when revalidating expired data', async () => {
+    let resolveSecond: (value: number) => void
+    const secondPromise = new Promise<number>(resolve => {
+      resolveSecond = resolve
+    })
+    const fetcher = vi.fn().mockResolvedValueOnce(1).mockReturnValueOnce(secondPromise)
+    const r = resource<number, void>({
+      fetch: fetcher,
+      cache: { staleWhileRevalidate: true, ttlMs: 100 },
+    })
+
+    let result: any
+    const loadingStates: boolean[] = []
+    createRoot(() => {
+      result = r.read(() => undefined)
+    })
+
+    // Initial fetch shows loading
+    loadingStates.push(result.loading)
+    await vi.runAllTimersAsync()
+    await tick()
+    expect(result.data).toBe(1)
+    expect(result.loading).toBe(false)
+
+    // Advance time past TTL to expire the cache
+    vi.advanceTimersByTime(150)
+
+    // Create new read to trigger revalidation of expired data
+    let result2: any
+    createRoot(() => {
+      result2 = r.read(() => undefined)
+    })
+    await tick()
+
+    // Should still show old data without loading state (stale-while-revalidate)
+    expect(result2.data).toBe(1)
+    expect(result2.loading).toBe(false) // Key assertion: no loading during revalidation
+
+    // Complete the background refresh
+    resolveSecond!(2)
+    await vi.runAllTimersAsync()
+    await tick()
+
+    // Now should show new data
+    expect(result2.data).toBe(2)
+    expect(result2.loading).toBe(false)
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  })
+
   it('supports invalidate and prefetch helpers', async () => {
     const fetcher = vi.fn().mockResolvedValue('value')
     const r = resource(fetcher)
