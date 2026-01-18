@@ -14,6 +14,8 @@ import {
   onMount,
   onDestroy,
   onCleanup,
+  createContext,
+  useContext,
 } from '../src/index'
 import { createSignal } from '../src/advanced'
 import { createKeyedList, createConditional } from '../src/internal'
@@ -585,6 +587,474 @@ describe('Memory and Lifecycle Tests', () => {
       expect(effectsB).toEqual([0, 1])
 
       dispose()
+    })
+  })
+
+  describe('Large List Cyclic Create/Destroy Tests', () => {
+    it('handles repeated large list creation and destruction', { timeout: 30000 }, async () => {
+      const ITERATIONS = 20
+      const LIST_SIZE = 200
+      const items = createSignal<number[]>([])
+      let totalCreations = 0
+      let totalDestructions = 0
+
+      const list = createKeyedList(
+        () => items(),
+        item => item,
+        (itemSig, _indexSig) => {
+          totalCreations++
+          const div = document.createElement('div')
+          createEffect(() => {
+            div.textContent = String(itemSig())
+          })
+          onDestroy(() => {
+            totalDestructions++
+          })
+          return [div]
+        },
+      )
+
+      container.appendChild(list.marker)
+      await tick()
+
+      // Cycle through creation and destruction multiple times
+      for (let i = 0; i < ITERATIONS; i++) {
+        // Create large list
+        items(Array.from({ length: LIST_SIZE }, (_, idx) => i * LIST_SIZE + idx))
+        await tick()
+
+        expect(container.querySelectorAll('div').length).toBe(LIST_SIZE)
+
+        // Clear list
+        items([])
+        await tick()
+
+        expect(container.querySelectorAll('div').length).toBe(0)
+      }
+
+      // Verify all creations have corresponding destructions
+      expect(totalCreations).toBe(ITERATIONS * LIST_SIZE)
+      expect(totalDestructions).toBe(ITERATIONS * LIST_SIZE)
+
+      list.dispose()
+    })
+
+    it('handles rapid list updates without memory accumulation', async () => {
+      const items = createSignal<{ id: number; value: string }[]>([])
+      let totalCreated = 0
+      let totalDestroyed = 0
+
+      const list = createKeyedList(
+        () => items(),
+        item => item.id,
+        (itemSig, _indexSig) => {
+          totalCreated++
+          const div = document.createElement('div')
+          createEffect(() => {
+            div.textContent = itemSig().value
+          })
+          onDestroy(() => {
+            totalDestroyed++
+          })
+          return [div]
+        },
+      )
+
+      container.appendChild(list.marker)
+      await tick()
+
+      // Rapidly update with different sized lists
+      const sizes = [100, 50, 200, 10, 150, 0, 300, 25, 0]
+      let nextId = 0
+
+      for (const size of sizes) {
+        const newItems = Array.from({ length: size }, () => ({
+          id: nextId++,
+          value: `Item ${nextId}`,
+        }))
+        items(newItems)
+        await tick()
+
+        // Current DOM should match list size
+        expect(container.querySelectorAll('div').length).toBe(size)
+      }
+
+      // After clearing, no elements should remain
+      expect(container.querySelectorAll('div').length).toBe(0)
+
+      // Verify all creations have corresponding destructions
+      expect(totalCreated).toBe(totalDestroyed)
+
+      list.dispose()
+    })
+
+    it('handles nested lists with proper cleanup', async () => {
+      const outerItems = createSignal<number[]>([1, 2, 3])
+      let innerListCreations = 0
+      let innerListDestructions = 0
+      let innerItemCreations = 0
+      let innerItemDestructions = 0
+
+      const outerList = createKeyedList(
+        () => outerItems(),
+        item => item,
+        (outerSig, _indexSig) => {
+          innerListCreations++
+          const container = document.createElement('div')
+          container.className = 'outer'
+
+          const innerItems = createSignal(
+            Array.from({ length: 10 }, (_, i) => outerSig() * 100 + i),
+          )
+
+          const innerList = createKeyedList(
+            () => innerItems(),
+            item => item,
+            (innerSig, _innerIndex) => {
+              innerItemCreations++
+              const span = document.createElement('span')
+              createEffect(() => {
+                span.textContent = String(innerSig())
+              })
+              onDestroy(() => {
+                innerItemDestructions++
+              })
+              return [span]
+            },
+          )
+
+          container.appendChild(innerList.marker)
+
+          onDestroy(() => {
+            innerListDestructions++
+            innerList.dispose()
+          })
+
+          return [container]
+        },
+      )
+
+      container.appendChild(outerList.marker)
+      await tick()
+
+      expect(innerListCreations).toBe(3)
+      expect(innerItemCreations).toBe(30) // 3 outer * 10 inner
+
+      // Remove middle outer item
+      outerItems([1, 3])
+      await tick()
+
+      expect(innerListDestructions).toBe(1)
+      expect(innerItemDestructions).toBe(10)
+
+      // Clear all
+      outerItems([])
+      await tick()
+
+      expect(innerListDestructions).toBe(3)
+      expect(innerItemDestructions).toBe(30)
+
+      outerList.dispose()
+    })
+
+    it('handles interleaved add/remove operations efficiently', async () => {
+      const items = createSignal<number[]>([])
+      const operations: string[] = []
+
+      const list = createKeyedList(
+        () => items(),
+        item => item,
+        (itemSig, _indexSig) => {
+          const id = itemSig() as number
+          operations.push(`create:${id}`)
+          const div = document.createElement('div')
+          createEffect(() => {
+            div.textContent = String(itemSig())
+          })
+          onDestroy(() => {
+            operations.push(`destroy:${id}`)
+          })
+          return [div]
+        },
+      )
+
+      container.appendChild(list.marker)
+      await tick()
+
+      // Perform interleaved operations
+      items([1, 2, 3, 4, 5])
+      await tick()
+      expect(operations.filter(o => o.startsWith('create')).length).toBe(5)
+
+      // Remove some, keep some, add new
+      items([2, 4, 6, 7])
+      await tick()
+
+      // Items 1, 3, 5 should be destroyed; 6, 7 created; 2, 4 retained
+      expect(operations).toContain('destroy:1')
+      expect(operations).toContain('destroy:3')
+      expect(operations).toContain('destroy:5')
+      expect(operations).toContain('create:6')
+      expect(operations).toContain('create:7')
+
+      // Final cleanup
+      items([])
+      await tick()
+
+      const createCount = operations.filter(o => o.startsWith('create')).length
+      const destroyCount = operations.filter(o => o.startsWith('destroy')).length
+      expect(createCount).toBe(destroyCount)
+
+      list.dispose()
+    })
+  })
+
+  describe('Long-Running Application Tests', () => {
+    it('maintains stable memory over many signal update cycles', async () => {
+      const CYCLE_COUNT = 1000
+      const signal = createSignal(0)
+      let effectRunCount = 0
+      let cleanupRunCount = 0
+
+      createEffect(() => {
+        signal()
+        effectRunCount++
+        onCleanup(() => {
+          cleanupRunCount++
+        })
+      })
+
+      // Simulate long-running updates
+      for (let i = 1; i <= CYCLE_COUNT; i++) {
+        signal(i)
+        await tick()
+      }
+
+      // Effect should have run CYCLE_COUNT + 1 times (initial + updates)
+      expect(effectRunCount).toBe(CYCLE_COUNT + 1)
+      // Cleanup should have run CYCLE_COUNT times (before each re-run, not after last)
+      expect(cleanupRunCount).toBe(CYCLE_COUNT)
+    })
+
+    it('handles many effect create/dispose cycles', async () => {
+      const CYCLE_COUNT = 200
+      let activeEffects = 0
+      let peakActiveEffects = 0
+      const signal = createSignal(0)
+
+      for (let i = 0; i < CYCLE_COUNT; i++) {
+        const dispose = createEffect(() => {
+          signal()
+          activeEffects++
+          peakActiveEffects = Math.max(peakActiveEffects, activeEffects)
+          onCleanup(() => {
+            activeEffects--
+          })
+        })
+
+        // Verify effect is active
+        expect(activeEffects).toBe(1)
+
+        // Dispose immediately
+        dispose()
+        await tick()
+
+        // Effect should be cleaned up
+        expect(activeEffects).toBe(0)
+      }
+
+      // Peak should never exceed 1 since we dispose before creating next
+      expect(peakActiveEffects).toBe(1)
+      expect(activeEffects).toBe(0)
+    })
+
+    it('handles cascading memo updates without memory growth', async () => {
+      const CHAIN_LENGTH = 50
+      const UPDATE_CYCLES = 100
+      const base = createSignal(0)
+      const memos: ReturnType<typeof createMemo<number>>[] = []
+
+      // Build a chain of memos
+      let prev: () => number = base
+      for (let i = 0; i < CHAIN_LENGTH; i++) {
+        const p = prev
+        const memo = createMemo(() => p() + 1)
+        memos.push(memo)
+        prev = memo
+      }
+
+      // Track effect runs
+      let effectRunCount = 0
+      createEffect(() => {
+        memos[CHAIN_LENGTH - 1]!()
+        effectRunCount++
+      })
+
+      expect(effectRunCount).toBe(1)
+      expect(memos[CHAIN_LENGTH - 1]!()).toBe(CHAIN_LENGTH)
+
+      // Update base signal many times
+      for (let i = 1; i <= UPDATE_CYCLES; i++) {
+        base(i)
+        await tick()
+
+        // Verify final memo value is correct
+        expect(memos[CHAIN_LENGTH - 1]!()).toBe(i + CHAIN_LENGTH)
+      }
+
+      // Effect should run exactly once per update + initial
+      expect(effectRunCount).toBe(UPDATE_CYCLES + 1)
+    })
+
+    it('handles component with many child renders over time', async () => {
+      const RENDER_CYCLES = 100
+      let totalMounts = 0
+      let totalUnmounts = 0
+      let currentlyMounted = 0
+
+      for (let cycle = 0; cycle < RENDER_CYCLES; cycle++) {
+        const dispose = render(() => {
+          const div = document.createElement('div')
+          onMount(() => {
+            totalMounts++
+            currentlyMounted++
+            return () => {
+              totalUnmounts++
+              currentlyMounted--
+            }
+          })
+
+          // Add several child elements with their own lifecycle
+          for (let i = 0; i < 5; i++) {
+            const child = document.createElement('span')
+            child.textContent = `Child ${i}`
+            onMount(() => {
+              totalMounts++
+              currentlyMounted++
+              return () => {
+                totalUnmounts++
+                currentlyMounted--
+              }
+            })
+            div.appendChild(child)
+          }
+
+          return div
+        }, container)
+
+        // Verify mounting
+        expect(currentlyMounted).toBe(6) // 1 parent + 5 children
+
+        // Clean container for next cycle
+        dispose()
+        await tick()
+
+        // Verify cleanup
+        expect(currentlyMounted).toBe(0)
+      }
+
+      // Verify total lifecycle calls balance
+      expect(totalMounts).toBe(RENDER_CYCLES * 6)
+      expect(totalUnmounts).toBe(RENDER_CYCLES * 6)
+    })
+
+    it('handles conditional rendering with effects over many toggles', async () => {
+      const TOGGLE_COUNT = 500
+      const show = createSignal(true)
+      let effectCreations = 0
+      let effectCleanups = 0
+
+      const dispose = render(() => {
+        const { marker } = createConditional(
+          () => show(),
+          () => {
+            const div = document.createElement('div')
+            createEffect(() => {
+              effectCreations++
+              div.textContent = 'visible'
+              onCleanup(() => {
+                effectCleanups++
+              })
+            })
+            return div
+          },
+          createElement,
+        )
+        return marker
+      }, container)
+
+      expect(effectCreations).toBe(1)
+
+      // Rapid toggles
+      for (let i = 0; i < TOGGLE_COUNT; i++) {
+        show(!show())
+        await tick()
+      }
+
+      dispose()
+      await tick()
+
+      // After even number of toggles (back to shown) + dispose:
+      // Creations = 1 (initial) + TOGGLE_COUNT/2 (each time show becomes true)
+      const expectedCreations = 1 + TOGGLE_COUNT / 2
+      expect(effectCreations).toBe(expectedCreations)
+
+      // Cleanups happen when condition changes to false or on dispose
+      // The important invariant: all created effects should eventually be cleaned up
+      // (allowing for the timing difference where cleanups may lag by one tick)
+      expect(effectCleanups).toBeGreaterThanOrEqual(expectedCreations - 1)
+      expect(effectCleanups).toBeLessThanOrEqual(expectedCreations)
+    })
+
+    it('handles context with provider updates over time', async () => {
+      const UPDATES = 200
+      const TestContext = createContext({ value: 0 })
+      let consumerReads = 0
+
+      const Provider = ({ children, value }: { children?: Node; value: number }) => {
+        const div = document.createElement('div')
+        TestContext.Provider({ value: { value }, children: () => div })
+        if (children) div.appendChild(children)
+        return div
+      }
+
+      const Consumer = () => {
+        const span = document.createElement('span')
+        createEffect(() => {
+          const ctx = useContext(TestContext)
+          span.textContent = String(ctx.value)
+          consumerReads++
+        })
+        return span
+      }
+
+      const contextValue = createSignal(0)
+
+      const dispose = render(() => {
+        const wrapper = document.createElement('div')
+        createEffect(() => {
+          wrapper.innerHTML = ''
+          const provider = Provider({
+            value: contextValue(),
+            children: Consumer(),
+          })
+          wrapper.appendChild(provider)
+        })
+        return wrapper
+      }, container)
+
+      expect(consumerReads).toBeGreaterThanOrEqual(1)
+
+      // Update context value many times
+      for (let i = 1; i <= UPDATES; i++) {
+        contextValue(i)
+        await tick()
+      }
+
+      dispose()
+
+      // Verify no memory leaks by checking cleanup happened
+      expect(container.innerHTML).toBe('')
     })
   })
 })

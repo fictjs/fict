@@ -43,6 +43,8 @@ Fict is a compiler-first, fine-grained reactive UI framework. This document cove
 - [Extended API (fict/plus)](#extended-api-fictplus)
   - [resource](#resource)
   - [lazy](#lazy)
+- [Advanced APIs (fict/advanced)](#advanced-apis-fictadvanced)
+  - [setCycleProtectionOptions](#setcycleprotectionoptions)
 - [Type Definitions](#type-definitions)
 
 ---
@@ -1344,6 +1346,53 @@ function App() {
   )
 }
 ```
+
+---
+
+## Advanced APIs (fict/advanced)
+
+These APIs are for power users and library authors. They provide lower-level control over Fict's internals.
+
+### setCycleProtectionOptions
+
+Configure cycle protection thresholds for development mode. This helps tune cycle detection sensitivity for your application.
+
+```typescript
+import { setCycleProtectionOptions } from 'fict/advanced'
+
+interface CycleProtectionOptions {
+  maxFlushCyclesPerMicrotask?: number // Default: 10,000
+  maxEffectRunsPerFlush?: number // Default: 20,000
+  windowSize?: number // Default: 5
+  highUsageRatio?: number // Default: 0.8
+  maxRootReentrantDepth?: number // Default: 10
+  enableWindowWarning?: boolean // Default: true
+  devMode?: boolean // Default: false (throw instead of warn)
+}
+
+function setCycleProtectionOptions(options: CycleProtectionOptions): void
+```
+
+**Example:**
+
+```tsx
+import { setCycleProtectionOptions } from 'fict/advanced'
+
+// For large applications
+setCycleProtectionOptions({
+  maxFlushCyclesPerMicrotask: 50000,
+})
+
+// Strict mode for testing
+setCycleProtectionOptions({
+  devMode: true,
+  maxFlushCyclesPerMicrotask: 100,
+})
+```
+
+> **Note:** Cycle protection only runs in development mode. In production, all guards are no-ops.
+
+For detailed documentation, see [Cycle Protection](./cycle-protection.md).
 
 ---
 

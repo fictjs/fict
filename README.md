@@ -448,9 +448,11 @@ _Lower is better. Baseline relative to best performer in each category._
 ## Documentation
 
 - [Architecture](./docs/architecture.md) — How the compiler and runtime work
+- [API Reference](./docs/api-reference.md) — Complete API documentation
 - [Compiler Spec](./docs/compiler-spec.md) — Formal semantics
 - [ESLint Rules](./docs/eslint-rules.md) — Linting configuration
 - [Diagnostic Codes](./docs/diagnostic-codes.md) — Compiler warnings reference
+- [Cycle Protection](./docs/cycle-protection.md) — Development-mode infinite loop detection
 
 ### Linting & diagnostics
 
