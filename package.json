@@ -18,6 +18,7 @@
     "test": "turbo run test",
     "test:watch": "turbo run test:watch",
     "test:coverage": "turbo run test:coverage",
+    "test:e2e": "pnpm -C packages/fict test:e2e",
     "size": "size-limit",
     "size:analyze": "size-limit --why",
     "commit": "cz",

@@ -8,7 +8,7 @@
 import type * as BabelCore from '@babel/core'
 
 import { RUNTIME_ALIASES } from '../constants'
-import { debugEnabled } from '../debug'
+import { debugEnabled, debugLog, debugWarn } from '../debug'
 import type { RegionMetadata } from '../fine-grained-dom'
 
 import type { CodegenContext, RegionInfo } from './codegen'
@@ -1770,12 +1770,10 @@ function wrapInMemo(
   const uniqueOutputNames = [...new Set(outputNames)]
   const bindableOutputs = uniqueOutputNames.filter(name => !declaredVars.has(name))
 
-  if (debugEnabled('region')) {
-    console.log('Region memo', region.id, {
-      instructions: region.instructions.map(instr => instr.kind),
-      outputs: uniqueOutputNames,
-    })
-  }
+  debugLog('region', `Region memo ${region.id}`, {
+    instructions: region.instructions.map(instr => instr.kind),
+    outputs: uniqueOutputNames,
+  })
 
   if (uniqueOutputNames.length === 0) {
     // No outputs - just execute for side effects
@@ -1839,16 +1837,13 @@ function wrapInMemo(
     )
     const directOutputs = bindableOutputs.filter(name => !getterOutputs.includes(name))
 
-    if (debugEnabled('region')) {
-      console.log('Region debug', {
-        id: region.id,
-        outputs: uniqueOutputNames,
-        getterOutputs,
-        directOutputs,
-        tracked: Array.from(ctx.trackedVars),
-        memoVars: Array.from(ctx.memoVars ?? []),
-      })
-    }
+    debugLog('region', `Region debug ${region.id}`, {
+      outputs: uniqueOutputNames,
+      getterOutputs,
+      directOutputs,
+      tracked: Array.from(ctx.trackedVars),
+      memoVars: Array.from(ctx.memoVars ?? []),
+    })
 
     // Destructure outputs that are already accessors or non-reactive values.
     if (directOutputs.length > 0) {
@@ -2427,7 +2422,13 @@ function instructionToStatement(
     }
 
     if (aliasVars.has(baseName) && declaredVars.has(baseName)) {
-      throw new Error(`Alias reassignment is not supported for "${baseName}"`)
+      throw new Error(
+        `Alias reassignment is not supported for "${baseName}".\n\n` +
+          `"${baseName}" was assigned from a reactive value and cannot be reassigned.\n` +
+          `Consider:\n` +
+          `  - Using a new variable name for the new value\n` +
+          `  - Updating the original reactive source instead`,
+      )
     }
 
     if (capturedTracked && isSignal) {
@@ -2438,7 +2439,13 @@ function instructionToStatement(
     }
 
     if (aliasVars.has(baseName) && !declaredVars.has(baseName)) {
-      throw new Error(`Alias reassignment is not supported for "${baseName}"`)
+      throw new Error(
+        `Alias reassignment is not supported for "${baseName}".\n\n` +
+          `"${baseName}" was assigned from a reactive value and cannot be reassigned.\n` +
+          `Consider:\n` +
+          `  - Using a new variable name for the new value\n` +
+          `  - Updating the original reactive source instead`,
+      )
     }
 
     // Handle tracked assignments to already-declared vars (e.g., let alias; alias = count)
@@ -2482,7 +2489,13 @@ function instructionToStatement(
 
     if (declaredVars.has(baseName)) {
       if (aliasVars.has(baseName)) {
-        throw new Error(`Alias reassignment is not supported for "${baseName}"`)
+        throw new Error(
+          `Alias reassignment is not supported for "${baseName}".\n\n` +
+            `"${baseName}" was assigned from a reactive value and cannot be reassigned.\n` +
+            `Consider:\n` +
+            `  - Using a new variable name for the new value\n` +
+            `  - Updating the original reactive source instead`,
+        )
       }
 
       // Already declared - use assignment expression
@@ -3141,8 +3154,8 @@ function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expres
 
     default:
       // Unknown expression type - log warning and return undefined
-      if (expr.kind && debugEnabled('region')) {
-        console.warn(`[HIR exprToAST] Unsupported expression kind: ${expr.kind}`)
+      if (expr.kind) {
+        debugWarn('region', `Unsupported expression kind: ${expr.kind}`)
       }
       return t.identifier('undefined')
   }

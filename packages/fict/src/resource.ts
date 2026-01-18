@@ -1,26 +1,133 @@
+/**
+ * @fileoverview Async data fetching with caching and Suspense support.
+ *
+ * The `resource` function creates a reactive data fetcher that:
+ * - Automatically cancels in-flight requests when args change
+ * - Supports Suspense for loading states
+ * - Provides caching with TTL and stale-while-revalidate
+ * - Handles errors gracefully
+ */
+
 import { createEffect, onCleanup, createSuspenseToken } from '@fictjs/runtime'
 import { createSignal } from '@fictjs/runtime/advanced'
 
+/**
+ * The result of reading a resource.
+ *
+ * @typeParam T - The type of data returned by the fetcher
+ */
 export interface ResourceResult<T> {
-  data: T | undefined
-  loading: boolean
-  error: unknown
+  /** The fetched data, or undefined if not yet loaded or on error */
+  readonly data: T | undefined
+  /** Whether the resource is currently loading (initial fetch or refetch) */
+  readonly loading: boolean
+  /**
+   * Any error that occurred during fetching.
+   * Type is unknown since errors can be any value in JavaScript.
+   */
+  readonly error: unknown
+  /** Manually trigger a refetch of the resource */
   refresh: () => void
 }
 
+/**
+ * Cache configuration options for a resource.
+ */
 export interface ResourceCacheOptions {
+  /**
+   * Caching mode:
+   * - `'memory'`: Cache responses in memory (default)
+   * - `'none'`: No caching, always refetch
+   * @default 'memory'
+   */
   mode?: 'memory' | 'none'
+
+  /**
+   * Time-to-live in milliseconds before cached data is considered stale.
+   * @default Infinity
+   */
   ttlMs?: number
+
+  /**
+   * If true, return stale cached data immediately while refetching in background.
+   * @default false
+   */
   staleWhileRevalidate?: boolean
+
+  /**
+   * If true, cache error responses as well.
+   * @default false
+   */
   cacheErrors?: boolean
 }
 
+/**
+ * Configuration options for creating a resource.
+ *
+ * @typeParam T - The type of data returned by the fetcher
+ * @typeParam Args - The type of arguments passed to the fetcher
+ */
 export interface ResourceOptions<T, Args> {
-  key?: unknown
+  /**
+   * Custom cache key. Can be a static value or a function that computes
+   * the key from the args. If not provided, args are used as the key.
+   */
+  key?: unknown | ((args: Args) => unknown)
+
+  /**
+   * The fetcher function that performs the async data retrieval.
+   * Receives an AbortController signal for cancellation support.
+   */
   fetch: (ctx: { signal: AbortSignal }, args: Args) => Promise<T>
+
+  /**
+   * If true, the resource will throw a Suspense token while loading,
+   * enabling React-like Suspense boundaries.
+   * @default false
+   */
   suspense?: boolean
+
+  /**
+   * Cache configuration options.
+   */
   cache?: ResourceCacheOptions
+
+  /**
+   * A value or reactive getter that, when changed, resets the resource.
+   * Useful for clearing cache when certain conditions change.
+   */
   reset?: unknown | (() => unknown)
+}
+
+/**
+ * Return type of the resource factory.
+ *
+ * @typeParam T - The type of data returned by the fetcher
+ * @typeParam Args - The type of arguments passed to the fetcher
+ */
+export interface Resource<T, Args> {
+  /**
+   * Read the resource data, triggering a fetch if needed.
+   * Can accept static args or a reactive getter.
+   *
+   * @param argsAccessor - Arguments or a getter returning arguments
+   */
+  read(argsAccessor: (() => Args) | Args): ResourceResult<T>
+
+  /**
+   * Invalidate cached data, causing the next read to refetch.
+   *
+   * @param key - Optional specific key to invalidate. If omitted, invalidates all.
+   */
+  invalidate(key?: unknown): void
+
+  /**
+   * Prefetch data without reading it. Useful for eager loading.
+   *
+   * @param args - Arguments to pass to the fetcher
+   * @param keyOverride - Optional cache key override
+   */
+  prefetch(args: Args, keyOverride?: unknown): void
 }
 
 interface ResourceEntry<T, Args> {
@@ -48,15 +155,52 @@ const defaultCacheOptions: Required<ResourceCacheOptions> = {
 }
 
 /**
- * Creates a resource factory that can be read with arguments.
+ * Create a reactive async data resource.
  *
- * @param optionsOrFetcher - Configuration object or fetcher function
+ * Resources handle async data fetching with automatic caching, cancellation,
+ * and optional Suspense integration.
+ *
+ * @param optionsOrFetcher - A fetcher function or full configuration object
+ * @returns A resource factory with read, invalidate, and prefetch methods
+ *
+ * @example
+ * ```tsx
+ * import { resource } from 'fict'
+ *
+ * // Simple fetcher
+ * const userResource = resource(
+ *   ({ signal }, userId: string) =>
+ *     fetch(`/api/users/${userId}`, { signal }).then(r => r.json())
+ * )
+ *
+ * // With full options
+ * const postsResource = resource({
+ *   fetch: ({ signal }, userId: string) =>
+ *     fetch(`/api/users/${userId}/posts`, { signal }).then(r => r.json()),
+ *   suspense: true,
+ *   cache: {
+ *     ttlMs: 60_000,
+ *     staleWhileRevalidate: true,
+ *   },
+ * })
+ *
+ * // Usage in component
+ * function UserProfile({ userId }: { userId: string }) {
+ *   const { data, loading, error, refresh } = userResource.read(() => userId)
+ *
+ *   if (loading) return <Spinner />
+ *   if (error) return <ErrorMessage error={error} />
+ *   return <div>{data.name}</div>
+ * }
+ * ```
+ *
+ * @public
  */
 export function resource<T, Args = void>(
   optionsOrFetcher:
     | ((ctx: { signal: AbortSignal }, args: Args) => Promise<T>)
     | ResourceOptions<T, Args>,
-) {
+): Resource<T, Args> {
   const fetcher = typeof optionsOrFetcher === 'function' ? optionsOrFetcher : optionsOrFetcher.fetch
   const useSuspense = typeof optionsOrFetcher === 'object' && !!optionsOrFetcher.suspense
   const cacheOptions: ResourceCacheOptions =

@@ -8,6 +8,13 @@ import type { SourceLocation } from '@babel/types'
  * (conditionals/loops/logical expressions) to preserve source shape.
  */
 
+// Note: Some fields use `any` or `any[]` to store raw Babel AST nodes.
+// These are passed through unchanged for code generation and would require
+// significant refactoring to type properly. The trade-off is acceptable
+// since these are internal implementation details.
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 /**
  * Unified error class for HIR-related errors.
  * Provides consistent error reporting across the HIR pipeline.
@@ -129,7 +136,7 @@ export type Terminator =
       variable: string
       /** Variable declaration kind (const, let, var) */
       variableKind: 'const' | 'let' | 'var'
-      /** Original pattern for destructuring (stored as Babel AST node for now) */
+      /** Original pattern for destructuring (stored as Babel AST node) */
       pattern?: any
       iterable: Expression
       body: BlockId
@@ -140,7 +147,7 @@ export type Terminator =
       variable: string
       /** Variable declaration kind (const, let, var) */
       variableKind: 'const' | 'let' | 'var'
-      /** Original pattern for destructuring (stored as Babel AST node for now) */
+      /** Original pattern for destructuring (stored as Babel AST node) */
       pattern?: any
       object: Expression
       body: BlockId
@@ -492,7 +499,8 @@ export interface ClassExpression extends SourceInfo {
   kind: 'ClassExpression'
   name?: string
   superClass?: Expression
-  body: any[] // ClassBody methods - stored as Babel AST for now
+  /** Class body elements - stored as Babel AST nodes */
+  body: any[]
 }
 
 export interface ThisExpression extends SourceInfo {
@@ -536,10 +544,10 @@ export interface HIRFunction extends SourceInfo {
 
 export interface HIRProgram {
   functions: HIRFunction[]
-  /** Import statements and other preamble to preserve */
+  /** Import statements and other preamble to preserve (Babel Statement nodes) */
   preamble: any[]
-  /** Export statements and other postamble to preserve */
+  /** Export statements and other postamble to preserve (Babel Statement nodes) */
   postamble: any[]
-  /** Original program body (for stable reordering during codegen) */
+  /** Original program body for stable reordering during codegen (Babel Statement nodes) */
   originalBody?: any[]
 }

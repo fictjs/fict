@@ -508,4 +508,138 @@ describe('$store', () => {
       expect(Object.keys(state.items).join(',')).toBe('0,1')
     })
   })
+
+  describe('circular references', () => {
+    it('should handle self-referencing objects without infinite recursion', () => {
+      interface SelfRef {
+        name: string
+        self?: SelfRef
+      }
+
+      const obj: SelfRef = { name: 'root' }
+      obj.self = obj // Create circular reference
+
+      const state = $store(obj)
+
+      // Should not throw or cause infinite loop
+      expect(state.name).toBe('root')
+      expect(state.self).toBe(state) // Should return the same proxy
+      expect(state.self?.name).toBe('root')
+      expect(state.self?.self?.name).toBe('root')
+    })
+
+    it('should handle mutually referencing objects', () => {
+      interface NodeA {
+        name: string
+        b?: NodeB
+      }
+      interface NodeB {
+        value: number
+        a?: NodeA
+      }
+
+      const a: NodeA = { name: 'A' }
+      const b: NodeB = { value: 42 }
+      a.b = b
+      b.a = a
+
+      const storeA = $store(a)
+
+      // Should not throw or cause infinite loop
+      expect(storeA.name).toBe('A')
+      expect(storeA.b?.value).toBe(42)
+      expect(storeA.b?.a?.name).toBe('A')
+      expect(storeA.b?.a?.b?.value).toBe(42)
+    })
+
+    it('should track changes in circular structures', async () => {
+      interface SelfRef {
+        name: string
+        self?: SelfRef
+      }
+
+      const obj: SelfRef = { name: 'root' }
+      obj.self = obj
+
+      const state = $store(obj)
+      const fn = vi.fn()
+
+      createEffect(() => {
+        fn(state.name)
+      })
+
+      expect(fn).toHaveBeenCalledWith('root')
+
+      state.name = 'updated'
+      await tick()
+      expect(fn).toHaveBeenCalledWith('updated')
+
+      // Access through circular reference should also see update
+      expect(state.self?.name).toBe('updated')
+    })
+
+    it('should handle nested arrays with circular references', () => {
+      interface TreeNode {
+        id: number
+        children: TreeNode[]
+        parent?: TreeNode
+      }
+
+      const root: TreeNode = { id: 1, children: [] }
+      const child1: TreeNode = { id: 2, children: [], parent: root }
+      const child2: TreeNode = { id: 3, children: [], parent: root }
+      root.children.push(child1, child2)
+
+      const state = $store(root)
+
+      expect(state.id).toBe(1)
+      expect(state.children.length).toBe(2)
+      expect(state.children[0].id).toBe(2)
+      expect(state.children[0].parent?.id).toBe(1)
+      expect(state.children[1].parent?.children[0].id).toBe(2)
+    })
+
+    it('should handle deeply nested circular structures', () => {
+      interface DeepNode {
+        level: number
+        nested?: {
+          inner?: {
+            ref?: DeepNode
+          }
+        }
+      }
+
+      const obj: DeepNode = {
+        level: 0,
+        nested: {
+          inner: {},
+        },
+      }
+      obj.nested!.inner!.ref = obj
+
+      const state = $store(obj)
+
+      expect(state.level).toBe(0)
+      expect(state.nested?.inner?.ref?.level).toBe(0)
+      expect(state.nested?.inner?.ref?.nested?.inner?.ref?.level).toBe(0)
+    })
+
+    it('should maintain proxy identity for circular references', () => {
+      interface SelfRef {
+        self?: SelfRef
+      }
+
+      const obj: SelfRef = {}
+      obj.self = obj
+
+      const state = $store(obj)
+
+      // The proxy should be the same object when accessed through circular reference
+      const directProxy = state
+      const circularProxy = state.self
+
+      // Both should be the same proxy (or at least equivalent proxies for the same target)
+      expect(circularProxy).toBe(directProxy)
+    })
+  })
 })

@@ -1,7 +1,7 @@
 import type * as BabelCore from '@babel/core'
 
 import { DelegatedEvents, RUNTIME_ALIASES, RUNTIME_HELPERS, RUNTIME_MODULE } from '../constants'
-import { debugEnabled } from '../debug'
+import { debugEnabled, debugLog } from '../debug'
 import { applyRegionMetadata, shouldMemoizeRegion, type RegionMetadata } from '../fine-grained-dom'
 import type { FictCompilerOptions } from '../types'
 import { DiagnosticCode, reportDiagnostic } from '../validation'
@@ -920,7 +920,14 @@ function detectDerivedCycles(fn: HIRFunction, _scopeResult: ReactiveScopeResult)
     if (visiting.has(node)) {
       const idx = stack.indexOf(node)
       const cycle = idx >= 0 ? [...stack.slice(idx), node] : [...stack, node]
-      throw new Error(`Detected cyclic derived dependency: ${cycle.join(' -> ')}`)
+      throw new Error(
+        `Detected cyclic derived dependency: ${cycle.join(' -> ')}\n\n` +
+          `Tip: This usually happens when derived values depend on each other in a loop.\n` +
+          `Consider:\n` +
+          `  - Using untrack() to break the dependency cycle\n` +
+          `  - Restructuring your derived values to avoid circular dependencies\n` +
+          `  - Moving one of the values to $state if it should be independently mutable`,
+      )
     }
     if (visited.has(node)) return
     visiting.add(node)
@@ -937,12 +944,11 @@ function detectDerivedCycles(fn: HIRFunction, _scopeResult: ReactiveScopeResult)
     visit(node)
   }
 
-  if (debugEnabled('cycles')) {
-    console.error(
-      'cycle graph',
-      Array.from(graph.entries()).map(([k, v]) => [k, Array.from(v)]),
-    )
-  }
+  debugLog(
+    'cycles',
+    'cycle graph',
+    Array.from(graph.entries()).map(([k, v]) => [k, Array.from(v)]),
+  )
 }
 
 function collectExpressionIdentifiers(expr: Expression, into: Set<string>): void {
@@ -6690,10 +6696,9 @@ function lowerFunctionWithRegions(
       ctx.hookReturnInfo.set(fn.name, info)
     }
   }
-  if (debugEnabled('region') && fn.name === 'Counter') {
-    console.log('Tracked vars for Counter', Array.from(ctx.trackedVars))
-
-    console.log('Memo vars for Counter', Array.from(ctx.memoVars))
+  if (fn.name === 'Counter') {
+    debugLog('region', 'Tracked vars for Counter', Array.from(ctx.trackedVars))
+    debugLog('region', 'Memo vars for Counter', Array.from(ctx.memoVars))
   }
 
   // Ensure hook call results that return direct accessors are treated as reactive aliases

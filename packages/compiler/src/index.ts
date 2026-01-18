@@ -2,6 +2,7 @@ import type * as BabelCore from '@babel/core'
 import { declare } from '@babel/helper-plugin-utils'
 
 import { SAFE_FUNCTIONS } from './constants'
+import { debugLog } from './debug'
 import { buildHIR } from './ir/build-hir'
 import { lowerHIRWithRegions } from './ir/codegen'
 import type { CompilerWarning, FictCompilerOptions } from './types'
@@ -1002,11 +1003,7 @@ function createHIREntrypointVisitor(
           })
           return usesState
         }
-        if (process.env.FICT_DEBUG_ALIAS) {
-          // Useful for debugging alias validation without affecting normal output
-
-          console.log('[fict] alias check state vars', Array.from(stateVars))
-        }
+        debugLog('alias', 'state vars', Array.from(stateVars))
         path.traverse({
           Function: {
             enter() {
@@ -1023,9 +1020,7 @@ function createHIREntrypointVisitor(
               t.isIdentifier(varPath.node.id) &&
               rhsUsesState(varPath.get('init') as any)
             ) {
-              if (process.env.FICT_DEBUG_ALIAS) {
-                console.log('[fict] alias add from decl', varPath.node.id.name)
-              }
+              debugLog('alias', 'add from decl', varPath.node.id.name)
               aliasSet.add(varPath.node.id.name)
             }
           },
@@ -1036,16 +1031,12 @@ function createHIREntrypointVisitor(
             const targetName = assignPath.node.left.name
             const rightPath = assignPath.get('right') as BabelCore.NodePath | null
             if (rhsUsesState(rightPath)) {
-              if (process.env.FICT_DEBUG_ALIAS) {
-                console.log('[fict] alias add from assign', targetName)
-              }
+              debugLog('alias', 'add from assign', targetName)
               aliasSet.add(targetName)
               return
             }
             if (aliasSet.has(targetName)) {
-              if (process.env.FICT_DEBUG_ALIAS) {
-                console.log('[fict] alias reassignment detected', targetName)
-              }
+              debugLog('alias', 'reassignment detected', targetName)
               throw assignPath.buildCodeFrameError(
                 `Alias reassignment is not supported for "${targetName}"`,
               )

@@ -1,16 +1,46 @@
+/**
+ * @fileoverview Deep reactive store implementation for Fict.
+ *
+ * $store creates a deeply reactive proxy that tracks property access at the path level.
+ * Unlike $state (which is shallow), $store allows direct mutation of nested properties.
+ *
+ * @example
+ * ```typescript
+ * const user = $store({ name: 'Alice', address: { city: 'London' } })
+ * user.address.city = 'Paris' // Fine-grained reactive update
+ * ```
+ */
+
 import { createSignal, type Signal } from '@fictjs/runtime/advanced'
 
+/** Function type for bound methods */
 type AnyFn = (...args: unknown[]) => unknown
+
+/** Cache entry for bound methods to preserve identity */
 interface BoundMethodEntry {
   ref: AnyFn
   bound: AnyFn
 }
 
+/** Type for objects with indexable properties */
+type IndexableObject = Record<string | symbol, unknown>
+
+/** Cache of proxied objects to avoid duplicate proxies */
 const PROXY_CACHE = new WeakMap<object, unknown>()
+
+/** Cache of signals per object property */
 const SIGNAL_CACHE = new WeakMap<object, Record<string | symbol, Signal<unknown>>>()
+
+/** Cache of bound methods to preserve function identity across reads */
 const BOUND_METHOD_CACHE = new WeakMap<object, Map<string | symbol, BoundMethodEntry>>()
+
+/** Special key for tracking iteration (Object.keys, for-in, etc.) */
 const ITERATE_KEY = Symbol('iterate')
 
+/**
+ * Get or create a signal for a specific property on a target object.
+ * @internal
+ */
 function getSignal(target: object, prop: string | symbol): Signal<unknown> {
   let signals = SIGNAL_CACHE.get(target)
   if (!signals) {
@@ -18,13 +48,17 @@ function getSignal(target: object, prop: string | symbol): Signal<unknown> {
     SIGNAL_CACHE.set(target, signals)
   }
   if (!signals[prop]) {
-    const initial = prop === ITERATE_KEY ? 0 : (target as Record<string | symbol, unknown>)[prop]
+    const initial = prop === ITERATE_KEY ? 0 : (target as IndexableObject)[prop]
     signals[prop] = createSignal(initial)
   }
   return signals[prop]
 }
 
-function triggerIteration(target: object) {
+/**
+ * Trigger iteration signal to notify consumers that keys have changed.
+ * @internal
+ */
+function triggerIteration(target: object): void {
   const signals = SIGNAL_CACHE.get(target)
   if (signals && signals[ITERATE_KEY]) {
     const current = signals[ITERATE_KEY]() as number
@@ -32,6 +66,35 @@ function triggerIteration(target: object) {
   }
 }
 
+/**
+ * Create a deep reactive store using Proxy.
+ *
+ * Unlike `$state` (which is shallow and compiler-transformed), `$store` provides:
+ * - **Deep reactivity**: Nested objects are automatically wrapped in proxies
+ * - **Direct mutation**: Modify properties directly without spread operators
+ * - **Path-level tracking**: Only components reading changed paths re-render
+ *
+ * @param initialValue - The initial object to make reactive
+ * @returns A reactive proxy of the object
+ *
+ * @example
+ * ```tsx
+ * import { $store } from 'fict'
+ *
+ * const form = $store({
+ *   user: { name: '', email: '' },
+ *   settings: { theme: 'light' }
+ * })
+ *
+ * // Direct mutation works
+ * form.user.name = 'Alice'
+ *
+ * // In JSX - only updates when form.user.name changes
+ * <input value={form.user.name} />
+ * ```
+ *
+ * @public
+ */
 export function $store<T extends object>(initialValue: T): T {
   if (typeof initialValue !== 'object' || initialValue === null) {
     return initialValue
@@ -114,7 +177,7 @@ export function $store<T extends object>(initialValue: T): T {
       if (Array.isArray(target) && prop !== 'length') {
         const signals = SIGNAL_CACHE.get(target)
         if (signals && signals.length) {
-          signals.length((target as unknown as { length: number }).length)
+          signals.length(target.length)
         }
       }
 
