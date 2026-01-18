@@ -83,8 +83,9 @@ export function Suspense(props: SuspenseProps): FictNode {
       // Suspended view: child threw a suspense token and was handled upstream.
       // Avoid replacing existing fallback content; tear down this attempt.
       const suspendedAttempt =
-        nodes.length > 0 &&
-        nodes.every(node => node instanceof Comment && (node as Comment).data === 'fict:suspend')
+        root.suspended ||
+        (nodes.length > 0 &&
+          nodes.every(node => node instanceof Comment && (node as Comment).data === 'fict:suspend'))
       if (suspendedAttempt) {
         popRoot(prev)
         destroyRoot(root)

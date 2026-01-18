@@ -505,8 +505,10 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
         (ctx.aliasVars?.has(deSSAVarName(expr.name)) ?? false)
       )
     case 'MemberExpression':
+    case 'OptionalMemberExpression':
       return expressionUsesTracked(expr.object as Expression, ctx)
     case 'CallExpression':
+    case 'OptionalCallExpression':
       if (expressionUsesTracked(expr.callee as Expression, ctx)) return true
       return expr.arguments.some(arg => expressionUsesTracked(arg as Expression, ctx))
     case 'LogicalExpression':

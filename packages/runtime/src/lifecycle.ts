@@ -15,6 +15,7 @@ export interface RootContext {
   destroyCallbacks: Cleanup[]
   errorHandlers?: ErrorHandler[]
   suspenseHandlers?: SuspenseHandler[]
+  suspended?: boolean
 }
 
 export interface CreateRootOptions {
@@ -30,7 +31,7 @@ const globalErrorHandlers = new WeakMap<RootContext, ErrorHandler[]>()
 const globalSuspenseHandlers = new WeakMap<RootContext, SuspenseHandler[]>()
 
 export function createRootContext(parent?: RootContext): RootContext {
-  return { parent, cleanups: [], destroyCallbacks: [] }
+  return { parent, cleanups: [], destroyCallbacks: [], suspended: false }
 }
 
 export function pushRoot(root: RootContext): RootContext | undefined {
@@ -267,13 +268,18 @@ export function handleSuspend(
   startRoot?: RootContext,
 ): boolean {
   let root: RootContext | undefined = startRoot ?? currentRoot
+  const originRoot = root // Preserve reference to set suspended flag on success
   while (root) {
     const handlers = root.suspenseHandlers
     if (handlers && handlers.length) {
       for (let i = handlers.length - 1; i >= 0; i--) {
         const handler = handlers[i]!
         const handled = handler(token)
-        if (handled !== false) return true
+        if (handled !== false) {
+          // Only set suspended = true when a handler actually handles the token
+          if (originRoot) originRoot.suspended = true
+          return true
+        }
       }
     }
     root = root.parent
@@ -288,7 +294,11 @@ export function handleSuspend(
     for (let i = globalForRoot.length - 1; i >= 0; i--) {
       const handler = globalForRoot[i]!
       const handled = handler(token)
-      if (handled !== false) return true
+      if (handled !== false) {
+        // Only set suspended = true when a handler actually handles the token
+        if (originRoot) originRoot.suspended = true
+        return true
+      }
     }
   }
   return false

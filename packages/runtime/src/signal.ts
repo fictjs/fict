@@ -1,6 +1,12 @@
 import { beginFlushGuard, beforeEffectRunGuard, endFlushGuard } from './cycle-guard'
 import { getDevtoolsHook } from './devtools'
-import { registerRootCleanup } from './lifecycle'
+import {
+  getCurrentRoot,
+  handleError,
+  handleSuspend,
+  registerRootCleanup,
+  type RootContext,
+} from './lifecycle'
 
 const isDev =
   typeof __DEV__ !== 'undefined'
@@ -103,6 +109,8 @@ export interface EffectNode extends BaseNode {
   depsTail: Link | undefined
   /** Optional cleanup runner to be called before checkDirty */
   runCleanup?: () => void
+  /** Root context for error/suspense handling */
+  root?: RootContext
   /** Devtools ID */
   __id?: number | undefined
 }
@@ -808,7 +816,25 @@ function runEffect(e: EffectNode): void {
         inCleanup = false
       }
     }
-    if (checkDirty(e.deps, e)) {
+    let isDirty = false
+    try {
+      isDirty = checkDirty(e.deps, e)
+    } catch (err) {
+      if (handleSuspend(err as any, e.root)) {
+        if (e.flags !== 0) {
+          e.flags = Watching
+        }
+        return
+      }
+      if (handleError(err, { source: 'effect' }, e.root)) {
+        if (e.flags !== 0) {
+          e.flags = Watching
+        }
+        return
+      }
+      throw err
+    }
+    if (isDirty) {
       ++cycle
       effectRunDevtools(e)
       e.depsTail = undefined
@@ -1031,7 +1057,7 @@ function computedOper<T>(this: ComputedNode<T>): T {
  * @returns An effect disposer function
  */
 export function effect(fn: () => void): EffectDisposer {
-  const e = {
+  const e: EffectNode = {
     fn,
     subs: undefined,
     subsTail: undefined,
@@ -1039,6 +1065,10 @@ export function effect(fn: () => void): EffectDisposer {
     depsTail: undefined,
     flags: WatchingRunning,
     __id: undefined as number | undefined,
+  }
+  const root = getCurrentRoot()
+  if (root) {
+    e.root = root
   }
 
   registerEffectDevtools(e)
@@ -1066,9 +1096,14 @@ export function effect(fn: () => void): EffectDisposer {
  * cleanup functions to access the previous values of signals.
  * @param fn - The effect function
  * @param cleanupRunner - Function to run cleanups before signal value commit
+ * @param root - Root context for error/suspense handling (defaults to current root)
  * @returns An effect disposer function
  */
-export function effectWithCleanup(fn: () => void, cleanupRunner: () => void): EffectDisposer {
+export function effectWithCleanup(
+  fn: () => void,
+  cleanupRunner: () => void,
+  root?: RootContext,
+): EffectDisposer {
   const e: EffectNode = {
     fn,
     subs: undefined,
@@ -1078,6 +1113,10 @@ export function effectWithCleanup(fn: () => void, cleanupRunner: () => void): Ef
     flags: WatchingRunning,
     runCleanup: cleanupRunner,
     __id: undefined as number | undefined,
+  }
+  const resolvedRoot = root ?? getCurrentRoot()
+  if (resolvedRoot) {
+    e.root = resolvedRoot
   }
 
   registerEffectDevtools(e)

@@ -47,7 +47,7 @@ export function createEffect(fn: Effect): () => void {
     cleanups = bucket
   }
 
-  const disposeEffect = effectWithCleanup(run, doCleanup)
+  const disposeEffect = effectWithCleanup(run, doCleanup, rootForError)
   const teardown = () => {
     runCleanupList(cleanups)
     disposeEffect()
@@ -91,7 +91,7 @@ export function createRenderEffect(fn: Effect): () => void {
     }
   }
 
-  const disposeEffect = effectWithCleanup(run, doCleanup)
+  const disposeEffect = effectWithCleanup(run, doCleanup, rootForError)
   const teardown = () => {
     if (cleanup) {
       cleanup()

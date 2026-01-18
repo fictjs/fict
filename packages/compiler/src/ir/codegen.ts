@@ -4532,11 +4532,11 @@ function emitHIRChildBinding(
     return
   }
 
-  // Check if it's a list (.map call)
-  if (expr.kind === 'CallExpression') {
+  // Check if it's a list (.map call), including optional chaining
+  if (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') {
     const callee = expr.callee
     if (
-      callee.kind === 'MemberExpression' &&
+      (callee.kind === 'MemberExpression' || callee.kind === 'OptionalMemberExpression') &&
       callee.property.kind === 'Identifier' &&
       callee.property.name === 'map'
     ) {
@@ -4597,6 +4597,11 @@ function emitConditionalChild(
   let condition: BabelCore.types.Expression
   let consequent: BabelCore.types.Expression
   let alternate: BabelCore.types.Expression | null = null
+  const lowerBranch = (branch: Expression): BabelCore.types.Expression => {
+    const listExpr = buildListCallExpression(branch, statements, ctx)
+    if (listExpr) return listExpr
+    return lowerDomExpression(branch, ctx)
+  }
 
   const enterConditional = () => {
     ctx.inConditional = (ctx.inConditional ?? 0) + 1
@@ -4608,13 +4613,13 @@ function emitConditionalChild(
   if (expr.kind === 'ConditionalExpression') {
     condition = lowerDomExpression(expr.test, ctx)
     enterConditional()
-    consequent = lowerDomExpression(expr.consequent, ctx)
-    alternate = lowerDomExpression(expr.alternate, ctx)
+    consequent = lowerBranch(expr.consequent)
+    alternate = lowerBranch(expr.alternate)
     exitConditional()
   } else if (expr.kind === 'LogicalExpression' && expr.operator === '&&') {
     condition = lowerDomExpression(expr.left, ctx)
     enterConditional()
-    consequent = lowerDomExpression(expr.right, ctx)
+    consequent = lowerBranch(expr.right)
     exitConditional()
   } else {
     return
@@ -5211,22 +5216,32 @@ function applySelectorHoist(
 }
 
 /**
- * Emit a list rendering child (array.map)
+ * Build a list binding call expression (array.map)
  */
-function emitListChild(
-  parentId: BabelCore.types.Expression,
-  markerId: BabelCore.types.Expression,
+function buildListCallExpression(
   expr: Expression,
   statements: BabelCore.types.Statement[],
   ctx: CodegenContext,
-): void {
+): BabelCore.types.Expression | null {
   const { t } = ctx
 
-  if (expr.kind !== 'CallExpression' || expr.callee.kind !== 'MemberExpression') {
-    return
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') {
+    return null
+  }
+  if (expr.callee.kind !== 'MemberExpression' && expr.callee.kind !== 'OptionalMemberExpression') {
+    return null
+  }
+  if (expr.callee.property.kind !== 'Identifier' || expr.callee.property.name !== 'map') {
+    return null
   }
 
-  const arrayExpr = lowerDomExpression(expr.callee.object, ctx)
+  const isOptional =
+    expr.kind === 'OptionalCallExpression' ||
+    (expr.callee.kind === 'OptionalMemberExpression' && expr.callee.optional)
+  const arrayExprBase = lowerDomExpression(expr.callee.object, ctx)
+  const arrayExpr = isOptional
+    ? t.logicalExpression('??', arrayExprBase, t.arrayExpression([]))
+    : arrayExprBase
   const mapCallback = expr.arguments[0]
   if (!mapCallback) {
     throw new Error('map callback is required')
@@ -5234,8 +5249,6 @@ function emitListChild(
   const keyExpr = extractKeyFromMapCallback(mapCallback)
   const isKeyed = !!keyExpr
 
-  ctx.helpersUsed.add('onDestroy')
-  ctx.helpersUsed.add('toNodeArray')
   if (isKeyed) {
     ctx.helpersUsed.add('keyedList')
   } else {
@@ -5318,7 +5331,6 @@ function emitListChild(
     }
   }
 
-  const listId = genTemp(ctx, 'list')
   if (isKeyed) {
     const itemParamName =
       t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)
@@ -5336,6 +5348,8 @@ function emitListChild(
       ctx,
     )
   }
+
+  let listCall: BabelCore.types.Expression
   if (isKeyed && keyExpr) {
     let keyExprAst = lowerExpression(keyExpr, ctx)
     if (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) {
@@ -5366,7 +5380,6 @@ function emitListChild(
       keyExprAst,
     )
 
-    // Determine if the callback uses an index parameter
     const hasIndexParam =
       (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) &&
       callbackExpr.params.length >= 2
@@ -5396,19 +5409,12 @@ function emitListChild(
     // Insert hoisted template declarations before list call
     statements.push(...hoistedStatements)
 
-    statements.push(
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          listId,
-          t.callExpression(t.identifier(RUNTIME_ALIASES.keyedList), [
-            t.arrowFunctionExpression([], arrayExpr),
-            keyFn,
-            callbackExpr,
-            t.booleanLiteral(hasIndexParam),
-          ]),
-        ),
-      ]),
-    )
+    listCall = t.callExpression(t.identifier(RUNTIME_ALIASES.keyedList), [
+      t.arrowFunctionExpression([], arrayExpr),
+      keyFn,
+      callbackExpr,
+      t.booleanLiteral(hasIndexParam),
+    ])
   } else {
     // Insert hoisted template declarations before list call
     statements.push(...hoistedStatements)
@@ -5434,20 +5440,37 @@ function emitListChild(
       t.identifier(indexParamName),
     )
 
-    statements.push(
-      t.variableDeclaration('const', [
-        t.variableDeclarator(
-          listId,
-          t.callExpression(t.identifier(RUNTIME_ALIASES.keyedList), [
-            t.arrowFunctionExpression([], arrayExpr),
-            keyFn,
-            callbackExpr,
-            t.booleanLiteral(hasIndexParam),
-          ]),
-        ),
-      ]),
-    )
+    listCall = t.callExpression(t.identifier(RUNTIME_ALIASES.keyedList), [
+      t.arrowFunctionExpression([], arrayExpr),
+      keyFn,
+      callbackExpr,
+      t.booleanLiteral(hasIndexParam),
+    ])
   }
+
+  return listCall
+}
+
+/**
+ * Emit a list rendering child (array.map)
+ */
+function emitListChild(
+  parentId: BabelCore.types.Expression,
+  markerId: BabelCore.types.Expression,
+  expr: Expression,
+  statements: BabelCore.types.Statement[],
+  ctx: CodegenContext,
+): void {
+  const { t } = ctx
+
+  const listCall = buildListCallExpression(expr, statements, ctx)
+  if (!listCall) return
+
+  ctx.helpersUsed.add('onDestroy')
+  ctx.helpersUsed.add('toNodeArray')
+
+  const listId = genTemp(ctx, 'list')
+  statements.push(t.variableDeclaration('const', [t.variableDeclarator(listId, listCall)]))
 
   // Insert markers
   const markersId = genTemp(ctx, 'markers')

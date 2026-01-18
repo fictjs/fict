@@ -590,6 +590,7 @@ export function insert(
     const root = createRootContext(hostRoot)
     const prev = pushRoot(root)
     let nodes: Node[] = []
+    let handledError = false
     try {
       let newNode: Node | Node[]
 
@@ -614,14 +615,34 @@ export function insert(
       }
 
       nodes = toNodeArray(newNode)
+      if (root.suspended) {
+        handledError = true
+        destroyRoot(root)
+        return
+      }
       if (parentNode) {
         insertNodesBefore(parentNode, nodes, marker)
       }
+    } catch (err) {
+      if (handleSuspend(err as any, root)) {
+        handledError = true
+        destroyRoot(root)
+        return
+      }
+      if (handleError(err, { source: 'renderChild' }, root)) {
+        handledError = true
+        destroyRoot(root)
+        return
+      }
+      throw err
     } finally {
       popRoot(prev)
-      flushOnMount(root)
+      if (!handledError) {
+        flushOnMount(root)
+      }
     }
 
+    // If we reach here, no error was handled (handledError blocks return early)
     currentRoot = root
     currentNodes = nodes
   })

@@ -19,6 +19,38 @@ const tick = () =>
       : Promise.resolve().then(resolve),
   )
 
+/**
+ * Wait for a condition to be true with exponential backoff.
+ * More reliable than fixed setTimeout delays in async tests.
+ */
+async function waitFor(
+  condition: () => boolean,
+  options: { timeout?: number; interval?: number } = {},
+): Promise<void> {
+  const { timeout = 1000, interval = 5 } = options
+  const start = Date.now()
+  while (Date.now() - start < timeout) {
+    await tick()
+    if (condition()) return
+    await new Promise(resolve => setTimeout(resolve, interval))
+  }
+  if (!condition()) {
+    throw new Error(`waitFor timeout after ${timeout}ms`)
+  }
+}
+
+/**
+ * Wait for suspense to resolve by checking that loading is gone and content is present.
+ */
+async function waitForSuspenseResolution(
+  container: HTMLElement,
+  options: { timeout?: number; loadingText?: string } = {},
+): Promise<void> {
+  const { timeout = 1000, loadingText = 'Loading...' } = options
+  await waitFor(() => !container.textContent?.includes(loadingText), { timeout })
+  await tick()
+}
+
 function compileAndLoad<TModule extends Record<string, any>>(
   source: string,
   deps: Record<string, any> = {},
@@ -3766,6 +3798,18 @@ describe('compiler + fict integration', () => {
   })
 
   it('loads posts after selecting a user with suspense resources', async () => {
+    const errors: unknown[] = []
+    const onError = (event: Event) => {
+      const errorEvent = event as ErrorEvent
+      errors.push(errorEvent.error ?? errorEvent.message ?? event)
+      errorEvent.preventDefault?.()
+    }
+    const onRejection = (event: PromiseRejectionEvent) => {
+      errors.push(event.reason ?? event)
+      event.preventDefault?.()
+    }
+    window.addEventListener('error', onError)
+    window.addEventListener('unhandledrejection', onRejection)
     const source = `
         import { $state, render, Suspense, ErrorBoundary } from 'fict'
         import { resource } from 'fict/plus'
@@ -3835,8 +3879,8 @@ describe('compiler + fict integration', () => {
                 <UserCard
                   key={user.id}
                   user={user}
-                  selected={props.selectedId === user.id}
-                  onSelect={() => props.onSelect(user.id)}
+                  selected={props.selectedUser?.id === user.id}
+                  onSelect={() => props.onSelect(user)}
                 />
               ))}
             </div>
@@ -3847,34 +3891,38 @@ describe('compiler + fict integration', () => {
           const posts = postsResource.read(() => props.userId)
           return (
             <div>
-              {posts.data?.map(post => (
-                <div key={post.id}>
-                  <h4 data-testid="post-title">{post.title}</h4>
-                  <p>{post.body}</p>
-                </div>
-              ))}
+              {posts.data?.length === 0 ? (
+                <p data-testid="no-posts">No posts yet</p>
+              ) : (
+                posts.data?.map(post => (
+                  <div key={post.id}>
+                    <h4 data-testid="post-title">{post.title}</h4>
+                    <p>{post.body}</p>
+                  </div>
+                ))
+              )}
             </div>
           )
         }
 
         function App() {
-          let selectedUserId = $state(null)
-          const handleSelectUser = id => {
-            selectedUserId = id
+          let selectedUser = $state(null)
+          const handleSelectUser = user => {
+            selectedUser = user
           }
           return (
             <div>
               <ErrorBoundary fallback={(error, reset) => <ErrorFallback error={error} reset={reset} />}>
                 <Suspense fallback={<Loading />}>
-                  <UsersList selectedId={selectedUserId} onSelect={handleSelectUser} />
+                  <UsersList selectedUser={selectedUser} onSelect={handleSelectUser} />
                 </Suspense>
               </ErrorBoundary>
-              {selectedUserId === null ? (
+              {selectedUser === null ? (
                 <div data-testid="placeholder">Select a user</div>
               ) : (
                 <ErrorBoundary fallback={(error, reset) => <ErrorFallback error={error} reset={reset} />}>
                   <Suspense fallback={<Loading />}>
-                    <PostsList userId={selectedUserId} />
+                    <PostsList userId={selectedUser?.id} />
                   </Suspense>
                 </ErrorBoundary>
               )}
@@ -3890,23 +3938,66 @@ describe('compiler + fict integration', () => {
     const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
     const dispose = mod.mount(container)
 
-    await new Promise(resolve => setTimeout(resolve, 10))
-    await tick()
+    try {
+      // Wait for users list to load
+      await waitForSuspenseResolution(container)
+      await waitFor(() => container.querySelectorAll('[data-testid="user-card"]').length === 4)
 
-    const cards = Array.from(container.querySelectorAll('[data-testid="user-card"]'))
-    expect(cards.length).toBe(4)
-    expect(cards[0]?.textContent).toContain('Alice Johnson')
-    ;(cards[1] as HTMLElement).click()
-    await tick()
-    await new Promise(resolve => setTimeout(resolve, 10))
-    await tick()
+      const cards = Array.from(container.querySelectorAll('[data-testid="user-card"]'))
+      expect(cards.length).toBe(4)
+      expect(cards[0]?.textContent).toContain('Alice Johnson')
+      expect(container.textContent).not.toContain('Loading...')
 
-    expect(container.querySelector('[data-testid="placeholder"]')).toBeNull()
+      // Click first user and wait for posts to load
+      ;(cards[0] as HTMLElement).click()
+      await tick()
+      await waitForSuspenseResolution(container)
+      await waitFor(() => container.querySelectorAll('[data-testid="post-title"]').length > 0)
 
-    const posts = container.querySelectorAll('[data-testid="post-title"]')
-    expect(posts.length).toBeGreaterThan(0)
+      expect(container.querySelector('[data-testid="placeholder"]')).toBeNull()
 
-    dispose()
+      const firstPosts = Array.from(container.querySelectorAll('[data-testid="post-title"]')).map(
+        el => el.textContent,
+      )
+      expect(firstPosts).toContain('Getting Started')
+      expect(container.textContent).not.toContain('Loading...')
+
+      // Click second user and wait for posts to load
+      ;(cards[1] as HTMLElement).click()
+      await tick()
+      await waitForSuspenseResolution(container)
+      await waitFor(() => {
+        const posts = container.querySelectorAll('[data-testid="post-title"]')
+        return posts.length === 1 && posts[0]?.textContent === 'Building Apps'
+      })
+
+      const secondPosts = Array.from(container.querySelectorAll('[data-testid="post-title"]')).map(
+        el => el.textContent,
+      )
+      expect(secondPosts).toEqual(['Building Apps'])
+      expect(container.textContent).not.toContain('Loading...')
+
+      // Click first user again and wait for posts to load
+      ;(cards[0] as HTMLElement).click()
+      await tick()
+      await waitForSuspenseResolution(container)
+      await waitFor(() => {
+        const posts = container.querySelectorAll('[data-testid="post-title"]')
+        return posts.length === 2
+      })
+
+      const thirdPosts = Array.from(container.querySelectorAll('[data-testid="post-title"]')).map(
+        el => el.textContent,
+      )
+      expect(thirdPosts).toContain('Getting Started')
+      expect(thirdPosts).toContain('Advanced Patterns')
+      expect(container.textContent).not.toContain('Loading...')
+      expect(errors.length).toBe(0)
+    } finally {
+      window.removeEventListener('error', onError)
+      window.removeEventListener('unhandledrejection', onRejection)
+      dispose()
+    }
   })
 
   it('handles nested ternary expressions', async () => {
