@@ -6,6 +6,7 @@ import {
   type ArrayExpression as HArrayExpression,
   type ArrowFunctionExpression as HArrowFunctionExpression,
   type AssignmentExpression as HAssignmentExpression,
+  type BabelStatement,
   type BasicBlock,
   type BinaryExpression as HBinaryExpression,
   type CallExpression as HCallExpression,
@@ -22,6 +23,8 @@ import {
   type LogicalExpression as HLogicalExpression,
   type MemberExpression as HMemberExpression,
   type ObjectExpression as HObjectExpression,
+  type PostambleItem,
+  type PreambleItem,
   type SpreadElement as HSpreadElement,
   type TemplateLiteral as HTemplateLiteral,
   type UnaryExpression as HUnaryExpression,
@@ -361,9 +364,9 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
  */
 export function buildHIR(ast: BabelCore.types.File): HIRProgram {
   const functions: HIRFunction[] = []
-  const preamble: any[] = []
-  const postamble: any[] = []
-  const originalBody = [...ast.program.body]
+  const preamble: PreambleItem[] = []
+  const postamble: PostambleItem[] = []
+  const originalBody = [...ast.program.body] as BabelStatement[]
   const programNoMemo =
     hasNoMemoDirective(ast.program.directives) ||
     hasNoMemoDirectiveInStatements(ast.program.body as BabelCore.types.Statement[])

@@ -1,4 +1,4 @@
-import type { SourceLocation } from '@babel/types'
+import type { SourceLocation, Statement, ClassBody, Node } from '@babel/types'
 
 /**
  * High-level Intermediate Representation (HIR) scaffolding.
@@ -8,12 +8,51 @@ import type { SourceLocation } from '@babel/types'
  * (conditionals/loops/logical expressions) to preserve source shape.
  */
 
-// Note: Some fields use `any` or `any[]` to store raw Babel AST nodes.
-// These are passed through unchanged for code generation and would require
-// significant refactoring to type properly. The trade-off is acceptable
-// since these are internal implementation details.
+// ============================================================================
+// Babel AST Passthrough Types
+// ============================================================================
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+/**
+ * Type alias for Babel Statement nodes that are passed through unchanged.
+ * These represent preamble (imports) and postamble (exports) statements.
+ */
+export type BabelStatement = Statement
+
+/**
+ * Type alias for class body members from Babel AST.
+ */
+export type BabelClassMember = ClassBody['body'][number]
+
+/**
+ * Type alias for function parameter nodes from Babel AST.
+ * These are preserved for proper props pattern lowering.
+ * Includes Identifier, Pattern (ObjectPattern, ArrayPattern), and RestElement.
+ */
+export type BabelParamNode = Node
+
+/**
+ * Marker for a function that was extracted and needs to be re-exported.
+ * Used in postamble to reconstruct export statements during codegen.
+ */
+export interface ExportFunctionMarker {
+  kind: 'ExportFunction'
+  name: string | undefined
+}
+
+/**
+ * Marker for a default export that was extracted.
+ */
+export interface ExportDefaultMarker {
+  kind: 'ExportDefault'
+  name: string | null
+}
+
+/**
+ * Items that can appear in preamble/postamble.
+ * Can be either Babel Statement nodes or HIR-specific markers.
+ */
+export type PreambleItem = BabelStatement
+export type PostambleItem = BabelStatement | ExportFunctionMarker | ExportDefaultMarker
 
 /**
  * Unified error class for HIR-related errors.
@@ -500,7 +539,7 @@ export interface ClassExpression extends SourceInfo {
   name?: string
   superClass?: Expression
   /** Class body elements - stored as Babel AST nodes */
-  body: any[]
+  body: BabelClassMember[]
 }
 
 export interface ThisExpression extends SourceInfo {
@@ -530,7 +569,7 @@ export interface HIRFunction extends SourceInfo {
   params: Identifier[]
   blocks: BasicBlock[]
   /** Original Babel param AST nodes for proper props pattern lowering */
-  rawParams?: any[]
+  rawParams?: BabelParamNode[]
   /** Optional SSA version map for consumers */
   ssaMap?: Map<string, number>
   /** Optional metadata about the origin of this function */
@@ -544,10 +583,10 @@ export interface HIRFunction extends SourceInfo {
 
 export interface HIRProgram {
   functions: HIRFunction[]
-  /** Import statements and other preamble to preserve (Babel Statement nodes) */
-  preamble: any[]
-  /** Export statements and other postamble to preserve (Babel Statement nodes) */
-  postamble: any[]
+  /** Import statements and other preamble to preserve */
+  preamble: PreambleItem[]
+  /** Export statements and other postamble to preserve */
+  postamble: PostambleItem[]
   /** Original program body for stable reordering during codegen (Babel Statement nodes) */
-  originalBody?: any[]
+  originalBody?: BabelStatement[]
 }

@@ -130,20 +130,48 @@ export interface Resource<T, Args> {
   prefetch(args: Args, keyOverride?: unknown): void
 }
 
+/**
+ * Resource status values for tracking fetch lifecycle.
+ * @internal
+ */
+export type ResourceStatus = 'idle' | 'pending' | 'success' | 'error'
+
+/**
+ * Internal cache entry for a resource.
+ * Tracks the reactive state and metadata for a single cached fetch.
+ *
+ * @typeParam T - The type of data returned by the fetcher
+ * @typeParam Args - The type of arguments passed to the fetcher
+ * @internal
+ */
 interface ResourceEntry<T, Args> {
+  /** Reactive signal for the fetched data */
   data: ReturnType<typeof createSignal<T | undefined>>
+  /** Reactive signal for loading state */
   loading: ReturnType<typeof createSignal<boolean>>
+  /** Reactive signal for error state */
   error: ReturnType<typeof createSignal<unknown>>
+  /** Version counter for invalidation */
   version: ReturnType<typeof createSignal<number>>
+  /** Suspense token when using suspense mode */
   pendingToken: ReturnType<typeof createSuspenseToken> | null
+  /** Last used arguments for change detection */
   lastArgs: Args | undefined
+  /** Last seen version for change detection */
   lastVersion: number
+  /** Last reset token value for change detection */
   lastReset: unknown
+  /** Whether we have a valid cached value */
   hasValue: boolean
-  status: 'idle' | 'pending' | 'success' | 'error'
+  /** Current fetch status */
+  status: ResourceStatus
+  /** Generation counter to handle race conditions */
   generation: number
+  /** Timestamp when the cached value expires */
   expiresAt: number | undefined
+  /** Currently in-flight fetch promise */
   inFlight: Promise<void> | undefined
+  /** AbortController for cancelling in-flight requests */
   controller: AbortController | undefined
 }
 

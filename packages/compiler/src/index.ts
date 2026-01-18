@@ -765,28 +765,43 @@ function createHIREntrypointVisitor(
             if (isStateCall(init, t)) {
               // Check if $state is imported from fict
               if (!fictImports.has('$state')) {
-                throw varPath.buildCodeFrameError('$state() must be imported from "fict"')
+                throw varPath.buildCodeFrameError(
+                  `$state() must be imported from "fict".\n\n` +
+                    `Add this import at the top of your file:\n` +
+                    `  import { $state } from 'fict'`,
+                )
               }
               if (!t.isIdentifier(varPath.node.id)) {
                 throw varPath.buildCodeFrameError(
-                  'Destructuring $state is not supported. Use a simple identifier.',
+                  `Destructuring $state is not supported.\n\n` +
+                    `Instead of:  const { a, b } = $state({ a: 1, b: 2 })\n` +
+                    `Use:         let state = $state({ a: 1, b: 2 })\n` +
+                    `             const { a, b } = state  // read-only aliases\n\n` +
+                    `For deep reactivity, consider using $store from 'fict'.`,
                 )
               }
               const ownerComponent = varPath.getFunctionParent()
               if (!ownerComponent || !isComponentOrHookDefinition(ownerComponent as any)) {
                 throw varPath.buildCodeFrameError(
-                  '$state() must be declared inside a component or hook function body',
+                  `$state() must be declared inside a component or hook function body.\n\n` +
+                    `For module-level shared state, use one of these alternatives:\n` +
+                    `  • $store from 'fict' - for deep reactive objects\n` +
+                    `  • createSignal from 'fict/advanced' - for primitives`,
                 )
               }
               stateVars.add(varPath.node.id.name)
               if (isInsideLoop(varPath) || isInsideConditional(varPath)) {
                 throw varPath.buildCodeFrameError(
-                  '$state() cannot be declared inside loops or conditionals',
+                  `$state() cannot be declared inside loops or conditionals.\n\n` +
+                    `Signals must be created at the top level of components for stable identity.\n` +
+                    `Move the $state() declaration before the loop/condition.`,
                 )
               }
               if (isInsideNestedFunction(varPath)) {
                 throw varPath.buildCodeFrameError(
-                  '$state() cannot be declared inside nested functions',
+                  `$state() cannot be declared inside nested functions.\n\n` +
+                    `Move the $state() declaration to the component's top level,\n` +
+                    `or extract the nested logic into a custom hook (useXxx).`,
                 )
               }
             } else if (t.isIdentifier(varPath.node.id)) {
@@ -835,46 +850,71 @@ function createHIREntrypointVisitor(
 
               if (!isVariableDeclarator) {
                 throw callPath.buildCodeFrameError(
-                  '$state() must be assigned directly to a variable (e.g. let count = $state(0)). For object state, consider using $store from fict/plus.',
+                  `$state() must be assigned directly to a variable.\n\n` +
+                    `Correct usage:\n` +
+                    `  let count = $state(0)\n` +
+                    `  let user = $state({ name: 'Alice' })\n\n` +
+                    `For object state with deep reactivity, consider:\n` +
+                    `  import { $store } from 'fict'\n` +
+                    `  const user = $store({ name: 'Alice', address: { city: 'NYC' } })`,
                 )
               }
 
               if (!t.isIdentifier(parentPath.node.id)) {
                 throw callPath.buildCodeFrameError(
-                  'Destructuring $state is not supported. Use a simple identifier.',
+                  `Destructuring $state is not supported.\n\n` +
+                    `Instead of:  const { a, b } = $state({ a: 1, b: 2 })\n` +
+                    `Use:         let state = $state({ a: 1, b: 2 })\n` +
+                    `             const { a, b } = state  // read-only aliases`,
                 )
               }
 
               const ownerComponent = callPath.getFunctionParent()
               if (!ownerComponent || !isComponentOrHookDefinition(ownerComponent as any)) {
                 throw callPath.buildCodeFrameError(
-                  '$state() must be declared inside a component or hook function body',
+                  `$state() must be declared inside a component or hook function body.\n\n` +
+                    `For module-level shared state, use one of these alternatives:\n` +
+                    `  • $store from 'fict' - for deep reactive objects\n` +
+                    `  • createSignal from 'fict/advanced' - for primitives`,
                 )
               }
               if (isInsideLoop(callPath) || isInsideConditional(callPath)) {
                 throw callPath.buildCodeFrameError(
-                  '$state() cannot be declared inside loops or conditionals',
+                  `$state() cannot be declared inside loops or conditionals.\n\n` +
+                    `Move the declaration to the top of your component.\n` +
+                    `For dynamic collections, consider using $store with an array/object.`,
                 )
               }
               if (isInsideNestedFunction(callPath)) {
                 throw callPath.buildCodeFrameError(
-                  '$state() cannot be declared inside nested functions',
+                  `$state() cannot be declared inside nested functions.\n\n` +
+                    `Move the declaration to the component's top level,\n` +
+                    `or extract the nested logic into a custom hook (useXxx).`,
                 )
               }
             }
             if (isEffectCall(callPath.node, t)) {
               // Check if $effect is imported from fict
               if (!fictImports.has('$effect')) {
-                throw callPath.buildCodeFrameError('$effect() must be imported from "fict"')
+                throw callPath.buildCodeFrameError(
+                  `$effect() must be imported from "fict".\n\n` +
+                    `Add this import at the top of your file:\n` +
+                    `  import { $effect } from 'fict'`,
+                )
               }
               if (isInsideLoop(callPath) || isInsideConditional(callPath)) {
                 throw callPath.buildCodeFrameError(
-                  '$effect() cannot be called inside loops or conditionals',
+                  `$effect() cannot be called inside loops or conditionals.\n\n` +
+                    `Effects must be registered at the top level of components.\n` +
+                    `For conditional effects, use a condition inside the effect body instead:\n` +
+                    `  $effect(() => { if (condition) { /* ... */ } })`,
                 )
               }
               if (isInsideNestedFunction(callPath)) {
                 throw callPath.buildCodeFrameError(
-                  '$effect() cannot be called inside nested functions',
+                  `$effect() cannot be called inside nested functions.\n\n` +
+                    `Move the effect to the component's top level,\n` +
+                    `or extract the nested logic into a custom hook (useXxx).`,
                 )
               }
             }

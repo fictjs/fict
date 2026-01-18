@@ -641,5 +641,96 @@ describe('$store', () => {
       // Both should be the same proxy (or at least equivalent proxies for the same target)
       expect(circularProxy).toBe(directProxy)
     })
+
+    it('should handle mutual references (A -> B -> A)', () => {
+      interface NodeA {
+        name: string
+        b?: NodeB
+      }
+      interface NodeB {
+        value: number
+        a?: NodeA
+      }
+
+      const a: NodeA = { name: 'nodeA' }
+      const b: NodeB = { value: 42 }
+      a.b = b
+      b.a = a // Creates mutual reference
+
+      const storeA = $store(a)
+
+      // Access through mutual reference chain
+      expect(storeA.name).toBe('nodeA')
+      expect(storeA.b?.value).toBe(42)
+      expect(storeA.b?.a?.name).toBe('nodeA')
+      expect(storeA.b?.a?.b?.value).toBe(42)
+    })
+
+    it('should handle reactivity through circular reference paths', async () => {
+      interface Node {
+        value: number
+        next?: Node
+      }
+
+      const obj: Node = { value: 1 }
+      obj.next = { value: 2 }
+      obj.next.next = obj // Circular back to root
+
+      const state = $store(obj)
+      const fn = vi.fn()
+
+      createEffect(() => {
+        // Access value through circular path
+        fn(state.next?.next?.value)
+      })
+
+      await tick()
+      expect(fn).toHaveBeenCalledWith(1)
+
+      // Modify root value
+      state.value = 100
+      await tick()
+      expect(fn).toHaveBeenCalledWith(100)
+    })
+
+    it('should handle breaking circular references', () => {
+      interface SelfRef {
+        name: string
+        self?: SelfRef | null
+      }
+
+      const obj: SelfRef = { name: 'root' }
+      obj.self = obj
+
+      const state = $store(obj)
+
+      // Initially circular
+      expect(state.self?.name).toBe('root')
+
+      // Break the circular reference
+      state.self = null
+
+      expect(state.self).toBe(null)
+      expect(state.name).toBe('root')
+    })
+
+    it('should handle creating circular references dynamically', () => {
+      interface DynamicNode {
+        id: number
+        ref?: DynamicNode
+      }
+
+      const state = $store<DynamicNode>({ id: 1 })
+
+      // Initially no circular reference
+      expect(state.ref).toBe(undefined)
+
+      // Dynamically create circular reference
+      state.ref = state as DynamicNode
+
+      // Access through circular reference
+      expect(state.ref.id).toBe(1)
+      expect(state.ref.ref?.id).toBe(1)
+    })
   })
 })

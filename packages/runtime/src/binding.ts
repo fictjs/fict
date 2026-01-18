@@ -36,7 +36,7 @@ import {
 } from './lifecycle'
 import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 import { batch } from './scheduler'
-import { computed, untrack, isSignal, isComputed } from './signal'
+import { computed, untrack, isSignal, isComputed, isEffect, isEffectScope } from './signal'
 import type { Cleanup, FictNode } from './types'
 
 const isDev =
@@ -70,13 +70,16 @@ export interface BindingHandle {
 // ============================================================================
 
 /**
- * Check if a value is reactive (a getter function).
+ * Check if a value is reactive (a getter function that returns a value).
  *
  * A value is considered reactive if:
  * 1. It's a signal or computed value created by the runtime (marked with Symbol)
  * 2. It's a zero-argument function (getter pattern used by the compiler)
  *
- * Note: Event handlers (functions that take arguments) are NOT reactive values.
+ * NOT considered reactive:
+ * - Event handlers (functions that take arguments)
+ * - Effect disposers (zero-arg but for cleanup, not value access)
+ * - Effect scopes (zero-arg but for scope management)
  *
  * @param value - The value to check
  * @returns true if the value is a reactive getter
@@ -84,10 +87,11 @@ export interface BindingHandle {
  * @example
  * ```ts
  * const [count, setCount] = createSignal(0)
- * isReactive(count)     // true - signal accessor
- * isReactive(() => 42)  // true - getter pattern
- * isReactive((x) => x)  // false - takes argument
- * isReactive('hello')   // false - not a function
+ * isReactive(count)          // true - signal accessor
+ * isReactive(() => 42)       // true - getter pattern
+ * isReactive((x) => x)       // false - takes argument
+ * isReactive('hello')        // false - not a function
+ * isReactive(effectDisposer) // false - effect cleanup function
  * ```
  */
 export function isReactive(value: unknown): value is () => unknown {
@@ -95,6 +99,10 @@ export function isReactive(value: unknown): value is () => unknown {
 
   // Check for runtime-created signals/computed (most reliable)
   if (isSignal(value) || isComputed(value)) return true
+
+  // Exclude effect disposers and effect scopes - they are zero-arg
+  // functions but not reactive getters
+  if (isEffect(value) || isEffectScope(value)) return false
 
   // Fall back to length check for compiler-generated getters
   // Zero-argument functions are treated as reactive getters
