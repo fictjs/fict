@@ -8,7 +8,7 @@
 import type * as BabelCore from '@babel/core'
 
 import { RUNTIME_ALIASES } from '../constants'
-import { debugEnabled, debugLog, debugWarn } from '../debug'
+import { debugLog, debugWarn } from '../debug'
 import type { RegionMetadata } from '../fine-grained-dom'
 
 import type { CodegenContext, RegionInfo } from './codegen'
