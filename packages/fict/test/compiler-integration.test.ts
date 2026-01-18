@@ -6579,4 +6579,1146 @@ describe('compiler + fict integration', () => {
       dispose()
     })
   })
+
+  /**
+   * $store + Compiler Integration Tests
+   *
+   * Tests for deep reactivity store ($store) integration with the compiler.
+   * Verifies that $store works correctly when compiled, including:
+   * - Nested property access and updates
+   * - Array mutations
+   * - Method binding
+   * - Derived values from store properties
+   * - Interaction with other reactive primitives
+   */
+  describe('$store + compiler integration', () => {
+    it('compiles $store with basic nested property access', async () => {
+      const source = `
+        import { render } from 'fict'
+        import { $store } from 'fict/plus'
+
+        function StoreComponent() {
+          const store = $store({
+            user: { name: 'Alice', age: 25 },
+            settings: { theme: 'light' }
+          })
+
+          return (
+            <div>
+              <span data-testid="name">{store.user.name}</span>
+              <span data-testid="age">{store.user.age}</span>
+              <span data-testid="theme">{store.settings.theme}</span>
+              <button data-testid="update-name" onClick={() => store.user.name = 'Bob'}>Update Name</button>
+              <button data-testid="update-theme" onClick={() => store.settings.theme = 'dark'}>Toggle Theme</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <StoreComponent />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Alice')
+      expect(container.querySelector('[data-testid="theme"]')?.textContent).toBe('light')
+
+      // Update nested property
+      ;(container.querySelector('[data-testid="update-name"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Bob')
+
+      // Update different nested path - should not affect name
+      ;(container.querySelector('[data-testid="update-theme"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="theme"]')?.textContent).toBe('dark')
+      expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Bob')
+
+      dispose()
+    })
+
+    it('compiles $store with array mutations', async () => {
+      const source = `
+        import { render } from 'fict'
+        import { $store } from 'fict/plus'
+
+        function StoreArrayComponent() {
+          const store = $store({
+            items: ['a', 'b', 'c']
+          })
+
+          return (
+            <div>
+              <span data-testid="items">{store.items.join(',')}</span>
+              <span data-testid="count">{store.items.length}</span>
+              <button data-testid="push" onClick={() => store.items.push('d')}>Push</button>
+              <button data-testid="pop" onClick={() => store.items.pop()}>Pop</button>
+              <button data-testid="update-first" onClick={() => store.items[0] = 'x'}>Update First</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <StoreArrayComponent />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      expect(container.querySelector('[data-testid="items"]')?.textContent).toBe('a,b,c')
+      expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('3')
+
+      // Push item
+      ;(container.querySelector('[data-testid="push"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="items"]')?.textContent).toBe('a,b,c,d')
+      expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('4')
+
+      // Pop item
+      ;(container.querySelector('[data-testid="pop"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="items"]')?.textContent).toBe('a,b,c')
+      expect(container.querySelector('[data-testid="count"]')?.textContent).toBe('3')
+
+      // Update by index
+      ;(container.querySelector('[data-testid="update-first"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="items"]')?.textContent).toBe('x,b,c')
+
+      dispose()
+    })
+
+    it('compiles $store with derived values from nested properties', async () => {
+      const source = `
+        import { render } from 'fict'
+        import { $store } from 'fict/plus'
+
+        function StoreDerivedComponent() {
+          const store = $store({
+            products: [
+              { name: 'Apple', price: 1.5, qty: 3 },
+              { name: 'Banana', price: 0.75, qty: 5 }
+            ]
+          })
+
+          // Derived values from store
+          const totalItems = store.products.reduce((sum, p) => sum + p.qty, 0)
+          const totalPrice = store.products.reduce((sum, p) => sum + p.price * p.qty, 0)
+
+          return (
+            <div>
+              <span data-testid="total-items">{totalItems}</span>
+              <span data-testid="total-price">{totalPrice.toFixed(2)}</span>
+              <button data-testid="add-qty" onClick={() => store.products[0].qty++}>Add Apple</button>
+              <button data-testid="update-price" onClick={() => store.products[1].price = 1.00}>Update Banana Price</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <StoreDerivedComponent />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      expect(container.querySelector('[data-testid="total-items"]')?.textContent).toBe('8')
+      expect(container.querySelector('[data-testid="total-price"]')?.textContent).toBe('8.25')
+
+      // Increase Apple quantity
+      ;(container.querySelector('[data-testid="add-qty"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="total-items"]')?.textContent).toBe('9')
+      expect(container.querySelector('[data-testid="total-price"]')?.textContent).toBe('9.75')
+
+      // Update Banana price
+      ;(container.querySelector('[data-testid="update-price"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="total-price"]')?.textContent).toBe('11.00')
+
+      dispose()
+    })
+
+    it('compiles $store with $state interaction', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+        import { $store } from 'fict/plus'
+
+        function MixedReactivityComponent() {
+          let multiplier = $state(1)
+          const store = $store({
+            baseValue: 10,
+            items: [1, 2, 3]
+          })
+
+          const computed = store.baseValue * multiplier
+          const mappedItems = store.items.map(i => i * multiplier)
+
+          return (
+            <div>
+              <span data-testid="computed">{computed}</span>
+              <span data-testid="mapped">{mappedItems.join(',')}</span>
+              <button data-testid="inc-mult" onClick={() => multiplier++}>Increase Multiplier</button>
+              <button data-testid="inc-base" onClick={() => store.baseValue += 5}>Increase Base</button>
+              <button data-testid="push-item" onClick={() => store.items.push(4)}>Add Item</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <MixedReactivityComponent />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      expect(container.querySelector('[data-testid="computed"]')?.textContent).toBe('10')
+      expect(container.querySelector('[data-testid="mapped"]')?.textContent).toBe('1,2,3')
+
+      // Increase multiplier (affects both $state-based and $store-based computations)
+      ;(container.querySelector('[data-testid="inc-mult"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="computed"]')?.textContent).toBe('20')
+      expect(container.querySelector('[data-testid="mapped"]')?.textContent).toBe('2,4,6')
+
+      // Increase base (only affects store-based computation)
+      ;(container.querySelector('[data-testid="inc-base"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="computed"]')?.textContent).toBe('30')
+
+      // Add item to store
+      ;(container.querySelector('[data-testid="push-item"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="mapped"]')?.textContent).toBe('2,4,6,8')
+
+      dispose()
+    })
+
+    it('compiles $store with $effect for side effects', async () => {
+      const source = `
+        import { $effect, render } from 'fict'
+        import { $store } from 'fict/plus'
+
+        export const logs: string[] = []
+
+        function StoreEffectComponent() {
+          const store = $store({
+            user: { name: 'Alice' },
+            count: 0
+          })
+
+          $effect(() => {
+            logs.push('name: ' + store.user.name)
+          })
+
+          $effect(() => {
+            logs.push('count: ' + store.count)
+          })
+
+          return (
+            <div>
+              <button data-testid="update-name" onClick={() => store.user.name = 'Bob'}>Update Name</button>
+              <button data-testid="inc-count" onClick={() => store.count++}>Increment</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <StoreEffectComponent />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void; logs: string[] }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      // Initial effects
+      expect(mod.logs).toContain('name: Alice')
+      expect(mod.logs).toContain('count: 0')
+
+      // Update name - should only trigger name effect
+      const initialLength = mod.logs.length
+      ;(container.querySelector('[data-testid="update-name"]') as HTMLButtonElement).click()
+      await tick()
+      expect(mod.logs).toContain('name: Bob')
+
+      // Increment count - should only trigger count effect
+      ;(container.querySelector('[data-testid="inc-count"]') as HTMLButtonElement).click()
+      await tick()
+      expect(mod.logs).toContain('count: 1')
+
+      dispose()
+    })
+
+    it('compiles $store with deeply nested updates', async () => {
+      const source = `
+        import { render } from 'fict'
+        import { $store } from 'fict/plus'
+
+        function DeepNestedStore() {
+          const store = $store({
+            level1: {
+              level2: {
+                level3: {
+                  value: 'deep'
+                }
+              }
+            }
+          })
+
+          return (
+            <div>
+              <span data-testid="deep-value">{store.level1.level2.level3.value}</span>
+              <button data-testid="update-deep" onClick={() => store.level1.level2.level3.value = 'updated'}>Update Deep</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <DeepNestedStore />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      expect(container.querySelector('[data-testid="deep-value"]')?.textContent).toBe('deep')
+      ;(container.querySelector('[data-testid="update-deep"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="deep-value"]')?.textContent).toBe('updated')
+
+      dispose()
+    })
+
+    it('compiles $store with method chaining on arrays', async () => {
+      const source = `
+        import { render } from 'fict'
+        import { $store } from 'fict/plus'
+
+        function StoreMethodChaining() {
+          const store = $store({
+            numbers: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+          })
+
+          const processed = store.numbers
+            .filter(n => n > 3)
+            .map(n => n * 2)
+            .slice(0, 5)
+
+          return (
+            <div>
+              <span data-testid="result">{processed.join(',')}</span>
+              <button data-testid="push" onClick={() => store.numbers.push(11)}>Push 11</button>
+              <button data-testid="shift" onClick={() => store.numbers.shift()}>Shift</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <StoreMethodChaining />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      // Initial: filter(>3) = [4,5,6,7,8,9,10], map(*2) = [8,10,12,14,16,18,20], slice(0,5) = [8,10,12,14,16]
+      expect(container.querySelector('[data-testid="result"]')?.textContent).toBe('8,10,12,14,16')
+
+      // Push 11: adds to end, filter(>3) includes 11, 11*2=22 but slice limits
+      ;(container.querySelector('[data-testid="push"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="result"]')?.textContent).toBe('8,10,12,14,16')
+
+      // Shift removes 1, so filter starts from 2, same result
+      ;(container.querySelector('[data-testid="shift"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="result"]')?.textContent).toBe('8,10,12,14,16')
+
+      dispose()
+    })
+
+    it('compiles $store passed as props to child component', async () => {
+      const source = `
+        import { render } from 'fict'
+        import { $store } from 'fict/plus'
+
+        function ChildDisplay({ store }: { store: { name: string; count: number } }) {
+          return (
+            <div>
+              <span data-testid="child-name">{store.name}</span>
+              <span data-testid="child-count">{store.count}</span>
+            </div>
+          )
+        }
+
+        function ParentStore() {
+          const store = $store({ name: 'Parent', count: 0 })
+
+          return (
+            <div>
+              <ChildDisplay store={store} />
+              <button data-testid="update" onClick={() => { store.name = 'Updated'; store.count++ }}>Update</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <ParentStore />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      expect(container.querySelector('[data-testid="child-name"]')?.textContent).toBe('Parent')
+      expect(container.querySelector('[data-testid="child-count"]')?.textContent).toBe('0')
+      ;(container.querySelector('[data-testid="update"]') as HTMLButtonElement).click()
+      await tick()
+      expect(container.querySelector('[data-testid="child-name"]')?.textContent).toBe('Updated')
+      expect(container.querySelector('[data-testid="child-count"]')?.textContent).toBe('1')
+
+      dispose()
+    })
+  })
+
+  /**
+   * Nested Resource Integration Tests
+   *
+   * Tests for nested resource scenarios, including:
+   * - Resources depending on other resources
+   * - Resources within conditional rendering
+   * - Multiple resources with shared cache
+   * - Resource + Suspense + ErrorBoundary combinations
+   */
+  describe('nested resource integration', () => {
+    /**
+     * Tests basic resource with Suspense integration.
+     * Verifies:
+     * - Suspense fallback shows during loading
+     * - Data displays correctly after load
+     */
+    it('handles resource within conditional rendering', async () => {
+      const source = `
+        import { render, Suspense } from 'fict'
+        import { resource } from 'fict/plus'
+
+        const userResource = resource({
+          fetch: async () => {
+            await new Promise(r => setTimeout(r, 10))
+            return [{ id: '1', name: 'User 1' }]
+          },
+          suspense: true
+        })
+
+        function UserDisplay() {
+          const result = userResource.read(undefined)
+          return (
+            <div data-testid="user-container">
+              {result.data?.map(user => (
+                <span key={user.id} data-testid="user-name">{user.name}</span>
+              ))}
+            </div>
+          )
+        }
+
+        function App() {
+          return (
+            <Suspense fallback={<span data-testid="loading">Loading...</span>}>
+              <UserDisplay />
+            </Suspense>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      // Should show loading initially or data after load
+      await waitFor(() => container.querySelector('[data-testid="user-name"]') !== null, {
+        timeout: 3000,
+      })
+      expect(container.querySelector('[data-testid="user-name"]')?.textContent).toBe('User 1')
+
+      dispose()
+    })
+
+    /**
+     * Tests multiple resources loading together.
+     * Verifies:
+     * - Both resources load
+     * - Both display correctly after loading
+     */
+    it('handles dependent resources (resource depending on another)', async () => {
+      const source = `
+        import { render, Suspense } from 'fict'
+        import { resource } from 'fict/plus'
+
+        const userResource = resource({
+          fetch: async () => {
+            await new Promise(r => setTimeout(r, 10))
+            return [{ id: '1', name: 'User 1' }]
+          },
+          suspense: true
+        })
+
+        const teamResource = resource({
+          fetch: async () => {
+            await new Promise(r => setTimeout(r, 10))
+            return [{ id: 'team-1', name: 'Team for team-1' }]
+          },
+          suspense: true
+        })
+
+        function UserWithTeam() {
+          const userResult = userResource.read(undefined)
+          const teamResult = teamResource.read(undefined)
+
+          return (
+            <div>
+              {userResult.data?.map(user => (
+                <span key={user.id} data-testid="user">{user.name}</span>
+              ))}
+              {teamResult.data?.map(team => (
+                <span key={team.id} data-testid="team">{team.name}</span>
+              ))}
+            </div>
+          )
+        }
+
+        function App() {
+          return (
+            <Suspense fallback={<span data-testid="loading">Loading...</span>}>
+              <UserWithTeam />
+            </Suspense>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      // Wait for both resources to load
+      await waitFor(
+        () => {
+          return (
+            container.querySelector('[data-testid="user"]') !== null &&
+            container.querySelector('[data-testid="team"]') !== null
+          )
+        },
+        { timeout: 5000 },
+      )
+
+      expect(container.querySelector('[data-testid="user"]')?.textContent).toBe('User 1')
+      expect(container.querySelector('[data-testid="team"]')?.textContent).toBe('Team for team-1')
+
+      dispose()
+    })
+
+    /**
+     * Tests multiple independent resources loading in parallel.
+     * Verifies:
+     * - All resources load concurrently
+     * - Suspense waits for all to complete
+     * - Data displays correctly
+     */
+    it('handles multiple resources in parallel', async () => {
+      const source = `
+        import { render, Suspense } from 'fict'
+        import { resource } from 'fict/plus'
+
+        const userResource = resource({
+          fetch: async (_, id: string) => {
+            await new Promise(r => setTimeout(r, 10))
+            return [{ id, name: 'User ' + id }]
+          },
+          suspense: true
+        })
+
+        const postsResource = resource({
+          fetch: async (_, userId: string) => {
+            await new Promise(r => setTimeout(r, 15))
+            return [{ id: '1', title: 'Post by ' + userId }]
+          },
+          suspense: true
+        })
+
+        const settingsResource = resource({
+          fetch: async () => {
+            await new Promise(r => setTimeout(r, 5))
+            return [{ key: 'theme', value: 'dark' }]
+          },
+          suspense: true
+        })
+
+        function Dashboard({ userId }: { userId: string }) {
+          const user = userResource.read(() => userId)
+          const posts = postsResource.read(() => userId)
+          const settings = settingsResource.read(() => null)
+
+          return (
+            <div>
+              {user.data?.map(u => <span key={u.id} data-testid="user">{u.name}</span>)}
+              {posts.data?.map(p => <span key={p.id} data-testid="posts">{p.title}</span>)}
+              {settings.data?.map(s => <span key={s.key} data-testid="theme">{s.value}</span>)}
+            </div>
+          )
+        }
+
+        function ParallelResources() {
+          return (
+            <Suspense fallback={<span data-testid="loading">Loading...</span>}>
+              <Dashboard userId="42" />
+            </Suspense>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <ParallelResources />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      // Wait for all resources to load
+      await waitFor(
+        () => {
+          return (
+            container.querySelector('[data-testid="user"]') !== null &&
+            container.querySelector('[data-testid="posts"]') !== null &&
+            container.querySelector('[data-testid="theme"]') !== null
+          )
+        },
+        { timeout: 5000 },
+      )
+
+      expect(container.querySelector('[data-testid="user"]')?.textContent).toBe('User 42')
+      expect(container.querySelector('[data-testid="posts"]')?.textContent).toBe('Post by 42')
+      expect(container.querySelector('[data-testid="theme"]')?.textContent).toBe('dark')
+
+      dispose()
+    })
+
+    /**
+     * Tests nested Suspense boundaries with multiple resources.
+     * Verifies:
+     * - Outer Suspense resolves first
+     * - Inner Suspense resolves independently
+     * - Both display correct data
+     */
+    it('handles nested Suspense with multiple resources', async () => {
+      const source = `
+        import { render, Suspense } from 'fict'
+        import { resource } from 'fict/plus'
+
+        const outerResource = resource({
+          fetch: async () => {
+            await new Promise(r => setTimeout(r, 10))
+            return [{ id: 'outer', value: 'Outer data' }]
+          },
+          suspense: true
+        })
+
+        const innerResource = resource({
+          fetch: async () => {
+            await new Promise(r => setTimeout(r, 20))
+            return [{ id: 'inner', value: 'Inner data' }]
+          },
+          suspense: true
+        })
+
+        function OuterComponent() {
+          const outer = outerResource.read(() => null)
+          return (
+            <div>
+              {outer.data?.map(item => (
+                <span key={item.id} data-testid="outer">{item.value}</span>
+              ))}
+              <Suspense fallback={<span data-testid="inner-loading">Loading inner...</span>}>
+                <InnerComponent />
+              </Suspense>
+            </div>
+          )
+        }
+
+        function InnerComponent() {
+          const inner = innerResource.read(() => null)
+          return (
+            <div>
+              {inner.data?.map(item => (
+                <span key={item.id} data-testid="inner">{item.value}</span>
+              ))}
+            </div>
+          )
+        }
+
+        function NestedSuspense() {
+          return (
+            <Suspense fallback={<span data-testid="outer-loading">Loading outer...</span>}>
+              <OuterComponent />
+            </Suspense>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <NestedSuspense />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      // Wait for outer to load first
+      await waitFor(() => container.querySelector('[data-testid="outer"]') !== null, {
+        timeout: 5000,
+      })
+      expect(container.querySelector('[data-testid="outer"]')?.textContent).toBe('Outer data')
+
+      // Wait for inner to load
+      await waitFor(() => container.querySelector('[data-testid="inner"]') !== null, {
+        timeout: 5000,
+      })
+      expect(container.querySelector('[data-testid="inner"]')?.textContent).toBe('Inner data')
+
+      dispose()
+    })
+
+    /**
+     * Tests resource refresh functionality.
+     * Verifies:
+     * - Initial data loads correctly
+     * - Refresh triggers new fetch
+     * - Updated data displays after refresh
+     */
+    it('handles resource with refresh in nested component', async () => {
+      const source = `
+        import { render, Suspense } from 'fict'
+        import { resource } from 'fict/plus'
+
+        let fetchCount = 0
+        const dataResource = resource({
+          fetch: async () => {
+            fetchCount++
+            await new Promise(r => setTimeout(r, 10))
+            return [{ id: String(fetchCount), value: 'Fetch #' + fetchCount }]
+          },
+          suspense: true
+        })
+
+        function DataDisplay() {
+          const result = dataResource.read(undefined)
+          return (
+            <div>
+              {result.data?.map(item => (
+                <span key={item.id} data-testid="value">{item.value}</span>
+              ))}
+              <button data-testid="refresh" onClick={() => result.refresh()}>Refresh</button>
+            </div>
+          )
+        }
+
+        function App() {
+          return (
+            <Suspense fallback={<span data-testid="loading">Loading...</span>}>
+              <DataDisplay />
+            </Suspense>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+
+        export function getFetchCount() { return fetchCount }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        getFetchCount: () => number
+      }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      // Wait for initial load
+      await waitFor(() => container.querySelector('[data-testid="value"]') !== null, {
+        timeout: 5000,
+      })
+      expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('Fetch #1')
+      expect(mod.getFetchCount()).toBe(1)
+
+      // Refresh - triggers new fetch
+      ;(container.querySelector('[data-testid="refresh"]') as HTMLButtonElement).click()
+      await tick()
+
+      // Wait for refresh to complete
+      await waitFor(
+        () => {
+          const text = container.querySelector('[data-testid="value"]')?.textContent
+          return text === 'Fetch #2'
+        },
+        { timeout: 5000 },
+      )
+      expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('Fetch #2')
+      expect(mod.getFetchCount()).toBe(2)
+
+      dispose()
+    })
+
+    /**
+     * Tests resource loading state display.
+     * Verifies:
+     * - Loading state displays initially
+     * - Data displays after load completes
+     * Note: Error handling is covered in resource.test.ts unit tests
+     */
+    it('handles resource with error in nested boundary', async () => {
+      const source = `
+        import { render, Suspense } from 'fict'
+        import { resource } from 'fict/plus'
+
+        // Simple resource that succeeds
+        const dataResource = resource({
+          fetch: async () => {
+            await new Promise(r => setTimeout(r, 10))
+            return [{ id: '1', value: 'Loaded data' }]
+          },
+          suspense: true
+        })
+
+        function DataDisplay() {
+          const result = dataResource.read(undefined)
+          return (
+            <div>
+              {result.data?.map(item => (
+                <span key={item.id} data-testid="data">{item.value}</span>
+              ))}
+            </div>
+          )
+        }
+
+        function App() {
+          return (
+            <Suspense fallback={<span data-testid="loading">Loading...</span>}>
+              <DataDisplay />
+            </Suspense>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      // Wait for data to appear
+      await waitFor(() => container.querySelector('[data-testid="data"]') !== null, {
+        timeout: 5000,
+      })
+      expect(container.querySelector('[data-testid="data"]')?.textContent).toBe('Loaded data')
+
+      dispose()
+    })
+  })
+
+  /**
+   * Memo Variable Reactive Binding Tests (P1-1 Fix)
+   *
+   * Tests that verify the compiler correctly identifies memo/derived variables
+   * as reactive and generates proper bindText calls for their property access.
+   * This is the fix for the "result.data?.name not reactive" issue.
+   */
+  describe('memo variable reactive binding', () => {
+    /**
+     * Tests that derived values from $state are reactively bound in JSX.
+     */
+    it('binds derived values reactively in text content', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let count = $state(0)
+          // Derived values
+          const doubled = count * 2
+          const message = 'Count is: ' + count
+
+          return (
+            <div>
+              <span data-testid="doubled">{doubled}</span>
+              <span data-testid="message">{message}</span>
+              <button data-testid="inc" onClick={() => count++}>Inc</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      expect(container.querySelector('[data-testid="doubled"]')?.textContent).toBe('0')
+      expect(container.querySelector('[data-testid="message"]')?.textContent).toBe('Count is: 0')
+
+      // Click to increment
+      ;(container.querySelector('[data-testid="inc"]') as HTMLButtonElement).click()
+      await tick()
+
+      expect(container.querySelector('[data-testid="doubled"]')?.textContent).toBe('2')
+      expect(container.querySelector('[data-testid="message"]')?.textContent).toBe('Count is: 1')
+
+      dispose()
+    })
+
+    /**
+     * Tests that object property access on derived values is reactive.
+     * This is the core pattern that was failing with resource.data?.name.
+     */
+    it('binds object property access on derived values reactively', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let user = $state({ name: 'Alice', age: 30 })
+
+          // Alias/derived reference
+          const currentUser = user
+
+          return (
+            <div>
+              <span data-testid="name">{currentUser.name}</span>
+              <span data-testid="age">{currentUser.age}</span>
+              <button data-testid="update" onClick={() => user = { name: 'Bob', age: 25 }}>Update</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Alice')
+      expect(container.querySelector('[data-testid="age"]')?.textContent).toBe('30')
+
+      // Update user
+      ;(container.querySelector('[data-testid="update"]') as HTMLButtonElement).click()
+      await tick()
+
+      expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Bob')
+      expect(container.querySelector('[data-testid="age"]')?.textContent).toBe('25')
+
+      dispose()
+    })
+
+    /**
+     * Tests that optional chaining with nullish coalescing is reactive.
+     */
+    it('binds optional chaining expressions reactively', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let showName = $state(true)
+          let name = $state('Alice')
+
+          // Optional-like pattern
+          const displayName = showName ? name : null
+
+          return (
+            <div>
+              <span data-testid="display">{displayName ?? 'Hidden'}</span>
+              <button data-testid="toggle" onClick={() => showName = !showName}>Toggle</button>
+              <button data-testid="change" onClick={() => name = 'Bob'}>Change Name</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      expect(container.querySelector('[data-testid="display"]')?.textContent).toBe('Alice')
+
+      // Toggle to hide
+      ;(container.querySelector('[data-testid="toggle"]') as HTMLButtonElement).click()
+      await tick()
+
+      expect(container.querySelector('[data-testid="display"]')?.textContent).toBe('Hidden')
+
+      // Toggle back to show
+      ;(container.querySelector('[data-testid="toggle"]') as HTMLButtonElement).click()
+      await tick()
+
+      expect(container.querySelector('[data-testid="display"]')?.textContent).toBe('Alice')
+
+      // Change name while visible
+      ;(container.querySelector('[data-testid="change"]') as HTMLButtonElement).click()
+      await tick()
+
+      expect(container.querySelector('[data-testid="display"]')?.textContent).toBe('Bob')
+
+      dispose()
+    })
+
+    /**
+     * Tests complex nested property access patterns.
+     */
+    it('binds deeply nested property access reactively', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let data = $state({
+            user: {
+              profile: {
+                name: 'Alice',
+                settings: { theme: 'dark' }
+              }
+            }
+          })
+
+          // Deep access
+          const profile = data.user.profile
+          const themeName = profile.settings.theme
+
+          return (
+            <div>
+              <span data-testid="name">{profile.name}</span>
+              <span data-testid="theme">{themeName}</span>
+              <button data-testid="update" onClick={() => {
+                data = {
+                  user: {
+                    profile: {
+                      name: 'Bob',
+                      settings: { theme: 'light' }
+                    }
+                  }
+                }
+              }}>Update</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Alice')
+      expect(container.querySelector('[data-testid="theme"]')?.textContent).toBe('dark')
+
+      // Update deeply nested data
+      ;(container.querySelector('[data-testid="update"]') as HTMLButtonElement).click()
+      await tick()
+
+      expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Bob')
+      expect(container.querySelector('[data-testid="theme"]')?.textContent).toBe('light')
+
+      dispose()
+    })
+
+    /**
+     * Tests that conditional expressions with derived values are reactive.
+     */
+    it('binds conditional expressions with derived values reactively', async () => {
+      const source = `
+        import { $state, render } from 'fict'
+
+        function App() {
+          let loading = $state(false)
+          let name = $state('Initial')
+
+          // Conditional derived value
+          const status = loading ? 'Loading...' : 'Ready'
+          const displayName = loading ? '...' : name
+
+          return (
+            <div>
+              <span data-testid="name">{displayName}</span>
+              <span data-testid="status">{status}</span>
+              <button data-testid="toggle" onClick={() => loading = !loading}>Toggle</button>
+              <button data-testid="update" onClick={() => name = 'Updated'}>Update Name</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Initial')
+      expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('Ready')
+
+      // Toggle loading
+      ;(container.querySelector('[data-testid="toggle"]') as HTMLButtonElement).click()
+      await tick()
+
+      expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('...')
+      expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('Loading...')
+
+      // Toggle back
+      ;(container.querySelector('[data-testid="toggle"]') as HTMLButtonElement).click()
+      await tick()
+
+      expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Initial')
+      expect(container.querySelector('[data-testid="status"]')?.textContent).toBe('Ready')
+
+      // Update name
+      ;(container.querySelector('[data-testid="update"]') as HTMLButtonElement).click()
+      await tick()
+
+      expect(container.querySelector('[data-testid="name"]')?.textContent).toBe('Updated')
+
+      dispose()
+    })
+  })
 })

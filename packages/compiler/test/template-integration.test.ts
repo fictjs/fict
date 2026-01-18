@@ -946,4 +946,237 @@ describe('compiled templates DOM integration', () => {
     teardown()
     container.remove()
   })
+
+  /**
+   * Tests that memo variables are correctly identified as reactive.
+   * This ensures that expressions accessing memo/derived values are bound reactively.
+   */
+  it('binds memo variable properties reactively (P1-1 fix)', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let user = $state({ name: 'Initial', active: true })
+
+        // Create a derived value (memo)
+        const currentUser = user
+        const status = currentUser.active ? 'Active' : 'Inactive'
+
+        return (
+          <div>
+            <span data-testid="name">{currentUser.name}</span>
+            <span data-testid="status">{status}</span>
+            <button data-testid="update" onClick={() => user = { name: 'Updated', active: false }}>Update</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    // Initial state
+    const nameEl = container.querySelector('[data-testid="name"]') as HTMLElement
+    const statusEl = container.querySelector('[data-testid="status"]') as HTMLElement
+    expect(nameEl.textContent).toBe('Initial')
+    expect(statusEl.textContent).toBe('Active')
+
+    // Update the data
+    const updateBtn = container.querySelector('[data-testid="update"]') as HTMLButtonElement
+    updateBtn.click()
+    await flushUpdates()
+
+    // Should reactively update
+    expect(nameEl.textContent).toBe('Updated')
+    expect(statusEl.textContent).toBe('Inactive')
+
+    teardown()
+    container.remove()
+  })
+
+  /**
+   * Tests that derived values (memo outputs) are correctly bound as reactive text.
+   * This is the core fix for the "result.data?.name not reactive" issue.
+   */
+  it('uses bindText for expressions depending on memo variables', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let count = $state(0)
+        // This creates a derived/memo value
+        const doubled = count * 2
+        const tripled = count * 3
+
+        return (
+          <div>
+            <span data-testid="doubled">{doubled}</span>
+            <span data-testid="tripled">{tripled}</span>
+            <button data-testid="inc" onClick={() => count++}>Inc</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const doubled = container.querySelector('[data-testid="doubled"]') as HTMLElement
+    const tripled = container.querySelector('[data-testid="tripled"]') as HTMLElement
+    expect(doubled.textContent).toBe('0')
+    expect(tripled.textContent).toBe('0')
+
+    // Increment
+    const incBtn = container.querySelector('[data-testid="inc"]') as HTMLButtonElement
+    incBtn.click()
+    await flushUpdates()
+
+    expect(doubled.textContent).toBe('2')
+    expect(tripled.textContent).toBe('3')
+
+    // Increment again
+    incBtn.click()
+    await flushUpdates()
+
+    expect(doubled.textContent).toBe('4')
+    expect(tripled.textContent).toBe('6')
+
+    teardown()
+    container.remove()
+  })
+
+  /**
+   * Tests that object property access on memo variables is reactive.
+   */
+  it('binds object property access on memo variables reactively', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let user = $state({ name: 'Alice', age: 30 })
+
+        // Access properties through a derived reference
+        const currentUser = user
+
+        return (
+          <div>
+            <span data-testid="name">{currentUser.name}</span>
+            <span data-testid="age">{currentUser.age}</span>
+            <button data-testid="update" onClick={() => user = { name: 'Bob', age: 25 }}>Update</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const nameEl = container.querySelector('[data-testid="name"]') as HTMLElement
+    const ageEl = container.querySelector('[data-testid="age"]') as HTMLElement
+    expect(nameEl.textContent).toBe('Alice')
+    expect(ageEl.textContent).toBe('30')
+
+    // Update
+    const updateBtn = container.querySelector('[data-testid="update"]') as HTMLButtonElement
+    updateBtn.click()
+    await flushUpdates()
+
+    expect(nameEl.textContent).toBe('Bob')
+    expect(ageEl.textContent).toBe('25')
+
+    teardown()
+    container.remove()
+  })
+
+  /**
+   * Tests that optional chaining on reactive expressions is handled correctly.
+   */
+  it('handles optional chaining on reactive memo expressions', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        let showUser = $state(true)
+        let userName = $state('Alice')
+
+        // Use optional chaining pattern
+        const displayName = showUser ? userName : null
+
+        return (
+          <div>
+            <span data-testid="name">{displayName ?? 'N/A'}</span>
+            <button data-testid="hide" onClick={() => showUser = false}>Hide</button>
+            <button data-testid="show" onClick={() => { showUser = true; userName = 'Bob' }}>Show Bob</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const nameEl = container.querySelector('[data-testid="name"]') as HTMLElement
+    expect(nameEl.textContent).toBe('Alice')
+
+    // Hide user
+    const hideBtn = container.querySelector('[data-testid="hide"]') as HTMLButtonElement
+    hideBtn.click()
+    await flushUpdates()
+
+    expect(nameEl.textContent).toBe('N/A')
+
+    // Show with new name
+    const showBtn = container.querySelector('[data-testid="show"]') as HTMLButtonElement
+    showBtn.click()
+    await flushUpdates()
+
+    expect(nameEl.textContent).toBe('Bob')
+
+    teardown()
+    container.remove()
+  })
 })

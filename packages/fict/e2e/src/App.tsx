@@ -622,6 +622,468 @@ function UserDisplay(props: { userId: string }) {
 }
 
 // ============================================================================
+// 15. Complex Interaction Test - Multi-step workflows
+// ============================================================================
+function ComplexInteraction() {
+  let step = $state(1)
+  let formData = $state({ name: '', email: '', confirmed: false })
+  let submitted = $state(false)
+
+  const nextStep = () => {
+    if (step < 3) step++
+  }
+
+  const prevStep = () => {
+    if (step > 1) step--
+  }
+
+  const submit = () => {
+    submitted = true
+  }
+
+  const reset = () => {
+    step = 1
+    formData = { name: '', email: '', confirmed: false }
+    submitted = false
+  }
+
+  if (submitted) {
+    return (
+      <section id="complex-interaction">
+        <h2>Complex Interaction</h2>
+        <div id="submission-result">
+          <p>
+            Submitted: {formData.name} ({formData.email})
+          </p>
+          <button id="reset-form" onClick={reset}>
+            Start Over
+          </button>
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section id="complex-interaction">
+      <h2>Complex Interaction</h2>
+      <p id="current-step">Step {step} of 3</p>
+
+      {step === 1 && (
+        <div id="step-1">
+          <input
+            id="wizard-name"
+            value={formData.name}
+            onInput={(e: InputEvent) =>
+              (formData = { ...formData, name: (e.target as HTMLInputElement).value })
+            }
+            placeholder="Name"
+          />
+        </div>
+      )}
+
+      {step === 2 && (
+        <div id="step-2">
+          <input
+            id="wizard-email"
+            type="email"
+            value={formData.email}
+            onInput={(e: InputEvent) =>
+              (formData = { ...formData, email: (e.target as HTMLInputElement).value })
+            }
+            placeholder="Email"
+          />
+        </div>
+      )}
+
+      {step === 3 && (
+        <div id="step-3">
+          <p>
+            Confirm: {formData.name} - {formData.email}
+          </p>
+          <label>
+            <input
+              id="wizard-confirm"
+              type="checkbox"
+              checked={formData.confirmed}
+              onChange={() => (formData = { ...formData, confirmed: !formData.confirmed })}
+            />
+            I confirm this is correct
+          </label>
+        </div>
+      )}
+
+      <div id="wizard-buttons">
+        <button id="wizard-prev" onClick={prevStep} disabled={step === 1}>
+          Previous
+        </button>
+        {step < 3 ? (
+          <button id="wizard-next" onClick={nextStep}>
+            Next
+          </button>
+        ) : (
+          <button id="wizard-submit" onClick={submit} disabled={!formData.confirmed}>
+            Submit
+          </button>
+        )}
+      </div>
+    </section>
+  )
+}
+
+// ============================================================================
+// 16. Suspense + ErrorBoundary Combined Test
+// ============================================================================
+const FailableLazyComponent = lazy(
+  () =>
+    new Promise<{ default: () => any }>((resolve, reject) => {
+      setTimeout(() => {
+        // Simulate random failure
+        if (Math.random() > 0.5) {
+          reject(new Error('Failed to load component'))
+        } else {
+          resolve({
+            default: () => <div id="failable-content">Successfully loaded!</div>,
+          })
+        }
+      }, 100)
+    }),
+)
+
+const AlwaysSuccessLazy = lazy(
+  () =>
+    new Promise<{ default: () => any }>(resolve => {
+      setTimeout(() => {
+        resolve({
+          default: () => <div id="success-lazy">Success component loaded</div>,
+        })
+      }, 50)
+    }),
+)
+
+function SuspenseErrorBoundaryTest() {
+  let showFailable = $state(false)
+  let showSuccess = $state(false)
+  let retryKey = $state(0)
+
+  return (
+    <section id="suspense-error-boundary-test">
+      <h2>Suspense + ErrorBoundary Combined</h2>
+
+      <button id="show-failable" onClick={() => (showFailable = true)}>
+        Load Failable Component
+      </button>
+      <button id="show-success" onClick={() => (showSuccess = true)}>
+        Load Success Component
+      </button>
+      <button id="retry-failable" onClick={() => (retryKey = retryKey + 1)}>
+        Retry
+      </button>
+
+      <div id="failable-container">
+        {showFailable && (
+          <ErrorBoundary
+            fallback={err => (
+              <div id="failable-error">
+                Error loading: {(err as Error).message}
+                <button id="error-retry" onClick={() => (retryKey = retryKey + 1)}>
+                  Retry
+                </button>
+              </div>
+            )}
+            resetKeys={() => retryKey}
+          >
+            <Suspense fallback={<div id="failable-loading">Loading failable...</div>}>
+              <FailableLazyComponent key={retryKey} />
+            </Suspense>
+          </ErrorBoundary>
+        )}
+      </div>
+
+      <div id="success-container">
+        {showSuccess && (
+          <Suspense fallback={<div id="success-loading">Loading success...</div>}>
+            <AlwaysSuccessLazy />
+          </Suspense>
+        )}
+      </div>
+    </section>
+  )
+}
+
+// ============================================================================
+// 17. Performance Sensitive Operations
+// ============================================================================
+function PerformanceTest() {
+  let items = $state<number[]>([])
+  let renderCount = $state(0)
+  let batchSize = $state(10)
+
+  const addItems = () => {
+    const newItems = Array.from({ length: batchSize }, (_, i) => items.length + i + 1)
+    items = [...items, ...newItems]
+    renderCount++
+  }
+
+  const removeHalf = () => {
+    items = items.slice(0, Math.floor(items.length / 2))
+    renderCount++
+  }
+
+  const reverseAll = () => {
+    items = [...items].reverse()
+    renderCount++
+  }
+
+  const shuffleAll = () => {
+    const shuffled = [...items]
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[shuffled[i], shuffled[j]] = [shuffled[j]!, shuffled[i]!]
+    }
+    items = shuffled
+    renderCount++
+  }
+
+  const clearAll = () => {
+    items = []
+    renderCount++
+  }
+
+  return (
+    <section id="performance-test">
+      <h2>Performance Test</h2>
+
+      <div id="perf-controls">
+        <input
+          id="batch-size"
+          type="number"
+          value={batchSize}
+          onInput={(e: InputEvent) =>
+            (batchSize = parseInt((e.target as HTMLInputElement).value) || 10)
+          }
+        />
+        <button id="perf-add" onClick={addItems}>
+          Add {batchSize} Items
+        </button>
+        <button id="perf-remove-half" onClick={removeHalf}>
+          Remove Half
+        </button>
+        <button id="perf-reverse" onClick={reverseAll}>
+          Reverse
+        </button>
+        <button id="perf-shuffle" onClick={shuffleAll}>
+          Shuffle
+        </button>
+        <button id="perf-clear" onClick={clearAll}>
+          Clear
+        </button>
+      </div>
+
+      <p id="perf-stats">
+        Items: <span id="item-total">{items.length}</span>, Renders:{' '}
+        <span id="render-count">{renderCount}</span>
+      </p>
+
+      <ul id="perf-list">
+        {items.map((item: number) => (
+          <li key={item} className="perf-item" data-value={item}>
+            Item {item}
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+// ============================================================================
+// 18. Keyboard Navigation Test
+// ============================================================================
+function KeyboardNavigationTest() {
+  let selectedIndex = $state(0)
+  let items = $state(['Apple', 'Banana', 'Cherry', 'Date', 'Elderberry'])
+  let lastKey = $state('')
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    lastKey = e.key
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      selectedIndex = Math.min(selectedIndex + 1, items.length - 1)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      selectedIndex = Math.max(selectedIndex - 1, 0)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      // Select action
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault()
+      if (items.length > 1) {
+        const newItems = items.filter((_: string, i: number) => i !== selectedIndex)
+        items = newItems
+        selectedIndex = Math.min(selectedIndex, newItems.length - 1)
+      }
+    }
+  }
+
+  return (
+    <section id="keyboard-test">
+      <h2>Keyboard Navigation</h2>
+      <p id="keyboard-instructions">Use Arrow keys to navigate, Delete to remove</p>
+      <p id="last-key">Last key: {lastKey}</p>
+
+      <ul
+        id="keyboard-list"
+        tabIndex={0}
+        onKeyDown={handleKeyDown as any}
+        style={{ outline: 'none' }}
+      >
+        {items.map((item: string, index: number) => (
+          <li
+            key={item}
+            className={`keyboard-item ${index === selectedIndex ? 'selected' : ''}`}
+            data-index={index}
+            style={{
+              background: index === selectedIndex ? '#e0e0ff' : 'transparent',
+              padding: '8px',
+            }}
+          >
+            {item}
+          </li>
+        ))}
+      </ul>
+      <p id="selected-item">Selected: {items[selectedIndex]}</p>
+    </section>
+  )
+}
+
+// ============================================================================
+// 19. Drag and Drop Simulation Test
+// ============================================================================
+function DragDropTest() {
+  let items = $state(['Item A', 'Item B', 'Item C', 'Item D'])
+  let draggedIndex = $state<number | null>(null)
+  let dropTargetIndex = $state<number | null>(null)
+
+  const startDrag = (index: number) => {
+    draggedIndex = index
+  }
+
+  const endDrag = () => {
+    if (draggedIndex !== null && dropTargetIndex !== null && draggedIndex !== dropTargetIndex) {
+      const newItems = [...items]
+      const [removed] = newItems.splice(draggedIndex, 1)
+      newItems.splice(dropTargetIndex, 0, removed!)
+      items = newItems
+    }
+    draggedIndex = null
+    dropTargetIndex = null
+  }
+
+  const setDropTarget = (index: number) => {
+    dropTargetIndex = index
+  }
+
+  return (
+    <section id="drag-drop-test">
+      <h2>Drag and Drop</h2>
+      <p id="drag-status">
+        {draggedIndex !== null
+          ? `Dragging: ${items[draggedIndex]} (target: ${dropTargetIndex !== null ? items[dropTargetIndex] : 'none'})`
+          : 'Not dragging'}
+      </p>
+
+      <ul id="drag-list">
+        {items.map((item: string, index: number) => (
+          <li
+            key={item}
+            className={`drag-item ${index === draggedIndex ? 'dragging' : ''} ${index === dropTargetIndex ? 'drop-target' : ''}`}
+            data-index={index}
+            draggable={true}
+            onDragStart={() => startDrag(index)}
+            onDragOver={(e: DragEvent) => {
+              e.preventDefault()
+              setDropTarget(index)
+            }}
+            onDrop={() => endDrag()}
+            onDragEnd={() => endDrag()}
+            style={{
+              opacity: index === draggedIndex ? 0.5 : 1,
+              background: index === dropTargetIndex ? '#ffffcc' : 'white',
+              padding: '10px',
+              margin: '5px',
+              border: '1px solid #ccc',
+              cursor: 'grab',
+            }}
+          >
+            {item}
+          </li>
+        ))}
+      </ul>
+      <p id="drag-order">Current order: {items.join(', ')}</p>
+    </section>
+  )
+}
+
+// ============================================================================
+// 20. Animation Frame Reactive Test
+// ============================================================================
+function AnimationFrameTest() {
+  let position = $state(0)
+  let running = $state(false)
+  let frameCount = $state(0)
+
+  createEffect(() => {
+    if (!running) return
+
+    let animationId: number
+    const animate = () => {
+      position = (position + 2) % 300
+      frameCount++
+      animationId = requestAnimationFrame(animate)
+    }
+    animationId = requestAnimationFrame(animate)
+
+    return () => cancelAnimationFrame(animationId)
+  })
+
+  return (
+    <section id="animation-test">
+      <h2>Animation Frame Test</h2>
+      <button id="toggle-animation" onClick={() => (running = !running)}>
+        {running ? 'Stop' : 'Start'} Animation
+      </button>
+      <button
+        id="reset-animation"
+        onClick={() => {
+          position = 0
+          frameCount = 0
+        }}
+      >
+        Reset
+      </button>
+
+      <p id="frame-count">Frames: {frameCount}</p>
+
+      <div
+        id="animation-container"
+        style={{ width: '300px', height: '50px', background: '#eee', position: 'relative' }}
+      >
+        <div
+          id="animated-box"
+          style={{
+            position: 'absolute',
+            left: `${position}px`,
+            top: '10px',
+            width: '30px',
+            height: '30px',
+            background: 'blue',
+          }}
+        />
+      </div>
+    </section>
+  )
+}
+
+// ============================================================================
 // Main App
 // ============================================================================
 export function App() {
@@ -655,6 +1117,18 @@ export function App() {
       <SuspenseLazyTest />
       <hr />
       <ResourceTest />
+      <hr />
+      <ComplexInteraction />
+      <hr />
+      <SuspenseErrorBoundaryTest />
+      <hr />
+      <PerformanceTest />
+      <hr />
+      <KeyboardNavigationTest />
+      <hr />
+      <DragDropTest />
+      <hr />
+      <AnimationFrameTest />
     </div>
   )
 }

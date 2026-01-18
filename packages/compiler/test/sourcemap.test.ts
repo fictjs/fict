@@ -1367,4 +1367,869 @@ export function Destructure() {
       assertMappingInRange(result, 'clientX', filename, 1, 12)
     })
   })
+
+  // ==========================================================================
+  // Production Environment Sourcemap Tests
+  // ==========================================================================
+
+  describe('production environment sourcemap accuracy', () => {
+    it('maintains accurate mappings with minification-friendly output', () => {
+      const input = `
+import { $state, $effect } from 'fict'
+export function ProductionComponent() {
+  let count = $state(0)
+  let name = $state('Test')
+  const doubled = count * 2
+  const greeting = \`Hello, \${name}!\`
+  
+  $effect(() => {
+    console.log('Count:', count, 'Doubled:', doubled)
+  })
+  
+  return (
+    <div className="production">
+      <h1>{greeting}</h1>
+      <span data-count={count}>{doubled}</span>
+      <button onClick={() => count++}>Increment</button>
+    </div>
+  )
+}
+`
+      const filename = 'ProductionComponent.tsx'
+      const result = compileWithSourcemap(input, filename, { production: true })
+
+      assertValidSourcemap(result)
+      assertAnyMappingExists(result, filename)
+      // Function declaration should map correctly
+      assertMappingInRange(result, 'function ProductionComponent', filename, 1, 5)
+    })
+
+    it('preserves mappings for complex expressions in production mode', () => {
+      const input = `
+import { $state } from 'fict'
+export function ComplexExpressions() {
+  let items = $state([1, 2, 3, 4, 5])
+  let multiplier = $state(2)
+  
+  const processed = items
+    .filter(n => n > 1)
+    .map(n => n * multiplier)
+    .reduce((sum, n) => sum + n, 0)
+  
+  const stats = {
+    total: processed,
+    count: items.length,
+    average: processed / items.length
+  }
+  
+  return (
+    <div>
+      <p>Total: {stats.total}</p>
+      <p>Count: {stats.count}</p>
+      <p>Average: {stats.average.toFixed(2)}</p>
+    </div>
+  )
+}
+`
+      const filename = 'ComplexExpressions.tsx'
+      const result = compileWithSourcemap(input, filename, { production: true })
+
+      assertValidSourcemap(result)
+      assertMappingInRange(result, 'filter', filename, 1, 12)
+    })
+
+    it('handles production builds with tree-shaking markers', () => {
+      const input = `
+import { $state } from 'fict'
+import { $store } from 'fict/plus'
+
+export function TreeShakeTest() {
+  let simpleState = $state(0)
+  const store = $store({ nested: { value: 1 } })
+  
+  // Only simpleState is used in JSX
+  return <div>{simpleState}</div>
+}
+`
+      const filename = 'TreeShakeTest.tsx'
+      const result = compileWithSourcemap(input, filename, { production: true })
+
+      assertValidSourcemap(result)
+      assertAnyMappingExists(result, filename)
+    })
+
+    it('maintains column accuracy for error stack traces', () => {
+      const input = `
+import { $state, $effect } from 'fict'
+export function ErrorStackTest() {
+  let value = $state<string | null>(null)
+  
+  $effect(() => {
+    if (!value) {
+      throw new Error('Value is required')
+    }
+    console.log(value.toUpperCase())
+  })
+  
+  return <input onInput={(e: InputEvent) => value = (e.target as HTMLInputElement).value} />
+}
+`
+      const filename = 'ErrorStackTest.tsx'
+      const result = compileWithSourcemap(input, filename)
+
+      // Verify column mappings exist for error location pinpointing
+      const pos = findGeneratedPosition(result.code, 'throw new Error')
+      const original = originalPositionFor(result.map, pos)
+
+      expect(original.source).toBe(filename)
+      expect(original.column).toBeGreaterThanOrEqual(0)
+      expect(original.line).toBeGreaterThanOrEqual(1)
+    })
+  })
+
+  // ==========================================================================
+  // Multi-file Scenario Tests
+  // ==========================================================================
+
+  describe('multi-file scenario mappings', () => {
+    it('preserves mappings for component with external type imports', () => {
+      const input = `
+import { $state } from 'fict'
+import type { User, Settings } from './types'
+import type { ApiResponse } from '../api/types'
+
+interface ComponentProps {
+  user: User
+  settings: Settings
+  onUpdate: (response: ApiResponse) => void
+}
+
+export function MultiImportComponent({ user, settings, onUpdate }: ComponentProps) {
+  let localState = $state(user.name)
+  
+  const handleUpdate = async () => {
+    const response: ApiResponse = await fetch('/api/update')
+      .then(r => r.json())
+    onUpdate(response)
+  }
+  
+  return (
+    <div>
+      <span>{localState}</span>
+      <span>{settings.theme}</span>
+      <button onClick={handleUpdate}>Update</button>
+    </div>
+  )
+}
+`
+      const filename = 'src/components/MultiImportComponent.tsx'
+      const result = compileWithSourcemap(input, filename)
+
+      assertValidSourcemap(result)
+      assertMappingInRange(result, 'MultiImportComponent', filename, 1, 15)
+    })
+
+    it('preserves mappings for re-exported components', () => {
+      const input = `
+import { $state } from 'fict'
+
+// Internal component
+function InternalButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return <button onClick={onClick}>{label}</button>
+}
+
+// Public component wrapping internal
+export function PublicButton(props: { text: string }) {
+  let clicks = $state(0)
+  return <InternalButton label={props.text} onClick={() => clicks++} />
+}
+
+// Re-export with alias
+export { InternalButton as BaseButton }
+`
+      const filename = 'src/components/buttons/index.tsx'
+      const result = compileWithSourcemap(input, filename)
+
+      assertValidSourcemap(result)
+      assertMapping(result, 'InternalButton', filename)
+      assertMapping(result, 'PublicButton', filename)
+    })
+
+    it('preserves mappings for barrel file patterns', () => {
+      const input = `
+import { $state } from 'fict'
+
+// Component A
+export function ComponentA() {
+  let stateA = $state('A')
+  return <div id="a">{stateA}</div>
+}
+
+// Component B
+export function ComponentB() {
+  let stateB = $state('B')
+  return <div id="b">{stateB}</div>
+}
+
+// Component C
+export function ComponentC() {
+  let stateC = $state('C')
+  return <div id="c">{stateC}</div>
+}
+
+// Default export
+export default function MainComponent() {
+  return (
+    <div>
+      <ComponentA />
+      <ComponentB />
+      <ComponentC />
+    </div>
+  )
+}
+`
+      const filename = 'src/features/dashboard/components.tsx'
+      const result = compileWithSourcemap(input, filename)
+
+      assertValidSourcemap(result)
+      // All components should have mappings
+      assertMapping(result, 'ComponentA', filename)
+      assertMapping(result, 'ComponentB', filename)
+      assertMapping(result, 'ComponentC', filename)
+    })
+
+    it('preserves mappings with path aliases', () => {
+      const input = `
+import { $state, $effect } from 'fict'
+import { useAuth } from '@/hooks/useAuth'
+import { formatDate } from '@utils/date'
+import { Button } from '@components/ui'
+
+export function PathAliasComponent() {
+  let date = $state(new Date())
+  const formatted = formatDate(date)
+  const { user } = useAuth()
+  
+  $effect(() => {
+    console.log('User:', user, 'Date:', formatted)
+  })
+  
+  return (
+    <div>
+      <span>{formatted}</span>
+      <Button onClick={() => date = new Date()}>Refresh</Button>
+    </div>
+  )
+}
+`
+      const filename = 'src/pages/Dashboard.tsx'
+      const result = compileWithSourcemap(input, filename)
+
+      assertValidSourcemap(result)
+      assertMappingInRange(result, 'PathAliasComponent', filename, 1, 10)
+    })
+
+    it('preserves mappings for circular dependency patterns', () => {
+      const input = `
+import { $state } from 'fict'
+import type { NodeProps } from './TreeNode'
+
+export interface TreeData {
+  id: string
+  children?: TreeData[]
+}
+
+export function TreeContainer({ data }: { data: TreeData[] }) {
+  let expanded = $state<Set<string>>(new Set())
+  
+  const toggle = (id: string) => {
+    const next = new Set(expanded)
+    if (next.has(id)) {
+      next.delete(id)
+    } else {
+      next.add(id)
+    }
+    expanded = next
+  }
+  
+  return (
+    <div className="tree">
+      {data.map(node => (
+        <div key={node.id}>
+          <span onClick={() => toggle(node.id)}>{node.id}</span>
+          {expanded.has(node.id) && node.children?.map(child => (
+            <div key={child.id} className="child">{child.id}</div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+`
+      const filename = 'src/components/Tree/TreeContainer.tsx'
+      const result = compileWithSourcemap(input, filename)
+
+      assertValidSourcemap(result)
+      assertAnyMappingExists(result, filename)
+    })
+  })
+
+  // ==========================================================================
+  // Complex Nested Component Mapping Tests
+  // ==========================================================================
+
+  describe('complex nested component mappings', () => {
+    it('preserves mappings for deeply nested component hierarchy', () => {
+      const input = `
+import { $state } from 'fict'
+
+function Level4({ value }: { value: number }) {
+  return <span className="level-4">{value * 4}</span>
+}
+
+function Level3({ value }: { value: number }) {
+  return (
+    <div className="level-3">
+      <Level4 value={value} />
+      <Level4 value={value + 1} />
+    </div>
+  )
+}
+
+function Level2({ items }: { items: number[] }) {
+  return (
+    <div className="level-2">
+      {items.map(item => (
+        <Level3 key={item} value={item} />
+      ))}
+    </div>
+  )
+}
+
+function Level1({ groups }: { groups: number[][] }) {
+  return (
+    <div className="level-1">
+      {groups.map((group, i) => (
+        <Level2 key={i} items={group} />
+      ))}
+    </div>
+  )
+}
+
+export function DeepNesting() {
+  let groups = $state([[1, 2], [3, 4], [5, 6]])
+  
+  return (
+    <div className="root">
+      <Level1 groups={groups} />
+      <button onClick={() => groups = [...groups, [7, 8]]}>Add Group</button>
+    </div>
+  )
+}
+`
+      const filename = 'DeepNesting.tsx'
+      const result = compileWithSourcemap(input, filename)
+
+      assertValidSourcemap(result)
+      // All levels should have valid mappings
+      assertMappingInRange(result, 'Level4', filename, 1, 10)
+      assertMappingInRange(result, 'Level3', filename, 5, 15)
+      assertMappingInRange(result, 'Level2', filename, 10, 25)
+      assertMappingInRange(result, 'Level1', filename, 20, 35)
+      assertMappingInRange(result, 'DeepNesting', filename, 30, 45)
+    })
+
+    it('preserves mappings for recursive component patterns', () => {
+      const input = `
+import { $state } from 'fict'
+
+interface MenuItem {
+  id: string
+  label: string
+  children?: MenuItem[]
+}
+
+function MenuItemComponent({ item, depth = 0 }: { item: MenuItem; depth?: number }) {
+  let expanded = $state(false)
+  
+  return (
+    <div className="menu-item" style={{ paddingLeft: \`\${depth * 16}px\` }}>
+      <div onClick={() => expanded = !expanded}>
+        {item.children && (expanded ? '▼' : '▶')}
+        {item.label}
+      </div>
+      {expanded && item.children && (
+        <div className="submenu">
+          {item.children.map(child => (
+            <MenuItemComponent key={child.id} item={child} depth={depth + 1} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function RecursiveMenu({ items }: { items: MenuItem[] }) {
+  return (
+    <nav className="menu">
+      {items.map(item => (
+        <MenuItemComponent key={item.id} item={item} />
+      ))}
+    </nav>
+  )
+}
+`
+      const filename = 'RecursiveMenu.tsx'
+      const result = compileWithSourcemap(input, filename)
+
+      assertValidSourcemap(result)
+      assertMappingInRange(result, 'MenuItemComponent', filename, 5, 15)
+      assertMappingInRange(result, 'RecursiveMenu', filename, 25, 40)
+    })
+
+    it('preserves mappings for higher-order components with generics', () => {
+      const input = `
+import { $state } from 'fict'
+
+interface WithLoadingProps<T> {
+  data: T | null
+  loading: boolean
+  error?: Error
+  retryCount: number
+  onRetry: () => void
+}
+
+// HOC factory without $state inside nested function
+function withLoading<T>(
+  WrappedComponent: (props: { data: T }) => any
+) {
+  return function WithLoadingComponent(props: WithLoadingProps<T>) {
+    if (props.loading) {
+      return <div className="loading">Loading... (attempts: {props.retryCount})</div>
+    }
+    
+    if (props.error) {
+      return (
+        <div className="error">
+          Error: {props.error.message}
+          <button onClick={props.onRetry}>Retry</button>
+        </div>
+      )
+    }
+    
+    if (!props.data) {
+      return <div className="empty">No data</div>
+    }
+    
+    return <WrappedComponent data={props.data} />
+  }
+}
+
+function UserCard({ data }: { data: { name: string; email: string } }) {
+  return (
+    <div className="user-card">
+      <h2>{data.name}</h2>
+      <p>{data.email}</p>
+    </div>
+  )
+}
+
+// State is managed at the top-level component
+function UserCardContainer() {
+  let retryCount = $state(0)
+  let loading = $state(true)
+  let data = $state<{ name: string; email: string } | null>(null)
+  
+  const UserCardWithLoading = withLoading<{ name: string; email: string }>(UserCard)
+  
+  return (
+    <UserCardWithLoading
+      data={data}
+      loading={loading}
+      retryCount={retryCount}
+      onRetry={() => retryCount++}
+    />
+  )
+}
+
+export { UserCardContainer }
+`
+      const filename = 'HOC.tsx'
+      const result = compileWithSourcemap(input, filename)
+
+      assertValidSourcemap(result)
+      assertMappingInRange(result, 'withLoading', filename, 1, 20)
+      assertMappingInRange(result, 'UserCard', filename, 35, 50)
+    })
+
+    it('preserves mappings for compound components pattern', () => {
+      const input = `
+import { $state, createContext, useContext } from 'fict'
+
+interface TabsContextType {
+  activeTab: string
+  setActiveTab: (id: string) => void
+}
+
+const TabsContext = createContext<TabsContextType | null>(null)
+
+function TabsRoot({ children, defaultTab }: { children: any; defaultTab: string }) {
+  let activeTab = $state(defaultTab)
+  
+  return (
+    <TabsContext.Provider value={{ activeTab, setActiveTab: (id) => activeTab = id }}>
+      <div className="tabs">{children}</div>
+    </TabsContext.Provider>
+  )
+}
+
+function TabsList({ children }: { children: any }) {
+  return <div className="tabs-list" role="tablist">{children}</div>
+}
+
+function TabsTrigger({ id, children }: { id: string; children: any }) {
+  const context = useContext(TabsContext)
+  if (!context) throw new Error('TabsTrigger must be used within Tabs')
+  
+  return (
+    <button
+      role="tab"
+      aria-selected={context.activeTab === id}
+      onClick={() => context.setActiveTab(id)}
+    >
+      {children}
+    </button>
+  )
+}
+
+function TabsContent({ id, children }: { id: string; children: any }) {
+  const context = useContext(TabsContext)
+  if (!context) throw new Error('TabsContent must be used within Tabs')
+  
+  if (context.activeTab !== id) return null
+  return <div role="tabpanel">{children}</div>
+}
+
+export const Tabs = Object.assign(TabsRoot, {
+  List: TabsList,
+  Trigger: TabsTrigger,
+  Content: TabsContent,
+})
+`
+      const filename = 'CompoundComponent.tsx'
+      const result = compileWithSourcemap(input, filename)
+
+      assertValidSourcemap(result)
+      assertMappingInRange(result, 'TabsRoot', filename, 5, 20)
+      assertMappingInRange(result, 'TabsList', filename, 15, 25)
+      assertMappingInRange(result, 'TabsTrigger', filename, 20, 40)
+      assertMappingInRange(result, 'TabsContent', filename, 35, 50)
+    })
+
+    it('preserves mappings for render props with complex state', () => {
+      const input = `
+import { $state, $effect } from 'fict'
+
+interface FormState<T> {
+  values: T
+  errors: Partial<Record<keyof T, string>>
+  touched: Partial<Record<keyof T, boolean>>
+  isSubmitting: boolean
+  isValid: boolean
+}
+
+interface FormRenderProps<T> extends FormState<T> {
+  setFieldValue: (field: keyof T, value: any) => void
+  setFieldTouched: (field: keyof T) => void
+  handleSubmit: () => void
+  resetForm: () => void
+}
+
+function Form<T extends Record<string, any>>({
+  initialValues,
+  onSubmit,
+  validate,
+  children
+}: {
+  initialValues: T
+  onSubmit: (values: T) => Promise<void>
+  validate?: (values: T) => Partial<Record<keyof T, string>>
+  children: (props: FormRenderProps<T>) => any
+}) {
+  let values = $state<T>(initialValues)
+  let errors = $state<Partial<Record<keyof T, string>>>({})
+  let touched = $state<Partial<Record<keyof T, boolean>>>({})
+  let isSubmitting = $state(false)
+  
+  $effect(() => {
+    if (validate) {
+      errors = validate(values)
+    }
+  })
+  
+  const isValid = Object.keys(errors).length === 0
+  
+  const setFieldValue = (field: keyof T, value: any) => {
+    values = { ...values, [field]: value }
+  }
+  
+  const setFieldTouched = (field: keyof T) => {
+    touched = { ...touched, [field]: true }
+  }
+  
+  const handleSubmit = async () => {
+    isSubmitting = true
+    try {
+      await onSubmit(values)
+    } finally {
+      isSubmitting = false
+    }
+  }
+  
+  const resetForm = () => {
+    values = initialValues
+    errors = {}
+    touched = {}
+  }
+  
+  return children({
+    values,
+    errors,
+    touched,
+    isSubmitting,
+    isValid,
+    setFieldValue,
+    setFieldTouched,
+    handleSubmit,
+    resetForm
+  })
+}
+
+export function LoginForm() {
+  return (
+    <Form
+      initialValues={{ email: '', password: '' }}
+      validate={v => {
+        const e: any = {}
+        if (!v.email) e.email = 'Required'
+        if (!v.password) e.password = 'Required'
+        return e
+      }}
+      onSubmit={async (values) => {
+        await fetch('/api/login', { method: 'POST', body: JSON.stringify(values) })
+      }}
+    >
+      {({ values, errors, setFieldValue, handleSubmit, isSubmitting }) => (
+        <form onSubmit={(e: Event) => { e.preventDefault(); handleSubmit() }}>
+          <input
+            type="email"
+            value={values.email}
+            onInput={(e: InputEvent) => setFieldValue('email', (e.target as HTMLInputElement).value)}
+          />
+          {errors.email && <span className="error">{errors.email}</span>}
+          <input
+            type="password"
+            value={values.password}
+            onInput={(e: InputEvent) => setFieldValue('password', (e.target as HTMLInputElement).value)}
+          />
+          {errors.password && <span className="error">{errors.password}</span>}
+          <button type="submit" disabled={isSubmitting}>Login</button>
+        </form>
+      )}
+    </Form>
+  )
+}
+`
+      const filename = 'RenderPropsForm.tsx'
+      const result = compileWithSourcemap(input, filename)
+
+      assertValidSourcemap(result)
+      assertMappingInRange(result, 'function Form', filename, 15, 30)
+      assertMappingInRange(result, 'function LoginForm', filename, 70, 85)
+    })
+
+    it('preserves mappings for portal components with nested state', () => {
+      const input = `
+import { $state, $effect, onMount, onCleanup } from 'fict'
+
+function Portal({ children, containerId = 'portal-root' }: { children: any; containerId?: string }) {
+  let container = $state<HTMLElement | null>(null)
+  
+  onMount(() => {
+    let el = document.getElementById(containerId)
+    if (!el) {
+      el = document.createElement('div')
+      el.id = containerId
+      document.body.appendChild(el)
+    }
+    container = el
+  })
+  
+  onCleanup(() => {
+    // Optional: cleanup empty portal container
+  })
+  
+  if (!container) return null
+  
+  // In real implementation, would use createPortal
+  return <div data-portal>{children}</div>
+}
+
+function Modal({ isOpen, onClose, title, children }: {
+  isOpen: boolean
+  onClose: () => void
+  title: string
+  children: any
+}) {
+  let closing = $state(false)
+  
+  $effect(() => {
+    if (!isOpen) {
+      closing = false
+    }
+  })
+  
+  const handleClose = () => {
+    closing = true
+    setTimeout(onClose, 300) // animation delay
+  }
+  
+  if (!isOpen && !closing) return null
+  
+  return (
+    <Portal>
+      <div className={\`modal-overlay \${closing ? 'closing' : ''}\`} onClick={handleClose}>
+        <div className="modal-content" onClick={(e: MouseEvent) => e.stopPropagation()}>
+          <header>
+            <h2>{title}</h2>
+            <button className="close" onClick={handleClose}>×</button>
+          </header>
+          <main>{children}</main>
+        </div>
+      </div>
+    </Portal>
+  )
+}
+
+export function ModalDemo() {
+  let showModal = $state(false)
+  let modalContent = $state('Hello!')
+  
+  return (
+    <div>
+      <button onClick={() => showModal = true}>Open Modal</button>
+      <input value={modalContent} onInput={(e: InputEvent) => modalContent = (e.target as HTMLInputElement).value} />
+      <Modal isOpen={showModal} onClose={() => showModal = false} title="Demo Modal">
+        <p>{modalContent}</p>
+      </Modal>
+    </div>
+  )
+}
+`
+      const filename = 'PortalModal.tsx'
+      const result = compileWithSourcemap(input, filename)
+
+      assertValidSourcemap(result)
+      assertMappingInRange(result, 'Portal', filename, 1, 10)
+      assertMappingInRange(result, 'Modal', filename, 20, 35)
+      assertMappingInRange(result, 'ModalDemo', filename, 50, 70)
+    })
+
+    it('preserves mappings for components with complex control flow', () => {
+      const input = `
+import { $state, $effect } from 'fict'
+
+type AsyncState<T> =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'success'; data: T }
+  | { status: 'error'; error: Error }
+
+export function ComplexControlFlow<T>({
+  fetchFn,
+  dependencies
+}: {
+  fetchFn: () => Promise<T>
+  dependencies: any[]
+}) {
+  let state = $state<AsyncState<T>>({ status: 'idle' })
+  let retryCount = $state(0)
+  let lastFetchTime = $state<Date | null>(null)
+  
+  $effect(() => {
+    // Track dependencies
+    const deps = dependencies
+    
+    const controller = new AbortController()
+    
+    state = { status: 'loading' }
+    lastFetchTime = new Date()
+    
+    fetchFn()
+      .then(data => {
+        if (!controller.signal.aborted) {
+          state = { status: 'success', data }
+          retryCount = 0
+        }
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) {
+          state = { status: 'error', error }
+        }
+      })
+    
+    return () => controller.abort()
+  })
+  
+  const retry = () => {
+    retryCount++
+    state = { status: 'loading' }
+    fetchFn()
+      .then(data => state = { status: 'success', data })
+      .catch(error => state = { status: 'error', error })
+  }
+  
+  // Complex switch-like rendering
+  if (state.status === 'idle') {
+    return <div className="idle">Ready to fetch</div>
+  }
+  
+  if (state.status === 'loading') {
+    return (
+      <div className="loading">
+        <span className="spinner" />
+        {lastFetchTime && <small>Started: {lastFetchTime.toISOString()}</small>}
+      </div>
+    )
+  }
+  
+  if (state.status === 'error') {
+    return (
+      <div className="error">
+        <p>Error: {state.error.message}</p>
+        <p>Retry attempts: {retryCount}</p>
+        <button onClick={retry}>Retry</button>
+      </div>
+    )
+  }
+  
+  // state.status === 'success'
+  return (
+    <div className="success">
+      <pre>{JSON.stringify(state.data, null, 2)}</pre>
+      <small>Fetched: {lastFetchTime?.toISOString()}</small>
+    </div>
+  )
+}
+`
+      const filename = 'ComplexControlFlow.tsx'
+      const result = compileWithSourcemap(input, filename)
+
+      assertValidSourcemap(result)
+      assertMappingInRange(result, 'ComplexControlFlow', filename, 5, 20)
+      // Verify control flow branches map correctly - use broader ranges
+      // The exact line numbers depend on compilation output
+      assertAnyMappingExists(result, filename)
+    })
+  })
 })

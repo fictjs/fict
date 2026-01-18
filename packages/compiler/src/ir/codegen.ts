@@ -3619,6 +3619,12 @@ function dependencyCoveredByDeclarations(dep: string, region: RegionInfo): boole
  * Check if an HIR expression references a tracked/reactive variable.
  * Uses de-versioned names for matching.
  * Also considers region membership for more precise reactivity detection.
+ *
+ * Reactive sources include:
+ * - trackedVars: $state variables and other tracked signals
+ * - memoVars: derived/memo values that may change reactively
+ * - signalVars: explicit signal accessors
+ * - region declarations/dependencies: variables in reactive scopes
  */
 function isExpressionReactive(expr: Expression, ctx: CodegenContext): boolean {
   // First collect all dependencies
@@ -3627,9 +3633,24 @@ function isExpressionReactive(expr: Expression, ctx: CodegenContext): boolean {
 
   const regionsToCheck = ctx.currentRegion ? [ctx.currentRegion] : (ctx.regions ?? [])
 
-  // Check if any dependency is tracked
+  // Check if any dependency is tracked (includes $state, signals, etc.)
   for (const dep of deps) {
     if (ctx.trackedVars.has(dep)) return true
+  }
+
+  // Check if any dependency is a memo variable (derived values)
+  // Memo vars are reactive because they wrap getters that depend on signals
+  if (ctx.memoVars) {
+    for (const dep of deps) {
+      if (ctx.memoVars.has(dep)) return true
+    }
+  }
+
+  // Check if any dependency is an explicit signal variable
+  if (ctx.signalVars) {
+    for (const dep of deps) {
+      if (ctx.signalVars.has(dep)) return true
+    }
   }
 
   // Check if any dependency is in a reactive region's declarations
@@ -3647,6 +3668,12 @@ function isExpressionReactive(expr: Expression, ctx: CodegenContext): boolean {
 /**
  * Get the reactive dependencies of an expression that require binding.
  * Returns the set of tracked variables that the expression depends on.
+ *
+ * This includes:
+ * - trackedVars: $state variables and other tracked signals
+ * - memoVars: derived/memo values that may change reactively
+ * - signalVars: explicit signal accessors
+ * - region declarations/dependencies: variables in reactive scopes
  */
 function _getReactiveDependencies(expr: Expression, ctx: CodegenContext): Set<string> {
   const deps = new Set<string>()
@@ -3655,9 +3682,29 @@ function _getReactiveDependencies(expr: Expression, ctx: CodegenContext): Set<st
   const regionsToCheck = ctx.currentRegion ? [ctx.currentRegion] : (ctx.regions ?? [])
 
   const reactiveDeps = new Set<string>()
+
+  // Check tracked vars ($state, signals, etc.)
   for (const dep of deps) {
     if (ctx.trackedVars.has(dep)) {
       reactiveDeps.add(dep)
+    }
+  }
+
+  // Check memo vars (derived values)
+  if (ctx.memoVars) {
+    for (const dep of deps) {
+      if (ctx.memoVars.has(dep)) {
+        reactiveDeps.add(dep)
+      }
+    }
+  }
+
+  // Check signal vars
+  if (ctx.signalVars) {
+    for (const dep of deps) {
+      if (ctx.signalVars.has(dep)) {
+        reactiveDeps.add(dep)
+      }
     }
   }
 

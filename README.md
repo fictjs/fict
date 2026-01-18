@@ -432,7 +432,7 @@ _Lower is better. Baseline relative to best performer in each category._
 - [x] `startTransition`, `useTransition`, `useDeferredValue` in `fict`
 - [x] Vite plugin
 - [x] ESLint plugin
-- [ ] Support sourcemap
+- [x] Support sourcemap
 - [ ] DevTools
 - [ ] SSR / streaming
 
