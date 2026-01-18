@@ -1,5 +1,11 @@
 # @fictjs/testing-library
 
+## 0.2.0
+
+### Minor Changes
+
+- fix some issue
+
 ## 0.1.0
 
 ### Minor Changes
