@@ -403,15 +403,24 @@ The compiler detects this automatically. You don't need to think about it — wr
 
 ![Performance Benchmark](./perf.png)
 
-### Benchmark Summary (Geometric Mean)
+### Benchmark Summary (js-framework-benchmark)
 
-| Metric             | Vue Vapor | Solid | Svelte 5 | Fict | React Compiler |
-| :----------------- | :-------- | :---- | :------- | :--- | :------------- |
-| **CPU (Duration)** | 1.01      | 1.04  | 1.05     | 1.09 | 1.45           |
-| **Memory**         | 1.24      | 1.00  | 1.20     | 1.22 | 2.08           |
-| **Size / Load**    | 2.62      | 1.00  | 2.23     | 2.23 | 9.65           |
+| Benchmark                 | Vue Vapor | Solid | Svelte 5 | Fict  | React Compiler |
+| :------------------------ | :-------- | :---- | :------- | :---- | :------------- |
+| create rows (1k)          | 24.5ms    | 24.5  | 24.5     | 26.2  | 29.3           |
+| replace all rows (1k)     | 28.1      | 28.0  | 29.1     | 30.7  | 34.8           |
+| partial update (10th row) | 14.7      | 15.0  | 15.3     | 15.3  | 18.6           |
+| select row                | 3.4       | 4.2   | 6.2      | 3.6   | 10.3           |
+| swap rows                 | 17.4      | 17.7  | 17.2     | 17.1  | 115.6          |
+| remove row                | 11.5      | 11.4  | 11.8     | 12.0  | 13.9           |
+| create many rows (10k)    | 263.7     | 256.8 | 264.6    | 270.7 | 398.2          |
+| append rows (1k to 1k)    | 29.7      | 29.0  | 29.2     | 30.4  | 35.5           |
+| clear rows (1k)           | 11.8      | 15.1  | 13.5     | 14.3  | 21.6           |
+| **Geometric Mean**        | **1.01**  | 1.04  | 1.06     | 1.07  | 1.45           |
 
-_Lower is better. Baseline relative to best performer in each category._
+_Lower is better. Geometric mean is the weighted mean of all relative factors._
+
+**Versions**: Vue Vapor 3.6.0-alpha.2, Solid 1.9.3, Svelte 5.42.1, React Compiler 19.0.0
 
 ---
 
@@ -486,7 +495,7 @@ Default: immutable style (`todos = [...todos, newTodo]`). For deep mutations, yo
 Not directly. Fict compiles to DOM operations, not React elements.
 
 **How big is the runtime?**
-~10kb brotli compressed. Performance is within ~8% of Solid in js-framework-benchmark.
+~10kb brotli compressed. Performance is within ~3% of Solid in js-framework-benchmark (geometric mean 1.07 vs 1.04).
 
 ---
 
