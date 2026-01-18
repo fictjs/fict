@@ -387,6 +387,8 @@ export interface CodegenContext {
   inRegionMemo?: boolean
   /** Whether we are lowering a list item render callback */
   inListRender?: boolean
+  /** Whether we are lowering top-level module statements */
+  inModule?: boolean
   /** Next explicit slot index for nested memo hooks */
   nextHookSlot?: number
   /** Disable numbered hook slots within dynamic iteration contexts */
@@ -471,6 +473,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     mutatedVars: new Set(),
     inRegionMemo: false,
     inListRender: false,
+    inModule: false,
     nextHookSlot: HOOK_SLOT_BASE,
     nonReactiveScopeDepth: 0,
     inConditional: 0,
@@ -2396,23 +2399,33 @@ function lowerExpressionImpl(
     case 'CallExpression': {
       // Handle Fict macros in experimental path
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '$state') {
+        const args = lowerCallArguments(expr.arguments)
+        if (ctx.inModule) {
+          ctx.helpersUsed.add('signal')
+          return t.callExpression(t.identifier(RUNTIME_ALIASES.signal), args)
+        }
         ctx.helpersUsed.add('useSignal')
         ctx.needsCtx = true
         return t.callExpression(t.identifier(RUNTIME_ALIASES.useSignal), [
           t.identifier('__fictCtx'),
-          ...lowerCallArguments(expr.arguments),
+          ...args,
         ])
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '$effect') {
+        const args = lowerCallArguments(expr.arguments, arg =>
+          arg.kind === 'ArrowFunction' || arg.kind === 'FunctionExpression'
+            ? withNonReactiveScope(ctx, () => lowerExpression(arg, ctx))
+            : lowerExpression(arg, ctx),
+        )
+        if (ctx.inModule) {
+          ctx.helpersUsed.add('effect')
+          return t.callExpression(t.identifier(RUNTIME_ALIASES.effect), args)
+        }
         ctx.helpersUsed.add('useEffect')
         ctx.needsCtx = true
         return t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
           t.identifier('__fictCtx'),
-          ...lowerCallArguments(expr.arguments, arg =>
-            arg.kind === 'ArrowFunction' || arg.kind === 'FunctionExpression'
-              ? withNonReactiveScope(ctx, () => lowerExpression(arg, ctx))
-              : lowerExpression(arg, ctx),
-          ),
+          ...args,
         ])
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '__forOf') {
@@ -4016,8 +4029,12 @@ function lowerIntrinsicElement(
       ? shouldMemoizeRegion(regionMeta)
       : false
   if (shouldMemo) {
-    ctx.helpersUsed.add('useMemo')
-    ctx.needsCtx = true
+    if (ctx.inModule) {
+      ctx.helpersUsed.add('memo')
+    } else {
+      ctx.helpersUsed.add('useMemo')
+      ctx.needsCtx = true
+    }
   }
 
   // Create template with full static HTML
@@ -4405,16 +4422,15 @@ function lowerIntrinsicElement(
   // Wrap in memo if region suggests memoization
   if (shouldMemo && containingRegion) {
     // __fictUseMemo returns a getter function - invoke it to get the actual DOM element
-    const memoArgs: BabelCore.types.Expression[] = [
-      t.identifier('__fictCtx'),
-      t.arrowFunctionExpression([], body),
-    ]
+    const memoBody = t.arrowFunctionExpression([], body)
+    if (ctx.inModule) {
+      return t.callExpression(t.callExpression(t.identifier(RUNTIME_ALIASES.memo), [memoBody]), [])
+    }
+    const memoArgs: BabelCore.types.Expression[] = [t.identifier('__fictCtx'), memoBody]
     if (ctx.isComponentFn) {
-      {
-        const slot = reserveHookSlot(ctx)
-        if (slot >= 0) {
-          memoArgs.push(t.numericLiteral(slot))
-        }
+      const slot = reserveHookSlot(ctx)
+      if (slot >= 0) {
+        memoArgs.push(t.numericLiteral(slot))
       }
     }
     return t.callExpression(t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), memoArgs), [])
@@ -4577,7 +4593,6 @@ function emitConditionalChild(
   ctx.helpersUsed.add('conditional')
   ctx.helpersUsed.add('createElement')
   ctx.helpersUsed.add('onDestroy')
-  ctx.helpersUsed.add('toNodeArray')
 
   let condition: BabelCore.types.Expression
   let consequent: BabelCore.types.Expression
@@ -4624,31 +4639,12 @@ function emitConditionalChild(
     ]),
   )
 
-  // Insert markers
-  const markersId = genTemp(ctx, 'markers')
+  // Insert marker fragment as a whole so any pre-rendered branch nodes move with it.
   statements.push(
-    t.variableDeclaration('const', [
-      t.variableDeclarator(
-        markersId,
-        t.callExpression(t.identifier(RUNTIME_ALIASES.toNodeArray), [
-          t.memberExpression(bindingId, t.identifier('marker')),
-        ]),
-      ),
-    ]),
-  )
-
-  const mId = genTemp(ctx, 'm')
-  statements.push(
-    t.forOfStatement(
-      t.variableDeclaration('const', [t.variableDeclarator(mId)]),
-      markersId,
-      t.blockStatement([
-        t.expressionStatement(
-          t.callExpression(t.memberExpression(parentId, t.identifier('insertBefore')), [
-            mId,
-            markerId,
-          ]),
-        ),
+    t.expressionStatement(
+      t.callExpression(t.memberExpression(parentId, t.identifier('insertBefore')), [
+        t.memberExpression(bindingId, t.identifier('marker')),
+        markerId,
       ]),
     ),
   )
@@ -6089,8 +6085,14 @@ function lowerTopLevelStatementBlock(
     }
   }
 
-  const lowered = generateRegionCode(fn, scopeResult, t, ctx)
-  return { statements: lowered, aliases: aliasVars }
+  const prevInModule = ctx.inModule
+  ctx.inModule = true
+  try {
+    const lowered = generateRegionCode(fn, scopeResult, t, ctx)
+    return { statements: lowered, aliases: aliasVars }
+  } finally {
+    ctx.inModule = prevInModule
+  }
 }
 
 function transformControlFlowReturns(
@@ -6221,12 +6223,14 @@ function lowerFunctionWithRegions(
   const prevWrapTracked = ctx.wrapTrackedExpressions
   const prevIsComponent = ctx.isComponentFn
   const prevHookResultVarMap = ctx.hookResultVarMap
+  const prevInModule = ctx.inModule
   const scopedTracked = new Set(ctx.trackedVars)
   const shadowedParams = new Set(fn.params.map(p => deSSAVarName(p.name)))
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
   ctx.trackedVars = scopedTracked
   const prevNeedsCtx = ctx.needsCtx
   ctx.needsCtx = false
+  ctx.inModule = false
   const prevShadowed = ctx.shadowedNames
   const functionShadowed = new Set(prevShadowed ?? [])
   shadowedParams.forEach(n => functionShadowed.add(n))
@@ -6639,6 +6643,7 @@ function lowerFunctionWithRegions(
     ctx.noMemo = prevNoMemo
     ctx.wrapTrackedExpressions = prevWrapTracked
     ctx.hookResultVarMap = prevHookResultVarMap
+    ctx.inModule = prevInModule
     return null
   }
 
@@ -6750,6 +6755,7 @@ function lowerFunctionWithRegions(
   ctx.propsParamName = prevPropsParam
   ctx.propAccessorDecls = prevPropAccessors
   ctx.delegatedEventsUsed = prevDelegatedEventsUsed
+  ctx.inModule = prevInModule
   return funcDecl
 }
 

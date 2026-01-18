@@ -71,6 +71,47 @@ export interface RegionResult {
 
 const REACTIVE_CREATORS = new Set(['createEffect', 'createMemo', 'createSelector'])
 
+function buildEffectCall(
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+  effectFn: BabelCore.types.Expression,
+  options?: { slot?: number; forceSlot?: boolean },
+): BabelCore.types.CallExpression {
+  if (ctx.inModule) {
+    ctx.helpersUsed.add('effect')
+    return t.callExpression(t.identifier(RUNTIME_ALIASES.effect), [effectFn])
+  }
+  ctx.helpersUsed.add('useEffect')
+  ctx.needsCtx = true
+  const args: BabelCore.types.Expression[] = [t.identifier('__fictCtx'), effectFn]
+  const slot = options?.slot
+  if (options?.forceSlot) {
+    args.push(slot !== undefined && slot >= 0 ? t.numericLiteral(slot) : t.identifier('undefined'))
+  } else if (slot !== undefined && slot >= 0) {
+    args.push(t.numericLiteral(slot))
+  }
+  return t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), args)
+}
+
+function buildMemoCall(
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+  memoFn: BabelCore.types.Expression,
+  slot?: number,
+): BabelCore.types.CallExpression {
+  if (ctx.inModule) {
+    ctx.helpersUsed.add('memo')
+    return t.callExpression(t.identifier(RUNTIME_ALIASES.memo), [memoFn])
+  }
+  ctx.helpersUsed.add('useMemo')
+  ctx.needsCtx = true
+  const args: BabelCore.types.Expression[] = [t.identifier('__fictCtx'), memoFn]
+  if (slot !== undefined && slot >= 0) {
+    args.push(t.numericLiteral(slot))
+  }
+  return t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), args)
+}
+
 function expressionCreatesReactive(expr: Expression): boolean {
   if (expr.kind === 'CallExpression' && expr.callee.kind === 'Identifier') {
     const base = getSSABaseName(expr.callee.name)
@@ -856,16 +897,8 @@ function lowerNodeWithRegionContext(
         expressionUsesTracked(node.test, ctx) &&
         !statementHasEarlyExit(ifStmt, t)
       if (shouldWrapEffect) {
-        ctx.helpersUsed.add('useEffect')
-        ctx.needsCtx = true
-        return [
-          t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
-              t.identifier('__fictCtx'),
-              t.arrowFunctionExpression([], t.blockStatement([ifStmt])),
-            ]),
-          ),
-        ]
+        const effectFn = t.arrowFunctionExpression([], t.blockStatement([ifStmt]))
+        return [t.expressionStatement(buildEffectCall(ctx, t, effectFn))]
       }
 
       return [ifStmt]
@@ -1220,16 +1253,8 @@ function lowerStructuredNodeForRegion(
       }
 
       if (shouldWrapEffect) {
-        ctx.helpersUsed.add('useEffect')
-        ctx.needsCtx = true
-        return [
-          t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
-              t.identifier('__fictCtx'),
-              t.arrowFunctionExpression([], t.blockStatement([ifStmt])),
-            ]),
-          ),
-        ]
+        const effectFn = t.arrowFunctionExpression([], t.blockStatement([ifStmt]))
+        return [t.expressionStatement(buildEffectCall(ctx, t, effectFn))]
       }
       return [ifStmt]
     }
@@ -1752,23 +1777,11 @@ function wrapInMemo(
 
   if (uniqueOutputNames.length === 0) {
     // No outputs - just execute for side effects
-    ctx.helpersUsed.add('useEffect')
-    ctx.needsCtx = true
-    const effectCallArgs: BabelCore.types.Expression[] = [
-      t.identifier('__fictCtx'),
-      t.arrowFunctionExpression([], t.blockStatement(bodyStatements)),
-    ]
-    {
-      const slot = reserveHookSlot(ctx)
-      if (slot >= 0) {
-        effectCallArgs.push(t.numericLiteral(slot))
-      }
-    }
-    const effectCall = t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), effectCallArgs)
+    const effectFn = t.arrowFunctionExpression([], t.blockStatement(bodyStatements))
+    const slot = ctx.inModule ? undefined : reserveHookSlot(ctx)
+    const effectCall = buildEffectCall(ctx, t, effectFn, { slot })
     statements.push(t.expressionStatement(effectCall))
   } else {
-    ctx.helpersUsed.add('useMemo')
-    ctx.needsCtx = true
     // Check for lazy conditional optimization (instruction-based only)
     if (!bodyStatementsOverride) {
       const lazyInfo = analyzeHIRConditionalUsage(region, ctx)
@@ -1803,15 +1816,8 @@ function wrapInMemo(
 
     const memoBody = t.blockStatement([...bodyStatements, t.returnStatement(returnObj)])
 
-    const slot = reserveHookSlot(ctx)
-    const memoArgs: BabelCore.types.Expression[] = [
-      t.identifier('__fictCtx'),
-      t.arrowFunctionExpression([], memoBody),
-    ]
-    if (slot >= 0) {
-      memoArgs.push(t.numericLiteral(slot))
-    }
-    const memoCall = t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), memoArgs)
+    const slot = ctx.inModule ? undefined : reserveHookSlot(ctx)
+    const memoCall = buildMemoCall(ctx, t, t.arrowFunctionExpression([], memoBody), slot)
 
     const regionVarName = `__region_${region.id}`
 
@@ -1875,21 +1881,15 @@ function wrapInMemo(
     }
 
     if (region.hasControlFlow && getterOutputs.length > 0) {
-      ctx.helpersUsed.add('useEffect')
-      ctx.needsCtx = true
       const effectBody = t.blockStatement(
         getterOutputs.map(name => t.expressionStatement(t.callExpression(t.identifier(name), []))),
       )
       statements.push(
         t.expressionStatement(
-          t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
-            t.identifier('__fictCtx'),
-            t.arrowFunctionExpression([], effectBody),
-            (() => {
-              const slot = reserveHookSlot(ctx)
-              return slot >= 0 ? t.numericLiteral(slot) : t.identifier('undefined')
-            })(),
-          ]),
+          buildEffectCall(ctx, t, t.arrowFunctionExpression([], effectBody), {
+            slot: ctx.inModule ? undefined : reserveHookSlot(ctx),
+            forceSlot: true,
+          }),
         ),
       )
     }
@@ -2185,20 +2185,14 @@ function generateLazyConditionalMemo(
     )
   }
 
-  ctx.helpersUsed.add('useMemo')
-  ctx.needsCtx = true
-
   const regionVarName = `__region_${region.id}`
 
-  const slotForMemo = reserveHookSlot(ctx)
-  const memoArgs: BabelCore.types.Expression[] = [
-    t.identifier('__fictCtx'),
+  const memoCall = buildMemoCall(
+    ctx,
+    t,
     t.arrowFunctionExpression([], t.blockStatement(memoBody)),
-  ]
-  if (slotForMemo >= 0) {
-    memoArgs.push(t.numericLiteral(slotForMemo))
-  }
-  const memoCall = t.callExpression(t.identifier('__fictUseMemo'), memoArgs)
+    ctx.inModule ? undefined : reserveHookSlot(ctx),
+  )
 
   statements.push(
     t.variableDeclaration('const', [t.variableDeclarator(t.identifier(regionVarName), memoCall)]),
@@ -2325,20 +2319,9 @@ function instructionToStatement(
     const isMemoReturningCall = isAccessorReturningCall || isReactiveObjectCall
     const lowerAssignedValue = (forceAssigned = false) =>
       lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
-    const buildMemoCall = (expr: BabelCore.types.Expression) => {
-      const args: BabelCore.types.Expression[] = [
-        t.identifier('__fictCtx'),
-        t.arrowFunctionExpression([], expr),
-      ]
-      if (inRegionMemo) {
-        const slot = reserveHookSlot(ctx)
-        if (slot >= 0) {
-          args.push(t.numericLiteral(slot))
-        }
-      }
-      ctx.helpersUsed.add('useMemo')
-      ctx.needsCtx = true
-      return t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), args)
+    const buildDerivedMemoCall = (expr: BabelCore.types.Expression) => {
+      const slot = !ctx.inModule && inRegionMemo ? reserveHookSlot(ctx) : undefined
+      return buildMemoCall(ctx, t, t.arrowFunctionExpression([], expr), slot)
     }
 
     if (isShadowDeclaration && declKind) {
@@ -2397,7 +2380,7 @@ function instructionToStatement(
           return t.variableDeclaration(normalizedDecl, [
             t.variableDeclarator(
               t.identifier(baseName),
-              isMemoReturningCall ? derivedExpr : buildMemoCall(derivedExpr),
+              isMemoReturningCall ? derivedExpr : buildDerivedMemoCall(derivedExpr),
             ),
           ])
         }
@@ -2431,7 +2414,7 @@ function instructionToStatement(
         return t.variableDeclaration(normalizedDecl, [
           t.variableDeclarator(
             t.identifier(baseName),
-            isMemoReturningCall ? derivedExpr : buildMemoCall(derivedExpr),
+            isMemoReturningCall ? derivedExpr : buildDerivedMemoCall(derivedExpr),
           ),
         ])
       }
@@ -2490,7 +2473,7 @@ function instructionToStatement(
         t.assignmentExpression(
           '=',
           t.identifier(baseName),
-          isMemoReturningCall ? derivedExpr : buildMemoCall(derivedExpr),
+          isMemoReturningCall ? derivedExpr : buildDerivedMemoCall(derivedExpr),
         ),
       )
     }
@@ -2554,7 +2537,7 @@ function instructionToStatement(
         return t.variableDeclaration('const', [
           t.variableDeclarator(
             t.identifier(baseName),
-            isMemoReturningCall ? derivedExpr : buildMemoCall(derivedExpr),
+            isMemoReturningCall ? derivedExpr : buildDerivedMemoCall(derivedExpr),
           ),
         ])
       }
@@ -2582,7 +2565,7 @@ function instructionToStatement(
       return t.variableDeclaration('const', [
         t.variableDeclarator(
           t.identifier(baseName),
-          isMemoReturningCall ? derivedExpr : buildMemoCall(derivedExpr),
+          isMemoReturningCall ? derivedExpr : buildDerivedMemoCall(derivedExpr),
         ),
       ])
     }
@@ -2606,8 +2589,6 @@ function instructionToStatement(
       !inNonReactiveScope &&
       (usesTracked || hasTrackedControlDep)
     if (shouldWrapExpr) {
-      ctx.helpersUsed.add('useEffect')
-      ctx.needsCtx = true
       const depReads: BabelCore.types.Statement[] = []
       if (hasTrackedControlDep) {
         const uniqueDeps = new Set(Array.from(controlDeps).map(dep => deSSAVarName(dep)))
@@ -2622,14 +2603,10 @@ function instructionToStatement(
         depReads.length > 0
           ? ctx.t.blockStatement([...depReads, ctx.t.expressionStatement(loweredExpr)])
           : loweredExpr
-      return t.expressionStatement(
-        t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
-          t.identifier('__fictCtx'),
-          ctx.t.isBlockStatement(effectBody)
-            ? t.arrowFunctionExpression([], effectBody)
-            : t.arrowFunctionExpression([], effectBody as BabelCore.types.Expression),
-        ]),
-      )
+      const effectFn = ctx.t.isBlockStatement(effectBody)
+        ? t.arrowFunctionExpression([], effectBody)
+        : t.arrowFunctionExpression([], effectBody as BabelCore.types.Expression)
+      return t.expressionStatement(buildEffectCall(ctx, t, effectFn))
     }
     return t.expressionStatement(lowerExpressionWithDeSSA(instr.value, ctx))
   }

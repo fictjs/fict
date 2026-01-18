@@ -2,7 +2,6 @@ import { $state, $effect, render } from 'fict'
 
 function Counter() {
   let count = $state(0)
-
   $effect(() => {
     console.log('current', count)
     return () => {

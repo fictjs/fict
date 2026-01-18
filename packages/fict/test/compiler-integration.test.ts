@@ -3689,6 +3689,82 @@ describe('compiler + fict integration', () => {
     dispose()
   })
 
+  it('renders a conditional button inside a template child expression', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const source = `
+      import { $state, $effect, render } from 'fict'
+
+      function Counter() {
+        let count = $state(0)
+        let submitted = $state(false)
+        $effect(() => {
+          console.log('current', count)
+          return () => {
+            console.log('prev', count)
+          }
+        })
+        return (
+          <div>{submitted ? <div>Submitted</div> : <button onClick={() => count++}>{count}</button>}</div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <Counter />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const button = container.querySelector('button') as HTMLButtonElement | null
+    expect(button).toBeTruthy()
+    expect(button?.textContent).toBe('0')
+
+    button?.click()
+    await tick()
+    expect(button?.textContent).toBe('1')
+
+    dispose()
+    logSpy.mockRestore()
+  })
+
+  it('supports top-level resource declarations without render context', async () => {
+    const source = `
+      import { render } from 'fict'
+      import { resource } from 'fict/plus'
+
+      const dataResource = resource({
+        fetch: async ({ signal }) => {
+          if (signal.aborted) {
+            throw new Error('Aborted')
+          }
+          return 'ok'
+        },
+      })
+
+      function App() {
+        const result = dataResource.read(undefined)
+        return (
+          <div data-testid="status">{result.loading ? 'loading' : result.data}</div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    await tick()
+
+    const status = container.querySelector('[data-testid="status"]')
+    expect(status).toBeTruthy()
+
+    dispose()
+  })
+
   it('handles nested ternary expressions', async () => {
     const source = `
       import { $state, render } from 'fict'

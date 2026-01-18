@@ -56,26 +56,35 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       const hasUserOptimize = !!userOptimize
       const hasDisabledOptimize =
         hasUserOptimize && (userOptimize as { disabled?: boolean }).disabled === true
+
       const include = new Set(userOptimize?.include ?? [])
       const exclude = new Set(userOptimize?.exclude ?? [])
-      if (!exclude.has('@fictjs/runtime')) {
-        include.add('@fictjs/runtime')
+      const dedupe = new Set((userConfig.resolve?.dedupe ?? []) as string[])
+
+      // Avoid duplicate runtime instances between pre-bundled deps and /@fs modules.
+      const runtimeDeps = ['fict', '@fictjs/runtime', '@fictjs/runtime/internal']
+      for (const dep of runtimeDeps) {
+        include.delete(dep)
+        exclude.add(dep)
+        dedupe.add(dep)
       }
+
       return {
         esbuild: {
           // Disable esbuild JSX handling for .tsx/.jsx files
           // Our plugin will handle the full transformation
           include: /\.(ts|js|mts|mjs|cjs)$/,
         },
+        resolve: {
+          ...(userConfig.resolve ?? {}),
+          dedupe: Array.from(dedupe),
+        },
         ...(hasDisabledOptimize
           ? { optimizeDeps: userOptimize }
           : {
               optimizeDeps: hasUserOptimize
-                ? { ...userOptimize, include: Array.from(include) }
-                : {
-                    // Ensure @fictjs/runtime is pre-bundled
-                    include: ['@fictjs/runtime'],
-                  },
+                ? { ...userOptimize, include: Array.from(include), exclude: Array.from(exclude) }
+                : { exclude: runtimeDeps },
             }),
       }
     },

@@ -77,7 +77,7 @@ describe('Cross-Module Reactivity', () => {
       `
       const output = transform(source)
       // Should compile effect correctly
-      expect(output).toContain('__fictUseEffect(__fictCtx, () => {')
+      expect(output).toContain('createEffect(() => {')
       expect(output).toContain('console.log(count())')
     })
   })
