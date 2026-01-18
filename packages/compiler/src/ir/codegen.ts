@@ -5124,11 +5124,27 @@ function applySelectorHoist(
   }
 
   const visitNode = (node: BabelCore.types.Node): void => {
+    // P1-3: Handle IIFE pattern: () => (() => { ... })()
+    // When callback body is an IIFE, we need to traverse into the inner function
     if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
-      if (node !== callbackExpr) return
+      if (node !== callbackExpr) {
+        // This is an inner function (like the IIFE body), traverse its body
+        if (t.isBlockStatement(node.body)) {
+          node.body.body.forEach(stmt => visitNode(stmt))
+        } else if (t.isExpression(node.body)) {
+          visitNode(node.body)
+        }
+        return
+      }
     }
-    if (t.isCallExpression(node) && t.isIdentifier(node.callee)) {
-      if (node.callee.name === RUNTIME_ALIASES.bindClass) {
+    if (t.isCallExpression(node)) {
+      // Check for bindClass call - handle both direct identifier and member expression
+      const calleeName = t.isIdentifier(node.callee)
+        ? node.callee.name
+        : t.isMemberExpression(node.callee) && t.isIdentifier(node.callee.property)
+          ? node.callee.property.name
+          : null
+      if (calleeName === RUNTIME_ALIASES.bindClass || calleeName === 'bindClass') {
         const handler = node.arguments[1]
         if (handler && (t.isArrowFunctionExpression(handler) || t.isFunctionExpression(handler))) {
           rewriteInFunction(handler)
@@ -5284,6 +5300,9 @@ function buildListCallExpression(
   let callbackExpr = lowerExpression(mapCallback, ctx)
   ctx.inListRender = prevInListRender
 
+  // P1-3: Capture key param name BEFORE restoring context (for selector hoist)
+  const capturedKeyParamName = ctx.listKeyParamName
+
   // Restore key constification context
   ctx.listKeyExpr = prevListKeyExpr
   ctx.listItemParamName = prevListItemParamName
@@ -5338,12 +5357,11 @@ function buildListCallExpression(
           ? callbackExpr.params[0].name
           : null
         : null
-    // P1-3: Pass keyParamName (__key) to recognize selector patterns like `__key === selected()`
-    const keyParamName = ctx.listKeyParamName ?? null
+    // P1-3: Use captured key param name for selector patterns like `__key === selected()`
     applySelectorHoist(
       callbackExpr as BabelCore.types.Expression,
       itemParamName,
-      keyParamName,
+      capturedKeyParamName ?? null,
       statements,
       ctx,
     )
