@@ -1,6 +1,7 @@
 import {
   getCurrentRoot,
   handleError,
+  handleSuspend,
   registerRootCleanup,
   runCleanupList,
   withEffectCleanups,
@@ -34,6 +35,9 @@ export function createEffect(fn: Effect): () => void {
           bucket.push(maybeCleanup)
         }
       } catch (err) {
+        if (handleSuspend(err as any, rootForError)) {
+          return
+        }
         if (handleError(err, { source: 'effect' }, rootForError)) {
           return
         }
@@ -76,6 +80,9 @@ export function createRenderEffect(fn: Effect): () => void {
         cleanup = maybeCleanup
       }
     } catch (err) {
+      if (handleSuspend(err as any, rootForError)) {
+        return
+      }
       const handled = handleError(err, { source: 'effect' }, rootForError)
       if (handled) {
         return

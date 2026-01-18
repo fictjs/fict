@@ -2024,7 +2024,9 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
               ? ({ kind: 'Identifier', name: prop.key.name } as HIdentifier)
               : t.isStringLiteral(prop.key)
                 ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
-                : undefined
+                : t.isNumericLiteral(prop.key)
+                  ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
+                  : undefined
             if (!keyExpr) return undefined
             const fnExpr = t.functionExpression(
               null,
@@ -2045,7 +2047,9 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
             ? ({ kind: 'Identifier', name: prop.key.name } as HIdentifier)
             : t.isStringLiteral(prop.key)
               ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
-              : undefined
+              : t.isNumericLiteral(prop.key)
+                ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
+                : undefined
           if (!keyExpr) return undefined
           if (!t.isExpression(prop.value)) return undefined
           return {

@@ -60,11 +60,6 @@ export function Suspense(props: SuspenseProps): FictNode {
       ? (props.fallback as (e?: unknown) => FictNode)(err)
       : props.fallback
 
-  const switchView = (view: FictNode | null) => {
-    currentView(view)
-    renderView(view)
-  }
-
   const renderView = (view: FictNode | null) => {
     if (cleanup) {
       cleanup()
@@ -134,7 +129,10 @@ export function Suspense(props: SuspenseProps): FictNode {
   registerSuspenseHandler(token => {
     const tokenEpoch = epoch
     pending(pending() + 1)
-    switchView(toFallback())
+    // Directly render fallback instead of using switchView to avoid
+    // triggering the effect which would cause duplicate renders
+    currentView(toFallback())
+    renderView(toFallback())
 
     const thenable = (token as SuspenseToken).then
       ? (token as SuspenseToken)
@@ -157,7 +155,9 @@ export function Suspense(props: SuspenseProps): FictNode {
           const newPending = Math.max(0, pending() - 1)
           pending(newPending)
           if (newPending === 0) {
-            switchView(props.children ?? null)
+            // Directly render children instead of using switchView
+            currentView(props.children ?? null)
+            renderView(props.children ?? null)
             onResolveMaybe()
           }
         },
@@ -180,9 +180,10 @@ export function Suspense(props: SuspenseProps): FictNode {
     return false
   })
 
-  createEffect(() => {
-    renderView(currentView())
-  })
+  // Initial render - render children directly
+  // Note: This will be called synchronously during component creation.
+  // If children suspend, the handler above will be called and switch to fallback.
+  renderView(props.children ?? null)
 
   if (props.resetKeys !== undefined) {
     const isGetter =
@@ -195,7 +196,9 @@ export function Suspense(props: SuspenseProps): FictNode {
         prev = next
         epoch++
         pending(0)
-        switchView(props.children ?? null)
+        // Directly render children instead of using switchView
+        currentView(props.children ?? null)
+        renderView(props.children ?? null)
       }
     })
   }

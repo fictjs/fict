@@ -3765,6 +3765,150 @@ describe('compiler + fict integration', () => {
     dispose()
   })
 
+  it('loads posts after selecting a user with suspense resources', async () => {
+    const source = `
+        import { $state, render, Suspense, ErrorBoundary } from 'fict'
+        import { resource } from 'fict/plus'
+
+        const fetchUsers = async ({ signal }) => {
+          await new Promise(resolve => setTimeout(resolve, 5))
+          if (signal.aborted) throw new Error('Aborted')
+          return [
+            { id: 1, name: 'Alice Johnson' },
+            { id: 2, name: 'Bob Smith' },
+            { id: 3, name: 'Carol Williams' },
+            { id: 4, name: 'David Brown' },
+          ]
+        }
+
+        const fetchPosts = async ({ signal }, userId) => {
+          await new Promise(resolve => setTimeout(resolve, 3))
+          if (signal.aborted) throw new Error('Aborted')
+          const allPosts = {
+            1: [
+              { id: 1, title: 'Getting Started', body: 'Intro', userId: 1 },
+              { id: 2, title: 'Advanced Patterns', body: 'Details', userId: 1 },
+            ],
+            2: [{ id: 3, title: 'Building Apps', body: 'Best practices', userId: 2 }],
+            3: [{ id: 4, title: 'Testing UIs', body: 'How to test', userId: 3 }],
+            4: [{ id: 5, title: 'Creative Designs', body: 'Inspiration', userId: 4 }],
+          }
+          return allPosts[userId] || []
+        }
+
+        const usersResource = resource({
+          fetch: fetchUsers,
+          suspense: true,
+        })
+
+        const postsResource = resource({
+          fetch: fetchPosts,
+          suspense: true,
+        })
+
+        function Loading() {
+          return <div>Loading...</div>
+        }
+
+        function ErrorFallback(props) {
+          return (
+            <div>
+              <span>{props.error.message}</span>
+              <button onClick={props.reset}>Try Again</button>
+            </div>
+          )
+        }
+
+        function UserCard(props) {
+          return (
+            <div data-testid="user-card" onClick={props.onSelect}>
+              <span>{props.user.name}</span>
+            </div>
+          )
+        }
+
+        function UsersList(props) {
+          const users = usersResource.read(undefined)
+          return (
+            <div>
+              {users.data?.map(user => (
+                <UserCard
+                  key={user.id}
+                  user={user}
+                  selected={props.selectedId === user.id}
+                  onSelect={() => props.onSelect(user.id)}
+                />
+              ))}
+            </div>
+          )
+        }
+
+        function PostsList(props) {
+          const posts = postsResource.read(() => props.userId)
+          return (
+            <div>
+              {posts.data?.map(post => (
+                <div key={post.id}>
+                  <h4 data-testid="post-title">{post.title}</h4>
+                  <p>{post.body}</p>
+                </div>
+              ))}
+            </div>
+          )
+        }
+
+        function App() {
+          let selectedUserId = $state(null)
+          const handleSelectUser = id => {
+            selectedUserId = id
+          }
+          return (
+            <div>
+              <ErrorBoundary fallback={(error, reset) => <ErrorFallback error={error} reset={reset} />}>
+                <Suspense fallback={<Loading />}>
+                  <UsersList selectedId={selectedUserId} onSelect={handleSelectUser} />
+                </Suspense>
+              </ErrorBoundary>
+              {selectedUserId === null ? (
+                <div data-testid="placeholder">Select a user</div>
+              ) : (
+                <ErrorBoundary fallback={(error, reset) => <ErrorFallback error={error} reset={reset} />}>
+                  <Suspense fallback={<Loading />}>
+                    <PostsList userId={selectedUserId} />
+                  </Suspense>
+                </ErrorBoundary>
+              )}
+            </div>
+          )
+        }
+
+        export function mount(el) {
+          return render(() => <App />, el)
+        }
+      `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+
+    await new Promise(resolve => setTimeout(resolve, 10))
+    await tick()
+
+    const cards = Array.from(container.querySelectorAll('[data-testid="user-card"]'))
+    expect(cards.length).toBe(4)
+    expect(cards[0]?.textContent).toContain('Alice Johnson')
+    ;(cards[1] as HTMLElement).click()
+    await tick()
+    await new Promise(resolve => setTimeout(resolve, 10))
+    await tick()
+
+    expect(container.querySelector('[data-testid="placeholder"]')).toBeNull()
+
+    const posts = container.querySelectorAll('[data-testid="post-title"]')
+    expect(posts.length).toBeGreaterThan(0)
+
+    dispose()
+  })
+
   it('handles nested ternary expressions', async () => {
     const source = `
       import { $state, render } from 'fict'
