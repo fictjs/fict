@@ -325,7 +325,7 @@ function Profile({ id }) {
 
 ### `fict/plus` — Advanced APIs
 
-````tsx
+```tsx
 import { $store, resource, lazy } from 'fict/plus'
 import { untrack } from 'fict'
 
@@ -368,7 +368,7 @@ When does a component re-execute vs just update DOM?
 ```tsx
 let count = $state(0)
 return <div>{count}</div> // Only the text node updates
-````
+```
 
 **Control flow reads → Component re-executes:**
 
