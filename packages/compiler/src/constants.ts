@@ -12,7 +12,30 @@
  * @see docs/api-freeze-v1.md for full API stability policy
  */
 
-import { DelegatedEventNames } from '../../runtime/src/delegated-events'
+const DelegatedEventNames = [
+  'beforeinput',
+  'click',
+  'dblclick',
+  'contextmenu',
+  'focusin',
+  'focusout',
+  'input',
+  'keydown',
+  'keyup',
+  'mousedown',
+  'mousemove',
+  'mouseout',
+  'mouseover',
+  'mouseup',
+  'pointerdown',
+  'pointermove',
+  'pointerout',
+  'pointerover',
+  'pointerup',
+  'touchend',
+  'touchmove',
+  'touchstart',
+] as const
 
 // ============================================================================
 // Runtime Constants

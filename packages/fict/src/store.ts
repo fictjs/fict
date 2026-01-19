@@ -145,6 +145,7 @@ export function $store<T extends object>(initialValue: T): T {
     },
 
     set(target, prop, newValue, receiver) {
+      const oldLength = Array.isArray(target) && prop === 'length' ? target.length : undefined
       const oldValue = Reflect.get(target, prop, receiver)
       const hadKey = Object.prototype.hasOwnProperty.call(target, prop)
 
@@ -182,8 +183,19 @@ export function $store<T extends object>(initialValue: T): T {
       }
 
       // If it's an array and length changed implicitly, we might need to handle it.
-      // But usually 'length' is set explicitly or handled by the runtime.
       if (Array.isArray(target) && prop === 'length') {
+        const nextLength = target.length
+        if (typeof oldLength === 'number' && nextLength < oldLength) {
+          const signals = SIGNAL_CACHE.get(target)
+          if (signals) {
+            for (let i = nextLength; i < oldLength; i += 1) {
+              const key = String(i)
+              if (signals[key]) {
+                signals[key](undefined)
+              }
+            }
+          }
+        }
         triggerIteration(target)
       }
 

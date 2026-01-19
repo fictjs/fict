@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { render, ErrorBoundary, Fragment, createEffect } from '../src/index'
+import { render, ErrorBoundary, Fragment, createEffect, onMount } from '../src/index'
 import { createSignal } from '../src/advanced'
 import { bindEvent, createKeyedList } from '../src/internal'
 
@@ -34,6 +34,67 @@ describe('ErrorBoundary', () => {
     expect(container.textContent).toBe('fallback')
 
     dispose()
+  })
+
+  it('does not run onMount when render fails', async () => {
+    const container = document.createElement('div')
+    let mounted = 0
+
+    const Bad = () => {
+      onMount(() => {
+        mounted += 1
+      })
+      throw new Error('boom')
+    }
+
+    render(
+      () => ({
+        type: ErrorBoundary,
+        props: { fallback: 'fb', children: { type: Bad, props: {} } },
+      }),
+      container,
+    )
+
+    await nextTick()
+    expect(container.textContent).toBe('fb')
+    expect(mounted).toBe(0)
+  })
+
+  it('exposes reset to fallback and restores children', async () => {
+    const container = document.createElement('div')
+    const shouldThrow = createSignal(true)
+    let resetFn: (() => void) | undefined
+
+    const MaybeThrow = () => {
+      if (shouldThrow()) {
+        throw new Error('boom')
+      }
+      return { type: 'span', props: { children: 'ok' } }
+    }
+
+    render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: (_err, reset) => {
+            resetFn = reset
+            return { type: 'button', props: { children: 'retry' } }
+          },
+          children: { type: MaybeThrow, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await nextTick()
+    expect(container.textContent).toBe('retry')
+    expect(resetFn).toBeTypeOf('function')
+
+    shouldThrow(false)
+    resetFn?.()
+    await nextTick()
+
+    expect(container.textContent).toBe('ok')
   })
 
   it('captures effect errors and switches to fallback', async () => {

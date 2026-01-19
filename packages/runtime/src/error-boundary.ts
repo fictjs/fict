@@ -14,7 +14,7 @@ import { createSignal } from './signal'
 import type { BaseProps, FictNode } from './types'
 
 interface ErrorBoundaryProps extends BaseProps {
-  fallback: FictNode | ((err: unknown) => FictNode)
+  fallback: FictNode | ((err: unknown, reset?: () => void) => FictNode)
   onError?: (err: unknown) => void
   resetKeys?: unknown | (() => unknown)
 }
@@ -31,10 +31,11 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   let activeNodes: Node[] = []
   let renderingFallback = false
 
+  let reset = () => {}
   const toView = (err: unknown | null): FictNode | null => {
     if (err != null) {
       return typeof props.fallback === 'function'
-        ? (props.fallback as (e: unknown) => FictNode)(err)
+        ? (props.fallback as (e: unknown, reset?: () => void) => FictNode)(err, reset)
         : props.fallback
     }
     return props.children ?? null
@@ -66,7 +67,6 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       }
     } catch (err) {
       popRoot(prev)
-      flushOnMount(root)
       destroyRoot(root)
       // Fall back immediately on render errors, avoid infinite recursion
       if (renderingFallback) {
@@ -98,6 +98,11 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       removeNodes(nodes)
     }
     activeNodes = nodes
+  }
+
+  reset = () => {
+    renderingFallback = false
+    renderValue(toView(null))
   }
 
   createEffect(() => {

@@ -791,7 +791,9 @@ Capture errors in the child component tree.
 
 ```typescript
 function ErrorBoundary(props: {
-  fallback: (error: Error, reset: () => void) => FictNode
+  fallback: FictNode | ((error: unknown, reset: () => void) => FictNode)
+  onError?: (error: unknown) => void
+  resetKeys?: unknown | (() => unknown)
   children: FictNode
 }): FictNode
 ```
@@ -828,6 +830,13 @@ function RiskyComponent() {
 }
 ```
 
+**Notes:**
+
+- `fallback` can be a node or a function. If a function is provided, it receives the error
+  and a `reset()` callback to retry rendering the children.
+- `onError` runs when the boundary captures an error.
+- `resetKeys` can be a value or a getter; when it changes, the boundary resets.
+
 ---
 
 ### Suspense
@@ -835,7 +844,13 @@ function RiskyComponent() {
 Handle async loading states.
 
 ```typescript
-function Suspense(props: { fallback?: FictNode; children: FictNode }): FictNode
+function Suspense(props: {
+  fallback: FictNode | ((error?: unknown) => FictNode)
+  onResolve?: () => void
+  onReject?: (error: unknown) => void
+  resetKeys?: unknown | (() => unknown)
+  children: FictNode
+}): FictNode
 ```
 
 **Example:**

@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest'
 
-import { Suspense, createSuspenseToken, render, ErrorBoundary, Fragment } from '../src/index'
+import {
+  Suspense,
+  createSuspenseToken,
+  render,
+  ErrorBoundary,
+  Fragment,
+  onMount,
+} from '../src/index'
 import { createSignal } from '../src/advanced'
 
 const tick = () => Promise.resolve()
@@ -42,6 +49,36 @@ describe('Suspense', () => {
     expect(container.textContent).toBe('ready')
 
     dispose()
+  })
+
+  it('does not run onMount when render fails inside Suspense', async () => {
+    const container = document.createElement('div')
+    let mounted = 0
+
+    const Bad = () => {
+      onMount(() => {
+        mounted += 1
+      })
+      throw new Error('boom')
+    }
+
+    render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'error',
+          children: {
+            type: Suspense,
+            props: { fallback: 'loading', children: { type: Bad, props: {} } },
+          },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('error')
+    expect(mounted).toBe(0)
   })
 
   it('calls onReject when token rejects', async () => {

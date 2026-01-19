@@ -18,6 +18,17 @@ function stripMacroImports(
     ImportDeclaration(importPath) {
       if (importPath.node.source.value !== 'fict' && importPath.node.source.value !== 'fict/slim')
         return
+      for (const spec of importPath.node.specifiers) {
+        if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
+          if (['$state', '$effect'].includes(spec.imported.name)) {
+            if (!t.isIdentifier(spec.local) || spec.local.name !== spec.imported.name) {
+              throw importPath.buildCodeFrameError(
+                `[Fict] Macro imports cannot be aliased. Use \`import { ${spec.imported.name} } from '${importPath.node.source.value}'\`.`,
+              )
+            }
+          }
+        }
+      }
       const filtered = importPath.node.specifiers.filter(spec => {
         if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
           return !['$state', '$effect'].includes(spec.imported.name)

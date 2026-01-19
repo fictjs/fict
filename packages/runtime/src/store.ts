@@ -74,6 +74,8 @@ function wrap<T>(value: T): T {
     set(target, prop, value, receiver) {
       if (prop === PROXY || prop === TARGET) return false
 
+      const isArrayLength = Array.isArray(target) && prop === 'length'
+      const oldLength = isArrayLength ? target.length : undefined
       const hadKey = Object.prototype.hasOwnProperty.call(target, prop)
       const oldValue = Reflect.get(target, prop, receiver)
       if (oldValue === value) return true
@@ -82,6 +84,23 @@ function wrap<T>(value: T): T {
       if (result) {
         trigger(target, prop)
         if (!hadKey) {
+          trigger(target, ITERATE_KEY)
+        }
+        if (isArrayLength) {
+          const nextLength = target.length
+          if (typeof oldLength === 'number' && nextLength < oldLength) {
+            const signals = signalCache.get(target)
+            if (signals) {
+              for (const key of signals.keys()) {
+                if (typeof key !== 'string') continue
+                const index = Number(key)
+                if (!Number.isInteger(index) || String(index) !== key) continue
+                if (index >= nextLength && index < oldLength) {
+                  trigger(target, key)
+                }
+              }
+            }
+          }
           trigger(target, ITERATE_KEY)
         }
       }

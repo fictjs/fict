@@ -97,7 +97,6 @@ export function Suspense(props: SuspenseProps): FictNode {
       }
     } catch (err) {
       popRoot(prev)
-      flushOnMount(root)
       destroyRoot(root)
       if (!handleError(err, { source: 'render' }, hostRoot)) {
         throw err

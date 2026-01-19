@@ -48,6 +48,11 @@
       "types": "./dist/advanced.d.ts",
       "import": "./dist/advanced.js",
       "require": "./dist/advanced.cjs"
+    },
+    "./slim": {
+      "types": "./dist/slim.d.ts",
+      "import": "./dist/slim.js",
+      "require": "./dist/slim.cjs"
     }
   },
   "sideEffects": false,

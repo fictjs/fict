@@ -33,6 +33,26 @@ describe('createStore iteration tracking', () => {
 })
 
 describe('createStore reconciliation', () => {
+  it('reacts when array length is truncated via direct assignment', async () => {
+    const [state, setState] = createStore<{ items: number[] }>({ items: [1, 2, 3] })
+    const seen: Array<number | undefined> = []
+
+    createEffect(() => {
+      seen.push(state.items[2])
+    })
+
+    await tick()
+    expect(seen[seen.length - 1]).toBe(3)
+
+    setState(s => {
+      s.items.length = 1
+    })
+    await tick()
+
+    expect(state.items.length).toBe(1)
+    expect(seen[seen.length - 1]).toBe(undefined)
+  })
+
   it('handles array shrink when reconciling', async () => {
     const [state, setState] = createStore<{ items: number[] }>({ items: [1, 2, 3, 4, 5] })
     const seen: number[][] = []

@@ -99,6 +99,23 @@ describe('$store', () => {
     expect(fn).toHaveBeenCalledTimes(2)
   })
 
+  it('should react to array length truncation', async () => {
+    const state = $store({ items: [1, 2, 3] })
+    const seen: Array<number | undefined> = []
+
+    createEffect(() => {
+      seen.push(state.items[2])
+    })
+
+    expect(seen[seen.length - 1]).toBe(3)
+
+    state.items.length = 1
+    await tick()
+
+    expect(state.items.length).toBe(1)
+    expect(seen[seen.length - 1]).toBe(undefined)
+  })
+
   it('should handle adding new properties', async () => {
     const state = $store<any>({})
     const fn = vi.fn()

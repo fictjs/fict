@@ -7,6 +7,7 @@ export default defineConfig({
     'src/jsx-dev-runtime.ts',
     'src/plus.ts',
     'src/advanced.ts',
+    'src/slim.ts',
   ],
   format: ['cjs', 'esm'],
   dts: true,
