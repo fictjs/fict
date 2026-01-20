@@ -49,7 +49,6 @@ const isThenable = (value: unknown): value is PromiseLike<unknown> =>
   typeof (value as PromiseLike<unknown>).then === 'function'
 
 export function Suspense(props: SuspenseProps): FictNode {
-  const currentView = createSignal<FictNode | null>(props.children ?? null)
   const pending = createSignal(0)
   let resolvedOnce = false
   let epoch = 0
@@ -131,7 +130,6 @@ export function Suspense(props: SuspenseProps): FictNode {
     pending(pending() + 1)
     // Directly render fallback instead of using switchView to avoid
     // triggering the effect which would cause duplicate renders
-    currentView(toFallback())
     renderView(toFallback())
 
     const thenable = (token as SuspenseToken).then
@@ -156,7 +154,6 @@ export function Suspense(props: SuspenseProps): FictNode {
           pending(newPending)
           if (newPending === 0) {
             // Directly render children instead of using switchView
-            currentView(props.children ?? null)
             renderView(props.children ?? null)
             onResolveMaybe()
           }
@@ -197,7 +194,6 @@ export function Suspense(props: SuspenseProps): FictNode {
         epoch++
         pending(0)
         // Directly render children instead of using switchView
-        currentView(props.children ?? null)
         renderView(props.children ?? null)
       }
     })

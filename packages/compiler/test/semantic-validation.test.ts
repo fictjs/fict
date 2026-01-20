@@ -161,15 +161,4 @@ describe('semantic validation', () => {
     `
     expect(() => transform(source)).toThrow(/destructured state alias/)
   })
-
-  it('throws when macro imports are aliased', () => {
-    const source = `
-      import { $state as s } from 'fict'
-      function App() {
-        const count = s(0)
-        return count
-      }
-    `
-    expect(() => transform(source)).toThrow(/macro imports cannot be aliased/i)
-  })
 })

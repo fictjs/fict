@@ -6,7 +6,7 @@ import { debugLog } from './debug'
 import { buildHIR } from './ir/build-hir'
 import { lowerHIRWithRegions } from './ir/codegen'
 import type { CompilerWarning, FictCompilerOptions } from './types'
-import { getRootIdentifier, isEffectCall, isStateCall } from './utils'
+import { getRootIdentifier, isEffectCall, isMemoCall, isStateCall } from './utils'
 
 export type { FictCompilerOptions, CompilerWarning } from './types'
 
@@ -18,17 +18,6 @@ function stripMacroImports(
     ImportDeclaration(importPath) {
       if (importPath.node.source.value !== 'fict' && importPath.node.source.value !== 'fict/slim')
         return
-      for (const spec of importPath.node.specifiers) {
-        if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
-          if (['$state', '$effect'].includes(spec.imported.name)) {
-            if (!t.isIdentifier(spec.local) || spec.local.name !== spec.imported.name) {
-              throw importPath.buildCodeFrameError(
-                `[Fict] Macro imports cannot be aliased. Use \`import { ${spec.imported.name} } from '${importPath.node.source.value}'\`.`,
-              )
-            }
-          }
-        }
-      }
       const filtered = importPath.node.specifiers.filter(spec => {
         if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
           return !['$state', '$effect'].includes(spec.imported.name)
@@ -693,6 +682,9 @@ function createHIREntrypointVisitor(
         })
         // Collect macro imports from fict
         const fictImports = new Set<string>()
+        const stateMacroNames = new Set<string>(['$state'])
+        const effectMacroNames = new Set<string>(['$effect'])
+        const memoMacroNames = new Set<string>(['$memo', 'createMemo'])
         path.traverse({
           ImportDeclaration(importPath) {
             if (
@@ -703,6 +695,18 @@ function createHIREntrypointVisitor(
             for (const spec of importPath.node.specifiers) {
               if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
                 fictImports.add(spec.imported.name)
+                if (spec.imported.name === '$state' && t.isIdentifier(spec.local)) {
+                  stateMacroNames.add(spec.local.name)
+                }
+                if (spec.imported.name === '$effect' && t.isIdentifier(spec.local)) {
+                  effectMacroNames.add(spec.local.name)
+                }
+                if (
+                  (spec.imported.name === '$memo' || spec.imported.name === 'createMemo') &&
+                  t.isIdentifier(spec.local)
+                ) {
+                  memoMacroNames.add(spec.local.name)
+                }
               }
             }
           },
@@ -773,7 +777,7 @@ function createHIREntrypointVisitor(
           VariableDeclarator(varPath) {
             const init = varPath.node.init
             if (!init) return
-            if (isStateCall(init, t)) {
+            if (isStateCall(init, t, stateMacroNames)) {
               // Check if $state is imported from fict
               if (!fictImports.has('$state')) {
                 throw varPath.buildCodeFrameError(
@@ -854,7 +858,7 @@ function createHIREntrypointVisitor(
             )
           },
           CallExpression(callPath) {
-            if (isStateCall(callPath.node, t)) {
+            if (isStateCall(callPath.node, t, stateMacroNames)) {
               const parentPath = callPath.parentPath
               const isVariableDeclarator =
                 parentPath?.isVariableDeclarator() && parentPath.node.init === callPath.node
@@ -904,7 +908,7 @@ function createHIREntrypointVisitor(
                 )
               }
             }
-            if (isEffectCall(callPath.node, t)) {
+            if (isEffectCall(callPath.node, t, effectMacroNames)) {
               // Check if $effect is imported from fict
               if (!fictImports.has('$effect')) {
                 throw callPath.buildCodeFrameError(
@@ -983,9 +987,9 @@ function createHIREntrypointVisitor(
                 }
               }
             }
-            const allowedStateCallees = new Set([
-              '$effect',
-              '$memo',
+            const allowedStateCallees = new Set<string>([
+              ...effectMacroNames,
+              ...memoMacroNames,
               'render',
               'createMemo',
               'createEffect',
@@ -1008,8 +1012,7 @@ function createHIREntrypointVisitor(
               }
             })
             if (
-              calleeId &&
-              (calleeId === '$memo' || calleeId === 'createMemo') &&
+              isMemoCall(callPath.node, t, memoMacroNames) &&
               (fictImports.has('$memo') || fictImports.has('createMemo'))
             ) {
               const firstArg = callPath.node.arguments[0]
@@ -1137,8 +1140,15 @@ function createHIREntrypointVisitor(
         }
 
         const fileAst = t.file(path.node)
-        const hir = buildHIR(fileAst)
-        const lowered = lowerHIRWithRegions(hir, t, optionsWithWarnings)
+        const hir = buildHIR(fileAst, {
+          state: stateMacroNames,
+          effect: effectMacroNames,
+        })
+        const lowered = lowerHIRWithRegions(hir, t, optionsWithWarnings, {
+          state: stateMacroNames,
+          effect: effectMacroNames,
+          memo: memoMacroNames,
+        })
 
         path.node.body = lowered.program.body
         path.node.directives = lowered.program.directives

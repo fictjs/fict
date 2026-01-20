@@ -42,6 +42,41 @@ const getLoc = (node?: BabelCore.types.Node | null): BabelCore.types.SourceLocat
   return node?.loc ?? null
 }
 
+interface MacroAliases {
+  state?: Set<string>
+  effect?: Set<string>
+}
+
+interface ResolvedMacroAliases {
+  state: Set<string>
+  effect: Set<string>
+}
+
+const DEFAULT_MACRO_ALIASES: ResolvedMacroAliases = {
+  state: new Set(['$state']),
+  effect: new Set(['$effect']),
+}
+
+let activeMacroAliases: ResolvedMacroAliases = DEFAULT_MACRO_ALIASES
+
+function resolveMacroAliases(aliases?: MacroAliases): ResolvedMacroAliases {
+  return {
+    state: new Set([...(aliases?.state ?? []), ...DEFAULT_MACRO_ALIASES.state]),
+    effect: new Set([...(aliases?.effect ?? []), ...DEFAULT_MACRO_ALIASES.effect]),
+  }
+}
+
+function normalizeMacroCallee(callee: BabelCore.types.Expression): BabelCore.types.Expression {
+  if (!t.isIdentifier(callee)) return callee
+  if (activeMacroAliases.state.has(callee.name)) {
+    return t.identifier('$state')
+  }
+  if (activeMacroAliases.effect.has(callee.name)) {
+    return t.identifier('$effect')
+  }
+  return callee
+}
+
 function normalizeVarKind(
   kind: BabelCore.types.VariableDeclaration['kind'],
 ): 'const' | 'let' | 'var' {
@@ -362,162 +397,173 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
  *
  * Future work will expand this into a full CFG + SSA builder.
  */
-export function buildHIR(ast: BabelCore.types.File): HIRProgram {
-  const functions: HIRFunction[] = []
-  const preamble: PreambleItem[] = []
-  const postamble: PostambleItem[] = []
-  const originalBody = [...ast.program.body] as BabelStatement[]
-  const programNoMemo =
-    hasNoMemoDirective(ast.program.directives) ||
-    hasNoMemoDirectiveInStatements(ast.program.body as BabelCore.types.Statement[])
+export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases): HIRProgram {
+  const prevMacroAliases = activeMacroAliases
+  activeMacroAliases = resolveMacroAliases(macroAliases)
+  try {
+    const functions: HIRFunction[] = []
+    const preamble: PreambleItem[] = []
+    const postamble: PostambleItem[] = []
+    const originalBody = [...ast.program.body] as BabelStatement[]
+    const programNoMemo =
+      hasNoMemoDirective(ast.program.directives) ||
+      hasNoMemoDirectiveInStatements(ast.program.body as BabelCore.types.Statement[])
 
-  // Track which function names we've processed to avoid duplicates in export
-  const processedFunctions = new Set<string>()
+    // Track which function names we've processed to avoid duplicates in export
+    const processedFunctions = new Set<string>()
 
-  for (const stmt of ast.program.body) {
-    // Import declarations go to preamble
-    if (t.isImportDeclaration(stmt)) {
-      preamble.push(stmt)
-      continue
-    }
+    for (const stmt of ast.program.body) {
+      // Import declarations go to preamble
+      if (t.isImportDeclaration(stmt)) {
+        preamble.push(stmt)
+        continue
+      }
 
-    // Function declarations
-    if (t.isFunctionDeclaration(stmt) && stmt.body) {
-      const name = stmt.id?.name
-      if (name) processedFunctions.add(name)
-      functions.push(
-        convertFunction(name, stmt.params, stmt.body.body, {
-          noMemo: programNoMemo,
-          directives: stmt.body.directives,
-          loc: getLoc(stmt),
-        }),
-      )
-      continue
-    }
-
-    // Export named declarations
-    if (t.isExportNamedDeclaration(stmt)) {
-      const decl = stmt.declaration
-      if (decl && t.isFunctionDeclaration(decl) && decl.body) {
-        // Export function declaration - convert to HIR and preserve export wrapper
-        const name = decl.id?.name
+      // Function declarations
+      if (t.isFunctionDeclaration(stmt) && stmt.body) {
+        const name = stmt.id?.name
         if (name) processedFunctions.add(name)
         functions.push(
-          convertFunction(name, decl.params, decl.body.body, {
+          convertFunction(name, stmt.params, stmt.body.body, {
             noMemo: programNoMemo,
-            directives: decl.body.directives,
-            loc: getLoc(decl),
+            directives: stmt.body.directives,
+            loc: getLoc(stmt),
           }),
         )
-        // We'll recreate the export in codegen
-        postamble.push({ kind: 'ExportFunction', name })
-      } else if (decl && t.isVariableDeclaration(decl)) {
-        // Check if it's a function expression
+        continue
+      }
+
+      // Export named declarations
+      if (t.isExportNamedDeclaration(stmt)) {
+        const decl = stmt.declaration
+        if (decl && t.isFunctionDeclaration(decl) && decl.body) {
+          // Export function declaration - convert to HIR and preserve export wrapper
+          const name = decl.id?.name
+          if (name) processedFunctions.add(name)
+          functions.push(
+            convertFunction(name, decl.params, decl.body.body, {
+              noMemo: programNoMemo,
+              directives: decl.body.directives,
+              loc: getLoc(decl),
+            }),
+          )
+          // We'll recreate the export in codegen
+          postamble.push({ kind: 'ExportFunction', name })
+        } else if (decl && t.isVariableDeclaration(decl)) {
+          // Check if it's a function expression
+          let hasFunction = false
+          for (const v of decl.declarations) {
+            if (!t.isIdentifier(v.id)) continue
+            const name = v.id.name
+            if (t.isFunctionExpression(v.init) || t.isArrowFunctionExpression(v.init)) {
+              hasFunction = true
+              processedFunctions.add(name)
+              const body = v.init.body
+              const params = v.init.params
+              const isArrow = t.isArrowFunctionExpression(v.init)
+              const hasExpressionBody = isArrow && !t.isBlockStatement(body)
+              const fnHIR = t.isBlockStatement(body)
+                ? convertFunction(name, params, body.body, {
+                    noMemo: programNoMemo,
+                    directives: body.directives,
+                    loc: getLoc(v.init ?? v),
+                  })
+                : convertFunction(name, params, [t.returnStatement(body as any)], {
+                    noMemo: programNoMemo,
+                    loc: getLoc(v.init ?? v),
+                  })
+              fnHIR.meta = {
+                ...(fnHIR.meta ?? {}),
+                fromExpression: true,
+                isArrow,
+                hasExpressionBody,
+              }
+              functions.push(fnHIR)
+              postamble.push({ kind: 'ExportFunction', name })
+            }
+          }
+          if (!hasFunction) {
+            // Non-function export - preserve as-is
+            postamble.push(stmt)
+          }
+        } else if (!decl && stmt.specifiers.length > 0) {
+          // Export specifiers (e.g., export { foo, bar })
+          postamble.push(stmt)
+        } else {
+          postamble.push(stmt)
+        }
+        continue
+      }
+
+      // Export default declaration
+      if (t.isExportDefaultDeclaration(stmt)) {
+        const decl = stmt.declaration
+        if (t.isFunctionDeclaration(decl) && decl.body) {
+          const name = decl.id?.name || '__default'
+          processedFunctions.add(name)
+          functions.push(
+            convertFunction(name, decl.params, decl.body.body, {
+              noMemo: programNoMemo,
+              directives: decl.body.directives,
+              loc: getLoc(decl),
+            }),
+          )
+          postamble.push({ kind: 'ExportDefault', name })
+        } else if (t.isIdentifier(decl)) {
+          postamble.push({ kind: 'ExportDefault', name: decl.name })
+        } else {
+          postamble.push(stmt)
+        }
+        continue
+      }
+
+      // Variable declarations - check for function expressions
+      if (t.isVariableDeclaration(stmt)) {
         let hasFunction = false
-        for (const v of decl.declarations) {
-          if (!t.isIdentifier(v.id)) continue
-          const name = v.id.name
-          if (t.isFunctionExpression(v.init) || t.isArrowFunctionExpression(v.init)) {
+        for (const decl of stmt.declarations) {
+          if (!t.isIdentifier(decl.id)) continue
+          const name = decl.id.name
+          if (t.isFunctionExpression(decl.init) || t.isArrowFunctionExpression(decl.init)) {
             hasFunction = true
             processedFunctions.add(name)
-            const body = v.init.body
-            const params = v.init.params
-            const isArrow = t.isArrowFunctionExpression(v.init)
+            const body = decl.init.body
+            const params = decl.init.params
+            const isArrow = t.isArrowFunctionExpression(decl.init)
             const hasExpressionBody = isArrow && !t.isBlockStatement(body)
             const fnHIR = t.isBlockStatement(body)
               ? convertFunction(name, params, body.body, {
                   noMemo: programNoMemo,
                   directives: body.directives,
-                  loc: getLoc(v.init ?? v),
+                  loc: getLoc(decl.init ?? decl),
                 })
-              : convertFunction(name, params, [t.returnStatement(body as any)], {
-                  noMemo: programNoMemo,
-                  loc: getLoc(v.init ?? v),
-                })
+              : convertFunction(
+                  name,
+                  params,
+                  [t.returnStatement(body as BabelCore.types.Expression)],
+                  {
+                    noMemo: programNoMemo,
+                    loc: getLoc(decl.init ?? decl),
+                  },
+                )
             fnHIR.meta = { ...(fnHIR.meta ?? {}), fromExpression: true, isArrow, hasExpressionBody }
             functions.push(fnHIR)
-            postamble.push({ kind: 'ExportFunction', name })
           }
         }
         if (!hasFunction) {
-          // Non-function export - preserve as-is
+          // Non-function variable declaration - preserve
           postamble.push(stmt)
         }
-      } else if (!decl && stmt.specifiers.length > 0) {
-        // Export specifiers (e.g., export { foo, bar })
-        postamble.push(stmt)
-      } else {
-        postamble.push(stmt)
+        continue
       }
-      continue
+
+      // Other statements go to postamble
+      postamble.push(stmt)
     }
 
-    // Export default declaration
-    if (t.isExportDefaultDeclaration(stmt)) {
-      const decl = stmt.declaration
-      if (t.isFunctionDeclaration(decl) && decl.body) {
-        const name = decl.id?.name || '__default'
-        processedFunctions.add(name)
-        functions.push(
-          convertFunction(name, decl.params, decl.body.body, {
-            noMemo: programNoMemo,
-            directives: decl.body.directives,
-            loc: getLoc(decl),
-          }),
-        )
-        postamble.push({ kind: 'ExportDefault', name })
-      } else if (t.isIdentifier(decl)) {
-        postamble.push({ kind: 'ExportDefault', name: decl.name })
-      } else {
-        postamble.push(stmt)
-      }
-      continue
-    }
-
-    // Variable declarations - check for function expressions
-    if (t.isVariableDeclaration(stmt)) {
-      let hasFunction = false
-      for (const decl of stmt.declarations) {
-        if (!t.isIdentifier(decl.id)) continue
-        const name = decl.id.name
-        if (t.isFunctionExpression(decl.init) || t.isArrowFunctionExpression(decl.init)) {
-          hasFunction = true
-          processedFunctions.add(name)
-          const body = decl.init.body
-          const params = decl.init.params
-          const isArrow = t.isArrowFunctionExpression(decl.init)
-          const hasExpressionBody = isArrow && !t.isBlockStatement(body)
-          const fnHIR = t.isBlockStatement(body)
-            ? convertFunction(name, params, body.body, {
-                noMemo: programNoMemo,
-                directives: body.directives,
-                loc: getLoc(decl.init ?? decl),
-              })
-            : convertFunction(
-                name,
-                params,
-                [t.returnStatement(body as BabelCore.types.Expression)],
-                {
-                  noMemo: programNoMemo,
-                  loc: getLoc(decl.init ?? decl),
-                },
-              )
-          fnHIR.meta = { ...(fnHIR.meta ?? {}), fromExpression: true, isArrow, hasExpressionBody }
-          functions.push(fnHIR)
-        }
-      }
-      if (!hasFunction) {
-        // Non-function variable declaration - preserve
-        postamble.push(stmt)
-      }
-      continue
-    }
-
-    // Other statements go to postamble
-    postamble.push(stmt)
+    return { functions, preamble, postamble, originalBody }
+  } finally {
+    activeMacroAliases = prevMacroAliases
   }
-
-  return { functions, preamble, postamble, originalBody }
 }
 
 function convertFunction(
@@ -1906,9 +1952,10 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
   )
     return { kind: 'Literal', value: (node as any).value ?? null, loc } as HLiteral
   if (t.isCallExpression(node)) {
+    const callee = normalizeMacroCallee(node.callee as BabelCore.types.Expression)
     const call: HCallExpression = {
       kind: 'CallExpression',
-      callee: convertExpression(node.callee as BabelCore.types.Expression),
+      callee: convertExpression(callee),
       arguments: convertCallArguments(node.arguments),
       loc,
     }
@@ -2265,9 +2312,10 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
 
   // Optional Call Expression
   if (t.isOptionalCallExpression(node)) {
+    const callee = normalizeMacroCallee(node.callee as BabelCore.types.Expression)
     return {
       kind: 'OptionalCallExpression',
-      callee: convertExpression(node.callee as BabelCore.types.Expression),
+      callee: convertExpression(callee),
       arguments: convertCallArguments(node.arguments),
       optional: node.optional,
       loc,

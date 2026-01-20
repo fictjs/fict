@@ -168,8 +168,13 @@ export function detectNoMemoDirective(
 export function isStateCall(
   node: BabelCore.types.Node,
   t: typeof BabelCore.types,
+  macroNames?: Set<string>,
 ): node is BabelCore.types.CallExpression {
-  return t.isCallExpression(node) && t.isIdentifier(node.callee) && node.callee.name === '$state'
+  return (
+    t.isCallExpression(node) &&
+    t.isIdentifier(node.callee) &&
+    (macroNames ? macroNames.has(node.callee.name) : node.callee.name === '$state')
+  )
 }
 
 /**
@@ -178,8 +183,28 @@ export function isStateCall(
 export function isEffectCall(
   node: BabelCore.types.Node,
   t: typeof BabelCore.types,
+  macroNames?: Set<string>,
 ): node is BabelCore.types.CallExpression {
-  return t.isCallExpression(node) && t.isIdentifier(node.callee) && node.callee.name === '$effect'
+  return (
+    t.isCallExpression(node) &&
+    t.isIdentifier(node.callee) &&
+    (macroNames ? macroNames.has(node.callee.name) : node.callee.name === '$effect')
+  )
+}
+
+/**
+ * Check if a node is a $memo() call
+ */
+export function isMemoCall(
+  node: BabelCore.types.Node,
+  t: typeof BabelCore.types,
+  macroNames?: Set<string>,
+): node is BabelCore.types.CallExpression {
+  return (
+    t.isCallExpression(node) &&
+    t.isIdentifier(node.callee) &&
+    (macroNames ? macroNames.has(node.callee.name) : node.callee.name === '$memo')
+  )
 }
 
 /**

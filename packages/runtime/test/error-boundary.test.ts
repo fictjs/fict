@@ -60,6 +60,43 @@ describe('ErrorBoundary', () => {
     expect(mounted).toBe(0)
   })
 
+  it('does not run onMount when fallback render fails', async () => {
+    const container = document.createElement('div')
+    let mounted = 0
+
+    const Crash = () => {
+      throw new Error('boom')
+    }
+
+    const BadFallback = () => {
+      onMount(() => {
+        mounted += 1
+      })
+      throw new Error('fallback boom')
+    }
+
+    render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'outer',
+          children: {
+            type: ErrorBoundary,
+            props: {
+              fallback: { type: BadFallback, props: {} },
+              children: { type: Crash, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    await nextTick()
+    expect(container.textContent).toBe('outer')
+    expect(mounted).toBe(0)
+  })
+
   it('exposes reset to fallback and restores children', async () => {
     const container = document.createElement('div')
     const shouldThrow = createSignal(true)

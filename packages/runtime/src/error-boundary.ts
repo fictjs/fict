@@ -10,7 +10,6 @@ import {
   registerErrorHandler,
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
-import { createSignal } from './signal'
 import type { BaseProps, FictNode } from './types'
 
 interface ErrorBoundaryProps extends BaseProps {
@@ -24,7 +23,6 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   const marker = document.createComment('fict:error-boundary')
   fragment.appendChild(marker)
 
-  const currentView = createSignal<FictNode | null>(props.children ?? null)
   const hostRoot = getCurrentRoot()
 
   let cleanup: (() => void) | undefined
@@ -105,10 +103,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     renderValue(toView(null))
   }
 
-  createEffect(() => {
-    const value = currentView()
-    renderValue(value)
-  })
+  renderValue(props.children ?? null)
 
   registerErrorHandler(err => {
     renderValue(toView(err))

@@ -69,7 +69,7 @@ export interface RegionResult {
   topLevelRegions: Region[]
 }
 
-const REACTIVE_CREATORS = new Set(['createEffect', 'createMemo', 'createSelector'])
+const REACTIVE_CREATORS = new Set(['createEffect', 'createMemo', 'createSelector', '$memo'])
 
 function buildEffectCall(
   ctx: CodegenContext,
@@ -112,100 +112,108 @@ function buildMemoCall(
   return t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), args)
 }
 
-function expressionCreatesReactive(expr: Expression): boolean {
+function expressionCreatesReactive(expr: Expression, memoMacroNames?: Set<string>): boolean {
   if (expr.kind === 'CallExpression' && expr.callee.kind === 'Identifier') {
     const base = getSSABaseName(expr.callee.name)
-    return REACTIVE_CREATORS.has(base)
+    return REACTIVE_CREATORS.has(base) || (memoMacroNames?.has(base) ?? false)
   }
   return false
 }
 
-function expressionContainsReactiveCreation(expr: Expression): boolean {
-  if (expressionCreatesReactive(expr)) return true
+function expressionContainsReactiveCreation(
+  expr: Expression,
+  memoMacroNames?: Set<string>,
+): boolean {
+  if (expressionCreatesReactive(expr, memoMacroNames)) return true
   switch (expr.kind) {
     case 'CallExpression':
       return (
-        expressionContainsReactiveCreation(expr.callee) ||
-        expr.arguments.some(arg => expressionContainsReactiveCreation(arg))
+        expressionContainsReactiveCreation(expr.callee, memoMacroNames) ||
+        expr.arguments.some(arg => expressionContainsReactiveCreation(arg, memoMacroNames))
       )
     case 'MemberExpression':
       return (
-        expressionContainsReactiveCreation(expr.object) ||
-        expressionContainsReactiveCreation(expr.property)
+        expressionContainsReactiveCreation(expr.object, memoMacroNames) ||
+        expressionContainsReactiveCreation(expr.property, memoMacroNames)
       )
     case 'BinaryExpression':
     case 'LogicalExpression':
       return (
-        expressionContainsReactiveCreation(expr.left) ||
-        expressionContainsReactiveCreation(expr.right)
+        expressionContainsReactiveCreation(expr.left, memoMacroNames) ||
+        expressionContainsReactiveCreation(expr.right, memoMacroNames)
       )
     case 'UnaryExpression':
-      return expressionContainsReactiveCreation(expr.argument)
+      return expressionContainsReactiveCreation(expr.argument, memoMacroNames)
     case 'ConditionalExpression':
       return (
-        expressionContainsReactiveCreation(expr.test) ||
-        expressionContainsReactiveCreation(expr.consequent) ||
-        expressionContainsReactiveCreation(expr.alternate)
+        expressionContainsReactiveCreation(expr.test, memoMacroNames) ||
+        expressionContainsReactiveCreation(expr.consequent, memoMacroNames) ||
+        expressionContainsReactiveCreation(expr.alternate, memoMacroNames)
       )
     case 'ArrayExpression':
-      return expr.elements.some(el => el && expressionContainsReactiveCreation(el))
+      return expr.elements.some(el => el && expressionContainsReactiveCreation(el, memoMacroNames))
     case 'ObjectExpression':
       return expr.properties.some(prop =>
         prop.kind === 'SpreadElement'
-          ? expressionContainsReactiveCreation(prop.argument)
-          : expressionContainsReactiveCreation(prop.value),
+          ? expressionContainsReactiveCreation(prop.argument, memoMacroNames)
+          : expressionContainsReactiveCreation(prop.value, memoMacroNames),
       )
     case 'ArrowFunction':
       if (expr.isExpression) {
-        return expressionContainsReactiveCreation(expr.body as Expression)
+        return expressionContainsReactiveCreation(expr.body as Expression, memoMacroNames)
       }
       return Array.isArray(expr.body)
         ? expr.body.some(block =>
-            block.instructions.some(i => instructionContainsReactiveCreation(i)),
+            block.instructions.some(i => instructionContainsReactiveCreation(i, memoMacroNames)),
           )
         : false
     case 'FunctionExpression':
       return expr.body.some(block =>
-        block.instructions.some(i => instructionContainsReactiveCreation(i)),
+        block.instructions.some(i => instructionContainsReactiveCreation(i, memoMacroNames)),
       )
     case 'AssignmentExpression':
       return (
-        expressionContainsReactiveCreation(expr.left) ||
-        expressionContainsReactiveCreation(expr.right)
+        expressionContainsReactiveCreation(expr.left, memoMacroNames) ||
+        expressionContainsReactiveCreation(expr.right, memoMacroNames)
       )
     case 'UpdateExpression':
-      return expressionContainsReactiveCreation(expr.argument)
+      return expressionContainsReactiveCreation(expr.argument, memoMacroNames)
     case 'TemplateLiteral':
-      return expr.expressions.some(e => expressionContainsReactiveCreation(e))
+      return expr.expressions.some(e => expressionContainsReactiveCreation(e, memoMacroNames))
     case 'SpreadElement':
-      return expressionContainsReactiveCreation(expr.argument)
+      return expressionContainsReactiveCreation(expr.argument, memoMacroNames)
     case 'AwaitExpression':
-      return expressionContainsReactiveCreation(expr.argument)
+      return expressionContainsReactiveCreation(expr.argument, memoMacroNames)
     case 'YieldExpression':
-      return expr.argument ? expressionContainsReactiveCreation(expr.argument) : false
+      return expr.argument
+        ? expressionContainsReactiveCreation(expr.argument, memoMacroNames)
+        : false
     case 'NewExpression':
       return (
-        expressionContainsReactiveCreation(expr.callee) ||
-        expr.arguments.some(arg => expressionContainsReactiveCreation(arg))
+        expressionContainsReactiveCreation(expr.callee, memoMacroNames) ||
+        expr.arguments.some(arg => expressionContainsReactiveCreation(arg, memoMacroNames))
       )
     case 'OptionalCallExpression':
       return (
-        expressionContainsReactiveCreation(expr.callee) ||
-        expr.arguments.some(arg => expressionContainsReactiveCreation(arg))
+        expressionContainsReactiveCreation(expr.callee, memoMacroNames) ||
+        expr.arguments.some(arg => expressionContainsReactiveCreation(arg, memoMacroNames))
       )
     case 'JSXElement':
       return (
         (typeof expr.tagName !== 'string' &&
-          expressionContainsReactiveCreation(expr.tagName as Expression)) ||
+          expressionContainsReactiveCreation(expr.tagName as Expression, memoMacroNames)) ||
         expr.attributes.some(attr =>
           attr.isSpread
-            ? !!attr.spreadExpr && expressionContainsReactiveCreation(attr.spreadExpr)
+            ? !!attr.spreadExpr &&
+              expressionContainsReactiveCreation(attr.spreadExpr, memoMacroNames)
             : attr.value
-              ? expressionContainsReactiveCreation(attr.value)
+              ? expressionContainsReactiveCreation(attr.value, memoMacroNames)
               : false,
         ) ||
         expr.children.some(child =>
-          child.kind === 'expression' ? expressionContainsReactiveCreation(child.value) : false,
+          child.kind === 'expression'
+            ? expressionContainsReactiveCreation(child.value, memoMacroNames)
+            : false,
         )
       )
     default:
@@ -213,33 +221,36 @@ function expressionContainsReactiveCreation(expr: Expression): boolean {
   }
 }
 
-function instructionContainsReactiveCreation(instr: Instruction): boolean {
+function instructionContainsReactiveCreation(
+  instr: Instruction,
+  memoMacroNames?: Set<string>,
+): boolean {
   if (instr.kind === 'Assign') {
-    return expressionContainsReactiveCreation(instr.value)
+    return expressionContainsReactiveCreation(instr.value, memoMacroNames)
   }
   if (instr.kind === 'Expression') {
-    return expressionContainsReactiveCreation(instr.value)
+    return expressionContainsReactiveCreation(instr.value, memoMacroNames)
   }
   return false
 }
 
-function instructionIsReactiveSetup(instr: Instruction): boolean {
+function instructionIsReactiveSetup(instr: Instruction, memoMacroNames?: Set<string>): boolean {
   if (instr.kind === 'Assign') {
-    return expressionCreatesReactive(instr.value)
+    return expressionCreatesReactive(instr.value, memoMacroNames)
   }
   if (instr.kind === 'Expression') {
-    return expressionCreatesReactive(instr.value)
+    return expressionCreatesReactive(instr.value, memoMacroNames)
   }
   return false
 }
 
-function nodeIsPureReactiveScope(node: StructuredNode): boolean {
+function nodeIsPureReactiveScope(node: StructuredNode, memoMacroNames?: Set<string>): boolean {
   let found = false
   const visit = (n: StructuredNode): boolean => {
     switch (n.kind) {
       case 'instruction': {
-        const ok = instructionIsReactiveSetup(n.instruction)
-        if (ok && instructionContainsReactiveCreation(n.instruction)) found = true
+        const ok = instructionIsReactiveSetup(n.instruction, memoMacroNames)
+        if (ok && instructionContainsReactiveCreation(n.instruction, memoMacroNames)) found = true
         return ok
       }
       case 'sequence':
@@ -827,8 +838,10 @@ function lowerNodeWithRegionContext(
         : null
       ctx.inConditional = prevConditional
 
-      const conseqReactiveOnly = nodeIsPureReactiveScope(node.consequent)
-      const altReactiveOnly = node.alternate ? nodeIsPureReactiveScope(node.alternate) : false
+      const conseqReactiveOnly = nodeIsPureReactiveScope(node.consequent, ctx.memoMacroNames)
+      const altReactiveOnly = node.alternate
+        ? nodeIsPureReactiveScope(node.alternate, ctx.memoMacroNames)
+        : false
       const testExpr = lowerExpressionWithDeSSA(node.test, ctx)
       const unwrapTestExpr = (): BabelCore.types.Expression => {
         if (
@@ -2238,6 +2251,7 @@ function instructionToStatement(
   if (instr.kind === 'Assign') {
     const ssaName = instr.target.name
     const baseName = deSSAVarName(ssaName)
+    const memoMacroNames = ctx.memoMacroNames ?? new Set(['$memo', 'createMemo'])
     const declKindRaw = instr.declarationKind
     propagateHookResultAlias(baseName, instr.value, ctx)
     const hookMember = resolveHookMemberValue(instr.value, ctx)
@@ -2305,7 +2319,7 @@ function instructionToStatement(
     const isAccessorReturningCall =
       instr.value.kind === 'CallExpression' &&
       instr.value.callee.kind === 'Identifier' &&
-      ['$memo', 'createMemo', 'prop'].includes(instr.value.callee.name)
+      (memoMacroNames.has(instr.value.callee.name) || instr.value.callee.name === 'prop')
     // Detect reactive object calls (mergeProps) - these return objects/getters, not accessors
     // They should NOT be wrapped in __fictUseMemo AND should NOT be added to memoVars
     const isReactiveObjectCall =

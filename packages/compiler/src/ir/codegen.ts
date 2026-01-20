@@ -381,6 +381,8 @@ export interface CodegenContext {
   functionVars?: Set<string>
   /** Variables that are memos (derived values) - these shouldn't be cached by getter cache */
   memoVars?: Set<string>
+  /** Memo call names (including aliases) that return accessors */
+  memoMacroNames?: Set<string>
   /** Variables that are assigned after declaration (need mutable binding) */
   mutatedVars?: Set<string>
   /** Whether we are emitting statements inside a region memo */
@@ -470,6 +472,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     signalVars: new Set(),
     functionVars: new Set(),
     memoVars: new Set(),
+    memoMacroNames: new Set(['$memo', 'createMemo']),
     mutatedVars: new Set(),
     inRegionMemo: false,
     inListRender: false,
@@ -5800,6 +5803,12 @@ function lowerInstructionWithScopes(
 
 import { analyzeReactiveScopesWithSSA } from './scopes'
 
+interface MacroAliases {
+  state?: Set<string>
+  effect?: Set<string>
+  memo?: Set<string>
+}
+
 /**
  * Lower HIR to Babel AST with full region-based reactive scope analysis.
  * This is the P0 integration point that bridges:
@@ -5811,6 +5820,7 @@ export function lowerHIRWithRegions(
   program: HIRProgram,
   t: typeof BabelCore.types,
   options?: FictCompilerOptions,
+  macroAliases?: MacroAliases,
 ): BabelCore.types.File {
   const ctx = createCodegenContext(t)
   ctx.programFunctions = new Map(
@@ -5824,6 +5834,11 @@ export function lowerHIRWithRegions(
   const originalBody = (program.originalBody ?? []) as BabelCore.types.Statement[]
   ctx.moduleDeclaredNames = collectDeclaredNames(originalBody, t)
   ctx.moduleRuntimeNames = collectRuntimeImportNames(originalBody, t)
+  const stateMacroNames = new Set<string>(['$state', ...(macroAliases?.state ?? [])])
+  const memoMacroNames = new Set<string>(macroAliases?.memo ?? ctx.memoMacroNames ?? [])
+  if (!memoMacroNames.has('$memo')) memoMacroNames.add('$memo')
+  if (!memoMacroNames.has('createMemo')) memoMacroNames.add('createMemo')
+  ctx.memoMacroNames = memoMacroNames
 
   // Pre-mark top-level tracked variables so nested functions can treat captured signals as reactive
   for (const stmt of originalBody) {
@@ -5834,7 +5849,7 @@ export function lowerHIRWithRegions(
           decl.init &&
           t.isCallExpression(decl.init) &&
           t.isIdentifier(decl.init.callee) &&
-          (decl.init.callee.name === '$state' || decl.init.callee.name === '$store')
+          (stateMacroNames.has(decl.init.callee.name) || decl.init.callee.name === '$store')
         ) {
           ctx.trackedVars.add(decl.id.name)
           if (decl.init.callee.name === '$store') {

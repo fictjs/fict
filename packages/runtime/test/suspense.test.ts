@@ -81,6 +81,45 @@ describe('Suspense', () => {
     expect(mounted).toBe(0)
   })
 
+  it('does not run onMount when fallback render fails', async () => {
+    const container = document.createElement('div')
+    let mounted = 0
+
+    const { token } = createSuspenseToken()
+
+    const BadFallback = () => {
+      onMount(() => {
+        mounted += 1
+      })
+      throw new Error('fallback boom')
+    }
+
+    const Child = () => {
+      throw token
+    }
+
+    render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'error',
+          children: {
+            type: Suspense,
+            props: {
+              fallback: { type: BadFallback, props: {} },
+              children: { type: Child, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('error')
+    expect(mounted).toBe(0)
+  })
+
   it('calls onReject when token rejects', async () => {
     const { token, reject } = createSuspenseToken()
     const container = document.createElement('div')
