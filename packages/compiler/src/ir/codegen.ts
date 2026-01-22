@@ -7,6 +7,7 @@ import type { FictCompilerOptions } from '../types'
 import { DiagnosticCode, reportDiagnostic } from '../validation'
 
 import { convertStatementsToHIRFunction } from './build-hir'
+import { isHookLikeFunction, isHookName } from './hook-utils'
 import {
   HIRError,
   type BasicBlock,
@@ -31,7 +32,6 @@ import { analyzeCFG } from './ssa'
 import { structurizeCFG, structurizeCFGWithDiagnostics, type StructuredNode } from './structurize'
 
 const HOOK_SLOT_BASE = 1000
-const HOOK_NAME_PREFIX = 'use'
 
 const cloneLoc = (loc?: BabelCore.types.SourceLocation | null) =>
   loc === undefined
@@ -72,10 +72,6 @@ interface HookReturnInfo {
   objectProps?: Map<string, HookAccessorKind>
   arrayProps?: Map<number, HookAccessorKind>
   directAccessor?: HookAccessorKind
-}
-
-function isHookName(name: string | undefined): boolean {
-  return !!name && name.startsWith(HOOK_NAME_PREFIX)
 }
 
 export function propagateHookResultAlias(
@@ -2406,7 +2402,7 @@ function lowerExpressionImpl(
       return t.identifier('undefined')
 
     case 'CallExpression': {
-      // Handle Fict macros in experimental path
+      // Handle Fict macros in HIR path
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '$state') {
         const args = lowerCallArguments(expr.arguments)
         if (ctx.inModule) {
@@ -6395,7 +6391,7 @@ function lowerFunctionWithRegions(
         if (
           instr.value.kind === 'CallExpression' &&
           instr.value.callee.kind === 'Identifier' &&
-          instr.value.callee.name.startsWith(HOOK_NAME_PREFIX)
+          isHookName(instr.value.callee.name)
         ) {
           hookResultVars.add(target)
           ctx.hookResultVarMap?.set(target, instr.value.callee.name)
@@ -6427,9 +6423,7 @@ function lowerFunctionWithRegions(
     ctx.trackedVars.add(name)
   })
 
-  const inferredHook =
-    (!fn.name || fn.name[0] !== fn.name[0]?.toUpperCase()) &&
-    ((ctx.signalVars?.size ?? 0) > 0 || (ctx.storeVars?.size ?? 0) > 0)
+  const inferredHook = isHookLikeFunction(fn)
   // Analyze reactive scopes with SSA/CFG awareness
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
   detectDerivedCycles(fn, scopeResult)
@@ -6439,7 +6433,7 @@ function lowerFunctionWithRegions(
   const regionResult = generateRegions(fn, scopeResult)
 
   const prevHookFlag = ctx.currentFnIsHook
-  ctx.currentFnIsHook = (!!fn.name && fn.name.startsWith(HOOK_NAME_PREFIX)) || inferredHook
+  ctx.currentFnIsHook = inferredHook
   const isComponent = !!(fn.name && fn.name[0] === fn.name[0]?.toUpperCase())
   ctx.isComponentFn = isComponent
   const rawPropsParam =
@@ -6768,7 +6762,7 @@ function lowerFunctionWithRegions(
     })
   }
 
-  // Ensure context if signals/effects are used in experimental path
+  // Ensure context if signals/effects are used in HIR path
   if (ctx.needsCtx) {
     ctx.helpersUsed.add('useContext')
     statements.unshift(

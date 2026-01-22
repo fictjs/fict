@@ -4,7 +4,7 @@ import type { SourceLocation, Statement, ClassBody, Node } from '@babel/types'
  * High-level Intermediate Representation (HIR) scaffolding.
  *
  * This is a minimal, non-executing definition set meant to unblock
- * the experimental HIR/SSA pipeline. It keeps constructs high-level
+ * the HIR/SSA pipeline. It keeps constructs high-level
  * (conditionals/loops/logical expressions) to preserve source shape.
  */
 
@@ -278,6 +278,8 @@ export interface CallExpression extends SourceInfo {
   kind: 'CallExpression'
   callee: Expression
   arguments: Expression[]
+  /** Optional purity hint (e.g., from @__PURE__ annotations) */
+  pure?: boolean
 }
 
 export interface MemberExpression extends SourceInfo {
@@ -526,6 +528,8 @@ export interface OptionalCallExpression extends SourceInfo {
   callee: Expression
   arguments: Expression[]
   optional: boolean
+  /** Optional purity hint (e.g., from @__PURE__ annotations) */
+  pure?: boolean
 }
 
 export interface TaggedTemplateExpression extends SourceInfo {
@@ -578,6 +582,7 @@ export interface HIRFunction extends SourceInfo {
     isArrow?: boolean
     hasExpressionBody?: boolean
     noMemo?: boolean
+    pure?: boolean
   }
 }
 

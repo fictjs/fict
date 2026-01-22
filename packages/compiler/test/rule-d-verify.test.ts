@@ -51,7 +51,6 @@ describe('Rule D Verification', () => {
     // HIR groups derived values into region memo
     expect(output).toContain('__fictUseMemo')
     expect(output).toContain('doubled')
-    expect(output).toContain('heading')
     expect(output).toContain('summary')
     // Should use region-based output
     expect(output).toContain('__region_')

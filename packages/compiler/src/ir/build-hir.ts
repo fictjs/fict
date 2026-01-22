@@ -98,6 +98,29 @@ function hasNoMemoDirectiveInStatements(body: BabelCore.types.Statement[]): bool
   )
 }
 
+const PURE_DIRECTIVE_TEXT = 'use pure'
+
+function hasPureDirective(directives?: BabelCore.types.Directive[] | null): boolean {
+  if (!directives) return false
+  return directives.some(d => d.value.value === PURE_DIRECTIVE_TEXT)
+}
+
+function hasPureDirectiveInStatements(body: BabelCore.types.Statement[]): boolean {
+  const first = body[0]
+  return !!(
+    first &&
+    t.isExpressionStatement(first) &&
+    t.isStringLiteral(first.expression) &&
+    first.expression.value === PURE_DIRECTIVE_TEXT
+  )
+}
+
+function hasPureAnnotation(node: BabelCore.types.Node | null | undefined): boolean {
+  if (!node) return false
+  const comments = node.leadingComments ?? []
+  return comments.some(c => /@__PURE__|#__PURE__/.test(c.value))
+}
+
 /**
  * Extract identifiers from destructuring patterns.
  * Handles object patterns, array patterns, rest elements, and assignment patterns.
@@ -408,6 +431,9 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
     const programNoMemo =
       hasNoMemoDirective(ast.program.directives) ||
       hasNoMemoDirectiveInStatements(ast.program.body as BabelCore.types.Statement[])
+    const programPure =
+      hasPureDirective(ast.program.directives) ||
+      hasPureDirectiveInStatements(ast.program.body as BabelCore.types.Statement[])
 
     // Track which function names we've processed to avoid duplicates in export
     const processedFunctions = new Set<string>()
@@ -426,6 +452,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
         functions.push(
           convertFunction(name, stmt.params, stmt.body.body, {
             noMemo: programNoMemo,
+            pure: programPure,
             directives: stmt.body.directives,
             loc: getLoc(stmt),
           }),
@@ -443,6 +470,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
           functions.push(
             convertFunction(name, decl.params, decl.body.body, {
               noMemo: programNoMemo,
+              pure: programPure,
               directives: decl.body.directives,
               loc: getLoc(decl),
             }),
@@ -465,11 +493,13 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
               const fnHIR = t.isBlockStatement(body)
                 ? convertFunction(name, params, body.body, {
                     noMemo: programNoMemo,
+                    pure: programPure,
                     directives: body.directives,
                     loc: getLoc(v.init ?? v),
                   })
                 : convertFunction(name, params, [t.returnStatement(body as any)], {
                     noMemo: programNoMemo,
+                    pure: programPure,
                     loc: getLoc(v.init ?? v),
                   })
               fnHIR.meta = {
@@ -504,6 +534,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
           functions.push(
             convertFunction(name, decl.params, decl.body.body, {
               noMemo: programNoMemo,
+              pure: programPure,
               directives: decl.body.directives,
               loc: getLoc(decl),
             }),
@@ -533,6 +564,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
             const fnHIR = t.isBlockStatement(body)
               ? convertFunction(name, params, body.body, {
                   noMemo: programNoMemo,
+                  pure: programPure,
                   directives: body.directives,
                   loc: getLoc(decl.init ?? decl),
                 })
@@ -542,6 +574,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
                   [t.returnStatement(body as BabelCore.types.Expression)],
                   {
                     noMemo: programNoMemo,
+                    pure: programPure,
                     loc: getLoc(decl.init ?? decl),
                   },
                 )
@@ -572,6 +605,7 @@ function convertFunction(
   body: BabelCore.types.Statement[],
   options?: {
     noMemo?: boolean
+    pure?: boolean
     directives?: BabelCore.types.Directive[] | null
     loc?: BabelCore.types.SourceLocation | null
   },
@@ -599,7 +633,11 @@ function convertFunction(
 
   const bodyStatements = [...body]
   const hasNoMemoInBody = hasNoMemoDirectiveInStatements(bodyStatements)
+  const hasPureInBody = hasPureDirectiveInStatements(bodyStatements)
   while (hasNoMemoDirectiveInStatements(bodyStatements)) {
+    bodyStatements.shift()
+  }
+  while (hasPureDirectiveInStatements(bodyStatements)) {
     bodyStatements.shift()
   }
 
@@ -1210,13 +1248,20 @@ function convertFunction(
 
   const hasNoMemo =
     !!options?.noMemo || hasNoMemoDirective(options?.directives ?? null) || hasNoMemoInBody
+  const hasPure = !!options?.pure || hasPureDirective(options?.directives ?? null) || hasPureInBody
 
   return {
     rawParams: params,
     name,
     params: paramIds,
     blocks,
-    meta: hasNoMemo ? { noMemo: true } : undefined,
+    meta:
+      hasNoMemo || hasPure
+        ? {
+            ...(hasNoMemo ? { noMemo: true } : null),
+            ...(hasPure ? { pure: true } : null),
+          }
+        : undefined,
     loc: options?.loc ?? null,
   }
 }
@@ -1953,10 +1998,12 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     return { kind: 'Literal', value: (node as any).value ?? null, loc } as HLiteral
   if (t.isCallExpression(node)) {
     const callee = normalizeMacroCallee(node.callee as BabelCore.types.Expression)
+    const pure = hasPureAnnotation(node) || hasPureAnnotation(node.callee as any)
     const call: HCallExpression = {
       kind: 'CallExpression',
       callee: convertExpression(callee),
       arguments: convertCallArguments(node.arguments),
+      ...(pure ? { pure: true } : null),
       loc,
     }
     return call
@@ -2186,6 +2233,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     if (t.isBlockStatement(node.body)) {
       const nested = convertFunction(undefined, node.params, node.body.body, {
         noMemo: hasNoMemoDirectiveInStatements(node.body.body),
+        pure: hasPureDirectiveInStatements(node.body.body),
         directives: node.body.directives,
         loc: getLoc(node),
       })
@@ -2223,6 +2271,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
   if (t.isFunctionExpression(node)) {
     const nested = convertFunction(undefined, node.params, node.body.body, {
       noMemo: hasNoMemoDirectiveInStatements(node.body.body),
+      pure: hasPureDirectiveInStatements(node.body.body),
       directives: node.body.directives,
       loc: getLoc(node),
     })
@@ -2318,6 +2367,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       callee: convertExpression(callee),
       arguments: convertCallArguments(node.arguments),
       optional: node.optional,
+      ...(hasPureAnnotation(node) || hasPureAnnotation(node.callee as any) ? { pure: true } : null),
       loc,
     }
   }

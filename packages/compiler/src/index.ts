@@ -5,6 +5,7 @@ import { SAFE_FUNCTIONS } from './constants'
 import { debugLog } from './debug'
 import { buildHIR } from './ir/build-hir'
 import { lowerHIRWithRegions } from './ir/codegen'
+import { optimizeHIR } from './ir/optimize'
 import type { CompilerWarning, FictCompilerOptions } from './types'
 import { getRootIdentifier, isEffectCall, isMemoCall, isStateCall } from './utils'
 
@@ -1144,7 +1145,13 @@ function createHIREntrypointVisitor(
           state: stateMacroNames,
           effect: effectMacroNames,
         })
-        const lowered = lowerHIRWithRegions(hir, t, optionsWithWarnings, {
+        const optimized = optionsWithWarnings.optimize
+          ? optimizeHIR(hir, {
+              memoMacroNames,
+              inlineDerivedMemos: optionsWithWarnings.inlineDerivedMemos ?? true,
+            })
+          : hir
+        const lowered = lowerHIRWithRegions(optimized, t, optionsWithWarnings, {
           state: stateMacroNames,
           effect: effectMacroNames,
           memo: memoMacroNames,
@@ -1169,6 +1176,8 @@ export const createFictPlugin = declare(
     const normalizedOptions: FictCompilerOptions = {
       ...options,
       fineGrainedDom: options.fineGrainedDom ?? true,
+      optimize: options.optimize ?? true,
+      inlineDerivedMemos: options.inlineDerivedMemos ?? true,
       dev:
         options.dev ?? (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'),
     }

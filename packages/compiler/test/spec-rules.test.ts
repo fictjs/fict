@@ -306,7 +306,7 @@ describe('Spec rule coverage', () => {
     )
   })
 
-  it('aliasing state inside component stays reactive via memo', () => {
+  it('aliasing state inside component stays reactive via inline read', () => {
     const input = `
       import { $state } from 'fict'
       function App() {
@@ -316,10 +316,8 @@ describe('Spec rule coverage', () => {
       }
     `
     const output = transform(input)
-    // Alias becomes a memo accessor
-    expect(output).toContain('__fictUseMemo')
-    expect(output).toContain('snap()')
-    expect(output).toContain('console.log(snap()')
+    expect(output).not.toContain('__fictUseMemo')
+    expect(output).toContain('console.log(count()')
   })
 
   it('closure always reads live value (getter)', () => {
@@ -976,7 +974,7 @@ describe('Rule L: Getter cache in same sync block', () => {
 })
 
 describe('Rule C: memo vs getter selection', () => {
-  it('JSX usage triggers memo', () => {
+  it('JSX usage inlines derived values by default', () => {
     const output = transform(`
       import { $state } from 'fict'
       function Component() {
@@ -985,7 +983,8 @@ describe('Rule C: memo vs getter selection', () => {
         return <div>{doubled}</div>
       }
     `)
-    expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
+    expect(output).toContain('bindText')
+    expect(output).toContain('count() * 2')
   })
 
   it('$effect usage triggers memo', () => {

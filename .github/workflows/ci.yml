@@ -75,6 +75,25 @@ jobs:
           files: ./coverage/lcov.info
           fail_ci_if_error: false
 
+  test-opt-out:
+    name: Test (Opt-out)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install
+      - run: pnpm build
+      - run: FICT_OPT_CROSS_BLOCK_CONST=0 pnpm test
+
   build:
     name: Build
     runs-on: ubuntu-latest
@@ -95,3 +114,40 @@ jobs:
 
       - name: Check bundle size
         run: pnpm size
+
+  hir-guardrails:
+    name: HIR Guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install
+      - run: pnpm --filter @fictjs/compiler build
+      - run: pnpm guardrails:hir
+
+  optimizer-bench:
+    name: Optimizer Bench Guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install
+      - run: pnpm bench:optimizer:guard

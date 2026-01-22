@@ -86,7 +86,7 @@ describe('Fict Compiler - Basic Transforms', () => {
   })
 
   describe('Derived values', () => {
-    it('creates memo for derived const', () => {
+    it('inlines derived const by default', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {
@@ -96,11 +96,11 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transform(input)
-      // Memo is created with an ID parameter for tracking
-      expect(output).toMatch(/__fictUseMemo\(__fictCtx, \(\) => count\(\) \* 2, \d+\)/)
+      expect(output).not.toContain('__fictUseMemo')
+      expect(output).toContain('count() * 2')
     })
 
-    it('creates memo for chained derived values (derived-from-derived) in component body', () => {
+    it('inlines chained derived values by default', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {
@@ -112,16 +112,12 @@ describe('Fict Compiler - Basic Transforms', () => {
     }
   `
       const output = transform(input)
-      // Dependent derived values should each get their own memo to preserve memoized chains.
-      // Memos are created with ID parameters for tracking
-      expect(output).toMatch(/__fictUseMemo\(__fictCtx, \(\) => count\(\) \* 2, \d+\)/)
-      expect(output).toMatch(/__fictUseMemo\(__fictCtx, \(\) => doubled\(\) \* 2, \d+\)/)
-      expect(output).toContain('console.log("fourfold", fourfold())')
-      // Note: regions ARE now created in the new HIR codegen
-      expect(output).toContain('__region_')
+      expect(output).not.toContain('__fictUseMemo')
+      expect(output).toContain('console.log("fourfold"')
+      expect(output).toContain('count()')
     })
 
-    it('groups independent derived values into a region memo', () => {
+    it('groups independent derived values into a region memo when inlining is disabled', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {
@@ -132,7 +128,7 @@ describe('Fict Compiler - Basic Transforms', () => {
           return null
         }
       `
-      const output = transform(input)
+      const output = transformWithOptions(input, { inlineDerivedMemos: false })
       // Region memo groups related derived values
       expect(output).toContain('__fictUseMemo')
       expect(output).toContain('doubled')
@@ -544,13 +540,10 @@ describe('Fict Compiler - Integration', () => {
     // Should transform state
     expect(output).toContain('__fictUseSignal(__fictCtx, 0)')
 
-    // Should transform derived
-    expect(output).toContain('__fictUseMemo')
-
     // Should transform effect
     expect(output).toContain('__fictUseEffect')
 
     // Should wrap reactive JSX
-    expect(output).toContain('() => doubled()')
+    expect(output).toContain('count() * 2')
   })
 })

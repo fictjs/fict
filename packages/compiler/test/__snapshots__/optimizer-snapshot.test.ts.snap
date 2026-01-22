@@ -1,0 +1,27 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`optimizer output snapshots > stabilizes cross-block constants in a reactive function 1`] = `
+"import { __fictUseSignal, __fictUseContext, createConditional, createElement, onDestroy } from "@fictjs/runtime/internal";
+export function Demo(flag) {
+  const __fictCtx = __fictUseContext();
+  const count = __fictUseSignal(__fictCtx, 1);
+  return (() => {
+    const __cond_0 = createConditional(() => flag, () => {
+      return 3 + count();
+    }, createElement, () => {
+      return 3 + count();
+    });
+    onDestroy(__cond_0.dispose);
+    return __cond_0;
+  })();
+}"
+`;
+
+exports[`optimizer output snapshots > stabilizes derived values and memo accessors 1`] = `
+"import { __fictUseSignal, __fictUseContext } from "@fictjs/runtime/internal";
+export function Demo() {
+  const __fictCtx = __fictUseContext();
+  const count = __fictUseSignal(__fictCtx, 2);
+  return count() * 2;
+}"
+`;

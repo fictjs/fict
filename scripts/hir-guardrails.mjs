@@ -6,10 +6,18 @@
  */
 import { transformSync } from '@babel/core'
 import { createRequire } from 'module'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { gzipSync } from 'zlib'
 
 const require = createRequire(import.meta.url)
 const { default: createFictPlugin } = require('../packages/compiler/dist/index.cjs')
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const baselinePath = path.join(__dirname, 'hir-guardrails.baseline.json')
+const updateBaseline = process.argv.includes('--update')
 
 const samples = [
   {
@@ -77,15 +85,79 @@ function runSample(sample) {
     description: sample.description,
     helpers: helpers.size,
     regions: regions.size,
-    size: `${sizeBytes} B`,
-    gzip: `${gzipBytes} B`,
+    sizeBytes,
+    gzipBytes,
   }
 }
 
 function main() {
   const rows = samples.map(runSample)
+  const baseline = fs.existsSync(baselinePath)
+    ? JSON.parse(fs.readFileSync(baselinePath, 'utf8'))
+    : null
+
+  if (updateBaseline) {
+    const payload = {
+      samples: Object.fromEntries(
+        rows.map(row => [
+          row.name,
+          {
+            helpers: row.helpers,
+            regions: row.regions,
+            sizeBytes: row.sizeBytes,
+            gzipBytes: row.gzipBytes,
+          },
+        ]),
+      ),
+    }
+    fs.writeFileSync(baselinePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+    console.log(`HIR guardrail baseline updated at ${baselinePath}`)
+  } else if (!baseline) {
+    throw new Error(`Missing baseline at ${baselinePath}. Run with --update to generate.`)
+  } else {
+    const mismatches = []
+    const expectedSamples = new Set(Object.keys(baseline.samples ?? {}))
+    const actualSamples = new Set(rows.map(row => row.name))
+
+    for (const name of expectedSamples) {
+      if (!actualSamples.has(name)) {
+        mismatches.push({ name, reason: 'missing sample' })
+      }
+    }
+    for (const row of rows) {
+      const expected = baseline.samples?.[row.name]
+      if (!expected) {
+        mismatches.push({ name: row.name, reason: 'unexpected sample' })
+        continue
+      }
+      const fields = ['helpers', 'regions', 'sizeBytes', 'gzipBytes']
+      for (const field of fields) {
+        if (row[field] !== expected[field]) {
+          mismatches.push({
+            name: row.name,
+            reason: `${field} ${expected[field]} -> ${row[field]}`,
+          })
+        }
+      }
+    }
+
+    if (mismatches.length > 0) {
+      console.error('HIR guardrail mismatches detected:')
+      console.table(mismatches)
+      process.exitCode = 1
+    }
+  }
+
+  const reportRows = rows.map(row => ({
+    name: row.name,
+    description: row.description,
+    helpers: row.helpers,
+    regions: row.regions,
+    size: `${row.sizeBytes} B`,
+    gzip: `${row.gzipBytes} B`,
+  }))
   console.log('HIR guardrail report:')
-  console.table(rows)
+  console.table(reportRows)
 }
 
 try {

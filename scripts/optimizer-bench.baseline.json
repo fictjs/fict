@@ -1,0 +1,27 @@
+{
+  "budgets": {
+    "timeRegressionRatio": 0.25,
+    "sizeRegressionRatio": 0.15,
+    "slowdownRatio": 0.35
+  },
+  "samples": {
+    "reactive-branch": {
+      "optimized_ms": 1.39,
+      "unoptimized_ms": 1,
+      "optimized_bytes": 757,
+      "unoptimized_bytes": 757
+    },
+    "array-map": {
+      "optimized_ms": 0.97,
+      "unoptimized_ms": 0.74,
+      "optimized_bytes": 314,
+      "unoptimized_bytes": 314
+    },
+    "no-jsx": {
+      "optimized_ms": 0.85,
+      "unoptimized_ms": 0.8,
+      "optimized_bytes": 464,
+      "unoptimized_bytes": 464
+    }
+  }
+}

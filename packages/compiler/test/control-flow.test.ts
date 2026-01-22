@@ -48,8 +48,6 @@ describe('Fict Compiler - Control Flow', () => {
         }
       `
       const output = runTransform(input)
-      // Ternary derived should be memoized
-      expect(output).toContain('__fictUseMemo')
       expect(output).toContain('count() > 10')
     })
   })
@@ -262,7 +260,6 @@ describe('Fict Compiler - Control Flow', () => {
       const output = runTransform(input)
       expect(output).toContain('a()')
       expect(output).toContain('b()')
-      expect(output).toContain('__fictUseMemo')
     })
 
     it('handles conditional in map', () => {
@@ -296,7 +293,6 @@ describe('Fict Compiler - Complex Scenarios', () => {
       `
       const output = runTransform(input)
       expect(output).toContain('count() + staticValue')
-      expect(output).toContain('__fictUseMemo')
     })
 
     it('handles reactive in some branches, not others', () => {
@@ -328,7 +324,6 @@ describe('Fict Compiler - Complex Scenarios', () => {
       `
       const output = runTransform(input)
       expect(output).toContain('Math.max(x(), y())')
-      expect(output).toContain('__fictUseMemo')
     })
 
     it('handles method calls on state', () => {

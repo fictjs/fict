@@ -1,0 +1,22 @@
+{
+  "samples": {
+    "counter-basic": {
+      "helpers": 4,
+      "regions": 1,
+      "sizeBytes": 1035,
+      "gzipBytes": 429
+    },
+    "optional-chain": {
+      "helpers": 3,
+      "regions": 0,
+      "sizeBytes": 551,
+      "gzipBytes": 307
+    },
+    "no-jsx": {
+      "helpers": 4,
+      "regions": 1,
+      "sizeBytes": 464,
+      "gzipBytes": 231
+    }
+  }
+}

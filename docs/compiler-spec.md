@@ -536,6 +536,32 @@ Optimization Strategy (Optional):
 
 This is a "good but not mandatory" optimization, which can be part of subsequent iterations.
 
+Implementation note: The compiler performs conservative cross-block constant propagation for
+compiler-generated temporaries by default. Set `FICT_OPT_CROSS_BLOCK_CONST=0` to disable it
+for troubleshooting or bisecting optimizer behavior.
+Inlining note: Single-use derived values are inlined by default (including user-named ones).
+Set `inlineDerivedMemos: false` in compiler options to keep user-named derived values
+as memos.
+Hook note: Hook-like functions (explicit `useX` or inferred hooks using `$state`/`$store`)
+do not inline user-named derived values by default, to preserve accessor return shapes.
+Benchmarking: run `pnpm bench:optimizer` (builds the compiler and prints average compile
+times with optimization enabled/disabled).
+Optimizer baselines: `pnpm bench:optimizer:guard` compares results to
+`scripts/optimizer-bench.baseline.json`. Use `pnpm bench:optimizer:update` to refresh
+the baseline when changes are intentional.
+Snapshot baselines: `pnpm -C packages/compiler test -- optimizer-baseline.test.ts -u`
+updates the optimizer output snapshots for core scenarios.
+Guardrails: `pnpm guardrails:hir` compares current output to `scripts/hir-guardrails.baseline.json`.
+Use `pnpm guardrails:hir:update` to refresh the baseline when changes are intentional.
+
+Purity annotations:
+
+- `/* @__PURE__ */` (or `/* #__PURE__ */`) on a call expression marks it as pure for
+  DCE/CSE/constant propagation. Example: `const x = /* @__PURE__ */ heavy();`
+- `"use pure"` at the top of a file or function body marks the scope as pure, enabling
+  more aggressive DCE/CSE for otherwise unknown calls and member reads.
+  Impure primitives like `$state`, `$effect`, `render`, etc. are never treated as pure.
+
 ---
 
 ## 11. Rule K: Circular Dependency Detection

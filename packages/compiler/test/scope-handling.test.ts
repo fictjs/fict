@@ -21,8 +21,6 @@ describe('Scope Handling', () => {
 
       // temp should be memoized inside if block, not exposed outside
       expect(output).not.toContain('const temp = () =>')
-      // temp is memoized as a standalone memo inside the if block
-      expect(output).toContain('const temp = __fictUseMemo')
       // result is assigned but not in a region (only one output)
       expect(output).toMatch(/result/)
     })
@@ -71,9 +69,6 @@ describe('Scope Handling', () => {
 
       expect(output).not.toContain('const tempA = () =>')
       expect(output).not.toContain('const tempB = () =>')
-      // Variables inside switch are memoized locally
-      expect(output).toContain('const tempA = __fictUseMemo')
-      expect(output).toContain('const tempB = __fictUseMemo')
     })
 
     it('should handle nested blocks correctly', () => {
@@ -97,13 +92,11 @@ describe('Scope Handling', () => {
 
       expect(output).not.toContain('const outer = () =>')
       expect(output).not.toContain('const inner = () =>')
-      // Nested blocks variables are memoized locally
-      expect(output).toContain('const outer = __fictUseMemo')
     })
   })
 
   describe('Top-level variables should be exposed', () => {
-    it('should expose top-level const declarations', () => {
+    it('inlines top-level derived const declarations by default', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {
@@ -115,8 +108,8 @@ describe('Scope Handling', () => {
       `
       const output = transform(input)
 
-      expect(output).toContain('const doubled = ')
-      expect(output).toContain('const tripled = ')
+      expect(output).toContain('count() * 2')
+      expect(output).toContain('count() * 3')
     })
 
     it('should expose let variables assigned in if blocks', () => {

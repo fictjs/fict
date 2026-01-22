@@ -31,7 +31,7 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).not.toContain('s(')
     })
 
-    it('rewrites derived const to useMemo', () => {
+    it('inlines derived const by default', () => {
       const output = transform(`
         import { $state } from 'fict'
         function Component() {
@@ -41,8 +41,8 @@ describe('createFictPlugin (HIR)', () => {
         }
       `)
 
-      expect(output).toContain(`__fictUseMemo(__fictCtx, () => count() * 2`)
-      expect(output).toContain('count()')
+      expect(output).not.toContain('__fictUseMemo')
+      expect(output).toContain('count() * 2')
     })
 
     it('throws on non-identifier $state targets', () => {

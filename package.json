@@ -28,10 +28,14 @@
     "precommit": "pnpm test && pnpm typecheck && pnpm lint && pnpm build",
     "prepare": "husky",
     "guardrails:hir": "node scripts/hir-guardrails.mjs",
+    "guardrails:hir:update": "node scripts/hir-guardrails.mjs --update",
     "perf:build": "pnpm build && cd js-framework-benchmark/frameworks/keyed/fict && npm run build-prod",
     "perf:run": "cd js-framework-benchmark && npm run bench -- --framework keyed/fict --headless",
     "perf:data": "pnpm build && pnpm perf:build && pnpm perf:run",
-    "perf:results": "cd js-framework-benchmark && npm run results"
+    "perf:results": "cd js-framework-benchmark && npm run results",
+    "bench:optimizer": "pnpm --filter @fictjs/compiler build && node scripts/optimizer-bench.mjs",
+    "bench:optimizer:update": "pnpm --filter @fictjs/compiler build && node scripts/optimizer-bench.mjs --update",
+    "bench:optimizer:guard": "pnpm --filter @fictjs/compiler build && node scripts/optimizer-bench.mjs --compare"
   },
   "devDependencies": {
     "@babel/core": "^7.26.0",

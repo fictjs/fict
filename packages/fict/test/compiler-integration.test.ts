@@ -54,8 +54,9 @@ async function waitForSuspenseResolution(
 function compileAndLoad<TModule extends Record<string, any>>(
   source: string,
   deps: Record<string, any> = {},
+  options: Parameters<typeof transformCommonJS>[1] = {},
 ): TModule {
-  const output = transformCommonJS(source)
+  const output = transformCommonJS(source, options)
   if (process.env.DEBUG_TEMPLATE_OUTPUT) {
     // eslint-disable-next-line no-console
     console.warn(output)
@@ -285,56 +286,6 @@ describe('compiler + fict integration', () => {
     expect(container.innerHTML).toBe('')
   })
 
-  it('supports hook-style helpers returning object without destructuring', async () => {
-    const source = `
-      import { $state, render } from 'fict'
-
-      const useCounter = () => {
-        let count = $state(0)
-        const double = count * 2
-        return { count, double }
-      }
-
-      function Counter() {
-        const props = useCounter()
-        return (
-          <div>
-            <p data-testid="count">Count: {props.count}</p>
-            <p data-testid="double">Double: {props.double}</p>
-            <button data-testid="inc" onClick={() => props.count++}>Increment</button>
-          </div>
-        )
-      }
-
-      export function mount(el: HTMLElement) {
-        return render(() => <Counter />, el)
-      }
-    `
-
-    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
-    const dispose = mod.mount(container)
-    await tick()
-
-    const readCount = () => container.querySelector('[data-testid="count"]')?.textContent
-    const readDouble = () => container.querySelector('[data-testid="double"]')?.textContent
-    const incBtn = container.querySelector('[data-testid="inc"]') as HTMLButtonElement
-
-    expect(readCount()).toBe('Count: 0')
-    expect(readDouble()).toBe('Double: 0')
-
-    incBtn.click()
-    await tick()
-    expect(readCount()).toBe('Count: 1')
-    expect(readDouble()).toBe('Double: 2')
-
-    incBtn.click()
-    await tick()
-    expect(readCount()).toBe('Count: 2')
-    expect(readDouble()).toBe('Double: 4')
-
-    dispose()
-  })
-
   it('supports hook-style helpers returning a single accessor value', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -379,33 +330,92 @@ describe('compiler + fict integration', () => {
     dispose()
   })
 
-  it('supports hook-style helpers that return objects consumed via destructuring', async () => {
-    const source = `
-      import { $state, render } from 'fict'
+  const hookObjectScenarios = [
+    {
+      name: 'returning object without destructuring',
+      source: `
+        import { $state, render } from 'fict'
 
-      const useCounter = () => {
-        let count = $state(0)
-        const double = count * 2
-        return { count, double }
-      }
+        const useCounter = () => {
+          let count = $state(0)
+          const double = count * 2
+          return { count, double }
+        }
 
-      function Counter() {
-        const { count, double } = useCounter()
-        return (
-          <div>
-            <p data-testid="count">Count: {count}</p>
-            <p data-testid="double">Double: {double}</p>
-            <button data-testid="inc" onClick={() => count++}>Increment</button>
-          </div>
-        )
-      }
+        function Counter() {
+          const props = useCounter()
+          return (
+            <div>
+              <p data-testid="count">Count: {props.count}</p>
+              <p data-testid="double">Double: {props.double}</p>
+              <button data-testid="inc" onClick={() => props.count++}>Increment</button>
+            </div>
+          )
+        }
 
-      export function mount(el: HTMLElement) {
-        return render(() => <Counter />, el)
-      }
-    `
+        export function mount(el: HTMLElement) {
+          return render(() => <Counter />, el)
+        }
+      `,
+    },
+    {
+      name: 'returning object consumed via destructuring',
+      source: `
+        import { $state, render } from 'fict'
 
-    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+        const useCounter = () => {
+          let count = $state(0)
+          const double = count * 2
+          return { count, double }
+        }
+
+        function Counter() {
+          const { count, double } = useCounter()
+          return (
+            <div>
+              <p data-testid="count">Count: {count}</p>
+              <p data-testid="double">Double: {double}</p>
+              <button data-testid="inc" onClick={() => count++}>Increment</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <Counter />, el)
+        }
+      `,
+    },
+    {
+      name: 'returning object spread into rest binding',
+      source: `
+        import { $state, render } from 'fict'
+
+        const useCounter = () => {
+          let count = $state(0)
+          const double = count * 2
+          return { count, double }
+        }
+
+        function Counter() {
+          const { ...props } = useCounter()
+          return (
+            <div>
+              <p data-testid="count">Count: {props.count}</p>
+              <p data-testid="double">Double: {props.double}</p>
+              <button data-testid="inc" onClick={() => props.count++}>Increment</button>
+            </div>
+          )
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <Counter />, el)
+        }
+      `,
+    },
+  ]
+
+  const runHookObjectScenario = async (source: string, optimize: boolean) => {
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {}, { optimize })
     const dispose = mod.mount(container)
     await tick()
 
@@ -427,56 +437,17 @@ describe('compiler + fict integration', () => {
     expect(readDouble()).toBe('Double: 4')
 
     dispose()
-  })
+  }
 
-  it('supports hook-style helpers spread into rest binding', async () => {
-    const source = `
-      import { $state, render } from 'fict'
-
-      const useCounter = () => {
-        let count = $state(0)
-        const double = count * 2
-        return { count, double }
-      }
-
-      function Counter() {
-        const { ...props } = useCounter()
-        return (
-          <div>
-            <p data-testid="count">Count: {props.count}</p>
-            <p data-testid="double">Double: {props.double}</p>
-            <button data-testid="inc" onClick={() => props.count++}>Increment</button>
-          </div>
-        )
-      }
-
-      export function mount(el: HTMLElement) {
-        return render(() => <Counter />, el)
-      }
-    `
-
-    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
-    const dispose = mod.mount(container)
-    await tick()
-
-    const readCount = () => container.querySelector('[data-testid="count"]')?.textContent
-    const readDouble = () => container.querySelector('[data-testid="double"]')?.textContent
-    const incBtn = container.querySelector('[data-testid="inc"]') as HTMLButtonElement
-
-    expect(readCount()).toBe('Count: 0')
-    expect(readDouble()).toBe('Double: 0')
-
-    incBtn.click()
-    await tick()
-    expect(readCount()).toBe('Count: 1')
-    expect(readDouble()).toBe('Double: 2')
-
-    incBtn.click()
-    await tick()
-    expect(readCount()).toBe('Count: 2')
-    expect(readDouble()).toBe('Double: 4')
-
-    dispose()
+  describe.each([
+    ['optimized', true],
+    ['unoptimized', false],
+  ])('hook-style helpers (%s)', (_label, optimize) => {
+    hookObjectScenarios.forEach(({ name, source }) => {
+      it(`supports ${name}`, async () => {
+        await runHookObjectScenario(source, optimize)
+      })
+    })
   })
 
   it('binds functions returned from external hooks without accessor unwrapping', async () => {

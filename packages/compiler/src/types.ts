@@ -83,6 +83,10 @@ export interface FictCompilerOptions {
   getterCache?: boolean
   /** Emit fine-grained DOM creation/binding code for supported JSX templates */
   fineGrainedDom?: boolean
+  /** Enable HIR optimization passes (DCE/const-fold/CSE) */
+  optimize?: boolean
+  /** Allow inlining single-use derived values even when user-named */
+  inlineDerivedMemos?: boolean
 }
 
 export interface VisitorOptions {
