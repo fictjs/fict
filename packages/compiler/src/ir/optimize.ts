@@ -3577,11 +3577,16 @@ function isCSESafeExpression(expr: Expression, ctx: PurityContext): boolean {
 
 function isCSESafeCall(expr: Expression, ctx: PurityContext): boolean {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
-  if (expr.pure) return true
   const calleeName =
     expr.callee.kind === 'Identifier' ? expr.callee.name : getCalleeName(expr.callee)
+  if (calleeName && IMPURE_CALLEES.has(calleeName)) {
+    if (calleeName === '$memo' || calleeName === 'createMemo') {
+      return !!(ctx.functionPure || expr.pure)
+    }
+    return false
+  }
+  if (expr.pure) return true
   if (!calleeName) return false
-  if (IMPURE_CALLEES.has(calleeName)) return false
   if (PURE_CALLEES.has(calleeName)) return true
   if (ctx.functionPure) return true
   if (calleeName.startsWith('Math.')) {
@@ -3609,11 +3614,14 @@ function isPureCall(expr: Expression, ctx: PurityContext): boolean {
   const calleeName =
     expr.callee.kind === 'Identifier' ? expr.callee.name : getCalleeName(expr.callee)
 
+  if (calleeName && IMPURE_CALLEES.has(calleeName)) {
+    if (calleeName === '$memo' || calleeName === 'createMemo') {
+      return !!(ctx.functionPure || expr.pure)
+    }
+    return false
+  }
   if (expr.pure) return true
   if (!calleeName) return false
-  if (IMPURE_CALLEES.has(calleeName)) {
-    return !!ctx.functionPure && (calleeName === '$memo' || calleeName === 'createMemo')
-  }
   if (PURE_CALLEES.has(calleeName)) return true
   if (ctx.functionPure) return true
   if (calleeName.startsWith('Math.')) {
@@ -3631,6 +3639,23 @@ function getCalleeName(callee: Expression): string | null {
     }
   }
   return null
+}
+
+function functionBodyDeclaresName(blocks: BasicBlock[], targetBase: string): boolean {
+  for (const block of blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' && instr.declarationKind) {
+        if (getSSABaseName(instr.target.name) === targetBase) return true
+      }
+    }
+    const term = block.terminator
+    if (term.kind === 'ForOf' || term.kind === 'ForIn') {
+      if (getSSABaseName(term.variable) === targetBase) return true
+    } else if (term.kind === 'Try') {
+      if (term.catchParam && getSSABaseName(term.catchParam) === targetBase) return true
+    }
+  }
+  return false
 }
 
 function replaceIdentifier(
@@ -3775,7 +3800,13 @@ function replaceIdentifier(
         ),
       }
     case 'ArrowFunction':
-      if (expr.params.some(p => p.name === target)) return expr
+      {
+        const targetBase = getSSABaseName(target)
+        if (expr.params.some(p => getSSABaseName(p.name) === targetBase)) return expr
+        if (!expr.isExpression && functionBodyDeclaresName(expr.body as BasicBlock[], targetBase)) {
+          return expr
+        }
+      }
       if (expr.isExpression) {
         return {
           ...expr,
@@ -3805,7 +3836,12 @@ function replaceIdentifier(
         })),
       }
     case 'FunctionExpression':
-      if (expr.params.some(p => p.name === target)) return expr
+      {
+        const targetBase = getSSABaseName(target)
+        if (expr.name && getSSABaseName(expr.name) === targetBase) return expr
+        if (expr.params.some(p => getSSABaseName(p.name) === targetBase)) return expr
+        if (functionBodyDeclaresName(expr.body, targetBase)) return expr
+      }
       return {
         ...expr,
         body: expr.body.map(block => ({

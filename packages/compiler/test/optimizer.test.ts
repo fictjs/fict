@@ -283,6 +283,17 @@ describe('optimizeHIR', () => {
     expect(hasAssignTarget(optimized, 'unused')).toBe(false)
   })
 
+  it('keeps impure primitives even when annotated pure', () => {
+    const ast = parseFile(`
+      function App() {
+        const __rendered = /* @__PURE__ */ render()
+        return 1
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasAssignTarget(optimized, '__rendered')).toBe(true)
+  })
+
   it('propagates constants across blocks when enabled', () => {
     const previous = process.env.FICT_OPT_CROSS_BLOCK_CONST
     process.env.FICT_OPT_CROSS_BLOCK_CONST = '1'
@@ -330,6 +341,53 @@ describe('optimizeHIR', () => {
         countExpression(optimized, expr => expr.kind === 'Identifier' && expr.name === '__a'),
       ).toBeGreaterThan(0)
       expect(hasAssignTarget(optimized, '__a')).toBe(true)
+    } finally {
+      if (previous === undefined) {
+        delete process.env.FICT_OPT_CROSS_BLOCK_CONST
+      } else {
+        process.env.FICT_OPT_CROSS_BLOCK_CONST = previous
+      }
+    }
+  })
+
+  it('does not replace shadowed names inside nested functions during const propagation', () => {
+    const previous = process.env.FICT_OPT_CROSS_BLOCK_CONST
+    process.env.FICT_OPT_CROSS_BLOCK_CONST = '1'
+    try {
+      const ast = parseFile(`
+        function Foo() {
+          const view = <div />
+          const __x = 1
+          const obj = {
+            fn: () => {
+              const __x = 2
+              return __x
+            },
+            value: __x
+          }
+          return obj
+        }
+      `)
+      const optimized = optimizeHIR(buildHIR(ast))
+      let arrowFn: Expression | null = null
+      countExpression(optimized, expr => {
+        if (!arrowFn && expr.kind === 'ArrowFunction') {
+          arrowFn = expr
+        }
+        return false
+      })
+      expect(arrowFn?.kind).toBe('ArrowFunction')
+      if (arrowFn?.kind === 'ArrowFunction' && !arrowFn.isExpression) {
+        const blocks = arrowFn.body as any[]
+        const returnArgs = blocks
+          .map(block => block.terminator)
+          .filter(term => term.kind === 'Return')
+          .map(term => term.argument)
+        expect(returnArgs.length).toBeGreaterThan(0)
+        const ret = returnArgs[0] as Expression
+        expect(ret?.kind).toBe('Identifier')
+        expect((ret as any).name).toBe('__x')
+      }
     } finally {
       if (previous === undefined) {
         delete process.env.FICT_OPT_CROSS_BLOCK_CONST
