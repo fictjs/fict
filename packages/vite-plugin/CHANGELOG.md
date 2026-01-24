@@ -1,5 +1,13 @@
 # @fictjs/vite-plugin
 
+## 0.2.1
+
+### Patch Changes
+
+- improve HIR
+- Updated dependencies
+  - @fictjs/compiler@0.2.1
+
 ## 0.2.0
 
 ### Minor Changes

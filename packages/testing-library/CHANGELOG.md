@@ -1,5 +1,11 @@
 # @fictjs/testing-library
 
+## 0.2.1
+
+### Patch Changes
+
+- improve HIR
+
 ## 0.2.0
 
 ### Minor Changes

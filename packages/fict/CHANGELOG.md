@@ -1,5 +1,13 @@
 # fict
 
+## 0.2.1
+
+### Patch Changes
+
+- improve HIR
+- Updated dependencies
+  - @fictjs/runtime@0.2.1
+
 ## 0.2.0
 
 ### Minor Changes
