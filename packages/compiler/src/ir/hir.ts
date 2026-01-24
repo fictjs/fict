@@ -581,6 +581,7 @@ export interface HIRFunction extends SourceInfo {
     fromExpression?: boolean
     isArrow?: boolean
     hasExpressionBody?: boolean
+    isAsync?: boolean
     noMemo?: boolean
     pure?: boolean
     /**

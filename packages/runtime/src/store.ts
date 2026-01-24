@@ -35,17 +35,17 @@ export function createStore<T extends object>(
 }
 
 // Map of target object -> Proxy
-const proxyCache = new WeakMap<object, any>()
+const proxyCache = new WeakMap<object, unknown>()
 // Map of target object -> Map<key, Signal>
-const signalCache = new WeakMap<object, Map<string | symbol, SignalAccessor<any>>>()
+const signalCache = new WeakMap<object, Map<string | symbol, SignalAccessor<unknown>>>()
 
 function wrap<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value
-  if ((value as any)[PROXY]) return value
+  if (Reflect.get(value, PROXY)) return value
 
-  if (proxyCache.has(value)) return proxyCache.get(value)
+  if (proxyCache.has(value)) return proxyCache.get(value) as T
 
-  const handler: ProxyHandler<any> = {
+  const handler: ProxyHandler<object> = {
     get(target, prop, receiver) {
       if (prop === PROXY) return true
       if (prop === TARGET) return target
@@ -125,8 +125,8 @@ function wrap<T>(value: T): T {
 }
 
 function unwrap<T>(value: T): T {
-  if (value && typeof value === 'object' && (value as any)[PROXY]) {
-    return (value as any)[TARGET]
+  if (value && typeof value === 'object' && Reflect.get(value, PROXY)) {
+    return Reflect.get(value, TARGET) as T
   }
   return value
 }
@@ -162,14 +162,14 @@ function trigger(target: object, prop: string | symbol) {
   }
 }
 
-function getLastValue(target: any, prop: string | symbol) {
-  return target[prop]
+function getLastValue(target: object, prop: string | symbol) {
+  return Reflect.get(target, prop)
 }
 
 /**
  * Reconcile a store path with a new value (shallow merge/diff)
  */
-function reconcile(target: any, value: any) {
+function reconcile(target: object, value: unknown) {
   if (target === value) return
   if (value === null || typeof value !== 'object') {
     throw new Error(
@@ -184,16 +184,19 @@ function reconcile(target: any, value: any) {
 
   const keys = new Set([...Object.keys(realTarget), ...Object.keys(realValue)])
   for (const key of keys) {
-    if (realValue[key] === undefined && realTarget[key] !== undefined) {
+    const rTarget = realTarget as Record<string, unknown>
+    const rValue = realValue as Record<string, unknown>
+
+    if (rValue[key] === undefined && rTarget[key] !== undefined) {
       // deleted
-      delete target[key] // Triggers proxy trap
-    } else if (realTarget[key] !== realValue[key]) {
-      target[key] = realValue[key] // Triggers proxy trap
+      delete (target as Record<string, unknown>)[key] // Triggers proxy trap
+    } else if (rTarget[key] !== rValue[key]) {
+      ;(target as Record<string, unknown>)[key] = rValue[key] // Triggers proxy trap
     }
   }
 
   // Fix array length if needed
-  if (Array.isArray(target) && target.length !== realValue.length) {
+  if (Array.isArray(target) && Array.isArray(realValue) && target.length !== realValue.length) {
     target.length = realValue.length
   }
 }
@@ -209,13 +212,13 @@ function reconcile(target: any, value: any) {
  */
 export function createDiffingSignal<T extends object>(initialValue: T) {
   let currentValue = unwrap(initialValue)
-  const signals = new Map<string | symbol, SignalAccessor<any>>()
+  const signals = new Map<string | symbol, SignalAccessor<unknown>>()
   let iterateSignal: SignalAccessor<number> | undefined
 
   const getPropSignal = (prop: string | symbol) => {
     let s = signals.get(prop)
     if (!s) {
-      s = signal((currentValue as any)[prop])
+      s = signal(Reflect.get(currentValue as object, prop))
       signals.set(prop, s)
     }
     return s
@@ -269,7 +272,7 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
       // Same ref update: re-evaluate all tracked signals
       // This is necessary for in-place mutations
       for (const [prop, s] of signals) {
-        const newVal = (next as any)[prop]
+        const newVal = Reflect.get(next as object, prop)
         s(newVal)
       }
       updateIterate(next)
@@ -280,8 +283,8 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
     // We only trigger signals for properties that exist in our cache (tracked)
     // and have changed.
     for (const [prop, s] of signals) {
-      const oldVal = (prev as any)[prop]
-      const newVal = (next as any)[prop]
+      const oldVal = Reflect.get(prev as object, prop)
+      const newVal = Reflect.get(next as object, prop)
       if (oldVal !== newVal) {
         s(newVal)
       }

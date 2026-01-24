@@ -209,6 +209,143 @@ function functionContainsJSX(fn: HIRFunction): boolean {
   return false
 }
 
+/**
+ * Check if a structured node contains complex control flow (loops) that
+ * the simple lowering path doesn't handle correctly.
+ */
+function structuredNodeHasComplexControlFlow(node: StructuredNode): boolean {
+  switch (node.kind) {
+    case 'while':
+    case 'doWhile':
+    case 'for':
+    case 'forOf':
+    case 'forIn':
+    case 'switch':
+    case 'try':
+    case 'stateMachine':
+      return true
+    case 'sequence':
+      return node.nodes.some(structuredNodeHasComplexControlFlow)
+    case 'block':
+      return node.statements.some(structuredNodeHasComplexControlFlow)
+    case 'if':
+      return (
+        structuredNodeHasComplexControlFlow(node.consequent) ||
+        (node.alternate !== null && structuredNodeHasComplexControlFlow(node.alternate))
+      )
+    default:
+      return false
+  }
+}
+
+/**
+ * Check if a function contains async/await that the simple lowering
+ * doesn't handle correctly.
+ */
+function functionHasAsyncAwait(fn: HIRFunction): boolean {
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if ((instr.kind === 'Assign' || instr.kind === 'Expression') && instr.value) {
+        if (expressionHasAwait(instr.value)) return true
+      }
+    }
+    if (terminatorHasAwait(block.terminator)) return true
+  }
+  return false
+}
+
+function terminatorHasAwait(term: BasicBlock['terminator']): boolean {
+  switch (term.kind) {
+    case 'Branch':
+      return expressionHasAwait(term.test)
+    case 'Switch':
+      if (expressionHasAwait(term.discriminant)) return true
+      return term.cases.some(c => (c.test ? expressionHasAwait(c.test) : false))
+    case 'ForOf':
+      return expressionHasAwait(term.iterable)
+    case 'ForIn':
+      return expressionHasAwait(term.object)
+    case 'Return':
+      return term.argument ? expressionHasAwait(term.argument) : false
+    case 'Throw':
+      return expressionHasAwait(term.argument)
+    default:
+      return false
+  }
+}
+
+function expressionHasAwait(expr: Expression): boolean {
+  switch (expr.kind) {
+    case 'AwaitExpression':
+      return true
+    case 'CallExpression':
+    case 'OptionalCallExpression':
+      return (
+        expressionHasAwait(expr.callee as Expression) ||
+        expr.arguments.some(arg => expressionHasAwait(arg as Expression))
+      )
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      return (
+        expressionHasAwait(expr.object as Expression) ||
+        expressionHasAwait(expr.property as Expression)
+      )
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      return (
+        expressionHasAwait(expr.left as Expression) || expressionHasAwait(expr.right as Expression)
+      )
+    case 'UnaryExpression':
+      return expressionHasAwait(expr.argument as Expression)
+    case 'ConditionalExpression':
+      return (
+        expressionHasAwait(expr.test as Expression) ||
+        expressionHasAwait(expr.consequent as Expression) ||
+        expressionHasAwait(expr.alternate as Expression)
+      )
+    case 'ArrayExpression':
+      return expr.elements.some(el => el && expressionHasAwait(el as Expression))
+    case 'ObjectExpression':
+      return expr.properties.some(
+        prop =>
+          (prop.kind === 'Property' && expressionHasAwait(prop.value as Expression)) ||
+          (prop.kind === 'SpreadElement' && expressionHasAwait(prop.argument as Expression)),
+      )
+    case 'TemplateLiteral':
+      return expr.expressions.some(ex => expressionHasAwait(ex as Expression))
+    case 'SequenceExpression':
+      return expr.expressions.some(ex => expressionHasAwait(ex as Expression))
+    case 'SpreadElement':
+      return expressionHasAwait(expr.argument as Expression)
+    case 'AssignmentExpression':
+      return (
+        expressionHasAwait(expr.left as Expression) || expressionHasAwait(expr.right as Expression)
+      )
+    case 'UpdateExpression':
+      return expressionHasAwait(expr.argument as Expression)
+    case 'NewExpression':
+      return (
+        expressionHasAwait(expr.callee as Expression) ||
+        expr.arguments.some(arg => expressionHasAwait(arg as Expression))
+      )
+    case 'YieldExpression':
+      return expr.argument ? expressionHasAwait(expr.argument as Expression) : false
+    case 'TaggedTemplateExpression':
+      return (
+        expressionHasAwait(expr.tag as Expression) ||
+        expr.quasi.expressions.some(ex => expressionHasAwait(ex as Expression))
+      )
+    case 'ClassExpression':
+      return expr.superClass ? expressionHasAwait(expr.superClass as Expression) : false
+    case 'ArrowFunction':
+    case 'FunctionExpression':
+      // Don't recurse into nested functions
+      return false
+    default:
+      return false
+  }
+}
+
 function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
   const called = new Set<string>()
 
@@ -1782,6 +1919,7 @@ function lowerFunction(
     t.functionDeclaration(t.identifier(fn.name ?? 'fn'), params, t.blockStatement(statements)),
     fn.loc,
   )
+  result.async = !!fn.meta?.isAsync || functionHasAsyncAwait(fn)
   ctx.trackedVars = prevTracked
   return result
 }
@@ -5722,10 +5860,12 @@ function lowerFunctionWithScopes(
     statements.push(...lowerTerminator(block, ctx))
   }
 
-  return setNodeLoc(
+  const result = setNodeLoc(
     t.functionDeclaration(t.identifier(fn.name ?? 'fn'), params, t.blockStatement(statements)),
     fn.loc,
   )
+  result.async = !!fn.meta?.isAsync || functionHasAsyncAwait(fn)
+  return result
 }
 
 /**
@@ -6094,6 +6234,11 @@ export function lowerHIRWithRegions(
                   found.stmt.generator,
                   found.stmt.async,
                 )
+            if (found.fn.meta?.isAsync) {
+              if (t.isArrowFunctionExpression(funcExpr) || t.isFunctionExpression(funcExpr)) {
+                funcExpr.async = true
+              }
+            }
             rebuiltDeclarators.push(t.variableDeclarator(decl.id, funcExpr))
             generatedFunctions.delete(decl.id.name)
             continue
@@ -6742,7 +6887,48 @@ function lowerFunctionWithRegions(
     (ctx.storeVars?.size ?? 0) > 0 ||
     (ctx.memoVars?.size ?? 0) > 0 ||
     (ctx.aliasVars?.size ?? 0) > 0
+  const isAsync = !!fn.meta?.isAsync || functionHasAsyncAwait(fn)
   if (!hasJSX && !hasTrackedValues) {
+    // For pure functions without JSX or tracked values, check if we can safely lower from HIR.
+    // We skip functions with complex control flow (loops, async) as the simple lowering
+    // doesn't handle all cases correctly.
+    const structured = structurizeCFG(fn)
+    const hasComplexControlFlow = structuredNodeHasComplexControlFlow(structured)
+
+    if (!hasComplexControlFlow && !isAsync) {
+      // For simple pure functions, generate code from optimized HIR
+      // This ensures constant propagation, DCE, and algebraic simplifications are applied
+      const pureDeclaredVars = new Set<string>()
+      const pureStatements = lowerStructuredNodeWithoutRegions(structured, t, ctx, pureDeclaredVars)
+      const params = fn.params.map(p => t.identifier(deSSAVarName(p.name)))
+      const funcDecl = setNodeLoc(
+        t.functionDeclaration(
+          t.identifier(fn.name ?? 'fn'),
+          params,
+          t.blockStatement(pureStatements),
+        ),
+        fn.loc,
+      )
+      funcDecl.async = isAsync
+      ctx.needsCtx = prevNeedsCtx
+      ctx.shadowedNames = prevShadowed
+      ctx.localDeclaredNames = prevLocalDeclared
+      ctx.trackedVars = prevTracked
+      ctx.externalTracked = prevExternalTracked
+      ctx.signalVars = prevSignalVars
+      ctx.functionVars = prevFunctionVars
+      ctx.memoVars = prevMemoVars
+      ctx.storeVars = prevStoreVars
+      ctx.mutatedVars = prevMutatedVars
+      ctx.aliasVars = prevAliasVars
+      ctx.noMemo = prevNoMemo
+      ctx.wrapTrackedExpressions = prevWrapTracked
+      ctx.hookResultVarMap = prevHookResultVarMap
+      ctx.inModule = prevInModule
+      return funcDecl
+    }
+
+    // Fall back to returning null for complex functions
     ctx.needsCtx = prevNeedsCtx
     ctx.shadowedNames = prevShadowed
     ctx.localDeclaredNames = prevLocalDeclared
@@ -6850,6 +7036,7 @@ function lowerFunctionWithRegions(
     t.functionDeclaration(t.identifier(fn.name ?? 'fn'), params, t.blockStatement(statements)),
     fn.loc,
   )
+  funcDecl.async = isAsync
   ctx.needsCtx = prevNeedsCtx
   ctx.shadowedNames = prevShadowed
   ctx.localDeclaredNames = prevLocalDeclared

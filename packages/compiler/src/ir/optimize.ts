@@ -2581,8 +2581,231 @@ function evaluateBinary(
 
 function foldExpression(expr: Expression, constants: Map<string, ConstantValue>): Expression {
   const value = evaluateConstant(expr, constants)
-  if (value === UNKNOWN_CONST) return expr
+  if (value === UNKNOWN_CONST) {
+    // Try algebraic simplification if constant folding failed
+    return simplifyAlgebraically(expr, constants)
+  }
   return { kind: 'Literal', value, loc: expr.loc }
+}
+
+/**
+ * Algebraic simplification pass.
+ * Applies conservative identity rules for arithmetic/logical operations.
+ *
+ * Arithmetic simplifications are intentionally limited here to avoid
+ * changing JS coercion or special-case semantics without numeric proof.
+ * Fully-constant expressions are handled by constant folding.
+ *
+ * Logical identities:
+ *   true && x = x
+ *   false || x = x
+ *   false && x = false
+ *   true || x = true
+ *
+ * Conditional identities:
+ *   true ? a : b = a
+ *   false ? a : b = b
+ *   x ? a : a = (x, a) (preserve test evaluation)
+ *
+ * Comparison identities:
+ *   x === x = true (for literals)
+ *   x !== x = false (for literals)
+ */
+function simplifyAlgebraically(
+  expr: Expression,
+  constants: Map<string, ConstantValue>,
+): Expression {
+  // First, recursively simplify children
+  const simplified = simplifyChildren(expr, constants)
+
+  if (simplified.kind === 'BinaryExpression') {
+    const { operator, left, right, loc } = simplified
+
+    switch (operator) {
+      case '===':
+      case '==':
+        // x === x for same literal values
+        if (left.kind === 'Literal' && right.kind === 'Literal' && left.value === right.value) {
+          return { kind: 'Literal', value: true, loc }
+        }
+        break
+
+      case '!==':
+      case '!=':
+        // x !== x for same literal values
+        if (left.kind === 'Literal' && right.kind === 'Literal' && left.value === right.value) {
+          return { kind: 'Literal', value: false, loc }
+        }
+        break
+    }
+  }
+
+  if (simplified.kind === 'LogicalExpression') {
+    const { operator, left, right, loc } = simplified
+    const leftConst = left.kind === 'Literal' ? left.value : undefined
+
+    switch (operator) {
+      case '&&':
+        // true && x = x
+        if (leftConst === true) return right
+        // false && x = false
+        if (leftConst === false) return { kind: 'Literal', value: false, loc }
+        // x && false = false (but x might have side effects, so keep as-is)
+        break
+
+      case '||':
+        // false || x = x
+        if (leftConst === false) return right
+        // true || x = true
+        if (leftConst === true) return { kind: 'Literal', value: true, loc }
+        // x || true = true (but x might have side effects, so keep as-is)
+        break
+
+      case '??':
+        // non-nullish ?? x = non-nullish
+        if (leftConst !== null && leftConst !== undefined && left.kind === 'Literal') {
+          return left
+        }
+        // null ?? x = x, undefined ?? x = x
+        if (leftConst === null || leftConst === undefined) return right
+        break
+    }
+  }
+
+  if (simplified.kind === 'UnaryExpression') {
+    const { operator, argument, loc } = simplified
+
+    switch (operator) {
+      case '!':
+        // !!x simplification (double negation)
+        if (argument.kind === 'UnaryExpression' && argument.operator === '!' && argument.prefix) {
+          // !!x where x is boolean literal
+          const inner = argument.argument
+          if (inner.kind === 'Literal' && typeof inner.value === 'boolean') {
+            return inner
+          }
+        }
+        // !true = false, !false = true
+        if (argument.kind === 'Literal') {
+          if (argument.value === true) return { kind: 'Literal', value: false, loc }
+          if (argument.value === false) return { kind: 'Literal', value: true, loc }
+        }
+        break
+
+      case '-':
+        // --x = x (double negation for numbers)
+        if (argument.kind === 'UnaryExpression' && argument.operator === '-' && argument.prefix) {
+          return argument.argument
+        }
+        // -0 = 0 (but -0 is different in JS, so be careful)
+        break
+
+      case '+':
+        // +x where x is already a number literal = x
+        if (argument.kind === 'Literal' && typeof argument.value === 'number') {
+          return argument
+        }
+        break
+    }
+  }
+
+  if (simplified.kind === 'ConditionalExpression') {
+    const { test, consequent, alternate, loc } = simplified
+
+    // true ? a : b = a
+    if (test.kind === 'Literal' && test.value === true) {
+      return consequent
+    }
+    // false ? a : b = b
+    if (test.kind === 'Literal' && test.value === false) {
+      return alternate
+    }
+    // x ? a : a = a (when consequent and alternate are identical literals)
+    if (
+      consequent.kind === 'Literal' &&
+      alternate.kind === 'Literal' &&
+      consequent.value === alternate.value
+    ) {
+      return { kind: 'SequenceExpression', expressions: [test, consequent], loc }
+    }
+  }
+
+  return simplified
+}
+
+/**
+ * Recursively simplify children of an expression.
+ */
+function simplifyChildren(expr: Expression, constants: Map<string, ConstantValue>): Expression {
+  switch (expr.kind) {
+    case 'BinaryExpression':
+      return {
+        ...expr,
+        left: simplifyAlgebraically(expr.left as Expression, constants),
+        right: simplifyAlgebraically(expr.right as Expression, constants),
+      }
+    case 'LogicalExpression':
+      return {
+        ...expr,
+        left: simplifyAlgebraically(expr.left as Expression, constants),
+        right: simplifyAlgebraically(expr.right as Expression, constants),
+      }
+    case 'UnaryExpression':
+      return {
+        ...expr,
+        argument: simplifyAlgebraically(expr.argument as Expression, constants),
+      }
+    case 'ConditionalExpression':
+      return {
+        ...expr,
+        test: simplifyAlgebraically(expr.test as Expression, constants),
+        consequent: simplifyAlgebraically(expr.consequent as Expression, constants),
+        alternate: simplifyAlgebraically(expr.alternate as Expression, constants),
+      }
+    case 'ArrayExpression':
+      return {
+        ...expr,
+        elements: expr.elements.map(el =>
+          el ? simplifyAlgebraically(el as Expression, constants) : el,
+        ),
+      }
+    case 'ObjectExpression':
+      return {
+        ...expr,
+        properties: expr.properties.map(prop => {
+          if (prop.kind === 'Property') {
+            return {
+              ...prop,
+              value: simplifyAlgebraically(prop.value as Expression, constants),
+            }
+          }
+          if (prop.kind === 'SpreadElement') {
+            return {
+              ...prop,
+              argument: simplifyAlgebraically(prop.argument as Expression, constants),
+            }
+          }
+          return prop
+        }),
+      }
+    case 'CallExpression':
+    case 'OptionalCallExpression':
+      return {
+        ...expr,
+        arguments: expr.arguments.map(arg => simplifyAlgebraically(arg, constants)),
+      }
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      return {
+        ...expr,
+        object: simplifyAlgebraically(expr.object as Expression, constants),
+        property: expr.computed
+          ? simplifyAlgebraically(expr.property as Expression, constants)
+          : expr.property,
+      }
+    default:
+      return expr
+  }
 }
 
 function foldExpressionWithConstants(

@@ -536,6 +536,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
             pure: programPure,
             directives: stmt.body.directives,
             loc: getLoc(stmt),
+            isAsync: stmt.async,
             astNode: stmt,
           }),
         )
@@ -555,6 +556,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
               pure: programPure,
               directives: decl.body.directives,
               loc: getLoc(decl),
+              isAsync: decl.async,
               astNode: [decl, stmt],
             }),
           )
@@ -579,12 +581,14 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
                     pure: programPure,
                     directives: body.directives,
                     loc: getLoc(v.init ?? v),
+                    isAsync: v.init.async,
                     astNode: [v.init, v, decl, stmt],
                   })
                 : convertFunction(name, params, [t.returnStatement(body as any)], {
                     noMemo: programNoMemo,
                     pure: programPure,
                     loc: getLoc(v.init ?? v),
+                    isAsync: v.init.async,
                     astNode: [v.init, v, decl, stmt],
                   })
               fnHIR.meta = {
@@ -622,6 +626,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
               pure: programPure,
               directives: decl.body.directives,
               loc: getLoc(decl),
+              isAsync: decl.async,
               astNode: [decl, stmt],
             }),
           )
@@ -653,6 +658,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
                   pure: programPure,
                   directives: body.directives,
                   loc: getLoc(decl.init ?? decl),
+                  isAsync: decl.init.async,
                   astNode: [decl.init, decl, stmt],
                 })
               : convertFunction(
@@ -663,6 +669,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
                     noMemo: programNoMemo,
                     pure: programPure,
                     loc: getLoc(decl.init ?? decl),
+                    isAsync: decl.init.async,
                     astNode: [decl.init, decl, stmt],
                   },
                 )
@@ -696,6 +703,7 @@ function convertFunction(
     pure?: boolean
     directives?: BabelCore.types.Directive[] | null
     loc?: BabelCore.types.SourceLocation | null
+    isAsync?: boolean
     /** Original AST node(s) for parsing @fictReturn annotations */
     astNode?: BabelCore.types.Node | null | (BabelCore.types.Node | null | undefined)[]
   },
@@ -1339,11 +1347,12 @@ function convertFunction(
   const hasNoMemo =
     !!options?.noMemo || hasNoMemoDirective(options?.directives ?? null) || hasNoMemoInBody
   const hasPure = !!options?.pure || hasPureDirective(options?.directives ?? null) || hasPureInBody
+  const isAsync = !!options?.isAsync
 
   // Parse @fictReturn annotation for cross-module hook return info
   const fictReturnInfo = parseFictReturnAnnotation(options?.astNode)
 
-  const hasMeta = hasNoMemo || hasPure || fictReturnInfo
+  const hasMeta = hasNoMemo || hasPure || fictReturnInfo || isAsync
 
   return {
     rawParams: params,
@@ -1355,6 +1364,7 @@ function convertFunction(
           ...(hasNoMemo ? { noMemo: true } : null),
           ...(hasPure ? { pure: true } : null),
           ...(fictReturnInfo ? { hookReturnInfo: fictReturnInfo } : null),
+          ...(isAsync ? { isAsync: true } : null),
         }
       : undefined,
     loc: options?.loc ?? null,

@@ -7,6 +7,7 @@ import {
   registerRootCleanup,
   type RootContext,
 } from './lifecycle'
+import type { SuspenseToken } from './types'
 
 const isDev =
   typeof __DEV__ !== 'undefined'
@@ -820,7 +821,7 @@ function runEffect(e: EffectNode): void {
     try {
       isDirty = checkDirty(e.deps, e)
     } catch (err) {
-      if (handleSuspend(err as any, e.root)) {
+      if (handleSuspend(err as SuspenseToken, e.root)) {
         if (e.flags !== 0) {
           e.flags = Watching
         }

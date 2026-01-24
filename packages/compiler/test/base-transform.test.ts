@@ -120,6 +120,30 @@ describe('createFictPlugin (HIR)', () => {
       ).toThrow('$effect() cannot be called inside loops or conditionals')
     })
 
+    it('preserves async function declarations with await in terminators', () => {
+      const output = transform(`
+        async function fetcher(flag) {
+          if (flag) {
+            return await fetchData()
+          }
+          return 1
+        }
+      `)
+
+      expect(output).toContain('async function fetcher')
+      expect(output).toContain('await fetchData()')
+    })
+
+    it('preserves async functions even without await', () => {
+      const output = transform(`
+        async function noop() {
+          return 1
+        }
+      `)
+
+      expect(output).toContain('async function noop')
+    })
+
     it('rewrites $effect to useEffect', () => {
       const output = transform(`
         import { $state, $effect } from 'fict'
