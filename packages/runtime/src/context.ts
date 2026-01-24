@@ -45,6 +45,7 @@
  */
 
 import { createElement } from './dom'
+import { createRenderEffect } from './effect'
 import {
   createRootContext,
   destroyRoot,
@@ -55,7 +56,6 @@ import {
   type RootContext,
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
-import { createRenderEffect } from './effect'
 import type { BaseProps, FictNode } from './types'
 
 // ============================================================================

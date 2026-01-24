@@ -1,3 +1,5 @@
+import * as t from '@babel/types'
+
 import type {
   BasicBlock,
   Expression,
@@ -10,10 +12,9 @@ import type {
   BlockId,
 } from './hir'
 import { getSSABaseName, makeSSAName } from './hir'
-import { analyzeCFG, enterSSA } from './ssa'
-import { analyzeReactiveScopesWithSSA, type ReactiveScopeResult } from './scopes'
 import { isHookLikeFunction } from './hook-utils'
-import * as t from '@babel/types'
+import { analyzeReactiveScopesWithSSA, type ReactiveScopeResult } from './scopes'
+import { analyzeCFG, enterSSA } from './ssa'
 
 type ConstantValue = string | number | boolean | null | undefined
 type ConstObjectFields = Map<string, ConstantValue>

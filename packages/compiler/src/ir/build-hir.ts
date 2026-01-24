@@ -142,7 +142,7 @@ export interface ParsedFictReturn {
  * @returns Parsed return info or null if no annotation found
  */
 export function parseFictReturnAnnotation(
-  node: BabelCore.types.Node | null | undefined | Array<BabelCore.types.Node | null | undefined>,
+  node: BabelCore.types.Node | null | undefined | (BabelCore.types.Node | null | undefined)[],
 ): ParsedFictReturn | null {
   if (!node) return null
 
@@ -697,7 +697,7 @@ function convertFunction(
     directives?: BabelCore.types.Directive[] | null
     loc?: BabelCore.types.SourceLocation | null
     /** Original AST node(s) for parsing @fictReturn annotations */
-    astNode?: BabelCore.types.Node | null | Array<BabelCore.types.Node | null | undefined>
+    astNode?: BabelCore.types.Node | null | (BabelCore.types.Node | null | undefined)[]
   },
 ): HIRFunction {
   const paramIds: HIdentifier[] = []

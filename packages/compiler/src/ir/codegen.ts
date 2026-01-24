@@ -7,7 +7,6 @@ import type { FictCompilerOptions } from '../types'
 import { DiagnosticCode, reportDiagnostic } from '../validation'
 
 import { convertStatementsToHIRFunction } from './build-hir'
-import { isHookLikeFunction, isHookName } from './hook-utils'
 import {
   HIRError,
   type BasicBlock,
@@ -19,6 +18,7 @@ import {
   type JSXChild,
   type JSXElementExpression,
 } from './hir'
+import { isHookLikeFunction, isHookName } from './hook-utils'
 import { buildPropsExpression } from './props-plan'
 import {
   deSSAVarName,
@@ -28,6 +28,7 @@ import {
 } from './regions'
 import { generateRegions, generateRegionCode, regionToMetadata } from './regions'
 import type { ReactiveScopeResult } from './scopes'
+import { analyzeReactiveScopesWithSSA } from './scopes'
 import { analyzeCFG } from './ssa'
 import { structurizeCFG, structurizeCFGWithDiagnostics, type StructuredNode } from './structurize'
 
@@ -5809,8 +5810,6 @@ function lowerInstructionWithScopes(
 // ============================================================================
 // Region-Based Codegen (P0 Integration)
 // ============================================================================
-
-import { analyzeReactiveScopesWithSSA } from './scopes'
 
 interface MacroAliases {
   state?: Set<string>
