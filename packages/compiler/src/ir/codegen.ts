@@ -659,6 +659,19 @@ function getHookReturnInfo(name: string, ctx: CodegenContext): HookReturnInfo | 
   const fn = ctx.programFunctions?.get(name)
   if (!fn) return null
 
+  // Priority: meta annotation > same-file analysis
+  // Check for @fictReturn annotation in function meta first
+  if (fn.meta?.hookReturnInfo) {
+    const annotationInfo: HookReturnInfo = {
+      objectProps: fn.meta.hookReturnInfo.objectProps,
+      arrayProps: fn.meta.hookReturnInfo.arrayProps,
+      directAccessor: fn.meta.hookReturnInfo.directAccessor,
+    }
+    ctx.hookReturnInfo.set(name, annotationInfo)
+    return annotationInfo
+  }
+
+  // Fallback to same-file analysis
   const info = analyzeHookReturnInfo(fn, ctx)
   if (info) {
     ctx.hookReturnInfo.set(name, info)

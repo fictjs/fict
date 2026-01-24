@@ -122,6 +122,87 @@ function hasPureAnnotation(node: BabelCore.types.Node | null | undefined): boole
 }
 
 /**
+ * Parsed @fictReturn annotation result.
+ */
+export interface ParsedFictReturn {
+  objectProps?: Map<string, 'signal' | 'memo'>
+  arrayProps?: Map<number, 'signal' | 'memo'>
+  directAccessor?: 'signal' | 'memo'
+}
+
+/**
+ * Parse @fictReturn JSDoc annotation from one or more nodes.
+ *
+ * Supported formats:
+ * - Object return: @fictReturn { count: 'signal', double: 'memo' }
+ * - Array return: @fictReturn [0: 'signal', 1: 'memo']
+ * - Direct accessor: @fictReturn 'signal' or @fictReturn 'memo'
+ *
+ * @param node - The function node to parse annotations from
+ * @returns Parsed return info or null if no annotation found
+ */
+export function parseFictReturnAnnotation(
+  node: BabelCore.types.Node | null | undefined | Array<BabelCore.types.Node | null | undefined>,
+): ParsedFictReturn | null {
+  if (!node) return null
+
+  const nodes = Array.isArray(node) ? node : [node]
+  for (const current of nodes) {
+    if (!current) continue
+    const comments = current.leadingComments ?? []
+    for (const comment of comments) {
+      // Match @fictReturn annotation
+      const match = comment.value.match(/@fictReturn\s+(.+?)(?:\s*\*\/|\s*$|\n)/s)
+      if (!match) continue
+
+      const content = match[1].trim()
+
+      // Direct accessor: 'signal' or 'memo'
+      if (content === "'signal'" || content === '"signal"') {
+        return { directAccessor: 'signal' }
+      }
+      if (content === "'memo'" || content === '"memo"') {
+        return { directAccessor: 'memo' }
+      }
+
+      // Object format: { key: 'signal', key2: 'memo' }
+      const objectMatch = content.match(/^\{([^}]+)\}$/)
+      if (objectMatch) {
+        const objectProps = new Map<string, 'signal' | 'memo'>()
+        const propsStr = objectMatch[1]
+        // Parse key: 'value' pairs
+        const propPattern = /(\w+)\s*:\s*['"]?(signal|memo)['"]?/g
+        let propMatch
+        while ((propMatch = propPattern.exec(propsStr)) !== null) {
+          objectProps.set(propMatch[1], propMatch[2] as 'signal' | 'memo')
+        }
+        if (objectProps.size > 0) {
+          return { objectProps }
+        }
+      }
+
+      // Array format: [0: 'signal', 1: 'memo']
+      const arrayMatch = content.match(/^\[([^\]]+)\]$/)
+      if (arrayMatch) {
+        const arrayProps = new Map<number, 'signal' | 'memo'>()
+        const propsStr = arrayMatch[1]
+        // Parse index: 'value' pairs
+        const propPattern = /(\d+)\s*:\s*['"]?(signal|memo)['"]?/g
+        let propMatch
+        while ((propMatch = propPattern.exec(propsStr)) !== null) {
+          arrayProps.set(parseInt(propMatch[1], 10), propMatch[2] as 'signal' | 'memo')
+        }
+        if (arrayProps.size > 0) {
+          return { arrayProps }
+        }
+      }
+    }
+  }
+
+  return null
+}
+
+/**
  * Extract identifiers from destructuring patterns.
  * Handles object patterns, array patterns, rest elements, and assignment patterns.
  */
@@ -455,6 +536,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
             pure: programPure,
             directives: stmt.body.directives,
             loc: getLoc(stmt),
+            astNode: stmt,
           }),
         )
         continue
@@ -473,6 +555,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
               pure: programPure,
               directives: decl.body.directives,
               loc: getLoc(decl),
+              astNode: [decl, stmt],
             }),
           )
           // We'll recreate the export in codegen
@@ -496,11 +579,13 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
                     pure: programPure,
                     directives: body.directives,
                     loc: getLoc(v.init ?? v),
+                    astNode: [v.init, v, decl, stmt],
                   })
                 : convertFunction(name, params, [t.returnStatement(body as any)], {
                     noMemo: programNoMemo,
                     pure: programPure,
                     loc: getLoc(v.init ?? v),
+                    astNode: [v.init, v, decl, stmt],
                   })
               fnHIR.meta = {
                 ...(fnHIR.meta ?? {}),
@@ -537,6 +622,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
               pure: programPure,
               directives: decl.body.directives,
               loc: getLoc(decl),
+              astNode: [decl, stmt],
             }),
           )
           postamble.push({ kind: 'ExportDefault', name })
@@ -567,6 +653,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
                   pure: programPure,
                   directives: body.directives,
                   loc: getLoc(decl.init ?? decl),
+                  astNode: [decl.init, decl, stmt],
                 })
               : convertFunction(
                   name,
@@ -576,6 +663,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
                     noMemo: programNoMemo,
                     pure: programPure,
                     loc: getLoc(decl.init ?? decl),
+                    astNode: [decl.init, decl, stmt],
                   },
                 )
             fnHIR.meta = { ...(fnHIR.meta ?? {}), fromExpression: true, isArrow, hasExpressionBody }
@@ -608,6 +696,8 @@ function convertFunction(
     pure?: boolean
     directives?: BabelCore.types.Directive[] | null
     loc?: BabelCore.types.SourceLocation | null
+    /** Original AST node(s) for parsing @fictReturn annotations */
+    astNode?: BabelCore.types.Node | null | Array<BabelCore.types.Node | null | undefined>
   },
 ): HIRFunction {
   const paramIds: HIdentifier[] = []
@@ -1250,18 +1340,23 @@ function convertFunction(
     !!options?.noMemo || hasNoMemoDirective(options?.directives ?? null) || hasNoMemoInBody
   const hasPure = !!options?.pure || hasPureDirective(options?.directives ?? null) || hasPureInBody
 
+  // Parse @fictReturn annotation for cross-module hook return info
+  const fictReturnInfo = parseFictReturnAnnotation(options?.astNode)
+
+  const hasMeta = hasNoMemo || hasPure || fictReturnInfo
+
   return {
     rawParams: params,
     name,
     params: paramIds,
     blocks,
-    meta:
-      hasNoMemo || hasPure
-        ? {
-            ...(hasNoMemo ? { noMemo: true } : null),
-            ...(hasPure ? { pure: true } : null),
-          }
-        : undefined,
+    meta: hasMeta
+      ? {
+          ...(hasNoMemo ? { noMemo: true } : null),
+          ...(hasPure ? { pure: true } : null),
+          ...(fictReturnInfo ? { hookReturnInfo: fictReturnInfo } : null),
+        }
+      : undefined,
     loc: options?.loc ?? null,
   }
 }
@@ -2236,6 +2331,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
         pure: hasPureDirectiveInStatements(node.body.body),
         directives: node.body.directives,
         loc: getLoc(node),
+        astNode: node,
       })
       const arrow: HArrowFunctionExpression = {
         kind: 'ArrowFunction',
@@ -2274,6 +2370,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       pure: hasPureDirectiveInStatements(node.body.body),
       directives: node.body.directives,
       loc: getLoc(node),
+      astNode: node,
     })
     const fn: HFunctionExpression = {
       kind: 'FunctionExpression',

@@ -583,6 +583,15 @@ export interface HIRFunction extends SourceInfo {
     hasExpressionBody?: boolean
     noMemo?: boolean
     pure?: boolean
+    /**
+     * Hook return info parsed from @fictReturn JSDoc annotation.
+     * Allows cross-module hook return type declarations.
+     */
+    hookReturnInfo?: {
+      objectProps?: Map<string, 'signal' | 'memo'>
+      arrayProps?: Map<number, 'signal' | 'memo'>
+      directAccessor?: 'signal' | 'memo'
+    }
   }
 }
 
