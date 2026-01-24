@@ -11,6 +11,8 @@
  */
 
 import type { HIRFunction, Instruction, Expression } from './hir'
+import * as t from '@babel/types'
+import { structurizeCFG, type StructuredNode } from './structurize'
 
 /**
  * Shape state for a single object
@@ -51,6 +53,14 @@ export interface ShapeAnalysisResult {
   spreadWrapping: Set<string>
 }
 
+type KeyNarrowingContext = Map<string, string | number>
+
+interface EqualityNarrowing {
+  name: string
+  value: string | number
+  kind: 'eq' | 'neq'
+}
+
 /**
  * Create an empty/unknown shape
  */
@@ -79,6 +89,87 @@ function createPropsShape(): ObjectShape {
   }
 }
 
+function cloneKeyContext(ctx: KeyNarrowingContext): KeyNarrowingContext {
+  return new Map(ctx)
+}
+
+type BabelPattern = t.PatternLike | t.LVal | null | undefined
+
+function clearPatternBindings(pattern: BabelPattern, ctx: KeyNarrowingContext): void {
+  if (!pattern || typeof pattern !== 'object') return
+
+  if (t.isIdentifier(pattern)) {
+    ctx.delete(pattern.name)
+    return
+  }
+  if (t.isRestElement(pattern)) {
+    clearPatternBindings(pattern.argument, ctx)
+    return
+  }
+  if (t.isAssignmentPattern(pattern)) {
+    clearPatternBindings(pattern.left, ctx)
+    return
+  }
+  if (t.isArrayPattern(pattern)) {
+    for (const element of pattern.elements) {
+      if (element) clearPatternBindings(element, ctx)
+    }
+    return
+  }
+  if (t.isObjectPattern(pattern)) {
+    for (const prop of pattern.properties) {
+      if (t.isRestElement(prop)) {
+        clearPatternBindings(prop.argument, ctx)
+      } else if (t.isObjectProperty(prop)) {
+        clearPatternBindings(prop.value as t.PatternLike, ctx)
+      }
+    }
+  }
+}
+
+function resolveNarrowedKey(expr: Expression, ctx: KeyNarrowingContext): string | number | null {
+  if (expr.kind === 'Literal') {
+    if (typeof expr.value === 'string' || typeof expr.value === 'number') {
+      return expr.value
+    }
+    return null
+  }
+  if (expr.kind === 'Identifier') {
+    return ctx.get(expr.name) ?? null
+  }
+  return null
+}
+
+function extractEqualityNarrowing(expr: Expression): EqualityNarrowing | null {
+  if (expr.kind !== 'BinaryExpression') return null
+  const isEq = expr.operator === '==='
+  const isNeq = expr.operator === '!=='
+  if (!isEq && !isNeq) return null
+
+  const literalValue = (node: Expression): string | number | null => {
+    if (node.kind !== 'Literal') return null
+    if (typeof node.value === 'string' || typeof node.value === 'number') {
+      return node.value
+    }
+    return null
+  }
+
+  if (expr.left.kind === 'Identifier') {
+    const value = literalValue(expr.right as Expression)
+    if (value !== null) {
+      return { name: expr.left.name, value, kind: isEq ? 'eq' : 'neq' }
+    }
+  }
+  if (expr.right.kind === 'Identifier') {
+    const value = literalValue(expr.left as Expression)
+    if (value !== null) {
+      return { name: expr.right.name, value, kind: isEq ? 'eq' : 'neq' }
+    }
+  }
+
+  return null
+}
+
 /**
  * Merge two shapes (join in the lattice)
  */
@@ -99,6 +190,7 @@ function mergeShapes(a: ObjectShape, b: ObjectShape): ObjectShape {
 export function analyzeObjectShapes(fn: HIRFunction): ShapeAnalysisResult {
   const shapes = new Map<string, ObjectShape>()
   const propertyReads = new Map<string, Set<string>>()
+  const devMode = process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'
 
   // Initialize shapes for parameters
   for (const param of fn.params) {
@@ -110,17 +202,39 @@ export function analyzeObjectShapes(fn: HIRFunction): ShapeAnalysisResult {
   }
 
   // First pass: collect all property accesses and assignments
-  for (const block of fn.blocks) {
-    for (const instr of block.instructions) {
-      analyzeInstruction(instr, shapes, propertyReads)
+  const baseCtx: KeyNarrowingContext = new Map()
+  let structured: StructuredNode | null = null
+  try {
+    structured = structurizeCFG(fn, {
+      warnOnIssues: devMode,
+      throwOnIssues: false,
+      useFallback: true,
+    })
+  } catch (error) {
+    if (devMode) {
+      console.warn(
+        '[analyzeObjectShapes] Failed to structurize CFG; falling back to linear scan.',
+        error,
+      )
     }
+    structured = null
+  }
 
-    // Check terminator for property reads and escaping
-    if (block.terminator.kind === 'Return' && block.terminator.argument) {
-      // First analyze for property reads (including JSX attributes)
-      analyzeExpression(block.terminator.argument, shapes, propertyReads)
-      // Then mark as escaping
-      markEscaping(block.terminator.argument, shapes)
+  if (structured && structured.kind !== 'stateMachine') {
+    analyzeStructuredNode(structured, shapes, propertyReads, baseCtx)
+  } else {
+    for (const block of fn.blocks) {
+      for (const instr of block.instructions) {
+        analyzeInstruction(instr, shapes, propertyReads, baseCtx)
+      }
+
+      // Check terminator for property reads and escaping
+      if (block.terminator.kind === 'Return' && block.terminator.argument) {
+        // First analyze for property reads (including JSX attributes)
+        analyzeExpression(block.terminator.argument, shapes, propertyReads, baseCtx)
+        // Then mark as escaping
+        markEscaping(block.terminator.argument, shapes)
+      }
     }
   }
 
@@ -164,6 +278,138 @@ export function analyzeObjectShapes(fn: HIRFunction): ShapeAnalysisResult {
   }
 }
 
+function analyzeStructuredNode(
+  node: StructuredNode,
+  shapes: Map<string, ObjectShape>,
+  propertyReads: Map<string, Set<string>>,
+  ctx: KeyNarrowingContext,
+): void {
+  switch (node.kind) {
+    case 'sequence':
+      node.nodes.forEach(child => analyzeStructuredNode(child, shapes, propertyReads, ctx))
+      return
+    case 'block':
+      node.statements.forEach(child => analyzeStructuredNode(child, shapes, propertyReads, ctx))
+      return
+    case 'instruction':
+      analyzeInstruction(node.instruction, shapes, propertyReads, ctx)
+      return
+    case 'return':
+      if (node.argument) {
+        analyzeExpression(node.argument, shapes, propertyReads, ctx)
+        markEscaping(node.argument, shapes)
+      }
+      return
+    case 'throw':
+      analyzeExpression(node.argument, shapes, propertyReads, ctx)
+      return
+    case 'if': {
+      analyzeExpression(node.test, shapes, propertyReads, ctx)
+      const narrowing = extractEqualityNarrowing(node.test)
+      const consequentCtx = cloneKeyContext(ctx)
+      const alternateCtx = cloneKeyContext(ctx)
+      if (narrowing) {
+        if (narrowing.kind === 'eq') {
+          consequentCtx.set(narrowing.name, narrowing.value)
+        } else {
+          alternateCtx.set(narrowing.name, narrowing.value)
+        }
+      }
+      analyzeStructuredNode(node.consequent, shapes, propertyReads, consequentCtx)
+      if (node.alternate) {
+        analyzeStructuredNode(node.alternate, shapes, propertyReads, alternateCtx)
+      }
+      return
+    }
+    case 'switch': {
+      analyzeExpression(node.discriminant, shapes, propertyReads, ctx)
+      const discriminant = node.discriminant.kind === 'Identifier' ? node.discriminant.name : null
+      for (const caseNode of node.cases) {
+        const caseCtx = cloneKeyContext(ctx)
+        if (
+          discriminant &&
+          caseNode.test?.kind === 'Literal' &&
+          (typeof caseNode.test.value === 'string' || typeof caseNode.test.value === 'number')
+        ) {
+          caseCtx.set(discriminant, caseNode.test.value)
+        }
+        analyzeStructuredNode(caseNode.body, shapes, propertyReads, caseCtx)
+      }
+      return
+    }
+    case 'while':
+      analyzeExpression(node.test, shapes, propertyReads, ctx)
+      analyzeStructuredNode(node.body, shapes, propertyReads, cloneKeyContext(ctx))
+      return
+    case 'doWhile':
+      analyzeStructuredNode(node.body, shapes, propertyReads, cloneKeyContext(ctx))
+      analyzeExpression(node.test, shapes, propertyReads, ctx)
+      return
+    case 'for': {
+      if (node.init) {
+        node.init.forEach(instr => analyzeInstruction(instr, shapes, propertyReads, ctx))
+      }
+      if (node.test) {
+        analyzeExpression(node.test, shapes, propertyReads, ctx)
+      }
+      analyzeStructuredNode(node.body, shapes, propertyReads, cloneKeyContext(ctx))
+      if (node.update) {
+        node.update.forEach(instr => analyzeInstruction(instr, shapes, propertyReads, ctx))
+      }
+      return
+    }
+    case 'forOf':
+      analyzeExpression(node.iterable, shapes, propertyReads, ctx)
+      {
+        const bodyCtx = cloneKeyContext(ctx)
+        bodyCtx.delete(node.variable)
+        if (node.pattern) {
+          clearPatternBindings(node.pattern, bodyCtx)
+        }
+        analyzeStructuredNode(node.body, shapes, propertyReads, bodyCtx)
+      }
+      return
+    case 'forIn':
+      analyzeExpression(node.object, shapes, propertyReads, ctx)
+      {
+        const bodyCtx = cloneKeyContext(ctx)
+        bodyCtx.delete(node.variable)
+        if (node.pattern) {
+          clearPatternBindings(node.pattern, bodyCtx)
+        }
+        analyzeStructuredNode(node.body, shapes, propertyReads, bodyCtx)
+      }
+      return
+    case 'try':
+      analyzeStructuredNode(node.block, shapes, propertyReads, cloneKeyContext(ctx))
+      if (node.handler) {
+        const handlerCtx = cloneKeyContext(ctx)
+        if (node.handler.param) {
+          handlerCtx.delete(node.handler.param)
+        }
+        analyzeStructuredNode(node.handler.body, shapes, propertyReads, handlerCtx)
+      }
+      if (node.finalizer) {
+        analyzeStructuredNode(node.finalizer, shapes, propertyReads, cloneKeyContext(ctx))
+      }
+      return
+    case 'break':
+    case 'continue':
+      return
+    case 'stateMachine':
+      for (const block of node.blocks) {
+        for (const instr of block.instructions) {
+          analyzeInstruction(instr, shapes, propertyReads, ctx)
+        }
+        if (block.terminator.kind === 'Return' && block.terminator.argument) {
+          analyzeExpression(block.terminator.argument, shapes, propertyReads, ctx)
+          markEscaping(block.terminator.argument, shapes)
+        }
+      }
+      return
+  }
+}
+
 /**
  * Analyze a single instruction for shape information
  */
@@ -171,10 +417,14 @@ function analyzeInstruction(
   instr: Instruction,
   shapes: Map<string, ObjectShape>,
   propertyReads: Map<string, Set<string>>,
+  ctx: KeyNarrowingContext,
 ): void {
   if (instr.kind === 'Assign') {
+    if (ctx.has(instr.target.name)) {
+      ctx.delete(instr.target.name)
+    }
     // Analyze the assigned value
-    const valueShape = analyzeExpression(instr.value, shapes, propertyReads)
+    const valueShape = analyzeExpression(instr.value, shapes, propertyReads, ctx)
     if (valueShape) {
       const existing = shapes.get(instr.target.name)
       if (existing) {
@@ -184,7 +434,7 @@ function analyzeInstruction(
       }
     }
   } else if (instr.kind === 'Expression') {
-    analyzeExpression(instr.value, shapes, propertyReads)
+    analyzeExpression(instr.value, shapes, propertyReads, ctx)
   }
 }
 
@@ -195,6 +445,7 @@ function analyzeExpression(
   expr: Expression,
   shapes: Map<string, ObjectShape>,
   propertyReads: Map<string, Set<string>>,
+  ctx: KeyNarrowingContext,
 ): ObjectShape | null {
   if (!expr || typeof expr !== 'object') return null
 
@@ -215,7 +466,7 @@ function analyzeExpression(
               argShape.isSpread = true
             }
           }
-          analyzeExpression(prop.argument, shapes, propertyReads)
+          analyzeExpression(prop.argument, shapes, propertyReads, ctx)
         } else if (prop.kind === 'Property') {
           if (prop.key.kind === 'Identifier') {
             shape.knownKeys.add(prop.key.name)
@@ -223,7 +474,7 @@ function analyzeExpression(
             shape.knownKeys.add(prop.key.value)
           }
           // Analyze property value for nested shapes
-          analyzeExpression(prop.value, shapes, propertyReads)
+          analyzeExpression(prop.value, shapes, propertyReads, ctx)
         }
       }
       return shape
@@ -253,17 +504,16 @@ function analyzeExpression(
         const baseShape = shapes.get(base)
 
         if (directMember.computed) {
-          // Check if it's a static computed property (literal key)
-          if (
-            directMember.property.kind === 'Literal' &&
-            typeof directMember.property.value === 'string'
-          ) {
-            reads.add(directMember.property.value)
-          } else {
-            // Dynamic property access - mark shape
+          const resolved = resolveNarrowedKey(directMember.property, ctx)
+          if (resolved !== null) {
+            const key = String(resolved)
+            reads.add(key)
             if (baseShape) {
-              baseShape.dynamicAccess = true
+              baseShape.knownKeys.add(key)
             }
+          } else if (baseShape) {
+            // Dynamic property access - mark shape
+            baseShape.dynamicAccess = true
           }
         } else if (directMember.property.kind === 'Identifier') {
           reads.add(directMember.property.name)
@@ -292,18 +542,23 @@ function analyzeExpression(
       // Special-case $state initializer to propagate object shape
       let returnedShape: ObjectShape | null = null
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '$state' && expr.arguments[0]) {
-        returnedShape = analyzeExpression(expr.arguments[0] as Expression, shapes, propertyReads)
+        returnedShape = analyzeExpression(
+          expr.arguments[0] as Expression,
+          shapes,
+          propertyReads,
+          ctx,
+        )
       }
 
       // Analyze callee unless it's a macro we purposefully skip
       if (!(expr.callee.kind === 'Identifier' && expr.callee.name === '$state')) {
-        analyzeExpression(expr.callee, shapes, propertyReads)
+        analyzeExpression(expr.callee, shapes, propertyReads, ctx)
       }
 
       // Analyze remaining arguments (first arg already handled for shape if present)
       expr.arguments
         .slice(returnedShape ? 1 : 0)
-        .forEach(arg => analyzeExpression(arg, shapes, propertyReads))
+        .forEach(arg => analyzeExpression(arg, shapes, propertyReads, ctx))
 
       return returnedShape
     }
@@ -316,28 +571,28 @@ function analyzeExpression(
           shape.isSpread = true
         }
       }
-      analyzeExpression(expr.argument, shapes, propertyReads)
+      analyzeExpression(expr.argument, shapes, propertyReads, ctx)
       return null
     }
 
     case 'ArrayExpression': {
       for (const el of expr.elements) {
-        analyzeExpression(el, shapes, propertyReads)
+        analyzeExpression(el, shapes, propertyReads, ctx)
       }
       return createUnknownShape({ kind: 'local', name: '' })
     }
 
     case 'BinaryExpression':
     case 'LogicalExpression': {
-      analyzeExpression(expr.left, shapes, propertyReads)
-      analyzeExpression(expr.right, shapes, propertyReads)
+      analyzeExpression(expr.left, shapes, propertyReads, ctx)
+      analyzeExpression(expr.right, shapes, propertyReads, ctx)
       return null
     }
 
     case 'ConditionalExpression': {
-      analyzeExpression(expr.test, shapes, propertyReads)
-      const consequent = analyzeExpression(expr.consequent, shapes, propertyReads)
-      const alternate = analyzeExpression(expr.alternate, shapes, propertyReads)
+      analyzeExpression(expr.test, shapes, propertyReads, ctx)
+      const consequent = analyzeExpression(expr.consequent, shapes, propertyReads, ctx)
+      const alternate = analyzeExpression(expr.alternate, shapes, propertyReads, ctx)
       if (consequent && alternate) {
         return mergeShapes(consequent, alternate)
       }
@@ -346,6 +601,11 @@ function analyzeExpression(
 
     case 'AssignmentExpression': {
       // Track mutation
+      if (expr.left.kind === 'Identifier') {
+        if (ctx.has(expr.left.name)) {
+          ctx.delete(expr.left.name)
+        }
+      }
       if (expr.left.kind === 'MemberExpression') {
         const base = getBaseIdentifier(expr.left.object)
         if (base) {
@@ -359,12 +619,27 @@ function analyzeExpression(
             ) {
               shape.mutableKeys.add(expr.left.property.value)
             } else {
-              shape.dynamicAccess = true
+              const resolved = resolveNarrowedKey(expr.left.property as Expression, ctx)
+              if (resolved !== null) {
+                shape.mutableKeys.add(String(resolved))
+              } else {
+                shape.dynamicAccess = true
+              }
             }
           }
         }
       }
-      analyzeExpression(expr.right, shapes, propertyReads)
+      analyzeExpression(expr.right, shapes, propertyReads, ctx)
+      return null
+    }
+
+    case 'UpdateExpression': {
+      if (expr.argument.kind === 'Identifier') {
+        if (ctx.has(expr.argument.name)) {
+          ctx.delete(expr.argument.name)
+        }
+      }
+      analyzeExpression(expr.argument, shapes, propertyReads, ctx)
       return null
     }
 
@@ -379,7 +654,7 @@ function analyzeExpression(
       // Analyze JSX attributes for property access
       for (const attr of expr.attributes) {
         if (attr.value) {
-          analyzeExpression(attr.value, shapes, propertyReads)
+          analyzeExpression(attr.value, shapes, propertyReads, ctx)
         }
         if (attr.isSpread && attr.spreadExpr) {
           // Spread in JSX
@@ -389,15 +664,15 @@ function analyzeExpression(
               shape.isSpread = true
             }
           }
-          analyzeExpression(attr.spreadExpr, shapes, propertyReads)
+          analyzeExpression(attr.spreadExpr, shapes, propertyReads, ctx)
         }
       }
       // Analyze children
       for (const child of expr.children) {
         if (child.kind === 'expression') {
-          analyzeExpression(child.value, shapes, propertyReads)
+          analyzeExpression(child.value, shapes, propertyReads, ctx)
         } else if (child.kind === 'element') {
-          analyzeExpression(child.value as any, shapes, propertyReads)
+          analyzeExpression(child.value as any, shapes, propertyReads, ctx)
         }
       }
       return null

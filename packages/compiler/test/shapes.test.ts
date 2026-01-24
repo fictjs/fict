@@ -72,6 +72,128 @@ describe('Object Shape Lattice Analysis', () => {
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(true)
     })
 
+    it('should narrow dynamic keys within if branches', () => {
+      const ast = parseFile(`
+        function test(props, key) {
+          if (key === 'a') {
+            return props[key]
+          }
+          if (key === 'b') {
+            return props[key]
+          }
+          return null
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('a')).toBe(true)
+      expect(subscriptions!.has('b')).toBe(true)
+    })
+
+    it('should narrow dynamic keys within switch cases', () => {
+      const ast = parseFile(`
+        function test(props, key) {
+          switch (key) {
+            case 'a':
+              return props[key]
+            case 'b':
+              return props[key]
+            default:
+              return null
+          }
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('a')).toBe(true)
+      expect(subscriptions!.has('b')).toBe(true)
+    })
+
+    it('should not narrow dynamic keys with loose equality', () => {
+      const ast = parseFile(`
+        function test(props, key) {
+          if (key == 'a') {
+            return props[key]
+          }
+          return null
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      const propsShape = result.shapes.get('props')
+      expect(propsShape).toBeDefined()
+      expect(propsShape!.dynamicAccess).toBe(true)
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(true)
+    })
+
+    it('should clear narrowing after update expressions', () => {
+      const ast = parseFile(`
+        function test(props, key) {
+          if (key === 'a') {
+            props[key]
+          }
+          key++
+          return props[key]
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      const propsShape = result.shapes.get('props')
+      expect(propsShape).toBeDefined()
+      expect(propsShape!.dynamicAccess).toBe(true)
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(true)
+    })
+
+    it('should preserve narrowing inside for loops before updates', () => {
+      const ast = parseFile(`
+        function test(props, key) {
+          if (key === 'a') {
+            for (; key === 'a'; key++) {
+              return props[key]
+            }
+          }
+          return null
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('a')).toBe(true)
+    })
+
+    it('should not leak narrowing into for-of shadowed bindings', () => {
+      const ast = parseFile(`
+        function test(props, key, items) {
+          if (key === 'a') {
+            for (const key of items) {
+              return props[key]
+            }
+          }
+          return null
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      const propsShape = result.shapes.get('props')
+      expect(propsShape).toBeDefined()
+      expect(propsShape!.dynamicAccess).toBe(true)
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(true)
+    })
+
     it('should track object escaping through return', () => {
       const ast = parseFile(`
         function test(props) {

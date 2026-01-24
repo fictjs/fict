@@ -3675,8 +3675,14 @@ export function buildDependencyGetter(
   }
 
   return parts.reduce<BabelCore.types.Expression>((acc, prop) => {
-    const key = /^[a-zA-Z_$][\w$]*$/.test(prop) ? t.identifier(prop) : t.stringLiteral(prop)
-    return t.memberExpression(acc, key, t.isStringLiteral(key))
+    const numericValue = Number(prop)
+    const useNumeric = Number.isSafeInteger(numericValue) && String(numericValue) === prop
+    const key = useNumeric
+      ? t.numericLiteral(numericValue)
+      : /^[a-zA-Z_$][\w$]*$/.test(prop)
+        ? t.identifier(prop)
+        : t.stringLiteral(prop)
+    return t.memberExpression(acc, key, !t.isIdentifier(key))
   }, baseExpr)
 }
 
