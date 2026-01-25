@@ -1,5 +1,13 @@
 # fict
 
+## 0.2.2
+
+### Patch Changes
+
+- improve compiler
+- Updated dependencies
+  - @fictjs/runtime@0.2.2
+
 ## 0.2.1
 
 ### Patch Changes

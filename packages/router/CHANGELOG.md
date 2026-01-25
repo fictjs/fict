@@ -1,5 +1,11 @@
 # @fictjs/router
 
+## 0.2.2
+
+### Patch Changes
+
+- improve compiler
+
 ## 0.2.1
 
 ### Patch Changes
