@@ -2101,6 +2101,13 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     t.isNullLiteral(node)
   )
     return { kind: 'Literal', value: (node as any).value ?? null, loc } as HLiteral
+  if (t.isRegExpLiteral(node)) {
+    return {
+      kind: 'Literal',
+      value: new RegExp(node.pattern, node.flags ?? ''),
+      loc,
+    } as HLiteral
+  }
   if (t.isCallExpression(node)) {
     const callee = normalizeMacroCallee(node.callee as BabelCore.types.Expression)
     const pure = hasPureAnnotation(node) || hasPureAnnotation(node.callee as any)

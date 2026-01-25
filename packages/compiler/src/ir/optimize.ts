@@ -2223,6 +2223,7 @@ function evaluateLiteral(
 ): ConstantValue | typeof UNKNOWN_CONST {
   switch (expr.kind) {
     case 'Literal':
+      if (expr.value instanceof RegExp) return UNKNOWN_CONST
       return expr.value
     case 'Identifier':
       return constants.has(expr.name) ? (constants.get(expr.name) as ConstantValue) : UNKNOWN_CONST

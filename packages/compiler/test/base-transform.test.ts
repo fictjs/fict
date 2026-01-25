@@ -144,6 +144,78 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).toContain('async function noop')
     })
 
+    it('preserves regex literals in function bodies', () => {
+      const output = transform(`
+        function validateEmail(email: string) {
+          return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)
+        }
+      `)
+
+      expect(output).toContain('/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/')
+      expect(output).not.toContain('undefined.test')
+    })
+
+    it('preserves regex literals with flags', () => {
+      const output = transform(`
+        function search(text: string) {
+          return text.match(/foo/gi)
+        }
+      `)
+
+      expect(output).toContain('/foo/gi')
+    })
+
+    it('preserves regex literals with multiple flags', () => {
+      const output = transform(`
+        function multiline(text: string) {
+          return /^start/gim.test(text)
+        }
+      `)
+
+      expect(output).toContain('/^start/gim')
+    })
+
+    it('preserves empty regex pattern', () => {
+      const output = transform(`
+        function empty() {
+          return /(?:)/.test('')
+        }
+      `)
+
+      expect(output).toContain('/(?:)/')
+    })
+
+    it('preserves regex with escape sequences', () => {
+      const output = transform(`
+        function hasWhitespace(str: string) {
+          return /[\\n\\t\\r]/.test(str)
+        }
+      `)
+
+      expect(output).toContain('/[\\n\\t\\r]/')
+    })
+
+    it('preserves regex in conditional expressions', () => {
+      const output = transform(`
+        function validate(input: string) {
+          const isValid = /^[a-z]+$/.test(input) ? true : false
+          return isValid
+        }
+      `)
+
+      expect(output).toContain('/^[a-z]+$/')
+    })
+
+    it('preserves regex as function argument', () => {
+      const output = transform(`
+        function splitByComma(str: string) {
+          return str.split(/,\\s*/)
+        }
+      `)
+
+      expect(output).toContain('/,\\s*/')
+    })
+
     it('rewrites $effect to useEffect', () => {
       const output = transform(`
         import { $state, $effect } from 'fict'

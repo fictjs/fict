@@ -13,7 +13,7 @@ function formatExpression(expr: Expression, depth = 0): string {
     case 'Identifier':
       return expr.name
     case 'Literal':
-      return JSON.stringify(expr.value)
+      return expr.value instanceof RegExp ? expr.value.toString() : JSON.stringify(expr.value)
     case 'CallExpression':
       return `${formatExpression(expr.callee, depth)}(${expr.arguments.map(a => formatExpression(a, depth)).join(', ')})`
     case 'MemberExpression':

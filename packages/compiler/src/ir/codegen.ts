@@ -2551,6 +2551,9 @@ function lowerExpressionImpl(
       if (typeof expr.value === 'string') return t.stringLiteral(expr.value)
       if (typeof expr.value === 'number') return t.numericLiteral(expr.value)
       if (typeof expr.value === 'boolean') return t.booleanLiteral(expr.value)
+      if (expr.value instanceof RegExp) {
+        return t.regExpLiteral(expr.value.source, expr.value.flags)
+      }
       return t.identifier('undefined')
 
     case 'CallExpression': {

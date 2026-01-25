@@ -271,7 +271,7 @@ export interface Identifier extends SourceInfo {
 
 export interface Literal extends SourceInfo {
   kind: 'Literal'
-  value: string | number | boolean | null | undefined
+  value: string | number | boolean | null | undefined | RegExp
 }
 
 export interface CallExpression extends SourceInfo {
