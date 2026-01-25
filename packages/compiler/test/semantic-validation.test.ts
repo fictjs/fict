@@ -126,11 +126,8 @@ describe('semantic validation', () => {
         return count
       }
     `
-    // This should throw or at least transform the destructuring assignment to setter calls
-    // Note: The current implementation may not support this case
-    const output = transform(source)
-    // If no error, check that it produces valid output (won't throw at runtime)
-    expect(output).toBeDefined()
+    // Destructuring assignment is not supported in HIR conversion.
+    expect(() => transform(source)).toThrow(/Unsupported expression|ArrayPattern|destructuring/i)
   })
 
   it('throws when derived is reassigned inside a branch', () => {

@@ -1141,10 +1141,18 @@ function createHIREntrypointVisitor(
         }
 
         const fileAst = t.file(path.node)
-        const hir = buildHIR(fileAst, {
-          state: stateMacroNames,
-          effect: effectMacroNames,
-        })
+        const hir = buildHIR(
+          fileAst,
+          {
+            state: stateMacroNames,
+            effect: effectMacroNames,
+          },
+          {
+            dev,
+            fileName,
+            onWarn: warn,
+          },
+        )
         const optimized = optionsWithWarnings.optimize
           ? optimizeHIR(hir, {
               memoMacroNames,

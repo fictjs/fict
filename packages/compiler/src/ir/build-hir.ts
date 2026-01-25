@@ -30,6 +30,13 @@ import {
   type UnaryExpression as HUnaryExpression,
   type UpdateExpression as HUpdateExpression,
 } from './hir'
+import type { CompilerWarning } from '../types'
+
+interface BuildHIROptions {
+  dev?: boolean
+  fileName?: string
+  onWarn?: (warning: CompilerWarning) => void
+}
 
 interface BlockBuilder {
   block: BasicBlock
@@ -37,9 +44,33 @@ interface BlockBuilder {
 }
 
 let destructuringTempCounter = 0
+let activeBuildOptions: BuildHIROptions | undefined
 
 const getLoc = (node?: BabelCore.types.Node | null): BabelCore.types.SourceLocation | null => {
   return node?.loc ?? null
+}
+
+const reportUnsupportedExpression = (node: BabelCore.types.Node): never => {
+  const loc = getLoc(node)
+  const line = loc?.start.line ?? 0
+  const column = loc?.start.column ?? 0
+  const fileName = activeBuildOptions?.fileName ?? '<unknown>'
+  const message = `Unsupported expression '${node.type}' in HIR conversion`
+
+  if (activeBuildOptions?.onWarn) {
+    activeBuildOptions.onWarn({
+      code: 'FICT-HIR-UNSUPPORTED',
+      message,
+      fileName,
+      line,
+      column,
+    })
+  }
+
+  throw new HIRError(message, 'BUILD_ERROR', {
+    file: fileName,
+    line: loc?.start.line,
+  })
 }
 
 interface MacroAliases {
@@ -501,9 +532,15 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
  *
  * Future work will expand this into a full CFG + SSA builder.
  */
-export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases): HIRProgram {
+export function buildHIR(
+  ast: BabelCore.types.File,
+  macroAliases?: MacroAliases,
+  options?: BuildHIROptions,
+): HIRProgram {
   const prevMacroAliases = activeMacroAliases
+  const prevOptions = activeBuildOptions
   activeMacroAliases = resolveMacroAliases(macroAliases)
+  activeBuildOptions = options
   try {
     const functions: HIRFunction[] = []
     const preamble: PreambleItem[] = []
@@ -691,6 +728,7 @@ export function buildHIR(ast: BabelCore.types.File, macroAliases?: MacroAliases)
     return { functions, preamble, postamble, originalBody }
   } finally {
     activeMacroAliases = prevMacroAliases
+    activeBuildOptions = prevOptions
   }
 }
 
@@ -2093,7 +2131,46 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       })
       .filter(Boolean) as Expression[]
 
+  if (t.isParenthesizedExpression(node) && t.isExpression(node.expression)) {
+    return convertExpression(node.expression)
+  }
+  if (
+    (t.isTSAsExpression(node) ||
+      t.isTSTypeAssertion(node) ||
+      t.isTSNonNullExpression(node) ||
+      t.isTSSatisfiesExpression(node) ||
+      t.isTSInstantiationExpression(node) ||
+      t.isTypeCastExpression(node)) &&
+    t.isExpression(node.expression)
+  ) {
+    return convertExpression(node.expression)
+  }
+
+  if (t.isImportExpression(node)) {
+    return {
+      kind: 'ImportExpression',
+      source: convertExpression(node.source as BabelCore.types.Expression),
+      loc,
+    }
+  }
+
+  if (t.isMetaProperty(node)) {
+    return {
+      kind: 'MetaProperty',
+      meta: { kind: 'Identifier', name: node.meta.name, loc: getLoc(node.meta) } as HIdentifier,
+      property: {
+        kind: 'Identifier',
+        name: node.property.name,
+        loc: getLoc(node.property),
+      } as HIdentifier,
+      loc,
+    }
+  }
+
   if (t.isIdentifier(node)) return { kind: 'Identifier', name: node.name, loc }
+  if (t.isBigIntLiteral(node)) {
+    return { kind: 'Literal', value: BigInt(node.value), loc } as HLiteral
+  }
   if (
     t.isStringLiteral(node) ||
     t.isNumericLiteral(node) ||
@@ -2107,6 +2184,13 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       value: new RegExp(node.pattern, node.flags ?? ''),
       loc,
     } as HLiteral
+  }
+  if (t.isCallExpression(node) && t.isImport(node.callee)) {
+    const firstArg = node.arguments[0]
+    const source = t.isExpression(firstArg)
+      ? convertExpression(firstArg)
+      : ({ kind: 'Literal', value: undefined, loc } as HLiteral)
+    return { kind: 'ImportExpression', source, loc }
   }
   if (t.isCallExpression(node)) {
     const callee = normalizeMacroCallee(node.callee as BabelCore.types.Expression)
@@ -2524,9 +2608,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
     return { kind: 'SuperExpression', loc }
   }
 
-  // Fallback for unsupported expressions
-  const fallback: HLiteral = { kind: 'Literal', value: undefined, loc }
-  return fallback
+  return reportUnsupportedExpression(node)
 }
 
 function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpression {

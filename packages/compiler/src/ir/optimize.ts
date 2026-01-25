@@ -2223,7 +2223,7 @@ function evaluateLiteral(
 ): ConstantValue | typeof UNKNOWN_CONST {
   switch (expr.kind) {
     case 'Literal':
-      if (expr.value instanceof RegExp) return UNKNOWN_CONST
+      if (expr.value instanceof RegExp || typeof expr.value === 'bigint') return UNKNOWN_CONST
       return expr.value
     case 'Identifier':
       return constants.has(expr.name) ? (constants.get(expr.name) as ConstantValue) : UNKNOWN_CONST
@@ -2795,6 +2795,11 @@ function simplifyChildren(expr: Expression, constants: Map<string, ConstantValue
         ...expr,
         arguments: expr.arguments.map(arg => simplifyAlgebraically(arg, constants)),
       }
+    case 'ImportExpression':
+      return {
+        ...expr,
+        source: simplifyAlgebraically(expr.source as Expression, constants),
+      }
     case 'MemberExpression':
     case 'OptionalMemberExpression':
       return {
@@ -2941,6 +2946,11 @@ function replaceIdentifiersWithConstants(
           inCallee: true,
         }),
         arguments: expr.arguments.map(arg => replaceIdentifiersWithConstants(arg, constants)),
+      }
+    case 'ImportExpression':
+      return {
+        ...expr,
+        source: replaceIdentifiersWithConstants(expr.source as Expression, constants),
       }
     default:
       return expr

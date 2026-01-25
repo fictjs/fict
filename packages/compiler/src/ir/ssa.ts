@@ -241,6 +241,11 @@ function rewriteExprWithMap(expr: any, rewrites: Map<string, string>): any {
           value: rewriteExprWithMap(p.value, rewrites),
         })),
       }
+    case 'ImportExpression':
+      return {
+        ...expr,
+        source: rewriteExprWithMap(expr.source, rewrites),
+      }
     default:
       return expr
   }

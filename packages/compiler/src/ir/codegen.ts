@@ -328,6 +328,8 @@ function expressionHasAwait(expr: Expression): boolean {
         expressionHasAwait(expr.callee as Expression) ||
         expr.arguments.some(arg => expressionHasAwait(arg as Expression))
       )
+    case 'ImportExpression':
+      return expressionHasAwait(expr.source as Expression)
     case 'YieldExpression':
       return expr.argument ? expressionHasAwait(expr.argument as Expression) : false
     case 'TaggedTemplateExpression':
@@ -2551,10 +2553,17 @@ function lowerExpressionImpl(
       if (typeof expr.value === 'string') return t.stringLiteral(expr.value)
       if (typeof expr.value === 'number') return t.numericLiteral(expr.value)
       if (typeof expr.value === 'boolean') return t.booleanLiteral(expr.value)
+      if (typeof expr.value === 'bigint') return t.bigIntLiteral(expr.value.toString())
       if (expr.value instanceof RegExp) {
         return t.regExpLiteral(expr.value.source, expr.value.flags)
       }
       return t.identifier('undefined')
+
+    case 'ImportExpression':
+      return t.importExpression(lowerExpression(expr.source, ctx) as BabelCore.types.Expression)
+
+    case 'MetaProperty':
+      return t.metaProperty(t.identifier(expr.meta.name), t.identifier(expr.property.name))
 
     case 'CallExpression': {
       // Handle Fict macros in HIR path

@@ -13,7 +13,12 @@ function formatExpression(expr: Expression, depth = 0): string {
     case 'Identifier':
       return expr.name
     case 'Literal':
+      if (typeof expr.value === 'bigint') return `${expr.value.toString()}n`
       return expr.value instanceof RegExp ? expr.value.toString() : JSON.stringify(expr.value)
+    case 'ImportExpression':
+      return `import(${formatExpression(expr.source, depth)})`
+    case 'MetaProperty':
+      return `${expr.meta.name}.${expr.property.name}`
     case 'CallExpression':
       return `${formatExpression(expr.callee, depth)}(${expr.arguments.map(a => formatExpression(a, depth)).join(', ')})`
     case 'MemberExpression':

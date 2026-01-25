@@ -3021,10 +3021,17 @@ function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expres
       if (typeof expr.value === 'string') return t.stringLiteral(expr.value)
       if (typeof expr.value === 'number') return t.numericLiteral(expr.value)
       if (typeof expr.value === 'boolean') return t.booleanLiteral(expr.value)
+      if (typeof expr.value === 'bigint') return t.bigIntLiteral(expr.value.toString())
       if (expr.value instanceof RegExp) {
         return t.regExpLiteral(expr.value.source, expr.value.flags)
       }
       return t.identifier('undefined')
+
+    case 'ImportExpression':
+      return t.importExpression(exprToAST(expr.source, t))
+
+    case 'MetaProperty':
+      return t.metaProperty(t.identifier(expr.meta.name), t.identifier(expr.property.name))
 
     case 'BinaryExpression':
       return t.binaryExpression(

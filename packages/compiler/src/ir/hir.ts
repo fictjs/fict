@@ -238,6 +238,8 @@ export function isAssignInstruction(instr: Instruction): instr is AssignInstruct
 export type Expression =
   | Identifier
   | Literal
+  | ImportExpression
+  | MetaProperty
   | CallExpression
   | MemberExpression
   | BinaryExpression
@@ -271,7 +273,18 @@ export interface Identifier extends SourceInfo {
 
 export interface Literal extends SourceInfo {
   kind: 'Literal'
-  value: string | number | boolean | null | undefined | RegExp
+  value: string | number | boolean | bigint | null | undefined | RegExp
+}
+
+export interface ImportExpression extends SourceInfo {
+  kind: 'ImportExpression'
+  source: Expression
+}
+
+export interface MetaProperty extends SourceInfo {
+  kind: 'MetaProperty'
+  meta: Identifier
+  property: Identifier
 }
 
 export interface CallExpression extends SourceInfo {

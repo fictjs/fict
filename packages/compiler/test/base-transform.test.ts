@@ -216,6 +216,47 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).toContain('/,\\s*/')
     })
 
+    it('preserves bigint literals in function bodies', () => {
+      const output = transform(`
+        function big() {
+          return 9007199254740993n
+        }
+      `)
+
+      expect(output).toContain('9007199254740993n')
+      expect(output).not.toContain('return undefined')
+    })
+
+    it('handles TypeScript expression wrappers', () => {
+      const output = transform(`
+        function identity<T>(value: T) {
+          return value
+        }
+
+        function wrap(value: string) {
+          const a = (value as string)!
+          const b = value satisfies string
+          return identity<string>(a) + b
+        }
+      `)
+
+      expect(output).toContain('identity')
+      expect(output).not.toContain('return undefined')
+    })
+
+    it('preserves import expressions and meta properties', () => {
+      const output = transform(`
+        async function load() {
+          const mod = await import('./foo')
+          return import.meta.url + mod
+        }
+      `)
+
+      expect(output).toContain('import(')
+      expect(output).toContain('import.meta')
+      expect(output).not.toContain('return undefined')
+    })
+
     it('rewrites $effect to useEffect', () => {
       const output = transform(`
         import { $state, $effect } from 'fict'

@@ -433,6 +433,9 @@ function collectExprReads(
       expr.arguments?.forEach((a: any) => collectExprReads(a, into, paths, bound))
       return
     }
+    case 'ImportExpression':
+      collectExprReads(expr.source, into, paths, bound)
+      return
     case 'SpreadElement':
       collectExprReads(expr.argument, into, paths, bound)
       return
