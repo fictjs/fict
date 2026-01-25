@@ -128,6 +128,19 @@ export interface Resource<T, Args> {
    * @param keyOverride - Optional cache key override
    */
   prefetch(args: Args, keyOverride?: unknown): void
+
+  /**
+   * Optimistically update cached data for a given args/key.
+   *
+   * @param argsAccessor - Arguments or a getter returning arguments
+   * @param value - New value or updater function
+   * @param options - Optional settings (key override, revalidate)
+   */
+  mutate(
+    argsAccessor: (() => Args) | Args,
+    value: T | ((prev: T | undefined) => T),
+    options?: { key?: unknown; revalidate?: boolean },
+  ): void
 }
 
 /**
@@ -171,6 +184,8 @@ interface ResourceEntry<T, Args> {
   expiresAt: number | undefined
   /** Currently in-flight fetch promise */
   inFlight: Promise<void> | undefined
+  /** Args used for the current in-flight request */
+  inFlightArgs: Args | undefined
   /** AbortController for cancelling in-flight requests */
   controller: AbortController | undefined
 }
@@ -274,6 +289,7 @@ export function resource<T, Args = void>(
         generation: 0,
         expiresAt: undefined,
         inFlight: undefined,
+        inFlightArgs: undefined,
         controller: undefined,
       }
       cache.set(key, state)
@@ -304,6 +320,9 @@ export function resource<T, Args = void>(
     args: Args,
     isRevalidating = false,
   ) => {
+    if (entry.inFlight && entry.inFlightArgs === args) {
+      return
+    }
     entry.controller?.abort()
     entry.inFlight = undefined
     const controller = new AbortController()
@@ -351,10 +370,12 @@ export function resource<T, Args = void>(
       })
       .finally(() => {
         entry.inFlight = undefined
+        entry.inFlightArgs = undefined
         entry.controller = undefined
       })
 
     entry.inFlight = fetchPromise
+    entry.inFlightArgs = args
 
     onCleanup(() => {
       if (resolvedCacheOptions.mode === 'none') {
@@ -391,6 +412,42 @@ export function resource<T, Args = void>(
       entry.lastArgs = args
       entry.lastVersion = entry.version()
       startFetch(entry, key, args)
+    }
+  }
+
+  const mutate = (
+    argsAccessor: (() => Args) | Args,
+    value: T | ((prev: T | undefined) => T),
+    options?: { key?: unknown; revalidate?: boolean },
+  ) => {
+    const args = readArgs(argsAccessor)
+    const key = options?.key ?? computeKey(args)
+    const entry = ensureEntry(key)
+    const prevValue = entry.data()
+    const nextValue =
+      typeof value === 'function' ? (value as (prev: T | undefined) => T)(prevValue) : value
+
+    entry.controller?.abort()
+    entry.inFlight = undefined
+    entry.inFlightArgs = undefined
+    entry.generation += 1
+
+    entry.data(nextValue)
+    entry.hasValue = true
+    entry.status = 'success'
+    entry.loading(false)
+    entry.error(undefined)
+    markExpiry(entry)
+    entry.lastArgs = args
+    entry.lastVersion = entry.version()
+
+    if (entry.pendingToken) {
+      entry.pendingToken.resolve()
+      entry.pendingToken = null
+    }
+
+    if (options?.revalidate) {
+      entry.version(entry.version() + 1)
     }
   }
 
@@ -466,5 +523,6 @@ export function resource<T, Args = void>(
     },
     invalidate,
     prefetch,
+    mutate,
   }
 }

@@ -234,6 +234,19 @@ describe('resource', () => {
     expect(fetcher).toHaveBeenCalledTimes(2)
   })
 
+  it('dedupes prefetch calls for the same key', async () => {
+    const fetcher = vi.fn(() => Promise.resolve('ok'))
+    const r = resource(fetcher)
+
+    r.prefetch('k')
+    r.prefetch('k')
+
+    await vi.runAllTimersAsync()
+    await tick()
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
   it('stale-while-revalidate keeps old data while refreshing', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce(2)
     const r = resource<number, void>({
@@ -333,5 +346,31 @@ describe('resource', () => {
     await tick()
     expect(fetcher).toHaveBeenCalledTimes(2)
     expect(result.data).toBe('value')
+  })
+
+  it('supports mutate with optimistic updates', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce('server').mockResolvedValueOnce('fresh')
+    const r = resource(fetcher)
+
+    let result: any
+    createRoot(() => {
+      result = r.read(() => 'k')
+    })
+
+    await vi.runAllTimersAsync()
+    await tick()
+    expect(result.data).toBe('server')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    r.mutate('k', 'optimistic')
+    expect(result.data).toBe('optimistic')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    r.mutate('k', 'optimistic', { revalidate: true })
+    await tick()
+    await vi.runAllTimersAsync()
+    await tick()
+    expect(result.data).toBe('fresh')
+    expect(fetcher).toHaveBeenCalledTimes(2)
   })
 })

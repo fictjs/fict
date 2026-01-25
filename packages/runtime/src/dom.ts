@@ -687,7 +687,10 @@ const setProperty: AttributeSetter = (el: Element, key: string, value: unknown):
  * Set innerHTML on an element (used for dangerouslySetInnerHTML)
  */
 const setInnerHTML: AttributeSetter = (el: Element, _key: string, value: unknown): void => {
-  ;(el as HTMLElement).innerHTML = value == null ? '' : String(value)
+  const next = value == null ? '' : String(value)
+  const node = el as HTMLElement
+  if (node.innerHTML === next) return
+  node.innerHTML = next
 }
 
 /**
