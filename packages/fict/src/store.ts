@@ -134,6 +134,15 @@ export function $store<T extends object>(initialValue: T): T {
         boundMethods.set(prop, { ref: currentValue as AnyFn, bound })
         return bound
       }
+      {
+        const boundMethods = BOUND_METHOD_CACHE.get(target)
+        if (boundMethods && boundMethods.has(prop)) {
+          boundMethods.delete(prop)
+          if (boundMethods.size === 0) {
+            BOUND_METHOD_CACHE.delete(target)
+          }
+        }
+      }
 
       // If the value is an object/array, we recursively wrap it in a store
       if (typeof currentValue === 'object' && currentValue !== null) {
@@ -160,6 +169,9 @@ export function $store<T extends object>(initialValue: T): T {
       const boundMethods = BOUND_METHOD_CACHE.get(target)
       if (boundMethods && boundMethods.has(prop)) {
         boundMethods.delete(prop)
+        if (boundMethods.size === 0) {
+          BOUND_METHOD_CACHE.delete(target)
+        }
       }
 
       // Update the signal if it exists
@@ -216,6 +228,9 @@ export function $store<T extends object>(initialValue: T): T {
         const boundMethods = BOUND_METHOD_CACHE.get(target)
         if (boundMethods && boundMethods.has(prop)) {
           boundMethods.delete(prop)
+          if (boundMethods.size === 0) {
+            BOUND_METHOD_CACHE.delete(target)
+          }
         }
 
         triggerIteration(target)

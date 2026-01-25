@@ -499,6 +499,100 @@ Not directly. Fict compiles to DOM operations, not React elements.
 
 ---
 
+## Known Limitations
+
+The compiler has some limitations when handling conditional rendering patterns. Understanding these can help you avoid unexpected behavior:
+
+### Multiple Sequential `if-return` Statements
+
+```tsx
+// ⚠️ Only the last if-return pair is converted to createConditional
+function Component() {
+  let count = $state(0)
+  let disabled = $state(false)
+
+  if (disabled) {
+    return <div>Disabled</div> // Treated as regular if statement
+  }
+
+  if (count >= 3) {
+    return <div>High: {count}</div> // ✅ Converted to createConditional
+  }
+  return <div>Low: {count}</div>
+}
+```
+
+**Workaround**: Use nested ternary expressions or restructure with `else if`:
+
+```tsx
+function Component() {
+  let count = $state(0)
+  let disabled = $state(false)
+
+  if (disabled) {
+    return <div>Disabled</div>
+  } else if (count >= 3) {
+    return <div>High: {count}</div>
+  } else {
+    return <div>Low: {count}</div>
+  }
+}
+```
+
+### `if` Blocks Without `return`
+
+```tsx
+// ⚠️ Side effects in if blocks only execute during initial render
+function Component() {
+  let count = $state(0)
+
+  if (count > 0) {
+    console.log('positive:', count) // Only runs once at initial render if true
+  }
+
+  return <button onClick={() => count++}>Count: {count}</button>
+}
+```
+
+**Workaround**: Use `$effect` for reactive side effects:
+
+```tsx
+function Component() {
+  let count = $state(0)
+
+  $effect(() => {
+    if (count > 0) {
+      console.log('positive:', count) // ✅ Runs reactively
+    }
+  })
+
+  return <button onClick={() => count++}>Count: {count}</button>
+}
+```
+
+### Nested `if` Statements Inside Branches
+
+```tsx
+// ⚠️ Inner if-else doesn't re-execute when signal changes within the same branch
+function Component() {
+  let count = $state(0)
+
+  if (count >= 2) {
+    if (count % 2 === 0) {
+      console.log('high and even') // Only runs when branch first renders
+    } else {
+      console.log('high and odd') // Never runs after initial branch render
+    }
+    return <div>High: {count}</div>
+  }
+  return <div>Low: {count}</div>
+}
+```
+
+**Workaround**: Use `$effect` for reactive logic within branches.
+
+---
+
 ## Acknowledgments
 
 Fict is built upon the brilliant ideas and relentless innovation of the open-source community. We would like to express our deepest respect and sincere gratitude to the following projects, whose work has been an indispensable source of inspiration and reference for Fict:

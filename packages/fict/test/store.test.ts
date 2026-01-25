@@ -195,6 +195,29 @@ describe('$store', () => {
       expect(state.fn()).toBe('second')
     })
 
+    it('should not return stale bound methods after external deletion', () => {
+      const raw: any = {
+        value: 'original',
+        getValue() {
+          return this.value
+        },
+      }
+      const state = $store(raw)
+
+      // Cache the bound method
+      expect(state.getValue()).toBe('original')
+
+      // Mutate the raw object directly (bypassing proxy)
+      delete raw.getValue
+      expect(state.getValue).toBeUndefined()
+
+      // Restore with a new function
+      raw.getValue = function () {
+        return this.value + '!'
+      }
+      expect(state.getValue()).toBe('original!')
+    })
+
     it('should maintain correct this binding after reassignment', () => {
       const state = $store({
         name: 'Alice',
