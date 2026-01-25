@@ -1,4 +1,7 @@
+import { transformFromAstSync } from '@babel/core'
 import type * as BabelCore from '@babel/core'
+// @ts-expect-error - CommonJS module without proper types
+import transformDestructuring from '@babel/plugin-transform-destructuring'
 import * as t from '@babel/types'
 
 import {
@@ -50,12 +53,62 @@ const getLoc = (node?: BabelCore.types.Node | null): BabelCore.types.SourceLocat
   return node?.loc ?? null
 }
 
-const reportUnsupportedExpression = (node: BabelCore.types.Node): never => {
+const resolveDestructuringPlugin = (): any => {
+  const mod: any = transformDestructuring
+  return mod?.default ?? mod
+}
+
+const createAssignmentDestructuringPlugin = () => {
+  const pluginFactory = resolveDestructuringPlugin()
+  if (typeof pluginFactory !== 'function') {
+    throw new Error('Expected @babel/plugin-transform-destructuring to export a function')
+  }
+  const plugin = pluginFactory(
+    {
+      assertVersion() {},
+      assumption() {
+        return undefined
+      },
+      types: t,
+    } as any,
+    {},
+  )
+
+  return {
+    visitor: {
+      AssignmentExpression(
+        path: BabelCore.NodePath<BabelCore.types.AssignmentExpression>,
+        state: BabelCore.PluginPass,
+      ) {
+        if (!t.isObjectPattern(path.node.left) && !t.isArrayPattern(path.node.left)) return
+        const visitor = plugin.visitor?.AssignmentExpression
+        if (!visitor) return
+        visitor.call(this, path, state)
+      },
+    },
+  }
+}
+
+const expandDestructuringAssignments = (ast: BabelCore.types.File): BabelCore.types.File => {
+  const result = transformFromAstSync(ast, undefined, {
+    configFile: false,
+    babelrc: false,
+    ast: true,
+    code: false,
+    plugins: [createAssignmentDestructuringPlugin()],
+  })
+  return (result?.ast as BabelCore.types.File) ?? ast
+}
+
+const reportUnsupportedExpression = (
+  node: BabelCore.types.Node,
+  overrideMessage?: string,
+): never => {
   const loc = getLoc(node)
   const line = loc?.start.line ?? 0
   const column = loc?.start.column ?? 0
   const fileName = activeBuildOptions?.fileName ?? '<unknown>'
-  const message = `Unsupported expression '${node.type}' in HIR conversion`
+  const message = overrideMessage ?? `Unsupported expression '${node.type}' in HIR conversion`
 
   if (activeBuildOptions?.onWarn) {
     activeBuildOptions.onWarn({
@@ -323,13 +376,10 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
         return // Stop processing after throw
       }
       if (t.isExpressionStatement(stmt)) {
-        if (t.isAssignmentExpression(stmt.expression) && t.isIdentifier(stmt.expression.left)) {
-          target.instructions.push({
-            kind: 'Assign',
-            target: { kind: 'Identifier', name: stmt.expression.left.name },
-            value: convertAssignmentValue(stmt.expression),
-          })
-        } else {
+        const handled = handleExpressionStatement(stmt.expression, instr =>
+          target.instructions.push(instr),
+        )
+        if (!handled) {
           target.instructions.push({
             kind: 'Expression',
             value: convertExpression(stmt.expression),
@@ -542,21 +592,22 @@ export function buildHIR(
   activeMacroAliases = resolveMacroAliases(macroAliases)
   activeBuildOptions = options
   try {
+    const expandedAst = expandDestructuringAssignments(ast)
     const functions: HIRFunction[] = []
     const preamble: PreambleItem[] = []
     const postamble: PostambleItem[] = []
-    const originalBody = [...ast.program.body] as BabelStatement[]
+    const originalBody = [...expandedAst.program.body] as BabelStatement[]
     const programNoMemo =
-      hasNoMemoDirective(ast.program.directives) ||
-      hasNoMemoDirectiveInStatements(ast.program.body as BabelCore.types.Statement[])
+      hasNoMemoDirective(expandedAst.program.directives) ||
+      hasNoMemoDirectiveInStatements(expandedAst.program.body as BabelCore.types.Statement[])
     const programPure =
-      hasPureDirective(ast.program.directives) ||
-      hasPureDirectiveInStatements(ast.program.body as BabelCore.types.Statement[])
+      hasPureDirective(expandedAst.program.directives) ||
+      hasPureDirectiveInStatements(expandedAst.program.body as BabelCore.types.Statement[])
 
     // Track which function names we've processed to avoid duplicates in export
     const processedFunctions = new Set<string>()
 
-    for (const stmt of ast.program.body) {
+    for (const stmt of expandedAst.program.body) {
       // Import declarations go to preamble
       if (t.isImportDeclaration(stmt)) {
         preamble.push(stmt)
@@ -817,13 +868,10 @@ function convertFunction(
       continue
     }
     if (t.isExpressionStatement(stmt)) {
-      if (t.isAssignmentExpression(stmt.expression) && t.isIdentifier(stmt.expression.left)) {
-        current.block.instructions.push({
-          kind: 'Assign',
-          target: { kind: 'Identifier', name: stmt.expression.left.name },
-          value: convertAssignmentValue(stmt.expression),
-        })
-      } else {
+      const handled = handleExpressionStatement(stmt.expression, instr =>
+        current.block.instructions.push(instr),
+      )
+      if (!handled) {
         current.block.instructions.push({
           kind: 'Expression',
           value: convertExpression(stmt.expression),
@@ -1445,6 +1493,49 @@ function convertAssignmentValue(expr: BabelCore.types.AssignmentExpression): Exp
   return right
 }
 
+type InstructionPush = (instr: BasicBlock['instructions'][number]) => void
+
+function unwrapExpression(expr: BabelCore.types.Expression): BabelCore.types.Expression {
+  let current: BabelCore.types.Expression = expr
+  while (true) {
+    if (
+      t.isTSAsExpression(current) ||
+      t.isTSTypeAssertion(current) ||
+      t.isTSNonNullExpression(current) ||
+      t.isTSSatisfiesExpression(current) ||
+      t.isTSInstantiationExpression(current) ||
+      t.isTypeCastExpression(current)
+    ) {
+      current = current.expression as BabelCore.types.Expression
+      continue
+    }
+    if (t.isParenthesizedExpression(current)) {
+      current = current.expression as BabelCore.types.Expression
+      continue
+    }
+    return current
+  }
+}
+
+function handleExpressionStatement(
+  expr: BabelCore.types.Expression,
+  push: InstructionPush,
+): boolean {
+  const unwrapped = unwrapExpression(expr)
+  if (!t.isAssignmentExpression(unwrapped)) return false
+
+  if (t.isIdentifier(unwrapped.left)) {
+    push({
+      kind: 'Assign',
+      target: { kind: 'Identifier', name: unwrapped.left.name },
+      value: convertAssignmentValue(unwrapped),
+    })
+    return true
+  }
+
+  return false
+}
+
 /**
  * Context for building nested control flow structures.
  * This enables recursive handling of if/for/while inside branches.
@@ -1514,13 +1605,7 @@ function processStatement(
   const push = (instr: BasicBlock['instructions'][number]) => bb.block.instructions.push(instr)
 
   if (t.isExpressionStatement(stmt)) {
-    if (t.isAssignmentExpression(stmt.expression) && t.isIdentifier(stmt.expression.left)) {
-      push({
-        kind: 'Assign',
-        target: { kind: 'Identifier', name: stmt.expression.left.name },
-        value: convertAssignmentValue(stmt.expression),
-      })
-    } else {
+    if (!handleExpressionStatement(stmt.expression, push)) {
       push({ kind: 'Expression', value: convertExpression(stmt.expression) })
     }
     return bb
@@ -2486,6 +2571,13 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
 
   // Assignment Expression
   if (t.isAssignmentExpression(node)) {
+    if (!t.isExpression(node.left)) {
+      const isDestructuring = t.isArrayPattern(node.left) || t.isObjectPattern(node.left)
+      const message = isDestructuring
+        ? 'Destructuring assignment should have been expanded before HIR conversion.'
+        : `Unsupported assignment target '${(node.left as any).type}' in HIR conversion`
+      return reportUnsupportedExpression(node.left, message)
+    }
     const assign: HAssignmentExpression = {
       kind: 'AssignmentExpression',
       operator: node.operator,

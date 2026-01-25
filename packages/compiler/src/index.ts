@@ -1082,19 +1082,41 @@ function createHIREntrypointVisitor(
           AssignmentExpression(assignPath) {
             const aliasSet = currentAliasSet()
             if (!aliasSet) return
-            if (!t.isIdentifier(assignPath.node.left)) return
-            const targetName = assignPath.node.left.name
             const rightPath = assignPath.get('right') as BabelCore.NodePath | null
-            if (rhsUsesState(rightPath)) {
-              debugLog('alias', 'add from assign', targetName)
-              aliasSet.add(targetName)
+            const usesState = rhsUsesState(rightPath)
+            const left = assignPath.node.left
+            if (t.isIdentifier(left)) {
+              const targetName = left.name
+              if (usesState) {
+                debugLog('alias', 'add from assign', targetName)
+                aliasSet.add(targetName)
+                return
+              }
+              if (aliasSet.has(targetName)) {
+                debugLog('alias', 'reassignment detected', targetName)
+                throw assignPath.buildCodeFrameError(
+                  `Alias reassignment is not supported for "${targetName}"`,
+                )
+              }
               return
             }
-            if (aliasSet.has(targetName)) {
-              debugLog('alias', 'reassignment detected', targetName)
-              throw assignPath.buildCodeFrameError(
-                `Alias reassignment is not supported for "${targetName}"`,
-              )
+            if (t.isObjectPattern(left) || t.isArrayPattern(left)) {
+              const targets = collectPatternIdentifiers(left)
+              if (targets.length === 0) return
+              if (usesState) {
+                for (const target of targets) {
+                  debugLog('alias', 'add from destructuring assign', target)
+                  aliasSet.add(target)
+                }
+                return
+              }
+              const reassigned = targets.find(target => aliasSet.has(target))
+              if (reassigned) {
+                debugLog('alias', 'reassignment detected', reassigned)
+                throw assignPath.buildCodeFrameError(
+                  `Alias reassignment is not supported for "${reassigned}"`,
+                )
+              }
             }
           },
         })
@@ -1109,6 +1131,15 @@ function createHIREntrypointVisitor(
                   `Cannot reassign derived value '${left.name}'. Derived values are read-only.`,
                 )
               }
+              if (t.isObjectPattern(left) || t.isArrayPattern(left)) {
+                const targets = collectPatternIdentifiers(left)
+                const derivedTarget = targets.find(target => derivedVars.has(target))
+                if (derivedTarget) {
+                  throw assignPath.buildCodeFrameError(
+                    `Cannot reassign derived value '${derivedTarget}'. Derived values are read-only.`,
+                  )
+                }
+              }
             },
           })
         }
@@ -1122,6 +1153,15 @@ function createHIREntrypointVisitor(
                 throw assignPath.buildCodeFrameError(
                   `Cannot write to destructured state alias '${left.name}'. Update the original state (e.g. state.count++ or immutable update).`,
                 )
+              }
+              if (t.isObjectPattern(left) || t.isArrayPattern(left)) {
+                const targets = collectPatternIdentifiers(left)
+                const aliasTarget = targets.find(target => destructuredAliases.has(target))
+                if (aliasTarget) {
+                  throw assignPath.buildCodeFrameError(
+                    `Cannot write to destructured state alias '${aliasTarget}'. Update the original state (e.g. state.count++ or immutable update).`,
+                  )
+                }
               }
             },
             UpdateExpression(updatePath) {

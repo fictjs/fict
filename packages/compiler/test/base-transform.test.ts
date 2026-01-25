@@ -57,6 +57,45 @@ describe('createFictPlugin (HIR)', () => {
       ).toThrow(/Destructuring \$state is not supported/)
     })
 
+    it('rewrites destructuring assignments to tracked setters', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          ;({ count } = { count: 2 })
+          return count
+        }
+      `)
+
+      expect(output).toMatch(/count\([_$\w]+\s*\.count\)/)
+    })
+
+    it('rewrites array destructuring assignments to tracked setters', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          ;[count] = [2]
+          return count
+        }
+      `)
+
+      expect(output).toMatch(/count\(\s*2\s*\)/)
+    })
+
+    it('rewrites destructuring assignments with defaults to tracked setters', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          ;({ count = 2 } = {})
+          return count
+        }
+      `)
+
+      expect(output).toContain('count(')
+    })
+
     it('throws on $state inside loops', () => {
       expect(() =>
         transform(`

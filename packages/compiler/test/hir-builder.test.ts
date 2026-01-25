@@ -252,6 +252,24 @@ describe('buildHIR - Advanced Patterns', () => {
     expect(targets).toContain('double')
   })
 
+  it('handles destructuring assignment statements', () => {
+    const ast = parseFile(`
+      function Assign(getObj, arr) {
+        let a = 0
+        let b = 0
+        ;({ a } = getObj())
+        ;[b] = arr
+        return a + b
+      }
+    `)
+    const hir = buildHIR(ast)
+    const fn = hir.functions.find(f => f.name === 'Assign') ?? hir.functions[0]
+    const assigns = fn.blocks.flatMap(b => b.instructions).filter(i => i.kind === 'Assign')
+    const targets = assigns.map(a => (a as any).target.name)
+    expect(targets).toContain('a')
+    expect(targets).toContain('b')
+  })
+
   it('handles complex conditional with loops', () => {
     const ast = parseFile(`
       function ComplexControl(items, filter) {

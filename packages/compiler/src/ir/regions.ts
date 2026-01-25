@@ -2524,8 +2524,13 @@ function instructionToStatement(
     }
 
     // If no declarationKind, this is a pure assignment (e.g. api = {...})
-    // Emit assignmentExpression to update existing variable, not create new declaration
+    // Emit setter call for signals, otherwise use assignment expression.
     if (!declKind) {
+      if (isSignal) {
+        return t.expressionStatement(
+          t.callExpression(t.identifier(baseName), [lowerAssignedValue(true)]),
+        )
+      }
       return t.expressionStatement(
         t.assignmentExpression('=', t.identifier(baseName), lowerAssignedValue(true)),
       )

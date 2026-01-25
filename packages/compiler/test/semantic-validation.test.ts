@@ -117,7 +117,7 @@ describe('semantic validation', () => {
     expect(() => transform(source)).toThrow(/Invalid left-hand side|must assign to an identifier/)
   })
 
-  it('throws on spread/object left assignment of reactive', () => {
+  it('supports destructuring assignment statements', () => {
     const source = `
       import { $state } from 'fict'
       function App() {
@@ -126,8 +126,7 @@ describe('semantic validation', () => {
         return count
       }
     `
-    // Destructuring assignment is not supported in HIR conversion.
-    expect(() => transform(source)).toThrow(/Unsupported expression|ArrayPattern|destructuring/i)
+    expect(() => transform(source)).not.toThrow()
   })
 
   it('throws when derived is reassigned inside a branch', () => {
@@ -153,6 +152,19 @@ describe('semantic validation', () => {
         const state = $state({ count: 0 })
         const { count } = state
         count++
+        return count
+      }
+    `
+    expect(() => transform(source)).toThrow(/destructured state alias/)
+  })
+
+  it('throws when destructuring assignment writes to a destructured state alias', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const state = $state({ count: 0 })
+        const { count } = state
+        ;({ count } = { count: 2 })
         return count
       }
     `

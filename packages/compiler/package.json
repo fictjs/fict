@@ -39,6 +39,7 @@
   },
   "dependencies": {
     "@babel/helper-plugin-utils": "^7.25.9",
+    "@babel/plugin-transform-destructuring": "^7.27.1",
     "@babel/traverse": "^7.26.0"
   },
   "devDependencies": {
@@ -49,8 +50,8 @@
     "@babel/plugin-transform-react-jsx": "^7.25.9",
     "@babel/preset-typescript": "^7.26.0",
     "@babel/types": "^7.26.0",
-    "@jridgewell/trace-mapping": "^0.3.31",
     "@fictjs/runtime": "workspace:*",
+    "@jridgewell/trace-mapping": "^0.3.31",
     "@types/babel__core": "^7.20.5",
     "@types/babel__helper-plugin-utils": "^7.10.3",
     "@types/babel__traverse": "^7.28.0",
