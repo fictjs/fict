@@ -87,6 +87,16 @@ export interface FictCompilerOptions {
   optimize?: boolean
   /** Allow inlining single-use derived values even when user-named */
   inlineDerivedMemos?: boolean
+  /**
+   * Optional TypeScript integration data provided by tooling (e.g., Vite plugin).
+   * The compiler currently ignores this, but it enables future type-aware passes.
+   */
+  typescript?: {
+    program?: unknown
+    checker?: unknown
+    projectVersion?: number
+    configPath?: string
+  }
 }
 
 export interface VisitorOptions {

@@ -1,7 +1,7 @@
 import type { ConfigAPI, TransformOptions } from '@babel/core'
 import { createFictPlugin, type FictCompilerOptions } from '@fictjs/compiler'
 
-export interface FictPresetOptions extends FictCompilerOptions {
+export interface FictPresetOptions extends Omit<FictCompilerOptions, 'typescript'> {
   /**
    * Enable TypeScript support.
    * @default true

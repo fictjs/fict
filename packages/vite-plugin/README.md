@@ -15,3 +15,21 @@ yarn add -D @fictjs/vite-plugin
 ```
 
 You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
+
+## Options
+
+```ts
+import fict from '@fictjs/vite-plugin'
+
+export default defineConfig({
+  plugins: [
+    fict({
+      // Optional transform cache (memory + persistent disk cache)
+      cache: { persistent: true },
+      // Optional TypeScript project integration
+      useTypeScriptProject: true,
+      tsconfigPath: './tsconfig.json',
+    }),
+  ],
+})
+```
