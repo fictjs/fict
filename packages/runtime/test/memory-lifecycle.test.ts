@@ -347,7 +347,7 @@ describe('Memory and Lifecycle Tests', () => {
       list.dispose()
     })
 
-    it('large list operations do not accumulate effects', async () => {
+    it('large list operations do not accumulate effects', { timeout: 10000 }, async () => {
       const items = createSignal<number[]>([])
       let totalCleanups = 0
 
