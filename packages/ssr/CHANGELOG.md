@@ -1,5 +1,11 @@
 # @fictjs/ssr
 
+## 0.2.3
+
+### Patch Changes
+
+- improve compiler
+
 ## 0.2.2
 
 ### Patch Changes
