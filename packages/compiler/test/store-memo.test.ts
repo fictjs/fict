@@ -30,6 +30,19 @@ describe('$store memoization and dynamic access', () => {
     expect(output).toContain(`__fictUseMemo(__fictCtx, () => store[props.key]`)
   })
 
+  it('memoizes dynamic store key when passed as component prop', () => {
+    const output = transform(`
+      import { $store } from 'fict/plus'
+      function Parent() {
+        const store = $store({ items: { a: 1 } })
+        const key = 'a'
+        return <Child value={store[key]} />
+      }
+    `)
+
+    expect(output).toContain(`prop(() => store[key])`)
+  })
+
   it('preserves dynamic $state property access inside memos', () => {
     const output = transform(`
       import { $state } from 'fict'

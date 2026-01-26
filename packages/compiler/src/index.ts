@@ -115,14 +115,51 @@ function shouldSuppressWarning(
   })
 }
 
+type WarningLevel = 'off' | 'warn' | 'error'
+
+function hasErrorEscalation(options: FictCompilerOptions): boolean {
+  if (options.warningsAsErrors === true) return true
+  if (Array.isArray(options.warningsAsErrors) && options.warningsAsErrors.length > 0) return true
+  if (options.warningLevels) {
+    return Object.values(options.warningLevels).some(level => level === 'error')
+  }
+  return false
+}
+
+function resolveWarningLevel(code: string, options: FictCompilerOptions): WarningLevel {
+  const override = options.warningLevels?.[code]
+  if (override) return override
+  if (options.warningsAsErrors === true) return 'error'
+  if (Array.isArray(options.warningsAsErrors) && options.warningsAsErrors.includes(code)) {
+    return 'error'
+  }
+  return 'warn'
+}
+
+function formatWarningAsError(warning: CompilerWarning): string {
+  const location =
+    warning.line > 0 ? `${warning.fileName}:${warning.line}:${warning.column}` : warning.fileName
+  return `Fict warning treated as error (${warning.code}): ${warning.message}\n  at ${location}`
+}
+
 function createWarningDispatcher(
   onWarn: FictCompilerOptions['onWarn'],
   suppressions: SuppressionDirective[],
+  options: FictCompilerOptions,
+  dev: boolean,
 ): WarningSink {
-  if (!onWarn) return () => {}
+  const hasEscalation = hasErrorEscalation(options)
+  if (!dev && !hasEscalation) return () => {}
   return warning => {
     if (shouldSuppressWarning(suppressions, warning.code, warning.line)) return
-    onWarn(warning)
+    const level = resolveWarningLevel(warning.code, options)
+    if (level === 'off') return
+    if (level === 'error') {
+      throw new Error(formatWarningAsError(warning))
+    }
+    if (dev && onWarn) {
+      onWarn(warning)
+    }
   }
 }
 
@@ -490,10 +527,12 @@ function createHIREntrypointVisitor(
           ((path.hub as any)?.file?.ast as BabelCore.types.File | undefined)?.comments || []
         const suppressions = parseSuppressions(comments)
         const dev = options.dev !== false
-        const warn = dev ? createWarningDispatcher(options.onWarn, suppressions) : () => {}
-        const optionsWithWarnings: FictCompilerOptions = dev
-          ? { ...options, onWarn: warn }
-          : { ...options, onWarn: undefined }
+        const warn = createWarningDispatcher(options.onWarn, suppressions, options, dev)
+        const optionsWithWarnings: FictCompilerOptions = {
+          ...options,
+          onWarn: warn,
+          filename: fileName,
+        }
         const isHookName = (name: string | undefined): boolean => !!name && /^use[A-Z]/.test(name)
         const getFunctionName = (
           fnPath: BabelCore.NodePath<BabelCore.types.Function>,
@@ -1176,7 +1215,8 @@ function createHIREntrypointVisitor(
         }
 
         // Emit conservative warnings for mutation/dynamic access
-        if (dev) {
+        const shouldRunWarnings = dev || hasErrorEscalation(options)
+        if (shouldRunWarnings) {
           runWarningPass(path as any, stateVars, derivedVars, warn, fileName, t)
         }
 
@@ -1197,6 +1237,7 @@ function createHIREntrypointVisitor(
           ? optimizeHIR(hir, {
               memoMacroNames,
               inlineDerivedMemos: optionsWithWarnings.inlineDerivedMemos ?? true,
+              optimizeLevel: optionsWithWarnings.optimizeLevel ?? 'safe',
             })
           : hir
         const lowered = lowerHIRWithRegions(optimized, t, optionsWithWarnings, {
@@ -1225,6 +1266,7 @@ export const createFictPlugin = declare(
       ...options,
       fineGrainedDom: options.fineGrainedDom ?? true,
       optimize: options.optimize ?? true,
+      optimizeLevel: options.optimizeLevel ?? 'safe',
       inlineDerivedMemos: options.inlineDerivedMemos ?? true,
       dev:
         options.dev ?? (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'),
@@ -1236,5 +1278,12 @@ export const createFictPlugin = declare(
     }
   },
 )
+
+export { clearModuleMetadata, resolveModuleMetadata, setModuleMetadata } from './module-metadata'
+export type {
+  HookReturnInfoSerializable,
+  ModuleReactiveMetadata,
+  ReactiveExportKind,
+} from './types'
 
 export default createFictPlugin

@@ -92,6 +92,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   let cache: TransformCache | null = null
   let tsProject: TypeScriptProject | null = null
   let tsProjectInit: Promise<TypeScriptProject | null> | null = null
+  const moduleMetadata: FictCompilerOptions['moduleMetadata'] = new Map()
 
   const ensureCache = () => {
     if (cache) return cache
@@ -192,6 +193,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         ...compilerOptions,
         dev: compilerOptions.dev ?? isDev,
         sourcemap: compilerOptions.sourcemap ?? true,
+        moduleMetadata,
       }
 
       const tsProject = await ensureTypeScriptProject()

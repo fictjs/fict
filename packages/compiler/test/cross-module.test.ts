@@ -1,9 +1,12 @@
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-import { type FictCompilerOptions } from '../src/index'
+import { clearModuleMetadata, type FictCompilerOptions } from '../src/index'
 import { transform } from './test-utils'
 
 describe('Cross-Module Reactivity', () => {
+  const baseDir = path.join(process.cwd(), '__fict_cross_module__')
+
   describe('Store Module (Exports)', () => {
     it('rejects exporting module-level state', () => {
       const source = `
@@ -79,6 +82,62 @@ describe('Cross-Module Reactivity', () => {
       // Should compile effect correctly
       expect(output).toContain('createEffect(() => {')
       expect(output).toContain('console.log(count())')
+    })
+
+    it('propagates hook return metadata across modules', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { directAccessor: "signal" } */
+        export function useCounter() {
+          const count = $state(0)
+          return count
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter'
+
+        export function App() {
+          const count = useCounter()
+          return <div>{count}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'use-counter.tsx'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app.tsx'),
+      )
+
+      expect(output).toMatch(/count\(\)/)
+    })
+
+    it('propagates hook return metadata across modules without explicit store', () => {
+      clearModuleMetadata()
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { directAccessor: "signal" } */
+        export function useCounter() {
+          const count = $state(0)
+          return count
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter'
+
+        export function App() {
+          const count = useCounter()
+          return <div>{count}</div>
+        }
+      `
+
+      transform(hookSource, {}, path.join(baseDir, 'use-counter.tsx'))
+      const output = transform(appSource, { fineGrainedDom: true }, path.join(baseDir, 'app.tsx'))
+
+      expect(output).toMatch(/count\(\)/)
     })
   })
 })

@@ -73,10 +73,25 @@ export interface CompilerWarning {
   column: number
 }
 
+export type ReactiveExportKind = 'signal' | 'memo' | 'store'
+
+export interface HookReturnInfoSerializable {
+  objectProps?: Record<string, 'signal' | 'memo'>
+  arrayProps?: Record<string, 'signal' | 'memo'>
+  directAccessor?: 'signal' | 'memo'
+}
+
+export interface ModuleReactiveMetadata {
+  exports: Record<string, ReactiveExportKind>
+  hooks?: Record<string, HookReturnInfoSerializable>
+}
+
 export interface FictCompilerOptions {
   dev?: boolean
   sourcemap?: boolean
   onWarn?: (warning: CompilerWarning) => void
+  /** Internal: filename of the module being compiled. */
+  filename?: string
   /** Enable lazy evaluation of conditional derived values (Rule J optimization) */
   lazyConditional?: boolean
   /** Enable getter caching within the same sync block (Rule L optimization) */
@@ -85,8 +100,35 @@ export interface FictCompilerOptions {
   fineGrainedDom?: boolean
   /** Enable HIR optimization passes (DCE/const-fold/CSE) */
   optimize?: boolean
+  /**
+   * Optimization safety level.
+   * - 'safe': avoid non-constant algebraic rewrites to preserve JS semantics.
+   * - 'full': allow algebraic simplifications beyond constant folding.
+   */
+  optimizeLevel?: 'safe' | 'full'
   /** Allow inlining single-use derived values even when user-named */
   inlineDerivedMemos?: boolean
+  /**
+   * Treat warnings as errors. Use true for all warnings, or provide a list of codes.
+   */
+  warningsAsErrors?: boolean | string[]
+  /**
+   * Per-warning override. "off" suppresses, "error" throws, "warn" emits.
+   */
+  warningLevels?: Record<string, 'off' | 'warn' | 'error'>
+  /**
+   * Optional shared module metadata map for cross-module reactive imports.
+   * If omitted, the compiler uses a process-wide cache.
+   */
+  moduleMetadata?: Map<string, ModuleReactiveMetadata>
+  /**
+   * Optional hook to resolve module metadata for a given import source.
+   * Tooling can override the default resolution strategy.
+   */
+  resolveModuleMetadata?: (
+    source: string,
+    importer?: string,
+  ) => ModuleReactiveMetadata | null | undefined
   /**
    * Optional TypeScript integration data provided by tooling (e.g., Vite plugin).
    * The compiler currently ignores this, but it enables future type-aware passes.

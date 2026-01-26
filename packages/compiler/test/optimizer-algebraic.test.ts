@@ -3,6 +3,8 @@ import { describe, it, expect } from 'vitest'
 import { transform } from './test-utils'
 
 describe('Optimizer Algebraic Simplification', () => {
+  const algebraicOptions = { optimize: true, optimizeLevel: 'full' as const }
+
   describe('arithmetic identities', () => {
     it('simplifies x + 0 to x', () => {
       const source = `
@@ -12,7 +14,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       // After constant propagation and simplification, b should be 5
       expect(output).toContain('return 5')
     })
@@ -25,7 +27,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 10')
     })
 
@@ -37,7 +39,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 7')
     })
 
@@ -49,7 +51,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 0')
     })
 
@@ -61,7 +63,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 15')
     })
 
@@ -73,7 +75,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 20')
     })
 
@@ -85,7 +87,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 3')
     })
 
@@ -97,7 +99,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 1')
     })
 
@@ -107,7 +109,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return x + 0
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toMatch(/return\s+x\s*\+\s*0/)
     })
 
@@ -117,7 +119,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return x * 0
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toMatch(/return\s+x\s*\*\s*0/)
     })
   })
@@ -131,7 +133,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 5')
     })
 
@@ -143,7 +145,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 10')
     })
 
@@ -155,7 +157,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       // In JavaScript, 7 && true evaluates to true (the last operand when both are truthy)
       // This is correct constant folding behavior, not algebraic simplification
       expect(output).toContain('return true')
@@ -167,7 +169,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return x && true
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toMatch(/return\s+x\s*&&\s*true/)
     })
 
@@ -179,7 +181,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 15')
     })
 
@@ -189,7 +191,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return x || false
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toMatch(/return\s+x\s*\|\|\s*false/)
     })
 
@@ -201,7 +203,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return false')
     })
 
@@ -213,7 +215,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return true')
     })
   })
@@ -227,7 +229,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 5')
     })
 
@@ -239,7 +241,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 10')
     })
 
@@ -251,7 +253,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 42')
     })
   })
@@ -264,7 +266,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return a
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return false')
     })
 
@@ -275,7 +277,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return a
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return true')
     })
 
@@ -287,7 +289,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return b
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 5')
     })
   })
@@ -302,7 +304,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return c
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 5')
     })
 
@@ -315,7 +317,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return c
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 10')
     })
 
@@ -327,7 +329,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return c
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return 42')
     })
 
@@ -337,7 +339,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return sideEffect() ? 1 : 1
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('sideEffect(')
     })
   })
@@ -350,7 +352,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return a
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return true')
     })
 
@@ -361,7 +363,7 @@ describe('Optimizer Algebraic Simplification', () => {
           return a
         }
       `
-      const output = transform(source, { optimize: true })
+      const output = transform(source, algebraicOptions)
       expect(output).toContain('return false')
     })
   })

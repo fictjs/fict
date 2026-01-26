@@ -2,6 +2,7 @@ import { transformFromAstSync } from '@babel/core'
 import type * as BabelCore from '@babel/core'
 // @ts-expect-error - CommonJS module without proper types
 import transformDestructuring from '@babel/plugin-transform-destructuring'
+import traverseModule from '@babel/traverse'
 import * as t from '@babel/types'
 
 import {
@@ -58,46 +59,77 @@ const resolveDestructuringPlugin = (): any => {
   return mod?.default ?? mod
 }
 
-const createAssignmentDestructuringPlugin = () => {
+const resolveTraverse = (): any => {
+  const mod: any = traverseModule
+  return mod?.default ?? mod
+}
+
+const OBJECT_REST_HELPERS = new Set(['_objectWithoutProperties', '_objectWithoutPropertiesLoose'])
+const OBJECT_DESTRUCTURING_EMPTY_HELPER = '_objectDestructuringEmpty'
+const EXTENDS_HELPER = '_extends'
+
+const isSameIdentifier = (
+  left: BabelCore.types.Expression | BabelCore.types.SpreadElement,
+  right: BabelCore.types.Expression | BabelCore.types.SpreadElement,
+): boolean => {
+  return t.isIdentifier(left) && t.isIdentifier(right) && left.name === right.name
+}
+
+const rewriteObjectRestHelpers = (ast: BabelCore.types.File): void => {
+  const traverse = resolveTraverse()
+  traverse(ast, {
+    CallExpression(path: BabelCore.NodePath<BabelCore.types.CallExpression>) {
+      const { callee, arguments: args } = path.node
+      if (t.isIdentifier(callee) && OBJECT_REST_HELPERS.has(callee.name)) {
+        path.node.callee = t.identifier('__fictPropsRest')
+        return
+      }
+
+      if (
+        t.isIdentifier(callee) &&
+        callee.name === EXTENDS_HELPER &&
+        args.length === 2 &&
+        t.isObjectExpression(args[0]) &&
+        args[0].properties.length === 0 &&
+        t.isSequenceExpression(args[1]) &&
+        args[1].expressions.length === 2
+      ) {
+        const [checkExpr, sourceExpr] = args[1].expressions
+        if (
+          t.isCallExpression(checkExpr) &&
+          t.isIdentifier(checkExpr.callee) &&
+          checkExpr.callee.name === OBJECT_DESTRUCTURING_EMPTY_HELPER &&
+          checkExpr.arguments.length === 1
+        ) {
+          const [checkArg] = checkExpr.arguments
+          if (checkArg && isSameIdentifier(checkArg as any, sourceExpr as any)) {
+            const restCall = t.callExpression(t.identifier('__fictPropsRest'), [
+              t.cloneNode(sourceExpr, true),
+              t.arrayExpression([]),
+            ])
+            path.replaceWith(t.sequenceExpression([checkExpr, restCall]))
+          }
+        }
+      }
+    },
+  })
+}
+
+const expandDestructuringAssignments = (ast: BabelCore.types.File): BabelCore.types.File => {
   const pluginFactory = resolveDestructuringPlugin()
   if (typeof pluginFactory !== 'function') {
     throw new Error('Expected @babel/plugin-transform-destructuring to export a function')
   }
-  const plugin = pluginFactory(
-    {
-      assertVersion() {},
-      assumption() {
-        return undefined
-      },
-      types: t,
-    } as any,
-    {},
-  )
-
-  return {
-    visitor: {
-      AssignmentExpression(
-        path: BabelCore.NodePath<BabelCore.types.AssignmentExpression>,
-        state: BabelCore.PluginPass,
-      ) {
-        if (!t.isObjectPattern(path.node.left) && !t.isArrayPattern(path.node.left)) return
-        const visitor = plugin.visitor?.AssignmentExpression
-        if (!visitor) return
-        visitor.call(this, path, state)
-      },
-    },
-  }
-}
-
-const expandDestructuringAssignments = (ast: BabelCore.types.File): BabelCore.types.File => {
   const result = transformFromAstSync(ast, undefined, {
     configFile: false,
     babelrc: false,
     ast: true,
     code: false,
-    plugins: [createAssignmentDestructuringPlugin()],
+    plugins: [pluginFactory],
   })
-  return (result?.ast as BabelCore.types.File) ?? ast
+  const expanded = (result?.ast as BabelCore.types.File) ?? ast
+  rewriteObjectRestHelpers(expanded)
+  return expanded
 }
 
 const reportUnsupportedExpression = (

@@ -212,7 +212,13 @@ function rewriteExprWithMap(expr: any, rewrites: Map<string, string>): any {
       return {
         ...expr,
         object: rewriteExprWithMap(expr.object, rewrites),
-        property: rewriteExprWithMap(expr.property, rewrites),
+        property: expr.computed ? rewriteExprWithMap(expr.property, rewrites) : expr.property,
+      }
+    case 'OptionalMemberExpression':
+      return {
+        ...expr,
+        object: rewriteExprWithMap(expr.object, rewrites),
+        property: expr.computed ? rewriteExprWithMap(expr.property, rewrites) : expr.property,
       }
     case 'BinaryExpression':
     case 'LogicalExpression':
@@ -235,11 +241,12 @@ function rewriteExprWithMap(expr: any, rewrites: Map<string, string>): any {
     case 'ObjectExpression':
       return {
         ...expr,
-        properties: expr.properties.map((p: any) => ({
-          ...p,
-          key: rewriteExprWithMap(p.key, rewrites),
-          value: rewriteExprWithMap(p.value, rewrites),
-        })),
+        properties: expr.properties.map((p: any) => {
+          if (p.kind === 'SpreadElement') {
+            return { ...p, argument: rewriteExprWithMap(p.argument, rewrites) }
+          }
+          return { ...p, value: rewriteExprWithMap(p.value, rewrites) }
+        }),
       }
     case 'ImportExpression':
       return {
@@ -373,7 +380,17 @@ function toSSA(fn: HIRFunction): HIRFunction {
           arguments: expr.arguments.map((a: any) => renameExpr(a)),
         }
       case 'MemberExpression':
-        return { ...expr, object: renameExpr(expr.object), property: renameExpr(expr.property) }
+        return {
+          ...expr,
+          object: renameExpr(expr.object),
+          property: expr.computed ? renameExpr(expr.property) : expr.property,
+        }
+      case 'OptionalMemberExpression':
+        return {
+          ...expr,
+          object: renameExpr(expr.object),
+          property: expr.computed ? renameExpr(expr.property) : expr.property,
+        }
       case 'BinaryExpression':
       case 'LogicalExpression':
         return { ...expr, left: renameExpr(expr.left), right: renameExpr(expr.right) }
@@ -391,11 +408,12 @@ function toSSA(fn: HIRFunction): HIRFunction {
       case 'ObjectExpression':
         return {
           ...expr,
-          properties: expr.properties.map((p: any) => ({
-            ...p,
-            key: renameExpr(p.key),
-            value: renameExpr(p.value),
-          })),
+          properties: expr.properties.map((p: any) => {
+            if (p.kind === 'SpreadElement') {
+              return { ...p, argument: renameExpr(p.argument) }
+            }
+            return { ...p, value: renameExpr(p.value) }
+          }),
         }
       default:
         return expr

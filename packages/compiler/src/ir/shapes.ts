@@ -53,11 +53,15 @@ export interface ShapeAnalysisResult {
   spreadWrapping: Set<string>
 }
 
-type KeyNarrowingContext = Map<string, string | number>
+type KeyNarrowingValue = Set<string | number>
+interface KeyNarrowingContext {
+  values: Map<string, KeyNarrowingValue>
+  keySets: Map<string, KeyNarrowingValue>
+}
 
 interface EqualityNarrowing {
   name: string
-  value: string | number
+  values: KeyNarrowingValue
   kind: 'eq' | 'neq'
 }
 
@@ -90,7 +94,17 @@ function createPropsShape(): ObjectShape {
 }
 
 function cloneKeyContext(ctx: KeyNarrowingContext): KeyNarrowingContext {
-  return new Map(ctx)
+  const cloneMap = (map: Map<string, KeyNarrowingValue>) => {
+    const next = new Map<string, KeyNarrowingValue>()
+    for (const [key, value] of map.entries()) {
+      next.set(key, new Set(value))
+    }
+    return next
+  }
+  return {
+    values: cloneMap(ctx.values),
+    keySets: cloneMap(ctx.keySets),
+  }
 }
 
 type BabelPattern = t.PatternLike | t.LVal | null | undefined
@@ -99,7 +113,8 @@ function clearPatternBindings(pattern: BabelPattern, ctx: KeyNarrowingContext): 
   if (!pattern || typeof pattern !== 'object') return
 
   if (t.isIdentifier(pattern)) {
-    ctx.delete(pattern.name)
+    ctx.values.delete(pattern.name)
+    ctx.keySets.delete(pattern.name)
     return
   }
   if (t.isRestElement(pattern)) {
@@ -127,20 +142,116 @@ function clearPatternBindings(pattern: BabelPattern, ctx: KeyNarrowingContext): 
   }
 }
 
-function resolveNarrowedKey(expr: Expression, ctx: KeyNarrowingContext): string | number | null {
+function resolveNarrowedKeys(expr: Expression, ctx: KeyNarrowingContext): KeyNarrowingValue | null {
   if (expr.kind === 'Literal') {
     if (typeof expr.value === 'string' || typeof expr.value === 'number') {
-      return expr.value
+      return new Set([expr.value])
     }
     return null
   }
   if (expr.kind === 'Identifier') {
-    return ctx.get(expr.name) ?? null
+    const value = ctx.values.get(expr.name)
+    return value ? new Set(value) : null
+  }
+  if (expr.kind === 'ConditionalExpression') {
+    const consequent = resolveNarrowedKeys(expr.consequent as Expression, ctx)
+    const alternate = resolveNarrowedKeys(expr.alternate as Expression, ctx)
+    if (consequent && alternate) {
+      return new Set([...consequent, ...alternate])
+    }
+    return null
+  }
+  if (expr.kind === 'SequenceExpression' && expr.expressions.length > 0) {
+    const last = expr.expressions[expr.expressions.length - 1] as Expression
+    return resolveNarrowedKeys(last, ctx)
+  }
+  if (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') {
+    if (expr.computed && expr.object.kind === 'Identifier') {
+      const keySet = ctx.keySets.get(expr.object.name)
+      if (keySet && keySet.size > 0) {
+        return new Set(keySet)
+      }
+    }
+  }
+  return null
+}
+
+function resolveKeySet(expr: Expression, ctx: KeyNarrowingContext): KeyNarrowingValue | null {
+  if (expr.kind === 'Identifier') {
+    const set = ctx.keySets.get(expr.name)
+    return set ? new Set(set) : null
+  }
+  if (expr.kind === 'ArrayExpression') {
+    const values: (string | number)[] = []
+    for (const el of expr.elements) {
+      if (!el) return null
+      if (el.kind !== 'Literal') return null
+      if (typeof el.value !== 'string' && typeof el.value !== 'number') return null
+      values.push(el.value)
+    }
+    return values.length > 0 ? new Set(values) : null
+  }
+  if (expr.kind === 'CallExpression') {
+    if (expr.callee.kind === 'MemberExpression') {
+      const object = expr.callee.object
+      const property = expr.callee.property
+      if (
+        object.kind === 'Identifier' &&
+        object.name === 'Object' &&
+        !expr.callee.computed &&
+        property.kind === 'Identifier' &&
+        property.name === 'keys' &&
+        expr.arguments.length === 1
+      ) {
+        const arg = expr.arguments[0] as Expression
+        if (arg.kind === 'ObjectExpression') {
+          const values: (string | number)[] = []
+          for (const prop of arg.properties) {
+            if (prop.kind !== 'Property') return null
+            if (prop.key.kind === 'Identifier') {
+              values.push(prop.key.name)
+            } else if (prop.key.kind === 'Literal') {
+              if (typeof prop.key.value !== 'string' && typeof prop.key.value !== 'number') {
+                return null
+              }
+              values.push(prop.key.value)
+            } else {
+              return null
+            }
+          }
+          return values.length > 0 ? new Set(values) : null
+        }
+      }
+    }
+  }
+  if (expr.kind === 'ConditionalExpression') {
+    const consequent = resolveKeySet(expr.consequent as Expression, ctx)
+    const alternate = resolveKeySet(expr.alternate as Expression, ctx)
+    if (consequent && alternate) {
+      return new Set([...consequent, ...alternate])
+    }
+    return null
+  }
+  if (expr.kind === 'SequenceExpression' && expr.expressions.length > 0) {
+    const last = expr.expressions[expr.expressions.length - 1] as Expression
+    return resolveKeySet(last, ctx)
   }
   return null
 }
 
 function extractEqualityNarrowing(expr: Expression): EqualityNarrowing | null {
+  if (expr.kind === 'LogicalExpression' && expr.operator === '||') {
+    const left = extractEqualityNarrowing(expr.left as Expression)
+    const right = extractEqualityNarrowing(expr.right as Expression)
+    if (left && right && left.kind === 'eq' && right.kind === 'eq' && left.name === right.name) {
+      return {
+        name: left.name,
+        values: new Set([...left.values, ...right.values]),
+        kind: 'eq',
+      }
+    }
+  }
+
   if (expr.kind !== 'BinaryExpression') return null
   const isEq = expr.operator === '==='
   const isNeq = expr.operator === '!=='
@@ -157,17 +268,61 @@ function extractEqualityNarrowing(expr: Expression): EqualityNarrowing | null {
   if (expr.left.kind === 'Identifier') {
     const value = literalValue(expr.right as Expression)
     if (value !== null) {
-      return { name: expr.left.name, value, kind: isEq ? 'eq' : 'neq' }
+      return { name: expr.left.name, values: new Set([value]), kind: isEq ? 'eq' : 'neq' }
     }
   }
   if (expr.right.kind === 'Identifier') {
     const value = literalValue(expr.left as Expression)
     if (value !== null) {
-      return { name: expr.right.name, value, kind: isEq ? 'eq' : 'neq' }
+      return { name: expr.right.name, values: new Set([value]), kind: isEq ? 'eq' : 'neq' }
     }
   }
 
   return null
+}
+
+function applyNarrowing(ctx: KeyNarrowingContext, name: string, values: KeyNarrowingValue): void {
+  const existing = ctx.values.get(name)
+  if (!existing) {
+    ctx.values.set(name, new Set(values))
+    return
+  }
+  const intersection = new Set<string | number>()
+  for (const value of existing) {
+    if (values.has(value)) intersection.add(value)
+  }
+  if (intersection.size > 0) {
+    ctx.values.set(name, intersection)
+  } else {
+    ctx.values.delete(name)
+  }
+}
+
+function applyKeyAssignment(ctx: KeyNarrowingContext, name: string, expr: Expression): void {
+  ctx.values.delete(name)
+  ctx.keySets.delete(name)
+
+  let assignedKeys: KeyNarrowingValue | null = null
+  let keySet: KeyNarrowingValue | null = null
+
+  if (expr.kind === 'Identifier') {
+    assignedKeys = resolveNarrowedKeys(expr, ctx)
+    keySet = resolveKeySet(expr, ctx)
+    if (ctx.keySets.has(expr.name)) {
+      // Treat aliasing as escape to avoid unsound key set reuse.
+      ctx.keySets.delete(expr.name)
+    }
+  } else {
+    assignedKeys = resolveNarrowedKeys(expr, ctx)
+    keySet = resolveKeySet(expr, ctx)
+  }
+
+  if (assignedKeys && assignedKeys.size > 0) {
+    ctx.values.set(name, new Set(assignedKeys))
+  }
+  if (keySet && keySet.size > 0) {
+    ctx.keySets.set(name, new Set(keySet))
+  }
 }
 
 /**
@@ -202,7 +357,7 @@ export function analyzeObjectShapes(fn: HIRFunction): ShapeAnalysisResult {
   }
 
   // First pass: collect all property accesses and assignments
-  const baseCtx: KeyNarrowingContext = new Map()
+  const baseCtx: KeyNarrowingContext = { values: new Map(), keySets: new Map() }
   let structured: StructuredNode | null = null
   try {
     structured = structurizeCFG(fn, {
@@ -310,9 +465,9 @@ function analyzeStructuredNode(
       const alternateCtx = cloneKeyContext(ctx)
       if (narrowing) {
         if (narrowing.kind === 'eq') {
-          consequentCtx.set(narrowing.name, narrowing.value)
+          applyNarrowing(consequentCtx, narrowing.name, narrowing.values)
         } else {
-          alternateCtx.set(narrowing.name, narrowing.value)
+          applyNarrowing(alternateCtx, narrowing.name, narrowing.values)
         }
       }
       analyzeStructuredNode(node.consequent, shapes, propertyReads, consequentCtx)
@@ -331,7 +486,7 @@ function analyzeStructuredNode(
           caseNode.test?.kind === 'Literal' &&
           (typeof caseNode.test.value === 'string' || typeof caseNode.test.value === 'number')
         ) {
-          caseCtx.set(discriminant, caseNode.test.value)
+          applyNarrowing(caseCtx, discriminant, new Set([caseNode.test.value]))
         }
         analyzeStructuredNode(caseNode.body, shapes, propertyReads, caseCtx)
       }
@@ -362,7 +517,8 @@ function analyzeStructuredNode(
       analyzeExpression(node.iterable, shapes, propertyReads, ctx)
       {
         const bodyCtx = cloneKeyContext(ctx)
-        bodyCtx.delete(node.variable)
+        bodyCtx.values.delete(node.variable)
+        bodyCtx.keySets.delete(node.variable)
         if (node.pattern) {
           clearPatternBindings(node.pattern, bodyCtx)
         }
@@ -373,7 +529,8 @@ function analyzeStructuredNode(
       analyzeExpression(node.object, shapes, propertyReads, ctx)
       {
         const bodyCtx = cloneKeyContext(ctx)
-        bodyCtx.delete(node.variable)
+        bodyCtx.values.delete(node.variable)
+        bodyCtx.keySets.delete(node.variable)
         if (node.pattern) {
           clearPatternBindings(node.pattern, bodyCtx)
         }
@@ -385,7 +542,8 @@ function analyzeStructuredNode(
       if (node.handler) {
         const handlerCtx = cloneKeyContext(ctx)
         if (node.handler.param) {
-          handlerCtx.delete(node.handler.param)
+          handlerCtx.values.delete(node.handler.param)
+          handlerCtx.keySets.delete(node.handler.param)
         }
         analyzeStructuredNode(node.handler.body, shapes, propertyReads, handlerCtx)
       }
@@ -420,9 +578,7 @@ function analyzeInstruction(
   ctx: KeyNarrowingContext,
 ): void {
   if (instr.kind === 'Assign') {
-    if (ctx.has(instr.target.name)) {
-      ctx.delete(instr.target.name)
-    }
+    applyKeyAssignment(ctx, instr.target.name, instr.value)
     // Analyze the assigned value
     const valueShape = analyzeExpression(instr.value, shapes, propertyReads, ctx)
     if (valueShape) {
@@ -504,12 +660,14 @@ function analyzeExpression(
         const baseShape = shapes.get(base)
 
         if (directMember.computed) {
-          const resolved = resolveNarrowedKey(directMember.property, ctx)
-          if (resolved !== null) {
-            const key = String(resolved)
-            reads.add(key)
-            if (baseShape) {
-              baseShape.knownKeys.add(key)
+          const resolved = resolveNarrowedKeys(directMember.property, ctx)
+          if (resolved && resolved.size > 0) {
+            for (const value of resolved) {
+              const key = String(value)
+              reads.add(key)
+              if (baseShape) {
+                baseShape.knownKeys.add(key)
+              }
             }
           } else if (baseShape) {
             // Dynamic property access - mark shape
@@ -534,6 +692,46 @@ function analyzeExpression(
     }
 
     case 'CallExpression': {
+      // Invalidate key-set arrays when they escape or are mutated
+      if (expr.callee.kind === 'MemberExpression') {
+        if (expr.callee.object.kind === 'Identifier') {
+          const baseName = expr.callee.object.name
+          const propName =
+            !expr.callee.computed && expr.callee.property.kind === 'Identifier'
+              ? expr.callee.property.name
+              : expr.callee.property.kind === 'Literal' &&
+                  typeof expr.callee.property.value === 'string'
+                ? expr.callee.property.value
+                : null
+          if (
+            propName &&
+            ctx.keySets.has(baseName) &&
+            [
+              'push',
+              'pop',
+              'shift',
+              'unshift',
+              'splice',
+              'sort',
+              'reverse',
+              'copyWithin',
+              'fill',
+            ].includes(propName)
+          ) {
+            ctx.keySets.delete(baseName)
+          }
+        }
+      }
+      for (const arg of expr.arguments) {
+        if (arg.kind === 'Identifier' && ctx.keySets.has(arg.name)) {
+          ctx.keySets.delete(arg.name)
+        } else if (arg.kind === 'SpreadElement' && arg.argument.kind === 'Identifier') {
+          if (ctx.keySets.has(arg.argument.name)) {
+            ctx.keySets.delete(arg.argument.name)
+          }
+        }
+      }
+
       // Function calls: arguments escape
       for (const arg of expr.arguments) {
         markEscaping(arg, shapes)
@@ -602,9 +800,7 @@ function analyzeExpression(
     case 'AssignmentExpression': {
       // Track mutation
       if (expr.left.kind === 'Identifier') {
-        if (ctx.has(expr.left.name)) {
-          ctx.delete(expr.left.name)
-        }
+        applyKeyAssignment(ctx, expr.left.name, expr.right)
       }
       if (expr.left.kind === 'MemberExpression') {
         const base = getBaseIdentifier(expr.left.object)
@@ -619,13 +815,19 @@ function analyzeExpression(
             ) {
               shape.mutableKeys.add(expr.left.property.value)
             } else {
-              const resolved = resolveNarrowedKey(expr.left.property as Expression, ctx)
-              if (resolved !== null) {
-                shape.mutableKeys.add(String(resolved))
+              const resolved = resolveNarrowedKeys(expr.left.property as Expression, ctx)
+              if (resolved && resolved.size > 0) {
+                for (const value of resolved) {
+                  shape.mutableKeys.add(String(value))
+                }
               } else {
                 shape.dynamicAccess = true
               }
             }
+          }
+          if (ctx.keySets.has(base)) {
+            // Array key sets are invalidated by mutation
+            ctx.keySets.delete(base)
           }
         }
       }
@@ -635,8 +837,13 @@ function analyzeExpression(
 
     case 'UpdateExpression': {
       if (expr.argument.kind === 'Identifier') {
-        if (ctx.has(expr.argument.name)) {
-          ctx.delete(expr.argument.name)
+        ctx.values.delete(expr.argument.name)
+        ctx.keySets.delete(expr.argument.name)
+      }
+      if (expr.argument.kind === 'MemberExpression') {
+        const base = getBaseIdentifier(expr.argument.object)
+        if (base) {
+          ctx.keySets.delete(base)
         }
       }
       analyzeExpression(expr.argument, shapes, propertyReads, ctx)

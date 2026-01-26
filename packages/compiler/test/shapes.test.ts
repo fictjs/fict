@@ -117,6 +117,94 @@ describe('Object Shape Lattice Analysis', () => {
       expect(subscriptions!.has('b')).toBe(true)
     })
 
+    it('should narrow dynamic keys from literal assignments', () => {
+      const ast = parseFile(`
+        function test(props) {
+          const key = 'a'
+          return props[key]
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('a')).toBe(true)
+    })
+
+    it('should narrow dynamic keys from conditional assignments', () => {
+      const ast = parseFile(`
+        function test(props, flag) {
+          const key = flag ? 'a' : 'b'
+          return props[key]
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('a')).toBe(true)
+      expect(subscriptions!.has('b')).toBe(true)
+    })
+
+    it('should narrow dynamic keys from array key sets', () => {
+      const ast = parseFile(`
+        function test(props, idx) {
+          const keys = ['a', 'b']
+          const key = keys[idx]
+          return props[key]
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('a')).toBe(true)
+      expect(subscriptions!.has('b')).toBe(true)
+    })
+
+    it('should narrow dynamic keys from Object.keys of object literal', () => {
+      const ast = parseFile(`
+        function test(props, idx) {
+          const keys = Object.keys({ a: 1, b: 2 })
+          const key = keys[idx]
+          return props[key]
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('a')).toBe(true)
+      expect(subscriptions!.has('b')).toBe(true)
+    })
+
+    it('should narrow dynamic keys across OR conditions', () => {
+      const ast = parseFile(`
+        function test(props, key) {
+          if (key === 'a' || key === 'b') {
+            return props[key]
+          }
+          return null
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('a')).toBe(true)
+      expect(subscriptions!.has('b')).toBe(true)
+    })
+
     it('should not narrow dynamic keys with loose equality', () => {
       const ast = parseFile(`
         function test(props, key) {

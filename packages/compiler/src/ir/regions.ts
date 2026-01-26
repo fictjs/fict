@@ -517,7 +517,11 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
       )
     case 'MemberExpression':
     case 'OptionalMemberExpression':
-      return expressionUsesTracked(expr.object as Expression, ctx)
+      if (expressionUsesTracked(expr.object as Expression, ctx)) return true
+      if (expr.computed && expr.property.kind !== 'Literal') {
+        return expressionUsesTracked(expr.property as Expression, ctx)
+      }
+      return false
     case 'CallExpression':
     case 'OptionalCallExpression':
       if (expressionUsesTracked(expr.callee as Expression, ctx)) return true

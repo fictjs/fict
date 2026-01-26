@@ -544,6 +544,9 @@ Set `inlineDerivedMemos: false` in compiler options to keep user-named derived v
 as memos.
 Hook note: Hook-like functions (explicit `useX` or inferred hooks using `$state`/`$store`)
 do not inline user-named derived values by default, to preserve accessor return shapes.
+Optimizer safety: `optimizeLevel` controls algebraic simplification. Defaults to `'safe'`,
+which avoids non-constant algebraic rewrites that can change JavaScript semantics.
+Use `optimizeLevel: 'full'` to enable those rewrites for maximum optimization.
 Benchmarking: run `pnpm bench:optimizer` (builds the compiler and prints average compile
 times with optimization enabled/disabled).
 Optimizer baselines: `pnpm bench:optimizer:guard` compares results to
@@ -553,6 +556,8 @@ Snapshot baselines: `pnpm -C packages/compiler test -- optimizer-baseline.test.t
 updates the optimizer output snapshots for core scenarios.
 Guardrails: `pnpm guardrails:hir` compares current output to `scripts/hir-guardrails.baseline.json`.
 Use `pnpm guardrails:hir:update` to refresh the baseline when changes are intentional.
+Warning escalation: `warningsAsErrors` (boolean or list of diagnostic codes) and
+`warningLevels` let you turn warnings into errors or suppress specific codes.
 
 Purity annotations:
 

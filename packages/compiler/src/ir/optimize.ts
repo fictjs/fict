@@ -122,6 +122,7 @@ const IMPURE_CALLEES = new Set([
 export interface OptimizeOptions {
   memoMacroNames?: Set<string>
   inlineDerivedMemos?: boolean
+  optimizeLevel?: 'safe' | 'full'
 }
 
 export function optimizeHIR(program: HIRProgram, options: OptimizeOptions = {}): HIRProgram {
@@ -135,7 +136,7 @@ export function optimizeHIR(program: HIRProgram, options: OptimizeOptions = {}):
         originalBody: [],
       })
       const ssaFn = ssaProgram.functions[0]
-      return ssaFn ? optimizeSSAFunction(ssaFn) : fn
+      return ssaFn ? optimizeSSAFunction(ssaFn, options) : fn
     }
     if (isReactiveOptimizationCandidate(fn)) {
       return optimizeReactiveFunction(fn, exportedNames, options)
@@ -148,9 +149,9 @@ export function optimizeHIR(program: HIRProgram, options: OptimizeOptions = {}):
   }
 }
 
-function optimizeSSAFunction(fn: HIRFunction): HIRFunction {
+function optimizeSSAFunction(fn: HIRFunction, options: OptimizeOptions): HIRFunction {
   let current = fn
-  current = propagateConstants(current)
+  current = propagateConstants(current, options)
   const purity = buildPurityContext(current)
   current = eliminateCommonSubexpressions(current, purity)
   current = inlineSingleUse(current, purity)
@@ -866,7 +867,9 @@ function optimizeReactiveFunction(
   const reactive = buildReactiveContext(fn)
   const purity = buildPurityContext(fn)
   const hookLike = isHookLikeFunction(fn)
-  const transformedBlocks = fn.blocks.map(block => optimizeReactiveBlock(block, reactive, purity))
+  const transformedBlocks = fn.blocks.map(block =>
+    optimizeReactiveBlock(block, reactive, purity, options),
+  )
   let transformed = { ...fn, blocks: transformedBlocks }
   if (isCrossBlockConstPropagationEnabled()) {
     transformed = propagateCrossBlockConstants(transformed, reactive, purity, scopeResult)
@@ -906,6 +909,7 @@ function optimizeReactiveBlock(
   block: BasicBlock,
   reactive: ReactiveContext,
   purity: PurityContext,
+  options: OptimizeOptions,
 ): BasicBlock {
   const constants = new Map<string, ConstantValue>()
   const constObjects = new Map<string, ConstObjectFields>()
@@ -948,7 +952,7 @@ function optimizeReactiveBlock(
       const dependsOnReactiveValue = expressionDependsOnReactive(instr.value, reactive)
       let value = dependsOnReactiveValue
         ? instr.value
-        : foldExpressionWithConstants(instr.value, constants, constObjects, constArrays)
+        : foldExpressionWithConstants(instr.value, constants, options, constObjects, constArrays)
       const allowCSE = isCompilerGeneratedName(target) && (!declKind || declKind === 'const')
 
       if (
@@ -1012,7 +1016,7 @@ function optimizeReactiveBlock(
       const dependsOnReactiveValue = expressionDependsOnReactive(instr.value, reactive)
       const value = dependsOnReactiveValue
         ? instr.value
-        : foldExpressionWithConstants(instr.value, constants, constObjects, constArrays)
+        : foldExpressionWithConstants(instr.value, constants, options, constObjects, constArrays)
       instructions.push(value === instr.value ? instr : { ...instr, value })
       continue
     }
@@ -1023,6 +1027,7 @@ function optimizeReactiveBlock(
   const terminator = foldTerminatorWithConstants(
     block.terminator,
     constants,
+    options,
     reactive,
     constObjects,
     constArrays,
@@ -2129,7 +2134,7 @@ function blocksContainImpureMarkers(blocks: BasicBlock[]): boolean {
   return false
 }
 
-function propagateConstants(fn: HIRFunction): HIRFunction {
+function propagateConstants(fn: HIRFunction, options: OptimizeOptions): HIRFunction {
   const constants = computeConstantMap(fn)
   if (constants.size === 0) return fn
   const blocks = fn.blocks.map(block => ({
@@ -2137,12 +2142,12 @@ function propagateConstants(fn: HIRFunction): HIRFunction {
     instructions: block.instructions.map(instr => {
       if (instr.kind === 'Assign') {
         const replaced = replaceIdentifiersWithConstants(instr.value, constants)
-        const folded = foldExpression(replaced, constants)
+        const folded = foldExpression(replaced, constants, options)
         return { ...instr, value: folded }
       }
       if (instr.kind === 'Expression') {
         const replaced = replaceIdentifiersWithConstants(instr.value, constants)
-        const folded = foldExpression(replaced, constants)
+        const folded = foldExpression(replaced, constants, options)
         return { ...instr, value: folded }
       }
       if (instr.kind === 'Phi') {
@@ -2580,11 +2585,15 @@ function evaluateBinary(
   }
 }
 
-function foldExpression(expr: Expression, constants: Map<string, ConstantValue>): Expression {
+function foldExpression(
+  expr: Expression,
+  constants: Map<string, ConstantValue>,
+  options: OptimizeOptions,
+): Expression {
   const value = evaluateConstant(expr, constants)
   if (value === UNKNOWN_CONST) {
     // Try algebraic simplification if constant folding failed
-    return simplifyAlgebraically(expr, constants)
+    return simplifyAlgebraically(expr, constants, options)
   }
   return { kind: 'Literal', value, loc: expr.loc }
 }
@@ -2615,9 +2624,14 @@ function foldExpression(expr: Expression, constants: Map<string, ConstantValue>)
 function simplifyAlgebraically(
   expr: Expression,
   constants: Map<string, ConstantValue>,
+  options: OptimizeOptions,
 ): Expression {
   // First, recursively simplify children
-  const simplified = simplifyChildren(expr, constants)
+  const simplified = simplifyChildren(expr, constants, options)
+
+  if (options.optimizeLevel === 'safe') {
+    return simplified
+  }
 
   if (simplified.kind === 'BinaryExpression') {
     const { operator, left, right, loc } = simplified
@@ -2737,37 +2751,41 @@ function simplifyAlgebraically(
 /**
  * Recursively simplify children of an expression.
  */
-function simplifyChildren(expr: Expression, constants: Map<string, ConstantValue>): Expression {
+function simplifyChildren(
+  expr: Expression,
+  constants: Map<string, ConstantValue>,
+  options: OptimizeOptions,
+): Expression {
   switch (expr.kind) {
     case 'BinaryExpression':
       return {
         ...expr,
-        left: simplifyAlgebraically(expr.left as Expression, constants),
-        right: simplifyAlgebraically(expr.right as Expression, constants),
+        left: simplifyAlgebraically(expr.left as Expression, constants, options),
+        right: simplifyAlgebraically(expr.right as Expression, constants, options),
       }
     case 'LogicalExpression':
       return {
         ...expr,
-        left: simplifyAlgebraically(expr.left as Expression, constants),
-        right: simplifyAlgebraically(expr.right as Expression, constants),
+        left: simplifyAlgebraically(expr.left as Expression, constants, options),
+        right: simplifyAlgebraically(expr.right as Expression, constants, options),
       }
     case 'UnaryExpression':
       return {
         ...expr,
-        argument: simplifyAlgebraically(expr.argument as Expression, constants),
+        argument: simplifyAlgebraically(expr.argument as Expression, constants, options),
       }
     case 'ConditionalExpression':
       return {
         ...expr,
-        test: simplifyAlgebraically(expr.test as Expression, constants),
-        consequent: simplifyAlgebraically(expr.consequent as Expression, constants),
-        alternate: simplifyAlgebraically(expr.alternate as Expression, constants),
+        test: simplifyAlgebraically(expr.test as Expression, constants, options),
+        consequent: simplifyAlgebraically(expr.consequent as Expression, constants, options),
+        alternate: simplifyAlgebraically(expr.alternate as Expression, constants, options),
       }
     case 'ArrayExpression':
       return {
         ...expr,
         elements: expr.elements.map(el =>
-          el ? simplifyAlgebraically(el as Expression, constants) : el,
+          el ? simplifyAlgebraically(el as Expression, constants, options) : el,
         ),
       }
     case 'ObjectExpression':
@@ -2777,13 +2795,13 @@ function simplifyChildren(expr: Expression, constants: Map<string, ConstantValue
           if (prop.kind === 'Property') {
             return {
               ...prop,
-              value: simplifyAlgebraically(prop.value as Expression, constants),
+              value: simplifyAlgebraically(prop.value as Expression, constants, options),
             }
           }
           if (prop.kind === 'SpreadElement') {
             return {
               ...prop,
-              argument: simplifyAlgebraically(prop.argument as Expression, constants),
+              argument: simplifyAlgebraically(prop.argument as Expression, constants, options),
             }
           }
           return prop
@@ -2793,20 +2811,20 @@ function simplifyChildren(expr: Expression, constants: Map<string, ConstantValue
     case 'OptionalCallExpression':
       return {
         ...expr,
-        arguments: expr.arguments.map(arg => simplifyAlgebraically(arg, constants)),
+        arguments: expr.arguments.map(arg => simplifyAlgebraically(arg, constants, options)),
       }
     case 'ImportExpression':
       return {
         ...expr,
-        source: simplifyAlgebraically(expr.source as Expression, constants),
+        source: simplifyAlgebraically(expr.source as Expression, constants, options),
       }
     case 'MemberExpression':
     case 'OptionalMemberExpression':
       return {
         ...expr,
-        object: simplifyAlgebraically(expr.object as Expression, constants),
+        object: simplifyAlgebraically(expr.object as Expression, constants, options),
         property: expr.computed
-          ? simplifyAlgebraically(expr.property as Expression, constants)
+          ? simplifyAlgebraically(expr.property as Expression, constants, options)
           : expr.property,
       }
     default:
@@ -2817,19 +2835,20 @@ function simplifyChildren(expr: Expression, constants: Map<string, ConstantValue
 function foldExpressionWithConstants(
   expr: Expression,
   constants: Map<string, ConstantValue>,
+  options: OptimizeOptions,
   constObjects?: Map<string, ConstObjectFields>,
   constArrays?: Map<string, ConstArrayElements>,
 ): Expression {
   const replaced = replaceIdentifiersWithConstants(expr, constants)
   if (!constObjects && !constArrays) {
-    return foldExpression(replaced, constants)
+    return foldExpression(replaced, constants, options)
   }
   const memberReplaced = replaceConstMemberExpressions(
     replaced,
     constObjects ?? new Map(),
     constArrays ?? new Map(),
   )
-  return foldExpression(memberReplaced, constants)
+  return foldExpression(memberReplaced, constants, options)
 }
 
 function replaceIdentifiersWithConstants(
@@ -3008,13 +3027,14 @@ function replaceConstantsInTerminator(
 function foldTerminatorWithConstants(
   term: Terminator,
   constants: Map<string, ConstantValue>,
+  options: OptimizeOptions,
   reactive?: ReactiveContext,
   constObjects?: Map<string, ConstObjectFields>,
   constArrays?: Map<string, ConstArrayElements>,
 ): Terminator {
   const fold = (expr: Expression) => {
     if (reactive && expressionDependsOnReactive(expr, reactive)) return expr
-    return foldExpressionWithConstants(expr, constants, constObjects, constArrays)
+    return foldExpressionWithConstants(expr, constants, options, constObjects, constArrays)
   }
   switch (term.kind) {
     case 'Return':
@@ -3141,11 +3161,14 @@ function hasSideEffectsBetween(
 function eliminateDeadCode(fn: HIRFunction, purity: PurityContext): HIRFunction {
   const depsByVar = buildDependencyGraph(fn)
   const live = computeLiveVariables(fn, depsByVar, purity)
+  const baseLive = new Set<string>()
+  live.forEach(name => baseLive.add(getSSABaseName(name)))
   const blocks = fn.blocks.map(block => {
     const instructions = block.instructions.filter(instr => {
       if (instr.kind === 'Assign') {
         const name = instr.target.name
         if (live.has(name)) return true
+        if (instr.declarationKind && baseLive.has(getSSABaseName(name))) return true
         return !isPureExpression(instr.value, purity) || isExplicitMemoCall(instr.value, purity)
       }
       if (instr.kind === 'Phi') {

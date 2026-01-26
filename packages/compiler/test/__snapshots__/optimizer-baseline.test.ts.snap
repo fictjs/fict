@@ -22,17 +22,17 @@ export function useCounter() {
 export function View() {
   const __fictCtx = __fictUseContext();
   const __region_0 = __fictUseMemo(__fictCtx, () => {
-    const __destruct_0 = useCounter();
-    const count = __destruct_0.count;
-    const double = __destruct_0.double;
+    const _useCounter = useCounter();
+    const count = _useCounter.count;
+    const double = _useCounter.double;
     return {
-      __destruct_0,
+      _useCounter,
       count,
       double
     };
   }, 1002);
   const {
-    __destruct_0,
+    _useCounter,
     count,
     double
   } = __region_0();

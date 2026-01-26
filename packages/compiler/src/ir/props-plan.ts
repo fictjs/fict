@@ -155,6 +155,28 @@ export function buildPropsPlan(
       return false
     }
 
+    const getBaseIdentifier = (expr: Expression): string | null => {
+      if (expr.kind === 'Identifier') return expr.name
+      if (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') {
+        return getBaseIdentifier(expr.object as Expression)
+      }
+      return null
+    }
+
+    const isDynamicStoreMember = (expr: Expression): boolean => {
+      if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') return false
+      if (!expr.computed) return false
+      if (
+        expr.property.kind === 'Literal' &&
+        (typeof expr.property.value === 'string' || typeof expr.property.value === 'number')
+      ) {
+        return false
+      }
+      const base = getBaseIdentifier(expr.object as Expression)
+      if (!base) return false
+      return ctx.storeVars?.has(helpers.deSSAVarName(base)) ?? false
+    }
+
     const flushBucket = () => {
       if (bucket.length === 0) return
       segments.push({ kind: 'object', properties: bucket })
@@ -262,6 +284,8 @@ export function buildPropsPlan(
           !t.isIdentifier(trackedExpr) &&
           !t.isMemberExpression(trackedExpr) &&
           !t.isLiteral(trackedExpr)
+        const forceMemoProp = usesTracked && isDynamicStoreMember(attr.value)
+        const shouldMemoProp = useMemoProp || forceMemoProp
         const valueExpr =
           !isFunctionLike && isAccessorBase && baseIdent
             ? (() => {
@@ -273,7 +297,7 @@ export function buildPropsPlan(
               })()
             : usesTracked && t.isExpression(lowered)
               ? (() => {
-                  if (useMemoProp) {
+                  if (shouldMemoProp) {
                     ctx.helpersUsed.add('prop')
                     return t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [
                       t.arrowFunctionExpression([], trackedExpr ?? lowered),
