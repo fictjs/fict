@@ -75,6 +75,6 @@
   "devDependencies": {
     "@fictjs/vite-plugin": "workspace:*",
     "tsup": "^8.5.1",
-    "vite": "^7.3.0"
+    "vite": "^7.3.1"
   }
 }
