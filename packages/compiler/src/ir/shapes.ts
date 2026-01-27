@@ -10,8 +10,9 @@
  * helping avoid whole-object subscriptions when only specific properties are needed.
  */
 
-import type { HIRFunction, Instruction, Expression } from './hir'
 import * as t from '@babel/types'
+
+import type { HIRFunction, Instruction, Expression } from './hir'
 import { structurizeCFG, type StructuredNode } from './structurize'
 
 /**

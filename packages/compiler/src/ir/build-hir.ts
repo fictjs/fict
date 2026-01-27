@@ -5,6 +5,8 @@ import transformDestructuring from '@babel/plugin-transform-destructuring'
 import traverseModule from '@babel/traverse'
 import * as t from '@babel/types'
 
+import type { CompilerWarning } from '../types'
+
 import {
   HIRError,
   type ArrayExpression as HArrayExpression,
@@ -34,7 +36,6 @@ import {
   type UnaryExpression as HUnaryExpression,
   type UpdateExpression as HUpdateExpression,
 } from './hir'
-import type { CompilerWarning } from '../types'
 
 interface BuildHIROptions {
   dev?: boolean

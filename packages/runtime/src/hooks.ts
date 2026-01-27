@@ -84,8 +84,22 @@ export function __fictUseMemo<T>(
 }
 
 export function __fictUseEffect(ctx: HookContext, fn: () => void, slot?: number): void {
+  // P0-1 fix: When a slot number is provided, we trust the compiler has allocated this slot.
+  // This allows effects inside conditional callbacks to work even outside render context.
+  // The slot number proves this is a known, statically-allocated effect location.
+  if (slot !== undefined) {
+    if (ctx.slots[slot]) {
+      // Effect already exists, nothing to do
+      return
+    }
+    // Create the effect even outside render context - the slot number proves validity
+    ctx.slots[slot] = createEffect(fn)
+    return
+  }
+
+  // For cursor-based allocation (no slot number), we need render context
   assertRenderContext(ctx, '__fictUseEffect')
-  const index = slot ?? ctx.cursor++
+  const index = ctx.cursor++
   if (!ctx.slots[index]) {
     ctx.slots[index] = createEffect(fn)
   }

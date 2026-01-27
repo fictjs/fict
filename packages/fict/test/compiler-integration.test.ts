@@ -169,6 +169,8 @@ describe('compiler + fict integration', () => {
   beforeEach(() => {
     // Reset hook context to avoid slot reuse across compiled modules
     ;(runtime as any).__fictResetContext?.()
+    // Reset reactive state to clear any pending effects from previous tests
+    ;(runtimeInternal as any).__resetReactiveState?.()
     container = document.createElement('div')
     document.body.appendChild(container)
   })
@@ -6546,6 +6548,125 @@ describe('compiler + fict integration', () => {
       incBtn.click()
       await tick()
       expect(mod.logs).toEqual(['current 0', 'prev 0', 'current 1', 'prev 1', 'current 2'])
+
+      dispose()
+    })
+  })
+
+  /**
+   * P0-3: Event Handler `this` Binding Tests
+   *
+   * Tests that function event handlers have correct `this` binding.
+   * The compiler should not wrap function handlers in arrow functions
+   * that would break the `this` binding.
+   */
+  describe('event handler this binding (P0-3)', () => {
+    it('preserves this binding for function handlers passed as identifiers', async () => {
+      const source = `
+        import { render } from 'fict'
+
+        export const results: string[] = []
+
+        function handler() {
+          results.push(this?.tagName || 'no-this')
+        }
+
+        function App() {
+          return <button data-testid="btn" onClick={handler}>Click</button>
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        results: string[]
+      }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const btn = container.querySelector('[data-testid="btn"]') as HTMLButtonElement
+      btn.click()
+      await tick()
+
+      // this should be the button element
+      expect(mod.results).toEqual(['BUTTON'])
+
+      dispose()
+    })
+
+    it('preserves this binding for method handlers (member expressions)', async () => {
+      const source = `
+        import { render } from 'fict'
+
+        export const results: string[] = []
+
+        const obj = {
+          handler() {
+            results.push(this?.tagName || 'no-this')
+          }
+        }
+
+        function App() {
+          return <button data-testid="btn" onClick={obj.handler}>Click</button>
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        results: string[]
+      }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const btn = container.querySelector('[data-testid="btn"]') as HTMLButtonElement
+      btn.click()
+      await tick()
+
+      // this should be the button element (not the obj)
+      expect(mod.results).toEqual(['BUTTON'])
+
+      dispose()
+    })
+
+    it('preserves this binding for non-delegated events (mouseenter)', async () => {
+      const source = `
+        import { render } from 'fict'
+
+        export const results: string[] = []
+
+        function handler() {
+          results.push(this?.tagName || 'no-this')
+        }
+
+        function App() {
+          return <div data-testid="div" onMouseEnter={handler}>Hover</div>
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+        results: string[]
+      }>(source)
+      const dispose = mod.mount(container)
+      await tick()
+
+      const div = container.querySelector('[data-testid="div"]') as HTMLDivElement
+      div.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }))
+      await tick()
+
+      // this should be the div element
+      expect(mod.results).toEqual(['DIV'])
 
       dispose()
     })

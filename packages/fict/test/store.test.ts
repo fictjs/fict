@@ -773,4 +773,106 @@ describe('$store', () => {
       expect(state.ref.ref?.id).toBe(1)
     })
   })
+
+  // P2-2: Double-wrap prevention and read-time write removal
+  describe('P2-2: proxy guard and read-time write prevention', () => {
+    it('should prevent double-wrapping of proxies', () => {
+      const raw = { value: 1 }
+      const store1 = $store(raw)
+      const store2 = $store(store1) // Try to wrap the proxy again
+
+      // Should return the same proxy, not create a new one
+      expect(store2).toBe(store1)
+    })
+
+    it('should return same proxy for same raw object', () => {
+      const raw = { value: 1 }
+      const store1 = $store(raw)
+      const store2 = $store(raw)
+
+      expect(store1).toBe(store2)
+    })
+
+    it('should identify store proxy via internal symbol', () => {
+      const store = $store({ value: 1 })
+
+      // Accessing IS_STORE_PROXY symbol should return true
+      // This is tested indirectly via the double-wrap prevention
+      const store2 = $store(store)
+      expect(store2).toBe(store)
+    })
+
+    it('should warn in dev mode when underlying object is mutated directly', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const raw = { value: 1 }
+      const store = $store(raw)
+
+      // First read - creates signal with initial value
+      expect(store.value).toBe(1)
+
+      // Direct mutation of raw object (bypassing proxy)
+      raw.value = 2
+
+      // Second read - should detect the discrepancy and warn
+      expect(store.value).toBe(2) // Still returns current value
+
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('[fict] $store detected direct mutation'),
+      )
+
+      warnSpy.mockRestore()
+    })
+
+    it('should not warn when mutations go through proxy', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const store = $store({ value: 1 })
+
+      expect(store.value).toBe(1)
+
+      // Mutation through proxy (correct way)
+      store.value = 2
+      await tick()
+
+      expect(store.value).toBe(2)
+
+      // No warning should be issued for proper proxy mutation
+      expect(warnSpy).not.toHaveBeenCalled()
+
+      warnSpy.mockRestore()
+    })
+
+    it('should not warn for built-in properties like constructor', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const store = $store([1, 2, 3])
+
+      // Accessing array methods (which internally access constructor, etc.)
+      store.push(4)
+      store.splice(0, 1)
+
+      // Should not warn about constructor access
+      expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('constructor'))
+
+      warnSpy.mockRestore()
+    })
+
+    it('should handle nested proxies correctly without double-wrapping', () => {
+      const store = $store({
+        nested: { value: 1 },
+      })
+
+      // Get nested proxy
+      const nested1 = store.nested
+      const nested2 = store.nested
+
+      // Should return the same proxy reference
+      expect(nested1).toBe(nested2)
+
+      // And double-wrapping the nested proxy should return itself
+      const rewrapped = $store(nested1)
+      expect(rewrapped).toBe(nested1)
+    })
+  })
 })

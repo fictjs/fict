@@ -553,6 +553,10 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
       return expr.expressions.some(e => expressionUsesTracked(e as Expression, ctx))
     case 'SpreadElement':
       return expressionUsesTracked(expr.argument as Expression, ctx)
+    case 'UnaryExpression':
+      return expressionUsesTracked(expr.argument as Expression, ctx)
+    case 'UpdateExpression':
+      return expressionUsesTracked(expr.argument as Expression, ctx)
     default:
       return false
   }
@@ -830,6 +834,26 @@ function lowerNodeWithRegionContext(
     case 'if': {
       const prevConditional = ctx.inConditional ?? 0
       ctx.inConditional = prevConditional + 1
+
+      // P0-1 fix: Pre-compute whether we *might* wrap this if in an effect BEFORE lowering children.
+      // We check most conditions but NOT early exit (that requires the built statement).
+      // If we might wrap in effect, increment nonReactiveScopeDepth to prevent nested effect wrapping.
+      // This prevents the bug where nested if statements inside an effect callback also get wrapped
+      // in effects, causing __fictUseEffect to be called outside render context.
+      const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
+      const mightWrapInEffect =
+        ctx.wrapTrackedExpressions !== false &&
+        !ctx.inRegionMemo &&
+        !inNonReactiveScope &&
+        expressionUsesTracked(node.test, ctx)
+
+      // If we might wrap in effect, mark children as being in a non-reactive scope
+      // so they don't also get wrapped in effects
+      const prevNonReactiveDepth = ctx.nonReactiveScopeDepth ?? 0
+      if (mightWrapInEffect) {
+        ctx.nonReactiveScopeDepth = prevNonReactiveDepth + 1
+      }
+
       const conseqStmts = lowerNodeWithRegionContext(
         node.consequent,
         t,
@@ -840,6 +864,11 @@ function lowerNodeWithRegionContext(
       const altStmts = node.alternate
         ? lowerNodeWithRegionContext(node.alternate, t, ctx, declaredVars, regionCtx)
         : null
+
+      // Restore non-reactive depth
+      if (mightWrapInEffect) {
+        ctx.nonReactiveScopeDepth = prevNonReactiveDepth
+      }
       ctx.inConditional = prevConditional
 
       const conseqReactiveOnly = nodeIsPureReactiveScope(node.consequent, ctx.memoMacroNames)
@@ -903,18 +932,22 @@ function lowerNodeWithRegionContext(
         return stmts
       }
 
+      // P0-1 fix: Don't generate empty if statements (or wrap them in effects).
+      // When assignments are moved to a region memo, the if body may become empty.
+      const conseqIsEmpty = conseqStmts.length === 0
+      const altIsEmpty = !altStmts || altStmts.length === 0
+      if (conseqIsEmpty && altIsEmpty) {
+        // Both branches are empty - nothing to generate
+        return []
+      }
+
       const ifStmt = t.ifStatement(
         testExpr,
         t.blockStatement(conseqStmts),
         altStmts ? t.blockStatement(altStmts) : null,
       )
-      const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
-      const shouldWrapEffect =
-        ctx.wrapTrackedExpressions !== false &&
-        !ctx.inRegionMemo &&
-        !inNonReactiveScope &&
-        expressionUsesTracked(node.test, ctx) &&
-        !statementHasEarlyExit(ifStmt, t)
+      // Final check: only wrap in effect if no early exit (after lowering to check the statement)
+      const shouldWrapEffect = mightWrapInEffect && !statementHasEarlyExit(ifStmt, t)
       if (shouldWrapEffect) {
         const effectFn = t.arrowFunctionExpression([], t.blockStatement([ifStmt]))
         return [t.expressionStatement(buildEffectCall(ctx, t, effectFn))]
@@ -1209,11 +1242,15 @@ function lowerStructuredNodeForRegion(
 
     case 'if': {
       const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
-      const baseShouldWrapEffect =
+      // P0-1 fix: Pre-compute whether we *might* wrap this if in an effect BEFORE lowering children.
+      // We check most conditions but NOT early exit (that requires the built statement).
+      // If we might wrap in effect, process children with forceNonReactive=true to prevent nested effects.
+      const mightWrapInEffect =
         ctx.wrapTrackedExpressions !== false &&
         !ctx.inRegionMemo &&
         !inNonReactiveScope &&
         expressionUsesTracked(node.test, ctx)
+
       const lowerChild = (
         child: StructuredNode | null | undefined,
         forceNonReactive: boolean,
@@ -1247,8 +1284,9 @@ function lowerStructuredNodeForRegion(
         }
       }
 
-      let consequent = lowerChild(node.consequent, baseShouldWrapEffect)
-      let alternate = node.alternate ? lowerChild(node.alternate, baseShouldWrapEffect) : []
+      // Lower children with forceNonReactive=true if we might wrap in effect
+      let consequent = lowerChild(node.consequent, mightWrapInEffect)
+      let alternate = node.alternate ? lowerChild(node.alternate, mightWrapInEffect) : []
       if (consequent.length === 0 && alternate.length === 0) return []
       const buildIfStmt = (
         cons: BabelCore.types.Statement[],
@@ -1261,9 +1299,15 @@ function lowerStructuredNodeForRegion(
         )
 
       let ifStmt = buildIfStmt(consequent, alternate)
-      const shouldWrapEffect = baseShouldWrapEffect && !statementHasEarlyExit(ifStmt, t)
+      // Final check: only wrap in effect if no early exit (after lowering to check the statement)
+      const hasEarlyExit = statementHasEarlyExit(ifStmt, t)
+      const shouldWrapEffect = mightWrapInEffect && !hasEarlyExit
 
-      if (!shouldWrapEffect && baseShouldWrapEffect) {
+      // P0-1 fix: When there's an early exit (createConditional case), DON'T re-lower without
+      // the non-reactive guard. The children will be inside a createConditional callback which
+      // is already reactive, so they don't need to be wrapped in effects themselves.
+      // Only re-lower without the guard if there's no early exit AND we won't wrap in effect.
+      if (!shouldWrapEffect && mightWrapInEffect && !hasEarlyExit) {
         // Re-lower without the non-reactive guard to preserve previous behavior
         consequent = lowerChild(node.consequent, false)
         alternate = node.alternate ? lowerChild(node.alternate, false) : []
@@ -1630,6 +1674,54 @@ function statementHasEarlyExit(
 }
 
 /**
+ * Check if a StructuredNode contains an early exit (return, throw, break, continue).
+ * This is used to determine if we should wrap an if statement in an effect
+ * BEFORE lowering its children.
+ */
+function _structuredNodeHasEarlyExit(node: StructuredNode | null | undefined): boolean {
+  if (!node) return false
+
+  switch (node.kind) {
+    case 'return':
+    case 'throw':
+    case 'break':
+    case 'continue':
+      return true
+
+    case 'block':
+      return node.statements.some(stmt => _structuredNodeHasEarlyExit(stmt))
+
+    case 'sequence':
+      return node.nodes.some(n => _structuredNodeHasEarlyExit(n))
+
+    case 'if':
+      return (
+        _structuredNodeHasEarlyExit(node.consequent) || _structuredNodeHasEarlyExit(node.alternate)
+      )
+
+    case 'while':
+    case 'doWhile':
+    case 'for':
+    case 'forOf':
+    case 'forIn':
+      return _structuredNodeHasEarlyExit(node.body)
+
+    case 'switch':
+      return node.cases.some(c => _structuredNodeHasEarlyExit(c.body))
+
+    case 'try':
+      return (
+        _structuredNodeHasEarlyExit(node.block) ||
+        _structuredNodeHasEarlyExit(node.handler?.body) ||
+        _structuredNodeHasEarlyExit(node.finalizer)
+      )
+
+    default:
+      return false
+  }
+}
+
+/**
  * Remove SSA version suffix from variable name.
  * Exported for use in codegen.ts and other modules that need SSA de-versioning.
  * Uses the centralized SSA naming utilities from hir.ts.
@@ -1894,19 +1986,10 @@ function wrapInMemo(
       ctx.memoVars?.add(name)
     }
 
-    if (region.hasControlFlow && getterOutputs.length > 0) {
-      const effectBody = t.blockStatement(
-        getterOutputs.map(name => t.expressionStatement(t.callExpression(t.identifier(name), []))),
-      )
-      statements.push(
-        t.expressionStatement(
-          buildEffectCall(ctx, t, t.arrowFunctionExpression([], effectBody), {
-            slot: ctx.inModule ? undefined : reserveHookSlot(ctx),
-            forceSlot: true,
-          }),
-        ),
-      )
-    }
+    // P0-1 fix: Removed unnecessary effect that just called getter outputs.
+    // The getterOutputs are already tracked through the memo - DOM bindings
+    // that read them will trigger the memo's dependency tracking.
+    // An effect that just calls heading() and extra() without side effects is wasteful.
   }
 
   return statements
@@ -2245,6 +2328,26 @@ function reserveHookSlot(ctx: CodegenContext): number {
   return slot
 }
 
+/**
+ * P0-1 fix helper: Create a plain variable declaration for non-reactive scopes.
+ * Variables declared inside non-reactive scopes (like createConditional callbacks)
+ * should be plain variables, not reactive accessors.
+ *
+ * This function:
+ * 1. Removes the variable from trackedVars and memoVars so it won't be called as an accessor later
+ * 2. Returns a 'let' declaration (allowing future reassignment in the scope)
+ */
+function createNonReactiveVarDecl(
+  baseName: string,
+  derivedExpr: BabelCore.types.Expression,
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+): BabelCore.types.VariableDeclaration {
+  ctx.trackedVars.delete(baseName)
+  ctx.memoVars?.delete(baseName)
+  return t.variableDeclaration('let', [t.variableDeclarator(t.identifier(baseName), derivedExpr)])
+}
+
 function instructionToStatement(
   instr: Instruction,
   t: typeof BabelCore.types,
@@ -2378,9 +2481,7 @@ function instructionToStatement(
           }
           const derivedExpr = lowerAssignedValue(true)
           if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
-            return t.variableDeclaration(normalizedDecl, [
-              t.variableDeclarator(t.identifier(baseName), derivedExpr),
-            ])
+            return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
           }
           // P0-1 fix: Don't wrap mutable variables in memo - they will be reassigned later
           // The containing region's memo will handle reactivity
@@ -2421,9 +2522,7 @@ function instructionToStatement(
         }
         const derivedExpr = lowerAssignedValue(true)
         if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
-          return t.variableDeclaration(normalizedDecl, [
-            t.variableDeclarator(t.identifier(baseName), derivedExpr),
-          ])
+          return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
         }
         // P0-1 fix: Don't wrap mutable variables in memo - they will be reassigned later
         // The containing region's memo will handle reactivity
@@ -2576,9 +2675,7 @@ function instructionToStatement(
       if (dependsOnTracked) {
         const derivedExpr = lowerAssignedValue(true)
         if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
-          return t.variableDeclaration('const', [
-            t.variableDeclarator(t.identifier(baseName), derivedExpr),
-          ])
+          return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
         }
         // P0-1 fix: Don't wrap mutable variables in memo - they will be reassigned later
         if (needsMutable) {
@@ -2613,9 +2710,7 @@ function instructionToStatement(
     if (dependsOnTracked) {
       const derivedExpr = lowerAssignedValue(true)
       if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
-        return t.variableDeclaration('let', [
-          t.variableDeclarator(t.identifier(baseName), derivedExpr),
-        ])
+        return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
       }
       // P0-1 fix: Don't wrap mutable variables in memo - they will be reassigned later
       if (needsMutable) {
@@ -2675,7 +2770,10 @@ function instructionToStatement(
       const effectFn = ctx.t.isBlockStatement(effectBody)
         ? t.arrowFunctionExpression([], effectBody)
         : t.arrowFunctionExpression([], effectBody as BabelCore.types.Expression)
-      return t.expressionStatement(buildEffectCall(ctx, t, effectFn))
+      // P0-1 fix: Always use numbered slots for effects so they work when called
+      // outside render context (e.g., in conditional callbacks that re-run).
+      const slot = ctx.inModule ? undefined : reserveHookSlot(ctx)
+      return t.expressionStatement(buildEffectCall(ctx, t, effectFn, { slot }))
     }
     return t.expressionStatement(lowerExpressionWithDeSSA(instr.value, ctx))
   }
