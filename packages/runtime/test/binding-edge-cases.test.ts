@@ -13,6 +13,7 @@ import {
   classList,
   spread,
   assign,
+  __fictProp,
   delegateEvents,
   clearDelegatedEvents,
   addEventListener,
@@ -184,6 +185,27 @@ describe('Binding Edge Cases', () => {
       const cleanup = bindEvent(el, 'click', handler)
 
       el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(handler).toHaveBeenCalled()
+
+      cleanup()
+    })
+
+    it('treats prop getters as reactive handlers (does not pass event to getter)', () => {
+      const el = document.createElement('button')
+      container.appendChild(el)
+      const handler = vi.fn()
+      let getterArgCount = -1
+
+      const getter = __fictProp(function () {
+        getterArgCount = arguments.length
+        return handler
+      })
+
+      const cleanup = bindEvent(el, 'click', getter)
+
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+
+      expect(getterArgCount).toBe(0)
       expect(handler).toHaveBeenCalled()
 
       cleanup()

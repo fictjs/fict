@@ -127,7 +127,7 @@ function isStrictlyReactive(value: unknown): value is () => unknown {
 }
 
 // Import-like check for prop getter marker without circular dependency
-const PROP_GETTER_MARKER = '__fictProp' as const
+const PROP_GETTER_MARKER = Symbol.for('fict:prop-getter')
 function isPropGetterFn(value: unknown): boolean {
   if (typeof value !== 'function') return false
   return (value as any)[PROP_GETTER_MARKER] === true

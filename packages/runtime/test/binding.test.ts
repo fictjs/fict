@@ -22,6 +22,7 @@ import {
   callEventHandler,
   createKeyedList,
   toNodeArray,
+  delegateEvents,
 } from '../src/internal'
 
 const tick = () =>
@@ -1057,6 +1058,33 @@ describe('Reactive DOM Binding', () => {
       text.dispatchEvent(new Event('click', { bubbles: true }))
 
       expect(handler).toHaveBeenCalledTimes(1)
+    })
+
+    it('passes (data, event) to data-bound delegated handlers', () => {
+      const button = document.createElement('button') as HTMLButtonElement & {
+        $$click?: (data: unknown, e: Event) => void
+        $$clickData?: () => unknown
+      }
+      container.appendChild(button)
+
+      let receivedData: unknown
+      let receivedEvent: Event | null = null
+      let receivedThis: unknown
+
+      button.$$click = function (data: unknown, e: Event) {
+        receivedThis = this
+        receivedData = data
+        receivedEvent = e
+      }
+      button.$$clickData = () => 'payload'
+
+      delegateEvents(['click'])
+      const event = new Event('click', { bubbles: true })
+      button.dispatchEvent(event)
+
+      expect(receivedData).toBe('payload')
+      expect(receivedEvent).toBe(event)
+      expect(receivedThis).toBe(button)
     })
   })
 
