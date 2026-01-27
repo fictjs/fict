@@ -896,7 +896,7 @@ function flush(): void {
   while (highIndex < highPriorityQueue.length) {
     const e = highPriorityQueue[highIndex]!
     if (!beforeEffectRunGuard()) {
-      // P1-3 fix: When cycle guard fails, schedule a retry flush instead of leaving
+      // fix: When cycle guard fails, schedule a retry flush instead of leaving
       // the queue stuck. This prevents the system from entering an unrecoverable state.
       if (highIndex > 0) {
         highPriorityQueue.copyWithin(0, highIndex)
@@ -927,7 +927,7 @@ function flush(): void {
     }
     const e = lowPriorityQueue[lowIndex]!
     if (!beforeEffectRunGuard()) {
-      // P1-3 fix: When cycle guard fails, schedule a retry flush instead of leaving
+      // fix: When cycle guard fails, schedule a retry flush instead of leaving
       // the queue stuck. This prevents the system from entering an unrecoverable state.
       if (lowIndex > 0) {
         lowPriorityQueue.copyWithin(0, lowIndex)
@@ -1027,7 +1027,7 @@ export function computed<T>(getter: (oldValue?: T) => T): ComputedAccessor<T> {
   return bound as ComputedAccessor<T>
 }
 function computedOper<T>(this: ComputedNode<T>): T {
-  // P1-1 fix: During cleanup, return cached value without triggering any updates.
+  // fix: During cleanup, return cached value without triggering any updates.
   // This ensures cleanup functions see the previous state, not the new pending values.
   // Without this check, checkDirty() could commit pending signal values during cleanup.
   if (inCleanup) return this.value

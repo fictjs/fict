@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { transform } from './test-utils'
 
-describe('SVG/MathML Namespace Support (P1-4)', () => {
+describe('SVG/MathML Namespace Support ()', () => {
   describe('SVG elements', () => {
     it('does not add isSVG flag for root svg element', () => {
       const source = `

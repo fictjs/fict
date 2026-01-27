@@ -271,11 +271,11 @@ export function template(
     const t = document.createElement('template')
 
     if (isSVG) {
-      // P1-4 fix: Wrap HTML in <svg> to parse content in SVG namespace
+      // fix: Wrap HTML in <svg> to parse content in SVG namespace
       // Then extract the actual content (firstChild of the wrapper svg)
       t.innerHTML = `<svg>${html}</svg>`
       const wrapper = (t as HTMLTemplateElement).content.firstChild!
-      // P2-1: Dev check for multi-root SVG templates
+      // Dev check for multi-root SVG templates
       if (isDev && wrapper.childNodes.length !== 1) {
         console.warn(
           `[fict] template() received multi-root SVG content (${wrapper.childNodes.length} nodes). ` +
@@ -285,11 +285,11 @@ export function template(
       return wrapper.firstChild!
     }
     if (isMathML) {
-      // P1-4 fix: Wrap HTML in <math> to parse content in MathML namespace
+      // fix: Wrap HTML in <math> to parse content in MathML namespace
       // Then extract the actual content (firstChild of the wrapper math)
       t.innerHTML = `<math>${html}</math>`
       const wrapper = (t as HTMLTemplateElement).content.firstChild!
-      // P2-1: Dev check for multi-root MathML templates
+      // Dev check for multi-root MathML templates
       if (isDev && wrapper.childNodes.length !== 1) {
         console.warn(
           `[fict] template() received multi-root MathML content (${wrapper.childNodes.length} nodes). ` +
@@ -301,7 +301,7 @@ export function template(
 
     t.innerHTML = html
     const content = (t as HTMLTemplateElement).content
-    // P2-1: Dev check for multi-root templates
+    // Dev check for multi-root templates
     if (isDev && content.childNodes.length !== 1) {
       console.warn(
         `[fict] template() received multi-root content (${content.childNodes.length} nodes). ` +

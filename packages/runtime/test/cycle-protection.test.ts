@@ -327,7 +327,7 @@ describe('framework cycle protection', () => {
     })
   })
 
-  describe('P1-3 backoff warnings', () => {
+  describe('backoff warnings', () => {
     it('warns at 50% of effect budget when backoff is enabled', () => {
       setCycleProtectionOptions({
         maxFlushCyclesPerMicrotask: 100,

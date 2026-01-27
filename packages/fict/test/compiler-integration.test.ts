@@ -6554,13 +6554,13 @@ describe('compiler + fict integration', () => {
   })
 
   /**
-   * P0-3: Event Handler `this` Binding Tests
+   * Event Handler `this` Binding Tests
    *
    * Tests that function event handlers have correct `this` binding.
    * The compiler should not wrap function handlers in arrow functions
    * that would break the `this` binding.
    */
-  describe('event handler this binding (P0-3)', () => {
+  describe('event handler this binding ()', () => {
     it('preserves this binding for function handlers passed as identifiers', async () => {
       const source = `
         import { render } from 'fict'
@@ -7541,7 +7541,7 @@ describe('compiler + fict integration', () => {
   })
 
   /**
-   * Memo Variable Reactive Binding Tests (P1-1 Fix)
+   * Memo Variable Reactive Binding Tests (Fix)
    *
    * Tests that verify the compiler correctly identifies memo/derived variables
    * as reactive and generates proper bindText calls for their property access.

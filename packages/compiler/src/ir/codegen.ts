@@ -633,7 +633,7 @@ export interface CodegenContext {
   listKeyExpr?: Expression
   /** The item parameter name in list render (e.g., "row") for key expression matching */
   listItemParamName?: string
-  /** P1-4: Current namespace context for SVG/MathML element creation */
+  /** Current namespace context for SVG/MathML element creation */
   namespaceContext?: NamespaceContext
 }
 
@@ -970,7 +970,7 @@ function getCachedGetterExpression(
  * Get or create a hoisted template identifier for the given HTML.
  * When in list render context, templates are hoisted outside the render callback
  * to avoid repeated HTML parsing (1000 items = 1000 parses -> 1 parse + 1000 clones).
- * P1-4: Now accepts isSVG/isMathML parameters for namespace-aware template creation.
+ * Now accepts isSVG/isMathML parameters for namespace-aware template creation.
  */
 function getOrCreateHoistedTemplate(
   html: string,
@@ -982,7 +982,7 @@ function getOrCreateHoistedTemplate(
     return null
   }
 
-  // P1-4: Include namespace in cache key to avoid collisions
+  // Include namespace in cache key to avoid collisions
   const cacheKey = isSVG ? `svg:${html}` : isMathML ? `mathml:${html}` : html
   const existing = ctx.hoistedTemplates.get(cacheKey)
   if (existing) {
@@ -994,7 +994,7 @@ function getOrCreateHoistedTemplate(
   const tmplId = genTemp(ctx, 'htmpl')
   ctx.hoistedTemplates.set(cacheKey, tmplId)
 
-  // P1-4: Build template call arguments with namespace flags
+  // Build template call arguments with namespace flags
   const templateArgs: BabelCore.types.Expression[] = [t.stringLiteral(html)]
   if (isSVG || isMathML) {
     // template(html, isImportNode, isSVG, isMathML)
@@ -3981,7 +3981,7 @@ function replaceIdentifiersWithOverrides(
     return
   }
 
-  // P0-3 fix: For MemberExpressions like `foo.call()`, `foo.apply()`, or `foo.bind()`,
+  // fix: For MemberExpressions like `foo.call()`, `foo.apply()`, or `foo.bind()`,
   // skip replacing the object identifier. These method calls need the original function
   // reference for proper `this` binding.
   const isMethodCallMember =
@@ -4004,7 +4004,7 @@ function replaceIdentifiersWithOverrides(
     ) {
       continue
     }
-    // P0-3 fix: Skip the object of .call()/.apply()/.bind() member expressions
+    // fix: Skip the object of .call()/.apply()/.bind() member expressions
     if (isMethodCallMember && key === 'object') {
       continue
     }
@@ -4278,21 +4278,21 @@ interface HIRBinding {
   name?: string // for attributes/events
   expr?: Expression // the dynamic expression
   eventOptions?: { capture?: boolean; passive?: boolean; once?: boolean }
-  /** P1-4: Namespace context at this binding's location (for dynamic children) */
+  /** Namespace context at this binding's location (for dynamic children) */
   namespace?: NamespaceContext
 }
 
 interface HIRTemplateExtractionResult {
   html: string
   bindings: HIRBinding[]
-  /** P1-4: Whether the root element is an SVG element (or child of SVG) */
+  /** Whether the root element is an SVG element (or child of SVG) */
   isSVG?: boolean
-  /** P1-4: Whether the root element is a MathML element (or child of MathML) */
+  /** Whether the root element is a MathML element (or child of MathML) */
   isMathML?: boolean
 }
 
 /**
- * P1-4: SVG element names for namespace tracking during template extraction.
+ * SVG element names for namespace tracking during template extraction.
  * These elements must be created in SVG namespace to work correctly.
  */
 const _SVG_ELEMENTS = new Set([
@@ -4358,7 +4358,7 @@ const _SVG_ELEMENTS = new Set([
 ])
 
 /**
- * P1-4: MathML element names for namespace tracking during template extraction.
+ * MathML element names for namespace tracking during template extraction.
  */
 const _MATHML_ELEMENTS = new Set([
   'math',
@@ -4405,7 +4405,7 @@ const _MATHML_ELEMENTS = new Set([
   'annotation-xml',
 ])
 
-/** P1-4: Namespace context type for template extraction */
+/** Namespace context type for template extraction */
 type NamespaceContext = 'svg' | 'mathml' | null
 
 /**
@@ -4528,7 +4528,7 @@ function normalizeHIRAttrName(name: string): string {
 }
 
 /**
- * P1-4: Resolve namespace context based on tag name and parent context.
+ * Resolve namespace context based on tag name and parent context.
  * - 'svg' enters SVG namespace
  * - 'math' enters MathML namespace
  * - 'foreignObject' inside SVG exits to null (HTML namespace)
@@ -4547,7 +4547,7 @@ function resolveNamespaceContext(
 /**
  * Extract static HTML from HIR JSXElementExpression.
  * Similar to extractStaticHtml from fine-grained-dom.ts but works with HIR types.
- * P1-4: Now tracks namespace context for SVG/MathML elements.
+ * Now tracks namespace context for SVG/MathML elements.
  */
 function extractHIRStaticHtml(
   jsx: JSXElementExpression,
@@ -4571,7 +4571,7 @@ function extractHIRStaticHtml(
   }
 
   const tagName = jsx.tagName as string
-  // P1-4: Resolve namespace for this element
+  // Resolve namespace for this element
   const resolvedNamespace = resolveNamespaceContext(tagName, namespace)
   let html = `<${tagName}`
   const bindings: HIRBinding[] = []
@@ -4698,7 +4698,7 @@ function extractHIRStaticHtml(
       }
     } else if (child.kind === 'element') {
       const childPath = [...parentPath, childIndex]
-      // P1-4: Pass namespace context to child elements
+      // Pass namespace context to child elements
       const childResult = extractHIRStaticHtml(child.value, ctx, childPath, resolvedNamespace)
       html += childResult.html
       bindings.push(...childResult.bindings)
@@ -4711,7 +4711,7 @@ function extractHIRStaticHtml(
           type: 'text',
           path: [...parentPath, childIndex],
           expr: child.value,
-          // P1-4: Track namespace for dynamic text bindings
+          // Track namespace for dynamic text bindings
           namespace: resolvedNamespace,
         })
       } else {
@@ -4721,7 +4721,7 @@ function extractHIRStaticHtml(
           type: 'child',
           path: [...parentPath, childIndex],
           expr: child.value,
-          // P1-4: Track namespace for dynamic child bindings
+          // Track namespace for dynamic child bindings
           namespace: resolvedNamespace,
         })
       }
@@ -4731,7 +4731,7 @@ function extractHIRStaticHtml(
 
   html += `</${tagName}>`
 
-  // P1-4: Determine if this template needs SVG/MathML namespace wrapping.
+  // Determine if this template needs SVG/MathML namespace wrapping.
   // This is needed when:
   // - We're in SVG/MathML context (from parent) but root tag isn't 'svg'/'math' itself
   // - In that case, the browser would parse the HTML as HTML elements without the namespace
@@ -4759,7 +4759,7 @@ function lowerIntrinsicElement(
   const { t } = ctx
   const statements: BabelCore.types.Statement[] = []
 
-  // P1-4: Extract static HTML with bindings, passing namespace context
+  // Extract static HTML with bindings, passing namespace context
   // This allows proper namespace detection for elements inside SVG/MathML
   const { html, bindings, isSVG, isMathML } = extractHIRStaticHtml(
     jsx,
@@ -4802,7 +4802,7 @@ function lowerIntrinsicElement(
 
   // Create template with full static HTML
   // For list render context, try to hoist template to avoid repeated HTML parsing
-  // P1-4: Pass namespace flags for SVG/MathML support
+  // Pass namespace flags for SVG/MathML support
   const hoistedTmplId = getOrCreateHoistedTemplate(html, ctx, isSVG, isMathML)
   const rootId = genTemp(ctx, 'root')
 
@@ -4818,7 +4818,7 @@ function lowerIntrinsicElement(
     ctx.helpersUsed.add('template')
     const tmplId = genTemp(ctx, 'tmpl')
 
-    // P1-4: Build template call arguments with namespace flags
+    // Build template call arguments with namespace flags
     const templateArgs: BabelCore.types.Expression[] = [t.stringLiteral(html)]
     if (isSVG || isMathML) {
       // template(html, isImportNode, isSVG, isMathML)
@@ -4851,7 +4851,7 @@ function lowerIntrinsicElement(
   const nodeCache = new Map<string, BabelCore.types.Identifier>()
   nodeCache.set('', elId)
 
-  // P1-4: Determine and set namespace context for this element's children
+  // Determine and set namespace context for this element's children
   // This allows dynamic child expressions to know they're inside SVG/MathML
   const tagName = typeof jsx.tagName === 'string' ? jsx.tagName : null
   const prevNamespace = ctx.namespaceContext
@@ -4879,13 +4879,13 @@ function lowerIntrinsicElement(
         (binding.eventOptions.capture || binding.eventOptions.passive || binding.eventOptions.once)
       const isDelegated = DelegatedEvents.has(eventName) && !hasEventOptions
 
-      // P1-2: Try to extract handler and data from HIR before lowering
+      // Try to extract handler and data from HIR before lowering
       // This preserves function references without transforming them to call expressions
       const hirDataBinding =
         isDelegated && binding.expr ? extractDelegatedEventDataFromHIR(binding.expr, ctx) : null
 
       if (hirDataBinding) {
-        // P1-2: Optimized path - handler and data extracted from HIR
+        // Optimized path - handler and data extracted from HIR
         // Pattern: onClick={() => select(__key)} compiles to:
         //   $$click = (data, _e) => select(data)
         //   $$clickData = () => __key
@@ -4902,7 +4902,7 @@ function lowerIntrinsicElement(
           skipRegionRootOverride: true,
         })
 
-        // P1-2: Create wrapper that adapts to runtime's (data, event) signature
+        // Create wrapper that adapts to runtime's (data, event) signature
         // but only passes data to the actual handler
         const dataParam = t.identifier('__data')
         const eventParam = t.identifier('_e')
@@ -4954,14 +4954,14 @@ function lowerIntrinsicElement(
             if (fn.params.length > 0) return fn
             return t.functionExpression(fn.id, [eventParam], fn.body, fn.generator, fn.async)
           }
-          // P0-3 fix: Don't wrap identifiers and member expressions in arrow functions.
+          // fix: Don't wrap identifiers and member expressions in arrow functions.
           // Arrow functions don't respect .call() for `this` binding.
           // The runtime's callEventHandler uses .call(element, event) to set `this` to the element.
           // By passing the function directly, the `this` binding works correctly.
           if (t.isIdentifier(fn) || t.isMemberExpression(fn)) {
             return fn
           }
-          // P0-3 fix: If fn is a simple accessor call like `handler()`, unwrap it to get
+          // fix: If fn is a simple accessor call like `handler()`, unwrap it to get
           // the actual handler function. The compiler may have incorrectly converted a
           // function-valued variable to an accessor call.
           if (
@@ -5004,11 +5004,11 @@ function lowerIntrinsicElement(
 
           // For reactive handlers (non-function expressions), we need to wrap them
           // so that when called, they resolve the handler and invoke it with the event
-          // P0-3 fix: Use regular function (not arrow) with .call(this, ...) to preserve `this` binding
+          // fix: Use regular function (not arrow) with .call(this, ...) to preserve `this` binding
           // The runtime's delegated event handler calls handlers with .call(element, event),
           // so we need to propagate `this` through to the actual handler.
           //
-          // P0-3 fix: If valueExpr is a simple accessor call like `handler()`, we need to
+          // fix: If valueExpr is a simple accessor call like `handler()`, we need to
           // unwrap it because the compiler may have incorrectly converted a function-valued
           // variable to an accessor call. For event handlers, we want the actual function.
           //
@@ -5232,7 +5232,7 @@ function lowerIntrinsicElement(
       )
     } else if (binding.type === 'text' && binding.expr) {
       const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
-      // P1-1: Only use bindText for reactive expressions; static text uses direct assignment
+      // Only use bindText for reactive expressions; static text uses direct assignment
       if (isExpressionReactive(binding.expr, ctx)) {
         ctx.helpersUsed.add('bindText')
         statements.push(
@@ -5257,7 +5257,7 @@ function lowerIntrinsicElement(
       }
     } else if (binding.type === 'child' && binding.expr) {
       // Child binding (dynamic expression at placeholder)
-      // P1-4: Pass the binding's namespace to ensure correct SVG/MathML context
+      // Pass the binding's namespace to ensure correct SVG/MathML context
       emitHIRChildBinding(
         targetId,
         binding.expr,
@@ -5272,7 +5272,7 @@ function lowerIntrinsicElement(
   // Restore previous region
   applyRegionToContext(ctx, prevRegion ?? null)
 
-  // P1-4: Restore previous namespace context
+  // Restore previous namespace context
   ctx.namespaceContext = prevNamespace
 
   // Return element
@@ -5353,7 +5353,7 @@ function resolveHIRBindingPath(
 
 /**
  * Emit a child binding at a placeholder comment node.
- * P1-4: Now accepts namespace parameter for proper SVG/MathML context.
+ * Now accepts namespace parameter for proper SVG/MathML context.
  */
 function emitHIRChildBinding(
   markerId: BabelCore.types.Identifier,
@@ -5366,7 +5366,7 @@ function emitHIRChildBinding(
   const { t } = ctx
   const parentId = t.memberExpression(markerId, t.identifier('parentNode'))
 
-  // P1-4: Set namespace context for child element lowering
+  // Set namespace context for child element lowering
   if (namespace !== undefined) {
     ctx.namespaceContext = namespace
   }
@@ -5670,7 +5670,7 @@ function extractDelegatedEventData(
 }
 
 /**
- * P1-2: Extract delegated event data from HIR expression before lowering.
+ * Extract delegated event data from HIR expression before lowering.
  * This allows us to preserve function references (like `select`) without
  * them being transformed to call expressions (like `select()`).
  *
@@ -5701,7 +5701,7 @@ function extractDelegatedEventDataFromHIR(
     return null
   }
 
-  // P1-2: Handler must be a simple identifier (function reference)
+  // Handler must be a simple identifier (function reference)
   // Don't optimize MemberExpression like console.log, obj.method, etc.
   // because those are not the typical data-binding patterns we want to optimize
   const callee = bodyExpr.callee
@@ -5714,7 +5714,7 @@ function extractDelegatedEventDataFromHIR(
     return null
   }
 
-  // P1-2: Check if handler is a tracked variable (signal/memo/alias)
+  // Check if handler is a tracked variable (signal/memo/alias)
   // If it is, this pattern doesn't apply - we can't use signal as a function reference
   if (callee.kind === 'Identifier') {
     const handlerName = deSSAVarName(callee.name)
@@ -5828,7 +5828,7 @@ function rewriteSelectorExpression(
 ): { expr: BabelCore.types.Expression; changed: boolean } {
   const { t } = ctx
 
-  // P1-3: Check if expression uses either itemParamName or keyParamName
+  // Check if expression uses either itemParamName or keyParamName
   const usesParamIdentifier = (e: BabelCore.types.Expression): boolean => {
     if (expressionUsesIdentifier(e, itemParamName, t)) return true
     if (keyParamName && expressionUsesIdentifier(e, keyParamName, t)) return true
@@ -5846,7 +5846,7 @@ function rewriteSelectorExpression(
       ctx,
       itemParamName,
     )
-    // P1-3: Support both itemParamName (row) and keyParamName (__key) for selector matching
+    // Support both itemParamName (row) and keyParamName (__key) for selector matching
     if (leftTracked && usesParamIdentifier(expr.right as BabelCore.types.Expression)) {
       return {
         expr: t.callExpression(getSelectorId(leftTracked), [
@@ -5962,7 +5962,7 @@ function applySelectorHoist(
     if (t.isBlockStatement(fn.body)) {
       for (const stmt of fn.body.body) {
         if (t.isReturnStatement(stmt) && stmt.argument && t.isExpression(stmt.argument)) {
-          // P1-3: Pass keyParamName for __key recognition
+          // Pass keyParamName for __key recognition
           const result = rewriteSelectorExpression(
             stmt.argument,
             itemParamName,
@@ -5978,7 +5978,7 @@ function applySelectorHoist(
       return
     }
     if (t.isExpression(fn.body)) {
-      // P1-3: Pass keyParamName for __key recognition
+      // Pass keyParamName for __key recognition
       const result = rewriteSelectorExpression(
         fn.body,
         itemParamName,
@@ -5993,7 +5993,7 @@ function applySelectorHoist(
   }
 
   const visitNode = (node: BabelCore.types.Node): void => {
-    // P1-3: Handle IIFE pattern: () => (() => { ... })()
+    // Handle IIFE pattern: () => (() => { ... })()
     // When callback body is an IIFE, we need to traverse into the inner function
     if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
       if (node !== callbackExpr) {
@@ -6169,7 +6169,7 @@ function buildListCallExpression(
   let callbackExpr = lowerExpression(mapCallback, ctx)
   ctx.inListRender = prevInListRender
 
-  // P1-3: Capture key param name BEFORE restoring context (for selector hoist)
+  // Capture key param name BEFORE restoring context (for selector hoist)
   const capturedKeyParamName = ctx.listKeyParamName
 
   // Restore key constification context
@@ -6226,7 +6226,7 @@ function buildListCallExpression(
           ? callbackExpr.params[0].name
           : null
         : null
-    // P1-3: Use captured key param name for selector patterns like `__key === selected()`
+    // Use captured key param name for selector patterns like `__key === selected()`
     applySelectorHoist(
       callbackExpr as BabelCore.types.Expression,
       itemParamName,

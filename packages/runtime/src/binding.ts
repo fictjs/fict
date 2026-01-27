@@ -110,7 +110,7 @@ export function isReactive(value: unknown): value is () => unknown {
 }
 
 /**
- * P1-2 fix: Stricter reactive check that only considers explicitly marked values.
+ * fix: Stricter reactive check that only considers explicitly marked values.
  * Used for event handlers where we don't want to misidentify regular callbacks
  * (like `onClick={() => doSomething()}`) as reactive getters.
  *
@@ -459,7 +459,7 @@ export function bindClass(
   let prevString: string | undefined
   return createRenderEffect(() => {
     const next = getValue()
-    // P2-1: Short-circuit for string values to avoid DOM writes when unchanged
+    // Short-circuit for string values to avoid DOM writes when unchanged
     if (typeof next === 'string') {
       if (next === prevString) return
       prevString = next
@@ -892,7 +892,7 @@ function globalEventHandler(e: Event): void {
       const rawData = (node as any)[dataKey] as unknown
       const hasData = rawData !== undefined
       const resolvedNodeData = hasData ? resolveData(rawData) : undefined
-      // P2-3: Wrap event handler calls in batch for synchronous flush & reduced microtasks
+      // Wrap event handler calls in batch for synchronous flush & reduced microtasks
       batch(() => {
         if (typeof handler === 'function') {
           callEventHandler(handler, e, node, hasData ? resolvedNodeData : undefined)
@@ -1038,7 +1038,7 @@ export function bindEvent(
     // Ensure global delegation is active for this event
     delegateEvents([eventName])
 
-    // P1-2: Use stricter check - don't misidentify regular callbacks as reactive
+    // Use stricter check - don't misidentify regular callbacks as reactive
     const resolveHandler = isStrictlyReactive(handler)
       ? (handler as () => EventListenerOrEventListenerObject | null | undefined)
       : () => handler
@@ -1065,7 +1065,7 @@ export function bindEvent(
 
   // Fallback: Native addEventListener
   // Used for non-delegated events or when options are present
-  // P1-2: Use stricter check - don't misidentify regular callbacks as reactive
+  // Use stricter check - don't misidentify regular callbacks as reactive
   const getHandler = isStrictlyReactive(handler) ? (handler as () => unknown) : () => handler
 
   // Create wrapped handler that resolves reactive handlers

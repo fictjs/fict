@@ -835,7 +835,7 @@ function lowerNodeWithRegionContext(
       const prevConditional = ctx.inConditional ?? 0
       ctx.inConditional = prevConditional + 1
 
-      // P0-1 fix: Pre-compute whether we *might* wrap this if in an effect BEFORE lowering children.
+      // fix: Pre-compute whether we *might* wrap this if in an effect BEFORE lowering children.
       // We check most conditions but NOT early exit (that requires the built statement).
       // If we might wrap in effect, increment nonReactiveScopeDepth to prevent nested effect wrapping.
       // This prevents the bug where nested if statements inside an effect callback also get wrapped
@@ -932,7 +932,7 @@ function lowerNodeWithRegionContext(
         return stmts
       }
 
-      // P0-1 fix: Don't generate empty if statements (or wrap them in effects).
+      // fix: Don't generate empty if statements (or wrap them in effects).
       // When assignments are moved to a region memo, the if body may become empty.
       const conseqIsEmpty = conseqStmts.length === 0
       const altIsEmpty = !altStmts || altStmts.length === 0
@@ -1242,7 +1242,7 @@ function lowerStructuredNodeForRegion(
 
     case 'if': {
       const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
-      // P0-1 fix: Pre-compute whether we *might* wrap this if in an effect BEFORE lowering children.
+      // fix: Pre-compute whether we *might* wrap this if in an effect BEFORE lowering children.
       // We check most conditions but NOT early exit (that requires the built statement).
       // If we might wrap in effect, process children with forceNonReactive=true to prevent nested effects.
       const mightWrapInEffect =
@@ -1303,7 +1303,7 @@ function lowerStructuredNodeForRegion(
       const hasEarlyExit = statementHasEarlyExit(ifStmt, t)
       const shouldWrapEffect = mightWrapInEffect && !hasEarlyExit
 
-      // P0-1 fix: When there's an early exit (createConditional case), DON'T re-lower without
+      // fix: When there's an early exit (createConditional case), DON'T re-lower without
       // the non-reactive guard. The children will be inside a createConditional callback which
       // is already reactive, so they don't need to be wrapped in effects themselves.
       // Only re-lower without the guard if there's no early exit AND we won't wrap in effect.
@@ -1986,7 +1986,7 @@ function wrapInMemo(
       ctx.memoVars?.add(name)
     }
 
-    // P0-1 fix: Removed unnecessary effect that just called getter outputs.
+    // fix: Removed unnecessary effect that just called getter outputs.
     // The getterOutputs are already tracked through the memo - DOM bindings
     // that read them will trigger the memo's dependency tracking.
     // An effect that just calls heading() and extra() without side effects is wasteful.
@@ -2329,7 +2329,7 @@ function reserveHookSlot(ctx: CodegenContext): number {
 }
 
 /**
- * P0-1 fix helper: Create a plain variable declaration for non-reactive scopes.
+ * fix helper: Create a plain variable declaration for non-reactive scopes.
  * Variables declared inside non-reactive scopes (like createConditional callbacks)
  * should be plain variables, not reactive accessors.
  *
@@ -2435,7 +2435,7 @@ function instructionToStatement(
       ['mergeProps'].includes(instr.value.callee.name)
     // Combined check for skipping memo wrapping
     const isMemoReturningCall = isAccessorReturningCall || isReactiveObjectCall
-    // P0-1 fix: Check if variable will be mutated (assigned to later without declaration)
+    // fix: Check if variable will be mutated (assigned to later without declaration)
     const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
     const lowerAssignedValue = (forceAssigned = false) =>
       lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
@@ -2483,7 +2483,7 @@ function instructionToStatement(
           if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
             return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
           }
-          // P0-1 fix: Don't wrap mutable variables in memo - they will be reassigned later
+          // fix: Don't wrap mutable variables in memo - they will be reassigned later
           // The containing region's memo will handle reactivity
           // Also remove from memoVars so wrapInMemo treats this as a getter output, not direct output
           if (needsMutable) {
@@ -2524,7 +2524,7 @@ function instructionToStatement(
         if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
           return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
         }
-        // P0-1 fix: Don't wrap mutable variables in memo - they will be reassigned later
+        // fix: Don't wrap mutable variables in memo - they will be reassigned later
         // The containing region's memo will handle reactivity
         // Also remove from memoVars so wrapInMemo treats this as a getter output, not direct output
         if (needsMutable) {
@@ -2677,7 +2677,7 @@ function instructionToStatement(
         if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
           return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
         }
-        // P0-1 fix: Don't wrap mutable variables in memo - they will be reassigned later
+        // fix: Don't wrap mutable variables in memo - they will be reassigned later
         if (needsMutable) {
           return t.variableDeclaration('let', [
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
@@ -2712,7 +2712,7 @@ function instructionToStatement(
       if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
         return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
       }
-      // P0-1 fix: Don't wrap mutable variables in memo - they will be reassigned later
+      // fix: Don't wrap mutable variables in memo - they will be reassigned later
       if (needsMutable) {
         return t.variableDeclaration('let', [
           t.variableDeclarator(t.identifier(baseName), derivedExpr),
@@ -2770,7 +2770,7 @@ function instructionToStatement(
       const effectFn = ctx.t.isBlockStatement(effectBody)
         ? t.arrowFunctionExpression([], effectBody)
         : t.arrowFunctionExpression([], effectBody as BabelCore.types.Expression)
-      // P0-1 fix: Always use numbered slots for effects so they work when called
+      // fix: Always use numbered slots for effects so they work when called
       // outside render context (e.g., in conditional callbacks that re-run).
       const slot = ctx.inModule ? undefined : reserveHookSlot(ctx)
       return t.expressionStatement(buildEffectCall(ctx, t, effectFn, { slot }))
