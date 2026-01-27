@@ -1283,6 +1283,21 @@ export function getBatchDepth(): number {
   return batchDepth
 }
 /**
+ * Reset all global reactive state for test isolation.
+ * ONLY use this in test setup/teardown - never in production code.
+ * This clears effect queues, resets batch depth, and clears pending flushes.
+ */
+export function __resetReactiveState(): void {
+  highPriorityQueue.length = 0
+  lowPriorityQueue.length = 0
+  batchDepth = 0
+  activeSub = undefined
+  flushScheduled = false
+  isInTransition = false
+  inCleanup = false
+  cycle = 0
+}
+/**
  * Execute a function without tracking dependencies
  * @param fn - The function to execute
  * @returns The return value of the function

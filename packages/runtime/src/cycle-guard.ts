@@ -15,6 +15,10 @@ export interface CycleProtectionOptions {
   maxRootReentrantDepth?: number
   enableWindowWarning?: boolean
   devMode?: boolean
+  /** P1-3: Enable backoff warnings at 50% and 75% of limits */
+  enableBackoffWarning?: boolean
+  /** P1-3: Ratio at which to show first backoff warning (default 0.5) */
+  backoffWarningRatio?: number
 }
 
 interface CycleWindowEntry {
@@ -39,6 +43,9 @@ const defaultOptions = {
   maxRootReentrantDepth: 10,
   enableWindowWarning: true,
   devMode: false,
+  // P1-3: Backoff warning options
+  enableBackoffWarning: isDev,
+  backoffWarningRatio: 0.5,
 }
 
 let enabled = defaultOptions.enabled
@@ -52,6 +59,9 @@ let rootDepth = new WeakMap<object, number>()
 let flushWarned = false
 let rootWarned = false
 let windowWarned = false
+// P1-3: Backoff warning state
+let backoffWarned50 = false
+let backoffWarned75 = false
 
 setCycleProtectionOptions = opts => {
   if (typeof opts.enabled === 'boolean') {
@@ -69,6 +79,9 @@ resetCycleProtectionStateForTests = () => {
   flushWarned = false
   rootWarned = false
   windowWarned = false
+  // P1-3: Reset backoff state
+  backoffWarned50 = false
+  backoffWarned75 = false
 }
 
 beginFlushGuard = () => {
@@ -76,19 +89,53 @@ beginFlushGuard = () => {
   effectRunsThisFlush = 0
   flushWarned = false
   windowWarned = false
+  // P1-3: Reset backoff state for new flush
+  backoffWarned50 = false
+  backoffWarned75 = false
 }
 
 beforeEffectRunGuard = () => {
   if (!enabled) return true
   const next = ++effectRunsThisFlush
-  if (next > options.maxFlushCyclesPerMicrotask || next > options.maxEffectRunsPerFlush) {
+  const limit = Math.min(options.maxFlushCyclesPerMicrotask, options.maxEffectRunsPerFlush)
+
+  // P1-3: Backoff warnings at 50% and 75% of limit
+  if (options.enableBackoffWarning && isDev) {
+    const ratio = next / limit
+    const backoffRatio = options.backoffWarningRatio ?? 0.5
+
+    if (!backoffWarned50 && ratio >= backoffRatio && ratio < backoffRatio + 0.25) {
+      backoffWarned50 = true
+      console.warn(
+        `[fict] cycle guard: approaching effect limit (${Math.round(ratio * 100)}% of budget used)\n` +
+          `  - Current: ${next} effects, Limit: ${limit}\n` +
+          `  - Tip: Check for effects that trigger other effects in a loop.\n` +
+          `  - Common causes: signal updates inside effects that read and write the same signal.`,
+      )
+    } else if (!backoffWarned75 && ratio >= backoffRatio + 0.25 && ratio < 1) {
+      backoffWarned75 = true
+      console.warn(
+        `[fict] cycle guard: nearing effect limit (${Math.round(ratio * 100)}% of budget used)\n` +
+          `  - Current: ${next} effects, Limit: ${limit}\n` +
+          `  - Warning: Consider breaking the reactive dependency cycle.\n` +
+          `  - Debug: Use browser devtools to identify the recursive effect chain.`,
+      )
+    }
+  }
+
+  if (next > limit) {
     const message = `[fict] cycle protection triggered: flush-budget-exceeded`
     if (options.devMode) {
-      throw new Error(message)
+      throw new Error(
+        message +
+          `\n  - Effect runs: ${next}, Limit: ${limit}` +
+          `\n  - This indicates a reactive cycle where effects keep triggering each other.` +
+          `\n  - Check for patterns like: createEffect(() => { signal(); signal(newValue); })`,
+      )
     }
     if (!flushWarned) {
       flushWarned = true
-      console.warn(message, { effectRuns: next })
+      console.warn(message, { effectRuns: next, limit })
     }
     return false
   }
@@ -107,11 +154,16 @@ enterRootGuard = root => {
   if (depth > options.maxRootReentrantDepth) {
     const message = `[fict] cycle protection triggered: root-reentry`
     if (options.devMode) {
-      throw new Error(message)
+      throw new Error(
+        message +
+          `\n  - Re-entry depth: ${depth}, Max allowed: ${options.maxRootReentrantDepth}` +
+          `\n  - This indicates recursive render() or component initialization.` +
+          `\n  - Check for components that trigger re-renders during their own render phase.`,
+      )
     }
     if (!rootWarned) {
       rootWarned = true
-      console.warn(message, { depth })
+      console.warn(message, { depth, maxAllowed: options.maxRootReentrantDepth })
     }
     return false
   }

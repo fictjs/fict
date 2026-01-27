@@ -790,6 +790,79 @@ describe('DOM Module', () => {
       expect((node.children[0] as HTMLSpanElement).textContent).toBe('A')
       expect((node.children[1] as HTMLSpanElement).textContent).toBe('B')
     })
+
+    // P2-1: Multi-root template warning tests
+    describe('multi-root template protection (P2-1)', () => {
+      it('warns in dev mode when template has multiple root nodes', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        // Template with two root nodes
+        const factory = template('<div>First</div><div>Second</div>')
+        const node = factory()
+
+        // Should still return first node
+        expect(node).toBeInstanceOf(HTMLDivElement)
+        expect((node as HTMLDivElement).textContent).toBe('First')
+
+        // Should have warned about multi-root
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('[fict] template() received multi-root content'),
+        )
+
+        warnSpy.mockRestore()
+      })
+
+      it('warns in dev mode for multi-root SVG templates', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        // SVG template with two root nodes
+        const factory = template(
+          '<circle cx="10" cy="10" r="5"/><circle cx="20" cy="20" r="5"/>',
+          false,
+          true,
+        )
+        const node = factory()
+
+        // Should still return first node
+        expect(node.nodeName.toLowerCase()).toBe('circle')
+
+        // Should have warned about multi-root
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('[fict] template() received multi-root SVG content'),
+        )
+
+        warnSpy.mockRestore()
+      })
+
+      it('warns in dev mode for multi-root MathML templates', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        // MathML template with two root nodes
+        const factory = template('<mi>x</mi><mo>+</mo>', false, false, true)
+        const node = factory()
+
+        // Should still return first node
+        expect(node.nodeName.toLowerCase()).toBe('mi')
+
+        // Should have warned about multi-root
+        expect(warnSpy).toHaveBeenCalledWith(
+          expect.stringContaining('[fict] template() received multi-root MathML content'),
+        )
+
+        warnSpy.mockRestore()
+      })
+
+      it('does not warn for single-root templates', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        const factory = template('<div><span>Nested</span></div>')
+        factory()
+
+        expect(warnSpy).not.toHaveBeenCalled()
+
+        warnSpy.mockRestore()
+      })
+    })
   })
 
   describe('Custom Elements', () => {

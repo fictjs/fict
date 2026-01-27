@@ -327,6 +327,129 @@ describe('framework cycle protection', () => {
     })
   })
 
+  describe('P1-3 backoff warnings', () => {
+    it('warns at 50% of effect budget when backoff is enabled', () => {
+      setCycleProtectionOptions({
+        maxFlushCyclesPerMicrotask: 100,
+        maxEffectRunsPerFlush: 100,
+        enableBackoffWarning: true,
+        backoffWarningRatio: 0.5,
+        devMode: false,
+      })
+
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      beginFlushGuard()
+      // Run 55 effects (55% of budget)
+      for (let i = 0; i < 55; i++) {
+        beforeEffectRunGuard()
+      }
+      endFlushGuard()
+
+      // Should have a backoff warning
+      expect(
+        warn.mock.calls.some(
+          ([msg]) => typeof msg === 'string' && msg.includes('approaching effect limit'),
+        ),
+      ).toBe(true)
+
+      warn.mockRestore()
+    })
+
+    it('warns at 75% of effect budget', () => {
+      setCycleProtectionOptions({
+        maxFlushCyclesPerMicrotask: 100,
+        maxEffectRunsPerFlush: 100,
+        enableBackoffWarning: true,
+        backoffWarningRatio: 0.5,
+        devMode: false,
+      })
+
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      beginFlushGuard()
+      // Run 80 effects (80% of budget)
+      for (let i = 0; i < 80; i++) {
+        beforeEffectRunGuard()
+      }
+      endFlushGuard()
+
+      // Should have both 50% and 75% warnings
+      expect(
+        warn.mock.calls.some(
+          ([msg]) => typeof msg === 'string' && msg.includes('approaching effect limit'),
+        ),
+      ).toBe(true)
+      expect(
+        warn.mock.calls.some(
+          ([msg]) => typeof msg === 'string' && msg.includes('nearing effect limit'),
+        ),
+      ).toBe(true)
+
+      warn.mockRestore()
+    })
+
+    it('does not warn when backoff is disabled', () => {
+      setCycleProtectionOptions({
+        maxFlushCyclesPerMicrotask: 100,
+        maxEffectRunsPerFlush: 100,
+        enableBackoffWarning: false,
+        devMode: false,
+      })
+
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      beginFlushGuard()
+      // Run 75 effects (75% of budget)
+      for (let i = 0; i < 75; i++) {
+        beforeEffectRunGuard()
+      }
+      endFlushGuard()
+
+      // Should NOT have backoff warnings
+      expect(
+        warn.mock.calls.some(
+          ([msg]) => typeof msg === 'string' && msg.includes('approaching effect limit'),
+        ),
+      ).toBe(false)
+      expect(
+        warn.mock.calls.some(
+          ([msg]) => typeof msg === 'string' && msg.includes('nearing effect limit'),
+        ),
+      ).toBe(false)
+
+      warn.mockRestore()
+    })
+
+    it('provides detailed error message in devMode', () => {
+      setCycleProtectionOptions({
+        maxFlushCyclesPerMicrotask: 5,
+        maxEffectRunsPerFlush: 5,
+        devMode: true,
+      })
+
+      beginFlushGuard()
+      // Exhaust budget
+      for (let i = 0; i < 5; i++) {
+        beforeEffectRunGuard()
+      }
+
+      // Next call should throw with detailed message
+      let errorMessage = ''
+      try {
+        beforeEffectRunGuard()
+      } catch (e) {
+        errorMessage = (e as Error).message
+      }
+
+      expect(errorMessage).toContain('flush-budget-exceeded')
+      expect(errorMessage).toContain('Effect runs: 6')
+      expect(errorMessage).toContain('reactive cycle')
+
+      endFlushGuard()
+    })
+  })
+
   describe('configuration options', () => {
     it('resetCycleProtectionStateForTests clears all state', () => {
       setCycleProtectionOptions({

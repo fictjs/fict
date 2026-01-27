@@ -274,17 +274,41 @@ export function template(
       // P1-4 fix: Wrap HTML in <svg> to parse content in SVG namespace
       // Then extract the actual content (firstChild of the wrapper svg)
       t.innerHTML = `<svg>${html}</svg>`
-      return (t as HTMLTemplateElement).content.firstChild!.firstChild!
+      const wrapper = (t as HTMLTemplateElement).content.firstChild!
+      // P2-1: Dev check for multi-root SVG templates
+      if (isDev && wrapper.childNodes.length !== 1) {
+        console.warn(
+          `[fict] template() received multi-root SVG content (${wrapper.childNodes.length} nodes). ` +
+            `Only the first node will be used. This may indicate a compiler bug or invalid JSX structure.`,
+        )
+      }
+      return wrapper.firstChild!
     }
     if (isMathML) {
       // P1-4 fix: Wrap HTML in <math> to parse content in MathML namespace
       // Then extract the actual content (firstChild of the wrapper math)
       t.innerHTML = `<math>${html}</math>`
-      return (t as HTMLTemplateElement).content.firstChild!.firstChild!
+      const wrapper = (t as HTMLTemplateElement).content.firstChild!
+      // P2-1: Dev check for multi-root MathML templates
+      if (isDev && wrapper.childNodes.length !== 1) {
+        console.warn(
+          `[fict] template() received multi-root MathML content (${wrapper.childNodes.length} nodes). ` +
+            `Only the first node will be used. This may indicate a compiler bug or invalid JSX structure.`,
+        )
+      }
+      return wrapper.firstChild!
     }
 
     t.innerHTML = html
-    return (t as HTMLTemplateElement).content.firstChild!
+    const content = (t as HTMLTemplateElement).content
+    // P2-1: Dev check for multi-root templates
+    if (isDev && content.childNodes.length !== 1) {
+      console.warn(
+        `[fict] template() received multi-root content (${content.childNodes.length} nodes). ` +
+          `Only the first node will be used. This may indicate a compiler bug or invalid JSX structure.`,
+      )
+    }
+    return content.firstChild!
   }
 
   // Create the cloning function

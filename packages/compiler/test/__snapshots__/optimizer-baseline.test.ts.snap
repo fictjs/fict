@@ -103,7 +103,7 @@ export default Card;"
 `;
 
 exports[`optimizer output baselines > region grouping across control flow 1`] = `
-"import { __fictUseSignal, __fictUseMemo, __fictUseEffect, template, insert, createElement, __fictUseContext } from "@fictjs/runtime/internal";
+"import { __fictUseSignal, __fictUseMemo, template, insert, createElement, __fictUseContext } from "@fictjs/runtime/internal";
 function Summary() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 0);
@@ -121,13 +121,6 @@ function Summary() {
   }, 1000);
   const heading = () => __region_0().heading;
   const extra = () => __region_0().extra;
-  __fictUseEffect(__fictCtx, () => {
-    heading();
-    extra();
-  }, 1001);
-  __fictUseEffect(__fictCtx, () => {
-    if (count() > 0) {} else {}
-  });
   return __fictUseMemo(__fictCtx, () => {
     const __tmpl_1 = template("<div><!----><!----></div>");
     const __root_0 = __tmpl_1();
@@ -136,7 +129,7 @@ function Summary() {
     insert(__el_2.parentNode, () => heading(), __el_2, createElement);
     insert(__el_3.parentNode, () => extra(), __el_3, createElement);
     return __root_0;
-  }, 1002)();
+  }, 1001)();
 }
 export default Summary;"
 `;

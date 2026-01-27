@@ -12,7 +12,7 @@
 // Core Primitives (also exported from main, but needed by compiler)
 // ============================================================================
 
-export { createSignal, createSelector } from './signal'
+export { createSignal, createSelector, __resetReactiveState } from './signal'
 export { createStore, type Store } from './store'
 export { createMemo } from './memo'
 export { createEffect } from './effect'

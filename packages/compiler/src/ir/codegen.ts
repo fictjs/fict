@@ -3922,6 +3922,17 @@ function replaceIdentifiersWithOverrides(
     return
   }
 
+  // P0-3 fix: For MemberExpressions like `foo.call()`, `foo.apply()`, or `foo.bind()`,
+  // skip replacing the object identifier. These method calls need the original function
+  // reference for proper `this` binding.
+  const isMethodCallMember =
+    (t.isMemberExpression(node) || t.isOptionalMemberExpression(node as any)) &&
+    !(node as BabelCore.types.MemberExpression).computed &&
+    t.isIdentifier((node as BabelCore.types.MemberExpression).property) &&
+    ['call', 'apply', 'bind'].includes(
+      ((node as BabelCore.types.MemberExpression).property as BabelCore.types.Identifier).name,
+    )
+
   for (const key of Object.keys(node)) {
     if (key === 'type' || key === 'loc' || key === 'start' || key === 'end') continue
     if (t.isObjectProperty(node as any) && key === 'key' && !(node as any).computed) {
@@ -3932,6 +3943,10 @@ function replaceIdentifiersWithOverrides(
       key === 'property' &&
       !(node as any).computed
     ) {
+      continue
+    }
+    // P0-3 fix: Skip the object of .call()/.apply()/.bind() member expressions
+    if (isMethodCallMember && key === 'object') {
       continue
     }
     const value = (node as unknown as Record<string, unknown>)[key]
@@ -4221,7 +4236,7 @@ interface HIRTemplateExtractionResult {
  * P1-4: SVG element names for namespace tracking during template extraction.
  * These elements must be created in SVG namespace to work correctly.
  */
-const SVG_ELEMENTS = new Set([
+const _SVG_ELEMENTS = new Set([
   'svg',
   'animate',
   'animateMotion',
@@ -4286,7 +4301,7 @@ const SVG_ELEMENTS = new Set([
 /**
  * P1-4: MathML element names for namespace tracking during template extraction.
  */
-const MATHML_ELEMENTS = new Set([
+const _MATHML_ELEMENTS = new Set([
   'math',
   'maction',
   'maligngroup',
@@ -4887,13 +4902,29 @@ function lowerIntrinsicElement(
           if (t.isIdentifier(fn) || t.isMemberExpression(fn)) {
             return fn
           }
-          // For other expressions (e.g., conditional, call), wrap in a function.
-          // Use regular function (not arrow) to preserve `this` binding from .call()
+          // P0-3 fix: If fn is a simple accessor call like `handler()`, unwrap it to get
+          // the actual handler function. The compiler may have incorrectly converted a
+          // function-valued variable to an accessor call.
+          if (
+            t.isCallExpression(fn) &&
+            fn.arguments.length === 0 &&
+            (t.isIdentifier(fn.callee) || t.isMemberExpression(fn.callee))
+          ) {
+            // For simple accessor calls, return the callee directly
+            return fn.callee as BabelCore.types.Expression
+          }
+          // For other expressions (e.g., conditional, complex call), wrap in a function.
+          // Use regular function (not arrow) with .call(this, ...) to preserve `this` binding from runtime's .call()
           return t.functionExpression(
             null,
             [eventParam],
             t.blockStatement([
-              t.returnStatement(t.callExpression(fn as BabelCore.types.Expression, [eventParam])),
+              t.returnStatement(
+                t.callExpression(
+                  t.memberExpression(fn as BabelCore.types.Expression, t.identifier('call')),
+                  [t.thisExpression(), eventParam],
+                ),
+              ),
             ]),
           )
         }
@@ -4914,9 +4945,46 @@ function lowerIntrinsicElement(
 
           // For reactive handlers (non-function expressions), we need to wrap them
           // so that when called, they resolve the handler and invoke it with the event
+          // P0-3 fix: Use regular function (not arrow) with .call(this, ...) to preserve `this` binding
+          // The runtime's delegated event handler calls handlers with .call(element, event),
+          // so we need to propagate `this` through to the actual handler.
+          //
+          // P0-3 fix: If valueExpr is a simple accessor call like `handler()`, we need to
+          // unwrap it because the compiler may have incorrectly converted a function-valued
+          // variable to an accessor call. For event handlers, we want the actual function.
+          //
+          // Critical: The AST nodes can be mutated by later processing steps. To preserve the
+          // original identifier, we extract the name and create a fresh identifier node.
+          let handlerName: string | null = null
+          if (t.isIdentifier(valueExpr)) {
+            handlerName = valueExpr.name
+          } else if (
+            t.isCallExpression(valueExpr) &&
+            valueExpr.arguments.length === 0 &&
+            t.isIdentifier(valueExpr.callee)
+          ) {
+            // This is an accessor call like `handler()` - extract the base name
+            handlerName = valueExpr.callee.name
+          }
+
+          // Create a fresh identifier to avoid mutation issues
+          const handlerForCall = handlerName
+            ? t.identifier(handlerName)
+            : t.cloneNode(valueExpr, true)
           const finalHandler =
             !isFn && shouldWrapHandler
-              ? t.arrowFunctionExpression([eventParam], t.callExpression(valueExpr, [eventParam]))
+              ? t.functionExpression(
+                  null,
+                  [eventParam],
+                  t.blockStatement([
+                    t.returnStatement(
+                      t.callExpression(t.memberExpression(handlerForCall, t.identifier('call')), [
+                        t.thisExpression(),
+                        eventParam,
+                      ]),
+                    ),
+                  ]),
+                )
               : handlerExpr
 
           const normalizeHandler = (
@@ -5240,7 +5308,6 @@ function emitHIRChildBinding(
   const parentId = t.memberExpression(markerId, t.identifier('parentNode'))
 
   // P1-4: Set namespace context for child element lowering
-  const prevNamespace = ctx.namespaceContext
   if (namespace !== undefined) {
     ctx.namespaceContext = namespace
   }
@@ -7141,6 +7208,11 @@ function lowerFunctionWithRegions(
   ctx.currentFnIsHook = inferredHook
   const isComponent = !!(fn.name && fn.name[0] === fn.name[0]?.toUpperCase())
   ctx.isComponentFn = isComponent
+  // Non-component, non-hook functions should use non-hook-based primitives (createSignal, createMemo)
+  // to avoid requiring hook context. Only component functions and hooks use hook-based APIs.
+  if (!isComponent && !inferredHook) {
+    ctx.inModule = true
+  }
   const rawPropsParam =
     fn.params.length === 1 && fn.params[0] ? deSSAVarName(fn.params[0].name) : undefined
   if (isComponent && rawPropsParam) {
