@@ -2332,6 +2332,8 @@ function instructionToStatement(
       ['mergeProps'].includes(instr.value.callee.name)
     // Combined check for skipping memo wrapping
     const isMemoReturningCall = isAccessorReturningCall || isReactiveObjectCall
+    // P0-1 fix: Check if variable will be mutated (assigned to later without declaration)
+    const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
     const lowerAssignedValue = (forceAssigned = false) =>
       lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
     const buildDerivedMemoCall = (expr: BabelCore.types.Expression) => {
@@ -2347,7 +2349,6 @@ function instructionToStatement(
       type VarDecl = 'const' | 'let' | 'var'
       const normalizedDecl: VarDecl =
         isStateCall || (dependsOnTracked && !isDestructuringTemp) ? 'const' : declKind
-      const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
       const isExternalAlias =
         declKind === 'const' &&
         instr.value.kind === 'Identifier' &&

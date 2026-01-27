@@ -26,13 +26,22 @@ function assertRenderContext(ctx: HookContext, hookName: string): void {
 
 export function __fictUseContext(): HookContext {
   if (ctxStack.length === 0) {
-    const ctx: HookContext = { slots: [], cursor: 0, rendering: true }
-    ctxStack.push(ctx)
-    return ctx
+    // P0-2 fix: Don't silently create context when called outside render.
+    // This would cause a memory leak and undefined behavior.
+    const message = isDev
+      ? 'Invalid hook call: hooks can only be used while rendering a component. ' +
+        'Make sure you are not calling hooks in event handlers or outside of components.'
+      : 'FICT:E_HOOK_OUTSIDE_RENDER'
+    throw new Error(message)
   }
   const ctx = ctxStack[ctxStack.length - 1]!
-  ctx.cursor = 0
-  ctx.rendering = true
+  // P0-2 fix: Only reset cursor when starting a new render, not during an existing render.
+  // This allows custom hooks to share the same hook slot sequence as the calling component,
+  // similar to React's "rules of hooks" where hooks are called in consistent order.
+  if (!ctx.rendering) {
+    ctx.cursor = 0
+    ctx.rendering = true
+  }
   return ctx
 }
 
@@ -43,7 +52,9 @@ export function __fictPushContext(): HookContext {
 }
 
 export function __fictPopContext(): void {
-  ctxStack.pop()
+  // P0-2 fix: Reset rendering flag when popping to avoid state leakage
+  const ctx = ctxStack.pop()
+  if (ctx) ctx.rendering = false
 }
 
 export function __fictResetContext(): void {
