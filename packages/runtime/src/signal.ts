@@ -896,10 +896,14 @@ function flush(): void {
   while (highIndex < highPriorityQueue.length) {
     const e = highPriorityQueue[highIndex]!
     if (!beforeEffectRunGuard()) {
+      // P1-3 fix: When cycle guard fails, schedule a retry flush instead of leaving
+      // the queue stuck. This prevents the system from entering an unrecoverable state.
       if (highIndex > 0) {
         highPriorityQueue.copyWithin(0, highIndex)
         highPriorityQueue.length -= highIndex
       }
+      // Schedule retry in next microtask to give the system a chance to recover
+      scheduleFlush()
       endFlushGuard()
       return
     }
@@ -923,10 +927,14 @@ function flush(): void {
     }
     const e = lowPriorityQueue[lowIndex]!
     if (!beforeEffectRunGuard()) {
+      // P1-3 fix: When cycle guard fails, schedule a retry flush instead of leaving
+      // the queue stuck. This prevents the system from entering an unrecoverable state.
       if (lowIndex > 0) {
         lowPriorityQueue.copyWithin(0, lowIndex)
         lowPriorityQueue.length -= lowIndex
       }
+      // Schedule retry in next microtask to give the system a chance to recover
+      scheduleFlush()
       endFlushGuard()
       return
     }
