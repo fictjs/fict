@@ -3631,6 +3631,18 @@ function collectExpressionDependencies(expr: Expression, deps: Set<string>): voi
     deps.add(deSSAVarName(expr.name))
     return
   }
+  if (expr.kind === 'ArrowFunction') {
+    if (expr.isExpression && !Array.isArray(expr.body)) {
+      collectExpressionDependencies(expr.body as Expression, deps)
+    } else if (Array.isArray(expr.body)) {
+      collectBlockDependencies(expr.body as BasicBlock[], deps)
+    }
+    return
+  }
+  if (expr.kind === 'FunctionExpression') {
+    collectBlockDependencies(expr.body as BasicBlock[], deps)
+    return
+  }
   if (expr.kind === 'MemberExpression') {
     const path = getMemberDependencyPath(expr)
     if (path) deps.add(path)
@@ -3677,6 +3689,53 @@ function collectExpressionDependencies(expr: Expression, deps: Set<string>): voi
   if (expr.kind === 'TemplateLiteral') {
     expr.expressions.forEach(e => collectExpressionDependencies(e, deps))
     return
+  }
+}
+
+function collectBlockDependencies(blocks: BasicBlock[], deps: Set<string>): void {
+  for (const block of blocks) {
+    for (const instr of block.instructions) {
+      switch (instr.kind) {
+        case 'Assign':
+        case 'Expression':
+          collectExpressionDependencies(instr.value, deps)
+          break
+        case 'Phi':
+          for (const source of instr.sources) {
+            deps.add(deSSAVarName(source.id.name))
+          }
+          break
+        default:
+          // Future-proof: ensure new instruction kinds are considered for dependency collection.
+          break
+      }
+    }
+    const term = block.terminator
+    switch (term.kind) {
+      case 'Return':
+        if (term.argument) collectExpressionDependencies(term.argument, deps)
+        break
+      case 'Throw':
+        collectExpressionDependencies(term.argument, deps)
+        break
+      case 'Branch':
+        collectExpressionDependencies(term.test, deps)
+        break
+      case 'Switch':
+        collectExpressionDependencies(term.discriminant, deps)
+        for (const c of term.cases) {
+          if (c.test) collectExpressionDependencies(c.test, deps)
+        }
+        break
+      case 'ForOf':
+        collectExpressionDependencies(term.iterable, deps)
+        break
+      case 'ForIn':
+        collectExpressionDependencies(term.object, deps)
+        break
+      default:
+        break
+    }
   }
 }
 
@@ -5598,7 +5657,8 @@ function extractDelegatedEventData(
 
   if (!bodyExpr || !t.isCallExpression(bodyExpr)) return null
   if (paramNames.some(name => expressionUsesIdentifier(bodyExpr, name, t))) return null
-  if (!t.isIdentifier(bodyExpr.callee) && !t.isMemberExpression(bodyExpr.callee)) return null
+  // Only optimize simple identifier calls to avoid altering `this` binding on member expressions.
+  if (!t.isIdentifier(bodyExpr.callee)) return null
   if (bodyExpr.arguments.length === 0) return null
   if (bodyExpr.arguments.length > 1) return null
 
