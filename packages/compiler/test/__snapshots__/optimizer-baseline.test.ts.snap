@@ -108,8 +108,8 @@ function Summary() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 0);
   const __region_0 = __fictUseMemo(__fictCtx, () => {
-    const heading = __fictUseMemo(__fictCtx, () => undefined, 1000);
-    const extra = __fictUseMemo(__fictCtx, () => 0, 1001);
+    let heading = undefined;
+    let extra = 0;
     if (count() > 0) {
       heading = (count() > 1 ? "Items" : "Item") + ": " + count();
       extra = count() * 10;
@@ -118,11 +118,13 @@ function Summary() {
       heading: heading != undefined ? heading : undefined,
       extra: extra != undefined ? extra : undefined
     };
-  }, 1002);
-  const {
-    heading,
-    extra
-  } = __region_0();
+  }, 1000);
+  const heading = () => __region_0().heading;
+  const extra = () => __region_0().extra;
+  __fictUseEffect(__fictCtx, () => {
+    heading();
+    extra();
+  }, 1001);
   __fictUseEffect(__fictCtx, () => {
     if (count() > 0) {} else {}
   });
@@ -134,7 +136,7 @@ function Summary() {
     insert(__el_2.parentNode, () => heading(), __el_2, createElement);
     insert(__el_3.parentNode, () => extra(), __el_3, createElement);
     return __root_0;
-  }, 1003)();
+  }, 1002)();
 }
 export default Summary;"
 `;
