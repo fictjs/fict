@@ -26,7 +26,7 @@ function assertRenderContext(ctx: HookContext, hookName: string): void {
 
 export function __fictUseContext(): HookContext {
   if (ctxStack.length === 0) {
-    // P0-2 fix: Don't silently create context when called outside render.
+    // fix: Don't silently create context when called outside render.
     // This would cause a memory leak and undefined behavior.
     const message = isDev
       ? 'Invalid hook call: hooks can only be used while rendering a component. ' +
@@ -35,7 +35,7 @@ export function __fictUseContext(): HookContext {
     throw new Error(message)
   }
   const ctx = ctxStack[ctxStack.length - 1]!
-  // P0-2 fix: Only reset cursor when starting a new render, not during an existing render.
+  // fix: Only reset cursor when starting a new render, not during an existing render.
   // This allows custom hooks to share the same hook slot sequence as the calling component,
   // similar to React's "rules of hooks" where hooks are called in consistent order.
   if (!ctx.rendering) {
@@ -52,7 +52,7 @@ export function __fictPushContext(): HookContext {
 }
 
 export function __fictPopContext(): void {
-  // P0-2 fix: Reset rendering flag when popping to avoid state leakage
+  // fix: Reset rendering flag when popping to avoid state leakage
   const ctx = ctxStack.pop()
   if (ctx) ctx.rendering = false
 }
@@ -84,7 +84,7 @@ export function __fictUseMemo<T>(
 }
 
 export function __fictUseEffect(ctx: HookContext, fn: () => void, slot?: number): void {
-  // P0-1 fix: When a slot number is provided, we trust the compiler has allocated this slot.
+  // fix: When a slot number is provided, we trust the compiler has allocated this slot.
   // This allows effects inside conditional callbacks to work even outside render context.
   // The slot number proves this is a known, statically-allocated effect location.
   if (slot !== undefined) {

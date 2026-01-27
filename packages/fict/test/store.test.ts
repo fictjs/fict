@@ -774,8 +774,8 @@ describe('$store', () => {
     })
   })
 
-  // P2-2: Double-wrap prevention and read-time write removal
-  describe('P2-2: proxy guard and read-time write prevention', () => {
+  // Double-wrap prevention and read-time write removal
+  describe('proxy guard and read-time write prevention', () => {
     it('should prevent double-wrapping of proxies', () => {
       const raw = { value: 1 }
       const store1 = $store(raw)

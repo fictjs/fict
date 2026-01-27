@@ -444,7 +444,7 @@ describe('createFictPlugin (HIR)', () => {
       `)
 
       expect(output).toContain(`"static"`)
-      // P1-1: Static text uses direct assignment instead of bindText
+      // Static text uses direct assignment instead of bindText
       expect(output).not.toContain(`bindText`)
       expect(output).toContain(`.data = String`)
     })
@@ -522,7 +522,7 @@ describe('createFictPlugin (HIR)', () => {
     })
   })
 
-  describe('P1-2: Event delegation data-binding', () => {
+  describe('Event delegation data-binding', () => {
     it('optimizes onClick={() => handler(data)} pattern', () => {
       const output = transform(`
         import { $state } from 'fict'
@@ -535,7 +535,7 @@ describe('createFictPlugin (HIR)', () => {
         }
       `)
 
-      // P1-2: Should generate wrapper and data getter:
+      // Should generate wrapper and data getter:
       //   $$click = (__data, _e) => select(__data)
       //   $$clickData = () => data.key
       expect(output).toContain('$$click')
@@ -555,7 +555,7 @@ describe('createFictPlugin (HIR)', () => {
         }
       `)
 
-      // console.log uses standard event delegation (not P1-2 optimization)
+      // console.log uses standard event delegation (not optimization)
       // Standard path still creates data binding for tracked variables
       expect(output).toContain('$$click')
       // The handler is an arrow function wrapping the console.log call
@@ -573,7 +573,7 @@ describe('createFictPlugin (HIR)', () => {
         }
       `)
 
-      // handler is a signal, so P1-2 should not apply
+      // handler is a signal, so should not apply
       // The pattern should fall through to standard event handling
       expect(output).toContain('$$click')
     })

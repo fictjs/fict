@@ -15,9 +15,9 @@ export interface CycleProtectionOptions {
   maxRootReentrantDepth?: number
   enableWindowWarning?: boolean
   devMode?: boolean
-  /** P1-3: Enable backoff warnings at 50% and 75% of limits */
+  /** Enable backoff warnings at 50% and 75% of limits */
   enableBackoffWarning?: boolean
-  /** P1-3: Ratio at which to show first backoff warning (default 0.5) */
+  /** Ratio at which to show first backoff warning (default 0.5) */
   backoffWarningRatio?: number
 }
 
@@ -43,7 +43,7 @@ const defaultOptions = {
   maxRootReentrantDepth: 10,
   enableWindowWarning: true,
   devMode: false,
-  // P1-3: Backoff warning options
+  // Backoff warning options
   enableBackoffWarning: isDev,
   backoffWarningRatio: 0.5,
 }
@@ -59,7 +59,7 @@ let rootDepth = new WeakMap<object, number>()
 let flushWarned = false
 let rootWarned = false
 let windowWarned = false
-// P1-3: Backoff warning state
+// Backoff warning state
 let backoffWarned50 = false
 let backoffWarned75 = false
 
@@ -79,7 +79,7 @@ resetCycleProtectionStateForTests = () => {
   flushWarned = false
   rootWarned = false
   windowWarned = false
-  // P1-3: Reset backoff state
+  // Reset backoff state
   backoffWarned50 = false
   backoffWarned75 = false
 }
@@ -89,7 +89,7 @@ beginFlushGuard = () => {
   effectRunsThisFlush = 0
   flushWarned = false
   windowWarned = false
-  // P1-3: Reset backoff state for new flush
+  // Reset backoff state for new flush
   backoffWarned50 = false
   backoffWarned75 = false
 }
@@ -99,7 +99,7 @@ beforeEffectRunGuard = () => {
   const next = ++effectRunsThisFlush
   const limit = Math.min(options.maxFlushCyclesPerMicrotask, options.maxEffectRunsPerFlush)
 
-  // P1-3: Backoff warnings at 50% and 75% of limit
+  // Backoff warnings at 50% and 75% of limit
   if (options.enableBackoffWarning && isDev) {
     const ratio = next / limit
     const backoffRatio = options.backoffWarningRatio ?? 0.5

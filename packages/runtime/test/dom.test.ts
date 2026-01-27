@@ -755,7 +755,7 @@ describe('DOM Module', () => {
     })
 
     it('handles SVG templates', () => {
-      // P1-4: With isSVG=true, pass content without <svg> wrapper
+      // With isSVG=true, pass content without <svg> wrapper
       // Runtime wraps it in <svg> for proper namespace parsing, then extracts content
       const factory = template('<circle cx="50" cy="50" r="40"/>', false, true)
 
@@ -791,8 +791,8 @@ describe('DOM Module', () => {
       expect((node.children[1] as HTMLSpanElement).textContent).toBe('B')
     })
 
-    // P2-1: Multi-root template warning tests
-    describe('multi-root template protection (P2-1)', () => {
+    // Multi-root template warning tests
+    describe('multi-root template protection', () => {
       it('warns in dev mode when template has multiple root nodes', () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 

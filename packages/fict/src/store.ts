@@ -25,25 +25,25 @@ interface BoundMethodEntry {
 /** Type for objects with indexable properties */
 type IndexableObject = Record<string | symbol, unknown>
 
-/** P2-2: Symbol to mark proxies and prevent double-wrapping */
+/** Symbol to mark proxies and prevent double-wrapping */
 const IS_STORE_PROXY = Symbol('fict-store-proxy')
 
-/** P2-2: WeakSet to track raw objects that have been proxied (for reverse lookup) */
+/** WeakSet to track raw objects that have been proxied (for reverse lookup) */
 const RAW_TO_PROXY = new WeakMap<object, object>()
 
 /** Cache of proxied objects to avoid duplicate proxies */
 const PROXY_CACHE = new WeakMap<object, unknown>()
 
-/** P2-2: Dev mode detection */
+/** Dev mode detection */
 const isDev =
   typeof __DEV__ !== 'undefined'
     ? __DEV__
     : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
 
-/** P2-2: Track if we've warned about direct mutation for a specific target+property */
+/** Track if we've warned about direct mutation for a specific target+property */
 const MUTATION_WARNED = new WeakMap<object, Set<string | symbol>>()
 
-/** P2-2: Properties to skip for direct mutation warning (built-in/internal properties) */
+/** Properties to skip for direct mutation warning (built-in/internal properties) */
 const SKIP_MUTATION_WARNING_PROPS = new Set<string | symbol>([
   'constructor',
   'prototype',
@@ -131,12 +131,12 @@ export function $store<T extends object>(initialValue: T): T {
     return initialValue
   }
 
-  // P2-2: Prevent double-wrapping - if already a store proxy, return as-is
+  // Prevent double-wrapping - if already a store proxy, return as-is
   if ((initialValue as IndexableObject)[IS_STORE_PROXY]) {
     return initialValue
   }
 
-  // P2-2: Check if this object was already wrapped (reverse lookup)
+  // Check if this object was already wrapped (reverse lookup)
   if (RAW_TO_PROXY.has(initialValue)) {
     return RAW_TO_PROXY.get(initialValue) as T
   }
@@ -147,7 +147,7 @@ export function $store<T extends object>(initialValue: T): T {
 
   const proxy = new Proxy(initialValue, {
     get(target, prop, receiver) {
-      // P2-2: Return true for IS_STORE_PROXY to identify this as a store proxy
+      // Return true for IS_STORE_PROXY to identify this as a store proxy
       if (prop === IS_STORE_PROXY) {
         return true
       }
@@ -159,7 +159,7 @@ export function $store<T extends object>(initialValue: T): T {
 
       const currentValue = Reflect.get(target, prop, receiver ?? proxy)
 
-      // P2-2: Remove "read-time write" - direct mutation is now undefined behavior
+      // Remove "read-time write" - direct mutation is now undefined behavior
       // In dev mode, warn once per property if we detect the underlying object was mutated directly
       if (isDev && currentValue !== trackedValue && !SKIP_MUTATION_WARNING_PROPS.has(prop)) {
         let warnedProps = MUTATION_WARNED.get(target)
@@ -308,7 +308,7 @@ export function $store<T extends object>(initialValue: T): T {
   })
 
   PROXY_CACHE.set(initialValue, proxy)
-  // P2-2: Register reverse lookup for double-wrap prevention
+  // Register reverse lookup for double-wrap prevention
   RAW_TO_PROXY.set(initialValue, proxy)
   return proxy
 }

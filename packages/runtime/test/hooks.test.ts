@@ -28,8 +28,8 @@ describe('Hook Context System', () => {
   })
 
   describe('__fictUseContext', () => {
-    it('throws when stack is empty (P0-2 fix)', () => {
-      // P0-2: Hooks should not be called outside render context
+    it('throws when stack is empty (fix)', () => {
+      // Hooks should not be called outside render context
       expect(() => __fictUseContext()).toThrow(/Invalid hook call/)
     })
 
@@ -44,8 +44,8 @@ describe('Hook Context System', () => {
       expect(ctx2.rendering).toBe(true) // Now rendering
     })
 
-    it('returns existing context without resetting cursor when already rendering (P0-2 fix)', () => {
-      // P0-2: Custom hooks should not reset cursor
+    it('returns existing context without resetting cursor when already rendering (fix)', () => {
+      // Custom hooks should not reset cursor
       const ctx1 = __fictPushContext()
       ctx1.cursor = 5
       ctx1.rendering = true
@@ -117,7 +117,7 @@ describe('Hook Context System', () => {
 
       __fictResetContext()
 
-      // After reset, __fictUseContext throws because stack is empty (P0-2)
+      // After reset, __fictUseContext throws because stack is empty ()
       expect(() => __fictUseContext()).toThrow(/Invalid hook call/)
 
       // Can push a new context after reset
@@ -387,7 +387,7 @@ describe('Hook Context System', () => {
     })
   })
 
-  describe('P0-2: Custom hook slot correctness', () => {
+  describe('Custom hook slot correctness', () => {
     it('custom hooks share hook slot sequence with calling component', () => {
       // Simulates the pattern: Component calls $state, then calls useCounter()
       // which also uses $state internally. Slots should not conflict.
@@ -403,7 +403,7 @@ describe('Hook Context System', () => {
         // This simulates what happens when a custom hook calls __fictUseContext()
         const customHookCtx = __fictUseContext() // Should NOT reset cursor!
         expect(customHookCtx).toBe(ctx) // Same context
-        expect(customHookCtx.cursor).toBe(1) // Cursor preserved (P0-2 fix)
+        expect(customHookCtx.cursor).toBe(1) // Cursor preserved (fix)
 
         // Custom hook creates its own state (slot 1, cursor advances to 2)
         const hookState = __fictUseSignal(ctx, 'hook')
@@ -431,12 +431,12 @@ describe('Hook Context System', () => {
         const s1 = __fictUseSignal(ctx, 1)
 
         // First custom hook (simulated)
-        __fictUseContext() // Should not reset cursor (P0-2 fix)
+        __fictUseContext() // Should not reset cursor (fix)
         const s2 = __fictUseSignal(ctx, 2) // slot 1, cursor -> 2
         const m1 = __fictUseMemo(ctx, () => s1() + s2()) // slot 2, cursor -> 3
 
         // Second custom hook (simulated)
-        __fictUseContext() // Should not reset cursor (P0-2 fix)
+        __fictUseContext() // Should not reset cursor (fix)
         const s3 = __fictUseSignal(ctx, 3) // slot 3, cursor -> 4
 
         // Total: 4 slots used (s1, s2, m1, s3)

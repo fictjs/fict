@@ -951,7 +951,7 @@ describe('compiled templates DOM integration', () => {
    * Tests that memo variables are correctly identified as reactive.
    * This ensures that expressions accessing memo/derived values are bound reactively.
    */
-  it('binds memo variable properties reactively (P1-1 fix)', async () => {
+  it('binds memo variable properties reactively (fix)', async () => {
     const source = `
       import { $state, render } from 'fict'
 
