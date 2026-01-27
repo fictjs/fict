@@ -4671,9 +4671,21 @@ function lowerIntrinsicElement(
             if (fn.params.length > 0) return fn
             return t.functionExpression(fn.id, [eventParam], fn.body, fn.generator, fn.async)
           }
-          return t.arrowFunctionExpression(
+          // P0-3 fix: Don't wrap identifiers and member expressions in arrow functions.
+          // Arrow functions don't respect .call() for `this` binding.
+          // The runtime's callEventHandler uses .call(element, event) to set `this` to the element.
+          // By passing the function directly, the `this` binding works correctly.
+          if (t.isIdentifier(fn) || t.isMemberExpression(fn)) {
+            return fn
+          }
+          // For other expressions (e.g., conditional, call), wrap in a function.
+          // Use regular function (not arrow) to preserve `this` binding from .call()
+          return t.functionExpression(
+            null,
             [eventParam],
-            t.callExpression(fn as BabelCore.types.Expression, [eventParam]),
+            t.blockStatement([
+              t.returnStatement(t.callExpression(fn as BabelCore.types.Expression, [eventParam])),
+            ]),
           )
         }
         const handlerExpr =
