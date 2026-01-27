@@ -1019,6 +1019,11 @@ export function computed<T>(getter: (oldValue?: T) => T): ComputedAccessor<T> {
   return bound as ComputedAccessor<T>
 }
 function computedOper<T>(this: ComputedNode<T>): T {
+  // P1-1 fix: During cleanup, return cached value without triggering any updates.
+  // This ensures cleanup functions see the previous state, not the new pending values.
+  // Without this check, checkDirty() could commit pending signal values during cleanup.
+  if (inCleanup) return this.value
+
   const flags = this.flags
 
   if (flags & Dirty) {
