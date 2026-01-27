@@ -633,6 +633,8 @@ export interface CodegenContext {
   listKeyExpr?: Expression
   /** The item parameter name in list render (e.g., "row") for key expression matching */
   listItemParamName?: string
+  /** P1-4: Current namespace context for SVG/MathML element creation */
+  namespaceContext?: NamespaceContext
 }
 
 /**
@@ -968,16 +970,21 @@ function getCachedGetterExpression(
  * Get or create a hoisted template identifier for the given HTML.
  * When in list render context, templates are hoisted outside the render callback
  * to avoid repeated HTML parsing (1000 items = 1000 parses -> 1 parse + 1000 clones).
+ * P1-4: Now accepts isSVG/isMathML parameters for namespace-aware template creation.
  */
 function getOrCreateHoistedTemplate(
   html: string,
   ctx: CodegenContext,
+  isSVG?: boolean,
+  isMathML?: boolean,
 ): BabelCore.types.Identifier | null {
   if (!ctx.inListRender || !ctx.hoistedTemplates || !ctx.hoistedTemplateStatements) {
     return null
   }
 
-  const existing = ctx.hoistedTemplates.get(html)
+  // P1-4: Include namespace in cache key to avoid collisions
+  const cacheKey = isSVG ? `svg:${html}` : isMathML ? `mathml:${html}` : html
+  const existing = ctx.hoistedTemplates.get(cacheKey)
   if (existing) {
     return existing
   }
@@ -985,12 +992,24 @@ function getOrCreateHoistedTemplate(
   const { t } = ctx
   ctx.helpersUsed.add('template')
   const tmplId = genTemp(ctx, 'htmpl')
-  ctx.hoistedTemplates.set(html, tmplId)
+  ctx.hoistedTemplates.set(cacheKey, tmplId)
+
+  // P1-4: Build template call arguments with namespace flags
+  const templateArgs: BabelCore.types.Expression[] = [t.stringLiteral(html)]
+  if (isSVG || isMathML) {
+    // template(html, isImportNode, isSVG, isMathML)
+    templateArgs.push(t.identifier('undefined')) // isImportNode
+    templateArgs.push(isSVG ? t.booleanLiteral(true) : t.identifier('undefined'))
+    if (isMathML) {
+      templateArgs.push(t.booleanLiteral(true))
+    }
+  }
+
   ctx.hoistedTemplateStatements.push(
     t.variableDeclaration('const', [
       t.variableDeclarator(
         tmplId,
-        t.callExpression(t.identifier(RUNTIME_ALIASES.template), [t.stringLiteral(html)]),
+        t.callExpression(t.identifier(RUNTIME_ALIASES.template), templateArgs),
       ),
     ]),
   )
@@ -4185,12 +4204,135 @@ interface HIRBinding {
   name?: string // for attributes/events
   expr?: Expression // the dynamic expression
   eventOptions?: { capture?: boolean; passive?: boolean; once?: boolean }
+  /** P1-4: Namespace context at this binding's location (for dynamic children) */
+  namespace?: NamespaceContext
 }
 
 interface HIRTemplateExtractionResult {
   html: string
   bindings: HIRBinding[]
+  /** P1-4: Whether the root element is an SVG element (or child of SVG) */
+  isSVG?: boolean
+  /** P1-4: Whether the root element is a MathML element (or child of MathML) */
+  isMathML?: boolean
 }
+
+/**
+ * P1-4: SVG element names for namespace tracking during template extraction.
+ * These elements must be created in SVG namespace to work correctly.
+ */
+const SVG_ELEMENTS = new Set([
+  'svg',
+  'animate',
+  'animateMotion',
+  'animateTransform',
+  'circle',
+  'clipPath',
+  'defs',
+  'desc',
+  'ellipse',
+  'feBlend',
+  'feColorMatrix',
+  'feComponentTransfer',
+  'feComposite',
+  'feConvolveMatrix',
+  'feDiffuseLighting',
+  'feDisplacementMap',
+  'feDistantLight',
+  'feDropShadow',
+  'feFlood',
+  'feFuncA',
+  'feFuncB',
+  'feFuncG',
+  'feFuncR',
+  'feGaussianBlur',
+  'feImage',
+  'feMerge',
+  'feMergeNode',
+  'feMorphology',
+  'feOffset',
+  'fePointLight',
+  'feSpecularLighting',
+  'feSpotLight',
+  'feTile',
+  'feTurbulence',
+  'filter',
+  'foreignObject',
+  'g',
+  'image',
+  'line',
+  'linearGradient',
+  'marker',
+  'mask',
+  'metadata',
+  'mpath',
+  'path',
+  'pattern',
+  'polygon',
+  'polyline',
+  'radialGradient',
+  'rect',
+  'set',
+  'stop',
+  'switch',
+  'symbol',
+  'text',
+  'textPath',
+  'tspan',
+  'use',
+  'view',
+])
+
+/**
+ * P1-4: MathML element names for namespace tracking during template extraction.
+ */
+const MATHML_ELEMENTS = new Set([
+  'math',
+  'maction',
+  'maligngroup',
+  'malignmark',
+  'menclose',
+  'merror',
+  'mfenced',
+  'mfrac',
+  'mglyph',
+  'mi',
+  'mlabeledtr',
+  'mlongdiv',
+  'mmultiscripts',
+  'mn',
+  'mo',
+  'mover',
+  'mpadded',
+  'mphantom',
+  'mroot',
+  'mrow',
+  'ms',
+  'mscarries',
+  'mscarry',
+  'msgroup',
+  'msline',
+  'mspace',
+  'msqrt',
+  'msrow',
+  'mstack',
+  'mstyle',
+  'msub',
+  'msup',
+  'msubsup',
+  'mtable',
+  'mtd',
+  'mtext',
+  'mtr',
+  'munder',
+  'munderover',
+  'semantics',
+  'annotation',
+  'annotation-xml',
+])
+
+/** P1-4: Namespace context type for template extraction */
+type NamespaceContext = 'svg' | 'mathml' | null
 
 /**
  * Check if an expression is static (can be included in template HTML).
@@ -4312,13 +4454,32 @@ function normalizeHIRAttrName(name: string): string {
 }
 
 /**
+ * P1-4: Resolve namespace context based on tag name and parent context.
+ * - 'svg' enters SVG namespace
+ * - 'math' enters MathML namespace
+ * - 'foreignObject' inside SVG exits to null (HTML namespace)
+ * - Otherwise inherit from parent context
+ */
+function resolveNamespaceContext(
+  tagName: string,
+  parentNamespace: NamespaceContext,
+): NamespaceContext {
+  if (tagName === 'svg') return 'svg'
+  if (tagName === 'math') return 'mathml'
+  if (tagName === 'foreignObject' && parentNamespace === 'svg') return null
+  return parentNamespace
+}
+
+/**
  * Extract static HTML from HIR JSXElementExpression.
  * Similar to extractStaticHtml from fine-grained-dom.ts but works with HIR types.
+ * P1-4: Now tracks namespace context for SVG/MathML elements.
  */
 function extractHIRStaticHtml(
   jsx: JSXElementExpression,
   ctx: CodegenContext,
   parentPath: number[] = [],
+  namespace: NamespaceContext = null,
 ): HIRTemplateExtractionResult {
   // Components or dynamic tag expressions should be treated as dynamic children,
   // not baked into static HTML.
@@ -4336,6 +4497,8 @@ function extractHIRStaticHtml(
   }
 
   const tagName = jsx.tagName as string
+  // P1-4: Resolve namespace for this element
+  const resolvedNamespace = resolveNamespaceContext(tagName, namespace)
   let html = `<${tagName}`
   const bindings: HIRBinding[] = []
 
@@ -4461,7 +4624,8 @@ function extractHIRStaticHtml(
       }
     } else if (child.kind === 'element') {
       const childPath = [...parentPath, childIndex]
-      const childResult = extractHIRStaticHtml(child.value, ctx, childPath)
+      // P1-4: Pass namespace context to child elements
+      const childResult = extractHIRStaticHtml(child.value, ctx, childPath, resolvedNamespace)
       html += childResult.html
       bindings.push(...childResult.bindings)
       childIndex++
@@ -4473,6 +4637,8 @@ function extractHIRStaticHtml(
           type: 'text',
           path: [...parentPath, childIndex],
           expr: child.value,
+          // P1-4: Track namespace for dynamic text bindings
+          namespace: resolvedNamespace,
         })
       } else {
         // Dynamic expression - insert placeholder comment
@@ -4481,6 +4647,8 @@ function extractHIRStaticHtml(
           type: 'child',
           path: [...parentPath, childIndex],
           expr: child.value,
+          // P1-4: Track namespace for dynamic child bindings
+          namespace: resolvedNamespace,
         })
       }
       childIndex++
@@ -4489,7 +4657,20 @@ function extractHIRStaticHtml(
 
   html += `</${tagName}>`
 
-  return { html, bindings }
+  // P1-4: Determine if this template needs SVG/MathML namespace wrapping.
+  // This is needed when:
+  // - We're in SVG/MathML context (from parent) but root tag isn't 'svg'/'math' itself
+  // - In that case, the browser would parse the HTML as HTML elements without the namespace
+  // Note: If root IS 'svg' or 'math', the tag itself creates the namespace, no wrapping needed
+  const needsSVG = namespace === 'svg' && tagName !== 'svg'
+  const needsMathML = namespace === 'mathml' && tagName !== 'math'
+
+  return {
+    html,
+    bindings,
+    isSVG: needsSVG || undefined,
+    isMathML: needsMathML || undefined,
+  }
 }
 
 /**
@@ -4504,8 +4685,14 @@ function lowerIntrinsicElement(
   const { t } = ctx
   const statements: BabelCore.types.Statement[] = []
 
-  // Extract static HTML with bindings (aligned with fine-grained-dom.ts)
-  const { html, bindings } = extractHIRStaticHtml(jsx, ctx)
+  // P1-4: Extract static HTML with bindings, passing namespace context
+  // This allows proper namespace detection for elements inside SVG/MathML
+  const { html, bindings, isSVG, isMathML } = extractHIRStaticHtml(
+    jsx,
+    ctx,
+    [],
+    ctx.namespaceContext ?? null,
+  )
 
   // Collect all dependencies from bindings to find containing region
   const allDeps = new Set<string>()
@@ -4541,7 +4728,8 @@ function lowerIntrinsicElement(
 
   // Create template with full static HTML
   // For list render context, try to hoist template to avoid repeated HTML parsing
-  const hoistedTmplId = getOrCreateHoistedTemplate(html, ctx)
+  // P1-4: Pass namespace flags for SVG/MathML support
+  const hoistedTmplId = getOrCreateHoistedTemplate(html, ctx, isSVG, isMathML)
   const rootId = genTemp(ctx, 'root')
 
   if (hoistedTmplId) {
@@ -4555,11 +4743,23 @@ function lowerIntrinsicElement(
     // Create template inline (non-list context)
     ctx.helpersUsed.add('template')
     const tmplId = genTemp(ctx, 'tmpl')
+
+    // P1-4: Build template call arguments with namespace flags
+    const templateArgs: BabelCore.types.Expression[] = [t.stringLiteral(html)]
+    if (isSVG || isMathML) {
+      // template(html, isImportNode, isSVG, isMathML)
+      templateArgs.push(t.identifier('undefined')) // isImportNode
+      templateArgs.push(isSVG ? t.booleanLiteral(true) : t.identifier('undefined'))
+      if (isMathML) {
+        templateArgs.push(t.booleanLiteral(true))
+      }
+    }
+
     statements.push(
       t.variableDeclaration('const', [
         t.variableDeclarator(
           tmplId,
-          t.callExpression(t.identifier(RUNTIME_ALIASES.template), [t.stringLiteral(html)]),
+          t.callExpression(t.identifier(RUNTIME_ALIASES.template), templateArgs),
         ),
       ]),
     )
@@ -4576,6 +4776,15 @@ function lowerIntrinsicElement(
   // Build a cache for resolved node paths
   const nodeCache = new Map<string, BabelCore.types.Identifier>()
   nodeCache.set('', elId)
+
+  // P1-4: Determine and set namespace context for this element's children
+  // This allows dynamic child expressions to know they're inside SVG/MathML
+  const tagName = typeof jsx.tagName === 'string' ? jsx.tagName : null
+  const prevNamespace = ctx.namespaceContext
+  if (tagName) {
+    const elementNamespace = resolveNamespaceContext(tagName, ctx.namespaceContext ?? null)
+    ctx.namespaceContext = elementNamespace
+  }
 
   // Precompute node references before any binding mutates the DOM tree
   const pathStatements: BabelCore.types.Statement[] = []
@@ -4921,12 +5130,23 @@ function lowerIntrinsicElement(
       }
     } else if (binding.type === 'child' && binding.expr) {
       // Child binding (dynamic expression at placeholder)
-      emitHIRChildBinding(targetId, binding.expr, statements, ctx, containingRegion)
+      // P1-4: Pass the binding's namespace to ensure correct SVG/MathML context
+      emitHIRChildBinding(
+        targetId,
+        binding.expr,
+        statements,
+        ctx,
+        containingRegion,
+        binding.namespace,
+      )
     }
   }
 
   // Restore previous region
   applyRegionToContext(ctx, prevRegion ?? null)
+
+  // P1-4: Restore previous namespace context
+  ctx.namespaceContext = prevNamespace
 
   // Return element
   statements.push(t.returnStatement(elId))
@@ -5006,6 +5226,7 @@ function resolveHIRBindingPath(
 
 /**
  * Emit a child binding at a placeholder comment node.
+ * P1-4: Now accepts namespace parameter for proper SVG/MathML context.
  */
 function emitHIRChildBinding(
   markerId: BabelCore.types.Identifier,
@@ -5013,9 +5234,16 @@ function emitHIRChildBinding(
   statements: BabelCore.types.Statement[],
   ctx: CodegenContext,
   containingRegion: RegionInfo | null,
+  namespace?: NamespaceContext,
 ): void {
   const { t } = ctx
   const parentId = t.memberExpression(markerId, t.identifier('parentNode'))
+
+  // P1-4: Set namespace context for child element lowering
+  const prevNamespace = ctx.namespaceContext
+  if (namespace !== undefined) {
+    ctx.namespaceContext = namespace
+  }
 
   // createPortal call inside JSX child: register cleanup but don't insert marker into parent
   if (
