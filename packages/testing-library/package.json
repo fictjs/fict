@@ -1,7 +1,7 @@
 {
   "name": "@fictjs/testing-library",
   "version": "0.2.3",
-  "description": "Fict testing library",
+  "description": "Testing utilities for Fict components, built on @testing-library/dom",
   "publishConfig": {
     "access": "public",
     "provenance": true
@@ -11,6 +11,7 @@
     "url": "https://github.com/fictjs/fict.git",
     "directory": "packages/testing-library"
   },
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -34,7 +35,27 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
+  "dependencies": {
+    "@testing-library/dom": "^10.4.0"
+  },
+  "peerDependencies": {
+    "@fictjs/runtime": "workspace:*"
+  },
   "devDependencies": {
-    "tsup": "^8.5.1"
-  }
+    "@fictjs/runtime": "workspace:*",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@types/node": "^22.14.1",
+    "jsdom": "^26.1.0",
+    "tsup": "^8.5.1",
+    "vitest": "^3.1.2"
+  },
+  "keywords": [
+    "fict",
+    "testing",
+    "testing-library",
+    "test",
+    "unit-test",
+    "ui",
+    "dom"
+  ]
 }
