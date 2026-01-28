@@ -25,7 +25,14 @@
  * @packageDocumentation
  */
 
-import { render as fictRender, createRoot, createElement } from '@fictjs/runtime'
+import {
+  render as fictRender,
+  createRoot,
+  createElement,
+  ErrorBoundary,
+  Suspense,
+  createSuspenseToken,
+} from '@fictjs/runtime'
 import type { FictNode, Component } from '@fictjs/runtime'
 import { getQueriesForElement, prettyDOM, queries } from '@testing-library/dom'
 import type { Queries } from '@testing-library/dom'
@@ -39,6 +46,11 @@ import type {
   RenderHookOptions,
   RenderHookResult,
   TestEffectCallback,
+  ErrorBoundaryRenderOptions,
+  ErrorBoundaryRenderResult,
+  SuspenseRenderOptions,
+  SuspenseRenderResult,
+  TestSuspenseHandle,
 } from './types'
 
 // ============================================================================
@@ -519,6 +531,278 @@ export function flush(): Promise<void> {
 }
 
 // ============================================================================
+// ErrorBoundary Testing Utilities
+// ============================================================================
+
+/**
+ * Render a view wrapped in an ErrorBoundary for testing error handling.
+ *
+ * The ErrorBoundary catches errors thrown during child component rendering
+ * and displays a fallback UI. Use this to test error handling behavior.
+ *
+ * @param view - A function that returns the component to render
+ * @param options - Render options including ErrorBoundary props
+ * @returns A render result with error boundary utilities
+ *
+ * @example
+ * ```tsx
+ * // Test error catching - component throws during render
+ * const onError = vi.fn()
+ * const { container, isShowingFallback } = renderWithErrorBoundary(
+ *   () => <ComponentThatMightThrow />,
+ *   {
+ *     fallback: (err) => <div data-testid="error">{err.message}</div>,
+ *     onError,
+ *   }
+ * )
+ *
+ * // If component threw, fallback is shown
+ * if (isShowingFallback()) {
+ *   expect(container.querySelector('[data-testid="error"]')).toBeTruthy()
+ * }
+ * ```
+ */
+export function renderWithErrorBoundary<Q extends Queries = typeof queries>(
+  view: View,
+  options: ErrorBoundaryRenderOptions<Q> = {},
+): ErrorBoundaryRenderResult<Q> {
+  const {
+    fallback = createElement({
+      type: 'div',
+      props: { 'data-testid': 'error-fallback', children: 'Error occurred' },
+    }),
+    onError,
+    resetKeys,
+    ...renderOptions
+  } = options
+
+  // Track error state
+  let hasError = false
+  let resetFn: (() => void) | undefined
+  let _currentError: unknown = null
+
+  // Create fallback that tracks state
+  const wrappedFallback = (err: unknown, reset?: () => void): FictNode => {
+    hasError = true
+    _currentError = err
+    resetFn = reset
+    if (typeof fallback === 'function') {
+      return fallback(err, reset)
+    }
+    return fallback
+  }
+
+  // Wrap view with ErrorBoundary
+  // Cast to generic component type since ErrorBoundary has specific props
+  const ErrorBoundaryComponent = ErrorBoundary as unknown as (
+    props: Record<string, unknown>,
+  ) => FictNode
+
+  const wrappedView: View = () => {
+    return createElement({
+      type: ErrorBoundaryComponent,
+      props: {
+        fallback: wrappedFallback,
+        onError: (err: unknown) => {
+          hasError = true
+          _currentError = err
+          onError?.(err)
+        },
+        resetKeys,
+        children: view(),
+      },
+    }) as FictNode
+  }
+
+  const result = render(wrappedView, renderOptions as RenderOptions<Q>)
+
+  return {
+    ...result,
+    triggerError: (error: Error) => {
+      // Rerender with a component that throws
+      hasError = true
+      _currentError = error
+      result.rerender(() => {
+        return createElement({
+          type: ErrorBoundaryComponent,
+          props: {
+            fallback: wrappedFallback,
+            onError: (err: unknown) => {
+              hasError = true
+              _currentError = err
+              onError?.(err)
+            },
+            resetKeys,
+            children: createElement({
+              type: () => {
+                throw error
+              },
+              props: {},
+            }),
+          },
+        }) as FictNode
+      })
+    },
+    resetErrorBoundary: () => {
+      if (resetFn) {
+        hasError = false
+        _currentError = null
+        resetFn()
+      }
+    },
+    isShowingFallback: () => hasError,
+  } as unknown as ErrorBoundaryRenderResult<Q>
+}
+
+// ============================================================================
+// Suspense Testing Utilities
+// ============================================================================
+
+/**
+ * Create a test suspense token for controlling suspense in tests.
+ *
+ * @returns A handle with token, resolve, and reject functions
+ *
+ * @example
+ * ```tsx
+ * const { token, resolve, reject } = createTestSuspenseToken()
+ *
+ * const { isShowingFallback, waitForResolution } = renderWithSuspense(
+ *   () => {
+ *     // Throw token to trigger suspense
+ *     throw token
+ *   },
+ *   { fallback: <div>Loading...</div> }
+ * )
+ *
+ * expect(isShowingFallback()).toBe(true)
+ *
+ * // Resolve the suspense
+ * resolve()
+ * await waitForResolution()
+ *
+ * expect(isShowingFallback()).toBe(false)
+ * ```
+ */
+export function createTestSuspenseToken(): TestSuspenseHandle {
+  const handle = createSuspenseToken()
+  return {
+    // Cast to match the TestSuspenseHandle type
+    token: handle.token as TestSuspenseHandle['token'],
+    resolve: handle.resolve,
+    reject: handle.reject,
+  }
+}
+
+/**
+ * Render a view wrapped in a Suspense boundary for testing async loading states.
+ *
+ * Note: Suspense in Fict catches async tokens thrown during child rendering.
+ * To test suspense, use createTestSuspenseToken() and throw the token in your component.
+ *
+ * @param view - A function that returns the component to render
+ * @param options - Render options including Suspense props
+ * @returns A render result with suspense utilities
+ *
+ * @example
+ * ```tsx
+ * // Test non-suspending component
+ * const { container } = renderWithSuspense(
+ *   () => <LoadedComponent />,
+ *   { fallback: <div>Loading...</div> }
+ * )
+ * expect(container.textContent).toBe('Loaded')
+ * ```
+ */
+export function renderWithSuspense<Q extends Queries = typeof queries>(
+  view: View,
+  options: SuspenseRenderOptions<Q> = {},
+): SuspenseRenderResult<Q> {
+  const {
+    fallback = createElement({
+      type: 'div',
+      props: { 'data-testid': 'suspense-fallback', children: 'Loading...' },
+    }),
+    onResolve,
+    onReject,
+    resetKeys,
+    ...renderOptions
+  } = options
+
+  // Track suspense state
+  let isSuspended = false
+  let isResolved = true // Start as resolved, set to false if suspense triggers
+  let resolveWaiters: (() => void)[] = []
+
+  // Create fallback that tracks suspended state
+  const wrappedFallback = (err?: unknown): FictNode => {
+    isSuspended = true
+    isResolved = false
+    if (typeof fallback === 'function') {
+      return fallback(err)
+    }
+    return fallback
+  }
+
+  // Cast to generic component type since Suspense has specific props
+  const SuspenseComponent = Suspense as unknown as (props: Record<string, unknown>) => FictNode
+
+  // Wrap view with Suspense
+  const wrappedView: View = () => {
+    return createElement({
+      type: SuspenseComponent,
+      props: {
+        fallback: wrappedFallback,
+        onResolve: () => {
+          isSuspended = false
+          isResolved = true
+          onResolve?.()
+          // Notify waiters
+          resolveWaiters.forEach(waiter => waiter())
+          resolveWaiters = []
+        },
+        onReject: (err: unknown) => {
+          isSuspended = false
+          onReject?.(err)
+        },
+        resetKeys,
+        children: view(),
+      },
+    }) as FictNode
+  }
+
+  const result = render(wrappedView, renderOptions as RenderOptions<Q>)
+
+  return {
+    ...result,
+    isShowingFallback: () => {
+      // Check if fallback element is present in DOM
+      const fallbackEl = result.container.querySelector('[data-testid="suspense-fallback"]')
+      return !!fallbackEl || isSuspended
+    },
+    waitForResolution: (waitOptions?: { timeout?: number }) => {
+      const { timeout = 5000 } = waitOptions ?? {}
+
+      // If never suspended or already resolved, return immediately
+      if (isResolved && !isSuspended) {
+        return Promise.resolve()
+      }
+
+      return new Promise<void>((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+          reject(new Error(`Suspense did not resolve within ${timeout}ms`))
+        }, timeout)
+
+        resolveWaiters.push(() => {
+          clearTimeout(timeoutId)
+          resolve()
+        })
+      })
+    },
+  } as unknown as SuspenseRenderResult<Q>
+}
+
+// ============================================================================
 // Re-exports from @testing-library/dom
 // ============================================================================
 
@@ -541,4 +825,9 @@ export type {
   TestEffectCallback,
   DebugFn,
   MountedRef,
+  ErrorBoundaryRenderOptions,
+  ErrorBoundaryRenderResult,
+  SuspenseRenderOptions,
+  SuspenseRenderResult,
+  TestSuspenseHandle,
 } from './types'

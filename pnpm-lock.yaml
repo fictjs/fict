@@ -366,9 +366,15 @@ importers:
         specifier: ^10.4.0
         version: 10.4.1
     devDependencies:
+      '@fictjs/compiler':
+        specifier: workspace:*
+        version: link:../compiler
       '@fictjs/runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@fictjs/vite-plugin':
+        specifier: workspace:*
+        version: link:../vite-plugin
       '@testing-library/jest-dom':
         specifier: ^6.6.3
         version: 6.9.1
