@@ -56,6 +56,7 @@ export { isReactive, unwrap } from './binding'
 
 export { getDevtoolsHook, type FictDevtoolsHook } from './devtools'
 export { setCycleProtectionOptions } from './cycle-guard'
+export { registerErrorHandler } from './lifecycle'
 
 // ============================================================================
 // Context API (for subtree scoping / SSR isolation / multi-instance)
