@@ -535,13 +535,13 @@ describe('createFictPlugin (HIR)', () => {
         }
       `)
 
-      // Should generate wrapper and data getter:
-      //   $$click = (__data, _e) => select(__data)
+      // Should generate handler assignment and data getter:
+      //   $$click = select
       //   $$clickData = () => data.key
       expect(output).toContain('$$click')
       expect(output).toContain('$$clickData')
-      // Wrapper function that adapts to (data, event) signature
-      expect(output).toContain('(__data, _e) => select(__data)')
+      // Handler should be assigned directly (runtime will pass data + event)
+      expect(output).toContain('$$click = select')
       expect(output).toContain('data.key')
     })
 

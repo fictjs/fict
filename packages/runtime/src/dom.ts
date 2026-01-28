@@ -279,10 +279,16 @@ export function template(
       if (isDev && wrapper.childNodes.length !== 1) {
         console.warn(
           `[fict] template() received multi-root SVG content (${wrapper.childNodes.length} nodes). ` +
-            `Only the first node will be used. This may indicate a compiler bug or invalid JSX structure.`,
+            `Returning a DocumentFragment. This may indicate a compiler bug or invalid JSX structure.`,
         )
       }
-      return wrapper.firstChild!
+      if (wrapper.childNodes.length === 1) {
+        return wrapper.firstChild!
+      }
+      // Preserve all root nodes by returning a fragment
+      const fragment = document.createDocumentFragment()
+      fragment.append(...Array.from(wrapper.childNodes))
+      return fragment
     }
     if (isMathML) {
       // fix: Wrap HTML in <math> to parse content in MathML namespace
@@ -293,10 +299,16 @@ export function template(
       if (isDev && wrapper.childNodes.length !== 1) {
         console.warn(
           `[fict] template() received multi-root MathML content (${wrapper.childNodes.length} nodes). ` +
-            `Only the first node will be used. This may indicate a compiler bug or invalid JSX structure.`,
+            `Returning a DocumentFragment. This may indicate a compiler bug or invalid JSX structure.`,
         )
       }
-      return wrapper.firstChild!
+      if (wrapper.childNodes.length === 1) {
+        return wrapper.firstChild!
+      }
+      // Preserve all root nodes by returning a fragment
+      const fragment = document.createDocumentFragment()
+      fragment.append(...Array.from(wrapper.childNodes))
+      return fragment
     }
 
     t.innerHTML = html
@@ -305,10 +317,14 @@ export function template(
     if (isDev && content.childNodes.length !== 1) {
       console.warn(
         `[fict] template() received multi-root content (${content.childNodes.length} nodes). ` +
-          `Only the first node will be used. This may indicate a compiler bug or invalid JSX structure.`,
+          `Returning a DocumentFragment. This may indicate a compiler bug or invalid JSX structure.`,
       )
     }
-    return content.firstChild!
+    if (content.childNodes.length === 1) {
+      return content.firstChild!
+    }
+    // Preserve all root nodes by returning a fragment
+    return content
   }
 
   // Create the cloning function

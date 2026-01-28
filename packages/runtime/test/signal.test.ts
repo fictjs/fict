@@ -69,6 +69,29 @@ describe('signal runtime robustness', () => {
     expect(order).toEqual(['early-0', 'late-0', 'early-1', 'late-1', 'early-2', 'late-2'])
   })
 
+  it('keeps computed values stable during cleanup', async () => {
+    const count = createSignal(0)
+    const doubled = createMemo(() => count() * 2)
+    const seen: number[] = []
+
+    const dispose = createEffect(() => {
+      const current = doubled()
+      onCleanup(() => {
+        // Cleanup should observe the previous computed value, not the new pending one.
+        seen.push(doubled())
+      })
+      return current
+    })
+
+    count(1)
+    await tick()
+    count(2)
+    await tick()
+    dispose()
+
+    expect(seen).toEqual([0, 2, 4])
+  })
+
   it('handles updates triggered inside effects', async () => {
     const signal1 = createSignal(0)
     const signal2 = createSignal(0)

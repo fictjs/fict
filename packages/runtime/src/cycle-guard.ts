@@ -42,7 +42,7 @@ const defaultOptions = {
   highUsageRatio: 0.8,
   maxRootReentrantDepth: 10,
   enableWindowWarning: true,
-  devMode: false,
+  devMode: isDev,
   // Backoff warning options
   enableBackoffWarning: isDev,
   backoffWarningRatio: 0.5,

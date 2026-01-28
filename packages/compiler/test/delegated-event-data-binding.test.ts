@@ -14,6 +14,6 @@ describe('Delegated event data binding', () => {
     const output = transform(source)
 
     expect(output).toContain('$$clickData')
-    expect(output).toMatch(/\$\$click\s*=\s*\(__data, _e\)\s*=>\s*handleClick\(__data\)/)
+    expect(output).toMatch(/\$\$click\s*=\s*handleClick\b/)
   })
 })

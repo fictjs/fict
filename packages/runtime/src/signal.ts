@@ -896,14 +896,23 @@ function flush(): void {
   while (highIndex < highPriorityQueue.length) {
     const e = highPriorityQueue[highIndex]!
     if (!beforeEffectRunGuard()) {
-      // fix: When cycle guard fails, schedule a retry flush instead of leaving
-      // the queue stuck. This prevents the system from entering an unrecoverable state.
-      if (highIndex > 0) {
-        highPriorityQueue.copyWithin(0, highIndex)
-        highPriorityQueue.length -= highIndex
+      // fix: When cycle guard fails, drop the current queues to avoid microtask spin.
+      // Dev mode will throw inside beforeEffectRunGuard; this branch is for prod warnings.
+      for (let i = 0; i < highPriorityQueue.length; i++) {
+        const queued = highPriorityQueue[i]
+        if (queued && queued.flags !== 0) {
+          queued.flags = Watching
+        }
       }
-      // Schedule retry in next microtask to give the system a chance to recover
-      scheduleFlush()
+      for (let i = 0; i < lowPriorityQueue.length; i++) {
+        const queued = lowPriorityQueue[i]
+        if (queued && queued.flags !== 0) {
+          queued.flags = Watching
+        }
+      }
+      highPriorityQueue.length = 0
+      lowPriorityQueue.length = 0
+      flushScheduled = false
       endFlushGuard()
       return
     }
@@ -927,14 +936,23 @@ function flush(): void {
     }
     const e = lowPriorityQueue[lowIndex]!
     if (!beforeEffectRunGuard()) {
-      // fix: When cycle guard fails, schedule a retry flush instead of leaving
-      // the queue stuck. This prevents the system from entering an unrecoverable state.
-      if (lowIndex > 0) {
-        lowPriorityQueue.copyWithin(0, lowIndex)
-        lowPriorityQueue.length -= lowIndex
+      // fix: When cycle guard fails, drop the current queues to avoid microtask spin.
+      // Dev mode will throw inside beforeEffectRunGuard; this branch is for prod warnings.
+      for (let i = 0; i < highPriorityQueue.length; i++) {
+        const queued = highPriorityQueue[i]
+        if (queued && queued.flags !== 0) {
+          queued.flags = Watching
+        }
       }
-      // Schedule retry in next microtask to give the system a chance to recover
-      scheduleFlush()
+      for (let i = 0; i < lowPriorityQueue.length; i++) {
+        const queued = lowPriorityQueue[i]
+        if (queued && queued.flags !== 0) {
+          queued.flags = Watching
+        }
+      }
+      highPriorityQueue.length = 0
+      lowPriorityQueue.length = 0
+      flushScheduled = false
       endFlushGuard()
       return
     }
