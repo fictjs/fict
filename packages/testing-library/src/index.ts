@@ -34,6 +34,7 @@ import {
   createSuspenseToken,
 } from '@fictjs/runtime'
 import type { FictNode, Component } from '@fictjs/runtime'
+import { registerErrorHandler } from '@fictjs/runtime/advanced'
 import { getQueriesForElement, prettyDOM, queries } from '@testing-library/dom'
 import type { Queries } from '@testing-library/dom'
 
@@ -458,21 +459,58 @@ export function renderHook<Result, Props extends unknown[] = []>(
  */
 export function testEffect<T = void>(fn: TestEffectCallback<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const { dispose } = createRoot(() => {
+    let settled = false
+    let resolveScheduled = false
+    let disposed = false
+    // Use a container to store dispose so we can reference it before assignment
+    const disposeRef: { current: (() => void) | null } = { current: null }
+
+    const scheduleDispose = () => {
+      if (disposed) return
+      queueMicrotask(() => {
+        if (disposed) return
+        disposed = true
+        disposeRef.current?.()
+      })
+    }
+
+    const reportError = (err: unknown) => {
+      if (settled) {
+        queueMicrotask(() => {
+          throw err
+        })
+        return
+      }
+      settled = true
+      reject(err)
+      scheduleDispose()
+    }
+
+    const scheduleResolve = (result: T) => {
+      if (settled || resolveScheduled) return
+      resolveScheduled = true
+      queueMicrotask(() => {
+        if (settled) return
+        settled = true
+        resolve(result)
+        scheduleDispose()
+      })
+    }
+
+    const root = createRoot(() => {
+      registerErrorHandler(err => {
+        reportError(err)
+        return true
+      })
       try {
         fn(result => {
-          resolve(result)
-          // Dispose the root after the done callback is called
-          // Use queueMicrotask to ensure any pending reactive updates complete
-          queueMicrotask(() => {
-            dispose()
-          })
+          scheduleResolve(result)
         })
       } catch (err) {
-        reject(err)
-        dispose()
+        reportError(err)
       }
     })
+    disposeRef.current = root.dispose
   })
 }
 

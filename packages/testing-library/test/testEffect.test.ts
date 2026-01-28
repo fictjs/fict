@@ -45,6 +45,25 @@ describe('testEffect', () => {
     })
   })
 
+  describe('error handling', () => {
+    it('rejects when an effect throws during an update', async () => {
+      await expect(
+        testEffect<void>(done => {
+          const count = createSignal(0)
+
+          createEffect(() => {
+            if (count() > 0) {
+              throw new Error('Effect update error')
+            }
+          })
+
+          count(1)
+          done(undefined)
+        }),
+      ).rejects.toThrow('Effect update error')
+    })
+  })
+
   describe('with reactive primitives', () => {
     it('tests signal updates', async () => {
       const result = await testEffect<number>(done => {
