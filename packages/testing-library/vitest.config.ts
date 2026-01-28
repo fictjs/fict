@@ -1,7 +1,14 @@
 import { defineConfig } from 'vitest/config'
 import { resolve } from 'path'
+import fict from '@fictjs/vite-plugin'
 
 export default defineConfig({
+  plugins: [
+    // Use fict plugin to transform .tsx files with $state, $effect macros
+    fict({
+      include: ['**/*.compiled.test.tsx'],
+    }),
+  ],
   test: {
     globals: true,
     environment: 'jsdom',
@@ -18,6 +25,7 @@ export default defineConfig({
     alias: {
       '@fictjs/runtime': resolve(__dirname, '../runtime/src'),
       '@fictjs/testing-library': resolve(__dirname, './src'),
+      fict: resolve(__dirname, '../fict/src'),
     },
   },
 })

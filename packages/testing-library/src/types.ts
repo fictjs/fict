@@ -176,3 +176,112 @@ export interface ConfigOptions {
    */
   skipAutoCleanup?: boolean
 }
+
+// ============================================================================
+// ErrorBoundary Testing Types
+// ============================================================================
+
+/**
+ * Result returned from renderWithErrorBoundary().
+ */
+export type ErrorBoundaryRenderResult<Q extends Queries = typeof queries> = RenderResult<Q> & {
+  /**
+   * Trigger an error in the error boundary by rendering a component that throws.
+   */
+  triggerError: (error: Error) => void
+
+  /**
+   * Reset the error boundary to re-render children.
+   */
+  resetErrorBoundary: () => void
+
+  /**
+   * Check if the error boundary is currently showing the fallback.
+   */
+  isShowingFallback: () => boolean
+}
+
+/**
+ * Options for renderWithErrorBoundary().
+ */
+export type ErrorBoundaryRenderOptions<Q extends Queries = typeof queries> = RenderOptions<Q> & {
+  /**
+   * The fallback UI to show when an error is caught.
+   * Can be a FictNode or a function that receives the error and reset function.
+   */
+  fallback?: FictNode | ((err: unknown, reset?: () => void) => FictNode)
+
+  /**
+   * Callback called when an error is caught.
+   */
+  onError?: (err: unknown) => void
+
+  /**
+   * Keys that trigger a reset when changed.
+   */
+  resetKeys?: unknown | (() => unknown)
+}
+
+// ============================================================================
+// Suspense Testing Types
+// ============================================================================
+
+/**
+ * Result returned from renderWithSuspense().
+ */
+export type SuspenseRenderResult<Q extends Queries = typeof queries> = RenderResult<Q> & {
+  /**
+   * Check if the suspense boundary is currently showing the fallback.
+   */
+  isShowingFallback: () => boolean
+
+  /**
+   * Wait for the suspense to resolve.
+   */
+  waitForResolution: (options?: { timeout?: number }) => Promise<void>
+}
+
+/**
+ * Options for renderWithSuspense().
+ */
+export type SuspenseRenderOptions<Q extends Queries = typeof queries> = RenderOptions<Q> & {
+  /**
+   * The fallback UI to show while suspended.
+   */
+  fallback?: FictNode | ((err?: unknown) => FictNode)
+
+  /**
+   * Callback called when the suspense resolves.
+   */
+  onResolve?: () => void
+
+  /**
+   * Callback called when the suspense rejects.
+   */
+  onReject?: (err: unknown) => void
+
+  /**
+   * Keys that trigger a reset when changed.
+   */
+  resetKeys?: unknown | (() => unknown)
+}
+
+/**
+ * Handle returned from createTestSuspenseToken().
+ */
+export interface TestSuspenseHandle {
+  /**
+   * The suspense token to throw in a component.
+   */
+  token: { then: PromiseLike<void>['then'] }
+
+  /**
+   * Resolve the suspense, allowing children to render.
+   */
+  resolve: () => void
+
+  /**
+   * Reject the suspense with an error.
+   */
+  reject: (err: unknown) => void
+}
