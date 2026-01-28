@@ -4887,14 +4887,17 @@ function lowerIntrinsicElement(
       if (hirDataBinding) {
         // Optimized path - handler and data extracted from HIR
         // Pattern: onClick={() => select(__key)} compiles to:
-        //   $$click = (data, _e) => select(data)
+        //   $$click = select
         //   $$clickData = () => __key
         // This avoids creating per-item closures in lists while maintaining
         // the runtime's (data, event) calling convention
         ctx.delegatedEventsUsed?.add(eventName)
 
         // Lower handler as a simple identifier (not as getter call)
-        const handlerExpr = lowerExpression(hirDataBinding.handler, ctx)
+        const handlerExpr =
+          hirDataBinding.handler.kind === 'Identifier'
+            ? t.identifier(hirDataBinding.handler.name)
+            : lowerExpression(hirDataBinding.handler, ctx)
 
         // Lower data with proper tracking (wrapped in getter for reactivity)
         const dataExpr = lowerDomExpression(hirDataBinding.data, ctx, containingRegion, {
@@ -4902,22 +4905,13 @@ function lowerIntrinsicElement(
           skipRegionRootOverride: true,
         })
 
-        // Create wrapper that adapts to runtime's (data, event) signature
-        // but only passes data to the actual handler
-        const dataParam = t.identifier('__data')
-        const eventParam = t.identifier('_e')
-        const wrappedHandler = t.arrowFunctionExpression(
-          [dataParam, eventParam],
-          t.callExpression(handlerExpr, [dataParam]),
-        )
-
-        // Assign wrapped handler
+        // Assign handler directly so runtime can apply `this` and pass (data, event)
         statements.push(
           t.expressionStatement(
             t.assignmentExpression(
               '=',
               t.memberExpression(targetId, t.identifier(`$$${eventName}`)),
-              wrappedHandler,
+              handlerExpr,
             ),
           ),
         )
@@ -4992,8 +4986,20 @@ function lowerIntrinsicElement(
             ? t.arrowFunctionExpression([], valueExpr)
             : ensureHandlerParam(valueExpr)
 
-        const dataBinding =
+        let dataBinding =
           isDelegated && !shouldWrapHandler ? extractDelegatedEventData(valueExpr, t) : null
+        if (dataBinding && t.isIdentifier(dataBinding.handler)) {
+          const handlerName = dataBinding.handler.name
+          if (
+            ctx.signalVars?.has(handlerName) ||
+            ctx.memoVars?.has(handlerName) ||
+            ctx.aliasVars?.has(handlerName) ||
+            ctx.storeVars?.has(handlerName) ||
+            ctx.trackedVars.has(handlerName)
+          ) {
+            dataBinding = null
+          }
+        }
 
         // Attempt data-binding for delegated events to avoid per-node closures
         if (isDelegated) {
@@ -5083,27 +5089,9 @@ function lowerIntrinsicElement(
             t.isIdentifier(handlerForDelegate) ||
             t.isMemberExpression(handlerForDelegate)
 
-          let handlerToAssign: BabelCore.types.Expression = handlerIsCallableExpr
+          const handlerToAssign: BabelCore.types.Expression = handlerIsCallableExpr
             ? handlerForDelegate
             : t.arrowFunctionExpression([eventParam], handlerForDelegate)
-
-          if (dataForDelegate) {
-            let payloadExpr: BabelCore.types.Expression
-            if (
-              t.isArrowFunctionExpression(dataForDelegate) &&
-              dataForDelegate.params.length === 0
-            ) {
-              payloadExpr = t.isBlockStatement(dataForDelegate.body)
-                ? t.callExpression(t.arrowFunctionExpression([], dataForDelegate.body), [])
-                : (dataForDelegate.body as BabelCore.types.Expression)
-            } else {
-              payloadExpr = t.callExpression(dataForDelegate, [])
-            }
-            handlerToAssign = t.arrowFunctionExpression(
-              [eventParam],
-              t.callExpression(handlerForDelegate, [payloadExpr]),
-            )
-          }
 
           statements.push(
             t.expressionStatement(
@@ -5115,6 +5103,7 @@ function lowerIntrinsicElement(
             ),
           )
           if (dataForDelegate) {
+            // Assign data getter so runtime can pass (data, event) and preserve `this`.
             statements.push(
               t.expressionStatement(
                 t.assignmentExpression(
@@ -5706,6 +5695,19 @@ function extractDelegatedEventDataFromHIR(
   // because those are not the typical data-binding patterns we want to optimize
   const callee = bodyExpr.callee
   if (callee.kind !== 'Identifier') {
+    return null
+  }
+
+  // Avoid optimizing reactive handler accessors (signals/memos/aliases).
+  // These need runtime resolution and should fall back to standard lowering.
+  const handlerName = callee.name
+  if (
+    ctx.signalVars?.has(handlerName) ||
+    ctx.memoVars?.has(handlerName) ||
+    ctx.aliasVars?.has(handlerName) ||
+    ctx.storeVars?.has(handlerName) ||
+    ctx.trackedVars.has(handlerName)
+  ) {
     return null
   }
 

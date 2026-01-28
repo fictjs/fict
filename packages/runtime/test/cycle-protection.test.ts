@@ -54,6 +54,54 @@ describe('framework cycle protection', () => {
       warn.mockRestore()
     })
 
+    it('drops queues on budget exceed and allows future updates in prod mode', async () => {
+      await tick()
+      setCycleProtectionOptions({
+        maxFlushCyclesPerMicrotask: 1,
+        maxEffectRunsPerFlush: 1,
+        devMode: false,
+      })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const s = createSignal(0)
+      let runsA = 0
+      let runsB = 0
+      const disposeA = createEffect(() => {
+        s()
+        runsA++
+      })
+      const disposeB = createEffect(() => {
+        s()
+        runsB++
+      })
+
+      const initialA = runsA
+      const initialB = runsB
+
+      // Trigger guard (budget exceeded)
+      s(1)
+      await tick()
+      const afterFailA = runsA
+      const afterFailB = runsB
+
+      // Increase budget and ensure future updates still flush
+      setCycleProtectionOptions({
+        maxFlushCyclesPerMicrotask: 10,
+        maxEffectRunsPerFlush: 10,
+        devMode: false,
+      })
+      s(2)
+      await tick()
+      await tick()
+
+      expect(runsA).toBeGreaterThan(afterFailA)
+      expect(runsB).toBeGreaterThan(afterFailB)
+      expect(runsA).toBeGreaterThanOrEqual(initialA)
+      expect(runsB).toBeGreaterThanOrEqual(initialB)
+      disposeA()
+      disposeB()
+      warn.mockRestore()
+    })
+
     it('throws when flush budget is exceeded in devMode', async () => {
       setCycleProtectionOptions({
         maxFlushCyclesPerMicrotask: 2,
@@ -92,6 +140,7 @@ describe('framework cycle protection', () => {
     })
 
     it('only warns once per flush in prod mode', async () => {
+      await tick()
       setCycleProtectionOptions({
         maxFlushCyclesPerMicrotask: 1,
         maxEffectRunsPerFlush: 1,
@@ -482,7 +531,7 @@ describe('framework cycle protection', () => {
       for (let i = 0; i < 10; i++) {
         expect(enterRootGuard(newRoot)).toBe(true)
       }
-      expect(enterRootGuard(newRoot)).toBe(false) // 11th should fail with default
+      expect(() => enterRootGuard(newRoot)).toThrow(/root-reentry/)
 
       // Cleanup
       for (let i = 0; i < 10; i++) {

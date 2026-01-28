@@ -800,9 +800,12 @@ describe('DOM Module', () => {
         const factory = template('<div>First</div><div>Second</div>')
         const node = factory()
 
-        // Should still return first node
-        expect(node).toBeInstanceOf(HTMLDivElement)
-        expect((node as HTMLDivElement).textContent).toBe('First')
+        // Should return a fragment with both nodes
+        expect(node).toBeInstanceOf(DocumentFragment)
+        const nodes = Array.from((node as DocumentFragment).childNodes)
+        expect(nodes.length).toBe(2)
+        expect((nodes[0] as HTMLDivElement).textContent).toBe('First')
+        expect((nodes[1] as HTMLDivElement).textContent).toBe('Second')
 
         // Should have warned about multi-root
         expect(warnSpy).toHaveBeenCalledWith(
@@ -823,8 +826,12 @@ describe('DOM Module', () => {
         )
         const node = factory()
 
-        // Should still return first node
-        expect(node.nodeName.toLowerCase()).toBe('circle')
+        // Should return a fragment with both nodes
+        expect(node).toBeInstanceOf(DocumentFragment)
+        const nodes = Array.from((node as DocumentFragment).childNodes)
+        expect(nodes.length).toBe(2)
+        expect(nodes[0]?.nodeName.toLowerCase()).toBe('circle')
+        expect(nodes[1]?.nodeName.toLowerCase()).toBe('circle')
 
         // Should have warned about multi-root
         expect(warnSpy).toHaveBeenCalledWith(
@@ -841,8 +848,12 @@ describe('DOM Module', () => {
         const factory = template('<mi>x</mi><mo>+</mo>', false, false, true)
         const node = factory()
 
-        // Should still return first node
-        expect(node.nodeName.toLowerCase()).toBe('mi')
+        // Should return a fragment with both nodes
+        expect(node).toBeInstanceOf(DocumentFragment)
+        const nodes = Array.from((node as DocumentFragment).childNodes)
+        expect(nodes.length).toBe(2)
+        expect(nodes[0]?.nodeName.toLowerCase()).toBe('mi')
+        expect(nodes[1]?.nodeName.toLowerCase()).toBe('mo')
 
         // Should have warned about multi-root
         expect(warnSpy).toHaveBeenCalledWith(
