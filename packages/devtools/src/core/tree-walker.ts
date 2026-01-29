@@ -87,6 +87,7 @@ export function walkTree(
       filter: filterLower,
       includeUnmounted,
       expandedIds,
+      visited: new Set<number>(),
     })
 
     if (rootNode) {
@@ -163,6 +164,14 @@ function walkComponent(
   components: Map<number, ComponentState>,
   ctx: WalkContext,
 ): TreeNode | null {
+  // Check for circular reference in the current recursion path to prevent infinite loops.
+  // We use a "stack-based" approach: add on entry, remove on exit.
+  // This allows the same component to appear in different branches (if data is malformed),
+  // while still preventing true cycles (A -> B -> A).
+  if (ctx.visited.has(component.id)) {
+    return null
+  }
+
   // Check if we should include unmounted components
   if (!ctx.includeUnmounted && !component.isMounted) {
     return null
@@ -173,55 +182,63 @@ function walkComponent(
     return null
   }
 
-  const node: TreeNode = {
-    id: component.id,
-    type: 'component',
-    name: component.name,
-    depth: ctx.depth,
-    parentId: ctx.parentId,
-    children: [],
-    signals: component.signals,
-    effects: component.effects,
-    computeds: component.computeds,
-    elements: component.elements?.length,
-    source: component.source,
-    renderCount: component.renderCount,
-    isMounted: component.isMounted,
-  }
+  // Add to visited stack for this recursion path
+  ctx.visited.add(component.id)
 
-  // Set expansion state
-  if (ctx.expandedIds) {
-    node.isExpanded = ctx.expandedIds.has(component.id)
-  }
+  try {
+    const node: TreeNode = {
+      id: component.id,
+      type: 'component',
+      name: component.name,
+      depth: ctx.depth,
+      parentId: ctx.parentId,
+      children: [],
+      signals: component.signals,
+      effects: component.effects,
+      computeds: component.computeds,
+      elements: component.elements?.length,
+      source: component.source,
+      renderCount: component.renderCount,
+      isMounted: component.isMounted,
+    }
 
-  // Walk child components
-  for (const childId of component.children) {
-    const child = components.get(childId)
-    if (child) {
-      const childNode = walkComponent(child, components, {
-        ...ctx,
-        depth: ctx.depth + 1,
-        parentId: component.id,
-      })
-      if (childNode) {
-        node.children.push(childNode)
+    // Set expansion state
+    if (ctx.expandedIds) {
+      node.isExpanded = ctx.expandedIds.has(component.id)
+    }
+
+    // Walk child components
+    for (const childId of component.children) {
+      const child = components.get(childId)
+      if (child) {
+        const childNode = walkComponent(child, components, {
+          ...ctx,
+          depth: ctx.depth + 1,
+          parentId: component.id,
+        })
+        if (childNode) {
+          node.children.push(childNode)
+        }
       }
     }
-  }
 
-  // Apply filter
-  if (ctx.filter) {
-    const matchesFilter = matchesSearch(node.name, ctx.filter)
-    node.isMatching = matchesFilter
-    node.hasMatchingChildren = node.children.some(c => c.isMatching || c.hasMatchingChildren)
+    // Apply filter
+    if (ctx.filter) {
+      const matchesFilter = matchesSearch(node.name, ctx.filter)
+      node.isMatching = matchesFilter
+      node.hasMatchingChildren = node.children.some(c => c.isMatching || c.hasMatchingChildren)
 
-    // Hide if neither matches nor has matching children
-    if (!matchesFilter && !node.hasMatchingChildren) {
-      return null
+      // Hide if neither matches nor has matching children
+      if (!matchesFilter && !node.hasMatchingChildren) {
+        return null
+      }
     }
-  }
 
-  return node
+    return node
+  } finally {
+    // Remove from visited stack when backtracking
+    ctx.visited.delete(component.id)
+  }
 }
 
 interface WalkContext {
@@ -231,6 +248,8 @@ interface WalkContext {
   includeUnmounted: boolean
   expandedIds?: Set<number>
   parentId?: number
+  /** Visited component IDs to prevent infinite loops from circular references */
+  visited: Set<number>
 }
 
 // ============================================================================

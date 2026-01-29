@@ -5,6 +5,31 @@
  * for inspection and debugging purposes.
  */
 
+// ============================================================================
+// Theme Colors
+// ============================================================================
+
+/**
+ * Theme colors for the highlighter.
+ * These can be customized by modifying the THEME object.
+ */
+export const THEME = {
+  /** Primary highlight color (Fict green) */
+  primary: '#42b883',
+  /** Primary color with alpha for backgrounds */
+  primaryAlpha: 'rgba(66, 184, 131, 0.1)',
+  /** Secondary highlight color for updates */
+  update: '#42b883',
+  /** Error highlight color */
+  error: '#ef4444',
+  /** Warning highlight color */
+  warning: '#f59e0b',
+} as const
+
+// ============================================================================
+// Types
+// ============================================================================
+
 export interface HighlightOptions {
   /** Border color */
   borderColor?: string
@@ -19,8 +44,8 @@ export interface HighlightOptions {
 }
 
 const DEFAULT_OPTIONS: Required<HighlightOptions> = {
-  borderColor: '#42b883',
-  backgroundColor: 'rgba(66, 184, 131, 0.1)',
+  borderColor: THEME.primary,
+  backgroundColor: THEME.primaryAlpha,
   label: '',
   showDimensions: true,
   duration: 1500,
@@ -338,7 +363,7 @@ function getComponentName(element: HTMLElement): string | null {
 /**
  * Flash an element to indicate an update
  */
-export function flashUpdate(element: HTMLElement, color = '#42b883'): void {
+export function flashUpdate(element: HTMLElement, color = THEME.update): void {
   const originalTransition = element.style.transition
   const originalOutline = element.style.outline
 

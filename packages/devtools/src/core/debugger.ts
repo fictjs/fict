@@ -777,6 +777,19 @@ export function detachDebugger(): void {
     window.removeEventListener('message', handlePanelMessage)
   }
 
+  // Close and cleanup BroadcastChannel
+  if (broadcastChannel) {
+    try {
+      broadcastChannel.close()
+    } catch {
+      // Ignore errors during cleanup
+    }
+    broadcastChannel = null
+  }
+
+  // Reset connection state
+  isConnected = false
+
   const global = globalThis as typeof globalThis & {
     __FICT_DEVTOOLS_HOOK__?: FictDevtoolsHookEnhanced
     __FICT_DEVTOOLS_STATE__?: unknown

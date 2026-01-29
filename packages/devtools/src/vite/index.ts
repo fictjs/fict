@@ -11,6 +11,34 @@ import { fileURLToPath } from 'node:url'
 
 import type { Plugin, ViteDevServer } from 'vite'
 
+/**
+ * Configuration options for the Fict DevTools Vite plugin.
+ *
+ * ## Auto-injection Behavior
+ *
+ * The plugin attempts to auto-inject DevTools into your entry file using
+ * heuristic-based detection. This works for common patterns like:
+ *
+ * ```ts
+ * import { render } from 'fict'
+ * render(App, document.getElementById('root'))
+ * ```
+ *
+ * However, it may not detect edge cases such as:
+ * - Aliased render calls: `const mount = render; mount(App, root)`
+ * - DOM elements imported from other modules
+ * - Dynamic render calls via variables
+ *
+ * If auto-injection doesn't work for your setup, add this import manually
+ * to your entry file:
+ *
+ * ```ts
+ * import 'virtual:fict-devtools'
+ * ```
+ *
+ * The plugin will log warnings when it detects potential entry files that
+ * weren't auto-injected.
+ */
 export interface FictDevToolsOptions {
   /**
    * Enable/disable DevTools
@@ -223,22 +251,85 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
         if (id.includes('/packages/')) return // Skip workspace packages
         if (!/\.[jt]sx?$/.test(id)) return
 
+        // Skip test files to avoid false positives
+        if (
+          id.includes('.test.') ||
+          id.includes('.spec.') ||
+          id.includes('__tests__') ||
+          id.includes('__mocks__')
+        ) {
+          return
+        }
+
         // Only inject into entry files that don't already have devtools
         if (code.includes('virtual:fict-devtools') || code.includes('@fictjs/devtools')) {
           return
         }
 
-        // Check if this looks like an entry file (has render or createRoot call)
-        const isEntryFile = /\b(render|createRoot|hydrate)\s*\(/.test(code)
-        if (!isEntryFile) return
+        // ========================================================================
+        // BEST-EFFORT ENTRY FILE DETECTION
+        // ========================================================================
+        // This is a heuristic-based detection that works for common patterns but
+        // may miss edge cases like:
+        //   - Aliased render calls: const mount = render; mount(App, root)
+        //   - DOM elements imported from other modules
+        //   - Dynamic render calls via variables
+        //
+        // If auto-injection doesn't work for your setup, add this import manually
+        // to your entry file:
+        //   import 'virtual:fict-devtools'
+        // ========================================================================
 
-        console.log('[fict-devtools] Injecting devtools import into:', id)
+        // Step 1: Must import from 'fict' or '@fictjs/runtime'
+        const hasFictImport = /import\s+.*\s+from\s+['"](?:fict|@fictjs\/runtime)['"]/.test(code)
+        if (!hasFictImport) return
 
-        // Inject devtools import at the very beginning
-        const injectedCode = `import 'virtual:fict-devtools'\n${code}`
-        return {
-          code: injectedCode,
-          map: null,
+        // Step 2: Check for direct render/createRoot/hydrate calls
+        const hasDirectRenderCall = /\b(render|createRoot|hydrate)\s*\(/.test(code)
+
+        // Step 3: Check for DOM element references
+        const hasDomReference =
+          /document\s*\./.test(code) ||
+          /getElementById|querySelector|querySelectorAll/.test(code) ||
+          // Common variable names for DOM elements
+          /\b(root|app|container|mount|el|element|target|wrapper)\s*[=!]/.test(code)
+
+        // Step 4: Check if render/createRoot/hydrate is imported (might be aliased later)
+        const importsRenderFunctions =
+          /import\s+\{[^}]*(render|createRoot|hydrate)[^}]*\}\s+from\s+['"]fict['"]/.test(code)
+
+        // Determine injection eligibility
+        const shouldInject = hasDirectRenderCall && hasDomReference
+
+        if (shouldInject) {
+          server?.config.logger.info(
+            `  \x1b[32m✓\x1b[0m  [fict-devtools] Auto-injecting into: ${id}`,
+          )
+
+          // Inject devtools import at the very beginning
+          const injectedCode = `import 'virtual:fict-devtools'\n${code}`
+          return {
+            code: injectedCode,
+            map: null,
+          }
+        }
+
+        // Provide helpful warnings for files that might be entry files but weren't injected
+        if (importsRenderFunctions || hasDirectRenderCall) {
+          const reasons: string[] = []
+          if (!hasDirectRenderCall) {
+            reasons.push('no direct render/createRoot/hydrate() call detected (aliased?)')
+          }
+          if (!hasDomReference) {
+            reasons.push('no DOM element reference detected (imported from another module?)')
+          }
+
+          const reasonStr = reasons.length > 0 ? ` Reason: ${reasons.join('; ')}.` : ''
+
+          server?.config.logger.info(
+            `  \x1b[33m⚠\x1b[0m  [fict-devtools] "${id}" imports render functions but wasn't auto-injected.${reasonStr}\n` +
+              `     If this is your entry file, add: \x1b[36mimport 'virtual:fict-devtools'\x1b[0m`,
+          )
         }
       },
     },

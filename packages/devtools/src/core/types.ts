@@ -8,7 +8,11 @@
 // Node Types
 // ============================================================================
 
-export const enum NodeType {
+/**
+ * Types of reactive nodes in the system.
+ * Note: Using regular enum instead of const enum for isolatedModules compatibility.
+ */
+export enum NodeType {
   Signal = 'signal',
   Computed = 'computed',
   Effect = 'effect',
@@ -17,7 +21,11 @@ export const enum NodeType {
   Component = 'component',
 }
 
-export const enum NodeFlag {
+/**
+ * Flags for node state.
+ * Note: Using regular enum instead of const enum for isolatedModules compatibility.
+ */
+export enum NodeFlag {
   None = 0,
   Mutable = 1,
   Watching = 2,
@@ -194,7 +202,11 @@ export interface DependencyGraph {
 // Timeline Events
 // ============================================================================
 
-export const enum TimelineEventType {
+/**
+ * Types of timeline events.
+ * Note: Using regular enum instead of const enum for isolatedModules compatibility.
+ */
+export enum TimelineEventType {
   SignalCreate = 'signal:create',
   SignalUpdate = 'signal:update',
   ComputedCreate = 'computed:create',
@@ -309,7 +321,11 @@ export interface FictDevtoolsHookEnhanced {
 // Message Types (for communication)
 // ============================================================================
 
-export const enum MessageSource {
+/**
+ * Sources of DevTools messages.
+ * Note: Using regular enum instead of const enum for isolatedModules compatibility.
+ */
+export enum MessageSource {
   Hook = 'fict-devtools-hook',
   Panel = 'fict-devtools-panel',
   Content = 'fict-devtools-content',

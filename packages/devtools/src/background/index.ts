@@ -237,36 +237,39 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  * Update extension icon based on Fict detection
  */
 function updateIcon(tabId: number, detected: boolean): void {
-  const iconPath = detected
-    ? {
-        16: 'icons/icon-16-active.png',
-        32: 'icons/icon-32-active.png',
-        48: 'icons/icon-48-active.png',
-        128: 'icons/icon-128-active.png',
-      }
-    : {
-        16: 'icons/icon-16.png',
-        32: 'icons/icon-32.png',
-        48: 'icons/icon-48.png',
-        128: 'icons/icon-128.png',
-      }
+  // Icon paths - using same base icons for now
+  // TODO: Add distinct active icons (e.g., icon16-active.png) for clearer visual feedback
+  const iconPath = {
+    16: 'icons/icon16.png',
+    48: 'icons/icon48.png',
+    128: 'icons/icon128.png',
+  }
 
   chrome.action.setIcon({ tabId, path: iconPath }).catch(() => {
     // Ignore if icons don't exist
   })
 
-  // Update badge
+  // Use badge to indicate Fict detection state
+  // This provides visual feedback since we don't have separate active icons yet
   chrome.action
     .setBadgeText({
       tabId,
-      text: detected ? '' : '',
+      text: detected ? '✓' : '',
     })
     .catch(() => {})
 
   chrome.action
     .setBadgeBackgroundColor({
       tabId,
-      color: '#42b883',
+      color: detected ? '#42b883' : '#6b7280', // Green when detected, gray otherwise
+    })
+    .catch(() => {})
+
+  // Set title to indicate state
+  chrome.action
+    .setTitle({
+      tabId,
+      title: detected ? 'Fict DevTools - Connected' : 'Fict DevTools - No Fict detected',
     })
     .catch(() => {})
 }
@@ -274,6 +277,58 @@ function updateIcon(tabId: number, detected: boolean): void {
 // ============================================================================
 // Content Script Injection
 // ============================================================================
+
+/**
+ * Error types for content script injection
+ * Note: Using regular enum instead of const enum for isolatedModules compatibility
+ */
+enum InjectionError {
+  /** Page is a chrome:// or other restricted URL */
+  RestrictedPage = 'restricted_page',
+  /** Missing scripting permission */
+  NoPermission = 'no_permission',
+  /** Tab was closed or navigated away */
+  TabGone = 'tab_gone',
+  /** Unknown error */
+  Unknown = 'unknown',
+}
+
+/**
+ * Categorize an injection error
+ */
+function categorizeInjectionError(error: unknown): InjectionError {
+  if (!(error instanceof Error)) return InjectionError.Unknown
+
+  const message = error.message.toLowerCase()
+
+  // Check for restricted page errors
+  if (
+    message.includes('cannot access') ||
+    message.includes('chrome://') ||
+    message.includes('chrome-extension://') ||
+    message.includes('edge://') ||
+    message.includes('about:') ||
+    message.includes('file://')
+  ) {
+    return InjectionError.RestrictedPage
+  }
+
+  // Check for permission errors
+  if (message.includes('permission') || message.includes('not allowed')) {
+    return InjectionError.NoPermission
+  }
+
+  // Check for tab gone errors
+  if (
+    message.includes('no tab') ||
+    message.includes('tab was closed') ||
+    message.includes('invalid tab')
+  ) {
+    return InjectionError.TabGone
+  }
+
+  return InjectionError.Unknown
+}
 
 /**
  * Inject content script into a tab
@@ -309,7 +364,29 @@ async function injectContentScript(tabId: number): Promise<void> {
 
     console.debug(`[Fict DevTools] Content script injected in tab ${tabId}`)
   } catch (error) {
-    console.debug(`[Fict DevTools] Failed to inject content script:`, error)
+    const errorType = categorizeInjectionError(error)
+
+    switch (errorType) {
+      case InjectionError.RestrictedPage:
+        // Silently ignore - this is expected for chrome://, about:, etc.
+        console.debug(`[Fict DevTools] Tab ${tabId} is a restricted page, skipping injection`)
+        break
+
+      case InjectionError.NoPermission:
+        console.warn(
+          `[Fict DevTools] Missing permission to inject into tab ${tabId}. ` +
+            'Please ensure the extension has the "scripting" permission.',
+        )
+        break
+
+      case InjectionError.TabGone:
+        // Tab was closed or navigated, silently ignore
+        console.debug(`[Fict DevTools] Tab ${tabId} is no longer available`)
+        break
+
+      default:
+        console.debug(`[Fict DevTools] Failed to inject content script into tab ${tabId}:`, error)
+    }
   }
 }
 

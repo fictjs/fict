@@ -11,12 +11,18 @@ const MAX_ARRAY_LENGTH = 100
 const MAX_OBJECT_KEYS = 50
 const MAX_DEPTH = 5
 
-const seen = new WeakSet<object>()
-
 /**
  * Serialize a value for safe display in DevTools
  */
 export function serialize(value: unknown, depth = 0): SerializedValue {
+  // Create a fresh WeakSet for each top-level call to avoid cross-call contamination
+  return serializeInternal(value, depth, new WeakSet<object>())
+}
+
+/**
+ * Internal serialization with circular reference tracking
+ */
+function serializeInternal(value: unknown, depth: number, seen: WeakSet<object>): SerializedValue {
   // Handle null
   if (value === null) {
     return { type: 'null', value: null, displayText: 'null' }
@@ -137,7 +143,7 @@ export function serialize(value: unknown, depth = 0): SerializedValue {
         let count = 0
         for (const [key, val] of obj) {
           if (count >= MAX_ARRAY_LENGTH) break
-          entries.push([String(key), serialize(val, depth + 1)])
+          entries.push([String(key), serializeInternal(val, depth + 1, seen)])
           count++
         }
         return {
@@ -155,7 +161,7 @@ export function serialize(value: unknown, depth = 0): SerializedValue {
         let count = 0
         for (const item of obj) {
           if (count >= MAX_ARRAY_LENGTH) break
-          items.push(serialize(item, depth + 1))
+          items.push(serializeInternal(item, depth + 1, seen))
           count++
         }
         return {
@@ -171,7 +177,7 @@ export function serialize(value: unknown, depth = 0): SerializedValue {
         const items: SerializedValue[] = []
         const len = Math.min(obj.length, MAX_ARRAY_LENGTH)
         for (let i = 0; i < len; i++) {
-          items.push(serialize(obj[i], depth + 1))
+          items.push(serializeInternal(obj[i], depth + 1, seen))
         }
         return {
           type: 'array',
@@ -185,7 +191,7 @@ export function serialize(value: unknown, depth = 0): SerializedValue {
       const keys = Object.keys(obj).slice(0, MAX_OBJECT_KEYS)
       const entries: Record<string, SerializedValue> = {}
       for (const key of keys) {
-        entries[key] = serialize((obj as Record<string, unknown>)[key], depth + 1)
+        entries[key] = serializeInternal((obj as Record<string, unknown>)[key], depth + 1, seen)
       }
 
       const constructorName = obj.constructor?.name || 'Object'

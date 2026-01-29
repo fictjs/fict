@@ -118,6 +118,39 @@ function escapeHtml(str: string): string {
 }
 
 // ============================================================================
+// Runtime Type Validation
+// ============================================================================
+
+function isValidId(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
+}
+
+function isSignalState(value: unknown): value is SignalState {
+  return typeof value === 'object' && value !== null && isValidId((value as SignalState).id)
+}
+
+function isComputedState(value: unknown): value is ComputedState {
+  return typeof value === 'object' && value !== null && isValidId((value as ComputedState).id)
+}
+
+function isEffectState(value: unknown): value is EffectState {
+  return typeof value === 'object' && value !== null && isValidId((value as EffectState).id)
+}
+
+function isComponentState(value: unknown): value is ComponentState {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    isValidId((value as ComponentState).id) &&
+    typeof (value as ComponentState).name === 'string'
+  )
+}
+
+function hasId(value: unknown): value is { id: number } {
+  return typeof value === 'object' && value !== null && isValidId((value as { id: number }).id)
+}
+
+// ============================================================================
 // Communication
 // ============================================================================
 
@@ -210,49 +243,58 @@ function handleMessage(message: Record<string, unknown>): void {
       break
 
     case 'signal:register':
-      state.signals.set((payload as SignalState).id, payload as SignalState)
+      if (!isSignalState(payload)) return
+      state.signals.set(payload.id, payload)
       state.lastUpdate = Date.now()
       if (state.activeTab === 'signals') renderSignalsTab()
       break
 
     case 'signal:update':
+      if (!hasId(payload)) return
       updateSignal(payload as SignalUpdate)
       break
 
     case 'signal:dispose':
-      state.signals.delete((payload as { id: number }).id)
+      if (!hasId(payload)) return
+      state.signals.delete(payload.id)
       state.lastUpdate = Date.now()
       if (state.activeTab === 'signals') renderSignalsTab()
       break
 
     case 'computed:register':
-      state.computeds.set((payload as ComputedState).id, payload as ComputedState)
+      if (!isComputedState(payload)) return
+      state.computeds.set(payload.id, payload)
       state.lastUpdate = Date.now()
       if (state.activeTab === 'signals') renderSignalsTab()
       break
 
     case 'computed:update':
+      if (!hasId(payload)) return
       updateComputed(payload as ComputedUpdate)
       break
 
     case 'effect:register':
-      state.effects.set((payload as EffectState).id, payload as EffectState)
+      if (!isEffectState(payload)) return
+      state.effects.set(payload.id, payload)
       state.lastUpdate = Date.now()
       if (state.activeTab === 'effects') renderEffectsTab()
       break
 
     case 'effect:run':
+      if (!hasId(payload)) return
       updateEffect(payload as EffectUpdate)
       break
 
     case 'effect:dispose':
-      state.effects.delete((payload as { id: number }).id)
+      if (!hasId(payload)) return
+      state.effects.delete(payload.id)
       state.lastUpdate = Date.now()
       if (state.activeTab === 'effects') renderEffectsTab()
       break
 
     case 'component:register':
-      state.components.set((payload as ComponentState).id, payload as ComponentState)
+      if (!isComponentState(payload)) return
+      state.components.set(payload.id, payload)
       state.lastUpdate = Date.now()
       if (state.activeTab === 'components') renderComponentsTab()
       break
@@ -260,10 +302,12 @@ function handleMessage(message: Record<string, unknown>): void {
     case 'component:mount':
     case 'component:unmount':
     case 'component:render':
+      if (!hasId(payload)) return
       updateComponent(payload as ComponentUpdate)
       break
 
     case 'timeline:event':
+      if (!payload || typeof payload !== 'object') return
       state.timeline.push(payload as TimelineEvent)
       if (state.timeline.length > state.settings.maxTimelineEvents) {
         state.timeline.shift()
@@ -273,24 +317,31 @@ function handleMessage(message: Record<string, unknown>): void {
       break
 
     case 'response:signals':
+      if (!Array.isArray(payload)) return
       state.signals.clear()
-      for (const signal of payload as SignalState[]) {
-        state.signals.set(signal.id, signal)
+      for (const signal of payload) {
+        if (isSignalState(signal)) {
+          state.signals.set(signal.id, signal)
+        }
       }
       state.lastUpdate = Date.now()
       if (state.activeTab === 'signals') renderSignalsTab()
       break
 
     case 'response:effects':
+      if (!Array.isArray(payload)) return
       state.effects.clear()
-      for (const effect of payload as EffectState[]) {
-        state.effects.set(effect.id, effect)
+      for (const effect of payload) {
+        if (isEffectState(effect)) {
+          state.effects.set(effect.id, effect)
+        }
       }
       state.lastUpdate = Date.now()
       if (state.activeTab === 'effects') renderEffectsTab()
       break
 
     case 'response:timeline':
+      if (!Array.isArray(payload)) return
       state.timeline = payload as TimelineEvent[]
       state.lastUpdate = Date.now()
       if (state.activeTab === 'timeline') renderTimelineTab()

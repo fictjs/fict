@@ -3,7 +3,7 @@
   "name": "Fict DevTools",
   "version": "0.0.3",
   "description": "Developer tools for Fict applications",
-  "permissions": ["storage"],
+  "permissions": ["storage", "scripting", "tabs", "activeTab"],
   "devtools_page": "devtools.html",
   "background": {
     "service_worker": "background.js"
