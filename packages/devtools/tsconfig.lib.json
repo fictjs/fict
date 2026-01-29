@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "declaration": true,
+    "declarationMap": true,
+    "rootDir": "src",
+    "jsx": "preserve",
+    "jsxImportSource": "react",
+    "verbatimModuleSyntax": false,
+    "exactOptionalPropertyTypes": false,
+    "noImplicitReturns": false,
+    "paths": {}
+  },
+  "include": ["src/index.ts", "src/core/**/*.ts", "src/vite/**/*.ts"],
+  "exclude": ["node_modules", "dist", "build", "src/background", "src/content", "src/panel"]
+}

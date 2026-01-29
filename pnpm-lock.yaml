@@ -123,6 +123,9 @@ importers:
 
   examples/counter-basic:
     dependencies:
+      '@fictjs/devtools':
+        specifier: workspace:*
+        version: link:../../packages/devtools
       '@fictjs/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
@@ -287,10 +290,20 @@ importers:
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(typescript@5.9.3)(yaml@2.8.2)
 
   packages/devtools:
+    dependencies:
+      '@fictjs/runtime':
+        specifier: workspace:*
+        version: link:../runtime
     devDependencies:
       '@types/chrome':
-        specifier: ^0.1.36
-        version: 0.1.36
+        specifier: ^0.0.268
+        version: 0.0.268
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(typescript@5.9.3)(yaml@2.8.2)
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
       vite:
         specifier: ^7.3.1
         version: 7.3.1(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0)(yaml@2.8.2)
@@ -1963,8 +1976,8 @@ packages:
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
 
-  '@types/chrome@0.1.36':
-    resolution: {integrity: sha512-BvHbuyGttYXnGt5Gpwa4769KIinKHY1iLjlAPrrMBS2GI9m/XNMPtdsq0NgQalyuUdxvlMN/0OyGw0shFVIoUQ==}
+  '@types/chrome@0.0.268':
+    resolution: {integrity: sha512-7N1QH9buudSJ7sI8Pe4mBHJr5oZ48s0hcanI9w3wgijAlv1OZNUZve9JR4x42dn5lJ5Sm87V1JNfnoh10EnQlA==}
 
   '@types/connect-history-api-fallback@1.5.4':
     resolution: {integrity: sha512-n6Cr2xS1h4uAulPRdlw6Jl6s1oG8KrVilPN2yUITEs+K48EzMJJ3W1xy8K5eWuFvjp3R74AOIGSmp2UfBJ8HFw==}
@@ -7200,7 +7213,7 @@ snapshots:
       '@types/deep-eql': 4.0.2
       assertion-error: 2.0.1
 
-  '@types/chrome@0.1.36':
+  '@types/chrome@0.0.268':
     dependencies:
       '@types/filesystem': 0.0.36
       '@types/har-format': 1.2.16

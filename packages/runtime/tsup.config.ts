@@ -9,9 +9,8 @@ export default defineConfig([
     clean: true,
     sourcemap: true,
     splitting: true, // Enable code splitting to share modules
-    define: {
-      __DEV__: 'false',
-    },
+    // Don't define __DEV__ here - let Vite handle it at runtime via define config
+    // This allows devtools to work in development mode
   },
   // JSX runtime
   {

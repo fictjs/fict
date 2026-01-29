@@ -12,7 +12,8 @@
   "dependencies": {
     "fict": "workspace:*",
     "@fictjs/runtime": "workspace:*",
-    "@fictjs/vite-plugin": "workspace:*"
+    "@fictjs/vite-plugin": "workspace:*",
+    "@fictjs/devtools": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

@@ -7,6 +7,11 @@
 
 import { DelegatedEventNames } from './delegated-events'
 
+// Detect dev mode at runtime:
+// 1. Check __DEV__ global (set by bundlers via define, e.g., Vite plugin sets this)
+// 2. Check process.env.NODE_ENV (Node.js)
+// Note: We cannot use import.meta.env here because import.meta is ES module syntax
+// and will cause syntax errors when the code is bundled to CJS format.
 const isDev =
   typeof __DEV__ !== 'undefined'
     ? __DEV__

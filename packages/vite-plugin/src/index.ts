@@ -143,7 +143,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       resetCache()
     },
 
-    config(userConfig) {
+    config(userConfig, env) {
       const userOptimize = userConfig.optimizeDeps
       const hasUserOptimize = !!userOptimize
       const hasDisabledOptimize =
@@ -154,14 +154,48 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       const dedupe = new Set((userConfig.resolve?.dedupe ?? []) as string[])
 
       // Avoid duplicate runtime instances between pre-bundled deps and /@fs modules.
-      const runtimeDeps = ['fict', '@fictjs/runtime', '@fictjs/runtime/internal']
-      for (const dep of runtimeDeps) {
+      // Exclude all workspace packages from prebundling to ensure changes take effect
+      // immediately without requiring node_modules reinstall.
+      const workspaceDeps = [
+        'fict',
+        'fict/plus',
+        'fict/advanced',
+        'fict/slim',
+        'fict/jsx-runtime',
+        'fict/jsx-dev-runtime',
+        '@fictjs/runtime',
+        '@fictjs/runtime/internal',
+        '@fictjs/runtime/advanced',
+        '@fictjs/runtime/jsx-runtime',
+        '@fictjs/runtime/jsx-dev-runtime',
+        '@fictjs/compiler',
+        '@fictjs/devtools',
+        '@fictjs/devtools/core',
+        '@fictjs/devtools/vite',
+        '@fictjs/router',
+        '@fictjs/ssr',
+        '@fictjs/testing-library',
+      ]
+      for (const dep of workspaceDeps) {
         include.delete(dep)
         exclude.add(dep)
+      }
+      // Only dedupe core runtime packages to avoid duplicate instances
+      const dedupePackages = ['fict', '@fictjs/runtime', '@fictjs/runtime/internal']
+      for (const dep of dedupePackages) {
         dedupe.add(dep)
       }
 
+      // Determine if we're in dev mode based on command or mode
+      const devMode = env.command === 'serve' || env.mode === 'development'
+
       return {
+        // Define __DEV__ for runtime devtools support
+        // In dev mode, enable devtools; in production, disable them for smaller bundles
+        define: {
+          __DEV__: String(devMode),
+          ...(userConfig.define ?? {}),
+        },
         esbuild: {
           // Disable esbuild JSX handling for .tsx/.jsx files
           // Our plugin will handle the full transformation
@@ -171,12 +205,19 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           ...(userConfig.resolve ?? {}),
           dedupe: Array.from(dedupe),
         },
+        // Watch workspace packages dist directories for changes in dev mode
+        // This ensures HMR picks up rebuilt packages without needing to restart
+        server: {
+          watch: {
+            ignored: ['!**/node_modules/@fictjs/**', '!**/node_modules/fict/**'],
+          },
+        },
         ...(hasDisabledOptimize
           ? { optimizeDeps: userOptimize }
           : {
               optimizeDeps: hasUserOptimize
                 ? { ...userOptimize, include: Array.from(include), exclude: Array.from(exclude) }
-                : { exclude: runtimeDeps },
+                : { exclude: workspaceDeps },
             }),
       }
     },
