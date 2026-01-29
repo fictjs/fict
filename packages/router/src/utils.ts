@@ -282,14 +282,27 @@ export function createMatcher(
           pathIndex++
           break
 
-        case 'optional':
+        case 'optional': {
           // May or may not have a value
           if (pathSegment) {
+            // Look ahead: if next pattern segment is static and matches current path segment,
+            // skip this optional to allow the static to match
+            const nextSegment = segments[i + 1]
+            if (
+              nextSegment &&
+              nextSegment.type === 'static' &&
+              pathSegment.toLowerCase() === nextSegment.value
+            ) {
+              // Skip this optional - don't consume the path segment
+              // so the next iteration can match it as static
+              break
+            }
+
             // Validate with filter if provided
             if (matchFilters && segment.paramName && matchFilters[segment.paramName]) {
               if (!validateParam(pathSegment, matchFilters[segment.paramName]!)) {
                 // Optional segment doesn't match filter, treat as not provided
-                continue
+                break
               }
             }
             params[segment.paramName!] = decodeURIComponent(pathSegment)
@@ -297,12 +310,22 @@ export function createMatcher(
             pathIndex++
           }
           break
+        }
 
         case 'splat': {
           // Capture remaining path
-          const remaining = pathSegments.slice(pathIndex).join('/')
-          params[segment.paramName!] = remaining ? decodeURIComponent(remaining) : ''
-          matchedPath += remaining ? '/' + pathSegments.slice(pathIndex).join('/') : ''
+          // Decode each segment individually to handle encoded slashes correctly
+          const remainingSegments = pathSegments.slice(pathIndex)
+          const decodedSegments = remainingSegments.map(seg => {
+            try {
+              return decodeURIComponent(seg)
+            } catch {
+              // If decoding fails (malformed URI), use the original segment
+              return seg
+            }
+          })
+          params[segment.paramName!] = decodedSegments.join('/')
+          matchedPath += remainingSegments.length > 0 ? '/' + remainingSegments.join('/') : ''
           pathIndex = pathSegments.length
           break
         }

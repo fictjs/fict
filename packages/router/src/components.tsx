@@ -13,6 +13,8 @@ import {
   untrack,
   startTransition,
   Fragment,
+  Suspense,
+  ErrorBoundary,
   type FictNode,
   type Component,
 } from '@fictjs/runtime'
@@ -22,6 +24,7 @@ import {
   RouterContext,
   RouteContext,
   BeforeLeaveContext,
+  RouteErrorContext,
   useRouter,
   useRoute,
   type BeforeLeaveContextValue,
@@ -56,12 +59,12 @@ import {
   resolvePath,
   createLocation,
   normalizePath,
-  scrollToTop,
   isBrowser,
   stripBasePath,
   prependBasePath,
   locationsAreEqual,
 } from './utils'
+import { getScrollRestoration } from './scroll'
 
 // Use Fict's signal for reactive state
 
@@ -73,6 +76,7 @@ interface RouterState {
   location: Location
   matches: RouteMatch[]
   isRouting: boolean
+  pendingLocation: Location | null
 }
 
 const isDevEnv =
@@ -150,6 +154,7 @@ function createRouterState(
   const locationSignal = createSignal<Location>(initialLocation)
   const matchesSignal = createSignal<RouteMatch[]>(initialMatches)
   const isRoutingSignal = createSignal<boolean>(false)
+  const pendingLocationSignal = createSignal<Location | null>(null)
 
   // BeforeLeave handlers and navigation token for async ordering
   const beforeLeaveHandlers = new Set<BeforeLeaveHandler>()
@@ -221,25 +226,57 @@ function createRouterState(
     const currentLocation = locationSignal()
     const to = toOrDelta
 
+    // Extract pathname, search, and hash from string without normalizing pathname
+    // This preserves relative paths like 'settings' vs '/settings'
+    let toPathname: string
+    let toSearch = ''
+    let toHash = ''
+
+    if (typeof to === 'string') {
+      // Extract hash first
+      let remaining = to
+      const hashIndex = remaining.indexOf('#')
+      if (hashIndex >= 0) {
+        toHash = remaining.slice(hashIndex)
+        remaining = remaining.slice(0, hashIndex)
+      }
+      // Extract search
+      const searchIndex = remaining.indexOf('?')
+      if (searchIndex >= 0) {
+        toSearch = remaining.slice(searchIndex)
+        remaining = remaining.slice(0, searchIndex)
+      }
+      // Remaining is the pathname (keep empty string for search/hash-only navigation)
+      toPathname = remaining
+    } else {
+      toPathname = to.pathname || ''
+      toSearch = to.search || ''
+      toHash = to.hash || ''
+    }
+
     // Resolve the target path (relative to current path, without base)
     let targetPath: string
     const currentPathWithoutBase = stripBaseOrWarn(currentLocation.pathname, baseForStrip) || '/'
 
     if (typeof to === 'string') {
-      if (options?.relative === 'route') {
+      // Empty pathname means search/hash-only navigation - keep current path
+      if (toPathname === '') {
+        targetPath = currentPathWithoutBase
+      } else if (options?.relative === 'route') {
         // Resolve relative to current route
         const matches = matchesSignal()
         const currentMatch = matches[matches.length - 1]
         const currentRoutePath = currentMatch?.pathname || currentPathWithoutBase
-        targetPath = resolvePath(currentRoutePath, to)
+        targetPath = resolvePath(currentRoutePath, toPathname)
       } else {
         // Resolve relative to current pathname
-        targetPath = to.startsWith('/')
-          ? stripBaseIfPresent(to, baseForStrip)
-          : resolvePath(currentPathWithoutBase, to)
+        // Only strip base if it's an absolute path
+        targetPath = toPathname.startsWith('/')
+          ? stripBaseIfPresent(toPathname, baseForStrip)
+          : resolvePath(currentPathWithoutBase, toPathname)
       }
     } else {
-      const rawTargetPath = to.pathname || currentPathWithoutBase
+      const rawTargetPath = toPathname || currentPathWithoutBase
       targetPath = stripBaseIfPresent(rawTargetPath, baseForStrip)
     }
 
@@ -253,8 +290,8 @@ function createRouterState(
     const targetPathWithBase = prependBasePath(targetPath, baseForStrip)
     const locationSpec: Partial<Location> = {
       pathname: targetPathWithBase,
-      search: typeof to === 'string' ? '' : to.search || '',
-      hash: typeof to === 'string' ? '' : to.hash || '',
+      search: toSearch,
+      hash: toHash,
     }
     if (finalState !== undefined) {
       locationSpec.state = finalState
@@ -268,10 +305,16 @@ function createRouterState(
     // Check beforeLeave handlers
     untrack(async () => {
       const canNavigate = await beforeLeave.confirm(targetLocation, currentLocation)
-      if (!canNavigate) return
+      if (!canNavigate) {
+        pendingLocationSignal(null)
+        return
+      }
 
-      // Start routing indicator
-      isRoutingSignal(true)
+      // Start routing indicator and set pending location
+      batch(() => {
+        isRoutingSignal(true)
+        pendingLocationSignal(targetLocation)
+      })
 
       // Use transition for smooth updates
       // Note: We only push/replace to history here.
@@ -284,14 +327,22 @@ function createRouterState(
           history.push(targetLocation, finalState)
         }
 
-        // Scroll handling
+        // Scroll handling for programmatic navigation
         if (options?.scroll !== false && isBrowser()) {
-          scrollToTop()
+          const scrollRestoration = getScrollRestoration()
+          scrollRestoration.handleNavigation(
+            prevLocation,
+            history.location,
+            options?.replace ? 'REPLACE' : 'PUSH',
+          )
         }
 
         // If navigation was blocked or no-op, reset routing state
         if (locationsAreEqual(prevLocation, history.location)) {
-          isRoutingSignal(false)
+          batch(() => {
+            isRoutingSignal(false)
+            pendingLocationSignal(null)
+          })
         }
       })
     })
@@ -299,13 +350,22 @@ function createRouterState(
 
   // Listen for history changes (browser back/forward AND navigate calls)
   // This is the single source of truth for location/matches updates
-  const unlisten = history.listen(({ location: newLocation }) => {
+  const unlisten = history.listen(({ action, location: newLocation }) => {
+    const prevLocation = locationSignal()
+
     batch(() => {
       locationSignal(newLocation)
       const newMatches = matchWithBase(newLocation.pathname)
       matchesSignal(newMatches)
       isRoutingSignal(false)
+      pendingLocationSignal(null)
     })
+
+    // Handle scroll restoration for POP navigation (back/forward)
+    if (action === 'POP' && isBrowser()) {
+      const scrollRestoration = getScrollRestoration()
+      scrollRestoration.handleNavigation(prevLocation, newLocation, 'POP')
+    }
   })
 
   // State accessor
@@ -313,6 +373,7 @@ function createRouterState(
     location: locationSignal(),
     matches: matchesSignal(),
     isRouting: isRoutingSignal(),
+    pendingLocation: pendingLocationSignal(),
   })
 
   return {
@@ -371,6 +432,7 @@ function RouterProvider(props: {
     matches: () => state().matches,
     navigate,
     isRouting: () => state().isRouting,
+    pendingLocation: () => state().pendingLocation,
     base: normalizedBase,
     resolvePath: (to: To) => {
       // Resolve path relative to current location (without base)
@@ -507,7 +569,16 @@ export function Routes(props: RoutesProps) {
 }
 
 /**
- * Render route matches recursively
+ * Route data state for preloading
+ */
+interface RouteDataState<T = unknown> {
+  data: T | undefined
+  error: unknown
+  loading: boolean
+}
+
+/**
+ * Render route matches recursively with data loading support
  */
 function renderMatches(matches: RouteMatch[], index: number): FictNode {
   if (index >= matches.length) {
@@ -518,10 +589,53 @@ function renderMatches(matches: RouteMatch[], index: number): FictNode {
   const route = match.route
   const router = useRouter()
 
+  // Create signals for route data
+  const dataState = createSignal<RouteDataState>({
+    data: undefined,
+    error: undefined,
+    loading: !!route.preload,
+  })
+
+  // Token to prevent stale preload results from overwriting newer ones
+  let preloadToken = 0
+
+  // Load data if preload is defined
+  if (route.preload) {
+    // Trigger preload on initial render and when location changes
+    createEffect(() => {
+      const location = router.location()
+      const preloadArgs = {
+        params: match.params,
+        location,
+        intent: 'navigate' as const,
+      }
+
+      // Increment token to invalidate any pending preloads
+      const currentToken = ++preloadToken
+
+      dataState({ data: undefined, error: undefined, loading: true })
+
+      Promise.resolve(route.preload!(preloadArgs))
+        .then(result => {
+          // Only apply result if this preload is still current
+          if (currentToken === preloadToken) {
+            dataState({ data: result, error: undefined, loading: false })
+          }
+        })
+        .catch(error => {
+          // Only apply error if this preload is still current
+          if (currentToken === preloadToken) {
+            dataState({ data: undefined, error, loading: false })
+          }
+        })
+    })
+  }
+
   // Create route context for this level
   const routeContext: RouteContextValue = {
     match: () => match,
-    data: () => undefined, // TODO: Implement preload data
+    data: () => dataState().data,
+    error: () => dataState().error,
     outlet: () => renderMatches(matches, index + 1),
     resolvePath: (to: To) => {
       const basePath = match.pathname
@@ -531,23 +645,65 @@ function renderMatches(matches: RouteMatch[], index: number): FictNode {
   }
 
   // Determine what to render
-  let content: FictNode = null
+  const renderContent = (): FictNode => {
+    const state = dataState()
 
-  if (route.component) {
-    const Component = route.component
-    content = (
-      <Component params={match.params} location={router.location()} data={routeContext.data()}>
-        <Outlet />
-      </Component>
-    )
-  } else if (route.element) {
-    content = route.element
-  } else if (route.children) {
-    // Layout route without component - just render outlet
-    content = <Outlet />
+    // If there's an error and an errorElement, render it
+    if (state.error !== undefined && route.errorElement) {
+      return route.errorElement
+    }
+
+    // If loading and there's a loadingElement, render it
+    if (state.loading && route.loadingElement) {
+      return route.loadingElement
+    }
+
+    // Render the normal content
+    if (route.component) {
+      const Component = route.component
+      return (
+        <Component params={match.params} location={router.location()} data={state.data}>
+          <Outlet />
+        </Component>
+      )
+    } else if (route.element) {
+      return route.element
+    } else if (route.children) {
+      // Layout route without component - just render outlet
+      return <Outlet />
+    }
+
+    return null
   }
 
-  return <RouteContext.Provider value={routeContext}>{content}</RouteContext.Provider>
+  // Build the route content with context provider
+  let content: FictNode = (
+    <RouteContext.Provider value={routeContext}>{renderContent()}</RouteContext.Provider>
+  )
+
+  // Always wrap with ErrorBoundary if errorElement is defined
+  // This catches both preload errors (handled in renderContent) AND render errors from components
+  // Use a function fallback to pass the error via RouteErrorContext for useRouteError()
+  if (route.errorElement) {
+    content = (
+      <ErrorBoundary
+        fallback={(err: unknown, reset?: () => void) => (
+          <RouteErrorContext.Provider value={{ error: err, reset }}>
+            {route.errorElement}
+          </RouteErrorContext.Provider>
+        )}
+      >
+        {content}
+      </ErrorBoundary>
+    )
+  }
+
+  // If route has loadingElement and component uses Suspense internally
+  if (route.loadingElement) {
+    content = <Suspense fallback={route.loadingElement}>{content}</Suspense>
+  }
+
+  return content
 }
 
 // ============================================================================
@@ -561,6 +717,15 @@ interface RouteJSXProps {
   children?: FictNode
   index?: boolean | undefined
   key?: string | undefined
+  preload?:
+    | ((args: {
+        params: Params
+        location: Location
+        intent: 'initial' | 'navigate' | 'native' | 'preload'
+      }) => unknown | Promise<unknown>)
+    | undefined
+  errorElement?: FictNode
+  loadingElement?: FictNode
 }
 
 /**
@@ -614,6 +779,58 @@ export function Navigate(props: NavigateComponentProps): FictNode {
 }
 
 // ============================================================================
+// Redirect Component
+// ============================================================================
+
+interface RedirectProps {
+  /** Target path to redirect to */
+  to: To
+  /** Path pattern that triggers this redirect (optional, for declarative redirects) */
+  from?: string
+  /** State to pass with the redirect */
+  state?: unknown
+  /** Whether to replace or push to history (default: true) */
+  push?: boolean
+}
+
+/**
+ * Redirect component - declarative redirect
+ *
+ * Unlike Navigate, Redirect is specifically for redirect scenarios:
+ * - Always replaces by default (unless push=true)
+ * - Can be used in route definitions with a `from` pattern
+ * - Semantically indicates a redirect rather than navigation
+ *
+ * @example
+ * ```tsx
+ * // Basic redirect (replaces current entry)
+ * <Redirect to="/login" />
+ *
+ * // Redirect with state
+ * <Redirect to="/login" state={{ from: location.pathname }} />
+ *
+ * // Push instead of replace
+ * <Redirect to="/new-page" push />
+ *
+ * // In route definitions (redirect old paths)
+ * <Route path="/old-path" element={<Redirect to="/new-path" />} />
+ * ```
+ */
+export function Redirect(props: RedirectProps): FictNode {
+  const router = useRouter()
+
+  // Redirect on mount
+  createEffect(() => {
+    router.navigate(props.to, {
+      replace: props.push !== true, // Replace by default, push only if explicitly requested
+      state: props.state,
+    })
+  })
+
+  return null
+}
+
+// ============================================================================
 // Utility Functions
 // ============================================================================
 
@@ -640,6 +857,11 @@ function extractRoutes(children: FictNode): RouteDefinition[] {
       if (props.component !== undefined) routeDef.component = props.component as Component<any>
       if (props.element !== undefined) routeDef.element = props.element as FictNode
       if (props.index !== undefined) routeDef.index = props.index as boolean
+      if (props.preload !== undefined)
+        routeDef.preload = props.preload as NonNullable<RouteDefinition['preload']>
+      if (props.errorElement !== undefined) routeDef.errorElement = props.errorElement as FictNode
+      if (props.loadingElement !== undefined)
+        routeDef.loadingElement = props.loadingElement as FictNode
       if (props.children) routeDef.children = extractRoutes(props.children as FictNode)
       routes.push(routeDef)
     } else if (vnode.type === Fragment && vnode.props?.children) {

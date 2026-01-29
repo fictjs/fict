@@ -7,8 +7,9 @@
 
 import { createMemo, type FictNode, type JSX, type StyleProp } from '@fictjs/runtime'
 
-import { useRouter, useIsActive, useHref } from './context'
+import { useRouter, useIsActive, useHref, usePendingLocation } from './context'
 import type { To, NavigateOptions } from './types'
+import { parseURL, stripBasePath } from './utils'
 
 // CSS Properties type for styles
 type CSSProperties = StyleProp
@@ -52,6 +53,7 @@ export interface LinkProps extends Omit<JSX.IntrinsicElements['a'], 'href'> {
 export function Link(props: LinkProps): FictNode {
   const router = useRouter()
   const href = useHref(() => props.to)
+  let preloadTriggered = false
 
   const handleClick = (event: MouseEvent) => {
     // Call custom onClick handler first
@@ -92,6 +94,40 @@ export function Link(props: LinkProps): FictNode {
     router.navigate(props.to, options)
   }
 
+  // Preload handler for hover/focus
+  const triggerPreload = () => {
+    if (preloadTriggered || props.disabled || props.prefetch === 'none') return
+    preloadTriggered = true
+
+    // Emit a preload event that can be handled by route preloaders
+    const hrefValue = href()
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(
+        new CustomEvent('fict-router:preload', {
+          detail: { href: hrefValue, to: props.to },
+        }),
+      )
+    }
+  }
+
+  const handleMouseEnter = (event: MouseEvent) => {
+    if (props.prefetch === 'intent' || props.prefetch === undefined) {
+      triggerPreload()
+    }
+    // Call original handler if provided
+    const onMouseEnter = (props as any).onMouseEnter
+    if (onMouseEnter) onMouseEnter(event)
+  }
+
+  const handleFocus = (event: FocusEvent) => {
+    if (props.prefetch === 'intent' || props.prefetch === undefined) {
+      triggerPreload()
+    }
+    // Call original handler if provided
+    const onFocus = (props as any).onFocus
+    if (onFocus) onFocus(event)
+  }
+
   // Extract link-specific props, pass rest to anchor
   const {
     to: _to,
@@ -100,7 +136,7 @@ export function Link(props: LinkProps): FictNode {
     scroll: _scroll,
     relative: _relative,
     reloadDocument: _reloadDocument,
-    prefetch: _prefetch,
+    prefetch,
     disabled,
     onClick: _onClick,
     children,
@@ -112,8 +148,19 @@ export function Link(props: LinkProps): FictNode {
     return <span {...(anchorProps as any)}>{children}</span>
   }
 
+  // Trigger preload immediately if prefetch='render'
+  if (prefetch === 'render') {
+    triggerPreload()
+  }
+
   return (
-    <a {...anchorProps} href={href()} onClick={handleClick}>
+    <a
+      {...anchorProps}
+      href={href()}
+      onClick={handleClick}
+      onMouseEnter={handleMouseEnter}
+      onFocus={handleFocus}
+    >
       {children}
     </a>
   )
@@ -180,11 +227,39 @@ export function NavLink(props: NavLinkProps): FictNode {
   const router = useRouter()
   const isActive = useIsActive(() => props.to, { end: props.end })
   const href = useHref(() => props.to)
+  const pendingLocation = usePendingLocation()
+
+  // Compute isPending by comparing pending location with this link's target
+  const computeIsPending = (): boolean => {
+    const pending = pendingLocation()
+    if (!pending) return false
+
+    // Get the resolved path for this link
+    const resolvedHref = href()
+    const baseToStrip = router.base === '/' ? '' : router.base
+
+    // Strip base from pending location to compare
+    const pendingPathWithoutBase = stripBasePath(pending.pathname, baseToStrip)
+
+    // Parse the resolved href to get pathname
+    const parsed = parseURL(resolvedHref)
+    const targetPathWithoutBase = stripBasePath(parsed.pathname, baseToStrip)
+
+    // Check if the pending navigation is to this link's destination
+    if (props.end) {
+      return pendingPathWithoutBase === targetPathWithoutBase
+    }
+
+    return (
+      pendingPathWithoutBase === targetPathWithoutBase ||
+      pendingPathWithoutBase.startsWith(targetPathWithoutBase + '/')
+    )
+  }
 
   // Compute render props
   const getRenderProps = (): NavLinkRenderProps => ({
     isActive: isActive(),
-    isPending: false, // TODO: Implement pending state tracking
+    isPending: computeIsPending(),
     isTransitioning: router.isRouting(),
   })
 
@@ -391,12 +466,19 @@ export function Form(props: FormProps): FictNode {
     // Don't handle if prevented
     if (event.defaultPrevented) return
 
+    const form = event.currentTarget as HTMLFormElement
+
+    // Don't handle if form has a target that opens in a new window/frame
+    const target = form.target
+    if (target && target !== '_self') return
+
     // Prevent default form submission
     event.preventDefault()
 
-    const form = event.currentTarget as HTMLFormElement
     const formData = new FormData(form)
     const method = props.method?.toUpperCase() || 'GET'
+
+    const actionUrl = props.action || router.location().pathname
 
     if (method === 'GET') {
       // For GET, navigate with search params
@@ -407,18 +489,84 @@ export function Form(props: FormProps): FictNode {
         }
       })
 
-      const action = props.action || router.location().pathname
       router.navigate(
         {
-          pathname: action,
+          pathname: actionUrl,
           search: '?' + searchParams.toString(),
         },
         { replace: props.replace },
       )
     } else {
-      // For other methods, submit via fetch (action handling)
-      // TODO: Implement action submission system
-      console.warn('[fict-router] Form action submission not yet implemented')
+      // For POST/PUT/PATCH/DELETE, submit via fetch
+      submitFormAction(form, actionUrl, method, formData, {
+        navigate: props.navigate !== false,
+        replace: props.replace ?? false,
+        router,
+      })
+    }
+  }
+
+  /**
+   * Submit form data via fetch for non-GET methods
+   */
+  async function submitFormAction(
+    formElement: HTMLFormElement,
+    url: string,
+    method: string,
+    formData: FormData,
+    options: {
+      navigate: boolean
+      replace: boolean
+      router: typeof router
+    },
+  ) {
+    try {
+      const response = await fetch(url, {
+        method,
+        body: formData,
+        headers: {
+          // Let the browser set Content-Type for FormData (includes boundary)
+          Accept: 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+      }
+
+      // Try to parse JSON response
+      const contentType = response.headers.get('Content-Type')
+      let data: unknown = null
+      if (contentType?.includes('application/json')) {
+        data = await response.json()
+      }
+
+      // If navigate is enabled and response includes a redirect location
+      const redirectUrl = response.headers.get('X-Redirect') || response.headers.get('Location')
+      if (options.navigate && redirectUrl) {
+        options.router.navigate(redirectUrl, { replace: options.replace })
+      }
+
+      // Emit a custom event for the form submission result on the actual form element
+      formElement.dispatchEvent(
+        new CustomEvent('formsubmit', {
+          bubbles: true,
+          detail: { data, response },
+        }),
+      )
+
+      return { data, response }
+    } catch (error) {
+      // Emit error event on the actual form element
+      formElement.dispatchEvent(
+        new CustomEvent('formerror', {
+          bubbles: true,
+          detail: { error },
+        }),
+      )
+
+      console.error('[fict-router] Form submission failed:', error)
+      throw error
     }
   }
 

@@ -29,11 +29,65 @@ const CACHE_DURATION = 3 * 60 * 1000
 /** Preload cache duration in milliseconds (default: 5 seconds) */
 const PRELOAD_CACHE_DURATION = 5 * 1000
 
+/** Maximum cache size to prevent memory spikes */
+const MAX_CACHE_SIZE = 500
+
+/** Cleanup interval when cache is small (60 seconds) */
+const NORMAL_CLEANUP_INTERVAL = 60 * 1000
+
+/** Cleanup interval when cache is large (10 seconds) */
+const FAST_CLEANUP_INTERVAL = 10 * 1000
+
 /** Global query cache */
 const queryCache = new Map<string, QueryCacheEntry<unknown>>()
 
 /** Cache cleanup timer */
 let cacheCleanupTimer: ReturnType<typeof setInterval> | undefined
+
+/** Current cleanup interval */
+let currentCleanupInterval = NORMAL_CLEANUP_INTERVAL
+
+/**
+ * Evict oldest entries when cache exceeds max size
+ */
+function evictOldestEntries() {
+  if (queryCache.size <= MAX_CACHE_SIZE) return
+
+  // Sort entries by timestamp (oldest first)
+  const entries = Array.from(queryCache.entries()).sort((a, b) => a[1].timestamp - b[1].timestamp)
+
+  // Remove oldest entries until we're under the limit
+  const toRemove = queryCache.size - MAX_CACHE_SIZE
+  for (let i = 0; i < toRemove && i < entries.length; i++) {
+    queryCache.delete(entries[i]![0])
+  }
+}
+
+/**
+ * Run cache cleanup
+ */
+function runCacheCleanup() {
+  const now = Date.now()
+
+  for (const [key, entry] of queryCache) {
+    const maxAge = entry.intent === 'preload' ? PRELOAD_CACHE_DURATION : CACHE_DURATION
+
+    if (now - entry.timestamp > maxAge) {
+      queryCache.delete(key)
+    }
+  }
+
+  // Adjust cleanup interval based on cache size
+  const newInterval =
+    queryCache.size > MAX_CACHE_SIZE / 2 ? FAST_CLEANUP_INTERVAL : NORMAL_CLEANUP_INTERVAL
+
+  if (newInterval !== currentCleanupInterval) {
+    currentCleanupInterval = newInterval
+    // Restart with new interval
+    stopCacheCleanup()
+    startCacheCleanup()
+  }
+}
 
 /**
  * Start the cache cleanup interval
@@ -41,17 +95,7 @@ let cacheCleanupTimer: ReturnType<typeof setInterval> | undefined
 function startCacheCleanup() {
   if (cacheCleanupTimer) return
 
-  cacheCleanupTimer = setInterval(() => {
-    const now = Date.now()
-
-    for (const [key, entry] of queryCache) {
-      const maxAge = entry.intent === 'preload' ? PRELOAD_CACHE_DURATION : CACHE_DURATION
-
-      if (now - entry.timestamp > maxAge) {
-        queryCache.delete(key)
-      }
-    }
-  }, 60 * 1000) // Run cleanup every minute
+  cacheCleanupTimer = setInterval(runCacheCleanup, currentCleanupInterval)
 }
 
 /**
@@ -124,6 +168,7 @@ export function query<T, Args extends unknown[]>(
           intent: 'navigate',
         }
         queryCache.set(cacheKey, entry)
+        evictOldestEntries()
 
         // Update signals
         batch(() => {
@@ -419,31 +464,40 @@ export function createResource<T, S = unknown>(
   const latestSignal = createSignal<T | undefined>(undefined)
 
   let currentSource: S
-  let _currentPromise: Promise<T | undefined> | undefined
+  let fetchId = 0 // Used to prevent race conditions
 
   /**
-   * Internal fetch function
+   * Internal fetch function with race condition protection
    * Returns T on success, undefined on error (error is stored in errorSignal)
    */
-  const doFetch = async (s: S): Promise<T | undefined> => {
+  const doFetch = async (s: S, id: number): Promise<T | undefined> => {
     loadingSignal(true)
     errorSignal(undefined)
 
     try {
       const result = await fetcher(s)
 
-      batch(() => {
-        dataSignal(result)
-        latestSignal(result)
-        loadingSignal(false)
-      })
+      // Only apply results if this fetch is still current
+      // (prevents race conditions when source changes rapidly)
+      if (id === fetchId) {
+        batch(() => {
+          dataSignal(result)
+          latestSignal(result)
+          loadingSignal(false)
+        })
+        return result
+      }
 
-      return result
+      // This fetch was superseded, return undefined
+      return undefined
     } catch (err) {
-      batch(() => {
-        errorSignal(err)
-        loadingSignal(false)
-      })
+      // Only apply error if this fetch is still current
+      if (id === fetchId) {
+        batch(() => {
+          errorSignal(err)
+          loadingSignal(false)
+        })
+      }
 
       // Return undefined on error - error is accessible via resource.error()
       return undefined
@@ -457,7 +511,9 @@ export function createResource<T, S = unknown>(
     // Only refetch if source changed
     if (s !== currentSource) {
       currentSource = s
-      _currentPromise = doFetch(s)
+      // Increment fetchId to invalidate any pending fetches
+      const currentFetchId = ++fetchId
+      doFetch(s, currentFetchId)
     }
   })
 
@@ -466,7 +522,10 @@ export function createResource<T, S = unknown>(
   resource.loading = () => loadingSignal()
   resource.error = () => errorSignal()
   resource.latest = () => latestSignal()
-  resource.refetch = () => doFetch(currentSource)
+  resource.refetch = () => {
+    const currentFetchId = ++fetchId
+    return doFetch(currentSource, currentFetchId)
+  }
 
   return resource
 }

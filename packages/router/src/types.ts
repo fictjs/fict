@@ -246,6 +246,8 @@ export interface RouterContextValue {
   navigate: NavigateFunction
   /** Whether currently routing */
   isRouting: () => boolean
+  /** Pending navigation target (if routing) */
+  pendingLocation: () => Location | null
   /** Base path for the router */
   base: string
   /** Resolve a path relative to the current route */
@@ -260,6 +262,8 @@ export interface RouteContextValue {
   match: () => RouteMatch | undefined
   /** Preloaded data */
   data: () => unknown
+  /** Route error (if any) */
+  error?: () => unknown
   /** Outlet function to render child route */
   outlet: () => FictNode
   /** Parent route context */

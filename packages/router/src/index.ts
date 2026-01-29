@@ -46,6 +46,7 @@ export {
   Route,
   Outlet,
   Navigate,
+  Redirect,
   createRoutes,
   createRouter,
 } from './components'
@@ -65,7 +66,9 @@ export {
   useSearchParams,
   useMatches,
   useIsRouting,
+  usePendingLocation,
   useRouteData,
+  useRouteError,
   useResolvedPath,
   useMatch,
   useHref,
@@ -125,6 +128,30 @@ export {
   isServer,
   isBrowser,
 } from './utils'
+
+// ============================================================================
+// Scroll Restoration
+// ============================================================================
+
+export {
+  createScrollRestoration,
+  getScrollRestoration,
+  configureScrollRestoration,
+  scrollToTop,
+  scrollToHash,
+  saveScrollPosition,
+  restoreScrollPosition,
+  clearScrollPosition,
+  clearAllScrollPositions,
+} from './scroll'
+
+export type { ScrollRestorationOptions } from './scroll'
+
+// ============================================================================
+// Lazy Loading
+// ============================================================================
+
+export { lazy, preloadLazy, isLazyComponent, lazyRoute, createLazyRoutes } from './lazy'
 
 // ============================================================================
 // Types
