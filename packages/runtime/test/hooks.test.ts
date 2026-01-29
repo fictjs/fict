@@ -28,30 +28,40 @@ describe('Hook Context System', () => {
   })
 
   describe('__fictUseContext', () => {
-    it('creates a new context when stack is empty', () => {
-      const ctx = __fictUseContext()
-      expect(ctx).toBeDefined()
-      expect(ctx.slots).toEqual([])
-      expect(ctx.cursor).toBe(0)
-      expect(ctx.rendering).toBe(true)
+    it('throws when stack is empty (P0-2 fix)', () => {
+      // P0-2: Hooks should not be called outside render context
+      expect(() => __fictUseContext()).toThrow(/Invalid hook call/)
     })
 
-    it('reuses existing context when called again', () => {
-      const ctx1 = __fictUseContext()
+    it('returns existing context and resets cursor when not rendering', () => {
+      const ctx1 = __fictPushContext()
       ctx1.cursor = 5
       ctx1.rendering = false
 
       const ctx2 = __fictUseContext()
       expect(ctx2).toBe(ctx1)
-      expect(ctx2.cursor).toBe(0) // Reset
-      expect(ctx2.rendering).toBe(true) // Reset
+      expect(ctx2.cursor).toBe(0) // Reset because rendering was false
+      expect(ctx2.rendering).toBe(true) // Now rendering
+    })
+
+    it('returns existing context without resetting cursor when already rendering (P0-2 fix)', () => {
+      // P0-2: Custom hooks should not reset cursor
+      const ctx1 = __fictPushContext()
+      ctx1.cursor = 5
+      ctx1.rendering = true
+
+      const ctx2 = __fictUseContext()
+      expect(ctx2).toBe(ctx1)
+      expect(ctx2.cursor).toBe(5) // NOT reset because already rendering
+      expect(ctx2.rendering).toBe(true)
     })
 
     it('returns the top of the context stack', () => {
-      const ctx1 = __fictUseContext()
+      const ctx1 = __fictPushContext()
       const ctx2 = __fictPushContext()
 
       // __fictUseContext should return ctx2 (top of stack)
+      ctx2.rendering = false // Reset so __fictUseContext will set it
       const ctx3 = __fictUseContext()
       expect(ctx3).toBe(ctx2)
     })
@@ -107,8 +117,11 @@ describe('Hook Context System', () => {
 
       __fictResetContext()
 
-      // After reset, __fictUseContext creates a fresh context
-      const newCtx = __fictUseContext()
+      // After reset, __fictUseContext throws because stack is empty (P0-2)
+      expect(() => __fictUseContext()).toThrow(/Invalid hook call/)
+
+      // Can push a new context after reset
+      const newCtx = __fictPushContext()
       expect(newCtx).toBeDefined()
       expect(newCtx.slots).toEqual([])
     })
@@ -116,7 +129,8 @@ describe('Hook Context System', () => {
 
   describe('__fictUseSignal', () => {
     it('creates a signal on first call', () => {
-      const ctx = __fictUseContext()
+      const ctx = __fictPushContext()
+      ctx.rendering = true
       const signal = __fictUseSignal(ctx, 42)
 
       expect(signal).toBeTypeOf('function')
@@ -124,7 +138,8 @@ describe('Hook Context System', () => {
     })
 
     it('reuses signal on subsequent calls', () => {
-      const ctx = __fictUseContext()
+      const ctx = __fictPushContext()
+      ctx.rendering = true
       const signal1 = __fictUseSignal(ctx, 42)
       signal1(100)
 
@@ -137,7 +152,8 @@ describe('Hook Context System', () => {
     })
 
     it('uses explicit slot index when provided', () => {
-      const ctx = __fictUseContext()
+      const ctx = __fictPushContext()
+      ctx.rendering = true
       const signal1 = __fictUseSignal(ctx, 'a', 5)
       const signal2 = __fictUseSignal(ctx, 'b', 3)
 
@@ -146,7 +162,8 @@ describe('Hook Context System', () => {
     })
 
     it('increments cursor when no slot is provided', () => {
-      const ctx = __fictUseContext()
+      const ctx = __fictPushContext()
+      ctx.rendering = true
       expect(ctx.cursor).toBe(0)
 
       __fictUseSignal(ctx, 'a')
@@ -157,7 +174,7 @@ describe('Hook Context System', () => {
     })
 
     it('throws when called outside render context', () => {
-      const ctx = __fictUseContext()
+      const ctx = __fictPushContext()
       ctx.rendering = false
 
       expect(() => __fictUseSignal(ctx, 42)).toThrow()
@@ -166,7 +183,8 @@ describe('Hook Context System', () => {
 
   describe('__fictUseMemo', () => {
     it('creates a memo on first call', () => {
-      const ctx = __fictUseContext()
+      const ctx = __fictPushContext()
+      ctx.rendering = true
       const memo = __fictUseMemo(ctx, () => 42)
 
       expect(memo).toBeTypeOf('function')
@@ -174,7 +192,8 @@ describe('Hook Context System', () => {
     })
 
     it('reuses memo on subsequent calls', () => {
-      const ctx = __fictUseContext()
+      const ctx = __fictPushContext()
+      ctx.rendering = true
       let computeCount = 0
       const memo1 = __fictUseMemo(ctx, () => {
         computeCount++
@@ -197,14 +216,15 @@ describe('Hook Context System', () => {
     })
 
     it('uses explicit slot index when provided', () => {
-      const ctx = __fictUseContext()
+      const ctx = __fictPushContext()
+      ctx.rendering = true
       const memo = __fictUseMemo(ctx, () => 'computed', 7)
 
       expect(ctx.slots[7]).toBe(memo)
     })
 
     it('throws when called outside render context', () => {
-      const ctx = __fictUseContext()
+      const ctx = __fictPushContext()
       ctx.rendering = false
 
       expect(() => __fictUseMemo(ctx, () => 42)).toThrow()
@@ -213,7 +233,8 @@ describe('Hook Context System', () => {
 
   describe('__fictUseEffect', () => {
     it('creates an effect on first call', async () => {
-      const ctx = __fictUseContext()
+      const ctx = __fictPushContext()
+      ctx.rendering = true
       let effectRan = false
 
       __fictUseEffect(ctx, () => {
@@ -225,7 +246,8 @@ describe('Hook Context System', () => {
     })
 
     it('does not recreate effect on subsequent calls', async () => {
-      const ctx = __fictUseContext()
+      const ctx = __fictPushContext()
+      ctx.rendering = true
       let effectCount = 0
 
       __fictUseEffect(ctx, () => {
@@ -247,14 +269,15 @@ describe('Hook Context System', () => {
     })
 
     it('uses explicit slot index when provided', () => {
-      const ctx = __fictUseContext()
+      const ctx = __fictPushContext()
+      ctx.rendering = true
       __fictUseEffect(ctx, () => {}, 4)
 
       expect(ctx.slots[4]).toBeDefined()
     })
 
     it('throws when called outside render context', () => {
-      const ctx = __fictUseContext()
+      const ctx = __fictPushContext()
       ctx.rendering = false
 
       expect(() => __fictUseEffect(ctx, () => {})).toThrow()
@@ -360,6 +383,72 @@ describe('Hook Context System', () => {
       expect(signal1).not.toBe(signal2)
 
       __fictPopContext()
+      __fictPopContext()
+    })
+  })
+
+  describe('P0-2: Custom hook slot correctness', () => {
+    it('custom hooks share hook slot sequence with calling component', () => {
+      // Simulates the pattern: Component calls $state, then calls useCounter()
+      // which also uses $state internally. Slots should not conflict.
+      const ctx = __fictPushContext()
+
+      // Simulate component render that calls a custom hook
+      __fictRender(ctx, () => {
+        // Component's own state (cursor starts at 0, so slot 0)
+        const componentState = __fictUseSignal(ctx, 'component')
+        expect(ctx.cursor).toBe(1) // cursor advanced to 1
+
+        // Custom hook is called - should continue from cursor 1, not reset to 0
+        // This simulates what happens when a custom hook calls __fictUseContext()
+        const customHookCtx = __fictUseContext() // Should NOT reset cursor!
+        expect(customHookCtx).toBe(ctx) // Same context
+        expect(customHookCtx.cursor).toBe(1) // Cursor preserved (P0-2 fix)
+
+        // Custom hook creates its own state (slot 1, cursor advances to 2)
+        const hookState = __fictUseSignal(ctx, 'hook')
+        expect(ctx.cursor).toBe(2)
+
+        // Verify states are in correct slots
+        expect(ctx.slots[0]).toBe(componentState)
+        expect(ctx.slots[1]).toBe(hookState)
+
+        // States should be independent
+        expect(componentState()).toBe('component')
+        expect(hookState()).toBe('hook')
+
+        return null
+      })
+
+      __fictPopContext()
+    })
+
+    it('multiple custom hooks maintain correct slot sequence', () => {
+      const ctx = __fictPushContext()
+
+      __fictRender(ctx, () => {
+        // Component state - slot 0, cursor -> 1
+        const s1 = __fictUseSignal(ctx, 1)
+
+        // First custom hook (simulated)
+        __fictUseContext() // Should not reset cursor (P0-2 fix)
+        const s2 = __fictUseSignal(ctx, 2) // slot 1, cursor -> 2
+        const m1 = __fictUseMemo(ctx, () => s1() + s2()) // slot 2, cursor -> 3
+
+        // Second custom hook (simulated)
+        __fictUseContext() // Should not reset cursor (P0-2 fix)
+        const s3 = __fictUseSignal(ctx, 3) // slot 3, cursor -> 4
+
+        // Total: 4 slots used (s1, s2, m1, s3)
+        expect(ctx.cursor).toBe(4)
+        expect(s1()).toBe(1)
+        expect(s2()).toBe(2)
+        expect(s3()).toBe(3)
+        expect(m1()).toBe(3)
+
+        return null
+      })
+
       __fictPopContext()
     })
   })

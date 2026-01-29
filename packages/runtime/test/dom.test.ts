@@ -755,12 +755,16 @@ describe('DOM Module', () => {
     })
 
     it('handles SVG templates', () => {
-      const factory = template('<svg><circle cx="50" cy="50" r="40"/></svg>', false, true)
+      // P1-4: With isSVG=true, pass content without <svg> wrapper
+      // Runtime wraps it in <svg> for proper namespace parsing, then extracts content
+      const factory = template('<circle cx="50" cy="50" r="40"/>', false, true)
 
       const node = factory()
 
-      // SVG template returns the nested content (circle element)
+      // SVG template returns the nested content (circle element in SVG namespace)
       expect(node.nodeName.toLowerCase()).toBe('circle')
+      // Verify it's actually an SVGElement (not HTMLElement)
+      expect(node).toBeInstanceOf(SVGElement)
     })
 
     it('handles MathML templates', () => {

@@ -32,8 +32,14 @@ describe('Alias-Safe Reactive Lowering', () => {
       `
       const output = transform(source)
       expect(output).toContain('__fictUseMemo')
-      expect(output).toContain('alias = __fictUseMemo')
-      expect(output).toContain('console.log(alias()')
+      // P0-1 fix: mutable tracked variables are now wrapped in a region memo
+      // Inside the region, alias is a value (not wrapped in individual memo)
+      // Outside the region, a getter wrapper is created
+      expect(output).toContain('alias = count()')
+      // Inside region memo, alias is used as value directly
+      expect(output).toContain('console.log(alias)')
+      // Outside region, alias becomes a getter wrapper
+      expect(output).toContain('const alias = () => __region_0().alias')
     })
 
     it('disallows reassignment of reactive alias', () => {

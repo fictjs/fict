@@ -268,18 +268,22 @@ export function template(
   let node: Node | null = null
 
   const create = (): Node => {
-    const t = isMathML
-      ? document.createElementNS(MATHML_NS, 'template')
-      : document.createElement('template')
-    t.innerHTML = html
+    const t = document.createElement('template')
 
     if (isSVG) {
-      // For SVG, get the nested content
+      // P1-4 fix: Wrap HTML in <svg> to parse content in SVG namespace
+      // Then extract the actual content (firstChild of the wrapper svg)
+      t.innerHTML = `<svg>${html}</svg>`
       return (t as HTMLTemplateElement).content.firstChild!.firstChild!
     }
     if (isMathML) {
-      return t.firstChild!
+      // P1-4 fix: Wrap HTML in <math> to parse content in MathML namespace
+      // Then extract the actual content (firstChild of the wrapper math)
+      t.innerHTML = `<math>${html}</math>`
+      return (t as HTMLTemplateElement).content.firstChild!.firstChild!
     }
+
+    t.innerHTML = html
     return (t as HTMLTemplateElement).content.firstChild!
   }
 

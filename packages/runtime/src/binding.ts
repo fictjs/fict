@@ -110,6 +110,30 @@ export function isReactive(value: unknown): value is () => unknown {
 }
 
 /**
+ * P1-2 fix: Stricter reactive check that only considers explicitly marked values.
+ * Used for event handlers where we don't want to misidentify regular callbacks
+ * (like `onClick={() => doSomething()}`) as reactive getters.
+ *
+ * Only returns true for:
+ * - Signal accessors (created by createSignal)
+ * - Computed accessors (created by createMemo)
+ * - Prop getters (marked by __fictProp)
+ */
+function isStrictlyReactive(value: unknown): value is () => unknown {
+  if (typeof value !== 'function') return false
+  // Only check for explicitly marked reactive values
+  // Do NOT use length === 0 as fallback - many callbacks have 0 params
+  return isSignal(value) || isComputed(value) || isPropGetterFn(value)
+}
+
+// Import-like check for prop getter marker without circular dependency
+const PROP_GETTER_MARKER = '__fictProp' as const
+function isPropGetterFn(value: unknown): boolean {
+  if (typeof value !== 'function') return false
+  return (value as any)[PROP_GETTER_MARKER] === true
+}
+
+/**
  * Unwrap a potentially reactive value to get the actual value
  */
 export function unwrap<T>(value: MaybeReactive<T>): T {
@@ -1014,7 +1038,8 @@ export function bindEvent(
     // Ensure global delegation is active for this event
     delegateEvents([eventName])
 
-    const resolveHandler = isReactive(handler)
+    // P1-2: Use stricter check - don't misidentify regular callbacks as reactive
+    const resolveHandler = isStrictlyReactive(handler)
       ? (handler as () => EventListenerOrEventListenerObject | null | undefined)
       : () => handler
 
@@ -1040,7 +1065,8 @@ export function bindEvent(
 
   // Fallback: Native addEventListener
   // Used for non-delegated events or when options are present
-  const getHandler = isReactive(handler) ? (handler as () => unknown) : () => handler
+  // P1-2: Use stricter check - don't misidentify regular callbacks as reactive
+  const getHandler = isStrictlyReactive(handler) ? (handler as () => unknown) : () => handler
 
   // Create wrapped handler that resolves reactive handlers
   const wrapped: EventListener = event => {

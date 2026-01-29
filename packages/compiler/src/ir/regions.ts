@@ -2332,6 +2332,8 @@ function instructionToStatement(
       ['mergeProps'].includes(instr.value.callee.name)
     // Combined check for skipping memo wrapping
     const isMemoReturningCall = isAccessorReturningCall || isReactiveObjectCall
+    // P0-1 fix: Check if variable will be mutated (assigned to later without declaration)
+    const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
     const lowerAssignedValue = (forceAssigned = false) =>
       lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
     const buildDerivedMemoCall = (expr: BabelCore.types.Expression) => {
@@ -2347,7 +2349,6 @@ function instructionToStatement(
       type VarDecl = 'const' | 'let' | 'var'
       const normalizedDecl: VarDecl =
         isStateCall || (dependsOnTracked && !isDestructuringTemp) ? 'const' : declKind
-      const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
       const isExternalAlias =
         declKind === 'const' &&
         instr.value.kind === 'Identifier' &&
@@ -2378,6 +2379,15 @@ function instructionToStatement(
           const derivedExpr = lowerAssignedValue(true)
           if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
             return t.variableDeclaration(normalizedDecl, [
+              t.variableDeclarator(t.identifier(baseName), derivedExpr),
+            ])
+          }
+          // P0-1 fix: Don't wrap mutable variables in memo - they will be reassigned later
+          // The containing region's memo will handle reactivity
+          // Also remove from memoVars so wrapInMemo treats this as a getter output, not direct output
+          if (needsMutable) {
+            ctx.memoVars?.delete(baseName)
+            return t.variableDeclaration('let', [
               t.variableDeclarator(t.identifier(baseName), derivedExpr),
             ])
           }
@@ -2412,6 +2422,15 @@ function instructionToStatement(
         const derivedExpr = lowerAssignedValue(true)
         if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
           return t.variableDeclaration(normalizedDecl, [
+            t.variableDeclarator(t.identifier(baseName), derivedExpr),
+          ])
+        }
+        // P0-1 fix: Don't wrap mutable variables in memo - they will be reassigned later
+        // The containing region's memo will handle reactivity
+        // Also remove from memoVars so wrapInMemo treats this as a getter output, not direct output
+        if (needsMutable) {
+          ctx.memoVars?.delete(baseName)
+          return t.variableDeclaration('let', [
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
           ])
         }
@@ -2561,6 +2580,12 @@ function instructionToStatement(
             t.variableDeclarator(t.identifier(baseName), derivedExpr),
           ])
         }
+        // P0-1 fix: Don't wrap mutable variables in memo - they will be reassigned later
+        if (needsMutable) {
+          return t.variableDeclaration('let', [
+            t.variableDeclarator(t.identifier(baseName), derivedExpr),
+          ])
+        }
         // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
         if (!isReactiveObjectCall) ctx.memoVars?.add(baseName)
         if (ctx.noMemo) {
@@ -2588,6 +2613,12 @@ function instructionToStatement(
     if (dependsOnTracked) {
       const derivedExpr = lowerAssignedValue(true)
       if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
+        return t.variableDeclaration('let', [
+          t.variableDeclarator(t.identifier(baseName), derivedExpr),
+        ])
+      }
+      // P0-1 fix: Don't wrap mutable variables in memo - they will be reassigned later
+      if (needsMutable) {
         return t.variableDeclaration('let', [
           t.variableDeclarator(t.identifier(baseName), derivedExpr),
         ])
