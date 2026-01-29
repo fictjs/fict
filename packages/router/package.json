@@ -1,11 +1,20 @@
 {
   "name": "@fictjs/router",
   "version": "0.2.3",
-  "description": "Router for Fict",
+  "description": "Reactive router for Fict applications",
   "publishConfig": {
     "access": "public",
     "provenance": true
   },
+  "keywords": [
+    "fict",
+    "router",
+    "routing",
+    "spa",
+    "reactive"
+  ],
+  "author": "Michael Lin",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/fictjs/fict.git",
@@ -22,19 +31,36 @@
       "require": "./dist/index.cjs"
     }
   },
+  "sideEffects": false,
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format cjs,esm --dts",
-    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "build": "tsup",
+    "dev": "tsup --watch",
     "test": "vitest run",
+    "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist coverage"
+  },
+  "dependencies": {
+    "@fictjs/runtime": "workspace:*"
   },
   "devDependencies": {
+    "@fictjs/vite-plugin": "workspace:*",
+    "fict": "workspace:*",
+    "jsdom": "^27.4.0",
     "tsup": "^8.5.1"
+  },
+  "peerDependencies": {
+    "fict": ">=0.2.0"
+  },
+  "peerDependenciesMeta": {
+    "fict": {
+      "optional": true
+    }
   }
 }

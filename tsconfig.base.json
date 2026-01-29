@@ -35,7 +35,9 @@
       "@fictjs/eslint-plugin": ["packages/eslint-plugin/src"],
       "@fictjs/devtools": ["packages/devtools/src"],
       "@fictjs/ssr": ["packages/ssr/src"],
-      "@fictjs/testing-library": ["packages/testing-library/src"]
+      "@fictjs/testing-library": ["packages/testing-library/src"],
+      "@fictjs/router": ["packages/router/src"],
+      "@fictjs/router/*": ["packages/router/src/*"]
     }
   },
   "include": ["packages/runtime/src/dev.d.ts"],
