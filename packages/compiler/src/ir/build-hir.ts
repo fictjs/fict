@@ -37,10 +37,11 @@ import {
   type UpdateExpression as HUpdateExpression,
 } from './hir'
 
-interface BuildHIROptions {
+export interface BuildHIROptions {
   dev?: boolean
   fileName?: string
   onWarn?: (warning: CompilerWarning) => void
+  reactiveScopes?: Set<string>
 }
 
 interface BlockBuilder {
@@ -1497,8 +1498,19 @@ function convertFunction(
 export function convertStatementsToHIRFunction(
   name: string,
   statements: BabelCore.types.Statement[],
+  options?: BuildHIROptions,
 ): HIRFunction {
-  return convertFunction(name, [], statements, { loc: getLoc(statements[0]) })
+  const prevOptions = activeBuildOptions
+  if (options) {
+    activeBuildOptions = options
+  }
+  try {
+    return convertFunction(name, [], statements, { loc: getLoc(statements[0]) })
+  } finally {
+    if (options) {
+      activeBuildOptions = prevOptions
+    }
+  }
 }
 
 function convertAssignmentValue(expr: BabelCore.types.AssignmentExpression): Expression {
@@ -2226,7 +2238,10 @@ function processStatement(
   return bb
 }
 
-function convertExpression(node: BabelCore.types.Expression): Expression {
+function convertExpression(
+  node: BabelCore.types.Expression,
+  options?: { reactiveScope?: string },
+): Expression {
   const loc = getLoc(node)
   const convertCallArguments = (
     args: (
@@ -2234,6 +2249,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       | BabelCore.types.SpreadElement
       | BabelCore.types.ArgumentPlaceholder
     )[],
+    reactiveScope?: string,
   ): Expression[] =>
     args
       .map(arg => {
@@ -2244,10 +2260,37 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
             loc: getLoc(arg),
           } as HSpreadElement
         }
-        if (t.isExpression(arg)) return convertExpression(arg)
+        if (t.isExpression(arg)) {
+          if (
+            reactiveScope &&
+            arg === args[0] &&
+            (t.isArrowFunctionExpression(arg) || t.isFunctionExpression(arg))
+          ) {
+            return convertExpression(arg, { reactiveScope })
+          }
+          return convertExpression(arg)
+        }
         return undefined
       })
       .filter(Boolean) as Expression[]
+
+  const resolveReactiveScope = (
+    callee: BabelCore.types.Expression | BabelCore.types.V8IntrinsicIdentifier,
+  ): string | undefined => {
+    const reactiveScopes = activeBuildOptions?.reactiveScopes
+    if (!reactiveScopes || reactiveScopes.size === 0) return undefined
+    if (t.isIdentifier(callee)) {
+      return reactiveScopes.has(callee.name) ? callee.name : undefined
+    }
+    if (
+      (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+      !callee.computed &&
+      t.isIdentifier(callee.property)
+    ) {
+      return reactiveScopes.has(callee.property.name) ? callee.property.name : undefined
+    }
+    return undefined
+  }
 
   if (t.isParenthesizedExpression(node) && t.isExpression(node.expression)) {
     return convertExpression(node.expression)
@@ -2313,10 +2356,11 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
   if (t.isCallExpression(node)) {
     const callee = normalizeMacroCallee(node.callee as BabelCore.types.Expression)
     const pure = hasPureAnnotation(node) || hasPureAnnotation(node.callee as any)
+    const reactiveScope = resolveReactiveScope(node.callee as BabelCore.types.Expression)
     const call: HCallExpression = {
       kind: 'CallExpression',
       callee: convertExpression(callee),
-      arguments: convertCallArguments(node.arguments),
+      arguments: convertCallArguments(node.arguments, reactiveScope),
       ...(pure ? { pure: true } : null),
       loc,
     }
@@ -2558,6 +2602,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
         body: nested.blocks,
         isExpression: false,
         isAsync: node.async,
+        reactiveScope: options?.reactiveScope,
         loc,
       }
       return arrow
@@ -2576,6 +2621,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
         body: convertExpression(node.body as BabelCore.types.Expression),
         isExpression: true,
         isAsync: node.async,
+        reactiveScope: options?.reactiveScope,
         loc,
       }
       return arrow
@@ -2597,6 +2643,7 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
       params: nested.params,
       body: nested.blocks,
       isAsync: node.async,
+      reactiveScope: options?.reactiveScope,
       loc,
     }
     return fn
@@ -2685,10 +2732,11 @@ function convertExpression(node: BabelCore.types.Expression): Expression {
   // Optional Call Expression
   if (t.isOptionalCallExpression(node)) {
     const callee = normalizeMacroCallee(node.callee as BabelCore.types.Expression)
+    const reactiveScope = resolveReactiveScope(node.callee as BabelCore.types.Expression)
     return {
       kind: 'OptionalCallExpression',
       callee: convertExpression(callee),
-      arguments: convertCallArguments(node.arguments),
+      arguments: convertCallArguments(node.arguments, reactiveScope),
       optional: node.optional,
       ...(hasPureAnnotation(node) || hasPureAnnotation(node.callee as any) ? { pure: true } : null),
       loc,

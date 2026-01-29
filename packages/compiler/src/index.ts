@@ -51,19 +51,6 @@ function isInsideConditional(path: BabelCore.NodePath): boolean {
   )
 }
 
-function isInsideNestedFunction(path: BabelCore.NodePath): boolean {
-  let depth = 0
-  let current: BabelCore.NodePath | null = path
-  while (current) {
-    if (current.isFunction?.()) {
-      depth++
-      if (depth > 1) return true
-    }
-    current = current.parentPath
-  }
-  return false
-}
-
 function isInsideJSX(path: BabelCore.NodePath): boolean {
   return !!path.findParent(p => p.isJSXElement?.() || p.isJSXFragment?.())
 }
@@ -534,6 +521,84 @@ function createHIREntrypointVisitor(
           filename: fileName,
         }
         const isHookName = (name: string | undefined): boolean => !!name && /^use[A-Z]/.test(name)
+        // Reactive scopes: function calls whose callbacks are treated as component-like contexts
+        const reactiveScopesSet = new Set(options.reactiveScopes ?? [])
+
+        const resolveReactiveScopeName = (
+          callee: BabelCore.types.Expression | BabelCore.types.V8IntrinsicIdentifier,
+        ): string | null => {
+          if (reactiveScopesSet.size === 0) return null
+          if (t.isIdentifier(callee)) {
+            return reactiveScopesSet.has(callee.name) ? callee.name : null
+          }
+          if (
+            (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+            !callee.computed &&
+            t.isIdentifier(callee.property)
+          ) {
+            return reactiveScopesSet.has(callee.property.name) ? callee.property.name : null
+          }
+          return null
+        }
+
+        // Check if a function is a callback argument to a reactive scope call
+        const isReactiveScopeCallback = (
+          fnPath: BabelCore.NodePath<BabelCore.types.Function>,
+        ): boolean => {
+          if (reactiveScopesSet.size === 0) return false
+          const parent = fnPath.parentPath
+          if (!parent || !(parent.isCallExpression() || parent.isOptionalCallExpression())) {
+            return false
+          }
+          // Check if the function is the first argument
+          if (parent.node.arguments[0] !== fnPath.node) return false
+          const callee = parent.node.callee
+          return !!resolveReactiveScopeName(callee as any)
+        }
+
+        // Check if a function node is a reactive scope callback
+        const isReactiveScopeCallbackNode = (
+          fnNode: BabelCore.types.Function,
+          parentNode: BabelCore.types.Node | null | undefined,
+        ): boolean => {
+          if (reactiveScopesSet.size === 0) return false
+          if (!parentNode) return false
+          if (!t.isCallExpression(parentNode) && !t.isOptionalCallExpression(parentNode)) {
+            return false
+          }
+          // Check if the function is the first argument
+          if (parentNode.arguments[0] !== fnNode) return false
+          return !!resolveReactiveScopeName(parentNode.callee as any)
+        }
+
+        // Local version of isInsideNestedFunction that respects reactive scope boundaries.
+        // Reactive scope callbacks are treated as depth 1 (outermost function), so $state inside
+        // them is not considered "nested" as long as it's directly in the callback body.
+        const isInsideNestedFunctionWithReactiveScopes = (
+          nodePath: BabelCore.NodePath,
+        ): boolean => {
+          let depth = 0
+          let current: BabelCore.NodePath | null = nodePath
+          while (current) {
+            if (current.isFunction?.()) {
+              depth++
+              // If this function is a reactive scope callback, treat it as the root boundary.
+              // Nested functions inside it should still be considered "nested".
+              if (
+                isReactiveScopeCallbackNode(
+                  current.node as BabelCore.types.Function,
+                  current.parentPath?.node,
+                )
+              ) {
+                return depth > 1
+              }
+              if (depth > 1) return true
+            }
+            current = current.parentPath
+          }
+          return false
+        }
+
         const getFunctionName = (
           fnPath: BabelCore.NodePath<BabelCore.types.Function>,
         ): string | undefined => {
@@ -561,7 +626,10 @@ function createHIREntrypointVisitor(
         }
         const isComponentOrHookDefinition = (
           fnPath: BabelCore.NodePath<BabelCore.types.Function>,
-        ): boolean => isComponentDefinition(fnPath) || isHookDefinition(fnPath)
+        ): boolean =>
+          isComponentDefinition(fnPath) ||
+          isHookDefinition(fnPath) ||
+          isReactiveScopeCallback(fnPath)
         const isComponentLike = (fnPath: BabelCore.NodePath<BabelCore.types.Function>): boolean => {
           const name = getFunctionName(fnPath)
           return (
@@ -852,7 +920,7 @@ function createHIREntrypointVisitor(
                     `Move the $state() declaration before the loop/condition.`,
                 )
               }
-              if (isInsideNestedFunction(varPath)) {
+              if (isInsideNestedFunctionWithReactiveScopes(varPath)) {
                 throw varPath.buildCodeFrameError(
                   `$state() cannot be declared inside nested functions.\n\n` +
                     `Move the $state() declaration to the component's top level,\n` +
@@ -940,7 +1008,7 @@ function createHIREntrypointVisitor(
                     `For dynamic collections, consider using $store with an array/object.`,
                 )
               }
-              if (isInsideNestedFunction(callPath)) {
+              if (isInsideNestedFunctionWithReactiveScopes(callPath)) {
                 throw callPath.buildCodeFrameError(
                   `$state() cannot be declared inside nested functions.\n\n` +
                     `Move the declaration to the component's top level,\n` +
@@ -965,7 +1033,7 @@ function createHIREntrypointVisitor(
                     `  $effect(() => { if (condition) { /* ... */ } })`,
                 )
               }
-              if (isInsideNestedFunction(callPath)) {
+              if (isInsideNestedFunctionWithReactiveScopes(callPath)) {
                 throw callPath.buildCodeFrameError(
                   `$effect() cannot be called inside nested functions.\n\n` +
                     `Move the effect to the component's top level,\n` +
@@ -1019,7 +1087,7 @@ function createHIREntrypointVisitor(
                 if (
                   isInsideLoop(callPath) ||
                   isInsideConditional(callPath) ||
-                  isInsideNestedFunction(callPath)
+                  isInsideNestedFunctionWithReactiveScopes(callPath)
                 ) {
                   throw callPath.buildCodeFrameError(
                     `${calleeId}() must be called at the top level of a component or hook (no loops/conditions/nested functions)`,
@@ -1220,6 +1288,12 @@ function createHIREntrypointVisitor(
           runWarningPass(path as any, stateVars, derivedVars, warn, fileName, t)
         }
 
+        // NOTE: Reactive scope callbacks (like renderHook(() => {...})) are NOT hoisted.
+        // They stay inline to preserve closure semantics. The HIR builder already processes
+        // nested arrow/function expressions via convertFunction, which handles $state/$effect.
+        // The isInsideNestedFunctionWithReactiveScopes validation allows $state/$effect
+        // inside reactive scope callbacks.
+
         const fileAst = t.file(path.node)
         const hir = buildHIR(
           fileAst,
@@ -1231,6 +1305,7 @@ function createHIREntrypointVisitor(
             dev,
             fileName,
             onWarn: warn,
+            reactiveScopes: reactiveScopesSet,
           },
         )
         const optimized = optionsWithWarnings.optimize

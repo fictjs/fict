@@ -479,6 +479,8 @@ export interface ArrowFunctionExpression extends SourceInfo {
   body: Expression | BasicBlock[]
   isExpression: boolean // true if body is Expression, false if block
   isAsync?: boolean
+  /** Marks this function as a reactive scope callback (e.g., renderHook(() => ...)). */
+  reactiveScope?: string
 }
 
 export interface FunctionExpression extends SourceInfo {
@@ -487,6 +489,8 @@ export interface FunctionExpression extends SourceInfo {
   params: Identifier[]
   body: BasicBlock[]
   isAsync?: boolean
+  /** Marks this function as a reactive scope callback (e.g., renderHook(() => ...)). */
+  reactiveScope?: string
 }
 
 export interface AssignmentExpression extends SourceInfo {

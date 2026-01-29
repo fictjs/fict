@@ -7,6 +7,8 @@ export default defineConfig({
     // Use fict plugin to transform .tsx files with $state, $effect macros
     fict({
       include: ['**/*.compiled.test.tsx'],
+      // Enable $state/$effect in renderHook callbacks
+      reactiveScopes: ['renderHook'],
     }),
   ],
   test: {

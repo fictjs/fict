@@ -246,14 +246,6 @@ function SuspenseWrapper(props: { children: any }) {
 }
 
 // ============================================================================
-// Hook definitions
-// ============================================================================
-
-// Note: Custom hooks that use $state can be tested by rendering components
-// that use them, since renderHook callbacks are not recognized as valid
-// hook contexts by the compiler.
-
-// ============================================================================
 // Tests
 // ============================================================================
 
@@ -367,14 +359,8 @@ describe('Compiler Integration: $effect macro', () => {
 })
 
 // Note: testEffect cannot use $state directly because the callback
-// is not a component or hook function. Use testEffect with
-// createSignal from '@fictjs/runtime/advanced' for reactive primitives,
-// or use renderHook for testing hooks that use $state.
-
-// Note: renderHook callbacks are not recognized as component/hook contexts
-// by the compiler. Use renderHook with hooks that use createSignal from
-// '@fictjs/runtime/advanced' instead of $state, or test hooks via
-// components that use them.
+// is not a component or hook function. Use testEffect with runtime
+// primitives or use renderHook for testing hooks that use $state.
 
 describe('Compiler Integration: Component patterns', () => {
   beforeEach(() => {
@@ -719,5 +705,160 @@ describe('Compiler Integration: renderWithSuspense utility', () => {
     await waitForResolution({ timeout: 1000 })
 
     // After resolution, onResolve should have been called
+  })
+})
+
+// ============================================================================
+// renderHook tests with $state/$effect
+// ============================================================================
+
+describe('Compiler Integration: renderHook with $state/$effect', () => {
+  beforeEach(() => {
+    cleanup()
+  })
+
+  it('works with $state inside renderHook callback', () => {
+    const { result } = renderHook(() => {
+      let count = $state(0)
+      return {
+        getCount: () => count,
+        increment: () => {
+          count = count + 1
+        },
+      }
+    })
+
+    expect(result.current.getCount()).toBe(0)
+  })
+
+  it('reactive state updates are reflected in result', async () => {
+    const { result } = renderHook(() => {
+      let count = $state(0)
+      return {
+        getCount: () => count,
+        increment: () => {
+          count = count + 1
+        },
+      }
+    })
+
+    expect(result.current.getCount()).toBe(0)
+
+    result.current.increment()
+    await tick()
+
+    expect(result.current.getCount()).toBe(1)
+  })
+
+  it('verifies closure works in renderHook', () => {
+    const log: string[] = []
+
+    renderHook(() => {
+      log.push('callback')
+      return { getValue: () => 'test' }
+    })
+
+    expect(log).toEqual(['callback'])
+  })
+
+  it('works with $effect inside renderHook callback', async () => {
+    const effectLog: number[] = []
+
+    const { result } = renderHook(() => {
+      let count = $state(0)
+
+      $effect(() => {
+        effectLog.push(count)
+      })
+
+      return {
+        getCount: () => count,
+        increment: () => {
+          count = count + 1
+        },
+      }
+    })
+
+    // Initial effect run
+    expect(effectLog).toEqual([0])
+
+    result.current.increment()
+    await tick()
+
+    // Effect should have run again with new value
+    expect(effectLog).toEqual([0, 1])
+  })
+
+  it('supports derived values in renderHook', async () => {
+    const { result } = renderHook(() => {
+      let count = $state(2)
+
+      return {
+        getCount: () => count,
+        getDoubled: () => count * 2,
+        increment: () => {
+          count = count + 1
+        },
+      }
+    })
+
+    expect(result.current.getCount()).toBe(2)
+    expect(result.current.getDoubled()).toBe(4)
+
+    result.current.increment()
+    await tick()
+
+    expect(result.current.getCount()).toBe(3)
+    expect(result.current.getDoubled()).toBe(6)
+  })
+
+  it('cleanup works correctly with renderHook', () => {
+    const cleanupLog: string[] = []
+
+    const { cleanup: hookCleanup } = renderHook(() => {
+      let count = $state(0)
+
+      $effect(() => {
+        const currentCount = count
+        return () => {
+          cleanupLog.push(`cleanup-${currentCount}`)
+        }
+      })
+
+      return {
+        getCount: () => count,
+        increment: () => {
+          count = count + 1
+        },
+      }
+    })
+
+    expect(cleanupLog).toEqual([])
+
+    hookCleanup()
+
+    expect(cleanupLog).toEqual(['cleanup-0'])
+  })
+
+  it('rerender creates fresh state', async () => {
+    // Note: renderHook creates a new root on each rerender, so state is not preserved
+    const { result, rerender } = renderHook(() => {
+      let count = $state(0)
+      return {
+        getCount: () => count,
+        increment: () => {
+          count = count + 1
+        },
+      }
+    })
+
+    result.current.increment()
+    await tick()
+    expect(result.current.getCount()).toBe(1)
+
+    // Rerender creates a new root, so state starts fresh
+    rerender()
+    // After rerender, it's a new root with fresh state
+    expect(result.current.getCount()).toBe(0)
   })
 })

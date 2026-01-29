@@ -40,6 +40,77 @@ describe('semantic validation', () => {
     )
   })
 
+  it('allows $state inside reactive scope callback but rejects nested functions within it', () => {
+    const okSource = `
+      import { $state } from 'fict'
+      import { renderHook } from '@fictjs/testing-library'
+      renderHook(() => {
+        const x = $state(0)
+        return x
+      })
+    `
+    expect(() => transform(okSource, { reactiveScopes: ['renderHook'] })).not.toThrow()
+
+    const badSource = `
+      import { $state } from 'fict'
+      import { renderHook } from '@fictjs/testing-library'
+      renderHook(() => {
+        function inner() {
+          const x = $state(0)
+          return x
+        }
+        return inner()
+      })
+    `
+    expect(() => transform(badSource, { reactiveScopes: ['renderHook'] })).toThrow(
+      /component or hook function body|no nested functions|cannot be declared inside nested functions/,
+    )
+  })
+
+  it('throws when $effect is used in a loop inside reactive scope callback', () => {
+    const source = `
+      import { $state, $effect } from 'fict'
+      import { renderHook } from '@fictjs/testing-library'
+      renderHook(() => {
+        for (let i = 0; i < 2; i++) {
+          $effect(() => console.log(i))
+        }
+      })
+    `
+    expect(() => transform(source, { reactiveScopes: ['renderHook'] })).toThrow(
+      /cannot be called inside loops/,
+    )
+  })
+
+  it('throws when reactive scope is invoked via alias (not supported)', () => {
+    const source = `
+      import { $state } from 'fict'
+      import { renderHook } from '@fictjs/testing-library'
+      const rh = renderHook
+      rh(() => {
+        const x = $state(0)
+        return x
+      })
+    `
+    expect(() => transform(source, { reactiveScopes: ['renderHook'] })).toThrow(
+      /component or hook function body|no nested functions|cannot be declared inside nested functions/,
+    )
+  })
+
+  it('throws when reactive scope callback is not the first argument', () => {
+    const source = `
+      import { $state } from 'fict'
+      import { renderHook } from '@fictjs/testing-library'
+      renderHook('label', () => {
+        const x = $state(0)
+        return x
+      })
+    `
+    expect(() => transform(source, { reactiveScopes: ['renderHook'] })).toThrow(
+      /component or hook function body|no nested functions|cannot be declared inside nested functions/,
+    )
+  })
+
   it('throws when $effect is used inside a loop', () => {
     const source = `
       import { $state, $effect } from 'fict'

@@ -120,6 +120,19 @@ describe('render', () => {
       customContainer.remove()
     })
 
+    it('defaults baseElement to provided container', () => {
+      const customContainer = document.createElement('section')
+      document.body.appendChild(customContainer)
+
+      const { baseElement } = render(() => document.createElement('div'), {
+        container: customContainer,
+      })
+
+      expect(baseElement).toBe(customContainer)
+
+      customContainer.remove()
+    })
+
     it('uses baseElement for creating container', () => {
       const baseElement = document.createElement('main')
       document.body.appendChild(baseElement)
@@ -447,6 +460,24 @@ describe('cleanup', () => {
     expect(baseElement.contains(container)).toBe(true)
     cleanup()
     expect(baseElement.contains(container)).toBe(false)
+
+    baseElement.remove()
+  })
+
+  it('does not remove user container when baseElement is provided', () => {
+    const baseElement = document.createElement('main')
+    const customContainer = document.createElement('section')
+    baseElement.appendChild(customContainer)
+    document.body.appendChild(baseElement)
+
+    render(() => document.createElement('div'), {
+      container: customContainer,
+      baseElement,
+    })
+
+    cleanup()
+
+    expect(baseElement.contains(customContainer)).toBe(true)
 
     baseElement.remove()
   })

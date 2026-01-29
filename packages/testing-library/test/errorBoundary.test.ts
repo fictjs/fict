@@ -73,6 +73,61 @@ describe('renderWithErrorBoundary', () => {
     })
   })
 
+  describe('triggerError/resetErrorBoundary', () => {
+    it('triggerError shows fallback and calls onError', () => {
+      const onError = vi.fn()
+      const { triggerError, isShowingFallback, getByTestId } = renderWithErrorBoundary(
+        () =>
+          createElement({
+            type: 'div',
+            props: { children: 'Content' },
+            key: undefined,
+          }),
+        {
+          fallback: (err: unknown) =>
+            createElement({
+              type: 'div',
+              props: { 'data-testid': 'error-fallback', children: String(err) },
+              key: undefined,
+            }),
+          onError,
+        },
+      )
+
+      triggerError(new Error('Boom'))
+
+      expect(isShowingFallback()).toBe(true)
+      expect(getByTestId('error-fallback')).toBeTruthy()
+      expect(onError).toHaveBeenCalled()
+    })
+
+    it('resetErrorBoundary clears fallback state after rerender', () => {
+      const { triggerError, resetErrorBoundary, isShowingFallback, rerender, container } =
+        renderWithErrorBoundary(() =>
+          createElement({
+            type: 'div',
+            props: { children: 'Content' },
+            key: undefined,
+          }),
+        )
+
+      triggerError(new Error('Boom'))
+      expect(isShowingFallback()).toBe(true)
+
+      rerender(() =>
+        createElement({
+          type: 'div',
+          props: { children: 'Recovered' },
+          key: undefined,
+        }),
+      )
+      resetErrorBoundary()
+
+      expect(isShowingFallback()).toBe(false)
+      expect(container.textContent).toBe('Recovered')
+    })
+  })
+
   // Note: triggerError uses rerender with a throwing component, which has
   // similar limitations to direct ErrorBoundary usage with createElement.
   // For proper error boundary testing with thrown errors, use compiled JSX.

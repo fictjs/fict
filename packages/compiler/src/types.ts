@@ -139,6 +139,31 @@ export interface FictCompilerOptions {
     projectVersion?: number
     configPath?: string
   }
+  /**
+   * Function names that create reactive scopes. Callbacks passed to these functions
+   * are treated as component-like contexts where $state and $effect can be used.
+   *
+   * This is useful for testing libraries (e.g., renderHook) and other scenarios
+   * where reactive code runs in non-component contexts.
+   *
+   * Limitations (by design):
+   * - Only direct calls are recognized (e.g., renderHook(() => ...), utils.renderHook(() => ...)).
+   * - Only the first argument is treated as the reactive callback.
+   * - Aliased/indirect calls are not recognized (e.g., const rh = renderHook; rh(() => ...)).
+   *
+   * @example
+   * ```typescript
+   * // In vite.config.ts or babel config:
+   * reactiveScopes: ['renderHook', 'createReactiveScope']
+   *
+   * // Then in tests:
+   * renderHook(() => {
+   *   let count = $state(0)  // Now allowed!
+   *   return count
+   * })
+   * ```
+   */
+  reactiveScopes?: string[]
 }
 
 export interface VisitorOptions {

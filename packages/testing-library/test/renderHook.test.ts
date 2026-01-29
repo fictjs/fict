@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest'
-import { renderHook, cleanup } from '../src/index'
+import { renderHook, cleanup, act } from '../src/index'
 import { createElement, createMemo, createEffect, onMount, onCleanup } from '@fictjs/runtime'
 import { createSignal } from '@fictjs/runtime/advanced'
 
@@ -96,6 +96,43 @@ describe('renderHook', () => {
 
       expect(result.current.count).toBe(2)
     })
+
+    it('remounts and resets hook state on rerender', () => {
+      const { result, rerender } = renderHook(() => {
+        const count = createSignal(0)
+        return {
+          count,
+          increment: () => count(count() + 1),
+        }
+      })
+
+      result.current.increment()
+      expect(result.current.count()).toBe(1)
+
+      rerender()
+
+      expect(result.current.count()).toBe(0)
+    })
+
+    it('runs cleanup for previous root before rerendering', () => {
+      const cleanupLog: string[] = []
+
+      const { rerender } = renderHook(
+        (label: string) => {
+          onCleanup(() => {
+            cleanupLog.push(label)
+          })
+          return {}
+        },
+        ['first'],
+      )
+
+      expect(cleanupLog).toEqual([])
+
+      rerender(['second'])
+
+      expect(cleanupLog).toEqual(['first'])
+    })
   })
 
   describe('cleanup', () => {
@@ -169,6 +206,28 @@ describe('renderHook', () => {
       expect(wrapperRendered).toBe(true)
       expect(result.current.value).toBe('test')
     })
+
+    it('rerenders wrapper on rerender', () => {
+      let renderCount = 0
+
+      const Wrapper = (props: { children: any }) => {
+        renderCount++
+        return props.children
+      }
+
+      const { rerender } = renderHook(
+        () => {
+          return { value: 'test' }
+        },
+        { wrapper: Wrapper },
+      )
+
+      expect(renderCount).toBe(1)
+
+      rerender()
+
+      expect(renderCount).toBe(2)
+    })
   })
 
   describe('reactive hooks', () => {
@@ -206,6 +265,24 @@ describe('renderHook', () => {
       expect(log).toEqual([0, 1, 2])
 
       cleanupHook()
+    })
+
+    it('act flushes effect updates', async () => {
+      const log: number[] = []
+
+      const { result } = renderHook(() => {
+        const count = createSignal(0)
+        createEffect(() => {
+          log.push(count())
+        })
+        return { count }
+      })
+
+      await act(() => {
+        result.current.count(1)
+      })
+
+      expect(log).toEqual([0, 1])
     })
   })
 

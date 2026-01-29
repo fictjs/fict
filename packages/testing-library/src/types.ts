@@ -138,6 +138,7 @@ export interface RenderHookResult<Result, Props extends unknown[]> {
 
   /**
    * Re-render the hook with new props.
+   * Note: this disposes the previous root and mounts a new one; hook state resets.
    */
   rerender: (newProps?: Props) => void
 
@@ -257,6 +258,9 @@ export type SuspenseRenderOptions<Q extends Queries = typeof queries> = RenderOp
 
   /**
    * Callback called when the suspense rejects.
+   *
+   * Note: providing onReject treats the rejection as handled in the test root
+   * to avoid unhandled promise rejections.
    */
   onReject?: (err: unknown) => void
 

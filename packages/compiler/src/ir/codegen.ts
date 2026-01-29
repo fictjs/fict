@@ -2143,18 +2143,20 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
     stmts.map(stmt => setNodeLoc(stmt, baseLoc))
   switch (block.terminator.kind) {
     case 'Return': {
-      const prevRegion = ctx.currentRegion
       const preserveAccessors = ctx.currentFnIsHook
-      if (preserveAccessors) ctx.currentRegion = undefined
+      const prevHookFlag = ctx.currentFnIsHook
+      if (preserveAccessors) ctx.currentFnIsHook = false
       ctx.inReturn = true
       let retExpr = block.terminator.argument
         ? lowerTrackedExpression(block.terminator.argument, ctx)
         : null
+      ctx.inReturn = false
+      if (preserveAccessors) {
+        ctx.currentFnIsHook = prevHookFlag
+      }
       if (preserveAccessors && retExpr) {
         retExpr = unwrapAccessorCalls(retExpr, ctx)
       }
-      ctx.inReturn = false
-      ctx.currentRegion = prevRegion
       return applyLoc([t.returnStatement(retExpr)])
     }
     case 'Throw':
@@ -2823,6 +2825,54 @@ function lowerExpressionImpl(
     }
   }
 
+  const lowerReactiveScopeExpression = (
+    fnExpr: Extract<Expression, { kind: 'ArrowFunction' | 'FunctionExpression' }>,
+  ): BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression | null => {
+    if (!fnExpr.reactiveScope) return null
+    const blocks = Array.isArray(fnExpr.body)
+      ? (fnExpr.body as BasicBlock[])
+      : ([
+          {
+            id: 0,
+            instructions: [],
+            terminator: {
+              kind: 'Return',
+              argument: fnExpr.body as Expression,
+            },
+          },
+        ] as BasicBlock[])
+
+    const fn: HIRFunction = {
+      params: fnExpr.params,
+      blocks,
+      meta: {
+        fromExpression: true,
+        isArrow: fnExpr.kind === 'ArrowFunction',
+        hasExpressionBody: fnExpr.kind === 'ArrowFunction' && fnExpr.isExpression,
+        isAsync: fnExpr.isAsync ?? false,
+      },
+      loc: fnExpr.loc ?? null,
+    }
+
+    const lowered = lowerFunctionWithRegions(fn, ctx, { forceHookContext: true })
+    if (!lowered) return null
+
+    const params = lowered.params as BabelCore.types.Identifier[]
+    if (fnExpr.kind === 'ArrowFunction') {
+      const arrow = t.arrowFunctionExpression(params, lowered.body)
+      arrow.async = lowered.async
+      return arrow
+    }
+
+    const fnExprAst = t.functionExpression(
+      fnExpr.name ? t.identifier(deSSAVarName(fnExpr.name)) : null,
+      params,
+      lowered.body,
+    )
+    fnExprAst.async = lowered.async
+    return fnExprAst
+  }
+
   switch (expr.kind) {
     case 'Identifier':
       // Apply SSA de-versioning to restore original variable names
@@ -3098,6 +3148,8 @@ function lowerExpressionImpl(
       return lowerJSXElement(expr, ctx)
 
     case 'ArrowFunction': {
+      const reactiveLowered = lowerReactiveScopeExpression(expr)
+      if (reactiveLowered) return reactiveLowered
       const paramIds = mapParams(expr.params)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
       const localDeclared = collectLocalDeclaredNames(
@@ -3148,6 +3200,8 @@ function lowerExpressionImpl(
     }
 
     case 'FunctionExpression': {
+      const reactiveLowered = lowerReactiveScopeExpression(expr)
+      if (reactiveLowered) return reactiveLowered
       const paramIds = mapParams(expr.params)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
       const localDeclared = collectLocalDeclaredNames(expr.params, expr.body as BasicBlock[], t)
@@ -6967,7 +7021,14 @@ function lowerTopLevelStatementBlock(
 ): { statements: BabelCore.types.Statement[]; aliases: Set<string> } {
   if (statements.length === 0) return { statements: [], aliases: new Set() }
 
-  const fn = convertStatementsToHIRFunction(name, statements)
+  const reactiveScopes = ctx.options?.reactiveScopes
+  const fn = convertStatementsToHIRFunction(
+    name,
+    statements,
+    reactiveScopes && reactiveScopes.length > 0
+      ? { reactiveScopes: new Set(reactiveScopes) }
+      : undefined,
+  )
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
   detectDerivedCycles(fn, scopeResult)
   ctx.scopes = scopeResult
@@ -7149,6 +7210,7 @@ function transformControlFlowReturns(
 function lowerFunctionWithRegions(
   fn: HIRFunction,
   ctx: CodegenContext,
+  options?: { forceHookContext?: boolean },
 ): BabelCore.types.FunctionDeclaration | null {
   const { t } = ctx
   const prevTracked = ctx.trackedVars
@@ -7257,7 +7319,7 @@ function lowerFunctionWithRegions(
     ctx.trackedVars.add(name)
   })
 
-  const inferredHook = isHookLikeFunction(fn)
+  const inferredHook = options?.forceHookContext ? true : isHookLikeFunction(fn)
   // Analyze reactive scopes with SSA/CFG awareness
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
   detectDerivedCycles(fn, scopeResult)

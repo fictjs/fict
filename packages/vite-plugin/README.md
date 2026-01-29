@@ -29,7 +29,14 @@ export default defineConfig({
       // Optional TypeScript project integration
       useTypeScriptProject: true,
       tsconfigPath: './tsconfig.json',
+      // Allow $state/$effect inside reactive-scope callbacks (e.g., renderHook(() => ...))
+      reactiveScopes: ['renderHook'],
     }),
   ],
 })
 ```
+
+Notes:
+
+- `reactiveScopes` only applies to **direct calls** and only treats the **first argument** as the reactive callback.
+- Aliased/indirect calls are not recognized (e.g., `const rh = renderHook; rh(() => ...)`).

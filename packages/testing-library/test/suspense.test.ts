@@ -142,6 +142,80 @@ describe('renderWithSuspense', () => {
 
       expect(elapsed).toBeLessThan(100)
     })
+
+    it('resolves after suspense token resolves', async () => {
+      const handle = createTestSuspenseToken()
+      let shouldSuspend = true
+      const onResolve = vi.fn()
+
+      const Suspender = () => {
+        if (shouldSuspend) throw handle.token
+        return createElement({
+          type: 'div',
+          props: { children: 'Loaded' },
+          key: undefined,
+        })
+      }
+
+      const { waitForResolution, isShowingFallback, container } = renderWithSuspense(
+        () =>
+          createElement({
+            type: Suspender as unknown as (props: Record<string, unknown>) => FictNode,
+            props: {},
+            key: undefined,
+          }),
+        { onResolve },
+      )
+
+      expect(isShowingFallback()).toBe(true)
+
+      shouldSuspend = false
+      handle.resolve()
+
+      await waitForResolution({ timeout: 1000 })
+
+      expect(onResolve).toHaveBeenCalled()
+      expect(container.textContent).toBe('Loaded')
+    })
+  })
+
+  describe('onReject', () => {
+    it('calls onReject when suspense token rejects', async () => {
+      const handle = createTestSuspenseToken()
+      const onReject = vi.fn()
+      let shouldSuspend = true
+
+      // Prevent unhandled rejection warnings from the test token.
+      handle.token.then(
+        () => {},
+        () => {},
+      )
+
+      const Suspender = () => {
+        if (shouldSuspend) throw handle.token
+        return createElement({
+          type: 'div',
+          props: { children: 'Loaded' },
+          key: undefined,
+        })
+      }
+
+      renderWithSuspense(
+        () =>
+          createElement({
+            type: Suspender as unknown as (props: Record<string, unknown>) => FictNode,
+            props: {},
+            key: undefined,
+          }),
+        { onReject },
+      )
+
+      shouldSuspend = false
+      handle.reject(new Error('Rejected'))
+      await tick()
+
+      expect(onReject).toHaveBeenCalled()
+    })
   })
 
   describe('cleanup', () => {

@@ -35,6 +35,7 @@ import {
 } from '@fictjs/runtime'
 import type { FictNode, Component } from '@fictjs/runtime'
 import { registerErrorHandler } from '@fictjs/runtime/advanced'
+import { __fictPushContext, __fictPopContext } from '@fictjs/runtime/internal'
 import { getQueriesForElement, prettyDOM, queries } from '@testing-library/dom'
 import type { Queries } from '@testing-library/dom'
 
@@ -280,6 +281,10 @@ export function cleanup(): void {
  * @param options - Options for rendering the hook
  * @returns Result with the hook's return value and cleanup utilities
  *
+ * @note
+ * renderHook().rerender() disposes the previous root and mounts a new one.
+ * Hook state does not persist across rerenders.
+ *
  * @example
  * ```ts
  * // Test a counter hook
@@ -347,13 +352,25 @@ export function renderHook<Result, Props extends unknown[] = []>(
           type: Wrapper,
           props: {
             children: (() => {
-              hookResult = hookFn(...currentProps)
+              // Push a hook context so that compiled hooks can use __fictUseContext
+              __fictPushContext()
+              try {
+                hookResult = hookFn(...currentProps)
+              } finally {
+                __fictPopContext()
+              }
               return null
             })(),
           },
         })
       } else {
-        hookResult = hookFn(...currentProps)
+        // Push a hook context so that compiled hooks can use __fictUseContext
+        __fictPushContext()
+        try {
+          hookResult = hookFn(...currentProps)
+        } finally {
+          __fictPopContext()
+        }
       }
       return hookResult!
     })
@@ -568,6 +585,27 @@ export function flush(): Promise<void> {
   return new Promise(resolve => queueMicrotask(resolve))
 }
 
+/**
+ * Run updates and flush pending microtasks/effects.
+ * Similar to React Testing Library's act().
+ *
+ * @param fn - A function that triggers updates (can be async)
+ * @returns The result of the function after flush
+ */
+export async function act<T>(fn: () => T | Promise<T>): Promise<T> {
+  try {
+    const result = await fn()
+    // Flush twice to handle nested microtasks scheduled during flush
+    await flush()
+    await flush()
+    return result
+  } catch (err) {
+    await flush()
+    await flush()
+    throw err
+  }
+}
+
 // ============================================================================
 // ErrorBoundary Testing Utilities
 // ============================================================================
@@ -636,59 +674,66 @@ export function renderWithErrorBoundary<Q extends Queries = typeof queries>(
     props: Record<string, unknown>,
   ) => FictNode
 
-  const wrappedView: View = () => {
-    return createElement({
-      type: ErrorBoundaryComponent,
-      props: {
-        fallback: wrappedFallback,
-        onError: (err: unknown) => {
-          hasError = true
-          _currentError = err
-          onError?.(err)
+  const wrapView = (nextView: View): View => {
+    return () => {
+      const ViewComponent = () => nextView()
+      return createElement({
+        type: ErrorBoundaryComponent,
+        props: {
+          fallback: wrappedFallback,
+          onError: (err: unknown) => {
+            hasError = true
+            _currentError = err
+            onError?.(err)
+          },
+          resetKeys,
+          children: {
+            type: ViewComponent,
+            props: {},
+            key: undefined,
+          },
         },
-        resetKeys,
-        children: view(),
-      },
-    }) as FictNode
+      }) as FictNode
+    }
   }
 
-  const result = render(wrappedView, renderOptions as RenderOptions<Q>)
+  const result = render(wrapView(view), renderOptions as RenderOptions<Q>)
 
   return {
     ...result,
     triggerError: (error: Error) => {
-      // Rerender with a component that throws
+      // Rerender with a component that throws inside the boundary
       hasError = true
       _currentError = error
-      result.rerender(() => {
-        return createElement({
-          type: ErrorBoundaryComponent,
-          props: {
-            fallback: wrappedFallback,
-            onError: (err: unknown) => {
-              hasError = true
-              _currentError = err
-              onError?.(err)
-            },
-            resetKeys,
-            children: createElement({
-              type: () => {
-                throw error
-              },
-              props: {},
-            }),
-          },
-        }) as FictNode
-      })
+      const Thrower = () => {
+        throw error
+      }
+      result.rerender(
+        wrapView(() => ({
+          type: Thrower,
+          props: {},
+          key: undefined,
+        })),
+      )
     },
     resetErrorBoundary: () => {
+      hasError = false
+      _currentError = null
       if (resetFn) {
-        hasError = false
-        _currentError = null
-        resetFn()
+        try {
+          resetFn()
+        } catch (err) {
+          onError?.(err)
+        }
       }
     },
     isShowingFallback: () => hasError,
+    rerender: (nextView: View) => {
+      hasError = false
+      _currentError = null
+      resetFn = undefined
+      result.rerender(wrapView(nextView))
+    },
   } as unknown as ErrorBoundaryRenderResult<Q>
 }
 
@@ -786,30 +831,41 @@ export function renderWithSuspense<Q extends Queries = typeof queries>(
   const SuspenseComponent = Suspense as unknown as (props: Record<string, unknown>) => FictNode
 
   // Wrap view with Suspense
-  const wrappedView: View = () => {
-    return createElement({
-      type: SuspenseComponent,
-      props: {
-        fallback: wrappedFallback,
-        onResolve: () => {
-          isSuspended = false
-          isResolved = true
-          onResolve?.()
-          // Notify waiters
-          resolveWaiters.forEach(waiter => waiter())
-          resolveWaiters = []
+  const wrapView = (nextView: View): View => {
+    return () => {
+      if (onReject) {
+        // If the caller provided onReject, treat errors as handled in this root
+        registerErrorHandler(() => true)
+      }
+      const ViewComponent = () => nextView()
+      return createElement({
+        type: SuspenseComponent,
+        props: {
+          fallback: wrappedFallback,
+          onResolve: () => {
+            isSuspended = false
+            isResolved = true
+            onResolve?.()
+            // Notify waiters
+            resolveWaiters.forEach(waiter => waiter())
+            resolveWaiters = []
+          },
+          onReject: (err: unknown) => {
+            isSuspended = false
+            onReject?.(err)
+          },
+          resetKeys,
+          children: {
+            type: ViewComponent,
+            props: {},
+            key: undefined,
+          },
         },
-        onReject: (err: unknown) => {
-          isSuspended = false
-          onReject?.(err)
-        },
-        resetKeys,
-        children: view(),
-      },
-    }) as FictNode
+      }) as FictNode
+    }
   }
 
-  const result = render(wrappedView, renderOptions as RenderOptions<Q>)
+  const result = render(wrapView(view), renderOptions as RenderOptions<Q>)
 
   return {
     ...result,
@@ -836,6 +892,9 @@ export function renderWithSuspense<Q extends Queries = typeof queries>(
           resolve()
         })
       })
+    },
+    rerender: (nextView: View) => {
+      result.rerender(wrapView(nextView))
     },
   } as unknown as SuspenseRenderResult<Q>
 }
