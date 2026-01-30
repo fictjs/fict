@@ -1,8 +1,10 @@
-import { transformAsync } from '@babel/core'
-import { createFictPlugin, type FictCompilerOptions } from '@fictjs/compiler'
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { transformAsync } from '@babel/core'
+import { createFictPlugin, type FictCompilerOptions } from '@fictjs/compiler'
 import type { Plugin, ResolvedConfig, TransformResult } from 'vite'
 
 export interface FictPluginOptions extends FictCompilerOptions {
@@ -56,10 +58,12 @@ interface TypeScriptProject {
   readonly projectVersion: number
   updateFile: (fileName: string, code: string) => void
   getProgram: () => unknown | null
+  resolveModuleName: (specifier: string, containingFile: string) => string | null
   dispose: () => void
 }
 
 const CACHE_VERSION = 1
+const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
 
 /**
  * Vite plugin for Fict reactive UI library.
@@ -230,11 +234,67 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         return null
       }
 
+      const aliasEntries = normalizeAliases(config?.resolve?.alias)
       const fictOptions: FictCompilerOptions = {
         ...compilerOptions,
         dev: compilerOptions.dev ?? isDev,
         sourcemap: compilerOptions.sourcemap ?? true,
         moduleMetadata,
+        resolveModuleMetadata: (source, importer) => {
+          const userResolved = compilerOptions.resolveModuleMetadata?.(source, importer)
+          if (userResolved) return userResolved
+          if (!importer) return undefined
+
+          const importerFile = normalizeFileName(importer, config?.root)
+          const lookupMetadata = (resolved: string) => {
+            const direct = moduleMetadata.get(resolved)
+            if (direct) return direct
+            const ext = path.extname(resolved)
+            if (!ext) {
+              for (const suffix of MODULE_EXTENSIONS) {
+                const byExt = moduleMetadata.get(`${resolved}${suffix}`)
+                if (byExt) return byExt
+              }
+              for (const suffix of MODULE_EXTENSIONS) {
+                const byIndex = moduleMetadata.get(path.join(resolved, `index${suffix}`))
+                if (byIndex) return byIndex
+              }
+            }
+            return undefined
+          }
+          let resolvedSource: string | null = null
+
+          if (path.isAbsolute(source)) {
+            resolvedSource = normalizeFileName(source, config?.root)
+          } else if (source.startsWith('.')) {
+            resolvedSource = normalizeFileName(
+              path.resolve(path.dirname(importerFile), source),
+              config?.root,
+            )
+          } else {
+            const aliased = applyAlias(source, aliasEntries)
+            if (aliased) {
+              if (path.isAbsolute(aliased)) {
+                resolvedSource = normalizeFileName(aliased, config?.root)
+              } else if (aliased.startsWith('.')) {
+                resolvedSource = normalizeFileName(
+                  path.resolve(path.dirname(importerFile), aliased),
+                  config?.root,
+                )
+              } else if (config?.root) {
+                resolvedSource = normalizeFileName(path.resolve(config.root, aliased), config?.root)
+              }
+            } else if (tsProject) {
+              const tsResolved = tsProject.resolveModuleName(source, importerFile)
+              if (tsResolved) {
+                resolvedSource = normalizeFileName(tsResolved, config?.root)
+              }
+            }
+          }
+
+          if (!resolvedSource) return undefined
+          return lookupMetadata(resolvedSource)
+        },
       }
 
       const tsProject = await ensureTypeScriptProject()
@@ -410,10 +470,58 @@ function normalizeCacheOptions(
 }
 
 function normalizeFileName(id: string, root?: string): string {
-  const clean = stripQuery(id)
+  let clean = stripQuery(id)
+  if (clean.startsWith('/@fs/')) {
+    clean = clean.slice('/@fs/'.length)
+  }
+  if (clean.startsWith('file://')) {
+    try {
+      clean = fileURLToPath(clean)
+    } catch {
+      // fall through
+    }
+  }
   if (path.isAbsolute(clean)) return path.normalize(clean)
   if (root) return path.normalize(path.resolve(root, clean))
   return path.normalize(path.resolve(clean))
+}
+
+interface AliasEntry {
+  find: string | RegExp
+  replacement: string
+}
+
+function normalizeAliases(aliases: ResolvedConfig['resolve']['alias'] | undefined): AliasEntry[] {
+  if (!aliases) return []
+  if (Array.isArray(aliases)) {
+    return aliases
+      .map(alias => {
+        if (!alias || !('find' in alias)) return null
+        const replacement =
+          typeof alias.replacement === 'string' ? alias.replacement : String(alias.replacement)
+        return { find: alias.find, replacement } as AliasEntry
+      })
+      .filter((alias): alias is AliasEntry => !!alias)
+  }
+  return Object.entries(aliases).map(([find, replacement]) => ({
+    find,
+    replacement: typeof replacement === 'string' ? replacement : String(replacement),
+  }))
+}
+
+function applyAlias(source: string, aliases: AliasEntry[]): string | null {
+  for (const alias of aliases) {
+    if (typeof alias.find === 'string') {
+      if (source === alias.find || source.startsWith(`${alias.find}/`)) {
+        return alias.replacement + source.slice(alias.find.length)
+      }
+      continue
+    }
+    if (alias.find instanceof RegExp && alias.find.test(source)) {
+      return source.replace(alias.find, alias.replacement)
+    }
+  }
+  return null
 }
 
 function hashString(value: string): string {
@@ -603,6 +711,14 @@ async function createTypeScriptProject(
     },
     updateFile,
     getProgram: () => service.getProgram?.() ?? null,
+    resolveModuleName: (specifier: string, containingFile: string) => {
+      try {
+        const resolved = ts.resolveModuleName(specifier, containingFile, parsed.options, ts.sys)
+        return resolved?.resolvedModule?.resolvedFileName ?? null
+      } catch {
+        return null
+      }
+    },
     dispose: () => service.dispose?.(),
   }
 }

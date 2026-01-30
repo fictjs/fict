@@ -40,7 +40,7 @@ describe('$store memoization and dynamic access', () => {
       }
     `)
 
-    expect(output).toContain(`prop(() => store[key])`)
+    expect(output).toContain(`keyed(store, () => key)`)
   })
 
   it('preserves dynamic $state property access inside memos', () => {

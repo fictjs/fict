@@ -33,7 +33,7 @@ function compileWithSourcemap(
       plugins: ['typescript', 'jsx'],
       allowReturnOutsideFunction: true,
     },
-    plugins: [[createFictPlugin, { sourcemap: true, ...options }]],
+    plugins: [[createFictPlugin, { sourcemap: true, emitModuleMetadata: false, ...options }]],
     presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
     generatorOpts: { compact: false },
   })
@@ -688,7 +688,7 @@ export const InlineSource = () => {
           sourceType: 'module',
           plugins: ['typescript', 'jsx'],
         },
-        plugins: [[createFictPlugin, { sourcemap: true }]],
+        plugins: [[createFictPlugin, { sourcemap: true, emitModuleMetadata: false }]],
         presets: [[presetTypescript, { isTSX: true, allExtensions: true }]],
       })
 
@@ -1381,11 +1381,11 @@ export function ProductionComponent() {
   let name = $state('Test')
   const doubled = count * 2
   const greeting = \`Hello, \${name}!\`
-  
+
   $effect(() => {
     console.log('Count:', count, 'Doubled:', doubled)
   })
-  
+
   return (
     <div className="production">
       <h1>{greeting}</h1>
@@ -1410,18 +1410,18 @@ import { $state } from 'fict'
 export function ComplexExpressions() {
   let items = $state([1, 2, 3, 4, 5])
   let multiplier = $state(2)
-  
+
   const processed = items
     .filter(n => n > 1)
     .map(n => n * multiplier)
     .reduce((sum, n) => sum + n, 0)
-  
+
   const stats = {
     total: processed,
     count: items.length,
     average: processed / items.length
   }
-  
+
   return (
     <div>
       <p>Total: {stats.total}</p>
@@ -1446,7 +1446,7 @@ import { $store } from 'fict/plus'
 export function TreeShakeTest() {
   let simpleState = $state(0)
   const store = $store({ nested: { value: 1 } })
-  
+
   // Only simpleState is used in JSX
   return <div>{simpleState}</div>
 }
@@ -1463,14 +1463,14 @@ export function TreeShakeTest() {
 import { $state, $effect } from 'fict'
 export function ErrorStackTest() {
   let value = $state<string | null>(null)
-  
+
   $effect(() => {
     if (!value) {
       throw new Error('Value is required')
     }
     console.log(value.toUpperCase())
   })
-  
+
   return <input onInput={(e: InputEvent) => value = (e.target as HTMLInputElement).value} />
 }
 `
@@ -1506,13 +1506,13 @@ interface ComponentProps {
 
 export function MultiImportComponent({ user, settings, onUpdate }: ComponentProps) {
   let localState = $state(user.name)
-  
+
   const handleUpdate = async () => {
     const response: ApiResponse = await fetch('/api/update')
       .then(r => r.json())
     onUpdate(response)
   }
-  
+
   return (
     <div>
       <span>{localState}</span>
@@ -1609,11 +1609,11 @@ export function PathAliasComponent() {
   let date = $state(new Date())
   const formatted = formatDate(date)
   const { user } = useAuth()
-  
+
   $effect(() => {
     console.log('User:', user, 'Date:', formatted)
   })
-  
+
   return (
     <div>
       <span>{formatted}</span>
@@ -1641,7 +1641,7 @@ export interface TreeData {
 
 export function TreeContainer({ data }: { data: TreeData[] }) {
   let expanded = $state<Set<string>>(new Set())
-  
+
   const toggle = (id: string) => {
     const next = new Set(expanded)
     if (next.has(id)) {
@@ -1651,7 +1651,7 @@ export function TreeContainer({ data }: { data: TreeData[] }) {
     }
     expanded = next
   }
-  
+
   return (
     <div className="tree">
       {data.map(node => (
@@ -1718,7 +1718,7 @@ function Level1({ groups }: { groups: number[][] }) {
 
 export function DeepNesting() {
   let groups = $state([[1, 2], [3, 4], [5, 6]])
-  
+
   return (
     <div className="root">
       <Level1 groups={groups} />
@@ -1751,7 +1751,7 @@ interface MenuItem {
 
 function MenuItemComponent({ item, depth = 0 }: { item: MenuItem; depth?: number }) {
   let expanded = $state(false)
-  
+
   return (
     <div className="menu-item" style={{ paddingLeft: \`\${depth * 16}px\` }}>
       <div onClick={() => expanded = !expanded}>
@@ -1807,7 +1807,7 @@ function withLoading<T>(
     if (props.loading) {
       return <div className="loading">Loading... (attempts: {props.retryCount})</div>
     }
-    
+
     if (props.error) {
       return (
         <div className="error">
@@ -1816,11 +1816,11 @@ function withLoading<T>(
         </div>
       )
     }
-    
+
     if (!props.data) {
       return <div className="empty">No data</div>
     }
-    
+
     return <WrappedComponent data={props.data} />
   }
 }
@@ -1839,9 +1839,9 @@ function UserCardContainer() {
   let retryCount = $state(0)
   let loading = $state(true)
   let data = $state<{ name: string; email: string } | null>(null)
-  
+
   const UserCardWithLoading = withLoading<{ name: string; email: string }>(UserCard)
-  
+
   return (
     <UserCardWithLoading
       data={data}
@@ -1875,7 +1875,7 @@ const TabsContext = createContext<TabsContextType | null>(null)
 
 function TabsRoot({ children, defaultTab }: { children: any; defaultTab: string }) {
   let activeTab = $state(defaultTab)
-  
+
   return (
     <TabsContext.Provider value={{ activeTab, setActiveTab: (id) => activeTab = id }}>
       <div className="tabs">{children}</div>
@@ -1890,7 +1890,7 @@ function TabsList({ children }: { children: any }) {
 function TabsTrigger({ id, children }: { id: string; children: any }) {
   const context = useContext(TabsContext)
   if (!context) throw new Error('TabsTrigger must be used within Tabs')
-  
+
   return (
     <button
       role="tab"
@@ -1905,7 +1905,7 @@ function TabsTrigger({ id, children }: { id: string; children: any }) {
 function TabsContent({ id, children }: { id: string; children: any }) {
   const context = useContext(TabsContext)
   if (!context) throw new Error('TabsContent must be used within Tabs')
-  
+
   if (context.activeTab !== id) return null
   return <div role="tabpanel">{children}</div>
 }
@@ -1960,23 +1960,23 @@ function Form<T extends Record<string, any>>({
   let errors = $state<Partial<Record<keyof T, string>>>({})
   let touched = $state<Partial<Record<keyof T, boolean>>>({})
   let isSubmitting = $state(false)
-  
+
   $effect(() => {
     if (validate) {
       errors = validate(values)
     }
   })
-  
+
   const isValid = Object.keys(errors).length === 0
-  
+
   const setFieldValue = (field: keyof T, value: any) => {
     values = { ...values, [field]: value }
   }
-  
+
   const setFieldTouched = (field: keyof T) => {
     touched = { ...touched, [field]: true }
   }
-  
+
   const handleSubmit = async () => {
     isSubmitting = true
     try {
@@ -1985,13 +1985,13 @@ function Form<T extends Record<string, any>>({
       isSubmitting = false
     }
   }
-  
+
   const resetForm = () => {
     values = initialValues
     errors = {}
     touched = {}
   }
-  
+
   return children({
     values,
     errors,
@@ -2054,7 +2054,7 @@ import { $state, $effect, onMount, onCleanup } from 'fict'
 
 function Portal({ children, containerId = 'portal-root' }: { children: any; containerId?: string }) {
   let container = $state<HTMLElement | null>(null)
-  
+
   onMount(() => {
     let el = document.getElementById(containerId)
     if (!el) {
@@ -2064,13 +2064,13 @@ function Portal({ children, containerId = 'portal-root' }: { children: any; cont
     }
     container = el
   })
-  
+
   onCleanup(() => {
     // Optional: cleanup empty portal container
   })
-  
+
   if (!container) return null
-  
+
   // In real implementation, would use createPortal
   return <div data-portal>{children}</div>
 }
@@ -2082,20 +2082,20 @@ function Modal({ isOpen, onClose, title, children }: {
   children: any
 }) {
   let closing = $state(false)
-  
+
   $effect(() => {
     if (!isOpen) {
       closing = false
     }
   })
-  
+
   const handleClose = () => {
     closing = true
     setTimeout(onClose, 300) // animation delay
   }
-  
+
   if (!isOpen && !closing) return null
-  
+
   return (
     <Portal>
       <div className={\`modal-overlay \${closing ? 'closing' : ''}\`} onClick={handleClose}>
@@ -2114,7 +2114,7 @@ function Modal({ isOpen, onClose, title, children }: {
 export function ModalDemo() {
   let showModal = $state(false)
   let modalContent = $state('Hello!')
-  
+
   return (
     <div>
       <button onClick={() => showModal = true}>Open Modal</button>
@@ -2155,16 +2155,16 @@ export function ComplexControlFlow<T>({
   let state = $state<AsyncState<T>>({ status: 'idle' })
   let retryCount = $state(0)
   let lastFetchTime = $state<Date | null>(null)
-  
+
   $effect(() => {
     // Track dependencies
     const deps = dependencies
-    
+
     const controller = new AbortController()
-    
+
     state = { status: 'loading' }
     lastFetchTime = new Date()
-    
+
     fetchFn()
       .then(data => {
         if (!controller.signal.aborted) {
@@ -2177,10 +2177,10 @@ export function ComplexControlFlow<T>({
           state = { status: 'error', error }
         }
       })
-    
+
     return () => controller.abort()
   })
-  
+
   const retry = () => {
     retryCount++
     state = { status: 'loading' }
@@ -2188,12 +2188,12 @@ export function ComplexControlFlow<T>({
       .then(data => state = { status: 'success', data })
       .catch(error => state = { status: 'error', error })
   }
-  
+
   // Complex switch-like rendering
   if (state.status === 'idle') {
     return <div className="idle">Ready to fetch</div>
   }
-  
+
   if (state.status === 'loading') {
     return (
       <div className="loading">
@@ -2202,7 +2202,7 @@ export function ComplexControlFlow<T>({
       </div>
     )
   }
-  
+
   if (state.status === 'error') {
     return (
       <div className="error">
@@ -2212,7 +2212,7 @@ export function ComplexControlFlow<T>({
       </div>
     )
   }
-  
+
   // state.status === 'success'
   return (
     <div className="success">

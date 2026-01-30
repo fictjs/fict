@@ -122,6 +122,18 @@ export interface FictCompilerOptions {
    */
   moduleMetadata?: Map<string, ModuleReactiveMetadata>
   /**
+   * Emit module metadata sidecar files to enable cross-process metadata resolution.
+   * - true: always emit
+   * - false: never emit
+   * - 'auto' or undefined: emit only when no external metadata store/resolver is provided
+   */
+  emitModuleMetadata?: boolean | 'auto'
+  /**
+   * File extension suffix for module metadata sidecars.
+   * Defaults to '.fict.meta.json'.
+   */
+  moduleMetadataExtension?: string
+  /**
    * Optional hook to resolve module metadata for a given import source.
    * Tooling can override the default resolution strategy.
    */

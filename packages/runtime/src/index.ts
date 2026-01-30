@@ -73,7 +73,7 @@ export { createContext, useContext, hasContext, type Context, type ProviderProps
 // Props Utilities (Public)
 // ============================================================================
 
-export { prop, mergeProps } from './props'
+export { prop, mergeProps, keyed } from './props'
 
 // ============================================================================
 // Types

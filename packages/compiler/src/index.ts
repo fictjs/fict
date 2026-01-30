@@ -1343,6 +1343,7 @@ export const createFictPlugin = declare(
       optimize: options.optimize ?? true,
       optimizeLevel: options.optimizeLevel ?? 'safe',
       inlineDerivedMemos: options.inlineDerivedMemos ?? true,
+      emitModuleMetadata: options.emitModuleMetadata ?? 'auto',
       dev:
         options.dev ?? (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'),
     }

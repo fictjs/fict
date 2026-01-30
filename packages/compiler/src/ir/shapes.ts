@@ -38,6 +38,7 @@ export type ObjectSource =
   | { kind: 'local'; name: string }
   | { kind: 'imported'; module: string; name: string }
   | { kind: 'props' }
+  | { kind: 'store'; name?: string }
   | { kind: 'unknown' }
 
 /**
@@ -91,6 +92,17 @@ function createPropsShape(): ObjectShape {
     escapes: false,
     isSpread: false,
     source: { kind: 'props' },
+  }
+}
+
+function createStoreShape(name?: string): ObjectShape {
+  return {
+    knownKeys: new Set(),
+    mutableKeys: new Set(),
+    dynamicAccess: false,
+    escapes: false,
+    isSpread: false,
+    source: { kind: 'store', name },
   }
 }
 
@@ -177,7 +189,11 @@ function resolveNarrowedKeys(expr: Expression, ctx: KeyNarrowingContext): KeyNar
   return null
 }
 
-function resolveKeySet(expr: Expression, ctx: KeyNarrowingContext): KeyNarrowingValue | null {
+function resolveKeySet(
+  expr: Expression,
+  ctx: KeyNarrowingContext,
+  shapes?: Map<string, ObjectShape>,
+): KeyNarrowingValue | null {
   if (expr.kind === 'Identifier') {
     const set = ctx.keySets.get(expr.name)
     return set ? new Set(set) : null
@@ -201,7 +217,7 @@ function resolveKeySet(expr: Expression, ctx: KeyNarrowingContext): KeyNarrowing
         object.name === 'Object' &&
         !expr.callee.computed &&
         property.kind === 'Identifier' &&
-        property.name === 'keys' &&
+        (property.name === 'keys' || property.name === 'getOwnPropertyNames') &&
         expr.arguments.length === 1
       ) {
         const arg = expr.arguments[0] as Expression
@@ -222,12 +238,24 @@ function resolveKeySet(expr: Expression, ctx: KeyNarrowingContext): KeyNarrowing
           }
           return values.length > 0 ? new Set(values) : null
         }
+        if (arg.kind === 'Identifier' && shapes) {
+          const shape = shapes.get(arg.name)
+          if (
+            shape &&
+            shape.knownKeys.size > 0 &&
+            !shape.dynamicAccess &&
+            !shape.escapes &&
+            shape.mutableKeys.size === 0
+          ) {
+            return new Set(Array.from(shape.knownKeys))
+          }
+        }
       }
     }
   }
   if (expr.kind === 'ConditionalExpression') {
-    const consequent = resolveKeySet(expr.consequent as Expression, ctx)
-    const alternate = resolveKeySet(expr.alternate as Expression, ctx)
+    const consequent = resolveKeySet(expr.consequent as Expression, ctx, shapes)
+    const alternate = resolveKeySet(expr.alternate as Expression, ctx, shapes)
     if (consequent && alternate) {
       return new Set([...consequent, ...alternate])
     }
@@ -235,7 +263,7 @@ function resolveKeySet(expr: Expression, ctx: KeyNarrowingContext): KeyNarrowing
   }
   if (expr.kind === 'SequenceExpression' && expr.expressions.length > 0) {
     const last = expr.expressions[expr.expressions.length - 1] as Expression
-    return resolveKeySet(last, ctx)
+    return resolveKeySet(last, ctx, shapes)
   }
   return null
 }
@@ -251,6 +279,26 @@ function extractEqualityNarrowing(expr: Expression): EqualityNarrowing | null {
         kind: 'eq',
       }
     }
+  }
+  if (expr.kind === 'LogicalExpression' && expr.operator === '&&') {
+    const left = extractEqualityNarrowing(expr.left as Expression)
+    const right = extractEqualityNarrowing(expr.right as Expression)
+    if (left && right && left.name === right.name && left.kind === right.kind) {
+      if (left.kind === 'eq') {
+        const intersection = new Set<string | number>()
+        for (const value of left.values) {
+          if (right.values.has(value)) intersection.add(value)
+        }
+        return intersection.size > 0 ? { name: left.name, values: intersection, kind: 'eq' } : null
+      }
+      if (left.kind === 'neq') {
+        const union = new Set<string | number>()
+        for (const value of left.values) union.add(value)
+        for (const value of right.values) union.add(value)
+        return { name: left.name, values: union, kind: 'neq' }
+      }
+    }
+    return left ?? right
   }
 
   if (expr.kind !== 'BinaryExpression') return null
@@ -299,7 +347,12 @@ function applyNarrowing(ctx: KeyNarrowingContext, name: string, values: KeyNarro
   }
 }
 
-function applyKeyAssignment(ctx: KeyNarrowingContext, name: string, expr: Expression): void {
+function applyKeyAssignment(
+  ctx: KeyNarrowingContext,
+  name: string,
+  expr: Expression,
+  shapes?: Map<string, ObjectShape>,
+): void {
   ctx.values.delete(name)
   ctx.keySets.delete(name)
 
@@ -308,14 +361,14 @@ function applyKeyAssignment(ctx: KeyNarrowingContext, name: string, expr: Expres
 
   if (expr.kind === 'Identifier') {
     assignedKeys = resolveNarrowedKeys(expr, ctx)
-    keySet = resolveKeySet(expr, ctx)
+    keySet = resolveKeySet(expr, ctx, shapes)
     if (ctx.keySets.has(expr.name)) {
       // Treat aliasing as escape to avoid unsound key set reuse.
       ctx.keySets.delete(expr.name)
     }
   } else {
     assignedKeys = resolveNarrowedKeys(expr, ctx)
-    keySet = resolveKeySet(expr, ctx)
+    keySet = resolveKeySet(expr, ctx, shapes)
   }
 
   if (assignedKeys && assignedKeys.size > 0) {
@@ -400,6 +453,13 @@ export function analyzeObjectShapes(fn: HIRFunction): ShapeAnalysisResult {
   const spreadWrapping = new Set<string>()
 
   for (const [name, shape] of shapes) {
+    if (shape.source.kind === 'store') {
+      const reads = propertyReads.get(name)
+      if (reads && reads.size > 0) {
+        propertySubscription.set(name, reads)
+      }
+      continue
+    }
     // Determine subscription strategy
     if (shape.dynamicAccess || shape.source.kind === 'unknown') {
       // Dynamic access or unknown source: whole-object subscription
@@ -523,6 +583,16 @@ function analyzeStructuredNode(
         if (node.pattern) {
           clearPatternBindings(node.pattern, bodyCtx)
         }
+        if (node.iterable.kind === 'Identifier') {
+          const keySet = ctx.keySets.get(node.iterable.name)
+          if (keySet) {
+            if (node.pattern && t.isIdentifier(node.pattern as any)) {
+              bodyCtx.values.set(node.pattern.name, new Set(keySet))
+            } else {
+              bodyCtx.values.set(node.variable, new Set(keySet))
+            }
+          }
+        }
         analyzeStructuredNode(node.body, shapes, propertyReads, bodyCtx)
       }
       return
@@ -534,6 +604,23 @@ function analyzeStructuredNode(
         bodyCtx.keySets.delete(node.variable)
         if (node.pattern) {
           clearPatternBindings(node.pattern, bodyCtx)
+        }
+        if (node.object.kind === 'Identifier') {
+          const shape = shapes.get(node.object.name)
+          if (
+            shape &&
+            shape.knownKeys.size > 0 &&
+            !shape.dynamicAccess &&
+            !shape.escapes &&
+            shape.mutableKeys.size === 0
+          ) {
+            const keySet = new Set(shape.knownKeys)
+            if (node.pattern && t.isIdentifier(node.pattern as any)) {
+              bodyCtx.values.set(node.pattern.name, keySet)
+            } else {
+              bodyCtx.values.set(node.variable, keySet)
+            }
+          }
         }
         analyzeStructuredNode(node.body, shapes, propertyReads, bodyCtx)
       }
@@ -579,7 +666,7 @@ function analyzeInstruction(
   ctx: KeyNarrowingContext,
 ): void {
   if (instr.kind === 'Assign') {
-    applyKeyAssignment(ctx, instr.target.name, instr.value)
+    applyKeyAssignment(ctx, instr.target.name, instr.value, shapes)
     // Analyze the assigned value
     const valueShape = analyzeExpression(instr.value, shapes, propertyReads, ctx)
     if (valueShape) {
@@ -738,19 +825,35 @@ function analyzeExpression(
         markEscaping(arg, shapes)
       }
 
-      // Special-case $state initializer to propagate object shape
+      // Special-case $state/$store initializer to propagate object shape
       let returnedShape: ObjectShape | null = null
-      if (expr.callee.kind === 'Identifier' && expr.callee.name === '$state' && expr.arguments[0]) {
+      if (
+        expr.callee.kind === 'Identifier' &&
+        (expr.callee.name === '$state' || expr.callee.name === '$store') &&
+        expr.arguments[0]
+      ) {
         returnedShape = analyzeExpression(
           expr.arguments[0] as Expression,
           shapes,
           propertyReads,
           ctx,
         )
+        if (expr.callee.name === '$store') {
+          if (!returnedShape) {
+            returnedShape = createStoreShape()
+          } else {
+            returnedShape.source = { kind: 'store' }
+          }
+        }
       }
 
       // Analyze callee unless it's a macro we purposefully skip
-      if (!(expr.callee.kind === 'Identifier' && expr.callee.name === '$state')) {
+      if (
+        !(
+          expr.callee.kind === 'Identifier' &&
+          (expr.callee.name === '$state' || expr.callee.name === '$store')
+        )
+      ) {
         analyzeExpression(expr.callee, shapes, propertyReads, ctx)
       }
 
@@ -801,7 +904,7 @@ function analyzeExpression(
     case 'AssignmentExpression': {
       // Track mutation
       if (expr.left.kind === 'Identifier') {
-        applyKeyAssignment(ctx, expr.left.name, expr.right)
+        applyKeyAssignment(ctx, expr.left.name, expr.right, shapes)
       }
       if (expr.left.kind === 'MemberExpression') {
         const base = getBaseIdentifier(expr.left.object)
@@ -1049,6 +1152,8 @@ function formatSource(source: ObjectSource): string {
       return `imported(${source.module}:${source.name})`
     case 'props':
       return 'props'
+    case 'store':
+      return source.name ? `store(${source.name})` : 'store'
     case 'unknown':
       return 'unknown'
   }

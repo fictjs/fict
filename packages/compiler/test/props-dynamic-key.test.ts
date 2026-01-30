@@ -13,7 +13,7 @@ describe('dynamic key props wrapping', () => {
       }
     `)
 
-    expect(output).toContain('__fictProp')
-    expect(output).toMatch(/__fictProp\(\(\)\s*=>\s*obj\[key\(\)\]\)/)
+    expect(output).toContain('keyed(')
+    expect(output).toMatch(/keyed\(obj,\s*\(\)\s*=>\s*key\(\)\)/)
   })
 })

@@ -56,6 +56,45 @@ describe('Object Shape Lattice Analysis', () => {
       expect(subscriptions!.has('bar')).toBe(true)
     })
 
+    it('tracks store properties without forcing whole-object subscription', () => {
+      const ast = parseFile(`
+        import { $store } from 'fict'
+        function test() {
+          const store = $store({ a: 1, b: 2 })
+          const value = store.a
+          return value
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      const storeShape = result.shapes.get('store')
+      expect(storeShape).toBeDefined()
+      expect(storeShape!.source.kind).toBe('store')
+      expect(shouldUseWholeObjectSubscription('store', result)).toBe(false)
+      const subscriptions = getPropertySubscription('store', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('a')).toBe(true)
+    })
+
+    it('narrows dynamic store keys when key set is known', () => {
+      const ast = parseFile(`
+        import { $store } from 'fict'
+        function test() {
+          const store = $store({ a: 1, b: 2 })
+          const key = 'a'
+          return store[key]
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      expect(shouldUseWholeObjectSubscription('store', result)).toBe(false)
+      const subscriptions = getPropertySubscription('store', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('a')).toBe(true)
+    })
+
     it('should detect dynamic property access', () => {
       const ast = parseFile(`
         function test(props, key) {
@@ -205,6 +244,24 @@ describe('Object Shape Lattice Analysis', () => {
       expect(subscriptions!.has('b')).toBe(true)
     })
 
+    it('should narrow dynamic keys across AND conditions', () => {
+      const ast = parseFile(`
+        function test(props, key, ok) {
+          if (key === 'a' && ok) {
+            return props[key]
+          }
+          return null
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('a')).toBe(true)
+    })
+
     it('should not narrow dynamic keys with loose equality', () => {
       const ast = parseFile(`
         function test(props, key) {
@@ -260,6 +317,46 @@ describe('Object Shape Lattice Analysis', () => {
       const subscriptions = getPropertySubscription('props', result)
       expect(subscriptions).toBeDefined()
       expect(subscriptions!.has('a')).toBe(true)
+    })
+
+    it('should narrow keys from for-of over key arrays', () => {
+      const ast = parseFile(`
+        function test(props) {
+          const keys = ['a', 'b']
+          for (const key of keys) {
+            return props[key]
+          }
+          return null
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('a')).toBe(true)
+      expect(subscriptions!.has('b')).toBe(true)
+    })
+
+    it('should narrow keys from for-in over known objects', () => {
+      const ast = parseFile(`
+        function test(props) {
+          const obj = { a: 1, b: 2 }
+          for (const key in obj) {
+            return props[key]
+          }
+          return null
+        }
+      `)
+      const hir = buildHIR(ast)
+      const result = analyzeObjectShapes(hir.functions[0])
+
+      expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
+      const subscriptions = getPropertySubscription('props', result)
+      expect(subscriptions).toBeDefined()
+      expect(subscriptions!.has('a')).toBe(true)
+      expect(subscriptions!.has('b')).toBe(true)
     })
 
     it('should not leak narrowing into for-of shadowed bindings', () => {

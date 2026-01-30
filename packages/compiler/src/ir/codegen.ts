@@ -528,6 +528,12 @@ export interface CodegenContext {
   moduleDeclaredNames?: Set<string>
   /** Module-level runtime helper imports (e.g., from 'fict'). */
   moduleRuntimeNames?: Set<string>
+  /** Module-level runtime import map (local name -> imported name). */
+  moduleRuntimeImportMap?: Map<string, string>
+  /** Module-level runtime namespace/default imports (local name). */
+  moduleRuntimeNamespaceImports?: Set<string>
+  /** Macro aliases for $state (compiler macro). */
+  stateMacroNames?: Set<string>
   /** Local (function-scope) declared names for helper shadowing checks. */
   localDeclaredNames?: Set<string>
   /** Tracks which runtime helpers are used */
@@ -647,6 +653,9 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     t,
     moduleDeclaredNames: new Set(),
     moduleRuntimeNames: new Set(),
+    moduleRuntimeImportMap: new Map(),
+    moduleRuntimeNamespaceImports: new Set(),
+    stateMacroNames: new Set(),
     localDeclaredNames: new Set(),
     helpersUsed: new Set(),
     tempCounter: 0,
@@ -722,14 +731,19 @@ function withGetterCache<T>(
   return { result, cacheDeclarations }
 }
 
-function collectHookReactiveVars(fn: HIRFunction): {
+function collectHookReactiveVars(
+  fn: HIRFunction,
+  ctx: CodegenContext,
+): {
   signalVars: Set<string>
   storeVars: Set<string>
+  memoVars: Set<string>
   functionVars: Set<string>
   mutatedVars: Set<string>
 } {
   const signalVars = new Set<string>()
   const storeVars = new Set<string>()
+  const memoVars = new Set<string>()
   const functionVars = new Set<string>()
   const mutatedVars = new Set<string>()
 
@@ -740,11 +754,17 @@ function collectHookReactiveVars(fn: HIRFunction): {
         if (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression') {
           functionVars.add(target)
         }
-        if (instr.value.kind === 'CallExpression' && instr.value.callee.kind === 'Identifier') {
-          if (instr.value.callee.name === '$state') {
+        if (
+          instr.value.kind === 'CallExpression' ||
+          instr.value.kind === 'OptionalCallExpression'
+        ) {
+          const callKind = getReactiveCallKind(instr.value, ctx)
+          if (callKind === 'signal') {
             signalVars.add(target)
-          } else if (instr.value.callee.name === '$store') {
+          } else if (callKind === 'store') {
             storeVars.add(target)
+          } else if (callKind === 'memo') {
+            memoVars.add(target)
           }
         }
         if (!instr.declarationKind) {
@@ -756,13 +776,16 @@ function collectHookReactiveVars(fn: HIRFunction): {
     }
   }
 
-  return { signalVars, storeVars, functionVars, mutatedVars }
+  return { signalVars, storeVars, memoVars, functionVars, mutatedVars }
 }
 
 function analyzeHookReturnInfo(fn: HIRFunction, ctx: CodegenContext): HookReturnInfo | null {
   if (!isHookName(fn.name)) return null
 
-  const { signalVars, storeVars, functionVars, mutatedVars } = collectHookReactiveVars(fn)
+  const { signalVars, storeVars, memoVars, functionVars, mutatedVars } = collectHookReactiveVars(
+    fn,
+    ctx,
+  )
   const tmpCtx = createCodegenContext(ctx.t)
   tmpCtx.signalVars = new Set(signalVars)
   tmpCtx.storeVars = new Set(storeVars)
@@ -770,10 +793,10 @@ function analyzeHookReturnInfo(fn: HIRFunction, ctx: CodegenContext): HookReturn
   tmpCtx.mutatedVars = new Set(mutatedVars)
   tmpCtx.aliasVars = new Set()
   tmpCtx.trackedVars = new Set()
-  tmpCtx.memoVars = new Set()
+  tmpCtx.memoVars = new Set(memoVars)
 
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
-  detectDerivedCycles(fn, scopeResult)
+  detectDerivedCycles(fn, scopeResult, ctx)
   tmpCtx.scopes = scopeResult
   const regionResult = generateRegions(fn, scopeResult)
   tmpCtx.regions = flattenRegions(regionResult.topLevelRegions)
@@ -1082,29 +1105,28 @@ function matchesListKeyPattern(expr: Expression, ctx: CodegenContext): boolean {
   return exprPropName === keyPropName
 }
 
-function detectDerivedCycles(fn: HIRFunction, _scopeResult: ReactiveScopeResult): void {
+function detectDerivedCycles(
+  fn: HIRFunction,
+  _scopeResult: ReactiveScopeResult,
+  ctx: CodegenContext,
+): void {
   if (debugEnabled('cycles_throw')) {
     throw new Error('cycle check invoked')
   }
   const declared = new Map<
     string,
-    { isState: boolean; isStore: boolean; declaredHere: boolean; count: number }
+    { isSignal: boolean; isStore: boolean; declaredHere: boolean; count: number }
   >()
   for (const block of fn.blocks) {
     for (const instr of block.instructions) {
       if (instr.kind !== 'Assign') continue
       const target = deSSAVarName(instr.target.name)
-      const isStateCall =
-        instr.value.kind === 'CallExpression' &&
-        instr.value.callee.kind === 'Identifier' &&
-        instr.value.callee.name === '$state'
-      const isStoreCall =
-        instr.value.kind === 'CallExpression' &&
-        instr.value.callee.kind === 'Identifier' &&
-        instr.value.callee.name === '$store'
+      const callKind = getReactiveCallKind(instr.value, ctx)
+      const isSignalCall = callKind === 'signal'
+      const isStoreCall = callKind === 'store'
       const prev = declared.get(target)
       declared.set(target, {
-        isState: (prev?.isState ?? false) || isStateCall,
+        isSignal: (prev?.isSignal ?? false) || isSignalCall,
         isStore: (prev?.isStore ?? false) || isStoreCall,
         declaredHere: prev?.declaredHere || !!instr.declarationKind,
         count: (prev?.count ?? 0) + 1,
@@ -1118,7 +1140,7 @@ function detectDerivedCycles(fn: HIRFunction, _scopeResult: ReactiveScopeResult)
       if (instr.kind !== 'Assign') continue
       const target = deSSAVarName(instr.target.name)
       const declInfo = declared.get(target)
-      if (declInfo?.isState || !declInfo?.declaredHere) continue
+      if (declInfo?.isSignal || declInfo?.isStore || !declInfo?.declaredHere) continue
       if ((declInfo.count ?? 0) !== 1) continue
       const deps = graph.get(target) ?? new Set<string>()
       const rawDeps = new Set<string>()
@@ -1126,7 +1148,13 @@ function detectDerivedCycles(fn: HIRFunction, _scopeResult: ReactiveScopeResult)
       for (const dep of rawDeps) {
         const base = deSSAVarName(dep.split('.')[0] ?? dep)
         const depInfo = declared.get(base)
-        if (depInfo && depInfo.declaredHere && !depInfo.isState && (depInfo.count ?? 0) === 1) {
+        if (
+          depInfo &&
+          depInfo.declaredHere &&
+          !depInfo.isSignal &&
+          !depInfo.isStore &&
+          (depInfo.count ?? 0) === 1
+        ) {
           deps.add(base)
         }
       }
@@ -2339,22 +2367,125 @@ function collectDeclaredNames(
   return declared
 }
 
-function collectRuntimeImportNames(
+interface RuntimeImportCollection {
+  names: Set<string>
+  importMap: Map<string, string>
+  namespaces: Set<string>
+}
+
+const RUNTIME_IMPORT_MODULES = new Set([
+  RUNTIME_MODULE,
+  '@fictjs/runtime',
+  '@fictjs/runtime/advanced',
+  'fict',
+  'fict/advanced',
+])
+
+function collectRuntimeImports(
   body: BabelCore.types.Statement[],
   t: typeof BabelCore.types,
-): Set<string> {
-  const runtimeModules = new Set([RUNTIME_MODULE, '@fictjs/runtime', 'fict'])
-  const imported = new Set<string>()
+): RuntimeImportCollection {
+  const names = new Set<string>()
+  const importMap = new Map<string, string>()
+  const namespaces = new Set<string>()
 
   for (const stmt of body) {
     if (!t.isImportDeclaration(stmt)) continue
-    if (!runtimeModules.has(stmt.source.value)) continue
+    if ((stmt as { importKind?: string }).importKind === 'type') continue
+    if (!RUNTIME_IMPORT_MODULES.has(stmt.source.value)) continue
     for (const spec of stmt.specifiers) {
-      imported.add(spec.local.name)
+      if (t.isImportSpecifier(spec) && spec.importKind === 'type') {
+        continue
+      }
+      names.add(spec.local.name)
+      if (t.isImportSpecifier(spec)) {
+        const importedName = t.isIdentifier(spec.imported)
+          ? spec.imported.name
+          : spec.imported.value
+        importMap.set(spec.local.name, importedName)
+      } else if (t.isImportNamespaceSpecifier(spec) || t.isImportDefaultSpecifier(spec)) {
+        namespaces.add(spec.local.name)
+      }
     }
   }
 
-  return imported
+  return { names, importMap, namespaces }
+}
+
+const RUNTIME_REACTIVE_CREATORS = new Map<string, ReactiveExportKind>([
+  ['createSignal', 'signal'],
+  ['createStore', 'store'],
+  ['createMemo', 'memo'],
+])
+
+function isNameShadowed(name: string, ctx: CodegenContext): boolean {
+  return !!(ctx.shadowedNames?.has(name) || ctx.localDeclaredNames?.has(name))
+}
+
+function getRuntimeImportedKind(name: string, ctx: CodegenContext): ReactiveExportKind | null {
+  if (isNameShadowed(name, ctx)) return null
+  const imported = ctx.moduleRuntimeImportMap?.get(name)
+  if (!imported) return null
+  return RUNTIME_REACTIVE_CREATORS.get(imported) ?? null
+}
+
+function getRuntimeMemberKind(expr: Expression, ctx: CodegenContext): ReactiveExportKind | null {
+  if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') return null
+  if (expr.object.kind !== 'Identifier') return null
+  const objectName = deSSAVarName(expr.object.name)
+  if (isNameShadowed(objectName, ctx)) return null
+  if (!ctx.moduleRuntimeNamespaceImports?.has(objectName)) return null
+  const propName = getStaticPropName(expr.property as Expression, expr.computed)
+  if (typeof propName !== 'string') return null
+  return RUNTIME_REACTIVE_CREATORS.get(propName) ?? null
+}
+
+export function getReactiveCallKind(
+  expr: Expression,
+  ctx: CodegenContext,
+): ReactiveExportKind | null {
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return null
+  const callee = expr.callee
+  if (callee.kind === 'Identifier') {
+    const name = deSSAVarName(callee.name)
+    if (ctx.stateMacroNames?.has(name)) return 'signal'
+    if (name === '$store') return 'store'
+    if (ctx.memoMacroNames?.has(name)) return 'memo'
+    return getRuntimeImportedKind(name, ctx)
+  }
+  return getRuntimeMemberKind(callee, ctx)
+}
+
+function getReactiveCallKindFromBabel(
+  callExpr: BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression,
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+): ReactiveExportKind | null {
+  const callee = callExpr.callee
+  if (t.isIdentifier(callee)) {
+    const name = callee.name
+    if (ctx.stateMacroNames?.has(name)) return 'signal'
+    if (name === '$store') return 'store'
+    if (ctx.memoMacroNames?.has(name)) return 'memo'
+    return getRuntimeImportedKind(name, ctx)
+  }
+  if (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) {
+    const memberCallee = callee as BabelCore.types.MemberExpression
+    if (!t.isIdentifier(memberCallee.object)) return null
+    const objectName = memberCallee.object.name
+    if (isNameShadowed(objectName, ctx)) return null
+    if (!ctx.moduleRuntimeNamespaceImports?.has(objectName)) return null
+    const propName = t.isIdentifier(memberCallee.property)
+      ? memberCallee.property.name
+      : t.isStringLiteral(memberCallee.property)
+        ? memberCallee.property.value
+        : t.isNumericLiteral(memberCallee.property)
+          ? String(memberCallee.property.value)
+          : null
+    if (!propName) return null
+    return RUNTIME_REACTIVE_CREATORS.get(propName) ?? null
+  }
+  return null
 }
 
 function addImportedReactiveBinding(
@@ -2442,8 +2573,6 @@ function buildModuleReactiveMetadata(
   ctx: CodegenContext,
   t: typeof BabelCore.types,
   options: FictCompilerOptions | undefined,
-  stateMacroNames: Set<string>,
-  memoMacroNames: Set<string>,
 ): ModuleReactiveMetadata {
   const metadata: ModuleReactiveMetadata = { exports: {} }
   const hookExports: Record<string, HookReturnInfoSerializable> = {}
@@ -2542,13 +2671,9 @@ function buildModuleReactiveMetadata(
         addExport('default', decl.id.name)
       } else if (t.isClassDeclaration(decl) && decl.id) {
         addExport('default', decl.id.name)
-      } else if (t.isCallExpression(decl) && t.isIdentifier(decl.callee)) {
-        const callee = decl.callee.name
-        if (stateMacroNames.has(callee) || callee === '$store') {
-          addDefaultExportKind(callee === '$store' ? 'store' : 'signal')
-        } else if (memoMacroNames.has(callee)) {
-          addDefaultExportKind('memo')
-        }
+      } else if (t.isCallExpression(decl) || t.isOptionalCallExpression(decl)) {
+        const kind = getReactiveCallKindFromBabel(decl, ctx, t)
+        addDefaultExportKind(kind)
       }
     }
   }
@@ -6757,12 +6882,16 @@ export function lowerHIRWithRegions(
   const emittedFunctionNames = new Set<string>()
   const originalBody = (program.originalBody ?? []) as BabelCore.types.Statement[]
   ctx.moduleDeclaredNames = collectDeclaredNames(originalBody, t)
-  ctx.moduleRuntimeNames = collectRuntimeImportNames(originalBody, t)
+  const runtimeImports = collectRuntimeImports(originalBody, t)
+  ctx.moduleRuntimeNames = runtimeImports.names
+  ctx.moduleRuntimeImportMap = runtimeImports.importMap
+  ctx.moduleRuntimeNamespaceImports = runtimeImports.namespaces
   applyImportedReactiveMetadata(originalBody, ctx, t, options)
   const stateMacroNames = new Set<string>(['$state', ...(macroAliases?.state ?? [])])
   const memoMacroNames = new Set<string>(macroAliases?.memo ?? ctx.memoMacroNames ?? [])
   if (!memoMacroNames.has('$memo')) memoMacroNames.add('$memo')
   if (!memoMacroNames.has('createMemo')) memoMacroNames.add('createMemo')
+  ctx.stateMacroNames = stateMacroNames
   ctx.memoMacroNames = memoMacroNames
 
   // Pre-mark top-level tracked variables so nested functions can treat captured signals as reactive
@@ -6772,12 +6901,13 @@ export function lowerHIRWithRegions(
         if (
           t.isIdentifier(decl.id) &&
           decl.init &&
-          t.isCallExpression(decl.init) &&
-          t.isIdentifier(decl.init.callee) &&
-          (stateMacroNames.has(decl.init.callee.name) || decl.init.callee.name === '$store')
+          (t.isCallExpression(decl.init) || t.isOptionalCallExpression(decl.init))
         ) {
-          ctx.trackedVars.add(decl.id.name)
-          if (decl.init.callee.name === '$store') {
+          const callKind = getReactiveCallKindFromBabel(decl.init, ctx, t)
+          if (callKind === 'signal') {
+            ctx.trackedVars.add(decl.id.name)
+          } else if (callKind === 'store') {
+            ctx.trackedVars.add(decl.id.name)
             ctx.storeVars?.add(decl.id.name)
           }
         }
@@ -7052,14 +7182,7 @@ export function lowerHIRWithRegions(
     body.push(t.expressionStatement(t.callExpression(t.identifier(RUNTIME_ALIASES.popContext), [])))
   }
 
-  const moduleMeta = buildModuleReactiveMetadata(
-    originalBody,
-    ctx,
-    t,
-    options,
-    stateMacroNames,
-    memoMacroNames,
-  )
+  const moduleMeta = buildModuleReactiveMetadata(originalBody, ctx, t, options)
   setModuleMetadata(options?.filename, moduleMeta, options)
   return t.file(t.program(attachHelperImports(ctx, body, t)))
 }
@@ -7085,7 +7208,7 @@ function lowerTopLevelStatementBlock(
       : undefined,
   )
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
-  detectDerivedCycles(fn, scopeResult)
+  detectDerivedCycles(fn, scopeResult, ctx)
   ctx.scopes = scopeResult
 
   const regionResult = generateRegions(fn, scopeResult)
@@ -7099,10 +7222,12 @@ function lowerTopLevelStatementBlock(
   const functionVars = ctx.functionVars ?? new Set<string>()
   const signalVars = ctx.signalVars ?? new Set<string>()
   const storeVars = ctx.storeVars ?? new Set<string>()
+  const memoVars = ctx.memoVars ?? new Set<string>()
   const mutatedVars = new Set<string>()
   ctx.functionVars = functionVars
   ctx.signalVars = signalVars
   ctx.storeVars = storeVars
+  ctx.memoVars = memoVars
   ctx.mutatedVars = mutatedVars
 
   for (const block of fn.blocks) {
@@ -7112,11 +7237,17 @@ function lowerTopLevelStatementBlock(
         if (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression') {
           functionVars.add(target)
         }
-        if (instr.value.kind === 'CallExpression' && instr.value.callee.kind === 'Identifier') {
-          if (instr.value.callee.name === '$state') {
+        if (
+          instr.value.kind === 'CallExpression' ||
+          instr.value.kind === 'OptionalCallExpression'
+        ) {
+          const callKind = getReactiveCallKind(instr.value, ctx)
+          if (callKind === 'signal') {
             signalVars.add(target)
-          } else if (instr.value.callee.name === '$store') {
+          } else if (callKind === 'store') {
             storeVars.add(target)
+          } else if (callKind === 'memo') {
+            memoVars.add(target)
           }
         }
         if (!instr.declarationKind) {
@@ -7333,11 +7464,17 @@ function lowerFunctionWithRegions(
           ctx.functionVars?.add(target)
         }
         if (
-          instr.value.kind === 'CallExpression' &&
-          instr.value.callee.kind === 'Identifier' &&
-          instr.value.callee.name === '$state'
+          instr.value.kind === 'CallExpression' ||
+          instr.value.kind === 'OptionalCallExpression'
         ) {
-          ctx.signalVars?.add(target)
+          const callKind = getReactiveCallKind(instr.value, ctx)
+          if (callKind === 'signal') {
+            ctx.signalVars?.add(target)
+          } else if (callKind === 'store') {
+            ctx.storeVars?.add(target)
+          } else if (callKind === 'memo') {
+            ctx.memoVars?.add(target)
+          }
         }
         if (
           instr.value.kind === 'CallExpression' &&
@@ -7353,13 +7490,6 @@ function lowerFunctionWithRegions(
           hookResultVars.has(deSSAVarName(instr.value.object.name))
         ) {
           hookAccessorAliases.add(target)
-        }
-        if (
-          instr.value.kind === 'CallExpression' &&
-          instr.value.callee.kind === 'Identifier' &&
-          instr.value.callee.name === '$store'
-        ) {
-          ctx.storeVars?.add(target)
         }
         if (!instr.declarationKind) {
           ctx.mutatedVars?.add(target)
@@ -7377,7 +7507,7 @@ function lowerFunctionWithRegions(
   const inferredHook = options?.forceHookContext ? true : isHookLikeFunction(fn)
   // Analyze reactive scopes with SSA/CFG awareness
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
-  detectDerivedCycles(fn, scopeResult)
+  detectDerivedCycles(fn, scopeResult, ctx)
   ctx.scopes = scopeResult
 
   // Generate region result for metadata

@@ -203,6 +203,22 @@ export type PropGetter<T> = (() => T) & { __fictProp: true }
 export interface PropOptions {
   unwrap?: boolean
 }
+
+/**
+ * Create a keyed prop getter that tracks both the key and the target access.
+ * Useful for dynamic property access like obj[key] where key is reactive.
+ */
+export function keyed<T, K extends string | number | symbol>(
+  target: T | PropGetter<T>,
+  key: K | (() => K),
+  options?: PropOptions,
+): PropGetter<unknown> {
+  return prop(() => {
+    const resolvedTarget = isPropGetter(target) ? (target as () => T)() : target
+    const resolvedKey = typeof key === 'function' ? (key as () => K)() : key
+    return (resolvedTarget as Record<string | number | symbol, unknown>)[resolvedKey]
+  }, options)
+}
 /**
  * Memoize a prop getter to cache expensive computations.
  * Use when prop expressions involve heavy calculations or you need lazy, reactive props.

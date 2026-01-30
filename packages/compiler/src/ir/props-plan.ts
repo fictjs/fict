@@ -91,11 +91,23 @@ export function buildPropsPlan(
       (!ctx.moduleDeclaredNames?.has(RUNTIME_ALIASES.mergeProps) ||
         (ctx.moduleRuntimeNames?.has(RUNTIME_ALIASES.mergeProps) ?? false))
 
+    const isRuntimeKeyed = (): boolean =>
+      !ctx.shadowedNames?.has(RUNTIME_ALIASES.keyed) &&
+      !ctx.localDeclaredNames?.has(RUNTIME_ALIASES.keyed) &&
+      (!ctx.moduleDeclaredNames?.has(RUNTIME_ALIASES.keyed) ||
+        (ctx.moduleRuntimeNames?.has(RUNTIME_ALIASES.keyed) ?? false))
+
     const isMergePropsCall = (expr: Expression): boolean =>
       expr.kind === 'CallExpression' &&
       expr.callee.kind === 'Identifier' &&
       expr.callee.name === RUNTIME_ALIASES.mergeProps &&
       isRuntimeMergeProps()
+
+    const isKeyedCall = (expr: Expression): boolean =>
+      expr.kind === 'CallExpression' &&
+      expr.callee.kind === 'Identifier' &&
+      expr.callee.name === RUNTIME_ALIASES.keyed &&
+      isRuntimeKeyed()
 
     const isDynamicMemberSpread = (expr: Expression): boolean => {
       if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') return false
@@ -177,6 +189,18 @@ export function buildPropsPlan(
       return ctx.storeVars?.has(helpers.deSSAVarName(base)) ?? false
     }
 
+    const getKeyedCandidate = (expr: Expression): { base: Expression; key: Expression } | null => {
+      if (expr.kind !== 'MemberExpression') return null
+      if (!expr.computed || expr.optional) return null
+      if (
+        expr.property.kind === 'Literal' &&
+        (typeof expr.property.value === 'string' || typeof expr.property.value === 'number')
+      ) {
+        return null
+      }
+      return { base: expr.object as Expression, key: expr.property as Expression }
+    }
+
     const flushBucket = () => {
       if (bucket.length === 0) return
       segments.push({ kind: 'object', properties: bucket })
@@ -254,6 +278,11 @@ export function buildPropsPlan(
         }
         const baseIdent =
           attr.value.kind === 'Identifier' ? helpers.deSSAVarName(attr.value.name) : undefined
+        const keyedCandidate = getKeyedCandidate(attr.value)
+        const keyedBaseIdent =
+          keyedCandidate && keyedCandidate.base.kind === 'Identifier'
+            ? helpers.deSSAVarName(keyedCandidate.base.name)
+            : undefined
         const isAccessorBase =
           baseIdent &&
           ((ctx.memoVars?.has(baseIdent) ?? false) ||
@@ -262,6 +291,7 @@ export function buildPropsPlan(
         const isStoreBase = baseIdent ? (ctx.storeVars?.has(baseIdent) ?? false) : false
         const alreadyGetter =
           isFunctionLike ||
+          isKeyedCall(attr.value) ||
           (baseIdent
             ? isStoreBase ||
               (ctx.memoVars?.has(baseIdent) ?? false) ||
@@ -286,6 +316,14 @@ export function buildPropsPlan(
           !t.isLiteral(trackedExpr)
         const forceMemoProp = usesTracked && isDynamicStoreMember(attr.value)
         const shouldMemoProp = useMemoProp || forceMemoProp
+        const canKeyed =
+          usesTracked &&
+          keyedCandidate &&
+          keyedBaseIdent &&
+          !(ctx.signalVars?.has(keyedBaseIdent) ?? false) &&
+          !(ctx.memoVars?.has(keyedBaseIdent) ?? false) &&
+          !(ctx.aliasVars?.has(keyedBaseIdent) ?? false) &&
+          !(ctx.functionVars?.has(keyedBaseIdent) ?? false)
         const valueExpr =
           !isFunctionLike && isAccessorBase && baseIdent
             ? (() => {
@@ -297,6 +335,14 @@ export function buildPropsPlan(
               })()
             : usesTracked && t.isExpression(lowered)
               ? (() => {
+                  if (canKeyed && keyedCandidate) {
+                    ctx.helpersUsed.add('keyed')
+                    const keyExpr = helpers.lowerDomExpression(keyedCandidate.key, ctx)
+                    return t.callExpression(t.identifier(RUNTIME_ALIASES.keyed), [
+                      t.identifier(keyedBaseIdent!),
+                      t.arrowFunctionExpression([], keyExpr),
+                    ])
+                  }
                   if (shouldMemoProp) {
                     ctx.helpersUsed.add('prop')
                     return t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [

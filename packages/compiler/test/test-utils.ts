@@ -16,6 +16,9 @@ function runTransform(
   if (mergedOptions.dev === undefined) {
     mergedOptions.dev = true
   }
+  if (mergedOptions.emitModuleMetadata === undefined) {
+    mergedOptions.emitModuleMetadata = false
+  }
 
   const result = transformSync(source, {
     filename,

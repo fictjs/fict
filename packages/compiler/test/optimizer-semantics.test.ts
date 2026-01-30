@@ -42,6 +42,58 @@ describe('optimizer semantics safety', () => {
     expect(output).toMatch(/return\s+x\s*\+\s*0/)
   })
 
+  it('keeps multiplicative zero in safe mode', () => {
+    const output = transform(
+      `
+        function foo(x) {
+          return x * 0
+        }
+      `,
+      { optimizeLevel: 'safe' },
+    )
+
+    expect(output).toMatch(/return\s+x\s*\*\s*0/)
+  })
+
+  it('keeps multiplicative identity in safe mode', () => {
+    const output = transform(
+      `
+        function foo(x) {
+          return x * 1
+        }
+      `,
+      { optimizeLevel: 'safe' },
+    )
+
+    expect(output).toMatch(/return\s+x\s*\*\s*1/)
+  })
+
+  it('keeps subtraction identity in safe mode', () => {
+    const output = transform(
+      `
+        function foo(x) {
+          return x - 0
+        }
+      `,
+      { optimizeLevel: 'safe' },
+    )
+
+    expect(output).toMatch(/return\s+x\s*-\s*0/)
+  })
+
+  it('keeps division identity in safe mode', () => {
+    const output = transform(
+      `
+        function foo(x) {
+          return x / 1
+        }
+      `,
+      { optimizeLevel: 'safe' },
+    )
+
+    expect(output).toMatch(/return\s+x\s*\/\s*1/)
+  })
+
   it('preserves conditional test evaluation when branches are identical in safe mode', () => {
     const output = transform(
       `

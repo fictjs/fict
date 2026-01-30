@@ -16,6 +16,7 @@ import {
   applyRegionToContext,
   applyRegionMetadataToExpression,
   buildDependencyGetter,
+  getReactiveCallKind,
   lowerExpression,
   propagateHookResultAlias,
   resolveHookMemberValue,
@@ -2358,7 +2359,6 @@ function instructionToStatement(
   if (instr.kind === 'Assign') {
     const ssaName = instr.target.name
     const baseName = deSSAVarName(ssaName)
-    const memoMacroNames = ctx.memoMacroNames ?? new Set(['$memo', 'createMemo'])
     const declKindRaw = instr.declarationKind
     propagateHookResultAlias(baseName, instr.value, ctx)
     const hookMember = resolveHookMemberValue(instr.value, ctx)
@@ -2415,18 +2415,17 @@ function instructionToStatement(
     const isShadowDeclaration = !!declKind && declaredVars.has(baseName)
     const treatAsTracked = !isShadowDeclaration && isTracked
     const isDestructuringTemp = baseName.startsWith('__destruct_')
-    const isStateCall =
-      instr.value.kind === 'CallExpression' &&
-      instr.value.callee.kind === 'Identifier' &&
-      instr.value.callee.name === '$state'
+    const callKind = getReactiveCallKind(instr.value, ctx)
+    const isStateCall = callKind === 'signal'
     const inRegionMemo = ctx.inRegionMemo ?? false
     const isFunctionValue =
       instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression'
     // Detect accessor-returning calls ($memo, createMemo, prop) - these return accessors and should be added to memoVars
     const isAccessorReturningCall =
-      instr.value.kind === 'CallExpression' &&
-      instr.value.callee.kind === 'Identifier' &&
-      (memoMacroNames.has(instr.value.callee.name) || instr.value.callee.name === 'prop')
+      callKind === 'memo' ||
+      (instr.value.kind === 'CallExpression' &&
+        instr.value.callee.kind === 'Identifier' &&
+        instr.value.callee.name === 'prop')
     // Detect reactive object calls (mergeProps) - these return objects/getters, not accessors
     // They should NOT be wrapped in __fictUseMemo AND should NOT be added to memoVars
     const isReactiveObjectCall =
