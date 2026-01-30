@@ -1,5 +1,6 @@
 import { beginFlushGuard, beforeEffectRunGuard, endFlushGuard } from './cycle-guard'
 import { getDevtoolsHook } from './devtools'
+import { __fictGetCurrentComponentId } from './hooks'
 import {
   getCurrentRoot,
   handleError,
@@ -71,6 +72,30 @@ export interface BaseNode {
 }
 
 /**
+ * Options for creating a signal
+ */
+export interface SignalOptions<T> {
+  /** Custom equality check */
+  equals?: false | ((prev: T, next: T) => boolean)
+  /** Debug name */
+  name?: string
+  /** Source location */
+  devToolsSource?: string
+}
+
+/**
+ * Options for creating a memo
+ */
+export interface MemoOptions<T> {
+  /** Custom equality check */
+  equals?: false | ((prev: T, next: T) => boolean)
+  /** Debug name */
+  name?: string
+  /** Source location */
+  devToolsSource?: string
+}
+
+/**
  * Signal node - mutable reactive value
  */
 export interface SignalNode<T = unknown> extends BaseNode {
@@ -82,6 +107,14 @@ export interface SignalNode<T = unknown> extends BaseNode {
   deps?: undefined
   depsTail?: undefined
   getter?: undefined
+  /** DevTools ID */
+  __id?: number | undefined
+  /** Equality check */
+  equals?: false | ((prev: T, next: T) => boolean)
+  /** Debug name */
+  name?: string
+  /** Source location */
+  devToolsSource?: string
 }
 
 /**
@@ -96,6 +129,14 @@ export interface ComputedNode<T = unknown> extends BaseNode {
   depsTail: Link | undefined
   /** Getter function to compute the value */
   getter: (oldValue: T | undefined) => T
+  /** DevTools ID */
+  __id?: number | undefined
+  /** Equality check */
+  equals?: false | ((prev: T, next: T) => boolean)
+  /** Debug name */
+  name?: string
+  /** Source location */
+  devToolsSource?: string
 }
 
 /**
@@ -464,6 +505,9 @@ function link(dep: ReactiveNode, sub: ReactiveNode, version: number): void {
   else sub.deps = newLink
   if (prevSub !== undefined) prevSub.nextSub = newLink
   else dep.subs = newLink
+
+  // Track dependency for devtools
+  if (isDev) trackDependencyDevtools(dep, sub)
 }
 /**
  * Remove a link between a dependency and a subscriber
@@ -487,6 +531,9 @@ function unlink(lnk: Link, sub: ReactiveNode = lnk.sub): Link | undefined {
   else dep.subsTail = prevSub
   if (prevSub !== undefined) prevSub.nextSub = nextSub
   else if ((dep.subs = nextSub) === undefined) unwatched(dep)
+
+  // Notify devtools that dependency edge is removed
+  if (isDev) untrackDependencyDevtools(dep, sub)
 
   return nextDep
 }
@@ -684,6 +731,16 @@ function update(node: ReactiveNode): boolean {
     ? updateComputed(node as ComputedNode)
     : updateSignal(node as SignalNode)
 }
+
+function valuesDiffer<T>(
+  node: { equals?: false | ((prev: T, next: T) => boolean) },
+  prev: T,
+  next: T,
+): boolean {
+  if (node.equals === false) return true
+  if (typeof node.equals === 'function') return !node.equals(prev, next)
+  return prev !== next
+}
 /**
  * Notify an effect and add it to the queue
  * @param effect - The effect to notify
@@ -740,7 +797,7 @@ function updateSignal(s: SignalNode): boolean {
   s.flags = Mutable
   const current = s.currentValue
   const pending = s.pendingValue
-  if (current !== pending) {
+  if (valuesDiffer(s, current, pending)) {
     s.currentValue = pending
     return true
   }
@@ -764,8 +821,9 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
     activeSub = prevSub
     c.flags &= ~Running
     purgeDeps(c)
-    if (oldValue !== newValue) {
+    if (valuesDiffer(c, oldValue, newValue)) {
       c.value = newValue
+      if (isDev) updateComputedDevtools(c, newValue)
       return true
     }
     return false
@@ -792,7 +850,7 @@ function runEffect(e: EffectNode): void {
       }
     }
     ++cycle
-    effectRunDevtools(e)
+    if (isDev) effectRunDevtools(e)
     e.depsTail = undefined
     e.flags = WatchingRunning
     const prevSub = activeSub
@@ -837,7 +895,7 @@ function runEffect(e: EffectNode): void {
     }
     if (isDirty) {
       ++cycle
-      effectRunDevtools(e)
+      if (isDev) effectRunDevtools(e)
       e.depsTail = undefined
       e.flags = WatchingRunning
       const prevSub = activeSub
@@ -971,26 +1029,31 @@ function flush(): void {
  * @param initialValue - The initial value
  * @returns A signal accessor function
  */
-export function signal<T>(initialValue: T): SignalAccessor<T> {
-  const s = {
+export function signal<T>(initialValue: T, options?: SignalOptions<T>): SignalAccessor<T> {
+  const s: SignalNode<T> = {
     currentValue: initialValue,
     pendingValue: initialValue,
     subs: undefined,
     subsTail: undefined,
     flags: Mutable,
     __id: undefined as number | undefined,
+    ...(options?.equals !== undefined ? { equals: options.equals } : {}),
+    ...(options?.name !== undefined ? { name: options.name } : {}),
+    ...(options?.devToolsSource !== undefined ? { devToolsSource: options.devToolsSource } : {}),
   }
-  registerSignalDevtools(initialValue, s)
-  const accessor = signalOper.bind(s) as SignalAccessor<T> & Record<symbol, boolean>
+  if (isDev) registerSignalDevtools(s)
+  const accessor = signalOper.bind(s as any) as SignalAccessor<T> & Record<symbol, boolean>
   accessor[SIGNAL_MARKER] = true
   return accessor as SignalAccessor<T>
 }
 function signalOper<T>(this: SignalNode<T>, value?: T): T | void {
   if (arguments.length > 0) {
-    if (this.pendingValue !== value) {
-      this.pendingValue = value as T
+    const next = value as T
+    const prev = this.pendingValue
+    if (valuesDiffer(this, prev as T, next)) {
+      this.pendingValue = next
       this.flags = MutableDirty
-      updateSignalDevtools(this, value)
+      if (isDev) updateSignalDevtools(this, next)
       const subs = this.subs
       if (subs !== undefined) {
         propagate(subs)
@@ -1003,7 +1066,7 @@ function signalOper<T>(this: SignalNode<T>, value?: T): T | void {
   const flags = this.flags
   // During cleanup, don't update signal - return currentValue as-is
   if (flags & Dirty && !inCleanup) {
-    if (updateSignal(this)) {
+    if (updateSignal(this as any)) {
       const subs = this.subs
       if (subs !== undefined) shallowPropagate(subs)
     }
@@ -1012,7 +1075,7 @@ function signalOper<T>(this: SignalNode<T>, value?: T): T | void {
   let sub = activeSub
   while (sub !== undefined) {
     if (sub.flags & 3) {
-      link(this, sub, cycle)
+      link(this as any, sub, cycle)
       break
     }
     const subSubs = sub.subs
@@ -1027,9 +1090,13 @@ function signalOper<T>(this: SignalNode<T>, value?: T): T | void {
 /**
  * Create a computed reactive value
  * @param getter - The getter function
+ * @param options - Computed options
  * @returns A computed accessor function
  */
-export function computed<T>(getter: (oldValue?: T) => T): ComputedAccessor<T> {
+export function computed<T>(
+  getter: (oldValue?: T) => T,
+  options?: MemoOptions<T>,
+): ComputedAccessor<T> {
   const c: ComputedNode<T> = {
     value: undefined as unknown as T,
     subs: undefined,
@@ -1038,9 +1105,15 @@ export function computed<T>(getter: (oldValue?: T) => T): ComputedAccessor<T> {
     depsTail: undefined,
     flags: 0,
     getter,
+    __id: undefined as number | undefined,
+    ...(options?.equals !== undefined ? { equals: options.equals } : {}),
+    ...(options?.name !== undefined ? { name: options.name } : {}),
+    ...(options?.devToolsSource !== undefined ? { devToolsSource: options.devToolsSource } : {}),
   }
-  const bound = (computedOper as (this: ComputedNode<T>) => T).bind(c) as ComputedAccessor<T> &
-    Record<symbol, boolean>
+  if (isDev) registerComputedDevtools(c)
+  const bound = (computedOper as (this: ComputedNode<T>) => T).bind(
+    c as any,
+  ) as ComputedAccessor<T> & Record<symbol, boolean>
   bound[COMPUTED_MARKER] = true
   return bound as ComputedAccessor<T>
 }
@@ -1071,6 +1144,7 @@ function computedOper<T>(this: ComputedNode<T>): T {
     const prevSub = setActiveSub(this)
     try {
       this.value = this.getter(undefined)
+      if (isDev) updateComputedDevtools(this, this.value)
     } finally {
       setActiveSub(prevSub)
       this.flags &= ~Running
@@ -1103,14 +1177,14 @@ export function effect(fn: () => void): EffectDisposer {
     e.root = root
   }
 
-  registerEffectDevtools(e)
+  if (isDev) registerEffectDevtools(e)
 
   const prevSub = activeSub
   if (prevSub !== undefined) link(e, prevSub, 0)
   activeSub = e
 
   try {
-    effectRunDevtools(e)
+    if (isDev) effectRunDevtools(e)
     fn()
   } finally {
     activeSub = prevSub
@@ -1151,14 +1225,14 @@ export function effectWithCleanup(
     e.root = resolvedRoot
   }
 
-  registerEffectDevtools(e)
+  if (isDev) registerEffectDevtools(e)
 
   const prevSub = activeSub
   if (prevSub !== undefined) link(e, prevSub, 0)
   activeSub = e
 
   try {
-    effectRunDevtools(e)
+    if (isDev) effectRunDevtools(e)
     fn()
   } finally {
     activeSub = prevSub
@@ -1437,21 +1511,30 @@ interface DevtoolsIdentifiable {
   __id?: number
 }
 
-let registerSignalDevtools: (value: unknown, node: SignalNode) => number | undefined = () =>
-  undefined
-let updateSignalDevtools: (node: SignalNode, value: unknown) => void = () => {}
+let registerSignalDevtools: <T>(node: SignalNode<T>) => number | undefined = () => undefined
+let updateSignalDevtools: <T>(node: SignalNode<T>, value: unknown) => void = () => {}
+let registerComputedDevtools: <T>(node: ComputedNode<T>) => number | undefined = () => undefined
+let updateComputedDevtools: <T>(node: ComputedNode<T>, value: unknown) => void = () => {}
 let registerEffectDevtools: (node: EffectNode) => number | undefined = () => undefined
 let effectRunDevtools: (node: EffectNode) => void = () => {}
+let trackDependencyDevtools: (dep: ReactiveNode, sub: ReactiveNode) => void = () => {}
+let untrackDependencyDevtools: (dep: ReactiveNode, sub: ReactiveNode) => void = () => {}
 
 if (isDev) {
-  let devtoolsSignalId = 0
-  let devtoolsEffectId = 0
+  // Unified ID counter for all reactive nodes (signal/computed/effect)
+  // to prevent ID collisions when storing in single devtools maps
+  let nextDevtoolsId = 0
 
-  registerSignalDevtools = (value, node) => {
+  registerSignalDevtools = node => {
     const hook = getDevtoolsHook()
     if (!hook) return undefined
-    const id = ++devtoolsSignalId
-    hook.registerSignal(id, value)
+    const id = ++nextDevtoolsId
+    const options: { name?: string; source?: string } = {}
+    if (node.name !== undefined) options.name = node.name
+    if (node.devToolsSource !== undefined) options.source = node.devToolsSource
+    const ownerId = __fictGetCurrentComponentId()
+    if (ownerId !== undefined) (options as any).ownerId = ownerId
+    hook.registerSignal(id, node.currentValue, options)
     ;(node as SignalNode & DevtoolsIdentifiable).__id = id
     return id
   }
@@ -1463,11 +1546,34 @@ if (isDev) {
     if (id) hook.updateSignal(id, value)
   }
 
+  registerComputedDevtools = node => {
+    const hook = getDevtoolsHook()
+    if (!hook) return undefined
+    const id = ++nextDevtoolsId
+    const options: { name?: string; source?: string } = {}
+    if (node.name !== undefined) options.name = node.name
+    if (node.devToolsSource !== undefined) options.source = node.devToolsSource
+    const ownerId = __fictGetCurrentComponentId()
+    if (ownerId !== undefined) (options as any).ownerId = ownerId
+    ;(options as any).hasValue = false
+    hook.registerComputed(id, node.value, options)
+    ;(node as ComputedNode & DevtoolsIdentifiable).__id = id
+    return id
+  }
+
+  updateComputedDevtools = (node, value) => {
+    const hook = getDevtoolsHook()
+    if (!hook) return
+    const id = (node as ComputedNode & DevtoolsIdentifiable).__id
+    if (id) hook.updateComputed(id, value)
+  }
+
   registerEffectDevtools = node => {
     const hook = getDevtoolsHook()
     if (!hook) return undefined
-    const id = ++devtoolsEffectId
-    hook.registerEffect(id)
+    const id = ++nextDevtoolsId
+    const ownerId = __fictGetCurrentComponentId()
+    hook.registerEffect(id, ownerId !== undefined ? { ownerId } : undefined)
     ;(node as EffectNode & DevtoolsIdentifiable).__id = id
     return id
   }
@@ -1477,6 +1583,22 @@ if (isDev) {
     if (!hook) return
     const id = (node as EffectNode & DevtoolsIdentifiable).__id
     if (id) hook.effectRun(id)
+  }
+
+  trackDependencyDevtools = (dep, sub) => {
+    const hook = getDevtoolsHook()
+    if (!hook?.trackDependency) return
+    const depId = (dep as ReactiveNode & DevtoolsIdentifiable).__id
+    const subId = (sub as ReactiveNode & DevtoolsIdentifiable).__id
+    if (depId && subId) hook.trackDependency(subId, depId)
+  }
+
+  untrackDependencyDevtools = (dep, sub) => {
+    const hook = getDevtoolsHook()
+    if (!hook?.untrackDependency) return
+    const depId = (dep as ReactiveNode & DevtoolsIdentifiable).__id
+    const subId = (sub as ReactiveNode & DevtoolsIdentifiable).__id
+    if (depId && subId) hook.untrackDependency(subId, depId)
   }
 }
 

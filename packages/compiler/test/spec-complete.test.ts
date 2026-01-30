@@ -34,7 +34,7 @@ describe('R001: $state source identification', () => {
       }
     `)
     expect(output).toContain('__fictUseSignal')
-    expect(output).toContain('__fictUseSignal(__fictCtx, 0)')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 0')
   })
 
   it('transforms const $state declaration', () => {

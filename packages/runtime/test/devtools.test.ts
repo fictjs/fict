@@ -36,8 +36,9 @@ describe('devtools hook integration', () => {
       count()
     })
 
+    // With unified ID counter: signal gets ID 1, effect gets ID 2
     expect(events.some(e => e.includes('signal:1:register'))).toBe(true)
-    expect(events.some(e => e.includes('effect:1:register'))).toBe(true)
+    expect(events.some(e => e.includes('effect:2:register'))).toBe(true)
     expect(events.filter(e => e.endsWith(':run')).length).toBeGreaterThan(0)
 
     count(1)

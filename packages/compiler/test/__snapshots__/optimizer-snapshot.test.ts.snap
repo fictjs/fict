@@ -1,5 +1,36 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`optimizer output snapshots > createMemo with equals option 1`] = `
+"import { __fictUseSignal, __fictUseContext } from "@fictjs/runtime/internal";
+import { createMemo } from 'fict';
+export function Demo() {
+  const __fictCtx = __fictUseContext();
+  const count = __fictUseSignal(__fictCtx, {
+    value: 0
+  });
+  const memoized = createMemo(() => ({
+    doubled: count().value * 2
+  }), {
+    equals: (prev, next) => prev.doubled === next.doubled
+  });
+  return memoized().doubled;
+}"
+`;
+
+exports[`optimizer output snapshots > createMemo with name and devToolsSource options 1`] = `
+"import { __fictUseSignal, __fictUseContext } from "@fictjs/runtime/internal";
+import { createMemo } from 'fict';
+export function Demo() {
+  const __fictCtx = __fictUseContext();
+  const count = __fictUseSignal(__fictCtx, 5);
+  const doubled = createMemo(() => count() * 2, {
+    name: "doubledMemo",
+    devToolsSource: "Demo.tsx:5"
+  });
+  return doubled();
+}"
+`;
+
 exports[`optimizer output snapshots > stabilizes cross-block constants in a reactive function 1`] = `
 "import { __fictUseSignal, __fictUseContext, createConditional, createElement, onDestroy } from "@fictjs/runtime/internal";
 export function Demo(flag) {

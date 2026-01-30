@@ -599,6 +599,8 @@ export interface CodegenContext {
   maxExpressionDepth?: number
   /** Track non-reactive nested scopes (event handlers, effects) */
   nonReactiveScopeDepth?: number
+  /** Current assignment target name (for devtools metadata) */
+  currentAssignmentName?: string
   /** Depth counter for conditional child lowering (disable memo caching) */
   inConditional?: number
   /** Whether we are lowering JSX props (enables prop getter wrapping) */
@@ -2107,20 +2109,28 @@ function lowerInstruction(
       }
     }
     if (ctx.signalVars?.has(baseName)) {
+      ctx.currentAssignmentName = baseName
+      const loweredValue = (() => {
+        try {
+          return lowerTrackedExpression(instr.value, ctx)
+        } finally {
+          ctx.currentAssignmentName = undefined
+        }
+      })()
       return applyLoc(
-        t.expressionStatement(
-          t.callExpression(t.identifier(baseName), [lowerTrackedExpression(instr.value, ctx)]),
-        ),
+        t.expressionStatement(t.callExpression(t.identifier(baseName), [loweredValue])),
       )
     }
+    ctx.currentAssignmentName = baseName
+    const loweredAssign = (() => {
+      try {
+        return lowerTrackedExpression(instr.value, ctx)
+      } finally {
+        ctx.currentAssignmentName = undefined
+      }
+    })()
     return applyLoc(
-      t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.identifier(baseName),
-          lowerTrackedExpression(instr.value, ctx),
-        ),
-      ),
+      t.expressionStatement(t.assignmentExpression('=', t.identifier(baseName), loweredAssign)),
     )
   }
   if (instr.kind === 'Expression') {
@@ -2900,6 +2910,23 @@ function lowerExpressionImpl(
       // Handle Fict macros in HIR path
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '$state') {
         const args = lowerCallArguments(expr.arguments)
+        const includeDevtools = ctx.options?.dev !== false
+        if (includeDevtools) {
+          const options: BabelCore.types.ObjectProperty[] = []
+          if (ctx.currentAssignmentName) {
+            options.push(
+              t.objectProperty(t.identifier('name'), t.stringLiteral(ctx.currentAssignmentName)),
+            )
+          }
+          if (expr.loc) {
+            const source = `${ctx.options?.filename ?? ''}:${expr.loc.start.line}:${expr.loc.start.column}`
+            options.push(t.objectProperty(t.identifier('devToolsSource'), t.stringLiteral(source)))
+          }
+          if (options.length > 0) {
+            args.push(t.objectExpression(options))
+          }
+        }
+
         if (ctx.inModule) {
           ctx.helpersUsed.add('signal')
           return t.callExpression(t.identifier(RUNTIME_ALIASES.signal), args)
@@ -2910,6 +2937,34 @@ function lowerExpressionImpl(
           t.identifier('__fictCtx'),
           ...args,
         ])
+      }
+      if (expr.callee.kind === 'Identifier') {
+        const memoCalleeName = deSSAVarName(expr.callee.name)
+        if (ctx.memoMacroNames?.has(memoCalleeName)) {
+          const args = lowerCallArguments(expr.arguments)
+          const includeDevtools = ctx.options?.dev !== false
+          if (includeDevtools && expr.arguments.length === 1) {
+            const options: BabelCore.types.ObjectProperty[] = []
+            if (ctx.currentAssignmentName) {
+              options.push(
+                t.objectProperty(t.identifier('name'), t.stringLiteral(ctx.currentAssignmentName)),
+              )
+            }
+            if (expr.loc) {
+              const source = `${ctx.options?.filename ?? ''}:${expr.loc.start.line}:${expr.loc.start.column}`
+              options.push(
+                t.objectProperty(t.identifier('devToolsSource'), t.stringLiteral(source)),
+              )
+            }
+            if (options.length > 0) {
+              args.push(t.objectExpression(options))
+            }
+          }
+          return t.callExpression(
+            lowerExpression(expr.callee, ctx) as BabelCore.types.Expression,
+            args,
+          )
+        }
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '$effect') {
         const args = lowerCallArguments(expr.arguments, arg =>

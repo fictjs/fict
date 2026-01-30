@@ -152,13 +152,15 @@ function handleContentConnection(port: chrome.runtime.Port, tabId: number): void
  * Handle messages from DevTools panel
  */
 function handleDevToolsMessage(message: unknown, tabId: number): void {
+  console.debug('[Fict DevTools Background] handleDevToolsMessage:', message, 'for tab:', tabId)
   const state = tabs.get(tabId)
   if (!state?.userApp) {
-    console.debug(`[Fict DevTools] No content script for tab ${tabId}`)
+    console.debug(`[Fict DevTools] No content script for tab ${tabId}, userApp:`, state?.userApp)
     return
   }
 
   // Forward message to content script
+  console.debug('[Fict DevTools Background] Forwarding to content script')
   state.userApp.postMessage(message)
 }
 
@@ -166,10 +168,12 @@ function handleDevToolsMessage(message: unknown, tabId: number): void {
  * Handle messages from content script
  */
 function handleContentMessage(message: Record<string, unknown>, tabId: number): void {
+  console.debug('[Fict DevTools Background] handleContentMessage:', message, 'for tab:', tabId)
   const state = tabs.get(tabId)
 
   // Handle Fict detection
   if (message.type === 'fict-detected') {
+    console.debug('[Fict DevTools Background] Fict detected, notifying panel')
     state!.fictDetected = true
     state!.fictVersion = message.version as string | undefined
     updateIcon(tabId, true)
@@ -415,12 +419,23 @@ chrome.tabs.onRemoved.addListener(tabId => {
  */
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status === 'loading') {
+    console.debug('[Fict DevTools Background] Tab loading, resetting state for tab:', tabId)
     // Reset Fict detection on page reload
     const state = tabs.get(tabId)
     if (state) {
       state.fictDetected = false
       state.fictVersion = undefined
       updateIcon(tabId, false)
+
+      // Notify DevTools panel that page is navigating
+      // This allows the panel to clear its state
+      if (state.devtools) {
+        console.debug('[Fict DevTools Background] Notifying panel of page navigation')
+        state.devtools.postMessage({
+          source: 'fict-devtools-background',
+          type: 'page-navigating',
+        })
+      }
     }
   }
 })

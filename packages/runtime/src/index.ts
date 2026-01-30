@@ -96,3 +96,5 @@ export type {
   ErrorInfo,
   SuspenseToken,
 } from './types'
+
+export type { FictDevtoolsHook } from './devtools'

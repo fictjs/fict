@@ -462,6 +462,7 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 - [ESLint Rules](./docs/eslint-rules.md) — Linting configuration
 - [Diagnostic Codes](./docs/diagnostic-codes.md) — Compiler warnings reference
 - [Cycle Protection](./docs/cycle-protection.md) — Development-mode infinite loop detection
+- [DevTools](./packages/devtools/README.md) — Vite plugin usage and auto-injection notes
 
 ### Linting & diagnostics
 

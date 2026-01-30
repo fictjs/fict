@@ -2,6 +2,7 @@
   "name": "@fictjs/devtools",
   "version": "0.0.3",
   "description": "Developer tools for Fict applications",
+  "readme": "README.md",
   "type": "module",
   "exports": {
     ".": {

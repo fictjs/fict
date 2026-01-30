@@ -25,7 +25,8 @@ import {
   type BindingHandle,
 } from './binding'
 import { Properties, ChildProperties, getPropAlias, SVGElements, SVGNamespace } from './constants'
-import { __fictPushContext, __fictPopContext } from './hooks'
+import { getDevtoolsHook } from './devtools'
+import { __fictPushContext, __fictPopContext, __fictGetCurrentComponentId } from './hooks'
 import { Fragment } from './jsx'
 import {
   createRootContext,
@@ -37,6 +38,8 @@ import {
   popRoot,
   registerRootCleanup,
   getCurrentRoot,
+  onMount,
+  onCleanup,
 } from './lifecycle'
 import { createPropsProxy, unwrapProps } from './props'
 import { untrack } from './scheduler'
@@ -50,6 +53,8 @@ const isDev =
   typeof __DEV__ !== 'undefined'
     ? __DEV__
     : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
+
+let nextComponentId = 1
 
 // ============================================================================
 // Main Render Function
@@ -209,9 +214,34 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
     const props = createPropsProxy(baseProps)
     // Create a fresh hook context for this component instance.
     // This preserves slot state across re-renders driven by __fictRender.
-    __fictPushContext()
+    const hook = isDev ? getDevtoolsHook() : undefined
+    const parentId = hook ? __fictGetCurrentComponentId() : undefined
+    const componentId = hook ? nextComponentId++ : undefined
+
+    // Register component
+    if (hook?.registerComponent && componentId !== undefined) {
+      hook.registerComponent(componentId, vnode.type.name || 'Anonymous', parentId)
+    }
+
+    const ctx = __fictPushContext()
+    if (componentId !== undefined) {
+      ctx.componentId = componentId
+      if (parentId !== undefined) {
+        ctx.parentId = parentId
+      }
+    }
+
     try {
       const rendered = vnode.type(props)
+
+      // Register lifecycle hooks
+      if (hook && componentId !== undefined) {
+        onMount(() => {
+          hook.componentMount?.(componentId)
+        })
+        onCleanup(() => hook.componentUnmount?.(componentId))
+      }
+
       return createElementWithContext(rendered as FictNode, namespace)
     } catch (err) {
       if (handleSuspend(err as any)) {

@@ -35,4 +35,36 @@ describe('optimizer output snapshots', () => {
     const output = transformOptimized(source)
     expect(output).toMatchSnapshot()
   })
+
+  it('createMemo with equals option', () => {
+    const source = `
+      import { createMemo, $state } from 'fict'
+      export function Demo() {
+        let count = $state({ value: 0 })
+        const memoized = createMemo(
+          () => ({ doubled: count.value * 2 }),
+          { equals: (prev, next) => prev.doubled === next.doubled }
+        )
+        return memoized().doubled
+      }
+    `
+    const output = transformOptimized(source)
+    expect(output).toMatchSnapshot()
+  })
+
+  it('createMemo with name and devToolsSource options', () => {
+    const source = `
+      import { createMemo, $state } from 'fict'
+      export function Demo() {
+        let count = $state(5)
+        const doubled = createMemo(
+          () => count * 2,
+          { name: 'doubledMemo', devToolsSource: 'Demo.tsx:5' }
+        )
+        return doubled()
+      }
+    `
+    const output = transformOptimized(source)
+    expect(output).toMatchSnapshot()
+  })
 })

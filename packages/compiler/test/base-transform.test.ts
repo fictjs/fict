@@ -14,7 +14,7 @@ describe('createFictPlugin (HIR)', () => {
       `)
 
       expect(output).toContain('__fictUseContext')
-      expect(output).toContain('__fictUseSignal(__fictCtx, 0)')
+      expect(output).toContain('__fictUseSignal(__fictCtx, 0')
       expect(output).not.toContain('$state')
     })
 
@@ -27,7 +27,7 @@ describe('createFictPlugin (HIR)', () => {
         }
       `)
 
-      expect(output).toContain('__fictUseSignal(__fictCtx, 0)')
+      expect(output).toContain('__fictUseSignal(__fictCtx, 0')
       expect(output).not.toContain('s(')
     })
 

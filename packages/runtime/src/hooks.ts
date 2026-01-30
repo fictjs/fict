@@ -1,6 +1,12 @@
 import { createEffect } from './effect'
 import { createMemo } from './memo'
-import { createSignal, type SignalAccessor, type ComputedAccessor } from './signal'
+import {
+  createSignal,
+  type SignalAccessor,
+  type ComputedAccessor,
+  type MemoOptions,
+  type SignalOptions,
+} from './signal'
 
 const isDev =
   typeof __DEV__ !== 'undefined'
@@ -11,6 +17,8 @@ interface HookContext {
   slots: unknown[]
   cursor: number
   rendering?: boolean
+  componentId?: number
+  parentId?: number
 }
 
 const ctxStack: HookContext[] = []
@@ -51,6 +59,10 @@ export function __fictPushContext(): HookContext {
   return ctx
 }
 
+export function __fictGetCurrentComponentId(): number | undefined {
+  return ctxStack[ctxStack.length - 1]?.componentId
+}
+
 export function __fictPopContext(): void {
   // fix: Reset rendering flag when popping to avoid state leakage
   const ctx = ctxStack.pop()
@@ -61,11 +73,18 @@ export function __fictResetContext(): void {
   ctxStack.length = 0
 }
 
-export function __fictUseSignal<T>(ctx: HookContext, initial: T, slot?: number): SignalAccessor<T> {
+export function __fictUseSignal<T>(
+  ctx: HookContext,
+  initial: T,
+  optionsOrSlot?: number | SignalOptions<T>,
+  slot?: number,
+): SignalAccessor<T> {
   assertRenderContext(ctx, '__fictUseSignal')
-  const index = slot ?? ctx.cursor++
+  const options = typeof optionsOrSlot === 'number' ? undefined : optionsOrSlot
+  const resolvedSlot = typeof optionsOrSlot === 'number' ? optionsOrSlot : slot
+  const index = resolvedSlot ?? ctx.cursor++
   if (!ctx.slots[index]) {
-    ctx.slots[index] = createSignal(initial)
+    ctx.slots[index] = createSignal(initial, options)
   }
   return ctx.slots[index] as SignalAccessor<T>
 }
@@ -73,12 +92,15 @@ export function __fictUseSignal<T>(ctx: HookContext, initial: T, slot?: number):
 export function __fictUseMemo<T>(
   ctx: HookContext,
   fn: () => T,
+  optionsOrSlot?: number | MemoOptions<T>,
   slot?: number,
 ): ComputedAccessor<T> {
   assertRenderContext(ctx, '__fictUseMemo')
-  const index = slot ?? ctx.cursor++
+  const options = typeof optionsOrSlot === 'number' ? undefined : optionsOrSlot
+  const resolvedSlot = typeof optionsOrSlot === 'number' ? optionsOrSlot : slot
+  const index = resolvedSlot ?? ctx.cursor++
   if (!ctx.slots[index]) {
-    ctx.slots[index] = createMemo(fn)
+    ctx.slots[index] = createMemo(fn, options)
   }
   return ctx.slots[index] as ComputedAccessor<T>
 }

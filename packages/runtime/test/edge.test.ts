@@ -36,6 +36,8 @@ import {
   pushRoot,
   popRoot,
   createRootContext,
+  flushOnMount,
+  onMount,
 } from '../src/lifecycle'
 
 const tick = () =>
@@ -682,5 +684,57 @@ describe('version overflow protection', () => {
     expect(effectCount).toBe(51)
 
     dispose()
+  })
+})
+
+describe('flushOnMount error recovery', () => {
+  it('restores currentRoot when onMount callback throws', () => {
+    const outerRoot = createRootContext()
+    const innerRoot = createRootContext()
+
+    // Set up outer root as current
+    const prevRoot = pushRoot(outerRoot)
+
+    // Register a throwing callback on inner root
+    pushRoot(innerRoot)
+    onMount(() => {
+      throw new Error('mount callback error')
+    })
+    // Also register a cleanup to verify it can be registered
+    onMount(() => {
+      onMount(() => {
+        // This should register against innerRoot, not get lost
+      })
+    })
+    popRoot(outerRoot) // Pop back to outer (innerRoot pushed, so prev is outerRoot)
+
+    // Verify currentRoot is outerRoot before flushOnMount
+    expect(getCurrentRoot()).toBe(outerRoot)
+
+    // flushOnMount should throw but still restore currentRoot
+    expect(() => flushOnMount(innerRoot)).toThrow('mount callback error')
+
+    // Critical: currentRoot should be restored to outerRoot, not stuck on innerRoot
+    expect(getCurrentRoot()).toBe(outerRoot)
+
+    popRoot(prevRoot)
+  })
+
+  it('clears onMountCallbacks even when callback throws', () => {
+    const root = createRootContext()
+    const prev = pushRoot(root)
+
+    onMount(() => {
+      throw new Error('mount error')
+    })
+
+    expect(root.onMountCallbacks?.length).toBe(1)
+
+    expect(() => flushOnMount(root)).toThrow('mount error')
+
+    // Callbacks should be cleared even after error
+    expect(root.onMountCallbacks?.length).toBe(0)
+
+    popRoot(prev)
   })
 })

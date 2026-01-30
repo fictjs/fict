@@ -26,7 +26,7 @@ describe('Fict Compiler - Basic Transforms', () => {
       `
       const output = transform(input)
       expect(output).toContain('__fictUseContext')
-      expect(output).toContain('__fictUseSignal(__fictCtx, 0)')
+      expect(output).toContain('__fictUseSignal(__fictCtx, 0')
       expect(output).not.toContain('$state')
     })
 
@@ -538,7 +538,7 @@ describe('Fict Compiler - Integration', () => {
     expect(output).toContain('__fictUseEffect')
 
     // Should transform state
-    expect(output).toContain('__fictUseSignal(__fictCtx, 0)')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 0')
 
     // Should transform effect
     expect(output).toContain('__fictUseEffect')

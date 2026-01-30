@@ -77,13 +77,21 @@ export function onCleanup(fn: Cleanup): void {
 export function flushOnMount(root: RootContext): void {
   const cbs = root.onMountCallbacks
   if (!cbs || cbs.length === 0) return
-  for (let i = 0; i < cbs.length; i++) {
-    const cleanup = cbs[i]!()
-    if (typeof cleanup === 'function') {
-      root.cleanups.push(cleanup)
+  // Temporarily restore root context so onCleanup calls inside
+  // mount callbacks register correctly
+  const prevRoot = currentRoot
+  currentRoot = root
+  try {
+    for (let i = 0; i < cbs.length; i++) {
+      const cleanup = cbs[i]!()
+      if (typeof cleanup === 'function') {
+        root.cleanups.push(cleanup)
+      }
     }
+  } finally {
+    currentRoot = prevRoot
+    cbs.length = 0
   }
-  cbs.length = 0
 }
 
 export function registerRootCleanup(fn: Cleanup): void {

@@ -263,17 +263,25 @@ export interface InspectorState {
 
 export interface FictDevtoolsHookEnhanced {
   // Signal lifecycle
-  registerSignal(id: number, value: unknown, name?: string, source?: SourceLocation): void
+  registerSignal(
+    id: number,
+    value: unknown,
+    options?: { name?: string; source?: string; ownerId?: number },
+  ): void
   updateSignal(id: number, value: unknown, previousValue?: unknown): void
   disposeSignal(id: number): void
 
   // Computed lifecycle
-  registerComputed(id: number, name?: string, source?: SourceLocation): void
+  registerComputed(
+    id: number,
+    value: unknown,
+    options?: { name?: string; source?: string; ownerId?: number },
+  ): void
   updateComputed(id: number, value: unknown, previousValue?: unknown): void
   disposeComputed(id: number): void
 
   // Effect lifecycle
-  registerEffect(id: number, name?: string, hasCleanup?: boolean, source?: SourceLocation): void
+  registerEffect(id: number, options?: { ownerId?: number; source?: string }): void
   effectRun(id: number, duration?: number): void
   effectCleanup(id: number): void
   disposeEffect(id: number): void
@@ -408,3 +416,72 @@ export interface SerializedValue {
   /** Constructor name for objects */
   constructorName?: string
 }
+
+// ============================================================================
+// Timeline Layers
+// ============================================================================
+
+export interface TimelineLayer {
+  id: string
+  label: string
+  color: string
+  enabled: boolean
+  /** 'builtin' or 'plugin' */
+  source: 'builtin' | 'plugin'
+}
+
+/** Built-in timeline layer IDs */
+export enum BuiltinTimelineLayer {
+  Signals = 'signals',
+  Computeds = 'computeds',
+  Effects = 'effects',
+  Components = 'components',
+  Batches = 'batches',
+  Errors = 'errors',
+}
+
+/** Default timeline layers configuration */
+export const DEFAULT_TIMELINE_LAYERS: TimelineLayer[] = [
+  {
+    id: BuiltinTimelineLayer.Signals,
+    label: 'Signals',
+    color: '#10b981',
+    enabled: true,
+    source: 'builtin',
+  },
+  {
+    id: BuiltinTimelineLayer.Computeds,
+    label: 'Computed',
+    color: '#3b82f6',
+    enabled: true,
+    source: 'builtin',
+  },
+  {
+    id: BuiltinTimelineLayer.Effects,
+    label: 'Effects',
+    color: '#f59e0b',
+    enabled: true,
+    source: 'builtin',
+  },
+  {
+    id: BuiltinTimelineLayer.Components,
+    label: 'Components',
+    color: '#8b5cf6',
+    enabled: true,
+    source: 'builtin',
+  },
+  {
+    id: BuiltinTimelineLayer.Batches,
+    label: 'Batches',
+    color: '#6b7280',
+    enabled: false,
+    source: 'builtin',
+  },
+  {
+    id: BuiltinTimelineLayer.Errors,
+    label: 'Errors',
+    color: '#ef4444',
+    enabled: true,
+    source: 'builtin',
+  },
+]

@@ -59,6 +59,211 @@ const panelPort: MessagePort | null = null
 let broadcastChannel: BroadcastChannel | null = null
 
 // ============================================================================
+// Console Exposure
+// ============================================================================
+
+const CONSOLE_HISTORY_SIZE = 10
+
+// Store history of selected nodes for console access
+const consoleHistory = {
+  signals: [] as unknown[],
+  effects: [] as unknown[],
+  components: [] as unknown[],
+}
+
+/**
+ * Expose a node to the browser console for interactive debugging.
+ * Creates $signal0-$signal9, $effect0-$effect9, $component0-$component9 variables.
+ */
+export function exposeToConsole(
+  type: 'signal' | 'computed' | 'effect' | 'component',
+  id: number,
+): void {
+  if (typeof window === 'undefined') return
+
+  const global = window as unknown as {
+    __FICT_DEVTOOLS_SIGNALS__?: Map<number, (value: unknown) => void>
+    [key: string]: unknown
+  }
+
+  let node: unknown
+  let history: unknown[]
+  let prefix: string
+
+  switch (type) {
+    case 'signal':
+    case 'computed': {
+      const signal = type === 'signal' ? signals.get(id) : computeds.get(id)
+      if (!signal) return
+
+      // Create an interactive object
+      const setter = global.__FICT_DEVTOOLS_SIGNALS__?.get(id)
+      const isComputed = type === 'computed'
+
+      node = {
+        id: signal.id,
+        name: signal.name,
+        type: isComputed ? 'computed' : 'signal',
+        get value() {
+          return signal.value
+        },
+        set value(v: unknown) {
+          if (!isComputed && setter) setter(v)
+          else console.warn('[Fict DevTools] Cannot set value on computed')
+        },
+        previousValue: signal.previousValue,
+        updateCount: signal.updateCount,
+        observers: signal.observers,
+        // Convenience methods
+        set: isComputed
+          ? undefined
+          : (v: unknown) => {
+              setter?.(v)
+            },
+        log: () =>
+          console.log(`${isComputed ? 'Computed' : 'Signal'} "${signal.name}":`, signal.value),
+        inspect: () => {
+          console.group(`${isComputed ? 'Computed' : 'Signal'} "${signal.name}" (#${signal.id})`)
+          console.log('Value:', signal.value)
+          console.log('Previous:', signal.previousValue)
+          console.log('Updates:', signal.updateCount)
+          console.log('Observers:', signal.observers)
+          if ('dependencies' in signal) {
+            console.log('Dependencies:', (signal as ComputedState).dependencies)
+          }
+          console.groupEnd()
+        },
+      }
+      history = consoleHistory.signals
+      prefix = '$signal'
+      break
+    }
+
+    case 'effect': {
+      const effect = effects.get(id)
+      if (!effect) return
+
+      node = {
+        id: effect.id,
+        name: effect.name,
+        runCount: effect.runCount,
+        lastRunAt: effect.lastRunAt,
+        lastRunDuration: effect.lastRunDuration,
+        dependencies: effect.dependencies,
+        isActive: effect.isActive,
+        hasCleanup: effect.hasCleanup,
+        // Convenience methods
+        getDeps: () =>
+          effect.dependencies.map(depId => {
+            const sig = signals.get(depId)
+            const comp = computeds.get(depId)
+            return sig || comp || { id: depId, name: 'unknown' }
+          }),
+        inspect: () => {
+          console.group(`Effect "${effect.name}" (#${effect.id})`)
+          console.log('Active:', effect.isActive)
+          console.log('Run count:', effect.runCount)
+          console.log(
+            'Last run:',
+            effect.lastRunAt ? new Date(effect.lastRunAt).toISOString() : 'never',
+          )
+          console.log(
+            'Duration:',
+            effect.lastRunDuration ? `${effect.lastRunDuration}ms` : 'unknown',
+          )
+          console.log('Dependencies:', effect.dependencies)
+          console.log('Has cleanup:', effect.hasCleanup)
+          console.groupEnd()
+        },
+      }
+      history = consoleHistory.effects
+      prefix = '$effect'
+      break
+    }
+
+    case 'component': {
+      const component = components.get(id)
+      if (!component) return
+
+      node = {
+        id: component.id,
+        name: component.name,
+        isMounted: component.isMounted,
+        renderCount: component.renderCount,
+        props: component.props,
+        signals: component.signals,
+        effects: component.effects,
+        children: component.children,
+        parentId: component.parentId,
+        get elements() {
+          return component.elements
+        },
+        // Convenience methods
+        highlight: () => {
+          if (component.elements?.[0]) {
+            component.elements[0].scrollIntoView({ behavior: 'smooth', block: 'center' })
+            // Temporary highlight
+            const el = component.elements[0]
+            const originalOutline = el.style.outline
+            const originalTransition = el.style.transition
+            el.style.transition = 'outline 0.3s'
+            el.style.outline = '3px solid #42b883'
+            setTimeout(() => {
+              el.style.outline = originalOutline
+              el.style.transition = originalTransition
+            }, 2000)
+          } else {
+            console.warn('[Fict DevTools] Component has no mounted elements')
+          }
+        },
+        getSignals: () => component.signals.map(sid => signals.get(sid)).filter(Boolean),
+        getEffects: () => component.effects.map(eid => effects.get(eid)).filter(Boolean),
+        getChildren: () => component.children.map(cid => components.get(cid)).filter(Boolean),
+        getParent: () => (component.parentId ? components.get(component.parentId) : null),
+        inspect: () => {
+          console.group(`Component "${component.name}" (#${component.id})`)
+          console.log('Mounted:', component.isMounted)
+          console.log('Render count:', component.renderCount)
+          console.log('Props:', component.props)
+          console.log('Signals:', component.signals.length)
+          console.log('Effects:', component.effects.length)
+          console.log('Children:', component.children.length)
+          console.log('Elements:', component.elements)
+          console.groupEnd()
+        },
+      }
+      history = consoleHistory.components
+      prefix = '$component'
+      break
+    }
+  }
+
+  // Update history (keep most recent at $xxx0)
+  history.unshift(node)
+  if (history.length > CONSOLE_HISTORY_SIZE) {
+    history.pop()
+  }
+
+  // Expose to window
+  history.forEach((item, index) => {
+    global[`${prefix}${index}`] = item
+  })
+
+  // Print hint
+  console.log(
+    `%c[Fict DevTools]%c ${prefix}0 =`,
+    'color: #42b883; font-weight: bold',
+    'color: inherit',
+    node,
+  )
+  console.log(
+    `%c  Tip:%c Try ${prefix}0.inspect() or ${prefix}0.log()`,
+    'color: #6b7280; font-style: italic',
+    'color: #6b7280',
+  )
+}
+
+// ============================================================================
 // Timeline Recording
 // ============================================================================
 
@@ -176,6 +381,15 @@ function handlePanelMessage(event: MessageEvent): void {
       timeline.length = 0
       nextTimelineId = 1
       break
+
+    case 'expose:console':
+      if (payload?.type && payload?.id !== undefined) {
+        exposeToConsole(
+          payload.type as 'signal' | 'computed' | 'effect' | 'component',
+          payload.id as number,
+        )
+      }
+      break
   }
 }
 
@@ -279,23 +493,42 @@ function buildDependencyGraph(nodeId: number): DependencyGraph | null {
 
 const hook: FictDevtoolsHookEnhanced = {
   // Signal lifecycle
-  registerSignal(id: number, value: unknown, name?: string, source?: SourceLocation): void {
+  registerSignal(
+    id: number,
+    value: unknown,
+    options?: { name?: string; source?: string; ownerId?: number },
+  ): void {
     const state: SignalState = {
       id,
       type: NodeType.Signal,
-      name,
+      name: options?.name,
       value,
       updateCount: 0,
       createdAt: Date.now(),
       observers: [],
-      source,
+      source: options?.source ? { file: options.source, line: 0, column: 0 } : undefined,
+      ownerId: options?.ownerId,
     }
     signals.set(id, state)
     observers.set(id, new Set())
 
-    recordEvent(TimelineEventType.SignalCreate, id, NodeType.Signal, name || `Signal #${id}`, {
-      value: formatValueShort(value),
-    })
+    // Link signal to owner component
+    if (options?.ownerId !== undefined) {
+      const ownerComponent = components.get(options.ownerId)
+      if (ownerComponent && !ownerComponent.signals.includes(id)) {
+        ownerComponent.signals.push(id)
+      }
+    }
+
+    recordEvent(
+      TimelineEventType.SignalCreate,
+      id,
+      NodeType.Signal,
+      options?.name || `Signal #${id}`,
+      {
+        value: formatValueShort(value),
+      },
+    )
 
     sendToPanel('signal:register', state)
   },
@@ -336,24 +569,42 @@ const hook: FictDevtoolsHookEnhanced = {
   },
 
   // Computed lifecycle
-  registerComputed(id: number, name?: string, source?: SourceLocation): void {
+  registerComputed(
+    id: number,
+    value: unknown,
+    options?: { name?: string; source?: string; ownerId?: number },
+  ): void {
     const state: ComputedState = {
       id,
       type: NodeType.Computed,
-      name,
-      value: undefined,
+      name: options?.name,
+      value,
       updateCount: 0,
       createdAt: Date.now(),
       dependencies: [],
       observers: [],
       isDirty: true,
-      source,
+      source: options?.source ? { file: options.source, line: 0, column: 0 } : undefined,
+      ownerId: options?.ownerId,
     }
     computeds.set(id, state)
     dependencies.set(id, new Set())
     observers.set(id, new Set())
 
-    recordEvent(TimelineEventType.ComputedCreate, id, NodeType.Computed, name || `Computed #${id}`)
+    // Link computed to owner component
+    if (options?.ownerId !== undefined) {
+      const ownerComponent = components.get(options.ownerId)
+      if (ownerComponent && !ownerComponent.computeds.includes(id)) {
+        ownerComponent.computeds.push(id)
+      }
+    }
+
+    recordEvent(
+      TimelineEventType.ComputedCreate,
+      id,
+      NodeType.Computed,
+      options?.name || `Computed #${id}`,
+    )
 
     sendToPanel('computed:register', state)
   },
@@ -395,22 +646,30 @@ const hook: FictDevtoolsHookEnhanced = {
   },
 
   // Effect lifecycle
-  registerEffect(id: number, name?: string, hasCleanup?: boolean, source?: SourceLocation): void {
+  registerEffect(id: number, options?: { ownerId?: number; source?: string }): void {
     const state: EffectState = {
       id,
       type: NodeType.Effect,
-      name,
       runCount: 0,
       createdAt: Date.now(),
       dependencies: [],
       isActive: true,
-      hasCleanup: hasCleanup ?? false,
-      source,
+      hasCleanup: false,
+      source: options?.source ? { file: options.source, line: 0, column: 0 } : undefined,
+      ownerId: options?.ownerId,
     }
     effects.set(id, state)
     dependencies.set(id, new Set())
 
-    recordEvent(TimelineEventType.EffectCreate, id, NodeType.Effect, name || `Effect #${id}`)
+    // Link effect to owner component
+    if (options?.ownerId !== undefined) {
+      const ownerComponent = components.get(options.ownerId)
+      if (ownerComponent && !ownerComponent.effects.includes(id)) {
+        ownerComponent.effects.push(id)
+      }
+    }
+
+    recordEvent(TimelineEventType.EffectCreate, id, NodeType.Effect, `Effect #${id}`)
 
     sendToPanel('effect:register', state)
   },
@@ -573,6 +832,7 @@ const hook: FictDevtoolsHookEnhanced = {
       subDeps = new Set()
       dependencies.set(subscriberId, subDeps)
     }
+    const isNewDep = !subDeps.has(dependencyId)
     subDeps.add(dependencyId)
 
     // Add to dependency's observers
@@ -583,25 +843,41 @@ const hook: FictDevtoolsHookEnhanced = {
     }
     depObs.add(subscriberId)
 
-    // Update state objects
+    // Update state objects and notify panel
     const signal = signals.get(dependencyId)
     if (signal && !signal.observers.includes(subscriberId)) {
       signal.observers.push(subscriberId)
+      // Notify panel of observer change
+      if (isNewDep) {
+        sendToPanel('signal:observers', { id: dependencyId, observers: signal.observers })
+      }
     }
 
     const computed = computeds.get(dependencyId)
     if (computed && !computed.observers.includes(subscriberId)) {
       computed.observers.push(subscriberId)
+      if (isNewDep) {
+        sendToPanel('computed:observers', { id: dependencyId, observers: computed.observers })
+      }
     }
 
     const subComputed = computeds.get(subscriberId)
     if (subComputed && !subComputed.dependencies.includes(dependencyId)) {
       subComputed.dependencies.push(dependencyId)
+      if (isNewDep) {
+        sendToPanel('computed:dependencies', {
+          id: subscriberId,
+          dependencies: subComputed.dependencies,
+        })
+      }
     }
 
     const effect = effects.get(subscriberId)
     if (effect && !effect.dependencies.includes(dependencyId)) {
       effect.dependencies.push(dependencyId)
+      if (isNewDep) {
+        sendToPanel('effect:dependencies', { id: subscriberId, dependencies: effect.dependencies })
+      }
     }
   },
 
@@ -766,6 +1042,13 @@ export function attachDebugger(): void {
       broadcastChannel.onmessage = event => {
         handlePanelMessage({ data: event.data } as MessageEvent)
       }
+
+      // Broadcast that hook is ready (for panels that connected before app loaded)
+      broadcastChannel.postMessage({
+        source: MessageSource.Hook,
+        type: 'hook-ready',
+        timestamp: Date.now(),
+      })
     }
   }
 
