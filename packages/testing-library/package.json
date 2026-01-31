@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/testing-library",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Testing utilities for Fict components, built on @testing-library/dom",
   "publishConfig": {
     "access": "public",
@@ -38,7 +38,7 @@
     "@testing-library/dom": "^10.4.1"
   },
   "peerDependencies": {
-    "@fictjs/runtime": "workspace:*"
+    "@fictjs/runtime": ">=0.3.0"
   },
   "devDependencies": {
     "@fictjs/compiler": "workspace:*",
