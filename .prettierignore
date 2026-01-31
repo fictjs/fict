@@ -4,3 +4,16 @@ coverage/
 *.d.ts
 pnpm-lock.yaml
 CHANGELOG.md
+
+# Snapshot files
+**/__snapshots__/**
+*.snap
+
+# Binary files
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.woff
+*.woff2

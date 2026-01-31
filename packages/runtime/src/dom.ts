@@ -140,6 +140,15 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
     return document.createTextNode('')
   }
 
+  // Reactive getter function - resolve to actual node
+  if (isReactive(node)) {
+    const resolved = (node as () => FictNode)()
+    if (resolved === node) {
+      return document.createTextNode('')
+    }
+    return createElementWithContext(resolved, namespace)
+  }
+
   if (typeof node === 'object' && node !== null && !(node instanceof Node)) {
     // Handle BindingHandle (list/conditional bindings, etc)
     if ('marker' in node) {

@@ -5,8 +5,10 @@
  * routing state without prop drilling. Uses Fict's context API.
  */
 
-import { createContext, useContext } from '@fictjs/runtime'
+import { batch, createContext, useContext } from '@fictjs/runtime'
+import { createSignal } from '@fictjs/runtime/advanced'
 
+import { wrapAccessor, wrapValue } from './accessor-utils'
 import type {
   RouterContextValue,
   RouteContextValue,
@@ -23,26 +25,88 @@ import { stripBasePath, prependBasePath } from './utils'
 // Router Context
 // ============================================================================
 
+export type MaybeAccessor<T> = T | (() => T)
+
+export function readAccessor<T>(value: MaybeAccessor<T>): T {
+  return typeof value === 'function' ? (value as () => T)() : value
+}
+
+const activeRouter = createSignal<RouterContextValue | null>(null)
+const activeRouterStack: RouterContextValue[] = []
+
+export function pushActiveRouter(router: RouterContextValue): void {
+  activeRouterStack.push(router)
+  batch(() => {
+    activeRouter(router)
+  })
+}
+
+export function popActiveRouter(router: RouterContextValue): void {
+  const index = activeRouterStack.lastIndexOf(router)
+  if (index >= 0) {
+    activeRouterStack.splice(index, 1)
+  }
+  batch(() => {
+    activeRouter(activeRouterStack[activeRouterStack.length - 1] ?? null)
+  })
+}
+
 /**
  * Default router context value (used when no router is present)
  */
-const defaultRouterContext: RouterContextValue = {
-  location: () => ({
-    pathname: '/',
-    search: '',
-    hash: '',
-    state: null,
-    key: 'default',
-  }),
-  params: () => ({}),
-  matches: () => [],
-  navigate: () => {
+const defaultLocation: Location = {
+  pathname: '/',
+  search: '',
+  hash: '',
+  state: null,
+  key: 'default',
+}
+
+const defaultNavigate = wrapAccessor(((toOrDelta: To | number) => {
+  const router = activeRouter()
+  if (!router) {
     console.warn('[fict-router] No router found. Wrap your app in a <Router>')
+    return
+  }
+  const navigate = readAccessor(router.navigate as MaybeAccessor<NavigateFunction>)
+  if (typeof toOrDelta === 'number') {
+    return navigate(toOrDelta)
+  }
+  return navigate(toOrDelta)
+}) as NavigateFunction)
+
+const defaultResolvePath = wrapAccessor((to: To) => {
+  const router = activeRouter()
+  if (router) {
+    return readAccessor(router.resolvePath as MaybeAccessor<(to: To) => string>)(to)
+  }
+  return typeof to === 'string' ? to : to.pathname || '/'
+})
+
+const defaultRouterContext: RouterContextValue = {
+  location: () => {
+    const router = activeRouter()
+    return router ? readAccessor(router.location) : defaultLocation
   },
-  isRouting: () => false,
-  pendingLocation: () => null,
-  base: '',
-  resolvePath: (to: To) => (typeof to === 'string' ? to : to.pathname || '/'),
+  params: () => {
+    const router = activeRouter()
+    return router ? readAccessor(router.params) : {}
+  },
+  matches: () => {
+    const router = activeRouter()
+    return router ? readAccessor(router.matches) : []
+  },
+  navigate: defaultNavigate,
+  isRouting: () => {
+    const router = activeRouter()
+    return router ? readAccessor(router.isRouting) : false
+  },
+  pendingLocation: () => {
+    const router = activeRouter()
+    return router ? readAccessor(router.pendingLocation) : null
+  },
+  base: wrapValue(''),
+  resolvePath: defaultResolvePath,
 }
 
 /**
@@ -53,6 +117,11 @@ RouterContext.displayName = 'RouterContext'
 
 /**
  * Use the router context
+ */
+/**
+ * Use the router context
+ *
+ * @fictReturn { location: 'signal', params: 'signal', matches: 'signal', isRouting: 'signal', pendingLocation: 'signal' }
  */
 export function useRouter(): RouterContextValue {
   return useContext(RouterContext)
@@ -69,7 +138,7 @@ const defaultRouteContext: RouteContextValue = {
   match: () => undefined,
   data: () => undefined,
   outlet: () => null,
-  resolvePath: (to: To) => (typeof to === 'string' ? to : to.pathname || '/'),
+  resolvePath: wrapAccessor((to: To) => (typeof to === 'string' ? to : to.pathname || '/')),
 }
 
 /**
@@ -80,6 +149,8 @@ RouteContext.displayName = 'RouteContext'
 
 /**
  * Use the route context
+ *
+ * @fictReturn { match: 'signal', data: 'signal', outlet: 'signal', error: 'signal' }
  */
 export function useRoute(): RouteContextValue {
   return useContext(RouteContext)
@@ -97,9 +168,45 @@ export interface BeforeLeaveContextValue {
   confirm: (to: Location, from: Location) => Promise<boolean>
 }
 
+const activeBeforeLeave = createSignal<BeforeLeaveContextValue | null>(null)
+const activeBeforeLeaveStack: BeforeLeaveContextValue[] = []
+
+export function pushActiveBeforeLeave(context: BeforeLeaveContextValue): void {
+  activeBeforeLeaveStack.push(context)
+  batch(() => {
+    activeBeforeLeave(context)
+  })
+}
+
+export function popActiveBeforeLeave(context: BeforeLeaveContextValue): void {
+  const index = activeBeforeLeaveStack.lastIndexOf(context)
+  if (index >= 0) {
+    activeBeforeLeaveStack.splice(index, 1)
+  }
+  batch(() => {
+    activeBeforeLeave(activeBeforeLeaveStack[activeBeforeLeaveStack.length - 1] ?? null)
+  })
+}
+
 const defaultBeforeLeaveContext: BeforeLeaveContextValue = {
-  addHandler: () => () => {},
-  confirm: async () => true,
+  addHandler: wrapAccessor((handler: BeforeLeaveHandler) => {
+    const context = activeBeforeLeave()
+    if (context) {
+      return readAccessor(
+        context.addHandler as MaybeAccessor<(handler: BeforeLeaveHandler) => () => void>,
+      )(handler)
+    }
+    return () => {}
+  }),
+  confirm: wrapAccessor((to: Location, from: Location) => {
+    const context = activeBeforeLeave()
+    if (context) {
+      return readAccessor(
+        context.confirm as MaybeAccessor<(to: Location, from: Location) => Promise<boolean>>,
+      )(to, from)
+    }
+    return Promise.resolve(true)
+  }),
 }
 
 export const BeforeLeaveContext = createContext<BeforeLeaveContextValue>(defaultBeforeLeaveContext)
@@ -107,6 +214,8 @@ BeforeLeaveContext.displayName = 'BeforeLeaveContext'
 
 /**
  * Use the beforeLeave context
+ *
+ * @fictReturn {}
  */
 export function useBeforeLeaveContext(): BeforeLeaveContextValue {
   return useContext(BeforeLeaveContext)
@@ -142,7 +251,7 @@ RouteErrorContext.displayName = 'RouteErrorContext'
  */
 export function useNavigate(): NavigateFunction {
   const router = useRouter()
-  return router.navigate
+  return readAccessor(router.navigate as MaybeAccessor<NavigateFunction>)
 }
 
 /**
@@ -150,7 +259,7 @@ export function useNavigate(): NavigateFunction {
  */
 export function useLocation(): () => Location {
   const router = useRouter()
-  return router.location
+  return () => readAccessor(router.location)
 }
 
 /**
@@ -158,11 +267,13 @@ export function useLocation(): () => Location {
  */
 export function useParams<P extends string = string>(): () => Params<P> {
   const router = useRouter()
-  return router.params as () => Params<P>
+  return () => readAccessor(router.params)
 }
 
 /**
  * Get the current search parameters
+ *
+ * @fictReturn [0: 'signal']
  */
 export function useSearchParams(): [
   () => URLSearchParams,
@@ -171,7 +282,7 @@ export function useSearchParams(): [
   const router = useRouter()
 
   const getSearchParams = () => {
-    const location = router.location()
+    const location = readAccessor(router.location)
     return new URLSearchParams(location.search)
   }
 
@@ -182,8 +293,9 @@ export function useSearchParams(): [
     const searchParams = params instanceof URLSearchParams ? params : new URLSearchParams(params)
     const search = searchParams.toString()
 
-    const location = router.location()
-    router.navigate(
+    const location = readAccessor(router.location)
+    const navigate = readAccessor(router.navigate as MaybeAccessor<NavigateFunction>)
+    navigate(
       {
         pathname: location.pathname,
         search: search ? '?' + search : '',
@@ -193,7 +305,7 @@ export function useSearchParams(): [
     )
   }
 
-  return [getSearchParams, setSearchParams]
+  return [getSearchParams, wrapAccessor(setSearchParams)]
 }
 
 /**
@@ -201,7 +313,7 @@ export function useSearchParams(): [
  */
 export function useMatches(): () => RouteMatch[] {
   const router = useRouter()
-  return router.matches
+  return () => readAccessor(router.matches)
 }
 
 /**
@@ -209,7 +321,7 @@ export function useMatches(): () => RouteMatch[] {
  */
 export function useIsRouting(): () => boolean {
   const router = useRouter()
-  return router.isRouting
+  return () => readAccessor(router.isRouting)
 }
 
 /**
@@ -217,7 +329,7 @@ export function useIsRouting(): () => boolean {
  */
 export function usePendingLocation(): () => Location | null {
   const router = useRouter()
-  return router.pendingLocation
+  return () => readAccessor(router.pendingLocation)
 }
 
 /**
@@ -225,7 +337,7 @@ export function usePendingLocation(): () => Location | null {
  */
 export function useRouteData<T = unknown>(): () => T | undefined {
   const route = useRoute()
-  return route.data as () => T | undefined
+  return () => readAccessor(route.data as MaybeAccessor<T | undefined>)
 }
 
 /**
@@ -256,7 +368,9 @@ export function useRouteError(): unknown {
 
   // Fall back to route context for preload errors
   const route = useRoute()
-  return (route as any).error?.()
+  const routeError = (route as any).error as MaybeAccessor<unknown> | undefined
+  if (routeError === undefined) return undefined
+  return readAccessor(routeError)
 }
 
 /**
@@ -267,7 +381,8 @@ export function useResolvedPath(to: To | (() => To)): () => string {
 
   return () => {
     const target = typeof to === 'function' ? to() : to
-    return route.resolvePath(target)
+    const resolvePath = readAccessor(route.resolvePath as MaybeAccessor<(to: To) => string>)
+    return resolvePath(target)
   }
 }
 
@@ -279,7 +394,7 @@ export function useMatch(path: string | (() => string)): () => RouteMatch | null
 
   return () => {
     const targetPath = typeof path === 'function' ? path() : path
-    const matches = router.matches()
+    const matches = readAccessor(router.matches)
 
     // Check if any match's pattern matches the target path
     for (const match of matches) {
@@ -304,6 +419,7 @@ export function useHref(to: To | (() => To)): () => string {
 
   return () => {
     const target = typeof to === 'function' ? to() : to
+    const base = readAccessor(router.base)
 
     // Extract pathname, search, and hash from target
     // For strings, we must extract WITHOUT normalizing to preserve relative paths
@@ -339,8 +455,8 @@ export function useHref(to: To | (() => To)): () => string {
     let resolved: string
     if (pathname === '') {
       // Use current path for search/hash-only hrefs
-      const currentPathname = router.location().pathname
-      const normalizedBase = router.base === '/' || router.base === '' ? '' : router.base
+      const currentPathname = readAccessor(router.location).pathname
+      const normalizedBase = base === '/' || base === '' ? '' : base
 
       // Check if current location is within the router's base
       if (normalizedBase && !currentPathname.startsWith(normalizedBase)) {
@@ -349,12 +465,13 @@ export function useHref(to: To | (() => To)): () => string {
         return currentPathname + search + hash
       }
 
-      resolved = stripBasePath(currentPathname, router.base)
+      resolved = stripBasePath(currentPathname, base)
     } else {
-      resolved = router.resolvePath(pathname)
+      const resolvePath = readAccessor(router.resolvePath as MaybeAccessor<(to: To) => string>)
+      resolved = resolvePath(pathname)
     }
     // Prepend base to get the full href, then append search/hash
-    const baseHref = prependBasePath(resolved, router.base)
+    const baseHref = prependBasePath(resolved, base)
     return baseHref + search + hash
   }
 }
@@ -372,14 +489,16 @@ export function useIsActive(
     const target = typeof to === 'function' ? to() : to
 
     // Resolve the target path relative to current location (handles relative paths)
-    const resolvedTargetPath = router.resolvePath(target)
+    const resolvePath = readAccessor(router.resolvePath as MaybeAccessor<(to: To) => string>)
+    const resolvedTargetPath = resolvePath(target)
 
     // Strip base from current location pathname for comparison
-    const currentPath = router.location().pathname
-    if (router.base && currentPath !== router.base && !currentPath.startsWith(router.base + '/')) {
+    const currentPath = readAccessor(router.location).pathname
+    const base = readAccessor(router.base)
+    if (base && currentPath !== base && !currentPath.startsWith(base + '/')) {
       return false
     }
-    const currentPathWithoutBase = stripBasePath(currentPath, router.base)
+    const currentPathWithoutBase = stripBasePath(currentPath, base)
 
     if (options?.end) {
       return currentPathWithoutBase === resolvedTargetPath

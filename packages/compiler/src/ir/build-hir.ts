@@ -283,6 +283,11 @@ export function parseFictReturnAnnotation(
         return { directAccessor: 'memo' }
       }
 
+      // Empty object format: {}
+      if (/^\{\s*\}$/.test(content)) {
+        return { objectProps: new Map() }
+      }
+
       // Object format: { key: 'signal', key2: 'memo' }
       const objectMatch = content.match(/^\{([^}]+)\}$/)
       if (objectMatch) {

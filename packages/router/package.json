@@ -48,6 +48,7 @@
     "@fictjs/runtime": "workspace:*"
   },
   "devDependencies": {
+    "@fictjs/testing-library": "workspace:*",
     "@fictjs/vite-plugin": "workspace:*",
     "fict": "workspace:*",
     "jsdom": "^27.4.0",

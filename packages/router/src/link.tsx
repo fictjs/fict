@@ -6,13 +6,34 @@
  */
 
 import { createMemo, type FictNode, type JSX, type StyleProp } from '@fictjs/runtime'
+import { spread } from '@fictjs/runtime/internal'
 
-import { useRouter, useIsActive, useHref, usePendingLocation } from './context'
+import {
+  useRouter,
+  useIsActive,
+  useHref,
+  usePendingLocation,
+  readAccessor,
+  type MaybeAccessor,
+} from './context'
 import type { To, NavigateOptions } from './types'
 import { parseURL, stripBasePath } from './utils'
 
 // CSS Properties type for styles
 type CSSProperties = StyleProp
+
+const createSpreadRef = <T extends Element>(props: Record<string, unknown>) => {
+  let current: T | null = null
+  return (el: T | null) => {
+    if (!el) {
+      current = null
+      return
+    }
+    if (el === current) return
+    current = el
+    spread(el, props, false, true)
+  }
+}
 
 // ============================================================================
 // Link Component
@@ -53,6 +74,8 @@ export interface LinkProps extends Omit<JSX.IntrinsicElements['a'], 'href'> {
 export function Link(props: LinkProps): FictNode {
   const router = useRouter()
   const href = useHref(() => props.to)
+  const getHrefValue = () =>
+    readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
   let preloadTriggered = false
 
   const handleClick = (event: MouseEvent) => {
@@ -100,7 +123,7 @@ export function Link(props: LinkProps): FictNode {
     preloadTriggered = true
 
     // Emit a preload event that can be handled by route preloaders
-    const hrefValue = href()
+    const hrefValue = getHrefValue()
     if (typeof window !== 'undefined' && window.dispatchEvent) {
       window.dispatchEvent(
         new CustomEvent('fict-router:preload', {
@@ -139,13 +162,17 @@ export function Link(props: LinkProps): FictNode {
     prefetch,
     disabled,
     onClick: _onClick,
+    onMouseEnter: _onMouseEnter,
+    onFocus: _onFocus,
     children,
     ...anchorProps
   } = props
+  const anchorRef = createSpreadRef<HTMLAnchorElement>(anchorProps as Record<string, unknown>)
+  const spanRef = createSpreadRef<HTMLSpanElement>(anchorProps as Record<string, unknown>)
 
   if (disabled) {
     // Render as span when disabled
-    return <span {...(anchorProps as any)}>{children}</span>
+    return <span ref={spanRef}>{children}</span>
   }
 
   // Trigger preload immediately if prefetch='render'
@@ -155,8 +182,8 @@ export function Link(props: LinkProps): FictNode {
 
   return (
     <a
-      {...anchorProps}
-      href={href()}
+      ref={anchorRef}
+      href={getHrefValue()}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
       onFocus={handleFocus}
@@ -227,6 +254,8 @@ export function NavLink(props: NavLinkProps): FictNode {
   const router = useRouter()
   const isActive = useIsActive(() => props.to, { end: props.end })
   const href = useHref(() => props.to)
+  const getHrefValue = () =>
+    readAccessor(readAccessor(href as MaybeAccessor<MaybeAccessor<string>>))
   const pendingLocation = usePendingLocation()
 
   // Compute isPending by comparing pending location with this link's target
@@ -235,8 +264,9 @@ export function NavLink(props: NavLinkProps): FictNode {
     if (!pending) return false
 
     // Get the resolved path for this link
-    const resolvedHref = href()
-    const baseToStrip = router.base === '/' ? '' : router.base
+    const resolvedHref = getHrefValue()
+    const base = readAccessor(router.base)
+    const baseToStrip = base === '/' ? '' : base
 
     // Strip base from pending location to compare
     const pendingPathWithoutBase = stripBasePath(pending.pathname, baseToStrip)
@@ -260,7 +290,7 @@ export function NavLink(props: NavLinkProps): FictNode {
   const getRenderProps = (): NavLinkRenderProps => ({
     isActive: isActive(),
     isPending: computeIsPending(),
-    isTransitioning: router.isRouting(),
+    isTransitioning: readAccessor(router.isRouting),
   })
 
   // Compute className
@@ -393,10 +423,18 @@ export function NavLink(props: NavLinkProps): FictNode {
     'aria-current': _ariaCurrent,
     ...anchorProps
   } = props
+  const anchorRef = createSpreadRef<HTMLAnchorElement>(anchorProps as Record<string, unknown>)
+  const spanRef = createSpreadRef<HTMLSpanElement>(anchorProps as Record<string, unknown>)
 
   if (disabled) {
+    const disabledClassName = computedClassName()
+    const disabledStyle = computedStyle()
     return (
-      <span {...(anchorProps as any)} className={computedClassName()} style={computedStyle()}>
+      <span
+        ref={spanRef}
+        {...(disabledClassName !== undefined ? { class: disabledClassName } : {})}
+        {...(disabledStyle !== undefined ? { style: disabledStyle } : {})}
+      >
         {computedChildren()}
       </span>
     )
@@ -408,9 +446,9 @@ export function NavLink(props: NavLinkProps): FictNode {
 
   return (
     <a
-      {...anchorProps}
-      href={href()}
-      {...(finalClassName !== undefined ? { className: finalClassName } : {})}
+      ref={anchorRef}
+      href={getHrefValue()}
+      {...(finalClassName !== undefined ? { class: finalClassName } : {})}
       {...(finalStyle !== undefined ? { style: finalStyle } : {})}
       {...(finalAriaCurrent !== undefined ? { 'aria-current': finalAriaCurrent } : {})}
       onClick={handleClick}
@@ -478,7 +516,7 @@ export function Form(props: FormProps): FictNode {
     const formData = new FormData(form)
     const method = props.method?.toUpperCase() || 'GET'
 
-    const actionUrl = props.action || router.location().pathname
+    const actionUrl = props.action || readAccessor(router.location).pathname
 
     if (method === 'GET') {
       // For GET, navigate with search params
@@ -582,6 +620,7 @@ export function Form(props: FormProps): FictNode {
     onSubmit: _onSubmit,
     ...formProps
   } = props
+  const formRef = createSpreadRef<HTMLFormElement>(formProps as Record<string, unknown>)
 
   // Only use standard form methods (get, post) for the HTML attribute
   // Other methods (put, patch, delete) are handled via fetch in handleSubmit
@@ -590,7 +629,7 @@ export function Form(props: FormProps): FictNode {
 
   return (
     <form
-      {...formProps}
+      ref={formRef}
       {...(action !== undefined ? { action } : {})}
       {...(htmlMethod !== undefined ? { method: htmlMethod } : {})}
       onSubmit={handleSubmit}

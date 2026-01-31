@@ -358,6 +358,9 @@ importers:
         specifier: workspace:*
         version: link:../runtime
     devDependencies:
+      '@fictjs/testing-library':
+        specifier: workspace:*
+        version: link:../testing-library
       '@fictjs/vite-plugin':
         specifier: workspace:*
         version: link:../vite-plugin

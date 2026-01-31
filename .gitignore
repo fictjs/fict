@@ -152,3 +152,5 @@ benchmark-results.txt
 test-results
 playwright-report
 e2e-dist
+
+*.fict.meta.json
