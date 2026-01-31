@@ -1,5 +1,16 @@
 # @fictjs/testing-library
 
+## 0.3.0
+
+### Minor Changes
+
+- update
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.3.0
+
 ## 0.2.3
 
 ### Patch Changes
