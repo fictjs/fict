@@ -11,7 +11,6 @@
     "url": "https://github.com/fictjs/fict.git",
     "directory": "packages/testing-library"
   },
-  "license": "MIT",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -59,5 +58,7 @@
     "unit-test",
     "ui",
     "dom"
-  ]
+  ],
+  "author": "unadlib",
+  "license": "MIT"
 }

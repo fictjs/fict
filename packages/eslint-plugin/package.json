@@ -41,5 +41,14 @@
     "@types/eslint": "^9.0.0",
     "@types/estree": "^1.0.8",
     "tsup": "^8.5.1"
-  }
+  },
+  "keywords": [
+    "fict",
+    "eslint",
+    "eslint-plugin",
+    "linting",
+    "reactive"
+  ],
+  "author": "unadlib",
+  "license": "MIT"
 }

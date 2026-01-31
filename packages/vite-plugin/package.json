@@ -48,5 +48,14 @@
     "@types/babel__core": "^7.20.5",
     "tsup": "^8.5.1",
     "vite": "^7.3.1"
-  }
+  },
+  "keywords": [
+    "fict",
+    "vite",
+    "vite-plugin",
+    "jsx",
+    "reactive"
+  ],
+  "author": "unadlib",
+  "license": "MIT"
 }

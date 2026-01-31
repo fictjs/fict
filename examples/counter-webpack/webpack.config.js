@@ -19,7 +19,14 @@ module.exports = {
         use: {
           loader: 'babel-loader',
           options: {
-            presets: ['@fictjs/babel-preset'],
+            presets: [
+              [
+                '@fictjs/babel-preset',
+                {
+                  emitModuleMetadata: false,
+                },
+              ],
+            ],
           },
         },
       },

@@ -12,8 +12,6 @@
     "ui",
     "reactive"
   ],
-  "author": "Michael Lin",
-  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/fictjs/fict.git",
@@ -76,5 +74,7 @@
     "@fictjs/vite-plugin": "workspace:*",
     "tsup": "^8.5.1",
     "vite": "^7.3.1"
-  }
+  },
+  "author": "unadlib",
+  "license": "MIT"
 }

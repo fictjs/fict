@@ -12,8 +12,6 @@
     "signals",
     "ui"
   ],
-  "author": "Michael Lin",
-  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/fictjs/fict.git",
@@ -70,5 +68,7 @@
   "devDependencies": {
     "jsdom": "^27.4.0",
     "tsup": "^8.5.1"
-  }
+  },
+  "author": "unadlib",
+  "license": "MIT"
 }

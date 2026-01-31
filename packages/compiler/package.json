@@ -6,6 +6,8 @@
     "access": "public",
     "provenance": true
   },
+  "author": "unadlib",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/fictjs/fict.git",

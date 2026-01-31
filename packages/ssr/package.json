@@ -34,7 +34,19 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
+  "dependencies": {
+    "@fictjs/runtime": "workspace:*"
+  },
   "devDependencies": {
     "tsup": "^8.5.1"
-  }
+  },
+  "keywords": [
+    "fict",
+    "ssr",
+    "server-side-rendering",
+    "isomorphic",
+    "reactive"
+  ],
+  "author": "unadlib",
+  "license": "MIT"
 }

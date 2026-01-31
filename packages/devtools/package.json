@@ -1,8 +1,16 @@
 {
   "name": "@fictjs/devtools",
-  "version": "0.0.3",
+  "version": "0.3.0",
   "description": "Developer tools for Fict applications",
-  "readme": "README.md",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fictjs/fict.git",
+    "directory": "packages/devtools"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -59,11 +67,6 @@
     "reactive",
     "signals"
   ],
-  "author": "",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/nickmccurdy/fict.git",
-    "directory": "packages/devtools"
-  }
+  "author": "unadlib",
+  "license": "MIT"
 }
