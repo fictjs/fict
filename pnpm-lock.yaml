@@ -381,6 +381,10 @@ importers:
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(typescript@5.9.3)(yaml@2.8.2)
 
   packages/ssr:
+    dependencies:
+      '@fictjs/runtime':
+        specifier: workspace:*
+        version: link:../runtime
     devDependencies:
       tsup:
         specifier: ^8.5.1
