@@ -442,15 +442,14 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 - [x] Vite plugin
 - [x] ESLint plugin
 - [x] Support sourcemap
-- [ ] DevTools
+- [x] DevTools
+- [x] Router
+- [x] Testing library
 - [ ] SSR / streaming
 
 ### Planned
 
-- [ ] TypeScript language service plugin
 - [ ] Migration guides from React/Vue/Svelte/Solid
-- [ ] Router
-- [ ] Testing library
 
 ---
 
