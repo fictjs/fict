@@ -18,5 +18,5 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["fict-docs-site", "@fictjs/devtools", "fict-example-*"]
+  "ignore": ["fict-docs-site", "@fictjs/devtools", "fict-example-*", "fict-example-counter-basic"]
 }
