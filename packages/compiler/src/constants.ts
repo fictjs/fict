@@ -99,6 +99,7 @@ export const RUNTIME_HELPERS = {
   exitHydration: '__fictExitHydration',
   domRender: 'render',
   hydrateComponent: 'hydrateComponent',
+  registerResume: '__fictRegisterResume',
 } as const
 
 export const RUNTIME_ALIASES = {
@@ -149,6 +150,7 @@ export const RUNTIME_ALIASES = {
   exitHydration: '__fictExitHydration',
   domRender: 'render',
   hydrateComponent: 'hydrateComponent',
+  registerResume: '__fictRegisterResume',
 } as const
 
 // Attributes that should NOT be wrapped in reactive functions

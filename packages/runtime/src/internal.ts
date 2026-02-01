@@ -56,6 +56,10 @@ export {
   __fictUseLexicalScope,
   __fictGetScopeProps,
   __fictQrl,
+  __fictRegisterResume,
+  __fictGetResume,
+  serializeValue,
+  deserializeValue,
 } from './resume'
 
 // ============================================================================

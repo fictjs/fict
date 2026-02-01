@@ -100,6 +100,20 @@ export interface FictCompilerOptions {
   fineGrainedDom?: boolean
   /** Enable resumable output (QRL handlers + resume metadata). */
   resumable?: boolean
+  /**
+   * Automatically extract event handlers for lazy loading even without `$` suffix.
+   * When enabled, the compiler analyzes handlers and extracts complex ones automatically.
+   * Handlers with explicit `$` suffix are always extracted regardless of this setting.
+   * @default true when resumable is enabled
+   */
+  autoExtractHandlers?: boolean
+  /**
+   * Minimum AST node count for a handler to be auto-extracted.
+   * Handlers with fewer nodes are considered too simple and will be inlined.
+   * Only applies when autoExtractHandlers is enabled.
+   * @default 3
+   */
+  autoExtractThreshold?: number
   /** Enable HIR optimization passes (DCE/const-fold/CSE) */
   optimize?: boolean
   /**

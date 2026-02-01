@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fict SSR Example</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 2rem;
+        background: #f5f5f5;
+      }
+      h1 {
+        color: #333;
+        margin-bottom: 1.5rem;
+      }
+      .counter {
+        background: white;
+        padding: 1.5rem;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin-bottom: 1rem;
+      }
+      .counter h2 {
+        margin: 0 0 1rem 0;
+        font-size: 1.2rem;
+        color: #666;
+      }
+      .counter-value {
+        font-size: 2rem;
+        font-weight: bold;
+        color: #333;
+        margin-bottom: 1rem;
+      }
+      .counter-buttons {
+        display: flex;
+        gap: 0.5rem;
+      }
+      button {
+        padding: 0.5rem 1rem;
+        font-size: 1rem;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      button:hover {
+        opacity: 0.9;
+      }
+      .btn-primary {
+        background: #4f46e5;
+        color: white;
+      }
+      .btn-secondary {
+        background: #e5e7eb;
+        color: #374151;
+      }
+      .info {
+        background: #dbeafe;
+        padding: 1rem;
+        border-radius: 8px;
+        color: #1e40af;
+        font-size: 0.9rem;
+      }
+      .info code {
+        background: rgba(0,0,0,0.1);
+        padding: 0.1rem 0.3rem;
+        border-radius: 3px;
+      }
+    </style>
+  </head>
+  <body>
+    <!--app-html-->
+    <script type="module" src="/src/entry-client.tsx"></script>
+  </body>
+</html>

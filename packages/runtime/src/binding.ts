@@ -21,6 +21,7 @@ import {
   SVGNamespace,
 } from './constants'
 import { createRenderEffect } from './effect'
+import { withHydrationRange, isHydratingActive } from './hydration'
 import { Fragment } from './jsx'
 import {
   createRootContext,
@@ -35,10 +36,9 @@ import {
   type RootContext,
 } from './lifecycle'
 import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
+import { __fictIsHydrating } from './resume'
 import { batch } from './scheduler'
 import { computed, untrack, isSignal, isComputed, isEffect, isEffectScope } from './signal'
-import { __fictIsHydrating } from './resume'
-import { withHydrationRange, isHydratingActive } from './hydration'
 import type { Cleanup, FictNode } from './types'
 
 const isDev =

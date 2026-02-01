@@ -7,6 +7,7 @@
 
 import { createElement } from './dom'
 import { createRenderEffect } from './effect'
+import { isHydratingActive, withHydrationRange } from './hydration'
 import {
   createRootContext,
   destroyRoot,
@@ -16,12 +17,11 @@ import {
   pushRoot,
   type RootContext,
 } from './lifecycle'
-import { __fictIsHydrating, __fictIsSSR } from './resume'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import reconcileArrays from './reconcile'
+import { __fictIsHydrating, __fictIsSSR } from './resume'
 import { batch } from './scheduler'
 import { createSignal, effectScope, flush, setActiveSub, type Signal } from './signal'
-import { isHydratingActive, withHydrationRange } from './hydration'
 import type { FictNode } from './types'
 
 // Re-export shared DOM helpers for compiler-generated code

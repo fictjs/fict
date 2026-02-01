@@ -27,13 +27,7 @@ import {
 import { Properties, ChildProperties, getPropAlias, SVGElements, SVGNamespace } from './constants'
 import { getDevtoolsHook } from './devtools'
 import { __fictPushContext, __fictPopContext, __fictGetCurrentComponentId } from './hooks'
-import {
-  __fictIsHydrating,
-  __fictIsResumable,
-  __fictRegisterScope,
-  __fictEnterHydration,
-  __fictExitHydration,
-} from './resume'
+import { claimNodes, isHydratingActive, withHydration } from './hydration'
 import { Fragment } from './jsx'
 import {
   createRootContext,
@@ -49,9 +43,15 @@ import {
   onCleanup,
 } from './lifecycle'
 import { createPropsProxy, unwrapProps } from './props'
+import {
+  __fictIsHydrating,
+  __fictIsResumable,
+  __fictRegisterScope,
+  __fictEnterHydration,
+  __fictExitHydration,
+} from './resume'
 import { untrack } from './scheduler'
 import type { DOMElement, FictNode, FictVNode, RefObject } from './types'
-import { claimNodes, isHydratingActive, withHydration } from './hydration'
 
 type NamespaceContext = 'svg' | 'mathml' | null
 

@@ -1,0 +1,26 @@
+{
+  "name": "fict-example-ssr-basic",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "vite build --outDir dist/client",
+    "build:server": "vite build --outDir dist/server --ssr src/entry-server.tsx",
+    "preview": "NODE_ENV=production node server.js"
+  },
+  "dependencies": {
+    "fict": "workspace:*",
+    "@fictjs/runtime": "workspace:*",
+    "@fictjs/ssr": "workspace:*",
+    "@fictjs/vite-plugin": "workspace:*",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.15.21",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  }
+}

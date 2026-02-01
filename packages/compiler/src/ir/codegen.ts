@@ -643,6 +643,10 @@ export interface CodegenContext {
   resumableComponents?: Map<string, { resumeExport: string; typeKey: string }>
   /** Whether resumable output is enabled */
   resumableEnabled?: boolean
+  /** Whether auto-extraction of handlers is enabled */
+  autoExtractEnabled?: boolean
+  /** Minimum AST node count for auto-extraction */
+  autoExtractThreshold?: number
   /** Set of delegated events used (for hoisting delegateEvents call) */
   delegatedEventsUsed?: Set<string>
   /** Parameter name for the list key constant (e.g., "__key") when in list render */
@@ -704,6 +708,8 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     resumableComponentCounter: 0,
     resumableComponents: new Map(),
     resumableEnabled: false,
+    autoExtractEnabled: false,
+    autoExtractThreshold: 3,
     delegatedEventsUsed: new Set(),
   }
 }
@@ -1824,6 +1830,27 @@ function computeReactiveAccessors(
  */
 function genTemp(ctx: CodegenContext, prefix = 'tmp'): BabelCore.types.Identifier {
   return ctx.t.identifier(`__${prefix}_${ctx.tempCounter++}`)
+}
+
+/**
+ * Generate the module URL expression for QRL generation.
+ * Uses filename from options as a constant if available, otherwise falls back to import.meta.url.
+ * Using a constant ensures the source file path is preserved in bundled SSR code.
+ */
+function genModuleUrlExpr(ctx: CodegenContext): BabelCore.types.Expression {
+  const { t } = ctx
+  const filename = ctx.options?.filename
+  if (filename) {
+    // Use the filename as a constant file:// URL
+    // This ensures the path is preserved even in bundled SSR builds
+    const fileUrl = filename.startsWith('file://') ? filename : `file://${filename}`
+    return t.stringLiteral(fileUrl)
+  }
+  // Fallback: use import.meta.url at runtime (for unbundled dev scenarios)
+  return t.memberExpression(
+    t.metaProperty(t.identifier('import'), t.identifier('meta')),
+    t.identifier('url'),
+  )
 }
 
 /**
@@ -4817,6 +4844,395 @@ function resolveNamespaceContext(
 }
 
 /**
+ * Count AST nodes in an expression for complexity estimation.
+ * Used by shouldAutoExtract to determine if a handler is complex enough to extract.
+ */
+function countExpressionNodes(expr: Expression | undefined): number {
+  if (!expr) return 0
+
+  let count = 1 // Count the current node
+
+  switch (expr.kind) {
+    case 'Literal':
+      return 1
+
+    case 'Identifier':
+      return 1
+
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      count += countExpressionNodes(expr.left)
+      count += countExpressionNodes(expr.right)
+      return count
+
+    case 'UnaryExpression':
+      count += countExpressionNodes(expr.argument)
+      return count
+
+    case 'ConditionalExpression':
+      count += countExpressionNodes(expr.test)
+      count += countExpressionNodes(expr.consequent)
+      count += countExpressionNodes(expr.alternate)
+      return count
+
+    case 'CallExpression':
+      count += countExpressionNodes(expr.callee)
+      for (const arg of expr.arguments) {
+        count += countExpressionNodes(arg)
+      }
+      return count
+
+    case 'MemberExpression':
+      count += countExpressionNodes(expr.object)
+      if (expr.computed && expr.property) {
+        count += countExpressionNodes(expr.property)
+      }
+      return count
+
+    case 'ArrayExpression':
+      for (const elem of expr.elements) {
+        if (elem) count += countExpressionNodes(elem)
+      }
+      return count
+
+    case 'ObjectExpression':
+      for (const prop of expr.properties) {
+        if (prop.kind === 'Property') {
+          count += countExpressionNodes(prop.value)
+        } else if (prop.kind === 'SpreadElement') {
+          count += countExpressionNodes(prop.argument)
+        }
+      }
+      return count
+
+    case 'ArrowFunction':
+      // For arrow functions, count the body
+      if (expr.isExpression && expr.body && !Array.isArray(expr.body)) {
+        // Expression body
+        count += countExpressionNodes(expr.body as Expression)
+      } else if (Array.isArray(expr.body)) {
+        // Block body (BasicBlock[])
+        for (const block of expr.body) {
+          count += countBlockNodes(block)
+        }
+      }
+      return count
+
+    case 'FunctionExpression':
+      // For function expressions, count the body blocks
+      if (expr.body) {
+        for (const block of expr.body) {
+          count += countBlockNodes(block)
+        }
+      }
+      return count
+
+    case 'AssignmentExpression':
+      count += countExpressionNodes(expr.left)
+      count += countExpressionNodes(expr.right)
+      return count
+
+    case 'UpdateExpression':
+      count += countExpressionNodes(expr.argument)
+      return count
+
+    case 'SequenceExpression':
+      for (const e of expr.expressions) {
+        count += countExpressionNodes(e)
+      }
+      return count
+
+    case 'AwaitExpression':
+      count += countExpressionNodes(expr.argument)
+      return count + 2 // Async adds complexity
+
+    case 'NewExpression':
+      count += countExpressionNodes(expr.callee)
+      for (const arg of expr.arguments) {
+        count += countExpressionNodes(arg)
+      }
+      return count
+
+    case 'TemplateLiteral':
+      for (const e of expr.expressions) {
+        count += countExpressionNodes(e)
+      }
+      return count
+
+    default:
+      return count
+  }
+}
+
+/**
+ * Count nodes in a basic block for complexity estimation.
+ */
+function countBlockNodes(block: BasicBlock): number {
+  let count = 1 // Count the block itself
+  for (const instr of block.instructions) {
+    count += countInstructionNodes(instr)
+  }
+  return count
+}
+
+/**
+ * Count nodes in an instruction for complexity estimation.
+ */
+function countInstructionNodes(instr: Instruction): number {
+  switch (instr.kind) {
+    case 'Expression':
+      return 1 + countExpressionNodes(instr.value)
+
+    case 'Assign':
+      return 1 + countExpressionNodes(instr.value)
+
+    case 'Phi':
+      return 1
+
+    default:
+      return 1
+  }
+}
+
+/**
+ * Check if an expression contains external function calls.
+ * External calls indicate the handler has side effects beyond simple state updates.
+ */
+function hasExternalCalls(expr: Expression | undefined): boolean {
+  if (!expr) return false
+
+  switch (expr.kind) {
+    case 'CallExpression': {
+      // Check if callee is a simple identifier (potential external function)
+      if (expr.callee.kind === 'Identifier') {
+        const name = expr.callee.name
+        // Built-in array methods and simple operations are not "external"
+        // But named function calls suggest external dependencies
+        if (!['console', 'Math', 'JSON', 'Object', 'Array'].includes(name)) {
+          return true
+        }
+      }
+      // Check if callee is a member expression (method call)
+      if (expr.callee.kind === 'MemberExpression') {
+        // foo.bar() - could be external
+        return true
+      }
+      // Also check arguments for external calls
+      for (const arg of expr.arguments) {
+        if (hasExternalCalls(arg)) return true
+      }
+      return false
+    }
+
+    case 'ArrowFunction':
+      // Check the function body for external calls
+      if (expr.isExpression && expr.body && !Array.isArray(expr.body)) {
+        return hasExternalCalls(expr.body as Expression)
+      } else if (Array.isArray(expr.body)) {
+        for (const block of expr.body) {
+          if (blockHasExternalCalls(block)) return true
+        }
+      }
+      return false
+
+    case 'FunctionExpression':
+      // Check the function body for external calls
+      if (expr.body) {
+        for (const block of expr.body) {
+          if (blockHasExternalCalls(block)) return true
+        }
+      }
+      return false
+
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      return hasExternalCalls(expr.left) || hasExternalCalls(expr.right)
+
+    case 'UnaryExpression':
+      return hasExternalCalls(expr.argument)
+
+    case 'ConditionalExpression':
+      return (
+        hasExternalCalls(expr.test) ||
+        hasExternalCalls(expr.consequent) ||
+        hasExternalCalls(expr.alternate)
+      )
+
+    case 'MemberExpression':
+      return hasExternalCalls(expr.object)
+
+    case 'AssignmentExpression':
+      return hasExternalCalls(expr.right)
+
+    case 'SequenceExpression':
+      return expr.expressions.some(e => hasExternalCalls(e))
+
+    case 'AwaitExpression':
+      return true // Await implies async external operation
+
+    case 'NewExpression':
+      return true // Constructor calls are external
+
+    default:
+      return false
+  }
+}
+
+/**
+ * Check if a basic block contains external function calls.
+ */
+function blockHasExternalCalls(block: BasicBlock): boolean {
+  for (const instr of block.instructions) {
+    if (instructionHasExternalCalls(instr)) return true
+  }
+  return false
+}
+
+/**
+ * Check if an instruction contains external function calls.
+ */
+function instructionHasExternalCalls(instr: Instruction): boolean {
+  switch (instr.kind) {
+    case 'Expression':
+      return hasExternalCalls(instr.value)
+
+    case 'Assign':
+      return hasExternalCalls(instr.value)
+
+    default:
+      return false
+  }
+}
+
+/**
+ * Check if an expression contains async/await.
+ */
+function hasAsyncAwait(expr: Expression | undefined): boolean {
+  if (!expr) return false
+
+  switch (expr.kind) {
+    case 'AwaitExpression':
+      return true
+
+    case 'ArrowFunction':
+      if (expr.isAsync) return true
+      if (expr.isExpression && expr.body && !Array.isArray(expr.body)) {
+        return hasAsyncAwait(expr.body as Expression)
+      } else if (Array.isArray(expr.body)) {
+        for (const block of expr.body) {
+          if (blockHasAsyncAwait(block)) return true
+        }
+      }
+      return false
+
+    case 'FunctionExpression':
+      if (expr.isAsync) return true
+      if (expr.body) {
+        for (const block of expr.body) {
+          if (blockHasAsyncAwait(block)) return true
+        }
+      }
+      return false
+
+    case 'CallExpression':
+      if (hasAsyncAwait(expr.callee)) return true
+      return expr.arguments.some(arg => hasAsyncAwait(arg))
+
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      return hasAsyncAwait(expr.left) || hasAsyncAwait(expr.right)
+
+    case 'ConditionalExpression':
+      return (
+        hasAsyncAwait(expr.test) || hasAsyncAwait(expr.consequent) || hasAsyncAwait(expr.alternate)
+      )
+
+    case 'SequenceExpression':
+      return expr.expressions.some(e => hasAsyncAwait(e))
+
+    default:
+      return false
+  }
+}
+
+/**
+ * Check if a basic block contains async/await.
+ */
+function blockHasAsyncAwait(block: BasicBlock): boolean {
+  for (const instr of block.instructions) {
+    if (instructionHasAsyncAwait(instr)) return true
+  }
+  return false
+}
+
+/**
+ * Check if an instruction contains async/await.
+ */
+function instructionHasAsyncAwait(instr: Instruction): boolean {
+  switch (instr.kind) {
+    case 'Expression':
+      return hasAsyncAwait(instr.value)
+
+    case 'Assign':
+      return hasAsyncAwait(instr.value)
+
+    default:
+      return false
+  }
+}
+
+/**
+ * Determine if an event handler expression should be automatically extracted
+ * for lazy loading based on heuristic rules.
+ *
+ * Handlers are extracted if they meet ANY of these criteria:
+ * 1. Node count exceeds the threshold (complex handler)
+ * 2. Contains external function calls (side effects)
+ * 3. Contains async/await (async operations)
+ * 4. References an external function identifier (not inline)
+ */
+function shouldAutoExtract(expr: Expression | undefined, ctx: CodegenContext): boolean {
+  if (!expr) return false
+  if (!ctx.autoExtractEnabled) return false
+
+  const threshold = ctx.autoExtractThreshold ?? 3
+
+  // If the handler is a reference to an external function, always extract
+  if (expr.kind === 'Identifier') {
+    return true
+  }
+
+  // For inline functions, analyze complexity
+  if (expr.kind === 'ArrowFunction' || expr.kind === 'FunctionExpression') {
+    // Check for async functions
+    if (
+      (expr.kind === 'ArrowFunction' && expr.isAsync) ||
+      (expr.kind === 'FunctionExpression' && expr.isAsync) ||
+      hasAsyncAwait(expr)
+    ) {
+      return true
+    }
+
+    // Check for external calls
+    if (hasExternalCalls(expr)) {
+      return true
+    }
+
+    // Check node count
+    const nodeCount = countExpressionNodes(expr)
+    if (nodeCount >= threshold) {
+      return true
+    }
+
+    return false
+  }
+
+  // For other expressions (shouldn't be common for event handlers)
+  const nodeCount = countExpressionNodes(expr)
+  return nodeCount >= threshold
+}
+
+/**
  * Extract static HTML from HIR JSXElementExpression.
  * Similar to extractStaticHtml from fine-grained-dom.ts but works with HIR types.
  * Now tracks namespace context for SVG/MathML elements.
@@ -4902,13 +5318,22 @@ function extractHIRStaticHtml(
         }
       }
 
+      // Determine if handler should be resumable (lazy-loaded)
+      // - Explicit $ suffix always enables resumable when resumable mode is on
+      // - Without $, auto-extract heuristics determine if handler is complex enough
+      const shouldBeResumable =
+        (isResumableEvent && ctx.resumableEnabled) ||
+        (!isResumableEvent &&
+          ctx.resumableEnabled &&
+          shouldAutoExtract(attr.value ?? undefined, ctx))
+
       bindings.push({
         type: 'event',
         path: [...parentPath],
         name: eventName.toLowerCase(),
         expr: attr.value ?? undefined,
         eventOptions: { capture, passive, once },
-        resumable: isResumableEvent && ctx.resumableEnabled,
+        resumable: shouldBeResumable,
       })
       continue
     }
@@ -5870,10 +6295,7 @@ function emitResumableEventBinding(
 
   ctx.helpersUsed.add('qrl')
   const qrlExpr = t.callExpression(t.identifier(RUNTIME_ALIASES.qrl), [
-    t.memberExpression(
-      t.metaProperty(t.identifier('import'), t.identifier('meta')),
-      t.identifier('url'),
-    ),
+    genModuleUrlExpr(ctx),
     t.stringLiteral(handlerId.name),
   ])
 
@@ -5954,10 +6376,11 @@ function registerResumableComponent(componentName: string, ctx: CodegenContext):
     t.callExpression(t.identifier(RUNTIME_ALIASES.popContext), []),
   )
 
+  const resumeFnId = t.identifier(resumeExport)
   const resumeFn = t.exportNamedDeclaration(
     t.variableDeclaration('const', [
       t.variableDeclarator(
-        t.identifier(resumeExport),
+        resumeFnId,
         t.arrowFunctionExpression(
           [scopeParam, hostParam],
           t.blockStatement([
@@ -5976,14 +6399,21 @@ function registerResumableComponent(componentName: string, ctx: CodegenContext):
     [],
   )
 
-  const metaId = t.identifier(`__fict_meta_${componentName}`)
-  const importMetaUrl = t.memberExpression(
-    t.metaProperty(t.identifier('import'), t.identifier('meta')),
-    t.identifier('url'),
+  // Register resume function to prevent tree-shaking
+  // This creates a side effect that keeps the export alive
+  ctx.helpersUsed.add('registerResume')
+  const registerCall = t.expressionStatement(
+    t.callExpression(t.identifier(RUNTIME_ALIASES.registerResume), [
+      t.stringLiteral(resumeExport),
+      resumeFnId,
+    ]),
   )
-  const typeKeyExpr = t.binaryExpression('+', t.stringLiteral(`${componentName}@`), importMetaUrl)
+
+  const metaId = t.identifier(`__fict_meta_${componentName}`)
+  const moduleUrlExpr = genModuleUrlExpr(ctx)
+  const typeKeyExpr = t.binaryExpression('+', t.stringLiteral(`${componentName}@`), moduleUrlExpr)
   const resumeQrlExpr = t.callExpression(t.identifier(RUNTIME_ALIASES.qrl), [
-    importMetaUrl,
+    genModuleUrlExpr(ctx),
     t.stringLiteral(resumeExport),
   ])
   const metaDecl = t.variableDeclaration('const', [
@@ -6003,7 +6433,7 @@ function registerResumableComponent(componentName: string, ctx: CodegenContext):
     ),
   )
 
-  ctx.hoistedResumableStatements.push(resumeFn, metaDecl, assignMeta)
+  ctx.hoistedResumableStatements.push(resumeFn, registerCall, metaDecl, assignMeta)
   ctx.resumableComponents.set(componentName, { resumeExport, typeKey: componentName })
 }
 
@@ -7018,6 +7448,8 @@ export function codegenWithScopes(
 ): BabelCore.types.File {
   const ctx = createCodegenContext(t)
   ctx.resumableEnabled = ctx.options?.resumable === true
+  ctx.autoExtractEnabled = ctx.options?.autoExtractHandlers ?? ctx.resumableEnabled
+  ctx.autoExtractThreshold = ctx.options?.autoExtractThreshold ?? 3
   ctx.programFunctions = new Map(
     program.functions.filter(fn => !!fn.name).map(fn => [fn.name as string, fn]),
   )
@@ -7194,6 +7626,9 @@ export function lowerHIRWithRegions(
   )
   ctx.options = options
   ctx.resumableEnabled = options?.resumable === true
+  // Auto-extract defaults to true when resumable is enabled, unless explicitly disabled
+  ctx.autoExtractEnabled = options?.autoExtractHandlers ?? options?.resumable === true
+  ctx.autoExtractThreshold = options?.autoExtractThreshold ?? 3
   const body: BabelCore.types.Statement[] = []
   const topLevelAliases = new Set<string>()
   let topLevelCtxInjected = false

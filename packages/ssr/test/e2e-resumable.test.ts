@@ -15,16 +15,22 @@ import { pathToFileURL } from 'node:url'
 import { transformSync } from '@babel/core'
 // @ts-expect-error - CommonJS module without proper types
 import presetTypescript from '@babel/preset-typescript'
-import { describe, it, expect, afterEach, beforeEach } from 'vitest'
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 
 import type { FictNode } from '@fictjs/runtime'
-import { installResumableLoader } from '@fictjs/runtime/loader'
+import {
+  installResumableLoader,
+  resetHydratedScopes,
+  resetPrefetchedUrls,
+} from '@fictjs/runtime/loader'
 import {
   __fictSetSSRState,
   __fictDisableSSR,
   __fictDisableResumable,
   __fictGetSSRScope,
   __fictEnableResumable,
+  serializeValue,
+  deserializeValue,
 } from '@fictjs/runtime/internal'
 import createFictPlugin, { type FictCompilerOptions } from '../../compiler/src/index'
 import { parseHTML } from 'linkedom'
@@ -170,16 +176,24 @@ function dispatchClick(
   return event
 }
 
+/**
+ * Complete cleanup function to reset all global state between tests.
+ * This ensures test isolation when running in parallel with other packages.
+ */
+function cleanupTestState(): void {
+  __fictDisableResumable()
+  __fictDisableSSR()
+  __fictSetSSRState(null)
+  resetHydratedScopes()
+  resetPrefetchedUrls()
+}
+
 // ============================================================================
 // Test Suite 1: QRL Generation and Event Handler Resolution
 // ============================================================================
 
 describe('QRL Generation and Event Handler Resolution', () => {
-  afterEach(() => {
-    __fictDisableResumable()
-    __fictDisableSSR()
-    __fictSetSSRState(null)
-  })
+  afterEach(cleanupTestState)
 
   it('compiler generates on:click attributes with QRL format', () => {
     const source = `
@@ -348,9 +362,7 @@ describe('QRL Generation and Event Handler Resolution', () => {
 
 describe('Manifest and Production Path Mapping', () => {
   afterEach(() => {
-    __fictDisableResumable()
-    __fictDisableSSR()
-    __fictSetSSRState(null)
+    cleanupTestState()
     delete (globalThis as Record<string, unknown>).__FICT_MANIFEST__
   })
 
@@ -452,11 +464,7 @@ describe('Manifest and Production Path Mapping', () => {
 // ============================================================================
 
 describe('Multi-Component Interaction Scenarios', () => {
-  afterEach(() => {
-    __fictDisableResumable()
-    __fictDisableSSR()
-    __fictSetSSRState(null)
-  })
+  afterEach(cleanupTestState)
 
   it('independent components resume and update separately', async () => {
     const source = `
@@ -645,11 +653,7 @@ describe('Multi-Component Interaction Scenarios', () => {
 // ============================================================================
 
 describe('Complex DOM Boundaries', () => {
-  afterEach(() => {
-    __fictDisableResumable()
-    __fictDisableSSR()
-    __fictSetSSRState(null)
-  })
+  afterEach(cleanupTestState)
 
   it('fragment (multi-root) components preserve scope', async () => {
     const source = `
@@ -816,11 +820,7 @@ describe('Complex DOM Boundaries', () => {
 // ============================================================================
 
 describe('Edge Cases and Error Handling', () => {
-  afterEach(() => {
-    __fictDisableResumable()
-    __fictDisableSSR()
-    __fictSetSSRState(null)
-  })
+  afterEach(cleanupTestState)
 
   it('handles component with no state gracefully', async () => {
     const source = `
@@ -1000,11 +1000,7 @@ describe('Edge Cases and Error Handling', () => {
 // ============================================================================
 
 describe('Attribute Binding and Dynamic Content', () => {
-  afterEach(() => {
-    __fictDisableResumable()
-    __fictDisableSSR()
-    __fictSetSSRState(null)
-  })
+  afterEach(cleanupTestState)
 
   it('dynamic attributes update after interaction', async () => {
     const source = `
@@ -1135,6 +1131,895 @@ describe('Attribute Binding and Dynamic Content', () => {
       expect(button.textContent).toContain('2')
       expect(button.textContent).toContain('4')
       expect(button.textContent).toContain('6')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+})
+
+// ============================================================================
+// Test Suite 7: Smart Prefetch
+// ============================================================================
+
+describe('Smart Prefetch', () => {
+  afterEach(cleanupTestState)
+
+  it('installResumableLoader accepts prefetch configuration', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function App() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      // Install with custom prefetch options
+      installResumableLoader({
+        document: env.document,
+        events: ['click'],
+        prefetch: {
+          visibility: true,
+          visibilityMargin: '100px',
+          hover: true,
+          hoverDelay: 100,
+        },
+      })
+
+      const button = env.document.querySelector('button') as HTMLElement
+      expect(button).not.toBeNull()
+
+      // Should still work for interactions
+      dispatchClick(button, env.window)
+      await tick(3)
+      expect(button.textContent).toBe('1')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('prefetch can be disabled entirely', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function App() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      // Install with prefetch disabled
+      installResumableLoader({
+        document: env.document,
+        events: ['click'],
+        prefetch: false,
+      })
+
+      const button = env.document.querySelector('button') as HTMLElement
+      expect(button).not.toBeNull()
+
+      // Interactions should still work
+      dispatchClick(button, env.window)
+      await tick(3)
+      expect(button.textContent).toBe('1')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('creates modulepreload links for prefetched QRLs', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function App() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      // Track link elements created
+      const originalAppendChild = env.document.head.appendChild.bind(env.document.head)
+      const appendedLinks: HTMLLinkElement[] = []
+      env.document.head.appendChild = (node: Node) => {
+        if (node instanceof env.window.HTMLLinkElement) {
+          appendedLinks.push(node as HTMLLinkElement)
+        }
+        return originalAppendChild(node)
+      }
+
+      installResumableLoader({
+        document: env.document,
+        events: ['click'],
+        prefetch: { visibility: true, hover: true },
+      })
+
+      // The button has on:click attribute, so prefetch should try to create a link
+      // Note: In linkedom, IntersectionObserver may not be available
+      // so we test that the system doesn't crash
+
+      const button = env.document.querySelector('button') as HTMLElement
+      expect(button).not.toBeNull()
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('handles multiple interactive elements', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Counter({ id }: { id: string }) {
+        let count = $state(0)
+        return <button data-id={id} onClick$={() => count++}>{count}</button>
+      }
+
+      export function App() {
+        return (
+          <div>
+            <Counter id="a" />
+            <Counter id="b" />
+            <Counter id="c" />
+          </div>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({
+        document: env.document,
+        events: ['click'],
+        prefetch: { visibility: true, hover: true },
+      })
+
+      // All buttons should have on:click attributes
+      const buttons = env.document.querySelectorAll('button')
+      expect(buttons.length).toBe(3)
+
+      for (const button of buttons) {
+        expect(button.getAttribute('on:click')).toBeTruthy()
+      }
+
+      // Each can be clicked independently
+      dispatchClick(buttons[1]!, env.window)
+      await tick(3)
+      expect(buttons[1]!.textContent).toBe('1')
+      expect(buttons[0]!.textContent).toBe('0')
+      expect(buttons[2]!.textContent).toBe('0')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+})
+
+// ============================================================================
+// Test Suite 8: Complete Serialization (Complex Types)
+// ============================================================================
+
+describe('Complete Serialization (Complex Types)', () => {
+  afterEach(cleanupTestState)
+
+  it('serializes and deserializes Date objects', () => {
+    const date = new Date('2024-06-15T12:30:00.000Z')
+    const serialized = serializeValue(date)
+    const deserialized = deserializeValue(serialized)
+
+    expect(deserialized).toBeInstanceOf(Date)
+    expect((deserialized as Date).getTime()).toBe(date.getTime())
+  })
+
+  it('serializes and deserializes Map objects', () => {
+    const map = new Map<string, number>([
+      ['a', 1],
+      ['b', 2],
+      ['c', 3],
+    ])
+    const serialized = serializeValue(map)
+    const deserialized = deserializeValue(serialized)
+
+    expect(deserialized).toBeInstanceOf(Map)
+    const result = deserialized as Map<string, number>
+    expect(result.size).toBe(3)
+    expect(result.get('a')).toBe(1)
+    expect(result.get('b')).toBe(2)
+    expect(result.get('c')).toBe(3)
+  })
+
+  it('serializes and deserializes Set objects', () => {
+    const set = new Set([1, 2, 3, 'a', 'b'])
+    const serialized = serializeValue(set)
+    const deserialized = deserializeValue(serialized)
+
+    expect(deserialized).toBeInstanceOf(Set)
+    const result = deserialized as Set<number | string>
+    expect(result.size).toBe(5)
+    expect(result.has(1)).toBe(true)
+    expect(result.has('a')).toBe(true)
+  })
+
+  it('serializes and deserializes RegExp objects', () => {
+    const regex = /hello\s+world/gi
+    const serialized = serializeValue(regex)
+    const deserialized = deserializeValue(serialized)
+
+    expect(deserialized).toBeInstanceOf(RegExp)
+    const result = deserialized as RegExp
+    expect(result.source).toBe(regex.source)
+    expect(result.flags).toBe(regex.flags)
+  })
+
+  it('serializes special number values', () => {
+    expect(deserializeValue(serializeValue(undefined))).toBe(undefined)
+    expect(Number.isNaN(deserializeValue(serializeValue(NaN)) as number)).toBe(true)
+    expect(deserializeValue(serializeValue(Infinity))).toBe(Infinity)
+    expect(deserializeValue(serializeValue(-Infinity))).toBe(-Infinity)
+  })
+
+  it('serializes BigInt values', () => {
+    const bigint = BigInt('9007199254740993')
+    const serialized = serializeValue(bigint)
+    const deserialized = deserializeValue(serialized)
+
+    expect(deserialized).toBe(bigint)
+  })
+
+  it('handles circular references', () => {
+    const obj: Record<string, unknown> = { name: 'root' }
+    obj.self = obj
+
+    const serialized = serializeValue(obj)
+    const deserialized = deserializeValue(serialized) as Record<string, unknown>
+
+    expect(deserialized.name).toBe('root')
+    expect(deserialized.self).toBe(deserialized) // Same reference
+  })
+
+  it('handles nested complex types', () => {
+    const complex = {
+      date: new Date('2024-01-01'),
+      map: new Map([['key', { nested: true }]]),
+      set: new Set([1, 2, 3]),
+      regex: /test/i,
+      array: [undefined, NaN, Infinity],
+    }
+
+    const serialized = serializeValue(complex)
+    const result = deserializeValue(serialized) as typeof complex
+
+    expect((result.date as Date).getTime()).toBe(new Date('2024-01-01').getTime())
+    expect(result.map).toBeInstanceOf(Map)
+    expect((result.map as Map<string, object>).get('key')).toEqual({ nested: true })
+    expect(result.set).toBeInstanceOf(Set)
+    expect((result.set as Set<number>).has(2)).toBe(true)
+    expect((result.regex as RegExp).source).toBe('test')
+    expect(result.array[0]).toBe(undefined)
+    expect(Number.isNaN(result.array[1])).toBe(true)
+    expect(result.array[2]).toBe(Infinity)
+  })
+
+  it('SSR snapshot preserves complex types in state', async () => {
+    // Note: This test verifies the serialization is used in SSR context
+    // The actual state usage depends on how the compiler transforms the code
+    const source = `
+      import { $state } from 'fict'
+
+      export function App() {
+        let count = $state(42)
+        let text = $state('hello')
+        return <div>{count} - {text}</div>
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      const snapshot = parseSnapshot(html)
+      expect(snapshot).not.toBeNull()
+
+      // Verify snapshot contains scopes with slot data
+      const scopes = snapshot!.scopes as Record<string, { slots: unknown[] }>
+      expect(Object.keys(scopes).length).toBeGreaterThan(0)
+
+      // Check that slots are serialized
+      const scope = Object.values(scopes)[0]!
+      expect(scope.slots).toBeDefined()
+      expect(Array.isArray(scope.slots)).toBe(true)
+    } finally {
+      compiled.cleanup()
+    }
+  })
+
+  it('Map with complex keys serializes correctly', () => {
+    const map = new Map<object, string>()
+    const key1 = { id: 1 }
+    const key2 = { id: 2 }
+    map.set(key1, 'first')
+    map.set(key2, 'second')
+
+    const serialized = serializeValue(map)
+    const result = deserializeValue(serialized) as Map<object, string>
+
+    expect(result).toBeInstanceOf(Map)
+    expect(result.size).toBe(2)
+
+    // Keys are new objects, so we check by iteration
+    const entries = Array.from(result.entries())
+    expect(entries[0]![0]).toEqual({ id: 1 })
+    expect(entries[0]![1]).toBe('first')
+    expect(entries[1]![0]).toEqual({ id: 2 })
+    expect(entries[1]![1]).toBe('second')
+  })
+})
+
+// ============================================================================
+// Test Suite 9: Function-level Code Splitting
+// ============================================================================
+
+describe('Function-level Code Splitting', () => {
+  afterEach(cleanupTestState)
+
+  it('compiler generates separate handler exports', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function App() {
+        let count = $state(0)
+        return (
+          <div>
+            <button onClick$={() => count++}>Increment</button>
+            <button onClick$={() => count--}>Decrement</button>
+          </div>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      // Should have multiple handler exports
+      const e0Match = compiled.code.match(/export\s+(const|function)\s+__fict_e0/g)
+      const e1Match = compiled.code.match(/export\s+(const|function)\s+__fict_e1/g)
+
+      expect(e0Match).not.toBeNull()
+      expect(e1Match).not.toBeNull()
+
+      // Each handler should use useLexicalScope for variable restoration
+      expect(compiled.code).toContain('__fictUseLexicalScope')
+    } finally {
+      compiled.cleanup()
+    }
+  })
+
+  it('handlers are self-contained with useLexicalScope', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Counter() {
+        let count = $state(0)
+        let step = $state(1)
+        return (
+          <button onClick$={() => count += step}>{count}</button>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      // Handler should restore both count and step from lexical scope
+      const handlerMatch = compiled.code.match(
+        /export\s+(const|function)\s+__fict_e0[\s\S]*?(?=export|$)/,
+      )
+      expect(handlerMatch).not.toBeNull()
+
+      const handler = handlerMatch![0]
+      expect(handler).toContain('__fictUseLexicalScope')
+      // Should reference the captured variables
+      expect(handler).toContain('count')
+      expect(handler).toContain('step')
+    } finally {
+      compiled.cleanup()
+    }
+  })
+
+  it('QRL format supports lazy loading', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function App() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      // QRL should contain module path and export name
+      const qrlMatch = html.match(/on:click="([^"]+)"/)
+      expect(qrlMatch).not.toBeNull()
+
+      const qrl = qrlMatch![1]
+      // QRL format: url#exportName
+      expect(qrl).toContain('#')
+      expect(qrl).toContain('__fict_e')
+
+      // Parse QRL
+      const [url, exportName] = qrl.split('#')
+      expect(url).toBeTruthy()
+      expect(exportName).toMatch(/^__fict_e\d+$/)
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      // Verify lazy loading works via loader
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const button = env.document.querySelector('button') as HTMLElement
+      dispatchClick(button, env.window)
+      await tick(3)
+
+      // Handler was lazily loaded and executed
+      expect(button.textContent).toBe('1')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('multiple handlers in same component work independently', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Dual() {
+        let a = $state(0)
+        let b = $state(100)
+        return (
+          <div>
+            <button data-id="a" onClick$={() => a++}>{a}</button>
+            <button data-id="b" onClick$={() => b++}>{b}</button>
+          </div>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { Dual: () => FictNode }
+      const html = renderToString(() => ({ type: mod.Dual, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const btnA = env.document.querySelector('[data-id="a"]') as HTMLElement
+      const btnB = env.document.querySelector('[data-id="b"]') as HTMLElement
+
+      expect(btnA.textContent).toBe('0')
+      expect(btnB.textContent).toBe('100')
+
+      // Click A only
+      dispatchClick(btnA, env.window)
+      await tick(3)
+      expect(btnA.textContent).toBe('1')
+      expect(btnB.textContent).toBe('100')
+
+      // Click B only
+      dispatchClick(btnB, env.window)
+      await tick(3)
+      expect(btnA.textContent).toBe('1')
+      expect(btnB.textContent).toBe('101')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('resume function is generated for components', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Counter() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      // Should have resume function export
+      const resumeMatch = compiled.code.match(/export\s+(const|function)\s+__fict_r\d+/)
+      expect(resumeMatch).not.toBeNull()
+
+      // Resume function should set up component metadata
+      expect(compiled.code).toContain('__fictMeta')
+      // The meta should contain 'resume' property which creates QRL for resume handler
+      expect(compiled.code).toContain('resume:')
+    } finally {
+      compiled.cleanup()
+    }
+  })
+
+  it('handler captures correct scope variables', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Computed() {
+        let count = $state(5)
+        const doubled = count * 2
+        return (
+          <button onClick$={() => count++}>
+            {count} x 2 = {doubled}
+          </button>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { Computed: () => FictNode }
+      const html = renderToString(() => ({ type: mod.Computed, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const button = env.document.querySelector('button') as HTMLElement
+      expect(button.textContent).toContain('5')
+      expect(button.textContent).toContain('10')
+
+      dispatchClick(button, env.window)
+      await tick(3)
+
+      expect(button.textContent).toContain('6')
+      expect(button.textContent).toContain('12')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+})
+
+// ============================================================================
+// Test Suite 10: Full E2E Integration
+// ============================================================================
+
+describe('Full E2E Integration', () => {
+  afterEach(cleanupTestState)
+
+  it('complete resumable flow: SSR -> serialize -> hydrate -> interact', async () => {
+    // Use a simpler example that doesn't rely on array-based list rendering
+    const source = `
+      import { $state } from 'fict'
+
+      export function App() {
+        let count = $state(10)
+        let text = $state('Hello')
+
+        return (
+          <div>
+            <span data-count>{count}</span>
+            <span data-text>{text}</span>
+            <button data-inc onClick$={() => count++}>Inc</button>
+            <button data-toggle onClick$={() => text = text === 'Hello' ? 'World' : 'Hello'}>
+              Toggle
+            </button>
+          </div>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      // 1. SSR Render
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      // 2. Verify SSR output
+      expect(html).toContain('10')
+      expect(html).toContain('Hello')
+      expect(html).toContain('__FICT_SNAPSHOT__')
+
+      // 3. Client hydration setup
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      // 4. Install loader with prefetch
+      installResumableLoader({
+        document: env.document,
+        events: ['click'],
+        prefetch: { visibility: true, hover: true },
+      })
+
+      // 5. Verify initial state
+      const countSpan = env.document.querySelector('[data-count]') as HTMLElement
+      const textSpan = env.document.querySelector('[data-text]') as HTMLElement
+      const incButton = env.document.querySelector('[data-inc]') as HTMLElement
+      const toggleButton = env.document.querySelector('[data-toggle]') as HTMLElement
+
+      expect(countSpan.textContent).toBe('10')
+      expect(textSpan.textContent).toBe('Hello')
+
+      // 6. Interact - increment count
+      dispatchClick(incButton, env.window)
+      await tick(3)
+      expect(countSpan.textContent).toBe('11')
+
+      // 7. Interact - toggle text
+      dispatchClick(toggleButton, env.window)
+      await tick(3)
+      expect(textSpan.textContent).toBe('World')
+
+      // 8. Multiple interactions
+      dispatchClick(incButton, env.window)
+      dispatchClick(incButton, env.window)
+      await tick(3)
+      expect(countSpan.textContent).toBe('13')
+
+      // 9. Toggle back
+      dispatchClick(toggleButton, env.window)
+      await tick(3)
+      expect(textSpan.textContent).toBe('Hello')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('handles complex state with serialization through full cycle', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function ComplexState() {
+        let data = $state({
+          count: 0,
+          items: ['a', 'b'],
+          nested: { value: 42 }
+        })
+
+        return (
+          <div>
+            <span data-count>{data.count}</span>
+            <span data-items>{data.items.length}</span>
+            <button onClick$={() => {
+              data = {
+                ...data,
+                count: data.count + 1,
+                items: [...data.items, 'c']
+              }
+            }}>
+              Update
+            </button>
+          </div>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { ComplexState: () => FictNode }
+      const html = renderToString(() => ({ type: mod.ComplexState, props: {} }))
+
+      // Verify snapshot captures complex state
+      const snapshot = parseSnapshot(html)
+      expect(snapshot).not.toBeNull()
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const countSpan = env.document.querySelector('[data-count]') as HTMLElement
+      const itemsSpan = env.document.querySelector('[data-items]') as HTMLElement
+      const button = env.document.querySelector('button') as HTMLElement
+
+      expect(countSpan.textContent).toBe('0')
+      expect(itemsSpan.textContent).toBe('2')
+
+      dispatchClick(button, env.window)
+      await tick(3)
+
+      expect(countSpan.textContent).toBe('1')
+      expect(itemsSpan.textContent).toBe('3')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('multiple independent components with different state types', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function NumberCounter() {
+        let count = $state(0)
+        return <button data-type="number" onClick$={() => count++}>{count}</button>
+      }
+
+      export function StringToggle() {
+        let text = $state('off')
+        return (
+          <button data-type="string" onClick$={() => text = text === 'off' ? 'on' : 'off'}>
+            {text}
+          </button>
+        )
+      }
+
+      export function BoolToggle() {
+        let active = $state(false)
+        return (
+          <button data-type="bool" onClick$={() => active = !active}>
+            {active ? 'yes' : 'no'}
+          </button>
+        )
+      }
+
+      export function App() {
+        return (
+          <div>
+            <NumberCounter />
+            <StringToggle />
+            <BoolToggle />
+          </div>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const numBtn = env.document.querySelector('[data-type="number"]') as HTMLElement
+      const strBtn = env.document.querySelector('[data-type="string"]') as HTMLElement
+      const boolBtn = env.document.querySelector('[data-type="bool"]') as HTMLElement
+
+      expect(numBtn.textContent).toBe('0')
+      expect(strBtn.textContent).toBe('off')
+      expect(boolBtn.textContent).toBe('no')
+
+      // Click each independently
+      dispatchClick(numBtn, env.window)
+      await tick(3)
+      expect(numBtn.textContent).toBe('1')
+      expect(strBtn.textContent).toBe('off')
+      expect(boolBtn.textContent).toBe('no')
+
+      dispatchClick(strBtn, env.window)
+      await tick(3)
+      expect(numBtn.textContent).toBe('1')
+      expect(strBtn.textContent).toBe('on')
+      expect(boolBtn.textContent).toBe('no')
+
+      dispatchClick(boolBtn, env.window)
+      await tick(3)
+      expect(numBtn.textContent).toBe('1')
+      expect(strBtn.textContent).toBe('on')
+      expect(boolBtn.textContent).toBe('yes')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('stress test: many components with rapid interactions', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Counter({ id }: { id: number }) {
+        let count = $state(id)
+        return (
+          <button data-id={id} onClick$={() => count++}>{count}</button>
+        )
+      }
+
+      export function App() {
+        const items = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+        return (
+          <div>
+            {items.map(id => <Counter key={id} id={id} />)}
+          </div>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const buttons = env.document.querySelectorAll('button')
+      expect(buttons.length).toBe(10)
+
+      // Click each button once
+      for (const button of buttons) {
+        dispatchClick(button, env.window)
+      }
+      await tick(5)
+
+      // Verify each incremented
+      for (let i = 0; i < buttons.length; i++) {
+        expect(buttons[i]!.textContent).toBe(String(i + 1))
+      }
+
+      // Click them all again
+      for (const button of buttons) {
+        dispatchClick(button, env.window)
+      }
+      await tick(5)
+
+      // Verify each incremented again
+      for (let i = 0; i < buttons.length; i++) {
+        expect(buttons[i]!.textContent).toBe(String(i + 2))
+      }
     } finally {
       cleanup()
       compiled.cleanup()

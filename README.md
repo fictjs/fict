@@ -445,7 +445,7 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 - [x] DevTools
 - [x] Router
 - [x] Testing library
-- [ ] SSR / streaming
+- [x] SSR / streaming
 
 ### Planned
 

@@ -4,6 +4,18 @@ import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { transformAsync } from '@babel/core'
+import _generate from '@babel/generator'
+import { parse } from '@babel/parser'
+import _traverse from '@babel/traverse'
+import * as t from '@babel/types'
+
+// Handle ESM/CJS interop for Babel packages
+const traverse = (
+  typeof _traverse === 'function' ? _traverse : (_traverse as { default: typeof _traverse }).default
+) as typeof _traverse
+const generate = (
+  typeof _generate === 'function' ? _generate : (_generate as { default: typeof _generate }).default
+) as typeof _generate
 import { createFictPlugin, type FictCompilerOptions } from '@fictjs/compiler'
 import type { Plugin, ResolvedConfig, TransformResult } from 'vite'
 
@@ -39,6 +51,13 @@ export interface FictPluginOptions extends FictCompilerOptions {
    * @default true
    */
   useTypeScriptProject?: boolean
+  /**
+   * Enable function-level code splitting for resumable handlers.
+   * When enabled, event handlers and resume functions are extracted
+   * to separate chunks for optimal lazy loading.
+   * @default false for dev, true for production build
+   */
+  functionSplitting?: boolean
 }
 
 interface NormalizedCacheOptions {
@@ -64,6 +83,29 @@ interface TypeScriptProject {
 
 const CACHE_VERSION = 1
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
+
+// Virtual module prefix for extracted handlers
+const VIRTUAL_HANDLER_PREFIX = '\0fict-handler:'
+const VIRTUAL_HANDLER_RESOLVE_PREFIX = 'virtual:fict-handler:'
+
+/**
+ * Information about an extracted resumable handler
+ */
+interface ExtractedHandler {
+  /** The module this handler was extracted from */
+  sourceModule: string
+  /** The export name in the source module */
+  exportName: string
+  /** Runtime helpers used by this handler */
+  helpersUsed: string[]
+  /** The handler function code (without export) */
+  code: string
+}
+
+/**
+ * Registry for extracted handlers during compilation
+ */
+const extractedHandlers = new Map<string, ExtractedHandler>()
 
 /**
  * Vite plugin for Fict reactive UI library.
@@ -145,6 +187,50 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       isDev = config.command === 'serve' || config.mode === 'development'
       // Rebuild cache with resolved config so cacheDir is available
       resetCache()
+      // Clear extracted handlers from previous builds
+      extractedHandlers.clear()
+    },
+
+    resolveId(id: string) {
+      // Handle virtual handler modules
+      if (id.startsWith(VIRTUAL_HANDLER_RESOLVE_PREFIX)) {
+        return VIRTUAL_HANDLER_PREFIX + id.slice(VIRTUAL_HANDLER_RESOLVE_PREFIX.length)
+      }
+      return null
+    },
+
+    load(id: string) {
+      // Load virtual handler modules
+      if (!id.startsWith(VIRTUAL_HANDLER_PREFIX)) {
+        return null
+      }
+
+      const handlerId = id.slice(VIRTUAL_HANDLER_PREFIX.length)
+      console.log(`[fict-plugin] Loading virtual module: ${handlerId}`)
+      console.log(
+        `[fict-plugin] Registry has ${extractedHandlers.size} handlers:`,
+        Array.from(extractedHandlers.keys()),
+      )
+      const handler = extractedHandlers.get(handlerId)
+      if (handler) {
+        const generatedCode = generateHandlerModule(handler)
+        console.log(`[fict-plugin] Generated code length: ${generatedCode.length}`)
+        console.log(`[fict-plugin] Generated code preview: ${generatedCode.slice(0, 200)}...`)
+        return generatedCode
+      }
+
+      if (!handler) {
+        // In dev mode or when splitting is disabled, the handler is still in the main module
+        // Generate a re-export from the source module
+        const [sourceModule, exportName] = parseHandlerId(handlerId)
+        if (sourceModule && exportName) {
+          return `export { ${exportName} as default } from '${sourceModule}'`
+        }
+        return null
+      }
+
+      // Generate the virtual module with the handler code
+      return generateHandlerModule(handler)
     },
 
     config(userConfig, env) {
@@ -205,6 +291,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           // Our plugin will handle the full transformation
           include: /\.(ts|js|mts|mjs|cjs)$/,
         },
+        build: {
+          rollupOptions: {
+            // Preserve exports in entry chunks to prevent tree-shaking of handler exports
+            preserveEntrySignatures: 'exports-only',
+          },
+        },
         resolve: {
           ...(userConfig.resolve ?? {}),
           dedupe: Array.from(dedupe),
@@ -239,6 +331,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         ...compilerOptions,
         dev: compilerOptions.dev ?? isDev,
         sourcemap: compilerOptions.sourcemap ?? true,
+        filename,
         moduleMetadata,
         resolveModuleMetadata: (source, importer) => {
           const userResolved = compilerOptions.resolveModuleMetadata?.(source, importer)
@@ -346,9 +439,52 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           return null
         }
 
+        let finalCode = result.code
+        let finalMap = result.map as TransformResult['map']
+
+        // Apply function-level code splitting in production builds
+        // For SSR builds with resumable enabled, we also need to rewrite QRLs to virtual URLs
+        // so they match the manifest generated by the client build
+        const shouldSplit =
+          options.functionSplitting ??
+          (config?.command === 'build' && (compilerOptions.resumable || !config?.build?.ssr))
+
+        console.log(
+          `[fict-plugin] shouldSplit=${shouldSplit}, ssr=${config?.build?.ssr}, resumable=${compilerOptions.resumable}, file=${filename}`,
+        )
+        if (shouldSplit) {
+          const splitResult = extractAndRewriteHandlers(finalCode, filename)
+          console.log(
+            `[fict-plugin] splitResult: ${splitResult ? splitResult.handlers.length + ' handlers' : 'null'}`,
+          )
+          if (splitResult) {
+            console.log(
+              `[fict-plugin] Function splitting: ${filename} - ${splitResult.handlers.length} handlers extracted`,
+            )
+            finalCode = splitResult.code
+            // Note: source maps are invalidated by this rewrite
+            // For production builds, this is acceptable
+            finalMap = null
+
+            // Emit each extracted handler as a separate chunk for lazy loading
+            // This ensures the virtual modules are included in the build
+            if (config?.command === 'build' && !config?.build?.ssr) {
+              for (const handlerName of splitResult.handlers) {
+                const handlerId = createHandlerId(filename, handlerName)
+                const virtualModuleId = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
+                this.emitFile({
+                  type: 'chunk',
+                  id: virtualModuleId,
+                  name: `handler-${handlerName}`,
+                })
+              }
+            }
+          }
+        }
+
         const transformed: TransformResult = {
-          code: result.code,
-          map: result.map as TransformResult['map'],
+          code: finalCode,
+          map: finalMap,
         }
 
         if (cacheKey) {
@@ -397,7 +533,22 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         const fileName = output.fileName
         const url = joinBasePath(base, fileName)
         for (const moduleId of Object.keys(output.modules)) {
-          if (!moduleId || moduleId.startsWith('\0')) continue
+          if (!moduleId) continue
+
+          // Handle virtual handler modules
+          if (moduleId.startsWith(VIRTUAL_HANDLER_PREFIX)) {
+            const handlerId = moduleId.slice(VIRTUAL_HANDLER_PREFIX.length)
+            // Map the virtual module resolve prefix to the chunk URL
+            const virtualKey = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
+            if (!manifest[virtualKey]) {
+              manifest[virtualKey] = url
+            }
+            continue
+          }
+
+          // Skip other virtual modules
+          if (moduleId.startsWith('\0')) continue
+
           const normalized = normalizeFileName(moduleId, config.root)
           if (!path.isAbsolute(normalized)) continue
           const key = pathToFileURL(normalized).href
@@ -757,4 +908,244 @@ async function createTypeScriptProject(
     },
     dispose: () => service.dispose?.(),
   }
+}
+
+// ============================================================================
+// Function-level Code Splitting Helpers
+// ============================================================================
+
+/**
+ * Parse a handler ID into source module and export name.
+ * Format: /path/to/module.tsx$$exportName (using $$ as separator to avoid URL fragment conflicts)
+ */
+function parseHandlerId(handlerId: string): [string | null, string | null] {
+  const separatorIndex = handlerId.lastIndexOf('$$')
+  if (separatorIndex === -1) {
+    return [handlerId, 'default']
+  }
+  return [handlerId.slice(0, separatorIndex), handlerId.slice(separatorIndex + 2)]
+}
+
+/**
+ * Generate handler ID from source module and export name.
+ * Uses $$ as separator to avoid conflicts with URL # fragments.
+ */
+function createHandlerId(sourceModule: string, exportName: string): string {
+  return `${sourceModule}$$${exportName}`
+}
+
+/**
+ * Generate a standalone virtual module for an extracted handler.
+ * The module contains the complete handler code with its own imports,
+ * creating a truly independent chunk that doesn't depend on the source module.
+ */
+function generateHandlerModule(handler: ExtractedHandler): string {
+  // If no code was extracted (fallback case), use re-export
+  if (!handler.code) {
+    return `export { ${handler.exportName} as default } from '${handler.sourceModule}';\n`
+  }
+
+  // Group imports by source module
+  const importsByModule = new Map<string, string[]>()
+
+  for (const helperName of handler.helpersUsed) {
+    const helper = RUNTIME_HELPERS[helperName]
+    if (!helper) continue
+
+    const existing = importsByModule.get(helper.from) ?? []
+    if (!existing.includes(helper.import)) {
+      existing.push(helper.import)
+    }
+    importsByModule.set(helper.from, existing)
+  }
+
+  // Generate import statements
+  const imports: string[] = []
+  for (const [module, names] of importsByModule) {
+    imports.push(`import { ${names.join(', ')} } from '${module}';`)
+  }
+
+  // Generate the complete standalone module
+  return `${imports.join('\n')}${imports.length > 0 ? '\n\n' : ''}export default ${handler.code};\n`
+}
+
+/**
+ * Register an extracted handler for function-level splitting.
+ */
+export function registerExtractedHandler(
+  sourceModule: string,
+  exportName: string,
+  helpersUsed: string[],
+  code: string,
+): string {
+  const handlerId = createHandlerId(sourceModule, exportName)
+  extractedHandlers.set(handlerId, {
+    sourceModule,
+    exportName,
+    helpersUsed,
+    code,
+  })
+  return `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
+}
+
+/**
+ * Runtime helper name mappings for generating imports in virtual modules
+ */
+const RUNTIME_HELPERS: Record<string, { import: string; from: string }> = {
+  __fictUseLexicalScope: { import: '__fictUseLexicalScope', from: '@fictjs/runtime/internal' },
+  __fictGetScopeProps: { import: '__fictGetScopeProps', from: '@fictjs/runtime/internal' },
+  __fictGetSSRScope: { import: '__fictGetSSRScope', from: '@fictjs/runtime/internal' },
+  __fictEnsureScope: { import: '__fictEnsureScope', from: '@fictjs/runtime/internal' },
+  __fictPrepareContext: { import: '__fictPrepareContext', from: '@fictjs/runtime/internal' },
+  __fictPushContext: { import: '__fictPushContext', from: '@fictjs/runtime/internal' },
+  __fictPopContext: { import: '__fictPopContext', from: '@fictjs/runtime/internal' },
+  hydrateComponent: { import: 'hydrateComponent', from: '@fictjs/runtime/internal' },
+  __fictQrl: { import: '__fictQrl', from: '@fictjs/runtime/internal' },
+}
+
+/**
+ * Extract handlers using Babel AST and rewrite QRLs to use virtual modules.
+ * This creates truly independent chunks for each handler.
+ */
+function extractAndRewriteHandlers(
+  code: string,
+  sourceModule: string,
+): { code: string; handlers: string[] } | null {
+  let ast: ReturnType<typeof parse>
+
+  try {
+    ast = parse(code, {
+      sourceType: 'module',
+      plugins: ['jsx', 'typescript'],
+    })
+  } catch {
+    // If parsing fails, fall back to no extraction
+    return null
+  }
+
+  const handlerNames: string[] = []
+  const nodesToRemove = new Set<t.Node>()
+
+  // First pass: find all handler exports and extract their code
+  traverse(ast, {
+    ExportNamedDeclaration(path) {
+      const declaration = path.node.declaration
+
+      // Handle: export const __fict_e0 = (scopeId, event, el) => { ... }
+      if (t.isVariableDeclaration(declaration)) {
+        for (const declarator of declaration.declarations) {
+          if (!t.isIdentifier(declarator.id)) continue
+
+          const name = declarator.id.name
+          // Only extract event handlers (__fict_e*), not resume handlers (__fict_r*)
+          // Resume handlers have complex component dependencies that can't be easily extracted
+          if (!name.match(/^__fict_e\d+$/)) continue
+
+          if (!declarator.init) continue
+
+          handlerNames.push(name)
+
+          // Generate the handler function code
+          const handlerCode = generate(declarator.init).code
+
+          // Detect which runtime helpers are used
+          const helpersUsed: string[] = []
+          for (const helperName of Object.keys(RUNTIME_HELPERS)) {
+            if (handlerCode.includes(helperName)) {
+              helpersUsed.push(helperName)
+            }
+          }
+
+          // Register the handler with its full code
+          const handlerId = createHandlerId(sourceModule, name)
+          extractedHandlers.set(handlerId, {
+            sourceModule,
+            exportName: name,
+            helpersUsed,
+            code: handlerCode,
+          })
+
+          // Mark this export for removal
+          nodesToRemove.add(path.node)
+        }
+        return
+      }
+
+      // Handle: export function __fict_e0(scopeId, event, el) { ... }
+      if (t.isFunctionDeclaration(declaration) && declaration.id) {
+        const name = declaration.id.name
+        // Only extract event handlers (__fict_e*), not resume handlers (__fict_r*)
+        // Resume handlers have complex component dependencies that can't be easily extracted
+        if (!name.match(/^__fict_e\d+$/)) return
+
+        handlerNames.push(name)
+
+        // Convert to arrow function expression for the virtual module
+        const params = declaration.params
+        const body = declaration.body
+        const arrowFn = t.arrowFunctionExpression(params, body, declaration.async)
+
+        // Generate the handler function code
+        const handlerCode = generate(arrowFn).code
+
+        // Detect which runtime helpers are used
+        const helpersUsed: string[] = []
+        for (const helperName of Object.keys(RUNTIME_HELPERS)) {
+          if (handlerCode.includes(helperName)) {
+            helpersUsed.push(helperName)
+          }
+        }
+
+        // Register the handler with its full code
+        const handlerId = createHandlerId(sourceModule, name)
+        extractedHandlers.set(handlerId, {
+          sourceModule,
+          exportName: name,
+          helpersUsed,
+          code: handlerCode,
+        })
+
+        // Mark this export for removal
+        nodesToRemove.add(path.node)
+      }
+    },
+  })
+
+  if (handlerNames.length === 0) {
+    return null
+  }
+
+  // Second pass: remove handler exports and rewrite QRL calls
+  traverse(ast, {
+    ExportNamedDeclaration(path) {
+      if (nodesToRemove.has(path.node)) {
+        path.remove()
+      }
+    },
+
+    CallExpression(path) {
+      // Rewrite __fictQrl(import.meta.url, "__fict_e0") -> "virtual:..."
+      if (!t.isIdentifier(path.node.callee, { name: '__fictQrl' })) return
+      if (path.node.arguments.length !== 2) return
+
+      const secondArg = path.node.arguments[1]
+      if (!t.isStringLiteral(secondArg)) return
+
+      const handlerName = secondArg.value
+      if (!handlerNames.includes(handlerName)) return
+
+      // Replace with the virtual module URL
+      const handlerId = createHandlerId(sourceModule, handlerName)
+      const virtualUrl = `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}#default`
+      path.replaceWith(t.stringLiteral(virtualUrl))
+    },
+  })
+
+  // Generate the modified code
+  const result = generate(ast, {
+    retainLines: true,
+    compact: false,
+  })
+
+  return { code: result.code, handlers: handlerNames }
 }

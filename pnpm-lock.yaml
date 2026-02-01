@@ -196,6 +196,37 @@ importers:
         specifier: ^7.3.1
         version: 7.3.1(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0)(yaml@2.8.2)
 
+  examples/ssr-basic:
+    dependencies:
+      '@fictjs/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@fictjs/ssr':
+        specifier: workspace:*
+        version: link:../../packages/ssr
+      '@fictjs/vite-plugin':
+        specifier: workspace:*
+        version: link:../../packages/vite-plugin
+      express:
+        specifier: ^4.21.0
+        version: 4.22.1
+      fict:
+        specifier: workspace:*
+        version: link:../../packages/fict
+    devDependencies:
+      '@types/express':
+        specifier: ^4.17.21
+        version: 4.17.25
+      '@types/node':
+        specifier: ^22.15.21
+        version: 22.19.7
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.1
+        version: 7.3.1(@types/node@22.19.7)(jiti@2.6.1)(terser@5.46.0)(yaml@2.8.2)
+
   examples/todos:
     dependencies:
       '@fictjs/runtime':
@@ -432,6 +463,12 @@ importers:
       '@babel/core':
         specifier: ^7.28.6
         version: 7.28.6
+      '@babel/generator':
+        specifier: ^7.28.6
+        version: 7.28.6
+      '@babel/parser':
+        specifier: ^7.28.6
+        version: 7.28.6
       '@babel/plugin-syntax-jsx':
         specifier: ^7.28.6
         version: 7.28.6(@babel/core@7.28.6)
@@ -441,6 +478,12 @@ importers:
       '@babel/preset-typescript':
         specifier: ^7.26.0
         version: 7.28.5(@babel/core@7.28.6)
+      '@babel/traverse':
+        specifier: ^7.28.6
+        version: 7.28.6
+      '@babel/types':
+        specifier: ^7.28.6
+        version: 7.28.6
       '@fictjs/compiler':
         specifier: workspace:*
         version: link:../compiler
@@ -448,6 +491,12 @@ importers:
       '@types/babel__core':
         specifier: ^7.20.5
         version: 7.20.5
+      '@types/babel__generator':
+        specifier: ^7.6.8
+        version: 7.27.0
+      '@types/babel__traverse':
+        specifier: ^7.20.6
+        version: 7.28.0
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(jiti@2.6.1)(postcss@8.5.6)(typescript@5.9.3)(yaml@2.8.2)
@@ -7250,11 +7299,11 @@ snapshots:
   '@types/body-parser@1.19.6':
     dependencies:
       '@types/connect': 3.4.38
-      '@types/node': 25.0.10
+      '@types/node': 22.19.7
 
   '@types/bonjour@3.5.13':
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.19.7
 
   '@types/chai@5.2.3':
     dependencies:
@@ -7269,15 +7318,15 @@ snapshots:
   '@types/connect-history-api-fallback@1.5.4':
     dependencies:
       '@types/express-serve-static-core': 4.19.8
-      '@types/node': 25.0.10
+      '@types/node': 22.19.7
 
   '@types/connect@3.4.38':
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.19.7
 
   '@types/conventional-commits-parser@5.0.2':
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.19.7
 
   '@types/deep-eql@4.0.2': {}
 
@@ -7295,7 +7344,7 @@ snapshots:
 
   '@types/express-serve-static-core@4.19.8':
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.19.7
       '@types/qs': 6.14.0
       '@types/range-parser': 1.2.7
       '@types/send': 1.2.1
@@ -7325,7 +7374,7 @@ snapshots:
 
   '@types/http-proxy@1.17.17':
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.19.7
 
   '@types/json-schema@7.0.15': {}
 
@@ -7363,11 +7412,11 @@ snapshots:
   '@types/send@0.17.6':
     dependencies:
       '@types/mime': 1.3.5
-      '@types/node': 25.0.10
+      '@types/node': 22.19.7
 
   '@types/send@1.2.1':
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.19.7
 
   '@types/serve-index@1.9.4':
     dependencies:
@@ -7376,12 +7425,12 @@ snapshots:
   '@types/serve-static@1.15.10':
     dependencies:
       '@types/http-errors': 2.0.5
-      '@types/node': 25.0.10
+      '@types/node': 22.19.7
       '@types/send': 0.17.6
 
   '@types/sockjs@0.3.36':
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.19.7
 
   '@types/unist@3.0.3': {}
 
@@ -7389,7 +7438,7 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.19.7
 
   '@typescript-eslint/eslint-plugin@8.53.1(@typescript-eslint/parser@8.53.1(eslint@9.39.2(jiti@2.6.1))(typescript@5.9.3))(eslint@9.39.2(jiti@2.6.1))(typescript@5.9.3)':
     dependencies:
@@ -9409,7 +9458,7 @@ snapshots:
 
   jest-worker@27.5.1:
     dependencies:
-      '@types/node': 25.0.10
+      '@types/node': 22.19.7
       merge-stream: 2.0.0
       supports-color: 8.1.1
 
