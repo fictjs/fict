@@ -1,5 +1,16 @@
 # @fictjs/babel-preset
 
+## 0.5.0
+
+### Minor Changes
+
+- fix ssr
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/compiler@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes

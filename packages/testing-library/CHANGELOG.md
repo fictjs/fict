@@ -1,5 +1,11 @@
 # @fictjs/testing-library
 
+## 0.5.0
+
+### Minor Changes
+
+- fix ssr
+
 ## 0.4.0
 
 ### Minor Changes
