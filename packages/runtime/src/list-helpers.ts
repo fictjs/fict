@@ -16,10 +16,12 @@ import {
   pushRoot,
   type RootContext,
 } from './lifecycle'
+import { __fictIsHydrating } from './resume'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import reconcileArrays from './reconcile'
 import { batch } from './scheduler'
 import { createSignal, effectScope, flush, setActiveSub, type Signal } from './signal'
+import { isHydratingActive, withHydrationRange } from './hydration'
 import type { FictNode } from './types'
 
 // Re-export shared DOM helpers for compiler-generated code
@@ -85,7 +87,7 @@ interface KeyedListContainer<T = unknown> {
  */
 export interface KeyedListBinding {
   /** Document fragment placeholder inserted by the compiler/runtime */
-  marker: DocumentFragment
+  marker: Comment | DocumentFragment
   /** Start marker comment node */
   startMarker: Comment
   /** End marker comment node */
@@ -195,9 +197,12 @@ export function createVersionedSignalAccessor<T>(initialValue: T): Signal<T> {
  *
  * @returns Container object with markers, blocks map, and dispose function
  */
-function createKeyedListContainer<T = unknown>(): KeyedListContainer<T> {
-  const startMarker = document.createComment('fict:list:start')
-  const endMarker = document.createComment('fict:list:end')
+function createKeyedListContainer<T = unknown>(
+  startOverride?: Comment,
+  endOverride?: Comment,
+): KeyedListContainer<T> {
+  const startMarker = startOverride ?? document.createComment('fict:list:start')
+  const endMarker = endOverride ?? document.createComment('fict:list:end')
 
   const dispose = () => {
     // Clean up all blocks
@@ -464,32 +469,57 @@ function reorderByLIS<T>(
  * @param renderItem - Function that creates DOM nodes for each item
  * @returns Binding handle with markers and dispose function
  */
-export function createKeyedList<T>(
+export function createKeyedList<T extends {}>(
   getItems: () => T[],
   keyFn: (item: T, index: number) => string | number,
   renderItem: FineGrainedRenderItem<T>,
   needsIndex?: boolean,
+  startMarker?: Comment,
+  endMarker?: Comment,
 ): KeyedListBinding {
   const resolvedNeedsIndex =
     arguments.length >= 4 ? !!needsIndex : renderItem.length > 1 /* has index param */
-  return createFineGrainedKeyedList(getItems, keyFn, renderItem, resolvedNeedsIndex)
+  return createFineGrainedKeyedList(
+    getItems,
+    keyFn,
+    renderItem,
+    resolvedNeedsIndex,
+    startMarker,
+    endMarker,
+  )
 }
 
-function createFineGrainedKeyedList<T>(
+function createFineGrainedKeyedList<T extends {}>(
   getItems: () => T[],
   keyFn: (item: T, index: number) => string | number,
   renderItem: FineGrainedRenderItem<T>,
   needsIndex: boolean,
+  startOverride?: Comment,
+  endOverride?: Comment,
 ): KeyedListBinding {
-  const container = createKeyedListContainer<T>()
+  const container = createKeyedListContainer<T>(startOverride, endOverride)
   const hostRoot = getCurrentRoot()
-  const fragment = document.createDocumentFragment()
-  fragment.append(container.startMarker, container.endMarker)
+  const useProvided = !!(startOverride && endOverride)
+  const fragment = useProvided ? container.startMarker : document.createDocumentFragment()
+  if (!useProvided) {
+    ;(fragment as DocumentFragment).append(container.startMarker, container.endMarker)
+  }
   let disposed = false
   let effectDispose: (() => void) | undefined
   let connectObserver: MutationObserver | null = null
   let effectStarted = false
   let startScheduled = false
+  let initialHydrating = __fictIsHydrating()
+
+  const collectBetween = (): Node[] => {
+    const nodes: Node[] = []
+    let cursor = container.startMarker.nextSibling
+    while (cursor && cursor !== container.endMarker) {
+      nodes.push(cursor)
+      cursor = cursor.nextSibling
+    }
+    return nodes
+  }
 
   const getConnectedParent = (): (ParentNode & Node) | null => {
     const endParent = container.endMarker.parentNode
@@ -518,6 +548,69 @@ function createFineGrainedKeyedList<T>(
       const nextOrderedBlocks = container.nextOrderedBlocks
       const orderedIndexByKey = container.orderedIndexByKey
       const newItems = getItems()
+
+      if (initialHydrating && isHydratingActive()) {
+        initialHydrating = false
+        newBlocks.clear()
+        nextOrderedBlocks.length = 0
+        orderedIndexByKey.clear()
+
+        if (newItems.length === 0) {
+          oldBlocks.clear()
+          prevOrderedBlocks.length = 0
+          container.currentNodes = [container.startMarker, container.endMarker]
+          container.nextNodes.length = 0
+          return
+        }
+
+        const createdBlocks: KeyedBlock<T>[] = []
+        withHydrationRange(
+          container.startMarker.nextSibling,
+          container.endMarker,
+          parent.ownerDocument ?? document,
+          () => {
+            for (let index = 0; index < newItems.length; index++) {
+              const item = newItems[index]!
+              const key = keyFn(item, index)
+              if (newBlocks.has(key)) {
+                if (isDev) {
+                  console.warn(
+                    `[fict] Duplicate key "${String(key)}" detected in list hydration. ` +
+                      `Each item should have a unique key.`,
+                  )
+                }
+                const existing = newBlocks.get(key)
+                if (existing) {
+                  destroyRoot(existing.root)
+                  removeNodes(existing.nodes)
+                }
+              }
+              const block = createKeyedBlock(key, item, index, renderItem, needsIndex, hostRoot)
+              createdBlocks.push(block)
+              newBlocks.set(key, block)
+              orderedIndexByKey.set(key, nextOrderedBlocks.length)
+              nextOrderedBlocks.push(block)
+            }
+          },
+        )
+
+        container.blocks = newBlocks
+        container.nextBlocks = oldBlocks
+        container.orderedBlocks = nextOrderedBlocks
+        container.nextOrderedBlocks = prevOrderedBlocks
+        oldBlocks.clear()
+        prevOrderedBlocks.length = 0
+        container.currentNodes = [container.startMarker, ...collectBetween(), container.endMarker]
+        container.nextNodes.length = 0
+
+        for (const block of createdBlocks) {
+          if (newBlocks.get(block.key) === block) {
+            flushOnMount(block.root)
+          }
+        }
+
+        return
+      }
 
       if (newItems.length === 0) {
         if (oldBlocks.size > 0) {

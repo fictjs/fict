@@ -37,6 +37,8 @@ import {
 import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 import { batch } from './scheduler'
 import { computed, untrack, isSignal, isComputed, isEffect, isEffectScope } from './signal'
+import { __fictIsHydrating } from './resume'
+import { withHydrationRange, isHydratingActive } from './hydration'
 import type { Cleanup, FictNode } from './types'
 
 const isDev =
@@ -717,6 +719,182 @@ export function insert(
 }
 
 /**
+ * Insert reactive content between two marker comments.
+ * Supports hydration by claiming existing nodes between markers.
+ */
+export function insertBetween(
+  start: Comment,
+  end: Comment,
+  getValue: () => FictNode,
+  createElementFn?: CreateElementFn,
+): Cleanup {
+  const hostRoot = getCurrentRoot()
+  let currentNodes: Node[] = []
+  let currentText: Text | null = null
+  let currentRoot: RootContext | null = null
+  let initialHydrating = __fictIsHydrating()
+
+  const collectBetween = (): Node[] => {
+    const nodes: Node[] = []
+    let cursor = start.nextSibling
+    while (cursor && cursor !== end) {
+      nodes.push(cursor)
+      cursor = cursor.nextSibling
+    }
+    return nodes
+  }
+
+  const clearCurrentNodes = () => {
+    if (currentNodes.length > 0) {
+      removeNodes(currentNodes)
+      currentNodes = []
+    }
+  }
+
+  const setTextNode = (textValue: string, shouldInsert: boolean) => {
+    if (!currentText) {
+      currentText = document.createTextNode(textValue)
+    } else if (currentText.data !== textValue) {
+      currentText.data = textValue
+    }
+
+    if (!shouldInsert) {
+      clearCurrentNodes()
+      return
+    }
+
+    if (currentNodes.length === 1 && currentNodes[0] === currentText) {
+      return
+    }
+
+    clearCurrentNodes()
+    const parentNode = start.parentNode as (ParentNode & Node) | null
+    if (parentNode) {
+      insertNodesBefore(parentNode, [currentText], end)
+      currentNodes = [currentText]
+    }
+  }
+
+  const dispose = createRenderEffect(() => {
+    const value = getValue()
+    const parentNode = start.parentNode as (ParentNode & Node) | null
+    const isPrimitive =
+      value == null ||
+      value === false ||
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean'
+
+    if (isPrimitive) {
+      if (initialHydrating && isHydratingActive() && parentNode) {
+        const existing = collectBetween()
+        if (existing.length > 0) {
+          currentNodes = existing
+          const only = existing.length === 1 ? existing[0] : null
+          currentText = only && only.nodeType === 3 ? (only as Text) : null
+          initialHydrating = false
+          return
+        }
+      }
+      if (currentRoot) {
+        destroyRoot(currentRoot)
+        currentRoot = null
+      }
+      if (!parentNode) {
+        clearCurrentNodes()
+        return
+      }
+      const textValue = value == null || value === false ? '' : String(value)
+      const shouldInsert = value != null && value !== false
+      setTextNode(textValue, shouldInsert)
+      initialHydrating = false
+      return
+    }
+
+    if (currentRoot) {
+      destroyRoot(currentRoot)
+      currentRoot = null
+    }
+    clearCurrentNodes()
+
+    const root = createRootContext(hostRoot)
+    const prev = pushRoot(root)
+    let nodes: Node[] = []
+    let handledError = false
+    try {
+      let newNode: Node | Node[] = undefined as unknown as Node | Node[]
+      const createValue = () => {
+        if (value instanceof Node) {
+          return value
+        }
+        if (Array.isArray(value)) {
+          if (value.every(v => v instanceof Node)) {
+            return value as Node[]
+          }
+          if (createElementFn) {
+            const mapped: Node[] = []
+            for (const item of value) {
+              mapped.push(...toNodeArray(createElementFn(item as any)))
+            }
+            return mapped
+          }
+          return document.createTextNode(String(value))
+        }
+        return createElementFn ? createElementFn(value) : document.createTextNode(String(value))
+      }
+
+      if (initialHydrating && isHydratingActive() && parentNode) {
+        withHydrationRange(start.nextSibling, end, parentNode.ownerDocument ?? document, () => {
+          newNode = createValue()
+        })
+      } else {
+        newNode = createValue()
+      }
+
+      nodes = toNodeArray(newNode)
+      if (root.suspended) {
+        handledError = true
+        destroyRoot(root)
+        return
+      }
+      if (parentNode && !initialHydrating) {
+        insertNodesBefore(parentNode, nodes, end)
+      }
+    } catch (err) {
+      if (handleSuspend(err as any, root)) {
+        handledError = true
+        destroyRoot(root)
+        return
+      }
+      if (handleError(err, { source: 'renderChild' }, root)) {
+        handledError = true
+        destroyRoot(root)
+        return
+      }
+      throw err
+    } finally {
+      popRoot(prev)
+      if (!handledError) {
+        flushOnMount(root)
+      }
+    }
+
+    currentRoot = root
+    currentNodes = initialHydrating ? collectBetween() : nodes
+    initialHydrating = false
+  })
+
+  return () => {
+    dispose()
+    if (currentRoot) {
+      destroyRoot(currentRoot)
+      currentRoot = null
+    }
+    clearCurrentNodes()
+  }
+}
+
+/**
  * Create a reactive child binding that updates when the child value changes.
  * This is used for dynamic expressions like `{show && <Modal />}` or `{items.map(...)}`.
  *
@@ -1299,7 +1477,11 @@ function assignProp(
   // Event handling: on:eventname
   if (prop.slice(0, 3) === 'on:') {
     const eventName = prop.slice(3)
-    if (prev) node.removeEventListener(eventName, prev as EventListener)
+    if (typeof value === 'string') {
+      node.setAttribute(prop, value)
+      return value
+    }
+    if (prev && typeof prev !== 'string') node.removeEventListener(eventName, prev as EventListener)
     if (value) node.addEventListener(eventName, value as EventListener)
     return value
   }
@@ -1433,17 +1615,33 @@ export function createConditional(
   renderTrue: () => FictNode,
   createElementFn: CreateElementFn,
   renderFalse?: () => FictNode,
+  startOverride?: Comment,
+  endOverride?: Comment,
 ): BindingHandle {
-  const startMarker = document.createComment('fict:cond:start')
-  const endMarker = document.createComment('fict:cond:end')
-  const fragment = document.createDocumentFragment()
-  fragment.append(startMarker, endMarker)
+  const useProvided = !!(startOverride && endOverride)
+  const startMarker = useProvided ? startOverride! : document.createComment('fict:cond:start')
+  const endMarker = useProvided ? endOverride! : document.createComment('fict:cond:end')
+  const fragment = useProvided ? startMarker : document.createDocumentFragment()
+  if (!useProvided) {
+    ;(fragment as DocumentFragment).append(startMarker, endMarker)
+  }
   const hostRoot = getCurrentRoot()
 
   let currentNodes: Node[] = []
   let currentRoot: RootContext | null = null
   let lastCondition: boolean | undefined = undefined
   let pendingRender = false
+  let initialHydrating = __fictIsHydrating()
+
+  const collectBetween = (): Node[] => {
+    const nodes: Node[] = []
+    let cursor = startMarker.nextSibling
+    while (cursor && cursor !== endMarker) {
+      nodes.push(cursor)
+      cursor = cursor.nextSibling
+    }
+    return nodes
+  }
 
   // Use computed to memoize condition value - this prevents the effect from
   // re-running when condition dependencies change but the boolean result stays same.
@@ -1459,6 +1657,58 @@ export function createConditional(
       return
     }
     pendingRender = false
+
+    if (initialHydrating && isHydratingActive()) {
+      initialHydrating = false
+      lastCondition = cond
+
+      const render = cond ? renderTrue : renderFalse
+      if (!render) {
+        currentNodes = collectBetween()
+        return
+      }
+
+      const root = createRootContext(hostRoot)
+      const prev = pushRoot(root)
+      let handledError = false
+      try {
+        const output = untrack(render)
+        if (output == null || output === false) {
+          currentNodes = collectBetween()
+          return
+        }
+        withHydrationRange(
+          startMarker.nextSibling,
+          endMarker,
+          parent.ownerDocument ?? document,
+          () => {
+            createElementFn(output)
+          },
+        )
+        currentNodes = collectBetween()
+      } catch (err) {
+        if (handleSuspend(err as any, root)) {
+          handledError = true
+          destroyRoot(root)
+          return
+        }
+        if (handleError(err, { source: 'renderChild' }, root)) {
+          handledError = true
+          destroyRoot(root)
+          return
+        }
+        throw err
+      } finally {
+        popRoot(prev)
+        if (!handledError) {
+          flushOnMount(root)
+          currentRoot = root
+        } else {
+          currentRoot = null
+        }
+      }
+      return
+    }
 
     if (lastCondition === cond && currentNodes.length > 0) {
       return

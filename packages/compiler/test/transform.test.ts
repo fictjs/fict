@@ -353,7 +353,7 @@ describe('Fict Compiler - Basic Transforms', () => {
       `
       const output = transformWithOptions(input)
       expect(output).toContain('createKeyedList')
-      expect(output).toContain('toNodeArray')
+      expect(output).toContain('getSlotEnd')
       expect(output).toContain('template')
       expect(output).toContain('bindText')
       expect(output).toContain('item().label')

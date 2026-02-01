@@ -131,6 +131,14 @@ function unwrap<T>(value: T): T {
   return value
 }
 
+export function isStoreProxy(value: unknown): boolean {
+  return !!(value && typeof value === 'object' && Reflect.get(value as object, PROXY))
+}
+
+export function unwrapStore<T>(value: T): T {
+  return unwrap(value)
+}
+
 function track(target: object, prop: string | symbol) {
   let signals = signalCache.get(target)
   if (!signals) {

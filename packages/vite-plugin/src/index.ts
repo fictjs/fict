@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { transformAsync } from '@babel/core'
 import { createFictPlugin, type FictCompilerOptions } from '@fictjs/compiler'
@@ -384,6 +384,35 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         })
       }
     },
+
+    generateBundle(_options, bundle) {
+      if (!config || config.command !== 'build') return
+      if (config.build.ssr) return
+
+      const base = config.base ?? '/'
+      const manifest: Record<string, string> = {}
+
+      for (const output of Object.values(bundle)) {
+        if (output.type !== 'chunk') continue
+        const fileName = output.fileName
+        const url = joinBasePath(base, fileName)
+        for (const moduleId of Object.keys(output.modules)) {
+          if (!moduleId || moduleId.startsWith('\0')) continue
+          const normalized = normalizeFileName(moduleId, config.root)
+          if (!path.isAbsolute(normalized)) continue
+          const key = pathToFileURL(normalized).href
+          if (!manifest[key]) {
+            manifest[key] = url
+          }
+        }
+      }
+
+      this.emitFile({
+        type: 'asset',
+        fileName: 'fict.manifest.json',
+        source: JSON.stringify(manifest),
+      })
+    },
   }
 }
 
@@ -484,6 +513,13 @@ function normalizeFileName(id: string, root?: string): string {
   if (path.isAbsolute(clean)) return path.normalize(clean)
   if (root) return path.normalize(path.resolve(root, clean))
   return path.normalize(path.resolve(clean))
+}
+
+function joinBasePath(base: string, fileName: string): string {
+  if (!base) return fileName
+  if (base === '/') return `/${fileName}`
+  const normalized = base.endsWith('/') ? base : `${base}/`
+  return `${normalized}${fileName}`
 }
 
 interface AliasEntry {

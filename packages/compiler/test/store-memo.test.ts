@@ -14,7 +14,7 @@ describe('$store memoization and dynamic access', () => {
     `)
 
     expect(output).toContain(`__fictUseMemo(__fictCtx, () => store.items.filter`)
-    expect(output).toContain(`insert(__el_`)
+    expect(output).toContain(`insertBetween(__el_`)
   })
 
   it('preserves dynamic store property access inside memos', () => {
@@ -67,7 +67,7 @@ describe('$store memoization and dynamic access', () => {
     `)
 
     expect(output).toContain(`const doubled = __fictUseMemo(__fictCtx, () => store.count * 2`)
-    expect(output).toContain(`insert(__el_`)
+    expect(output).toContain(`insertBetween(__el_`)
   })
 
   it('memoizes nested store property access in derived computation', () => {

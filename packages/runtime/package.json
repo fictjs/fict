@@ -38,6 +38,11 @@
       "import": "./dist/advanced.js",
       "require": "./dist/advanced.cjs"
     },
+    "./loader": {
+      "types": "./dist/loader.d.ts",
+      "import": "./dist/loader.js",
+      "require": "./dist/loader.cjs"
+    },
     "./jsx-runtime": {
       "types": "./dist/jsx-runtime.d.ts",
       "import": "./dist/jsx-runtime.js",

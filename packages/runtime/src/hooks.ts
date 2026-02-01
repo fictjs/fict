@@ -13,15 +13,19 @@ const isDev =
     ? __DEV__
     : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
 
-interface HookContext {
+export interface HookContext {
   slots: unknown[]
   cursor: number
   rendering?: boolean
   componentId?: number
   parentId?: number
+  scopeId?: string
+  scopeType?: string
+  slotMap?: Record<string, number>
 }
 
 const ctxStack: HookContext[] = []
+let preparedContext: HookContext | null = null
 
 function assertRenderContext(ctx: HookContext, hookName: string): void {
   if (!ctx.rendering) {
@@ -54,9 +58,14 @@ export function __fictUseContext(): HookContext {
 }
 
 export function __fictPushContext(): HookContext {
-  const ctx: HookContext = { slots: [], cursor: 0 }
+  const ctx: HookContext = preparedContext ?? { slots: [], cursor: 0 }
+  preparedContext = null
   ctxStack.push(ctx)
   return ctx
+}
+
+export function __fictPrepareContext(ctx: HookContext): void {
+  preparedContext = ctx
 }
 
 export function __fictGetCurrentComponentId(): number | undefined {
@@ -85,6 +94,10 @@ export function __fictUseSignal<T>(
   const index = resolvedSlot ?? ctx.cursor++
   if (!ctx.slots[index]) {
     ctx.slots[index] = createSignal(initial, options)
+  }
+  if (options?.name) {
+    if (!ctx.slotMap) ctx.slotMap = {}
+    ctx.slotMap[options.name] = index
   }
   return ctx.slots[index] as SignalAccessor<T>
 }

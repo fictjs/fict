@@ -1,7 +1,7 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
 exports[`optimizer output baselines > hook + derived accessors 1`] = `
-"import { __fictUseSignal, __fictUseMemo, __fictUseContext, template, insert, createElement } from "@fictjs/runtime/internal";
+"import { __fictUseSignal, __fictUseMemo, __fictUseContext, template, resolvePath, getSlotEnd, insertBetween, createElement } from "@fictjs/runtime/internal";
 export function useCounter() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 0);
@@ -37,19 +37,21 @@ export function View() {
     double
   } = __region_0();
   return __fictUseMemo(__fictCtx, () => {
-    const __tmpl_1 = template("<div><!----> / <!----></div>");
+    const __tmpl_1 = template("<div><!--fict:slot:start--><!--fict:slot:end--> / <!--fict:slot:start--><!--fict:slot:end--></div>");
     const __root_0 = __tmpl_1();
-    const __el_2 = __root_0.firstChild;
-    const __el_3 = __root_0.firstChild.nextSibling.nextSibling;
-    insert(__el_2.parentNode, () => count(), __el_2, createElement);
-    insert(__el_3.parentNode, () => double(), __el_3, createElement);
+    const __el_2 = resolvePath(__root_0, [0]);
+    const __el_3 = resolvePath(__root_0, [2]);
+    const __end_4 = getSlotEnd(__el_2);
+    insertBetween(__el_2, __end_4, () => count(), createElement);
+    const __end_5 = getSlotEnd(__el_3);
+    insertBetween(__el_3, __end_5, () => double(), createElement);
     return __root_0;
   }, 1003)();
 }"
 `;
 
 exports[`optimizer output baselines > keyed list rendering 1`] = `
-"import { __fictUseSignal, __fictUseMemo, template, createKeyedList, bindText, onDestroy, toNodeArray, __fictUseContext } from "@fictjs/runtime/internal";
+"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, createKeyedList, bindText, onDestroy, __fictUseContext } from "@fictjs/runtime/internal";
 function List() {
   const __fictCtx = __fictUseContext();
   const items = __fictUseSignal(__fictCtx, [{
@@ -60,23 +62,20 @@ function List() {
     text: "b"
   }]);
   return __fictUseMemo(__fictCtx, () => {
-    const __tmpl_1 = template("<ul><!----></ul>");
+    const __tmpl_1 = template("<ul><!--fict:slot:start--><!--fict:slot:end--></ul>");
     const __root_0 = __tmpl_1();
-    const __el_2 = __root_0.firstChild;
-    const __htmpl_3 = template("<li> </li>");
-    const __list_6 = createKeyedList(() => items(), (item, __index) => item.id, (item, __index, __key) => (() => {
-      const __root_4 = __htmpl_3();
-      const __el_5 = __root_4.firstChild;
+    const __el_2 = resolvePath(__root_0, [0]);
+    const __end_3 = getSlotEnd(__el_2);
+    const __htmpl_4 = template("<li> </li>");
+    const __list_7 = createKeyedList(() => items(), (item, __index) => item.id, (item, __index, __key) => (() => {
+      const __root_5 = __htmpl_4();
+      const __el_6 = resolvePath(__root_5, [0]);
       __key;
-      bindText(__el_5, () => item().text);
-      return __root_4;
-    })(), false);
-    const __markers_7 = toNodeArray(__list_6.marker);
-    for (const __m_8 of __markers_7) {
-      __el_2.parentNode.insertBefore(__m_8, __el_2);
-    }
-    __list_6?.flush?.();
-    onDestroy(__list_6.dispose);
+      bindText(__el_6, () => item().text);
+      return __root_5;
+    })(), false, __el_2, __end_3);
+    __list_7?.flush?.();
+    onDestroy(__list_7.dispose);
     return __root_0;
   }, 1000)();
 }
@@ -84,18 +83,20 @@ export default List;"
 `;
 
 exports[`optimizer output baselines > props destructuring + defaults 1`] = `
-"import { __fictUseMemo, template, insert, createElement, __fictUseContext, prop } from "@fictjs/runtime/internal";
+"import { __fictUseMemo, template, resolvePath, getSlotEnd, insertBetween, createElement, __fictUseContext, prop } from "@fictjs/runtime/internal";
 function Card(__props) {
   const title = prop(() => __props.title);
   const count = prop(() => __props.count ?? 0);
   const __fictCtx = __fictUseContext();
   return __fictUseMemo(__fictCtx, () => {
-    const __tmpl_1 = template("<h1><!----><!----></h1>");
+    const __tmpl_1 = template("<h1><!--fict:slot:start--><!--fict:slot:end--><!--fict:slot:start--><!--fict:slot:end--></h1>");
     const __root_0 = __tmpl_1();
-    const __el_2 = __root_0.firstChild;
-    const __el_3 = __root_0.firstChild.nextSibling;
-    insert(__el_2.parentNode, () => title(), __el_2, createElement);
-    insert(__el_3.parentNode, () => count(), __el_3, createElement);
+    const __el_2 = resolvePath(__root_0, [0]);
+    const __el_3 = resolvePath(__root_0, [1]);
+    const __end_4 = getSlotEnd(__el_2);
+    insertBetween(__el_2, __end_4, () => title(), createElement);
+    const __end_5 = getSlotEnd(__el_3);
+    insertBetween(__el_3, __end_5, () => count(), createElement);
     return __root_0;
   }, 1000)();
 }
@@ -103,7 +104,7 @@ export default Card;"
 `;
 
 exports[`optimizer output baselines > region grouping across control flow 1`] = `
-"import { __fictUseSignal, __fictUseMemo, template, insert, createElement, __fictUseContext } from "@fictjs/runtime/internal";
+"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, insertBetween, createElement, __fictUseContext } from "@fictjs/runtime/internal";
 function Summary() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 0);
@@ -122,12 +123,14 @@ function Summary() {
   const heading = () => __region_0().heading;
   const extra = () => __region_0().extra;
   return __fictUseMemo(__fictCtx, () => {
-    const __tmpl_1 = template("<div><!----><!----></div>");
+    const __tmpl_1 = template("<div><!--fict:slot:start--><!--fict:slot:end--><!--fict:slot:start--><!--fict:slot:end--></div>");
     const __root_0 = __tmpl_1();
-    const __el_2 = __root_0.firstChild;
-    const __el_3 = __root_0.firstChild.nextSibling;
-    insert(__el_2.parentNode, () => heading(), __el_2, createElement);
-    insert(__el_3.parentNode, () => extra(), __el_3, createElement);
+    const __el_2 = resolvePath(__root_0, [0]);
+    const __el_3 = resolvePath(__root_0, [1]);
+    const __end_4 = getSlotEnd(__el_2);
+    insertBetween(__el_2, __end_4, () => heading(), createElement);
+    const __end_5 = getSlotEnd(__el_3);
+    insertBetween(__el_3, __end_5, () => extra(), createElement);
     return __root_0;
   }, 1001)();
 }

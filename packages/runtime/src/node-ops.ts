@@ -183,3 +183,68 @@ export function removeNodes(nodes: Node[]): void {
     node.parentNode?.removeChild(node)
   }
 }
+
+const SLOT_START = 'fict:slot:start'
+const SLOT_END = 'fict:slot:end'
+
+function isSlotStart(node: Node | null): node is Comment {
+  return !!(node && node.nodeType === 8 && (node as Comment).data === SLOT_START)
+}
+
+function isSlotEnd(node: Node | null): node is Comment {
+  return !!(node && node.nodeType === 8 && (node as Comment).data === SLOT_END)
+}
+
+export function getSlotEnd(start: Comment): Comment {
+  let depth = 1
+  let cursor: Node | null = start.nextSibling
+  while (cursor) {
+    if (isSlotStart(cursor)) {
+      depth++
+    } else if (isSlotEnd(cursor)) {
+      depth--
+      if (depth === 0) {
+        return cursor
+      }
+    }
+    cursor = cursor.nextSibling
+  }
+
+  const owner = start.ownerDocument ?? document
+  const end = owner.createComment(SLOT_END)
+  if (start.parentNode) {
+    start.parentNode.insertBefore(end, start.nextSibling)
+  }
+  return end
+}
+
+export function resolvePath(root: Node, path: number[]): Node | null {
+  let current: Node | null = root
+  for (const index of path) {
+    if (!current) return null
+    let child: Node | null = current.firstChild
+    let currentIndex = 0
+    while (child) {
+      if (isSlotStart(child)) {
+        if (currentIndex === index) {
+          current = child
+          break
+        }
+        const end = getSlotEnd(child as Comment)
+        child = end.nextSibling
+        currentIndex++
+        continue
+      }
+      if (currentIndex === index) {
+        current = child
+        break
+      }
+      currentIndex++
+      child = child.nextSibling
+    }
+    if (!child) {
+      return null
+    }
+  }
+  return current
+}

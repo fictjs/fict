@@ -98,6 +98,8 @@ export interface FictCompilerOptions {
   getterCache?: boolean
   /** Emit fine-grained DOM creation/binding code for supported JSX templates */
   fineGrainedDom?: boolean
+  /** Enable resumable output (QRL handlers + resume metadata). */
+  resumable?: boolean
   /** Enable HIR optimization passes (DCE/const-fold/CSE) */
   optimize?: boolean
   /**

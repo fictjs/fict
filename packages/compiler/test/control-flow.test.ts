@@ -64,8 +64,7 @@ describe('Fict Compiler - Control Flow', () => {
       `
       const output = runTransform(input)
       // Should use fine-grained list helpers
-      // Non-fine-grained mode uses insert with createKeyedList
-      expect(output).toContain('insert')
+      expect(output).toContain('createKeyedList')
       // Should have getItems arrow function
       expect(output).toContain('() => items()')
       // Keyed list callback should have __key as third parameter for key constification
@@ -83,7 +82,7 @@ describe('Fict Compiler - Control Flow', () => {
       `
       const output = runTransform(input)
       // Should use fine-grained list helpers
-      expect(output).toContain('insert')
+      expect(output).toContain('createKeyedList')
       // Should access user property with getter pattern
       expect(output).toContain('user()')
     })

@@ -74,6 +74,9 @@ export const RUNTIME_HELPERS = {
   conditional: 'createConditional',
   keyedList: 'createKeyedList',
   insert: 'insert',
+  insertBetween: 'insertBetween',
+  resolvePath: 'resolvePath',
+  getSlotEnd: 'getSlotEnd',
   onDestroy: 'onDestroy',
   bindText: 'bindText',
   bindAttribute: 'bindAttribute',
@@ -86,6 +89,15 @@ export const RUNTIME_HELPERS = {
   toNodeArray: 'toNodeArray',
   template: 'template',
   delegateEvents: 'delegateEvents',
+  useLexicalScope: '__fictUseLexicalScope',
+  getScopeProps: '__fictGetScopeProps',
+  qrl: '__fictQrl',
+  getSSRScope: '__fictGetSSRScope',
+  ensureScope: '__fictEnsureScope',
+  prepareContext: '__fictPrepareContext',
+  enterHydration: '__fictEnterHydration',
+  exitHydration: '__fictExitHydration',
+  domRender: 'render',
 } as const
 
 export const RUNTIME_ALIASES = {
@@ -111,6 +123,9 @@ export const RUNTIME_ALIASES = {
   conditional: 'createConditional',
   keyedList: 'createKeyedList',
   insert: 'insert',
+  insertBetween: 'insertBetween',
+  resolvePath: 'resolvePath',
+  getSlotEnd: 'getSlotEnd',
   onDestroy: 'onDestroy',
   bindText: 'bindText',
   bindAttribute: 'bindAttribute',
@@ -123,6 +138,15 @@ export const RUNTIME_ALIASES = {
   toNodeArray: 'toNodeArray',
   template: 'template',
   delegateEvents: 'delegateEvents',
+  useLexicalScope: '__fictUseLexicalScope',
+  getScopeProps: '__fictGetScopeProps',
+  qrl: '__fictQrl',
+  getSSRScope: '__fictGetSSRScope',
+  ensureScope: '__fictEnsureScope',
+  prepareContext: '__fictPrepareContext',
+  enterHydration: '__fictEnterHydration',
+  exitHydration: '__fictExitHydration',
+  domRender: 'render',
 } as const
 
 // Attributes that should NOT be wrapped in reactive functions

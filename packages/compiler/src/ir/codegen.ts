@@ -633,6 +633,16 @@ export interface CodegenContext {
   hoistedTemplates?: Map<string, BabelCore.types.Identifier>
   /** Hoisted template declarations to insert at function/component scope */
   hoistedTemplateStatements?: BabelCore.types.Statement[]
+  /** Hoisted resumable handler/export statements */
+  hoistedResumableStatements?: BabelCore.types.Statement[]
+  /** Resumable handler counter */
+  resumableHandlerCounter?: number
+  /** Resumable component counter */
+  resumableComponentCounter?: number
+  /** Resumable component metadata */
+  resumableComponents?: Map<string, { resumeExport: string; typeKey: string }>
+  /** Whether resumable output is enabled */
+  resumableEnabled?: boolean
   /** Set of delegated events used (for hoisting delegateEvents call) */
   delegatedEventsUsed?: Set<string>
   /** Parameter name for the list key constant (e.g., "__key") when in list render */
@@ -689,6 +699,11 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     hookReturnInfo: new Map(),
     hoistedTemplates: new Map(),
     hoistedTemplateStatements: [],
+    hoistedResumableStatements: [],
+    resumableHandlerCounter: 0,
+    resumableComponentCounter: 0,
+    resumableComponents: new Map(),
+    resumableEnabled: false,
     delegatedEventsUsed: new Set(),
   }
 }
@@ -3036,20 +3051,18 @@ function lowerExpressionImpl(
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '$state') {
         const args = lowerCallArguments(expr.arguments)
         const includeDevtools = ctx.options?.dev !== false
-        if (includeDevtools) {
-          const options: BabelCore.types.ObjectProperty[] = []
-          if (ctx.currentAssignmentName) {
-            options.push(
-              t.objectProperty(t.identifier('name'), t.stringLiteral(ctx.currentAssignmentName)),
-            )
-          }
-          if (expr.loc) {
-            const source = `${ctx.options?.filename ?? ''}:${expr.loc.start.line}:${expr.loc.start.column}`
-            options.push(t.objectProperty(t.identifier('devToolsSource'), t.stringLiteral(source)))
-          }
-          if (options.length > 0) {
-            args.push(t.objectExpression(options))
-          }
+        const options: BabelCore.types.ObjectProperty[] = []
+        if (ctx.currentAssignmentName) {
+          options.push(
+            t.objectProperty(t.identifier('name'), t.stringLiteral(ctx.currentAssignmentName)),
+          )
+        }
+        if (includeDevtools && expr.loc) {
+          const source = `${ctx.options?.filename ?? ''}:${expr.loc.start.line}:${expr.loc.start.column}`
+          options.push(t.objectProperty(t.identifier('devToolsSource'), t.stringLiteral(source)))
+        }
+        if (options.length > 0) {
+          args.push(t.objectExpression(options))
         }
 
         if (ctx.inModule) {
@@ -4512,6 +4525,7 @@ interface HIRBinding {
   name?: string // for attributes/events
   expr?: Expression // the dynamic expression
   eventOptions?: { capture?: boolean; passive?: boolean; once?: boolean }
+  resumable?: boolean
   /** Namespace context at this binding's location (for dynamic children) */
   namespace?: NamespaceContext
 }
@@ -4519,6 +4533,7 @@ interface HIRBinding {
 interface HIRTemplateExtractionResult {
   html: string
   bindings: HIRBinding[]
+  nodeCount: number
   /** Whether the root element is an SVG element (or child of SVG) */
   isSVG?: boolean
   /** Whether the root element is a MathML element (or child of MathML) */
@@ -4793,7 +4808,7 @@ function extractHIRStaticHtml(
   // not baked into static HTML.
   if (jsx.isComponent || typeof jsx.tagName !== 'string') {
     return {
-      html: '<!---->',
+      html: '<!--fict:slot:start--><!--fict:slot:end-->',
       bindings: [
         {
           type: 'child',
@@ -4801,6 +4816,7 @@ function extractHIRStaticHtml(
           expr: jsx,
         },
       ],
+      nodeCount: 1,
     }
   }
 
@@ -4817,7 +4833,11 @@ function extractHIRStaticHtml(
       continue
     }
 
-    const name = normalizeHIRAttrName(attr.name)
+    let name = normalizeHIRAttrName(attr.name)
+    const isResumableEvent = name.endsWith('$')
+    if (isResumableEvent) {
+      name = name.slice(0, -1)
+    }
 
     // Key attribute is for list reconciliation only; keep expression for evaluation
     if (name === 'key') {
@@ -4865,6 +4885,7 @@ function extractHIRStaticHtml(
         name: eventName.toLowerCase(),
         expr: attr.value ?? undefined,
         eventOptions: { capture, passive, once },
+        resumable: isResumableEvent && ctx.resumableEnabled,
       })
       continue
     }
@@ -4936,7 +4957,7 @@ function extractHIRStaticHtml(
       const childResult = extractHIRStaticHtml(child.value, ctx, childPath, resolvedNamespace)
       html += childResult.html
       bindings.push(...childResult.bindings)
-      childIndex++
+      childIndex += childResult.nodeCount
     } else if (child.kind === 'expression') {
       const inline = hasAdjacentInline(i)
       if (!inline && isLikelyTextExpression(child.value, ctx)) {
@@ -4949,8 +4970,8 @@ function extractHIRStaticHtml(
           namespace: resolvedNamespace,
         })
       } else {
-        // Dynamic expression - insert placeholder comment
-        html += '<!---->'
+        // Dynamic expression - insert placeholder comments
+        html += '<!--fict:slot:start--><!--fict:slot:end-->'
         bindings.push({
           type: 'child',
           path: [...parentPath, childIndex],
@@ -4958,6 +4979,8 @@ function extractHIRStaticHtml(
           // Track namespace for dynamic child bindings
           namespace: resolvedNamespace,
         })
+        childIndex++
+        continue
       }
       childIndex++
     }
@@ -4976,6 +4999,7 @@ function extractHIRStaticHtml(
   return {
     html,
     bindings,
+    nodeCount: 1,
     isSVG: needsSVG || undefined,
     isMathML: needsMathML || undefined,
   }
@@ -5112,6 +5136,18 @@ function lowerIntrinsicElement(
         binding.eventOptions &&
         (binding.eventOptions.capture || binding.eventOptions.passive || binding.eventOptions.once)
       const isDelegated = DelegatedEvents.has(eventName) && !hasEventOptions
+
+      if (binding.resumable && !hasEventOptions) {
+        emitResumableEventBinding(
+          targetId,
+          eventName,
+          binding.expr,
+          statements,
+          ctx,
+          containingRegion,
+        )
+        continue
+      }
 
       // Try to extract handler and data from HIR before lowering
       // This preserves function references without transforming them to call expressions
@@ -5559,14 +5595,18 @@ function resolveHIRBindingPath(
     relativePath = path
   }
 
-  // Navigate relative path using firstChild/nextSibling
-  let currentExpr: BabelCore.types.Expression = ancestorId
-  for (const index of relativePath) {
-    currentExpr = t.memberExpression(currentExpr, t.identifier('firstChild'))
-    for (let i = 0; i < index; i++) {
-      currentExpr = t.memberExpression(currentExpr, t.identifier('nextSibling'))
-    }
+  if (relativePath.length === 0) {
+    cache.set(key, ancestorId)
+    return ancestorId
   }
+
+  // Navigate relative path using runtime helper that skips slot ranges
+  ctx.helpersUsed.add('resolvePath')
+  const pathExpr = t.arrayExpression(relativePath.map(index => t.numericLiteral(index)))
+  const currentExpr = t.callExpression(t.identifier(RUNTIME_ALIASES.resolvePath), [
+    ancestorId,
+    pathExpr,
+  ])
 
   const varId = genTemp(ctx, 'el')
   statements.push(t.variableDeclaration('const', [t.variableDeclarator(varId, currentExpr)]))
@@ -5587,7 +5627,16 @@ function emitHIRChildBinding(
   namespace?: NamespaceContext,
 ): void {
   const { t } = ctx
-  const parentId = t.memberExpression(markerId, t.identifier('parentNode'))
+  ctx.helpersUsed.add('getSlotEnd')
+  const endMarkerId = genTemp(ctx, 'end')
+  statements.push(
+    t.variableDeclaration('const', [
+      t.variableDeclarator(
+        endMarkerId,
+        t.callExpression(t.identifier(RUNTIME_ALIASES.getSlotEnd), [markerId]),
+      ),
+    ]),
+  )
 
   // Set namespace context for child element lowering
   if (namespace !== undefined) {
@@ -5619,7 +5668,7 @@ function emitHIRChildBinding(
     expr.kind === 'ConditionalExpression' ||
     (expr.kind === 'LogicalExpression' && expr.operator === '&&')
   ) {
-    emitConditionalChild(parentId, markerId, expr, statements, ctx)
+    emitConditionalChild(markerId, endMarkerId, expr, statements, ctx)
     return
   }
 
@@ -5631,7 +5680,7 @@ function emitHIRChildBinding(
       callee.property.kind === 'Identifier' &&
       callee.property.name === 'map'
     ) {
-      emitListChild(parentId, markerId, expr, statements, ctx)
+      emitListChild(markerId, endMarkerId, expr, statements, ctx)
       return
     }
   }
@@ -5639,14 +5688,14 @@ function emitHIRChildBinding(
   // Check if it's a JSX element
   if (expr.kind === 'JSXElement') {
     const childExpr = lowerJSXElement(expr, ctx)
-    ctx.helpersUsed.add('insert')
+    ctx.helpersUsed.add('insertBetween')
     ctx.helpersUsed.add('createElement')
     statements.push(
       t.expressionStatement(
-        t.callExpression(t.identifier(RUNTIME_ALIASES.insert), [
-          parentId,
-          t.arrowFunctionExpression([], childExpr),
+        t.callExpression(t.identifier(RUNTIME_ALIASES.insertBetween), [
           markerId,
+          endMarkerId,
+          t.arrowFunctionExpression([], childExpr),
           t.identifier(RUNTIME_ALIASES.createElement),
         ]),
       ),
@@ -5656,26 +5705,289 @@ function emitHIRChildBinding(
 
   // Default: insert dynamic expression
   const valueExpr = lowerDomExpression(expr, ctx, containingRegion)
-  ctx.helpersUsed.add('insert')
+  ctx.helpersUsed.add('insertBetween')
   ctx.helpersUsed.add('createElement')
   statements.push(
     t.expressionStatement(
-      t.callExpression(t.identifier(RUNTIME_ALIASES.insert), [
-        parentId,
-        t.arrowFunctionExpression([], valueExpr),
+      t.callExpression(t.identifier(RUNTIME_ALIASES.insertBetween), [
         markerId,
+        endMarkerId,
+        t.arrowFunctionExpression([], valueExpr),
         t.identifier(RUNTIME_ALIASES.createElement),
       ]),
     ),
   )
 }
 
+function emitResumableEventBinding(
+  targetId: BabelCore.types.Identifier,
+  eventName: string,
+  expr: Expression,
+  statements: BabelCore.types.Statement[],
+  ctx: CodegenContext,
+  containingRegion: RegionInfo | null,
+): void {
+  const { t } = ctx
+  if (!ctx.resumableEnabled) {
+    return
+  }
+
+  const prevWrapTracked = ctx.wrapTrackedExpressions
+  ctx.wrapTrackedExpressions = false
+  const valueExpr = lowerDomExpression(expr, ctx, containingRegion, {
+    skipHookAccessors: true,
+    skipRegionRootOverride: true,
+  })
+  ctx.wrapTrackedExpressions = prevWrapTracked
+
+  const eventParam = t.identifier('event')
+  const elParam = t.identifier('el')
+  const scopeParam = t.identifier('scopeId')
+
+  const ensureHandlerParam = (fn: BabelCore.types.Expression): BabelCore.types.Expression => {
+    if (t.isArrowFunctionExpression(fn)) {
+      if (fn.params.length > 0) return fn
+      return t.arrowFunctionExpression([eventParam], fn.body, fn.async)
+    }
+    if (t.isFunctionExpression(fn)) {
+      if (fn.params.length > 0) return fn
+      return t.functionExpression(fn.id, [eventParam], fn.body, fn.generator, fn.async)
+    }
+    if (t.isIdentifier(fn) || t.isMemberExpression(fn)) {
+      return fn
+    }
+    if (
+      t.isCallExpression(fn) &&
+      fn.arguments.length === 0 &&
+      (t.isIdentifier(fn.callee) || t.isMemberExpression(fn.callee))
+    ) {
+      return fn.callee as BabelCore.types.Expression
+    }
+    return t.functionExpression(
+      null,
+      [eventParam],
+      t.blockStatement([
+        t.returnStatement(
+          t.callExpression(
+            t.memberExpression(fn as BabelCore.types.Expression, t.identifier('call')),
+            [t.thisExpression(), eventParam],
+          ),
+        ),
+      ]),
+    )
+  }
+
+  const handlerExpr = ensureHandlerParam(valueExpr)
+  const handlerId = t.identifier(`__fict_e${ctx.resumableHandlerCounter ?? 0}`)
+  ctx.resumableHandlerCounter = (ctx.resumableHandlerCounter ?? 0) + 1
+
+  const captured = new Set<string>()
+  collectExpressionIdentifiersDeep(expr, captured)
+
+  const lexicalNames = Array.from(captured).filter(name => ctx.signalVars?.has(name))
+  const propsName =
+    ctx.propsParamName && captured.has(ctx.propsParamName) ? ctx.propsParamName : null
+
+  const bodyStatements: BabelCore.types.Statement[] = []
+  if (lexicalNames.length > 0) {
+    ctx.helpersUsed.add('useLexicalScope')
+    bodyStatements.push(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(
+          t.arrayPattern(lexicalNames.map(name => t.identifier(name))),
+          t.callExpression(t.identifier(RUNTIME_ALIASES.useLexicalScope), [
+            scopeParam,
+            t.arrayExpression(lexicalNames.map(name => t.stringLiteral(name))),
+          ]),
+        ),
+      ]),
+    )
+  }
+
+  if (propsName) {
+    ctx.helpersUsed.add('getScopeProps')
+    bodyStatements.push(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(
+          t.identifier(propsName),
+          t.logicalExpression(
+            '||',
+            t.callExpression(t.identifier(RUNTIME_ALIASES.getScopeProps), [scopeParam]),
+            t.objectExpression([]),
+          ),
+        ),
+      ]),
+    )
+  }
+
+  const handlerVar = t.identifier('__handler')
+  bodyStatements.push(
+    t.variableDeclaration('const', [t.variableDeclarator(handlerVar, handlerExpr)]),
+  )
+  bodyStatements.push(
+    t.returnStatement(
+      t.callExpression(t.memberExpression(handlerVar, t.identifier('call')), [elParam, eventParam]),
+    ),
+  )
+
+  const exportedHandler = t.exportNamedDeclaration(
+    t.variableDeclaration('const', [
+      t.variableDeclarator(
+        handlerId,
+        t.arrowFunctionExpression(
+          [scopeParam, eventParam, elParam],
+          t.blockStatement(bodyStatements),
+        ),
+      ),
+    ]),
+    [],
+  )
+
+  ctx.hoistedResumableStatements?.push(exportedHandler)
+
+  ctx.helpersUsed.add('qrl')
+  const qrlExpr = t.callExpression(t.identifier(RUNTIME_ALIASES.qrl), [
+    t.memberExpression(
+      t.metaProperty(t.identifier('import'), t.identifier('meta')),
+      t.identifier('url'),
+    ),
+    t.stringLiteral(handlerId.name),
+  ])
+
+  statements.push(
+    t.expressionStatement(
+      t.callExpression(t.memberExpression(targetId, t.identifier('setAttribute')), [
+        t.stringLiteral(`on:${eventName}`),
+        qrlExpr,
+      ]),
+    ),
+  )
+}
+
+function registerResumableComponent(componentName: string, ctx: CodegenContext): void {
+  if (!ctx.resumableEnabled) return
+  if (!ctx.hoistedResumableStatements || !ctx.resumableComponents) return
+  if (ctx.resumableComponents.has(componentName)) return
+
+  const { t } = ctx
+  const resumeExport = `__fict_r${ctx.resumableComponentCounter ?? 0}`
+  ctx.resumableComponentCounter = (ctx.resumableComponentCounter ?? 0) + 1
+
+  const scopeParam = t.identifier('scopeId')
+  const hostParam = t.identifier('host')
+  const snapshotId = t.identifier('snapshot')
+  const ctxId = t.identifier('ctx')
+
+  ctx.helpersUsed.add('getSSRScope')
+  ctx.helpersUsed.add('ensureScope')
+  ctx.helpersUsed.add('prepareContext')
+  ctx.helpersUsed.add('enterHydration')
+  ctx.helpersUsed.add('exitHydration')
+  ctx.helpersUsed.add('domRender')
+  ctx.helpersUsed.add('qrl')
+
+  const snapshotDecl = t.variableDeclaration('const', [
+    t.variableDeclarator(
+      snapshotId,
+      t.callExpression(t.identifier(RUNTIME_ALIASES.getSSRScope), [scopeParam]),
+    ),
+  ])
+  const earlyReturn = t.ifStatement(t.unaryExpression('!', snapshotId), t.returnStatement())
+  const ensureCtxDecl = t.variableDeclaration('const', [
+    t.variableDeclarator(
+      ctxId,
+      t.callExpression(t.identifier(RUNTIME_ALIASES.ensureScope), [
+        scopeParam,
+        hostParam,
+        snapshotId,
+      ]),
+    ),
+  ])
+  const enterHydration = t.expressionStatement(
+    t.callExpression(t.identifier(RUNTIME_ALIASES.enterHydration), []),
+  )
+  const prepareCtx = t.expressionStatement(
+    t.callExpression(t.identifier(RUNTIME_ALIASES.prepareContext), [ctxId]),
+  )
+  const renderCall = t.expressionStatement(
+    t.callExpression(t.identifier(RUNTIME_ALIASES.domRender), [
+      t.arrowFunctionExpression(
+        [],
+        t.callExpression(t.identifier(componentName), [
+          t.logicalExpression(
+            '||',
+            t.memberExpression(snapshotId, t.identifier('props')),
+            t.objectExpression([]),
+          ),
+        ]),
+      ),
+      hostParam,
+    ]),
+  )
+  const exitHydration = t.expressionStatement(
+    t.callExpression(t.identifier(RUNTIME_ALIASES.exitHydration), []),
+  )
+
+  const resumeFn = t.exportNamedDeclaration(
+    t.variableDeclaration('const', [
+      t.variableDeclarator(
+        t.identifier(resumeExport),
+        t.arrowFunctionExpression(
+          [scopeParam, hostParam],
+          t.blockStatement([
+            snapshotDecl,
+            earlyReturn,
+            ensureCtxDecl,
+            enterHydration,
+            t.tryStatement(
+              t.blockStatement([prepareCtx, renderCall]),
+              null,
+              t.blockStatement([exitHydration]),
+            ),
+          ]),
+        ),
+      ),
+    ]),
+    [],
+  )
+
+  const metaId = t.identifier(`__fict_meta_${componentName}`)
+  const importMetaUrl = t.memberExpression(
+    t.metaProperty(t.identifier('import'), t.identifier('meta')),
+    t.identifier('url'),
+  )
+  const typeKeyExpr = t.binaryExpression('+', t.stringLiteral(`${componentName}@`), importMetaUrl)
+  const resumeQrlExpr = t.callExpression(t.identifier(RUNTIME_ALIASES.qrl), [
+    importMetaUrl,
+    t.stringLiteral(resumeExport),
+  ])
+  const metaDecl = t.variableDeclaration('const', [
+    t.variableDeclarator(
+      metaId,
+      t.objectExpression([
+        t.objectProperty(t.identifier('id'), typeKeyExpr),
+        t.objectProperty(t.identifier('resume'), resumeQrlExpr),
+      ]),
+    ),
+  ])
+  const assignMeta = t.expressionStatement(
+    t.assignmentExpression(
+      '=',
+      t.memberExpression(t.identifier(componentName), t.identifier('__fictMeta')),
+      metaId,
+    ),
+  )
+
+  ctx.hoistedResumableStatements.push(resumeFn, metaDecl, assignMeta)
+  ctx.resumableComponents.set(componentName, { resumeExport, typeKey: componentName })
+}
+
 /**
  * Emit a conditional child expression
  */
 function emitConditionalChild(
-  parentId: BabelCore.types.Expression,
-  markerId: BabelCore.types.Expression,
+  startMarkerId: BabelCore.types.Expression,
+  endMarkerId: BabelCore.types.Expression,
   expr: Expression,
   statements: BabelCore.types.Statement[],
   ctx: CodegenContext,
@@ -5724,7 +6036,10 @@ function emitConditionalChild(
   ]
   if (alternate) {
     args.push(t.arrowFunctionExpression([], alternate))
+  } else {
+    args.push(t.identifier('undefined'))
   }
+  args.push(startMarkerId, endMarkerId)
 
   statements.push(
     t.variableDeclaration('const', [
@@ -5733,16 +6048,6 @@ function emitConditionalChild(
         t.callExpression(t.identifier(RUNTIME_ALIASES.conditional), args),
       ),
     ]),
-  )
-
-  // Insert marker fragment as a whole so any pre-rendered branch nodes move with it.
-  statements.push(
-    t.expressionStatement(
-      t.callExpression(t.memberExpression(parentId, t.identifier('insertBefore')), [
-        t.memberExpression(bindingId, t.identifier('marker')),
-        markerId,
-      ]),
-    ),
   )
 
   // Flush and cleanup
@@ -6578,8 +6883,8 @@ function buildListCallExpression(
  * Emit a list rendering child (array.map)
  */
 function emitListChild(
-  parentId: BabelCore.types.Expression,
-  markerId: BabelCore.types.Expression,
+  startMarkerId: BabelCore.types.Expression,
+  endMarkerId: BabelCore.types.Expression,
   expr: Expression,
   statements: BabelCore.types.Statement[],
   ctx: CodegenContext,
@@ -6589,40 +6894,14 @@ function emitListChild(
   const listCall = buildListCallExpression(expr, statements, ctx)
   if (!listCall) return
 
+  if (t.isCallExpression(listCall)) {
+    listCall.arguments.push(startMarkerId, endMarkerId)
+  }
+
   ctx.helpersUsed.add('onDestroy')
-  ctx.helpersUsed.add('toNodeArray')
 
   const listId = genTemp(ctx, 'list')
   statements.push(t.variableDeclaration('const', [t.variableDeclarator(listId, listCall)]))
-
-  // Insert markers
-  const markersId = genTemp(ctx, 'markers')
-  statements.push(
-    t.variableDeclaration('const', [
-      t.variableDeclarator(
-        markersId,
-        t.callExpression(t.identifier(RUNTIME_ALIASES.toNodeArray), [
-          t.memberExpression(listId, t.identifier('marker')),
-        ]),
-      ),
-    ]),
-  )
-
-  const mId = genTemp(ctx, 'm')
-  statements.push(
-    t.forOfStatement(
-      t.variableDeclaration('const', [t.variableDeclarator(mId)]),
-      markersId,
-      t.blockStatement([
-        t.expressionStatement(
-          t.callExpression(t.memberExpression(parentId, t.identifier('insertBefore')), [
-            mId,
-            markerId,
-          ]),
-        ),
-      ]),
-    ),
-  )
 
   // Flush and cleanup
   statements.push(
@@ -6713,6 +6992,7 @@ export function codegenWithScopes(
   t: typeof BabelCore.types,
 ): BabelCore.types.File {
   const ctx = createCodegenContext(t)
+  ctx.resumableEnabled = ctx.options?.resumable === true
   ctx.programFunctions = new Map(
     program.functions.filter(fn => !!fn.name).map(fn => [fn.name as string, fn]),
   )
@@ -6876,6 +7156,7 @@ export function lowerHIRWithRegions(
     program.functions.filter(fn => !!fn.name).map(fn => [fn.name as string, fn]),
   )
   ctx.options = options
+  ctx.resumableEnabled = options?.resumable === true
   const body: BabelCore.types.Statement[] = []
   const topLevelAliases = new Set<string>()
   let topLevelCtxInjected = false
@@ -7170,6 +7451,14 @@ export function lowerHIRWithRegions(
   }
 
   flushLowerableBuffer()
+
+  if (
+    ctx.resumableEnabled &&
+    ctx.hoistedResumableStatements &&
+    ctx.hoistedResumableStatements.length > 0
+  ) {
+    body.push(...ctx.hoistedResumableStatements)
+  }
 
   // Emit any remaining generated functions (not present in original order)
   for (const func of generatedFunctions.values()) {
@@ -7984,6 +8273,9 @@ function lowerFunctionWithRegions(
     fn.loc,
   )
   funcDecl.async = isAsync
+  if (isComponent && fn.name) {
+    registerResumableComponent(fn.name, ctx)
+  }
   ctx.needsCtx = prevNeedsCtx
   ctx.shadowedNames = prevShadowed
   ctx.localDeclaredNames = prevLocalDeclared

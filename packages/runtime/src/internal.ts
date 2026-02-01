@@ -13,7 +13,7 @@
 // ============================================================================
 
 export { createSignal, createSelector, __resetReactiveState } from './signal'
-export { createStore, type Store } from './store'
+export { createStore, type Store, isStoreProxy, unwrapStore } from './store'
 export { createMemo } from './memo'
 export { createEffect } from './effect'
 export { Fragment } from './jsx'
@@ -31,7 +31,32 @@ export {
   __fictUseEffect,
   __fictRender,
   __fictResetContext,
+  __fictPrepareContext,
 } from './hooks'
+
+// ============================================================================
+// SSR / Resumability (Internal)
+// ============================================================================
+
+export {
+  __fictEnableSSR,
+  __fictDisableSSR,
+  __fictEnableResumable,
+  __fictDisableResumable,
+  __fictIsResumable,
+  __fictEnterHydration,
+  __fictExitHydration,
+  __fictIsHydrating,
+  __fictRegisterScope,
+  __fictGetScopeRegistry,
+  __fictSerializeSSRState,
+  __fictSetSSRState,
+  __fictGetSSRScope,
+  __fictEnsureScope,
+  __fictUseLexicalScope,
+  __fictGetScopeProps,
+  __fictQrl,
+} from './resume'
 
 // ============================================================================
 // Props Helpers (Compiler-generated code)
@@ -53,6 +78,7 @@ export {
   bindProperty,
   bindRef,
   insert,
+  insertBetween,
   createConditional,
   createPortal,
   spread,
@@ -61,6 +87,7 @@ export {
   isReactive,
   unwrap,
 } from './binding'
+export { resolvePath, getSlotEnd } from './node-ops'
 
 // ============================================================================
 // Event Delegation (Compiler-generated code)
@@ -86,7 +113,7 @@ export {
 // DOM Creation (Compiler-generated code)
 // ============================================================================
 
-export { createElement, template } from './dom'
+export { createElement, template, render } from './dom'
 export { createRenderEffect } from './effect'
 
 // ============================================================================

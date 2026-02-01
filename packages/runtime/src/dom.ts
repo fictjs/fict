@@ -27,6 +27,7 @@ import {
 import { Properties, ChildProperties, getPropAlias, SVGElements, SVGNamespace } from './constants'
 import { getDevtoolsHook } from './devtools'
 import { __fictPushContext, __fictPopContext, __fictGetCurrentComponentId } from './hooks'
+import { __fictIsHydrating, __fictIsResumable, __fictRegisterScope } from './resume'
 import { Fragment } from './jsx'
 import {
   createRootContext,
@@ -44,6 +45,7 @@ import {
 import { createPropsProxy, unwrapProps } from './props'
 import { untrack } from './scheduler'
 import type { DOMElement, FictNode, FictVNode, RefObject } from './types'
+import { claimNodes, isHydratingActive, withHydration } from './hydration'
 
 type NamespaceContext = 'svg' | 'mathml' | null
 
@@ -76,17 +78,25 @@ let nextComponentId = 1
 export function render(view: () => FictNode, container: HTMLElement): () => void {
   const root = createRootContext()
   const prev = pushRoot(root)
-  let dom: DOMElement
+  let dom: DOMElement = undefined as unknown as DOMElement
   try {
     const output = view()
     // createElement must be called within the root context
     // so that child components register their onMount callbacks correctly
-    dom = createElement(output)
+    if (__fictIsHydrating()) {
+      withHydration(container, () => {
+        dom = createElement(output)
+      })
+    } else {
+      dom = createElement(output)
+    }
   } finally {
     popRoot(prev)
   }
 
-  container.replaceChildren(dom)
+  if (!__fictIsHydrating()) {
+    container.replaceChildren(dom)
+  }
   container.setAttribute('data-fict-fine-grained', '1')
 
   flushOnMount(root)
@@ -250,6 +260,32 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
         })
         onCleanup(() => hook.componentUnmount?.(componentId))
       }
+      if (__fictIsResumable() && !__fictIsHydrating()) {
+        const content = createElementWithContext(rendered as FictNode, namespace)
+        const host =
+          namespace === 'svg'
+            ? document.createElementNS(SVG_NS, 'fict-host')
+            : namespace === 'mathml'
+              ? document.createElementNS(MATHML_NS, 'fict-host')
+              : document.createElement('fict-host')
+        host.setAttribute('data-fict-host', '')
+        if (namespace === null && (host as HTMLElement).style) {
+          ;(host as HTMLElement).style.display = 'contents'
+        }
+        const meta = (vnode.type as unknown as { __fictMeta?: { id?: string; resume?: string } })
+          .__fictMeta
+        const typeKey = (meta?.id ?? vnode.type.name) || 'Anonymous'
+        __fictRegisterScope(ctx, host, typeKey, rawProps)
+        if (meta?.resume) {
+          host.setAttribute('data-fict-h', meta.resume)
+        }
+        if (content instanceof DocumentFragment) {
+          host.append(...Array.from(content.childNodes))
+        } else {
+          host.appendChild(content)
+        }
+        return host as DOMElement
+      }
 
       return createElementWithContext(rendered as FictNode, namespace)
     } catch (err) {
@@ -368,8 +404,19 @@ export function template(
 
   // Create the cloning function
   const fn = isImportNode
-    ? () => untrack(() => document.importNode(node || (node = create()), true))
-    : () => (node || (node = create())).cloneNode(true)
+    ? () =>
+        untrack(() => {
+          const base = node || (node = create())
+          return isHydratingActive()
+            ? claimNodes(base, () => document.importNode(base, true))
+            : document.importNode(base, true)
+        })
+    : () => {
+        const base = node || (node = create())
+        return isHydratingActive()
+          ? claimNodes(base, () => base.cloneNode(true))
+          : base.cloneNode(true)
+      }
 
   // Add cloneNode property for compatibility
   ;(fn as { cloneNode?: typeof fn }).cloneNode = fn

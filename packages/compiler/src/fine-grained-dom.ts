@@ -153,6 +153,9 @@ function isStaticTextExpression(
 function normalizeAttributeName(name: string): NormalizedAttribute | null {
   if (name.length > 2 && name.startsWith('on') && name[2]?.toUpperCase() === name[2]) {
     let eventName = name.slice(2)
+    if (eventName.endsWith('$')) {
+      eventName = eventName.slice(0, -1)
+    }
     let capture = false
     let passive = false
     let once = false
@@ -244,7 +247,7 @@ export function extractStaticHtml(
   const tagName = getIntrinsicTagName(node, t)
   if (!tagName) {
     return {
-      html: '<!---->',
+      html: '<!--fict:slot:start--><!--fict:slot:end-->',
       hasDynamic: true,
       bindings: [
         {
@@ -332,7 +335,7 @@ export function extractStaticHtml(
           path: [...parentPath, childIndex],
         })
       } else {
-        html += '<!---->'
+        html += '<!--fict:slot:start--><!--fict:slot:end-->'
         hasDynamic = true
         bindings.push({
           type: 'child',
