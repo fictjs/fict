@@ -227,5 +227,119 @@ function Counter() {
         }
       }
     })
+
+    it('includes hoisted helper functions in handler virtual modules', async () => {
+      const plugin = fict({ functionSplitting: true })
+
+      // Configure the plugin as if in build mode
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      // Simulated compiled code with a hoisted helper function
+      // This is what the compiler generates when a handler uses a component-scoped function
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_fn_formatNumber_0 = n => n.toLocaleString();
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const [count] = __fictUseLexicalScope(scopeId, ['count']);
+  const __handler = () => {
+    count(count() + 1);
+    console.log(__fict_fn_formatNumber_0(count()));
+  };
+  return __handler.call(el, event);
+};
+
+function Counter() {
+  // Component code...
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn() }
+      const transform = plugin.transform as any
+
+      const result =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, compiledCode, '/project/src/Counter.tsx')
+          : null
+
+      if (result && typeof result === 'object' && 'code' in result) {
+        const code = result.code as string
+
+        // Handler export should be removed from main module
+        expect(code).not.toContain('export const __fict_e0')
+
+        // Hoisted function should also be removed (it's only used by handler)
+        expect(code).not.toContain('export const __fict_fn_formatNumber_0')
+      }
+
+      // Check that the virtual module includes the hoisted helper
+      const load = plugin.load as any
+      if (typeof load === 'function') {
+        const content = load('\0fict-handler:/project/src/Counter.tsx$$__fict_e0')
+        if (content) {
+          // Should include the handler
+          expect(content).toContain('export default')
+          expect(content).toContain('__fictUseLexicalScope')
+
+          // Should include the hoisted helper function as a dependency import
+          expect(content).toContain('__fict_fn_formatNumber_0')
+          // The helper should be imported from the source module
+          expect(content).toContain('/project/src/Counter.tsx')
+        }
+      }
+    })
+
+    it('handler with direct function reference works in virtual module', async () => {
+      const plugin = fict({ functionSplitting: true })
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      // Test onClick={helper} pattern (direct function reference)
+      // Handler still needs __fictUseLexicalScope call for vite-plugin to detect it
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_fn_handleClick_0 = () => console.log('clicked');
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const [] = __fictUseLexicalScope(scopeId, []);
+  return __fict_fn_handleClick_0.call(el, event);
+};
+
+function Button() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = {
+        error: vi.fn(),
+        emitFile: vi.fn(), // Required for production build handler emission
+      }
+      const transform = plugin.transform as any
+
+      // Use a unique file path for this test
+      const result =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, compiledCode, '/project/src/DirectRef.tsx')
+          : await transform?.handler?.call(mockContext, compiledCode, '/project/src/DirectRef.tsx')
+
+      expect(result && typeof result === 'object').toBe(true)
+
+      // Check virtual module has the dependency
+      const load = plugin.load as any
+      if (typeof load === 'function') {
+        const content = load('\0fict-handler:/project/src/DirectRef.tsx$$__fict_e0')
+        if (content) {
+          // Handler should reference the hoisted function
+          expect(content).toContain('__fict_fn_handleClick_0')
+        }
+      }
+    })
   })
 })

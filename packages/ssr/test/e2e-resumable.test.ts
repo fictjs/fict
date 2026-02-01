@@ -22,6 +22,7 @@ import {
   installResumableLoader,
   resetHydratedScopes,
   resetPrefetchedUrls,
+  cleanupEventListeners,
 } from '@fictjs/runtime/loader'
 import {
   __fictSetSSRState,
@@ -186,6 +187,7 @@ function cleanupTestState(): void {
   __fictSetSSRState(null)
   resetHydratedScopes()
   resetPrefetchedUrls()
+  cleanupEventListeners()
 }
 
 // ============================================================================
@@ -351,6 +353,114 @@ describe('QRL Generation and Event Handler Resolution', () => {
       }
     } finally {
       cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('hoists non-reactive function dependencies for handler access', () => {
+    // Test that component-scoped functions referenced in handlers are hoisted
+    const source = `
+      import { $state } from 'fict'
+      export function Counter() {
+        // Non-reactive helper function defined inside component
+        const formatNumber = (n: number) => n.toLocaleString()
+        let count = $state(0)
+
+        return (
+          <button onClick$={() => {
+            count++
+            console.log(formatNumber(count))
+          }}>
+            {count}
+          </button>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      // Debug: print compiled code
+      // console.log('=== Compiled Code ===')
+      // console.log(compiled.code)
+      // console.log('=== End Compiled Code ===')
+
+      // Verify the handler is exported
+      expect(compiled.code).toContain('export const __fict_e0')
+
+      // Verify the formatNumber function is hoisted with a unique name
+      // The pattern should be __fict_fn_formatNumber_<counter>
+      expect(compiled.code).toMatch(/export const __fict_fn_formatNumber_\d+/)
+
+      // Verify the handler references the hoisted function name
+      const handlerMatch = compiled.code.match(/export const __fict_e0[\s\S]*?;(?=\s*export|$)/)
+      expect(handlerMatch).not.toBeNull()
+
+      // The handler should use the hoisted name instead of formatNumber
+      expect(handlerMatch![0]).toMatch(/__fict_fn_formatNumber_\d+/)
+      expect(handlerMatch![0]).not.toMatch(/\bformatNumber\(/)
+    } finally {
+      compiled.cleanup()
+    }
+  })
+
+  it('handles multiple function dependencies in same handler', () => {
+    const source = `
+      import { $state } from 'fict'
+      export function App() {
+        const add = (a: number, b: number) => a + b
+        const multiply = (a: number, b: number) => a * b
+        let x = $state(1)
+
+        return (
+          <button onClick$={() => {
+            x = add(x, multiply(x, 2))
+          }}>
+            {x}
+          </button>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      // Both helper functions should be hoisted
+      expect(compiled.code).toMatch(/export const __fict_fn_add_\d+/)
+      expect(compiled.code).toMatch(/export const __fict_fn_multiply_\d+/)
+
+      // Handler should reference hoisted names
+      const handlerMatch = compiled.code.match(/export const __fict_e0[\s\S]*?;(?=\s*export|$)/)
+      expect(handlerMatch).not.toBeNull()
+      expect(handlerMatch![0]).toMatch(/__fict_fn_add_\d+/)
+      expect(handlerMatch![0]).toMatch(/__fict_fn_multiply_\d+/)
+    } finally {
+      compiled.cleanup()
+    }
+  })
+
+  it('shared function between handlers is hoisted once', () => {
+    const source = `
+      import { $state } from 'fict'
+      export function App() {
+        const validate = (n: number) => n >= 0
+        let count = $state(0)
+
+        return (
+          <div>
+            <button onClick$={() => { if (validate(count + 1)) count++ }}>Inc</button>
+            <button onClick$={() => { if (validate(count - 1)) count-- }}>Dec</button>
+          </div>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      // validate should only be hoisted once
+      const hoistedMatches = compiled.code.match(/export const __fict_fn_validate_\d+/g)
+      expect(hoistedMatches).not.toBeNull()
+      // Should have exactly one export for the hoisted function
+      expect(hoistedMatches!.length).toBe(1)
+    } finally {
       compiled.cleanup()
     }
   })

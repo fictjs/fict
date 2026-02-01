@@ -1,4 +1,5 @@
 import type * as BabelCore from '@babel/core'
+import { pathToFileURL } from 'node:url'
 
 import { DelegatedEvents, RUNTIME_ALIASES, RUNTIME_HELPERS, RUNTIME_MODULE } from '../constants'
 import { debugEnabled, debugLog } from '../debug'
@@ -649,6 +650,12 @@ export interface CodegenContext {
   autoExtractThreshold?: number
   /** Set of delegated events used (for hoisting delegateEvents call) */
   delegatedEventsUsed?: Set<string>
+  /** Component-scoped function definitions (variable name -> HIR expression) for handler dependency hoisting */
+  componentFunctionDefs?: Map<string, Expression>
+  /** Hoisted function dependency counter for unique naming */
+  hoistedFunctionDepCounter?: number
+  /** Map of hoisted function dep names (original name -> hoisted module-level name) */
+  hoistedFunctionDepNames?: Map<string, string>
   /** Parameter name for the list key constant (e.g., "__key") when in list render */
   listKeyParamName?: string
   /** The key expression HIR (e.g., row.id) for comparison when replacing with __key */
@@ -711,6 +718,9 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     autoExtractEnabled: false,
     autoExtractThreshold: 3,
     delegatedEventsUsed: new Set(),
+    componentFunctionDefs: new Map(),
+    hoistedFunctionDepCounter: 0,
+    hoistedFunctionDepNames: new Map(),
   }
 }
 
@@ -1833,6 +1843,59 @@ function genTemp(ctx: CodegenContext, prefix = 'tmp'): BabelCore.types.Identifie
 }
 
 /**
+ * Rename identifiers in a Babel AST expression according to a rename map.
+ * This is used to update references to hoisted function dependencies in handlers.
+ */
+function renameIdentifiersInExpr(
+  expr: BabelCore.types.Expression,
+  renames: Map<string, string>,
+  _t: typeof BabelCore.types,
+): BabelCore.types.Expression {
+  // Deep clone the expression to avoid mutating the original
+  const cloned = JSON.parse(JSON.stringify(expr)) as BabelCore.types.Expression
+
+  function visit(node: unknown): void {
+    if (!node || typeof node !== 'object') return
+    const n = node as Record<string, unknown>
+
+    // Rename identifiers
+    if (n.type === 'Identifier' && typeof n.name === 'string') {
+      const newName = renames.get(n.name)
+      if (newName) {
+        n.name = newName
+      }
+    }
+
+    // Recursively visit all properties
+    for (const key of Object.keys(n)) {
+      // Skip metadata keys
+      if (
+        key === 'loc' ||
+        key === 'start' ||
+        key === 'end' ||
+        key === 'extra' ||
+        key === 'comments' ||
+        key === 'leadingComments' ||
+        key === 'trailingComments'
+      ) {
+        continue
+      }
+      const value = n[key]
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          visit(item)
+        }
+      } else if (value && typeof value === 'object') {
+        visit(value)
+      }
+    }
+  }
+
+  visit(cloned)
+  return cloned
+}
+
+/**
  * Generate the module URL expression for QRL generation.
  * Uses filename from options as a constant if available, otherwise falls back to import.meta.url.
  * Using a constant ensures the source file path is preserved in bundled SSR code.
@@ -1843,7 +1906,17 @@ function genModuleUrlExpr(ctx: CodegenContext): BabelCore.types.Expression {
   if (filename) {
     // Use the filename as a constant file:// URL
     // This ensures the path is preserved even in bundled SSR builds
-    const fileUrl = filename.startsWith('file://') ? filename : `file://${filename}`
+    // Use pathToFileURL for proper handling of Windows paths and special characters
+    let fileUrl: string
+    if (filename.startsWith('file://')) {
+      fileUrl = filename
+    } else {
+      // pathToFileURL properly handles:
+      // - Windows paths: C:\Users\... -> file:///C:/Users/...
+      // - Spaces and special characters: URL encoding
+      // - Forward/back slash normalization
+      fileUrl = pathToFileURL(filename).href
+    }
     return t.stringLiteral(fileUrl)
   }
   // Fallback: use import.meta.url at runtime (for unbundled dev scenarios)
@@ -6236,6 +6309,55 @@ function emitResumableEventBinding(
   const propsName =
     ctx.propsParamName && captured.has(ctx.propsParamName) ? ctx.propsParamName : null
 
+  // Identify function dependencies that need to be hoisted
+  // These are captured identifiers that are:
+  // 1. In functionVars (function expressions)
+  // 2. NOT in signalVars (not reactive)
+  // 3. Have a definition in componentFunctionDefs
+  const functionDeps: string[] = []
+  const functionDepRenames = new Map<string, string>()
+
+  for (const name of captured) {
+    if (ctx.functionVars?.has(name) && !ctx.signalVars?.has(name)) {
+      const hirDef = ctx.componentFunctionDefs?.get(name)
+      if (hirDef) {
+        functionDeps.push(name)
+
+        // Check if this function has already been hoisted
+        let hoistedName = ctx.hoistedFunctionDepNames?.get(name)
+        if (!hoistedName) {
+          // Generate a unique hoisted name
+          hoistedName = `__fict_fn_${name}_${ctx.hoistedFunctionDepCounter ?? 0}`
+          ctx.hoistedFunctionDepCounter = (ctx.hoistedFunctionDepCounter ?? 0) + 1
+          ctx.hoistedFunctionDepNames?.set(name, hoistedName)
+
+          // Lower the HIR function definition to Babel AST and hoist it
+          const loweredFn = lowerDomExpression(hirDef, ctx, null, {
+            skipHookAccessors: true,
+            skipRegionRootOverride: true,
+          })
+
+          // Create a module-level const declaration for the hoisted function
+          const hoistedDecl = t.variableDeclaration('const', [
+            t.variableDeclarator(t.identifier(hoistedName), loweredFn),
+          ])
+
+          // Also export it so vite-plugin can extract it to handler chunks
+          const hoistedExport = t.exportNamedDeclaration(hoistedDecl, [])
+          ctx.hoistedResumableStatements?.push(hoistedExport)
+        }
+
+        functionDepRenames.set(name, hoistedName)
+      }
+    }
+  }
+
+  // If we have function deps, we need to rename references in the handler
+  let finalHandlerExpr = handlerExpr
+  if (functionDepRenames.size > 0) {
+    finalHandlerExpr = renameIdentifiersInExpr(handlerExpr, functionDepRenames, t)
+  }
+
   const bodyStatements: BabelCore.types.Statement[] = []
   if (lexicalNames.length > 0) {
     ctx.helpersUsed.add('useLexicalScope')
@@ -6270,7 +6392,7 @@ function emitResumableEventBinding(
 
   const handlerVar = t.identifier('__handler')
   bodyStatements.push(
-    t.variableDeclaration('const', [t.variableDeclarator(handlerVar, handlerExpr)]),
+    t.variableDeclaration('const', [t.variableDeclarator(handlerVar, finalHandlerExpr)]),
   )
   bodyStatements.push(
     t.returnStatement(
@@ -7991,12 +8113,19 @@ function lowerTopLevelStatementBlock(
   ctx.memoVars = memoVars
   ctx.mutatedVars = mutatedVars
 
+  // Initialize componentFunctionDefs for this component to track function definitions
+  // These may need to be hoisted for handler dependency resolution
+  const componentFunctionDefs = ctx.componentFunctionDefs ?? new Map<string, Expression>()
+  ctx.componentFunctionDefs = componentFunctionDefs
+
   for (const block of fn.blocks) {
     for (const instr of block.instructions) {
       if (instr.kind === 'Assign') {
         const target = deSSAVarName(instr.target.name)
         if (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression') {
           functionVars.add(target)
+          // Store the HIR expression for potential hoisting in handlers
+          componentFunctionDefs.set(target, instr.value)
         }
         if (
           instr.value.kind === 'CallExpression' ||
@@ -8201,6 +8330,9 @@ function lowerFunctionWithRegions(
   ctx.mutatedVars = new Set()
   ctx.noMemo = !!(prevNoMemo || fn.meta?.noMemo)
   ctx.hookResultVarMap = new Map()
+  // Save and initialize componentFunctionDefs for this function scope
+  const prevComponentFunctionDefs = ctx.componentFunctionDefs
+  ctx.componentFunctionDefs = new Map()
   const hookResultVars = new Set<string>()
   const hookAccessorAliases = new Set<string>()
   const prevPropsParam = ctx.propsParamName
@@ -8223,6 +8355,8 @@ function lowerFunctionWithRegions(
         const target = deSSAVarName(instr.target.name)
         if (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression') {
           ctx.functionVars?.add(target)
+          // Store HIR expression for potential hoisting in resumable handlers
+          ctx.componentFunctionDefs?.set(target, instr.value)
         }
         if (
           instr.value.kind === 'CallExpression' ||
@@ -8607,6 +8741,7 @@ function lowerFunctionWithRegions(
       ctx.externalTracked = prevExternalTracked
       ctx.signalVars = prevSignalVars
       ctx.functionVars = prevFunctionVars
+      ctx.componentFunctionDefs = prevComponentFunctionDefs
       ctx.memoVars = prevMemoVars
       ctx.storeVars = prevStoreVars
       ctx.mutatedVars = prevMutatedVars
@@ -8626,6 +8761,7 @@ function lowerFunctionWithRegions(
     ctx.externalTracked = prevExternalTracked
     ctx.signalVars = prevSignalVars
     ctx.functionVars = prevFunctionVars
+    ctx.componentFunctionDefs = prevComponentFunctionDefs
     ctx.memoVars = prevMemoVars
     ctx.storeVars = prevStoreVars
     ctx.mutatedVars = prevMutatedVars
@@ -8755,6 +8891,7 @@ function lowerFunctionWithRegions(
   ctx.externalTracked = prevExternalTracked
   ctx.signalVars = prevSignalVars
   ctx.functionVars = prevFunctionVars
+  ctx.componentFunctionDefs = prevComponentFunctionDefs
   ctx.memoVars = prevMemoVars
   ctx.storeVars = prevStoreVars
   ctx.mutatedVars = prevMutatedVars

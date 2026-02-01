@@ -109,37 +109,45 @@ export function renderToDocument(
   options: RenderToStringOptions = {},
 ): RenderToDocumentResult {
   const includeSnapshot = options.includeSnapshot !== false
-  if (includeSnapshot) {
-    __fictEnableSSR()
-  }
-  const dom = resolveDom(options)
-  const { document, window } = dom
 
-  const shouldExpose = options.exposeGlobals !== false
-  const restoreGlobals = shouldExpose ? installGlobals(window, document) : () => {}
-  const restoreManifest = installManifest(options.manifest)
+  // Always enable SSR mode during server rendering.
+  // This ensures SSR-specific code paths (list rendering, etc.) work correctly
+  // regardless of whether state snapshots are included.
+  __fictEnableSSR()
 
-  const container = resolveContainer(document, options)
-
+  let dom: SSRDom
+  let restoreGlobals = () => {}
+  let restoreManifest = () => {}
+  let container: HTMLElement
   let teardown = () => {}
+
   try {
+    dom = resolveDom(options)
+    const { document, window } = dom
+
+    const shouldExpose = options.exposeGlobals !== false
+    restoreGlobals = shouldExpose ? installGlobals(window, document) : () => {}
+    restoreManifest = installManifest(options.manifest)
+
+    container = resolveContainer(document, options)
     teardown = render(view, container)
-  } catch (error) {
+
     if (includeSnapshot) {
-      __fictDisableSSR()
+      const state = __fictSerializeSSRState()
+      injectSnapshot(document, container, state, options)
     }
+  } catch (error) {
+    // Clean up SSR state and globals on any error
+    __fictDisableSSR()
     restoreGlobals()
     restoreManifest()
     throw error
   }
 
-  if (includeSnapshot) {
-    const state = __fictSerializeSSRState()
-    injectSnapshot(document, container, state, options)
-    __fictDisableSSR()
-  }
+  // SSR rendering complete - disable SSR mode
+  __fictDisableSSR()
 
-  const html = serializeOutput(document, container, options)
+  const html = serializeOutput(dom.document, container!, options)
 
   const dispose = () => {
     try {
@@ -150,7 +158,7 @@ export function renderToDocument(
     }
   }
 
-  return { html, document, window, container, dispose }
+  return { html, document: dom.document, window: dom.window, container: container!, dispose }
 }
 
 export function renderToString(view: () => FictNode, options: RenderToStringOptions = {}): string {

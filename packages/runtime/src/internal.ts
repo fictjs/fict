@@ -41,6 +41,7 @@ export {
 export {
   __fictEnableSSR,
   __fictDisableSSR,
+  __fictIsSSR,
   __fictEnableResumable,
   __fictDisableResumable,
   __fictIsResumable,

@@ -98,6 +98,8 @@ interface ExtractedHandler {
   exportName: string
   /** Runtime helpers used by this handler */
   helpersUsed: string[]
+  /** Local dependencies from source module that need to be re-exported */
+  localDeps: string[]
   /** The handler function code (without export) */
   code: string
 }
@@ -453,7 +455,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           `[fict-plugin] shouldSplit=${shouldSplit}, ssr=${config?.build?.ssr}, resumable=${compilerOptions.resumable}, file=${filename}`,
         )
         if (shouldSplit) {
-          const splitResult = extractAndRewriteHandlers(finalCode, filename)
+          let splitResult: { code: string; handlers: string[] } | null = null
+          try {
+            splitResult = extractAndRewriteHandlers(finalCode, filename)
+          } catch (e) {
+            console.error('[fict-plugin] extractAndRewriteHandlers error:', e)
+          }
           console.log(
             `[fict-plugin] splitResult: ${splitResult ? splitResult.handlers.length + ' handlers' : 'null'}`,
           )
@@ -959,15 +966,25 @@ function generateHandlerModule(handler: ExtractedHandler): string {
     importsByModule.set(helper.from, existing)
   }
 
-  // Generate import statements
+  // Generate import statements for runtime helpers
   const imports: string[] = []
   for (const [module, names] of importsByModule) {
     imports.push(`import { ${names.join(', ')} } from '${module}';`)
   }
 
+  // Import local dependencies from the source module
+  // These are re-exported by the source module with __fict_dep_ prefix
+  if (handler.localDeps.length > 0) {
+    const depImports = handler.localDeps.map(dep => `${HANDLER_DEP_PREFIX}${dep} as ${dep}`)
+    imports.push(`import { ${depImports.join(', ')} } from '${handler.sourceModule}';`)
+  }
+
   // Generate the complete standalone module
   return `${imports.join('\n')}${imports.length > 0 ? '\n\n' : ''}export default ${handler.code};\n`
 }
+
+/** Prefix for re-exported handler dependencies */
+const HANDLER_DEP_PREFIX = '__fict_dep_'
 
 /**
  * Register an extracted handler for function-level splitting.
@@ -977,12 +994,14 @@ export function registerExtractedHandler(
   exportName: string,
   helpersUsed: string[],
   code: string,
+  localDeps: string[] = [],
 ): string {
   const handlerId = createHandlerId(sourceModule, exportName)
   extractedHandlers.set(handlerId, {
     sourceModule,
     exportName,
     helpersUsed,
+    localDeps,
     code,
   })
   return `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
@@ -1003,9 +1022,325 @@ const RUNTIME_HELPERS: Record<string, { import: string; from: string }> = {
   __fictQrl: { import: '__fictQrl', from: '@fictjs/runtime/internal' },
 }
 
+/** Known global identifiers that don't need to be imported */
+const GLOBAL_IDENTIFIERS = new Set([
+  // JavaScript globals
+  'undefined',
+  'null',
+  'true',
+  'false',
+  'NaN',
+  'Infinity',
+  'globalThis',
+  'window',
+  'document',
+  'console',
+  'setTimeout',
+  'setInterval',
+  'clearTimeout',
+  'clearInterval',
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+  'fetch',
+  'URL',
+  'URLSearchParams',
+  'FormData',
+  'Headers',
+  'Request',
+  'Response',
+  'AbortController',
+  'AbortSignal',
+  // Built-in constructors
+  'Object',
+  'Array',
+  'String',
+  'Number',
+  'Boolean',
+  'Symbol',
+  'BigInt',
+  'Date',
+  'RegExp',
+  'Error',
+  'TypeError',
+  'RangeError',
+  'SyntaxError',
+  'Map',
+  'Set',
+  'WeakMap',
+  'WeakSet',
+  'Promise',
+  'Proxy',
+  'Reflect',
+  'JSON',
+  'Math',
+  'Intl',
+  // Event and DOM
+  'Event',
+  'CustomEvent',
+  'Element',
+  'Node',
+  'HTMLElement',
+])
+
+/**
+ * Collect identifiers referenced in an AST node that are not locally defined.
+ * Uses simple recursive traversal instead of Babel's traverse to work on sub-nodes.
+ */
+function collectReferencedIdentifiers(node: t.Node, localBindings: Set<string>): Set<string> {
+  const referenced = new Set<string>()
+
+  function visitNode(
+    current: t.Node | null | undefined,
+    parent: t.Node | null,
+    key: string | null,
+  ): void {
+    if (!current) return
+
+    if (t.isIdentifier(current)) {
+      const name = current.name
+
+      // Skip if it's a property access (obj.prop) - only the object is a reference
+      if (
+        parent &&
+        t.isMemberExpression(parent) &&
+        parent.property === current &&
+        !parent.computed
+      ) {
+        return
+      }
+
+      // Skip if it's a key in object property (non-computed)
+      if (parent && t.isObjectProperty(parent) && parent.key === current && !parent.computed) {
+        return
+      }
+
+      // Skip if it's a function/variable declaration name
+      if (parent && t.isVariableDeclarator(parent) && parent.id === current) {
+        return
+      }
+      if (
+        parent &&
+        (t.isFunctionDeclaration(parent) || t.isFunctionExpression(parent)) &&
+        parent.id === current
+      ) {
+        return
+      }
+
+      // Skip if it's a parameter
+      if (key === 'params') {
+        return
+      }
+
+      // Skip if it's a catch clause parameter
+      if (parent && t.isCatchClause(parent) && parent.param === current) {
+        return
+      }
+
+      // Skip local bindings (locally declared variables)
+      if (localBindings.has(name)) {
+        return
+      }
+
+      // Skip globals
+      if (GLOBAL_IDENTIFIERS.has(name)) {
+        return
+      }
+
+      // Skip runtime helpers
+      if (RUNTIME_HELPERS[name]) {
+        return
+      }
+
+      referenced.add(name)
+      return
+    }
+
+    // Recursively visit child nodes
+    for (const nodeKey of Object.keys(current)) {
+      // Skip metadata keys that aren't child nodes
+      if (
+        nodeKey === 'loc' ||
+        nodeKey === 'start' ||
+        nodeKey === 'end' ||
+        nodeKey === 'extra' ||
+        nodeKey === 'comments' ||
+        nodeKey === 'leadingComments' ||
+        nodeKey === 'trailingComments' ||
+        nodeKey === 'innerComments'
+      ) {
+        continue
+      }
+      const child = (current as unknown as Record<string, unknown>)[nodeKey]
+      if (Array.isArray(child)) {
+        for (const item of child) {
+          if (
+            item &&
+            typeof item === 'object' &&
+            item !== null &&
+            'type' in item &&
+            typeof (item as Record<string, unknown>).type === 'string'
+          ) {
+            visitNode(item as t.Node, current, nodeKey)
+          }
+        }
+      } else if (
+        child &&
+        typeof child === 'object' &&
+        child !== null &&
+        'type' in child &&
+        typeof (child as Record<string, unknown>).type === 'string'
+      ) {
+        visitNode(child as t.Node, current, nodeKey)
+      }
+    }
+  }
+
+  visitNode(node, null, null)
+  return referenced
+}
+
+/**
+ * Collect all bindings (variables, functions, params) defined within an AST node.
+ * Uses simple recursive traversal instead of Babel's traverse to work on sub-nodes.
+ */
+function collectLocalBindings(node: t.Node): Set<string> {
+  const bindings = new Set<string>()
+
+  function visitNode(current: t.Node | null | undefined): void {
+    if (!current) return
+
+    // Handle variable declarations
+    if (t.isVariableDeclarator(current)) {
+      if (t.isIdentifier(current.id)) {
+        bindings.add(current.id.name)
+      } else if (t.isObjectPattern(current.id) || t.isArrayPattern(current.id)) {
+        const names = collectPatternIdentifiers(current.id)
+        for (const name of names) {
+          bindings.add(name)
+        }
+      }
+    }
+
+    // Handle function declarations
+    if (t.isFunctionDeclaration(current)) {
+      if (current.id) {
+        bindings.add(current.id.name)
+      }
+      for (const param of current.params) {
+        const names = collectPatternIdentifiers(param)
+        for (const name of names) {
+          bindings.add(name)
+        }
+      }
+    }
+
+    // Handle function expressions
+    if (t.isFunctionExpression(current)) {
+      for (const param of current.params) {
+        const names = collectPatternIdentifiers(param)
+        for (const name of names) {
+          bindings.add(name)
+        }
+      }
+    }
+
+    // Handle arrow function expressions
+    if (t.isArrowFunctionExpression(current)) {
+      for (const param of current.params) {
+        const names = collectPatternIdentifiers(param)
+        for (const name of names) {
+          bindings.add(name)
+        }
+      }
+    }
+
+    // Handle catch clauses
+    if (t.isCatchClause(current)) {
+      if (current.param && t.isIdentifier(current.param)) {
+        bindings.add(current.param.name)
+      }
+    }
+
+    // Recursively visit child nodes
+    for (const nodeKey of Object.keys(current)) {
+      // Skip metadata keys that aren't child nodes
+      if (
+        nodeKey === 'loc' ||
+        nodeKey === 'start' ||
+        nodeKey === 'end' ||
+        nodeKey === 'extra' ||
+        nodeKey === 'comments' ||
+        nodeKey === 'leadingComments' ||
+        nodeKey === 'trailingComments' ||
+        nodeKey === 'innerComments'
+      ) {
+        continue
+      }
+      const child = (current as unknown as Record<string, unknown>)[nodeKey]
+      if (Array.isArray(child)) {
+        for (const item of child) {
+          if (
+            item &&
+            typeof item === 'object' &&
+            item !== null &&
+            'type' in item &&
+            typeof (item as Record<string, unknown>).type === 'string'
+          ) {
+            visitNode(item as t.Node)
+          }
+        }
+      } else if (
+        child &&
+        typeof child === 'object' &&
+        child !== null &&
+        'type' in child &&
+        typeof (child as Record<string, unknown>).type === 'string'
+      ) {
+        visitNode(child as t.Node)
+      }
+    }
+  }
+
+  visitNode(node)
+
+  return bindings
+}
+
+/**
+ * Collect identifier names from a pattern (for destructuring).
+ */
+function collectPatternIdentifiers(pattern: t.LVal | t.PatternLike): string[] {
+  const names: string[] = []
+
+  if (t.isIdentifier(pattern)) {
+    names.push(pattern.name)
+  } else if (t.isObjectPattern(pattern)) {
+    for (const prop of pattern.properties) {
+      if (t.isObjectProperty(prop) && t.isLVal(prop.value)) {
+        names.push(...collectPatternIdentifiers(prop.value))
+      } else if (t.isRestElement(prop)) {
+        names.push(...collectPatternIdentifiers(prop.argument))
+      }
+    }
+  } else if (t.isArrayPattern(pattern)) {
+    for (const element of pattern.elements) {
+      if (element) {
+        names.push(...collectPatternIdentifiers(element))
+      }
+    }
+  } else if (t.isRestElement(pattern)) {
+    names.push(...collectPatternIdentifiers(pattern.argument))
+  } else if (t.isAssignmentPattern(pattern)) {
+    names.push(...collectPatternIdentifiers(pattern.left))
+  }
+
+  return names
+}
+
 /**
  * Extract handlers using Babel AST and rewrite QRLs to use virtual modules.
  * This creates truly independent chunks for each handler.
+ * Local dependencies are detected and re-exported for handlers to import.
  */
 function extractAndRewriteHandlers(
   code: string,
@@ -1018,13 +1353,75 @@ function extractAndRewriteHandlers(
       sourceType: 'module',
       plugins: ['jsx', 'typescript'],
     })
-  } catch {
+  } catch (e) {
     // If parsing fails, fall back to no extraction
+    console.error('[fict-plugin] Parse error in extractAndRewriteHandlers:', e)
     return null
+  }
+
+  // Collect all top-level declarations that could be referenced by handlers
+  const topLevelDeclarations = new Set<string>()
+  const importedNames = new Set<string>()
+
+  for (const node of ast.program.body) {
+    // Collect imports
+    if (t.isImportDeclaration(node)) {
+      for (const specifier of node.specifiers) {
+        if (t.isImportSpecifier(specifier) || t.isImportDefaultSpecifier(specifier)) {
+          importedNames.add(specifier.local.name)
+        } else if (t.isImportNamespaceSpecifier(specifier)) {
+          importedNames.add(specifier.local.name)
+        }
+      }
+      continue
+    }
+
+    // Collect function declarations
+    if (t.isFunctionDeclaration(node) && node.id) {
+      topLevelDeclarations.add(node.id.name)
+      continue
+    }
+
+    // Collect variable declarations
+    if (t.isVariableDeclaration(node)) {
+      for (const declarator of node.declarations) {
+        if (t.isIdentifier(declarator.id)) {
+          topLevelDeclarations.add(declarator.id.name)
+        }
+      }
+      continue
+    }
+
+    // Collect class declarations
+    if (t.isClassDeclaration(node) && node.id) {
+      topLevelDeclarations.add(node.id.name)
+      continue
+    }
+
+    // Collect exported declarations
+    if (t.isExportNamedDeclaration(node) && node.declaration) {
+      if (t.isFunctionDeclaration(node.declaration) && node.declaration.id) {
+        topLevelDeclarations.add(node.declaration.id.name)
+      } else if (t.isVariableDeclaration(node.declaration)) {
+        for (const declarator of node.declaration.declarations) {
+          if (t.isIdentifier(declarator.id)) {
+            topLevelDeclarations.add(declarator.id.name)
+          }
+        }
+      } else if (t.isClassDeclaration(node.declaration) && node.declaration.id) {
+        topLevelDeclarations.add(node.declaration.id.name)
+      }
+    }
+  }
+
+  // Merge imports into top-level declarations (they're also available at top level)
+  for (const name of importedNames) {
+    topLevelDeclarations.add(name)
   }
 
   const handlerNames: string[] = []
   const nodesToRemove = new Set<t.Node>()
+  const allLocalDeps = new Set<string>()
 
   // First pass: find all handler exports and extract their code
   traverse(ast, {
@@ -1056,12 +1453,25 @@ function extractAndRewriteHandlers(
             }
           }
 
+          // Detect local dependencies
+          const localBindings = collectLocalBindings(declarator.init)
+          const referencedIds = collectReferencedIdentifiers(declarator.init, localBindings)
+          const localDeps: string[] = []
+          for (const ref of referencedIds) {
+            // Only include if it's a top-level declaration (not a handler itself)
+            if (topLevelDeclarations.has(ref) && !ref.match(/^__fict_[er]\d+$/)) {
+              localDeps.push(ref)
+              allLocalDeps.add(ref)
+            }
+          }
+
           // Register the handler with its full code
           const handlerId = createHandlerId(sourceModule, name)
           extractedHandlers.set(handlerId, {
             sourceModule,
             exportName: name,
             helpersUsed,
+            localDeps,
             code: handlerCode,
           })
 
@@ -1096,12 +1506,25 @@ function extractAndRewriteHandlers(
           }
         }
 
+        // Detect local dependencies
+        const localBindings = collectLocalBindings(arrowFn)
+        const referencedIds = collectReferencedIdentifiers(arrowFn, localBindings)
+        const localDeps: string[] = []
+        for (const ref of referencedIds) {
+          // Only include if it's a top-level declaration (not a handler itself)
+          if (topLevelDeclarations.has(ref) && !ref.match(/^__fict_[er]\d+$/)) {
+            localDeps.push(ref)
+            allLocalDeps.add(ref)
+          }
+        }
+
         // Register the handler with its full code
         const handlerId = createHandlerId(sourceModule, name)
         extractedHandlers.set(handlerId, {
           sourceModule,
           exportName: name,
           helpersUsed,
+          localDeps,
           code: handlerCode,
         })
 
@@ -1115,7 +1538,7 @@ function extractAndRewriteHandlers(
     return null
   }
 
-  // Second pass: remove handler exports and rewrite QRL calls
+  // Second pass: remove handler exports, rewrite QRL calls, and add re-exports for dependencies
   traverse(ast, {
     ExportNamedDeclaration(path) {
       if (nodesToRemove.has(path.node)) {
@@ -1140,6 +1563,19 @@ function extractAndRewriteHandlers(
       path.replaceWith(t.stringLiteral(virtualUrl))
     },
   })
+
+  // Add re-exports for local dependencies used by handlers
+  // This allows handlers to import them from the source module
+  if (allLocalDeps.size > 0) {
+    const reExports: t.ExportSpecifier[] = []
+    for (const dep of allLocalDeps) {
+      // Export as __fict_dep_<name> to avoid conflicts
+      reExports.push(
+        t.exportSpecifier(t.identifier(dep), t.identifier(`${HANDLER_DEP_PREFIX}${dep}`)),
+      )
+    }
+    ast.program.body.push(t.exportNamedDeclaration(null, reExports))
+  }
 
   // Generate the modified code
   const result = generate(ast, {

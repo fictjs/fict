@@ -81,6 +81,7 @@ export interface ResumableLoaderOptions {
 const hydratedScopes = new Set<string>()
 const prefetchedUrls = new Set<string>()
 let prefetchCleanup: (() => void) | null = null
+let eventListenerCleanup: (() => void) | null = null
 
 /**
  * Reset the hydrated scopes set. Useful for testing.
@@ -96,6 +97,16 @@ export function resetPrefetchedUrls(): void {
   prefetchedUrls.clear()
 }
 
+/**
+ * Clean up all registered event listeners. Useful for testing.
+ */
+export function cleanupEventListeners(): void {
+  if (eventListenerCleanup) {
+    eventListenerCleanup()
+    eventListenerCleanup = null
+  }
+}
+
 // ============================================================================
 // Main Entry Point
 // ============================================================================
@@ -107,6 +118,12 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
   // Reset hydrated scopes for fresh loader installation
   hydratedScopes.clear()
   prefetchedUrls.clear()
+
+  // Clean up previous event listeners
+  if (eventListenerCleanup) {
+    eventListenerCleanup()
+    eventListenerCleanup = null
+  }
 
   // Clean up previous prefetch handlers
   if (prefetchCleanup) {
@@ -129,6 +146,13 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
   const events = options.events ?? Array.from(DelegatedEvents)
   for (const eventName of events) {
     doc.addEventListener(eventName, handleResumableEvent, true)
+  }
+
+  // Store cleanup function for event listeners
+  eventListenerCleanup = () => {
+    for (const eventName of events) {
+      doc.removeEventListener(eventName, handleResumableEvent, true)
+    }
   }
 
   // Setup prefetch if enabled

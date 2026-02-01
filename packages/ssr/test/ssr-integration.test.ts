@@ -20,6 +20,7 @@ import {
   __fictEnableResumable,
   __fictDisableResumable,
   __fictDisableSSR,
+  __fictIsSSR,
 } from '@fictjs/runtime/internal'
 import createFictPlugin, { type FictCompilerOptions } from '../../compiler/src/index'
 import { parseHTML } from 'linkedom'
@@ -785,6 +786,92 @@ describe('List/Conditional/Fragment Combination Scenarios', () => {
 
     expect(htmlVisible).toContain('Visible!')
   })
+
+  it('renders list correctly with includeSnapshot:false (SSR mode still active)', () => {
+    // This test ensures that SSR mode is enabled even when snapshots are disabled,
+    // which is necessary for proper list rendering with SSR-specific code paths.
+    interface Item {
+      id: number
+      name: string
+    }
+
+    function ListComponent(props: { items: Item[] }): FictNode {
+      const ctx = __fictUseContext()
+      const items = __fictUseSignal(ctx, props.items, { name: 'items' })
+
+      return {
+        type: 'ul',
+        props: {
+          children: items().map((item: Item) => ({
+            type: 'li',
+            props: { key: item.id, children: item.name },
+          })),
+        },
+      }
+    }
+
+    ;(ListComponent as any).__fictMeta = { id: 'List@noSnapshot', resume: 'list#resume' }
+
+    const testItems = [
+      { id: 1, name: 'Red' },
+      { id: 2, name: 'Green' },
+      { id: 3, name: 'Blue' },
+    ]
+
+    // Render with includeSnapshot: false
+    const html = renderToString(
+      () => ({
+        type: ListComponent,
+        props: { items: testItems },
+      }),
+      { includeSnapshot: false },
+    )
+
+    // Verify list items are rendered correctly
+    expect(html).toContain('<ul>')
+    expect(html).toContain('<li')
+    expect(html).toContain('Red')
+    expect(html).toContain('Green')
+    expect(html).toContain('Blue')
+
+    // Verify NO snapshot script is included
+    expect(html).not.toContain('__FICT_SNAPSHOT__')
+    expect(html).not.toContain('application/json')
+
+    // Verify scope attributes are still present (SSR mode was active)
+    expect(html).toContain('<fict-host')
+    expect(html).toContain('data-fict-s=')
+  })
+
+  it('renderToDocument with includeSnapshot:false does not leak SSR state', () => {
+    // Verify that after rendering with includeSnapshot:false, SSR state is properly cleaned up
+    function SimpleComponent(props: { value: number }): FictNode {
+      const ctx = __fictUseContext()
+      const value = __fictUseSignal(ctx, props.value, { name: 'value' })
+      return { type: 'span', props: { children: String(value()) } }
+    }
+
+    ;(SimpleComponent as any).__fictMeta = { id: 'Simple@noLeak', resume: 'simple#resume' }
+
+    const result = renderToDocument(
+      () => ({
+        type: SimpleComponent,
+        props: { value: 42 },
+      }),
+      { includeSnapshot: false },
+    )
+
+    try {
+      // Verify HTML is rendered correctly
+      expect(result.html).toContain('42')
+      expect(result.html).toContain('<fict-host')
+
+      // Verify no snapshot
+      expect(result.html).not.toContain('__FICT_SNAPSHOT__')
+    } finally {
+      result.dispose()
+    }
+  })
 })
 
 // ============================================================================
@@ -835,6 +922,109 @@ describe('Resumable end-to-end interaction', () => {
       restoreGlobals()
       compiled.cleanup()
     }
+  })
+})
+
+// ============================================================================
+// Test Suite 5: Exception Path Cleanup
+// ============================================================================
+
+describe('SSR exception path cleanup', () => {
+  afterEach(() => {
+    __fictDisableResumable()
+    __fictDisableSSR()
+    __fictSetSSRState(null)
+  })
+
+  it('cleans up SSR state when render throws an error', () => {
+    // Component that throws during render
+    function ThrowingComponent(): FictNode {
+      throw new Error('Intentional test error during render')
+    }
+
+    // Verify SSR is not enabled before render
+    expect(__fictIsSSR()).toBe(false)
+
+    // Attempt to render - should throw
+    expect(() => {
+      renderToString(() => ({ type: ThrowingComponent, props: {} }))
+    }).toThrow('Intentional test error during render')
+
+    // CRITICAL: SSR state must be cleaned up after the error
+    // If this fails, SSR mode leaks and affects subsequent renders
+    expect(__fictIsSSR()).toBe(false)
+  })
+
+  it('cleans up SSR state when renderToDocument throws an error', () => {
+    // Component that throws during render
+    function ThrowingComponent(): FictNode {
+      throw new Error('Intentional renderToDocument error')
+    }
+
+    expect(__fictIsSSR()).toBe(false)
+
+    expect(() => {
+      renderToDocument(() => ({ type: ThrowingComponent, props: {} }))
+    }).toThrow('Intentional renderToDocument error')
+
+    // SSR state must be cleaned up
+    expect(__fictIsSSR()).toBe(false)
+  })
+
+  it('cleans up SSR state when component child throws', () => {
+    // Child component that throws
+    function ChildThatThrows(): FictNode {
+      throw new Error('Child component error')
+    }
+
+    // Parent component that renders the child
+    function ParentComponent(): FictNode {
+      return {
+        type: 'div',
+        props: {
+          children: { type: ChildThatThrows, props: {} },
+        },
+      }
+    }
+
+    expect(__fictIsSSR()).toBe(false)
+
+    expect(() => {
+      renderToString(() => ({ type: ParentComponent, props: {} }))
+    }).toThrow('Child component error')
+
+    // SSR state must still be cleaned up
+    expect(__fictIsSSR()).toBe(false)
+  })
+
+  it('successful render followed by error render does not leak SSR state', () => {
+    // Normal component
+    function NormalComponent(props: { value: string }): FictNode {
+      return { type: 'span', props: { children: props.value } }
+    }
+
+    // Throwing component
+    function ThrowingComponent(): FictNode {
+      throw new Error('Error after successful render')
+    }
+
+    // First render succeeds
+    const html = renderToString(() => ({ type: NormalComponent, props: { value: 'success' } }))
+    expect(html).toContain('success')
+    expect(__fictIsSSR()).toBe(false)
+
+    // Second render throws
+    expect(() => {
+      renderToString(() => ({ type: ThrowingComponent, props: {} }))
+    }).toThrow('Error after successful render')
+
+    // SSR state is still clean
+    expect(__fictIsSSR()).toBe(false)
+
+    // Third render should succeed normally
+    const html2 = renderToString(() => ({ type: NormalComponent, props: { value: 'after-error' } }))
+    expect(html2).toContain('after-error')
+    expect(__fictIsSSR()).toBe(false)
   })
 })
 
