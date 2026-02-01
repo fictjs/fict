@@ -364,7 +364,11 @@ function installGlobals(window: Window, document: Document): () => void {
   return () => restoreGlobals(snapshot)
 }
 
-type GlobalSnapshot = { key: string; exists: boolean; value: unknown }
+interface GlobalSnapshot {
+  key: string
+  exists: boolean
+  value: unknown
+}
 
 function captureGlobals(keys: string[]): GlobalSnapshot[] {
   const snapshot: GlobalSnapshot[] = []

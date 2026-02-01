@@ -2465,9 +2465,15 @@ function instructionToStatement(
 
       if (treatAsTracked && !isDestructuringTemp) {
         if (isStateCall) {
-          return t.variableDeclaration(normalizedDecl, [
-            t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
-          ])
+          // Set currentAssignmentName so the signal gets a name option for resumability
+          ctx.currentAssignmentName = baseName
+          try {
+            return t.variableDeclaration(normalizedDecl, [
+              t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
+            ])
+          } finally {
+            ctx.currentAssignmentName = undefined
+          }
         }
 
         if (dependsOnTracked) {

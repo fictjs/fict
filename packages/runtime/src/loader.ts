@@ -15,9 +15,19 @@ export interface ResumableLoaderOptions {
 
 const hydratedScopes = new Set<string>()
 
+/**
+ * Reset the hydrated scopes set. Useful for testing.
+ */
+export function resetHydratedScopes(): void {
+  hydratedScopes.clear()
+}
+
 export function installResumableLoader(options: ResumableLoaderOptions = {}): void {
   const doc = options.document ?? window.document
   const scriptId = options.snapshotScriptId ?? '__FICT_SNAPSHOT__'
+
+  // Reset hydrated scopes for fresh loader installation
+  hydratedScopes.clear()
 
   const snapshotEl = doc.getElementById(scriptId)
   if (snapshotEl?.textContent) {

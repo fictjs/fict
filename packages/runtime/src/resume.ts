@@ -42,6 +42,8 @@ export function __fictEnableSSR(): void {
   ssrEnabled = true
   scopeCounter = 0
   scopeRegistry = new Map()
+  resumedScopes.clear()
+  snapshotState = null
 }
 
 export function __fictDisableSSR(): void {
@@ -54,10 +56,15 @@ export function __fictEnableResumable(): void {
 
 export function __fictDisableResumable(): void {
   resumableEnabled = false
+  resumedScopes.clear()
 }
 
 export function __fictIsResumable(): boolean {
   return ssrEnabled || resumableEnabled
+}
+
+export function __fictIsSSR(): boolean {
+  return ssrEnabled
 }
 
 export function __fictEnterHydration(): void {
@@ -130,6 +137,9 @@ export function __fictSerializeSSRState(): SSRState {
 
 export function __fictSetSSRState(state: SSRState | null): void {
   snapshotState = state
+  if (!state) {
+    resumedScopes.clear()
+  }
 }
 
 export function __fictGetSSRScope(id: string): ScopeSnapshot | undefined {

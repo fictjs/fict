@@ -16,7 +16,7 @@ import {
   pushRoot,
   type RootContext,
 } from './lifecycle'
-import { __fictIsHydrating } from './resume'
+import { __fictIsHydrating, __fictIsSSR } from './resume'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import reconcileArrays from './reconcile'
 import { batch } from './scheduler'
@@ -469,7 +469,7 @@ function reorderByLIS<T>(
  * @param renderItem - Function that creates DOM nodes for each item
  * @returns Binding handle with markers and dispose function
  */
-export function createKeyedList<T extends {}>(
+export function createKeyedList<T extends object>(
   getItems: () => T[],
   keyFn: (item: T, index: number) => string | number,
   renderItem: FineGrainedRenderItem<T>,
@@ -489,7 +489,7 @@ export function createKeyedList<T extends {}>(
   )
 }
 
-function createFineGrainedKeyedList<T extends {}>(
+function createFineGrainedKeyedList<T extends object>(
   getItems: () => T[],
   keyFn: (item: T, index: number) => string | number,
   renderItem: FineGrainedRenderItem<T>,
@@ -539,7 +539,11 @@ function createFineGrainedKeyedList<T extends {}>(
 
   const performDiff = () => {
     if (disposed) return
-    const parent = getConnectedParent()
+    // During SSR, render synchronously without waiting for DOM connection
+    const isSSR = __fictIsSSR()
+    const parent = isSSR
+      ? (container.startMarker.parentNode as (ParentNode & Node) | null)
+      : getConnectedParent()
     if (!parent) return
     batch(() => {
       const oldBlocks = container.blocks
@@ -896,7 +900,11 @@ function createFineGrainedKeyedList<T extends {}>(
 
   const ensureEffectStarted = (): boolean => {
     if (disposed || effectStarted) return effectStarted
-    const parent = getConnectedParent()
+    // During SSR, render synchronously without waiting for DOM connection
+    const isSSR = __fictIsSSR()
+    const parent = isSSR
+      ? (container.startMarker.parentNode as (ParentNode & Node) | null)
+      : getConnectedParent()
     if (!parent) return false
     const start = () => {
       effectDispose = createRenderEffect(performDiff)

@@ -7,11 +7,19 @@ export default defineConfig({
     globals: true,
   },
   resolve: {
-    alias: {
-      '@fictjs/runtime/internal': fileURLToPath(
-        new URL('../runtime/src/internal.ts', import.meta.url),
-      ),
-      '@fictjs/runtime': fileURLToPath(new URL('../runtime/src/index.ts', import.meta.url)),
-    },
+    alias: [
+      {
+        find: '@fictjs/runtime/loader',
+        replacement: fileURLToPath(new URL('../runtime/src/loader.ts', import.meta.url)),
+      },
+      {
+        find: '@fictjs/runtime/internal',
+        replacement: fileURLToPath(new URL('../runtime/src/internal.ts', import.meta.url)),
+      },
+      {
+        find: /^@fictjs\/runtime$/,
+        replacement: fileURLToPath(new URL('../runtime/src/index.ts', import.meta.url)),
+      },
+    ],
   },
 })

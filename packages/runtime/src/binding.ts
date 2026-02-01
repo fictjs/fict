@@ -792,8 +792,6 @@ export function insertBetween(
           currentNodes = existing
           const only = existing.length === 1 ? existing[0] : null
           currentText = only && only.nodeType === 3 ? (only as Text) : null
-          initialHydrating = false
-          return
         }
       }
       if (currentRoot) {
@@ -1672,16 +1670,17 @@ export function createConditional(
       const prev = pushRoot(root)
       let handledError = false
       try {
-        const output = untrack(render)
-        if (output == null || output === false) {
-          currentNodes = collectBetween()
-          return
-        }
+        // Call render() INSIDE withHydrationRange so that template() and insertBetween
+        // see the correct hydration context for the conditional content
         withHydrationRange(
           startMarker.nextSibling,
           endMarker,
           parent.ownerDocument ?? document,
           () => {
+            const output = untrack(render)
+            if (output == null || output === false) {
+              return
+            }
             createElementFn(output)
           },
         )

@@ -113,7 +113,7 @@ export {
 // DOM Creation (Compiler-generated code)
 // ============================================================================
 
-export { createElement, template, render } from './dom'
+export { createElement, template, render, hydrateComponent } from './dom'
 export { createRenderEffect } from './effect'
 
 // ============================================================================

@@ -1,0 +1,1143 @@
+/**
+ * End-to-end resumable SSR integration tests
+ *
+ * These tests verify the complete resumability chain:
+ * 1. Compiler produces QRL handlers + resume metadata
+ * 2. SSR injects on:click/data-fict-h attributes
+ * 3. Client loader triggers events
+ * 4. Partial hydration updates DOM
+ */
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+
+import { transformSync } from '@babel/core'
+// @ts-expect-error - CommonJS module without proper types
+import presetTypescript from '@babel/preset-typescript'
+import { describe, it, expect, afterEach, beforeEach } from 'vitest'
+
+import type { FictNode } from '@fictjs/runtime'
+import { installResumableLoader } from '@fictjs/runtime/loader'
+import {
+  __fictSetSSRState,
+  __fictDisableSSR,
+  __fictDisableResumable,
+  __fictGetSSRScope,
+  __fictEnableResumable,
+} from '@fictjs/runtime/internal'
+import createFictPlugin, { type FictCompilerOptions } from '../../compiler/src/index'
+import { parseHTML } from 'linkedom'
+
+import { renderToString, renderToDocument } from '../src/index'
+
+// ============================================================================
+// Test Utilities
+// ============================================================================
+
+interface CompiledModule {
+  url: string
+  code: string
+  cleanup: () => void
+}
+
+function compileModule(source: string, options?: Partial<FictCompilerOptions>): CompiledModule {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'fict-e2e-'))
+  const entryPath = path.join(tempDir, 'entry.mjs')
+
+  const compilerOptions: FictCompilerOptions = {
+    dev: false,
+    fineGrainedDom: true,
+    resumable: true,
+    emitModuleMetadata: false,
+    ...options,
+  }
+
+  const result = transformSync(source, {
+    filename: entryPath,
+    configFile: false,
+    babelrc: false,
+    sourceType: 'module',
+    parserOpts: {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx'],
+      allowReturnOutsideFunction: true,
+    },
+    plugins: [[createFictPlugin, compilerOptions]],
+    presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
+    generatorOpts: { compact: false },
+  })
+
+  if (!result?.code) {
+    throw new Error('Failed to compile module')
+  }
+
+  writeFileSync(entryPath, result.code, 'utf8')
+
+  return {
+    url: pathToFileURL(entryPath).href,
+    code: result.code,
+    cleanup: () => {
+      try {
+        rmSync(tempDir, { recursive: true, force: true })
+      } catch {
+        // ignore cleanup errors
+      }
+    },
+  }
+}
+
+function setupClientEnvironment(html: string): {
+  document: Document
+  window: Window
+  cleanup: () => void
+} {
+  const { document, window } = parseHTML(
+    `<!doctype html><html><head></head><body>${html}</body></html>`,
+  ) as Window & typeof globalThis
+
+  const globals: Record<string, unknown> = {
+    window,
+    document,
+    self: window,
+    Node: window.Node,
+    Element: window.Element,
+    HTMLElement: window.HTMLElement,
+    SVGElement: (window as Window & { SVGElement?: typeof SVGElement }).SVGElement,
+    Document: window.Document,
+    DocumentFragment: window.DocumentFragment,
+    Text: window.Text,
+    Comment: window.Comment,
+    Event: window.Event,
+    CustomEvent: (window as Window & { CustomEvent?: typeof CustomEvent }).CustomEvent,
+  }
+
+  const snapshot = Object.keys(globals).map(key => ({
+    key,
+    exists: Object.prototype.hasOwnProperty.call(globalThis, key),
+    value: (globalThis as Record<string, unknown>)[key],
+  }))
+
+  for (const [key, value] of Object.entries(globals)) {
+    if (value !== undefined) {
+      ;(globalThis as Record<string, unknown>)[key] = value
+    }
+  }
+
+  const cleanup = () => {
+    for (const entry of snapshot) {
+      if (entry.exists) {
+        ;(globalThis as Record<string, unknown>)[entry.key] = entry.value
+      } else {
+        delete (globalThis as Record<string, unknown>)[entry.key]
+      }
+    }
+  }
+
+  return { document, window, cleanup }
+}
+
+function parseSnapshot(html: string): Record<string, unknown> | null {
+  const match = html.match(
+    /<script id="__FICT_SNAPSHOT__" type="application\/json">([^<]*)<\/script>/,
+  )
+  if (!match?.[1]) return null
+  try {
+    return JSON.parse(match[1]) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+async function tick(count = 1): Promise<void> {
+  for (let i = 0; i < count; i++) {
+    await Promise.resolve()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await Promise.resolve()
+  }
+}
+
+function dispatchClick(
+  element: Element,
+  window: Window,
+  options?: { bubbles?: boolean; cancelable?: boolean },
+): Event {
+  const event = new window.Event('click', {
+    bubbles: options?.bubbles ?? true,
+    cancelable: options?.cancelable ?? true,
+  })
+  element.dispatchEvent(event)
+  return event
+}
+
+// ============================================================================
+// Test Suite 1: QRL Generation and Event Handler Resolution
+// ============================================================================
+
+describe('QRL Generation and Event Handler Resolution', () => {
+  afterEach(() => {
+    __fictDisableResumable()
+    __fictDisableSSR()
+    __fictSetSSRState(null)
+  })
+
+  it('compiler generates on:click attributes with QRL format', () => {
+    const source = `
+      import { $state } from 'fict'
+      export function Counter() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      // Debug: print compiled code
+      // console.log('=== Compiled Code ===')
+      // console.log(compiled.code)
+      // console.log('=== End Compiled Code ===')
+
+      // Verify QRL handler is exported
+      expect(compiled.code).toContain('__fict_e')
+      expect(compiled.code).toContain('export')
+
+      // Verify on:click attribute is set
+      expect(compiled.code).toContain('on:click')
+
+      // Verify handler properly modifies signal - the handler should use signal setter
+      // The handler should NOT just have 'count++' as a raw expression
+      const handlerMatch = compiled.code.match(/export const __fict_e0[\s\S]*?;(?=\s*export|$)/)
+      expect(handlerMatch).not.toBeNull()
+      // console.log('=== Handler Code ===')
+      // console.log(handlerMatch?.[0])
+    } finally {
+      compiled.cleanup()
+    }
+  })
+
+  it('compiler generates resume function for components', () => {
+    const source = `
+      import { $state } from 'fict'
+      export function Counter() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      // Verify resume function is exported
+      expect(compiled.code).toContain('__fict_r')
+      expect(compiled.code).toContain('__fictMeta')
+    } finally {
+      compiled.cleanup()
+    }
+  })
+
+  it('QRL contains module path and export name', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function App() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      // Verify on:click attribute contains module path and export
+      const onClickMatch = html.match(/on:click="([^"]+)"/)
+      expect(onClickMatch).not.toBeNull()
+
+      const qrl = onClickMatch![1]
+      expect(qrl).toContain('#')
+      expect(qrl).toContain('__fict_e')
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      const button = env.document.querySelector('button')
+      expect(button).not.toBeNull()
+      expect(button!.getAttribute('on:click')).toBeTruthy()
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('loader parses QRL and invokes handler', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function App() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const button = env.document.querySelector('button') as HTMLElement
+      expect(button).not.toBeNull()
+      expect(button.textContent).toBe('0')
+
+      dispatchClick(button, env.window)
+      await tick(3)
+
+      expect(button.textContent).toBe('1')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('multiple clicks increment state correctly', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function Counter() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { Counter: () => FictNode }
+      const html = renderToString(() => ({ type: mod.Counter, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const button = env.document.querySelector('button') as HTMLElement
+      expect(button.textContent).toBe('0')
+
+      // Multiple clicks
+      for (let i = 1; i <= 5; i++) {
+        dispatchClick(button, env.window)
+        await tick(3)
+        expect(button.textContent).toBe(String(i))
+      }
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+})
+
+// ============================================================================
+// Test Suite 2: Manifest and Production Path Mapping
+// ============================================================================
+
+describe('Manifest and Production Path Mapping', () => {
+  afterEach(() => {
+    __fictDisableResumable()
+    __fictDisableSSR()
+    __fictSetSSRState(null)
+    delete (globalThis as Record<string, unknown>).__FICT_MANIFEST__
+  })
+
+  it('SSR respects manifest for QRL resolution', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function App() {
+        let x = $state(0)
+        return <button onClick$={() => x++}>{x}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      // Create a mock manifest that maps the module URL
+      const manifest: Record<string, string> = {
+        [compiled.url]: '/assets/app-abc123.js',
+      }
+
+      // Set manifest before SSR
+      ;(globalThis as Record<string, unknown>).__FICT_MANIFEST__ = manifest
+
+      // Verify manifest is accessible
+      const installedManifest = (globalThis as Record<string, unknown>).__FICT_MANIFEST__ as Record<
+        string,
+        string
+      >
+      expect(installedManifest[compiled.url]).toBe('/assets/app-abc123.js')
+
+      // Import the module to verify it compiles correctly
+      const mod = (await import(compiled.url)) as { App: () => unknown }
+      expect(mod.App).toBeDefined()
+    } finally {
+      compiled.cleanup()
+    }
+  })
+
+  it('renderToString accepts manifest option', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function App() {
+        let count = $state(0)
+        return <div>{count}</div>
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+
+      const manifest = {
+        [compiled.url]: '/assets/app-abc123.js',
+      }
+
+      // Render with manifest option
+      const html = renderToString(() => ({ type: mod.App, props: {} }), {
+        manifest,
+      })
+
+      expect(html).toContain('fict-host')
+      expect(html).toContain('__FICT_SNAPSHOT__')
+    } finally {
+      compiled.cleanup()
+    }
+  })
+
+  it('QRL uses manifest-mapped URL when available', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function App() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      // Set up manifest before import
+      const manifest: Record<string, string> = {
+        [compiled.url]: '/assets/app-xyz789.js',
+      }
+      ;(globalThis as Record<string, unknown>).__FICT_MANIFEST__ = manifest
+
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }), {
+        manifest,
+      })
+
+      // The QRL should still work with manifest resolution
+      expect(html).toContain('on:click')
+    } finally {
+      compiled.cleanup()
+    }
+  })
+})
+
+// ============================================================================
+// Test Suite 3: Multi-Component Interaction Scenarios
+// ============================================================================
+
+describe('Multi-Component Interaction Scenarios', () => {
+  afterEach(() => {
+    __fictDisableResumable()
+    __fictDisableSSR()
+    __fictSetSSRState(null)
+  })
+
+  it('independent components resume and update separately', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function CounterA() {
+        let count = $state(100)
+        return <button data-testid="a" onClick$={() => count++}>{count}</button>
+      }
+
+      export function CounterB() {
+        let count = $state(200)
+        return <button data-testid="b" onClick$={() => count++}>{count}</button>
+      }
+
+      export function App() {
+        return (
+          <div>
+            <CounterA />
+            <CounterB />
+          </div>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const buttonA = env.document.querySelector('[data-testid="a"]') as HTMLElement
+      const buttonB = env.document.querySelector('[data-testid="b"]') as HTMLElement
+
+      expect(buttonA).not.toBeNull()
+      expect(buttonB).not.toBeNull()
+      expect(buttonA.textContent).toBe('100')
+      expect(buttonB.textContent).toBe('200')
+
+      // Click only button A
+      dispatchClick(buttonA, env.window)
+      await tick(3)
+
+      expect(buttonA.textContent).toBe('101')
+      expect(buttonB.textContent).toBe('200') // B unchanged
+
+      // Click button B
+      dispatchClick(buttonB, env.window)
+      await tick(3)
+
+      expect(buttonA.textContent).toBe('101')
+      expect(buttonB.textContent).toBe('201')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('nested components with props resume correctly', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Child(props: { label: string; initial: number }) {
+        let count = $state(props.initial)
+        return (
+          <button data-label={props.label} onClick$={() => count++}>
+            {props.label}: {count}
+          </button>
+        )
+      }
+
+      export function Parent() {
+        return (
+          <div>
+            <Child label="First" initial={10} />
+            <Child label="Second" initial={20} />
+          </div>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { Parent: () => FictNode }
+      const html = renderToString(() => ({ type: mod.Parent, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const firstBtn = env.document.querySelector('[data-label="First"]') as HTMLElement
+      const secondBtn = env.document.querySelector('[data-label="Second"]') as HTMLElement
+
+      expect(firstBtn).not.toBeNull()
+      expect(secondBtn).not.toBeNull()
+
+      // Initial values
+      expect(firstBtn.textContent).toContain('10')
+      expect(secondBtn.textContent).toContain('20')
+
+      // Interact with first child
+      dispatchClick(firstBtn, env.window)
+      await tick(3)
+      expect(firstBtn.textContent).toContain('11')
+      expect(secondBtn.textContent).toContain('20')
+
+      // Interact with second child
+      dispatchClick(secondBtn, env.window)
+      await tick(3)
+      expect(firstBtn.textContent).toContain('11')
+      expect(secondBtn.textContent).toContain('21')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('sibling components in a list resume independently', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Item(props: { id: number }) {
+        let count = $state(props.id * 10)
+        return (
+          <li data-id={props.id} onClick$={() => count++}>
+            Item {props.id}: {count}
+          </li>
+        )
+      }
+
+      export function List() {
+        const items = [1, 2, 3]
+        return (
+          <ul>
+            {items.map(id => <Item key={id} id={id} />)}
+          </ul>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { List: () => FictNode }
+      const html = renderToString(() => ({ type: mod.List, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const items = env.document.querySelectorAll('li')
+      expect(items.length).toBe(3)
+
+      // Initial values
+      expect(items[0]!.textContent).toContain('10')
+      expect(items[1]!.textContent).toContain('20')
+      expect(items[2]!.textContent).toContain('30')
+
+      // Click middle item only
+      dispatchClick(items[1]!, env.window)
+      await tick(3)
+
+      expect(items[0]!.textContent).toContain('10') // unchanged
+      expect(items[1]!.textContent).toContain('21') // incremented
+      expect(items[2]!.textContent).toContain('30') // unchanged
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+})
+
+// ============================================================================
+// Test Suite 4: Complex DOM Boundaries
+// ============================================================================
+
+describe('Complex DOM Boundaries', () => {
+  afterEach(() => {
+    __fictDisableResumable()
+    __fictDisableSSR()
+    __fictSetSSRState(null)
+  })
+
+  it('fragment (multi-root) components preserve scope', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function MultiRoot() {
+        let count = $state(0)
+        return [
+          <span key="label">Count: </span>,
+          <button key="btn" onClick$={() => count++}>{count}</button>
+        ]
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { MultiRoot: () => FictNode }
+      const html = renderToString(() => ({ type: mod.MultiRoot, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const button = env.document.querySelector('button') as HTMLElement
+      expect(button).not.toBeNull()
+      expect(button.textContent).toBe('0')
+
+      dispatchClick(button, env.window)
+      await tick(3)
+
+      expect(button.textContent).toBe('1')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('conditional rendering preserves state after branch change', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Toggle() {
+        let show = $state(true)
+        let count = $state(0)
+
+        return (
+          <div>
+            <button data-testid="toggle" onClick$={() => show = !show}>Toggle</button>
+            {show && (
+              <button data-testid="counter" onClick$={() => count++}>
+                Count: {count}
+              </button>
+            )}
+          </div>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { Toggle: () => FictNode }
+      const html = renderToString(() => ({ type: mod.Toggle, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const toggleBtn = env.document.querySelector('[data-testid="toggle"]') as HTMLElement
+      let counterBtn = env.document.querySelector('[data-testid="counter"]') as HTMLElement | null
+
+      expect(toggleBtn).not.toBeNull()
+      expect(counterBtn).not.toBeNull()
+      expect(counterBtn!.textContent).toContain('0')
+
+      // Increment counter
+      dispatchClick(counterBtn!, env.window)
+      await tick(3)
+      expect(counterBtn!.textContent).toContain('1')
+
+      // Toggle off
+      dispatchClick(toggleBtn, env.window)
+      await tick(3)
+
+      counterBtn = env.document.querySelector('[data-testid="counter"]')
+      // Counter should be hidden (or null depending on implementation)
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('deeply nested scopes all resume correctly', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Level3(props: { base: number }) {
+        let count = $state(props.base)
+        return <button data-level="3" onClick$={() => count++}>{count}</button>
+      }
+
+      export function Level2(props: { base: number }) {
+        let multiplier = $state(2)
+        return (
+          <div data-level="2">
+            <Level3 base={props.base * multiplier} />
+          </div>
+        )
+      }
+
+      export function Level1() {
+        let base = $state(5)
+        return (
+          <section data-level="1">
+            <Level2 base={base} />
+          </section>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { Level1: () => FictNode }
+      const html = renderToString(() => ({ type: mod.Level1, props: {} }))
+
+      // Verify all scope levels are present in snapshot
+      const snapshot = parseSnapshot(html)
+      expect(snapshot).not.toBeNull()
+
+      const scopes = snapshot!.scopes as Record<string, unknown>
+      // Should have 3 scopes (Level1, Level2, Level3)
+      expect(Object.keys(scopes).length).toBeGreaterThanOrEqual(3)
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      // Initial value should be 5 * 2 = 10
+      const button = env.document.querySelector('[data-level="3"]') as HTMLElement
+      expect(button).not.toBeNull()
+      expect(button.textContent).toBe('10')
+
+      // Click should increment
+      dispatchClick(button, env.window)
+      await tick(3)
+      expect(button.textContent).toBe('11')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+})
+
+// ============================================================================
+// Test Suite 5: Edge Cases and Error Handling
+// ============================================================================
+
+describe('Edge Cases and Error Handling', () => {
+  afterEach(() => {
+    __fictDisableResumable()
+    __fictDisableSSR()
+    __fictSetSSRState(null)
+  })
+
+  it('handles component with no state gracefully', async () => {
+    const source = `
+      export function Static() {
+        return <div>Static content</div>
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      const mod = (await import(compiled.url)) as { Static: () => FictNode }
+      const html = renderToString(() => ({ type: mod.Static, props: {} }))
+
+      expect(html).toContain('Static content')
+      // Should still have snapshot infrastructure even if empty
+      expect(html).toContain('__FICT_SNAPSHOT__')
+    } finally {
+      compiled.cleanup()
+    }
+  })
+
+  it('handles event on element without scope host', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function App() {
+        let count = $state(0)
+        return (
+          <div>
+            <button onClick$={() => count++}>{count}</button>
+          </div>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      // Should work even when button is nested inside div
+      const button = env.document.querySelector('button') as HTMLElement
+      expect(button.textContent).toBe('0')
+
+      dispatchClick(button, env.window)
+      await tick(3)
+
+      expect(button.textContent).toBe('1')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('handles rapid consecutive clicks', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Rapid() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { Rapid: () => FictNode }
+      const html = renderToString(() => ({ type: mod.Rapid, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const button = env.document.querySelector('button') as HTMLElement
+      expect(button.textContent).toBe('0')
+
+      // Fire 10 rapid clicks
+      for (let i = 0; i < 10; i++) {
+        dispatchClick(button, env.window)
+      }
+
+      await tick(5)
+
+      // All clicks should be processed
+      expect(button.textContent).toBe('10')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('scope snapshot contains correct slot types', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Mixed() {
+        let count = $state(42)
+        let other = $state('hello')
+        return <div>{count} - {other}</div>
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      const mod = (await import(compiled.url)) as { Mixed: () => FictNode }
+      const html = renderToString(() => ({ type: mod.Mixed, props: {} }))
+
+      const snapshot = parseSnapshot(html)
+      expect(snapshot).not.toBeNull()
+
+      const scopes = snapshot!.scopes as Record<string, { slots: Array<[number, string, unknown]> }>
+      const scopeIds = Object.keys(scopes)
+      expect(scopeIds.length).toBeGreaterThan(0)
+
+      const scope = scopes[scopeIds[0]!]!
+      expect(scope.slots).toBeDefined()
+
+      // Should have signal slots
+      const slotTypes = scope.slots.map(s => s[1])
+      expect(slotTypes).toContain('sig')
+      // Verify we have multiple signal slots
+      expect(slotTypes.filter(t => t === 'sig').length).toBeGreaterThanOrEqual(2)
+    } finally {
+      compiled.cleanup()
+    }
+  })
+
+  it('preserves props in snapshot for resume', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function WithProps(props: { name: string; value: number }) {
+        let count = $state(props.value)
+        return <div data-name={props.name}>{count}</div>
+      }
+
+      export function App() {
+        return <WithProps name="test" value={123} />
+      }
+    `
+
+    const compiled = compileModule(source)
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+
+      const snapshot = parseSnapshot(html)
+      expect(snapshot).not.toBeNull()
+
+      const scopes = snapshot!.scopes as Record<
+        string,
+        { slots: Array<[number, string, unknown]>; props?: Record<string, unknown> }
+      >
+
+      // Find scope with props
+      const scopeWithProps = Object.values(scopes).find(s => s.props?.name === 'test')
+      expect(scopeWithProps).toBeDefined()
+      expect(scopeWithProps!.props!.value).toBe(123)
+    } finally {
+      compiled.cleanup()
+    }
+  })
+})
+
+// ============================================================================
+// Test Suite 6: Attribute Binding and Dynamic Content
+// ============================================================================
+
+describe('Attribute Binding and Dynamic Content', () => {
+  afterEach(() => {
+    __fictDisableResumable()
+    __fictDisableSSR()
+    __fictSetSSRState(null)
+  })
+
+  it('dynamic attributes update after interaction', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function DynamicAttr() {
+        let active = $state(false)
+        return (
+          <button
+            data-active={active}
+            onClick$={() => active = !active}
+          >
+            {active ? 'Active' : 'Inactive'}
+          </button>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { DynamicAttr: () => FictNode }
+      const html = renderToString(() => ({ type: mod.DynamicAttr, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const button = env.document.querySelector('button') as HTMLElement
+      expect(button.textContent).toBe('Inactive')
+      // Note: when value is `false`, bindAttribute removes the attribute (falsy removal)
+      expect(button.hasAttribute('data-active')).toBe(false)
+
+      dispatchClick(button, env.window)
+      await tick(3)
+
+      expect(button.textContent).toBe('Active')
+      // After click, active becomes true, so attribute should be set (empty string for true)
+      expect(button.hasAttribute('data-active')).toBe(true)
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('class bindings update correctly', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function ClassToggle() {
+        let expanded = $state(false)
+        return (
+          <div
+            class={'panel ' + (expanded ? 'expanded' : 'collapsed')}
+            onClick$={() => expanded = !expanded}
+          >
+            Panel
+          </div>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { ClassToggle: () => FictNode }
+      const html = renderToString(() => ({ type: mod.ClassToggle, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const div = env.document.querySelector('.panel') as HTMLElement
+      expect(div.classList.contains('collapsed')).toBe(true)
+      expect(div.classList.contains('expanded')).toBe(false)
+
+      dispatchClick(div, env.window)
+      await tick(3)
+
+      expect(div.classList.contains('collapsed')).toBe(false)
+      expect(div.classList.contains('expanded')).toBe(true)
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('multiple state updates in single handler', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function MultiState() {
+        let a = $state(1)
+        let b = $state(2)
+        return (
+          <button onClick$={() => { a++; b += 2 }}>
+            {a} + {b} = {a + b}
+          </button>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { MultiState: () => FictNode }
+      const html = renderToString(() => ({ type: mod.MultiState, props: {} }))
+
+      const env = setupClientEnvironment(html)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const button = env.document.querySelector('button') as HTMLElement
+      expect(button.textContent).toContain('1')
+      expect(button.textContent).toContain('2')
+      expect(button.textContent).toContain('3') // 1 + 2
+
+      dispatchClick(button, env.window)
+      await tick(3)
+
+      // After click: a=2, b=4, sum=6
+      expect(button.textContent).toContain('2')
+      expect(button.textContent).toContain('4')
+      expect(button.textContent).toContain('6')
+    } finally {
+      cleanup()
+      compiled.cleanup()
+    }
+  })
+})

@@ -4,7 +4,9 @@ exports[`optimizer output baselines > hook + derived accessors 1`] = `
 "import { __fictUseSignal, __fictUseMemo, __fictUseContext, template, resolvePath, getSlotEnd, insertBetween, createElement } from "@fictjs/runtime/internal";
 export function useCounter() {
   const __fictCtx = __fictUseContext();
-  const count = __fictUseSignal(__fictCtx, 0);
+  const count = __fictUseSignal(__fictCtx, 0, {
+    name: "count"
+  });
   const __region_0 = __fictUseMemo(__fictCtx, () => {
     const double = __fictUseMemo(__fictCtx, () => count() * 2, 1000);
     return {
@@ -60,7 +62,9 @@ function List() {
   }, {
     id: 2,
     text: "b"
-  }]);
+  }], {
+    name: "items"
+  });
   return __fictUseMemo(__fictCtx, () => {
     const __tmpl_1 = template("<ul><!--fict:slot:start--><!--fict:slot:end--></ul>");
     const __root_0 = __tmpl_1();
@@ -107,7 +111,9 @@ exports[`optimizer output baselines > region grouping across control flow 1`] = 
 "import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, insertBetween, createElement, __fictUseContext } from "@fictjs/runtime/internal";
 function Summary() {
   const __fictCtx = __fictUseContext();
-  const count = __fictUseSignal(__fictCtx, 0);
+  const count = __fictUseSignal(__fictCtx, 0, {
+    name: "count"
+  });
   const __region_0 = __fictUseMemo(__fictCtx, () => {
     let heading = undefined;
     let extra = 0;

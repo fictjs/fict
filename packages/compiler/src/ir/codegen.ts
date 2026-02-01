@@ -2151,6 +2151,26 @@ function lowerInstruction(
         ctx.memoVars?.add(baseName)
       }
     }
+    if (declKind) {
+      const initKind = getReactiveCallKind(instr.value, ctx)
+      if (initKind === 'signal') {
+        ctx.signalVars?.add(baseName)
+        ctx.trackedVars.add(baseName)
+        ctx.currentAssignmentName = baseName
+        const loweredValue = (() => {
+          try {
+            return lowerTrackedExpression(instr.value, ctx)
+          } finally {
+            ctx.currentAssignmentName = undefined
+          }
+        })()
+        return applyLoc(
+          t.variableDeclaration(declKind, [
+            t.variableDeclarator(t.identifier(baseName), loweredValue),
+          ]),
+        )
+      }
+    }
     if (ctx.signalVars?.has(baseName)) {
       ctx.currentAssignmentName = baseName
       const loweredValue = (() => {
@@ -3048,10 +3068,13 @@ function lowerExpressionImpl(
 
     case 'CallExpression': {
       // Handle Fict macros in HIR path
-      if (expr.callee.kind === 'Identifier' && expr.callee.name === '$state') {
+      const stateCalleeNameRaw = expr.callee.kind === 'Identifier' ? expr.callee.name : null
+      const stateCalleeName = stateCalleeNameRaw ? deSSAVarName(stateCalleeNameRaw) : null
+      if (stateCalleeName && ctx.stateMacroNames?.has(stateCalleeName)) {
         const args = lowerCallArguments(expr.arguments)
         const includeDevtools = ctx.options?.dev !== false
         const options: BabelCore.types.ObjectProperty[] = []
+        // Always include name when available - needed for resumable mode slotMap and devtools
         if (ctx.currentAssignmentName) {
           options.push(
             t.objectProperty(t.identifier('name'), t.stringLiteral(ctx.currentAssignmentName)),
@@ -5881,9 +5904,9 @@ function registerResumableComponent(componentName: string, ctx: CodegenContext):
   ctx.helpersUsed.add('getSSRScope')
   ctx.helpersUsed.add('ensureScope')
   ctx.helpersUsed.add('prepareContext')
-  ctx.helpersUsed.add('enterHydration')
-  ctx.helpersUsed.add('exitHydration')
-  ctx.helpersUsed.add('domRender')
+  ctx.helpersUsed.add('pushContext')
+  ctx.helpersUsed.add('popContext')
+  ctx.helpersUsed.add('hydrateComponent')
   ctx.helpersUsed.add('qrl')
 
   const snapshotDecl = t.variableDeclaration('const', [
@@ -5903,14 +5926,17 @@ function registerResumableComponent(componentName: string, ctx: CodegenContext):
       ]),
     ),
   ])
-  const enterHydration = t.expressionStatement(
-    t.callExpression(t.identifier(RUNTIME_ALIASES.enterHydration), []),
-  )
+  // Prepare context so __fictPushContext will use it
   const prepareCtx = t.expressionStatement(
     t.callExpression(t.identifier(RUNTIME_ALIASES.prepareContext), [ctxId]),
   )
-  const renderCall = t.expressionStatement(
-    t.callExpression(t.identifier(RUNTIME_ALIASES.domRender), [
+  // Push context onto ctxStack so __fictUseContext can find it
+  const pushCtx = t.expressionStatement(
+    t.callExpression(t.identifier(RUNTIME_ALIASES.pushContext), []),
+  )
+  // Use hydrateComponent which runs view INSIDE withHydration for proper DOM claiming
+  const hydrateCall = t.expressionStatement(
+    t.callExpression(t.identifier(RUNTIME_ALIASES.hydrateComponent), [
       t.arrowFunctionExpression(
         [],
         t.callExpression(t.identifier(componentName), [
@@ -5924,8 +5950,8 @@ function registerResumableComponent(componentName: string, ctx: CodegenContext):
       hostParam,
     ]),
   )
-  const exitHydration = t.expressionStatement(
-    t.callExpression(t.identifier(RUNTIME_ALIASES.exitHydration), []),
+  const popCtx = t.expressionStatement(
+    t.callExpression(t.identifier(RUNTIME_ALIASES.popContext), []),
   )
 
   const resumeFn = t.exportNamedDeclaration(
@@ -5938,11 +5964,10 @@ function registerResumableComponent(componentName: string, ctx: CodegenContext):
             snapshotDecl,
             earlyReturn,
             ensureCtxDecl,
-            enterHydration,
             t.tryStatement(
-              t.blockStatement([prepareCtx, renderCall]),
+              t.blockStatement([prepareCtx, pushCtx, hydrateCall]),
               null,
-              t.blockStatement([exitHydration]),
+              t.blockStatement([popCtx]),
             ),
           ]),
         ),
@@ -7087,7 +7112,19 @@ function lowerInstructionWithScopes(
       }
     }
     const declKind = instr.declarationKind === 'function' ? undefined : instr.declarationKind
-    const valueExpr = lowerExpression(instr.value, ctx)
+    let valueExpr: BabelCore.types.Expression
+    if (declKind && getReactiveCallKind(instr.value, ctx) === 'signal') {
+      ctx.signalVars?.add(targetBase)
+      ctx.trackedVars.add(targetBase)
+      ctx.currentAssignmentName = targetBase
+      try {
+        valueExpr = lowerExpression(instr.value, ctx)
+      } finally {
+        ctx.currentAssignmentName = undefined
+      }
+    } else {
+      valueExpr = lowerExpression(instr.value, ctx)
+    }
 
     // Check if target is a tracked variable (use de-versioned name for lookup)
     if (ctx.trackedVars.has(targetBase)) {

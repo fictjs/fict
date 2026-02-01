@@ -1,6 +1,16 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+
+import { transformSync } from '@babel/core'
+// @ts-expect-error - CommonJS module without proper types
+import presetTypescript from '@babel/preset-typescript'
+
 import { describe, it, expect, afterEach } from 'vitest'
 
 import type { FictNode } from '@fictjs/runtime'
+import { installResumableLoader } from '@fictjs/runtime/loader'
 import {
   __fictUseContext,
   __fictUseSignal,
@@ -11,6 +21,8 @@ import {
   __fictDisableResumable,
   __fictDisableSSR,
 } from '@fictjs/runtime/internal'
+import createFictPlugin, { type FictCompilerOptions } from '../../compiler/src/index'
+import { parseHTML } from 'linkedom'
 
 import { renderToDocument, renderToString } from '../src/index'
 
@@ -774,3 +786,155 @@ describe('List/Conditional/Fragment Combination Scenarios', () => {
     expect(htmlVisible).toContain('Visible!')
   })
 })
+
+// ============================================================================
+// Test Suite 4: End-to-end resumable + interaction-driven hydration
+// ============================================================================
+
+describe('Resumable end-to-end interaction', () => {
+  afterEach(() => {
+    __fictDisableResumable()
+    __fictDisableSSR()
+    __fictSetSSRState(null)
+  })
+
+  it('updates DOM after resumable click without upfront hydration', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function App() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileResumableModule(source)
+    expect(compiled.code).toContain('name: "count"')
+    let mod: { App: (props: Record<string, unknown>) => FictNode } | null = null
+    let restoreGlobals = () => {}
+
+    try {
+      mod = await import(compiled.url)
+      const html = renderToString(() => ({ type: mod!.App, props: {} }))
+      const { document, window } = parseHTML(
+        `<!doctype html><html><head></head><body>${html}</body></html>`,
+      ) as Window & typeof globalThis
+
+      restoreGlobals = installClientGlobals(window, document)
+      installResumableLoader({ document, events: ['click'] })
+
+      const button = document.querySelector('button') as HTMLElement | null
+      expect(button).not.toBeNull()
+      expect(button!.textContent).toBe('0')
+
+      const click = new window.Event('click', { bubbles: true, cancelable: true })
+      button!.dispatchEvent(click)
+
+      await tick(3)
+      expect(button!.textContent).toBe('1')
+    } finally {
+      restoreGlobals()
+      compiled.cleanup()
+    }
+  })
+})
+
+// ============================================================================
+// Local helpers
+// ============================================================================
+
+function compileResumableModule(source: string): {
+  url: string
+  code: string
+  cleanup: () => void
+} {
+  const tempDir = mkdtempSync(path.join(tmpdir(), 'fict-ssr-'))
+  const entryPath = path.join(tempDir, 'entry.mjs')
+
+  const options: FictCompilerOptions = {
+    dev: false,
+    fineGrainedDom: true,
+    resumable: true,
+    emitModuleMetadata: false,
+  }
+
+  const result = transformSync(source, {
+    filename: entryPath,
+    configFile: false,
+    babelrc: false,
+    sourceType: 'module',
+    parserOpts: {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx'],
+      allowReturnOutsideFunction: true,
+    },
+    plugins: [[createFictPlugin, options]],
+    presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
+    generatorOpts: { compact: false },
+  })
+
+  if (!result?.code) {
+    throw new Error('Failed to compile resumable fixture module')
+  }
+
+  writeFileSync(entryPath, result.code, 'utf8')
+
+  return {
+    url: pathToFileURL(entryPath).href,
+    code: result.code,
+    cleanup: () => {
+      try {
+        rmSync(tempDir, { recursive: true, force: true })
+      } catch {
+        // ignore cleanup errors in tests
+      }
+    },
+  }
+}
+
+function installClientGlobals(window: Window, document: Document): () => void {
+  const globals: Record<string, unknown> = {
+    window,
+    document,
+    self: window,
+    Node: window.Node,
+    Element: window.Element,
+    HTMLElement: window.HTMLElement,
+    SVGElement: (window as Window & { SVGElement?: typeof SVGElement }).SVGElement,
+    Document: window.Document,
+    DocumentFragment: window.DocumentFragment,
+    Text: window.Text,
+    Comment: window.Comment,
+    Event: window.Event,
+    CustomEvent: (window as Window & { CustomEvent?: typeof CustomEvent }).CustomEvent,
+  }
+
+  const snapshot = Object.keys(globals).map(key => ({
+    key,
+    exists: Object.prototype.hasOwnProperty.call(globalThis, key),
+    value: (globalThis as Record<string, unknown>)[key],
+  }))
+
+  for (const [key, value] of Object.entries(globals)) {
+    if (value !== undefined) {
+      ;(globalThis as Record<string, unknown>)[key] = value
+    }
+  }
+
+  return () => {
+    for (const entry of snapshot) {
+      if (entry.exists) {
+        ;(globalThis as Record<string, unknown>)[entry.key] = entry.value
+      } else {
+        delete (globalThis as Record<string, unknown>)[entry.key]
+      }
+    }
+  }
+}
+
+async function tick(count = 1): Promise<void> {
+  for (let i = 0; i < count; i++) {
+    await Promise.resolve()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    await Promise.resolve()
+  }
+}

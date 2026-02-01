@@ -27,7 +27,13 @@ import {
 import { Properties, ChildProperties, getPropAlias, SVGElements, SVGNamespace } from './constants'
 import { getDevtoolsHook } from './devtools'
 import { __fictPushContext, __fictPopContext, __fictGetCurrentComponentId } from './hooks'
-import { __fictIsHydrating, __fictIsResumable, __fictRegisterScope } from './resume'
+import {
+  __fictIsHydrating,
+  __fictIsResumable,
+  __fictRegisterScope,
+  __fictEnterHydration,
+  __fictExitHydration,
+} from './resume'
 import { Fragment } from './jsx'
 import {
   createRootContext,
@@ -104,6 +110,42 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
   const teardown = () => {
     destroyRoot(root)
     container.innerHTML = ''
+  }
+
+  return teardown
+}
+
+/**
+ * Hydrate a component into an existing DOM container.
+ * Unlike render(), this runs the view function INSIDE the hydration context
+ * so that template() can claim existing DOM nodes.
+ *
+ * @param view - A function that returns the view to hydrate
+ * @param container - The DOM container with existing SSR content
+ * @returns A teardown function to unmount the view
+ */
+export function hydrateComponent(view: () => FictNode, container: HTMLElement): () => void {
+  const root = createRootContext()
+  const prev = pushRoot(root)
+
+  // Enable hydration flags for bindings that check __fictIsHydrating()
+  __fictEnterHydration()
+
+  try {
+    // Run the view function INSIDE withHydration so template() can claim nodes
+    withHydration(container, () => {
+      view()
+    })
+  } finally {
+    __fictExitHydration()
+    popRoot(prev)
+  }
+
+  container.setAttribute('data-fict-fine-grained', '1')
+  flushOnMount(root)
+
+  const teardown = () => {
+    destroyRoot(root)
   }
 
   return teardown
