@@ -875,55 +875,9 @@ describe('List/Conditional/Fragment Combination Scenarios', () => {
 })
 
 // ============================================================================
-// Test Suite 4: End-to-end resumable + interaction-driven hydration
+// NOTE: Resumable end-to-end interaction tests are in e2e-resumable.test.ts
+// which has proper test isolation and cleanup utilities.
 // ============================================================================
-
-describe('Resumable end-to-end interaction', () => {
-  afterEach(() => {
-    __fictDisableResumable()
-    __fictDisableSSR()
-    __fictSetSSRState(null)
-  })
-
-  it('updates DOM after resumable click without upfront hydration', async () => {
-    const source = `
-      import { $state } from 'fict'
-      export function App() {
-        let count = $state(0)
-        return <button onClick$={() => count++}>{count}</button>
-      }
-    `
-
-    const compiled = compileResumableModule(source)
-    expect(compiled.code).toContain('name: "count"')
-    let mod: { App: (props: Record<string, unknown>) => FictNode } | null = null
-    let restoreGlobals = () => {}
-
-    try {
-      mod = await import(compiled.url)
-      const html = renderToString(() => ({ type: mod!.App, props: {} }))
-      const { document, window } = parseHTML(
-        `<!doctype html><html><head></head><body>${html}</body></html>`,
-      ) as Window & typeof globalThis
-
-      restoreGlobals = installClientGlobals(window, document)
-      installResumableLoader({ document, events: ['click'] })
-
-      const button = document.querySelector('button') as HTMLElement | null
-      expect(button).not.toBeNull()
-      expect(button!.textContent).toBe('0')
-
-      const click = new window.Event('click', { bubbles: true, cancelable: true })
-      button!.dispatchEvent(click)
-
-      await tick(3)
-      expect(button!.textContent).toBe('1')
-    } finally {
-      restoreGlobals()
-      compiled.cleanup()
-    }
-  })
-})
 
 // ============================================================================
 // Test Suite 5: Exception Path Cleanup

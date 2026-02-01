@@ -23,6 +23,7 @@ import {
   resetHydratedScopes,
   resetPrefetchedUrls,
   cleanupEventListeners,
+  waitForPendingHandlers,
 } from '@fictjs/runtime/loader'
 import {
   __fictSetSSRState,
@@ -97,7 +98,7 @@ function compileModule(source: string, options?: Partial<FictCompilerOptions>): 
 function setupClientEnvironment(html: string): {
   document: Document
   window: Window
-  cleanup: () => void
+  cleanup: () => Promise<void>
 } {
   const { document, window } = parseHTML(
     `<!doctype html><html><head></head><body>${html}</body></html>`,
@@ -131,7 +132,9 @@ function setupClientEnvironment(html: string): {
     }
   }
 
-  const cleanup = () => {
+  const cleanup = async (): Promise<void> => {
+    // Wait for pending handlers to complete before restoring globals
+    await waitForPendingHandlers()
     for (const entry of snapshot) {
       if (entry.exists) {
         ;(globalThis as Record<string, unknown>)[entry.key] = entry.value
@@ -157,6 +160,9 @@ function parseSnapshot(html: string): Record<string, unknown> | null {
 }
 
 async function tick(count = 1): Promise<void> {
+  // First wait for any pending async handlers to complete
+  await waitForPendingHandlers()
+  // Then wait for microtask cycles to process signal updates
   for (let i = 0; i < count; i++) {
     await Promise.resolve()
     await new Promise(resolve => setTimeout(resolve, 0))
@@ -181,7 +187,9 @@ function dispatchClick(
  * Complete cleanup function to reset all global state between tests.
  * This ensures test isolation when running in parallel with other packages.
  */
-function cleanupTestState(): void {
+async function cleanupTestState(): Promise<void> {
+  // Wait for any pending async handlers to complete before clearing state
+  await waitForPendingHandlers()
   __fictDisableResumable()
   __fictDisableSSR()
   __fictSetSSRState(null)
@@ -281,7 +289,7 @@ describe('QRL Generation and Event Handler Resolution', () => {
       expect(button).not.toBeNull()
       expect(button!.getAttribute('on:click')).toBeTruthy()
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -316,7 +324,7 @@ describe('QRL Generation and Event Handler Resolution', () => {
 
       expect(button.textContent).toBe('1')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -352,7 +360,7 @@ describe('QRL Generation and Event Handler Resolution', () => {
         expect(button.textContent).toBe(String(i))
       }
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -634,7 +642,7 @@ describe('Multi-Component Interaction Scenarios', () => {
       expect(buttonA.textContent).toBe('101')
       expect(buttonB.textContent).toBe('201')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -696,7 +704,7 @@ describe('Multi-Component Interaction Scenarios', () => {
       expect(firstBtn.textContent).toContain('11')
       expect(secondBtn.textContent).toContain('21')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -752,7 +760,7 @@ describe('Multi-Component Interaction Scenarios', () => {
       expect(items[1]!.textContent).toContain('21') // incremented
       expect(items[2]!.textContent).toContain('30') // unchanged
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -799,7 +807,7 @@ describe('Complex DOM Boundaries', () => {
 
       expect(button.textContent).toBe('1')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -856,7 +864,7 @@ describe('Complex DOM Boundaries', () => {
       counterBtn = env.document.querySelector('[data-testid="counter"]')
       // Counter should be hidden (or null depending on implementation)
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -919,7 +927,7 @@ describe('Complex DOM Boundaries', () => {
       await tick(3)
       expect(button.textContent).toBe('11')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -987,7 +995,7 @@ describe('Edge Cases and Error Handling', () => {
 
       expect(button.textContent).toBe('1')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -1027,7 +1035,7 @@ describe('Edge Cases and Error Handling', () => {
       // All clicks should be processed
       expect(button.textContent).toBe('10')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -1153,7 +1161,7 @@ describe('Attribute Binding and Dynamic Content', () => {
       // After click, active becomes true, so attribute should be set (empty string for true)
       expect(button.hasAttribute('data-active')).toBe(true)
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -1197,7 +1205,7 @@ describe('Attribute Binding and Dynamic Content', () => {
       expect(div.classList.contains('collapsed')).toBe(false)
       expect(div.classList.contains('expanded')).toBe(true)
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -1242,7 +1250,7 @@ describe('Attribute Binding and Dynamic Content', () => {
       expect(button.textContent).toContain('4')
       expect(button.textContent).toContain('6')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -1294,7 +1302,7 @@ describe('Smart Prefetch', () => {
       await tick(3)
       expect(button.textContent).toBe('1')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -1333,7 +1341,7 @@ describe('Smart Prefetch', () => {
       await tick(3)
       expect(button.textContent).toBe('1')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -1380,7 +1388,7 @@ describe('Smart Prefetch', () => {
       const button = env.document.querySelector('button') as HTMLElement
       expect(button).not.toBeNull()
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -1436,7 +1444,7 @@ describe('Smart Prefetch', () => {
       expect(buttons[0]!.textContent).toBe('0')
       expect(buttons[2]!.textContent).toBe('0')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -1716,7 +1724,7 @@ describe('Function-level Code Splitting', () => {
       // Handler was lazily loaded and executed
       expect(button.textContent).toBe('1')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -1767,7 +1775,7 @@ describe('Function-level Code Splitting', () => {
       expect(btnA.textContent).toBe('1')
       expect(btnB.textContent).toBe('101')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -1834,7 +1842,7 @@ describe('Function-level Code Splitting', () => {
       expect(button.textContent).toContain('6')
       expect(button.textContent).toContain('12')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -1923,7 +1931,7 @@ describe('Full E2E Integration', () => {
       await tick(3)
       expect(textSpan.textContent).toBe('Hello')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -1986,7 +1994,7 @@ describe('Full E2E Integration', () => {
       expect(countSpan.textContent).toBe('1')
       expect(itemsSpan.textContent).toBe('3')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -2068,7 +2076,7 @@ describe('Full E2E Integration', () => {
       expect(strBtn.textContent).toBe('on')
       expect(boolBtn.textContent).toBe('yes')
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })
@@ -2131,7 +2139,7 @@ describe('Full E2E Integration', () => {
         expect(buttons[i]!.textContent).toBe(String(i + 2))
       }
     } finally {
-      cleanup()
+      await cleanup()
       compiled.cleanup()
     }
   })

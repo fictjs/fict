@@ -98,6 +98,19 @@ export function resetPrefetchedUrls(): void {
 }
 
 /**
+ * Set of pending handler promises. Used for testing to wait for all handlers to complete.
+ */
+const pendingHandlers = new Set<Promise<void>>()
+
+/**
+ * Wait for all pending event handlers to complete. Useful for testing.
+ */
+export async function waitForPendingHandlers(): Promise<void> {
+  if (pendingHandlers.size === 0) return
+  await Promise.allSettled([...pendingHandlers])
+}
+
+/**
  * Clean up all registered event listeners. Useful for testing.
  */
 export function cleanupEventListeners(): void {
@@ -327,10 +340,19 @@ function prefetchQrl(qrl: string): void {
 }
 
 // ============================================================================
-// Event Handler
-// ============================================================================
 
-async function handleResumableEvent(event: Event): Promise<void> {
+/**
+ * Wrapper that tracks the async handler promise for testing.
+ */
+function handleResumableEvent(event: Event): void {
+  const promise = handleResumableEventAsync(event)
+  pendingHandlers.add(promise)
+  promise.finally(() => {
+    pendingHandlers.delete(promise)
+  })
+}
+
+async function handleResumableEventAsync(event: Event): Promise<void> {
   const path =
     typeof event.composedPath === 'function' ? event.composedPath() : buildEventPath(event)
 

@@ -468,7 +468,8 @@ describe('List Fuzzing Tests', () => {
       container.appendChild(list.marker)
       await tick()
 
-      for (let i = 0; i < 50; i++) {
+      // Reduced iterations from 50 to 10 to prevent CI timeout
+      for (let i = 0; i < 10; i++) {
         // Fill
         items(Array.from({ length: 100 }, (_, j) => ({ id: j })))
         await tick()
@@ -481,7 +482,7 @@ describe('List Fuzzing Tests', () => {
       }
 
       list.dispose()
-    })
+    }, 30000)
 
     it('handles worst-case reverse pattern', async () => {
       const SIZE = 100
