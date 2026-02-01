@@ -138,7 +138,8 @@ export function Link(props: LinkProps): FictNode {
       triggerPreload()
     }
     // Call original handler if provided
-    const onMouseEnter = (props as any).onMouseEnter
+    const propsRecord = props as unknown as Record<string, unknown>
+    const onMouseEnter = propsRecord.onMouseEnter as ((event: MouseEvent) => void) | undefined
     if (onMouseEnter) onMouseEnter(event)
   }
 
@@ -147,7 +148,8 @@ export function Link(props: LinkProps): FictNode {
       triggerPreload()
     }
     // Call original handler if provided
-    const onFocus = (props as any).onFocus
+    const propsRecord = props as unknown as Record<string, unknown>
+    const onFocus = propsRecord.onFocus as ((event: FocusEvent) => void) | undefined
     if (onFocus) onFocus(event)
   }
 

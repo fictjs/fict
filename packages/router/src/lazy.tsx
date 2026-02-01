@@ -5,10 +5,13 @@
  * Works with Fict's Suspense for loading states.
  */
 
-import { type FictNode, type Component } from '@fictjs/runtime'
+import { type FictNode, type Component, onCleanup } from '@fictjs/runtime'
 import { createSignal } from '@fictjs/runtime/advanced'
 
 import type { RouteComponentProps, RouteDefinition } from './types'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyComponent = Component<any>
 
 // ============================================================================
 // Lazy Component
@@ -40,14 +43,20 @@ interface LazyState<T> {
  * </Suspense>
  * ```
  */
-export function lazy<T extends Component<any>>(
+export function lazy<T extends AnyComponent>(
   loader: () => Promise<{ default: T } | T>,
-): Component<any> {
+): AnyComponent {
   let cachedComponent: T | null = null
   let loadPromise: Promise<T> | null = null
 
   // Create a wrapper component that handles lazy loading
-  const LazyComponent: Component<any> = props => {
+  const LazyComponent: AnyComponent = props => {
+    // Track if component is still mounted to prevent state updates after unmount
+    let isMounted = true
+    onCleanup(() => {
+      isMounted = false
+    })
+
     const state = createSignal<LazyState<T>>({
       component: cachedComponent,
       error: null,
@@ -70,13 +79,17 @@ export function lazy<T extends Component<any>>(
       })
     }
 
-    // Load the component
+    // Load the component with mounted check
     loadPromise
       .then(component => {
-        state({ component, error: null, loading: false })
+        if (isMounted) {
+          state({ component, error: null, loading: false })
+        }
       })
       .catch(error => {
-        state({ component: null, error, loading: false })
+        if (isMounted) {
+          state({ component: null, error, loading: false })
+        }
       })
 
     // Render based on state
@@ -97,8 +110,9 @@ export function lazy<T extends Component<any>>(
   }
 
   // Mark as lazy for identification
-  ;(LazyComponent as any).__lazy = true
-  ;(LazyComponent as any).__preload = () => {
+  const lazyComp = LazyComponent as AnyComponent & { __lazy: boolean; __preload: () => Promise<T> }
+  lazyComp.__lazy = true
+  lazyComp.__preload = () => {
     if (!loadPromise) {
       loadPromise = loader().then(module => {
         const component = 'default' in module ? module.default : module
@@ -116,8 +130,8 @@ export function lazy<T extends Component<any>>(
  * Preload a lazy component
  * Useful for preloading on hover/focus
  */
-export function preloadLazy(component: Component<any>): Promise<void> {
-  const lazyComp = component as any
+export function preloadLazy(component: AnyComponent): Promise<void> {
+  const lazyComp = component as AnyComponent & { __lazy?: boolean; __preload?: () => Promise<void> }
   if (lazyComp.__lazy && lazyComp.__preload) {
     return lazyComp.__preload()
   }
@@ -127,8 +141,9 @@ export function preloadLazy(component: Component<any>): Promise<void> {
 /**
  * Check if a component is a lazy component
  */
-export function isLazyComponent(component: unknown): boolean {
-  return !!(component && typeof component === 'function' && (component as any).__lazy)
+export function isLazyComponent(component: unknown): component is AnyComponent {
+  const comp = component as AnyComponent & { __lazy?: boolean }
+  return !!(comp && typeof comp === 'function' && comp.__lazy)
 }
 
 // ============================================================================
@@ -211,7 +226,7 @@ export function lazyRoute<P extends string = string>(config: {
  * ```
  */
 export function createLazyRoutes(
-  modules: Record<string, () => Promise<{ default: Component<any> }>>,
+  modules: Record<string, () => Promise<{ default: AnyComponent }>>,
   options: {
     pathTransform?: (filePath: string) => string
     loadingElement?: FictNode
