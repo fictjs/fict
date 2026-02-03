@@ -27,6 +27,43 @@ describe('List Helpers', () => {
     document.body.appendChild(container)
   })
 
+  it('renders keyed list inside ShadowRoot when available', async () => {
+    if (!('attachShadow' in container)) return
+    const host = document.createElement('div')
+    const shadow = host.attachShadow({ mode: 'open' })
+    document.body.appendChild(host)
+
+    const items = createSignal([1, 2])
+    const list = createKeyedList(
+      () => items(),
+      item => item,
+      itemSig => {
+        const span = document.createElement('span')
+        createEffect(() => {
+          span.textContent = String(itemSig())
+        })
+        return [span]
+      },
+      false,
+    )
+
+    shadow.appendChild(list.marker)
+    list.flush?.()
+    await tick()
+    const read = () =>
+      Array.from(shadow.querySelectorAll('span'))
+        .map(node => node.textContent ?? '')
+        .join('')
+    expect(read()).toBe('12')
+
+    items([1, 2, 3])
+    await tick()
+    expect(read()).toBe('123')
+
+    list.dispose()
+    host.remove()
+  })
+
   describe('DOM Manipulation', () => {
     it('moveNodesBefore moves nodes to correct position', () => {
       const div1 = document.createElement('div')

@@ -3053,7 +3053,7 @@ function lowerExpressionImpl(
   const lowerStructuredBlocks = (
     blocks: BasicBlock[],
     params: { name: string }[],
-    paramIds: BabelCore.types.Identifier[],
+    paramIds: BabelCore.types.FunctionParameter[],
   ): BabelCore.types.Statement[] => {
     try {
       const fn: HIRFunction = {
@@ -3088,7 +3088,13 @@ function lowerExpressionImpl(
                 })),
                 entryBlock: fn.blocks[0]?.id ?? 0,
               }
-      const declared = new Set(paramIds.map(p => p.name))
+      const declared = new Set<string>()
+      for (const p of paramIds) {
+        const ids = t.getBindingIdentifiers(p)
+        for (const name of Object.keys(ids)) {
+          declared.add(name)
+        }
+      }
       return lowerStructuredNodeWithoutRegions(structured, t, ctx, declared)
     } catch {
       return lowerBlocksToStatements(blocks)
@@ -3466,7 +3472,18 @@ function lowerExpressionImpl(
     case 'ArrowFunction': {
       const reactiveLowered = lowerReactiveScopeExpression(expr)
       if (reactiveLowered) return reactiveLowered
-      const paramIds = mapParams(expr.params)
+      const useRawParams =
+        expr.rawParams &&
+        expr.rawParams.length > 0 &&
+        expr.rawParams.every(
+          param =>
+            t.isIdentifier(param) || (t.isRestElement(param) && t.isIdentifier(param.argument)),
+        )
+      const paramIds = useRawParams
+        ? expr.rawParams!.map(
+            param => t.cloneNode(param, true) as BabelCore.types.FunctionParameter,
+          )
+        : mapParams(expr.params)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
       const localDeclared = collectLocalDeclaredNames(
         expr.params,
@@ -3518,7 +3535,18 @@ function lowerExpressionImpl(
     case 'FunctionExpression': {
       const reactiveLowered = lowerReactiveScopeExpression(expr)
       if (reactiveLowered) return reactiveLowered
-      const paramIds = mapParams(expr.params)
+      const useRawParams =
+        expr.rawParams &&
+        expr.rawParams.length > 0 &&
+        expr.rawParams.every(
+          param =>
+            t.isIdentifier(param) || (t.isRestElement(param) && t.isIdentifier(param.argument)),
+        )
+      const paramIds = useRawParams
+        ? expr.rawParams!.map(
+            param => t.cloneNode(param, true) as BabelCore.types.FunctionParameter,
+          )
+        : mapParams(expr.params)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
       const localDeclared = collectLocalDeclaredNames(expr.params, expr.body as BasicBlock[], t)
       return withNonReactiveScope(ctx, () =>
@@ -7251,6 +7279,11 @@ function buildListCallExpression(
   }
   const keyExpr = extractKeyFromMapCallback(mapCallback)
   const isKeyed = !!keyExpr
+  const hasRestParam =
+    (mapCallback.kind === 'ArrowFunction' || mapCallback.kind === 'FunctionExpression') &&
+    Array.isArray(mapCallback.rawParams) &&
+    mapCallback.rawParams.some(param => t.isRestElement(param))
+  const canConstifyKey = isKeyed && keyExpr && !hasRestParam
 
   if (isKeyed) {
     ctx.helpersUsed.add('keyedList')
@@ -7270,7 +7303,7 @@ function buildListCallExpression(
   const prevListItemParamName = ctx.listItemParamName
   const prevListKeyParamName = ctx.listKeyParamName
 
-  if (isKeyed && keyExpr) {
+  if (canConstifyKey && keyExpr) {
     ctx.listKeyExpr = keyExpr
     ctx.listKeyParamName = '__key'
     // Extract item param name from callback
@@ -7390,7 +7423,10 @@ function buildListCallExpression(
       callbackExpr.params.length >= 2
 
     // Add __key as third parameter to the callback for key constification
-    if (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) {
+    if (
+      canConstifyKey &&
+      (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr))
+    ) {
       const newParams = [...callbackExpr.params]
       // Ensure we have at least 2 params (item, index) before adding key
       while (newParams.length < 2) {

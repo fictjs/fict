@@ -2604,6 +2604,7 @@ function convertExpression(
       const arrow: HArrowFunctionExpression = {
         kind: 'ArrowFunction',
         params: nested.params,
+        rawParams: nested.rawParams ?? node.params,
         body: nested.blocks,
         isExpression: false,
         isAsync: node.async,
@@ -2623,6 +2624,7 @@ function convertExpression(
                 : [],
           )
           .flat(),
+        rawParams: node.params,
         body: convertExpression(node.body as BabelCore.types.Expression),
         isExpression: true,
         isAsync: node.async,
@@ -2646,6 +2648,7 @@ function convertExpression(
       kind: 'FunctionExpression',
       name: node.id?.name ?? '',
       params: nested.params,
+      rawParams: nested.rawParams ?? node.params,
       body: nested.blocks,
       isAsync: node.async,
       reactiveScope: options?.reactiveScope,

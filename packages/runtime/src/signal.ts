@@ -103,6 +103,10 @@ export interface SignalNode<T = unknown> extends BaseNode {
   currentValue: T
   /** Pending value to be committed */
   pendingValue: T
+  /** Previous committed value (for cleanup reads) */
+  prevValue?: T
+  /** Flush id when prevValue was recorded */
+  prevFlushId?: number
   /** Signals don't have dependencies */
   deps?: undefined
   depsTail?: undefined
@@ -123,6 +127,10 @@ export interface SignalNode<T = unknown> extends BaseNode {
 export interface ComputedNode<T = unknown> extends BaseNode {
   /** Current computed value */
   value: T
+  /** Previous computed value (for cleanup reads) */
+  prevValue?: T
+  /** Flush id when prevValue was recorded */
+  prevFlushId?: number
   /** First dependency link */
   deps: Link | undefined
   /** Last dependency link */
@@ -251,6 +259,8 @@ let cycle = 0
 let batchDepth = 0
 let activeSub: ReactiveNode | undefined
 let flushScheduled = false
+let currentFlushId = 0
+let activeCleanupFlushId = 0
 // Dual-priority queue for scheduler
 const highPriorityQueue: EffectNode[] = []
 const lowPriorityQueue: EffectNode[] = []
@@ -798,6 +808,8 @@ function updateSignal(s: SignalNode): boolean {
   const current = s.currentValue
   const pending = s.pendingValue
   if (valuesDiffer(s, current, pending)) {
+    s.prevValue = current
+    s.prevFlushId = currentFlushId
     s.currentValue = pending
     return true
   }
@@ -822,6 +834,8 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
     c.flags &= ~Running
     purgeDeps(c)
     if (valuesDiffer(c, oldValue, newValue)) {
+      c.prevValue = oldValue
+      c.prevFlushId = currentFlushId
       c.value = newValue
       if (isDev) updateComputedDevtools(c, newValue)
       return true
@@ -839,16 +853,20 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
  */
 function runEffect(e: EffectNode): void {
   const flags = e.flags
-  // Run cleanup BEFORE checkDirty so cleanup sees previous signal values
-  if (flags & Dirty) {
-    if (e.runCleanup) {
-      inCleanup = true
-      try {
-        e.runCleanup()
-      } finally {
-        inCleanup = false
-      }
+  const runCleanup = () => {
+    if (!e.runCleanup) return
+    inCleanup = true
+    activeCleanupFlushId = currentFlushId
+    try {
+      e.runCleanup()
+    } finally {
+      activeCleanupFlushId = 0
+      inCleanup = false
     }
+  }
+  if (flags & Dirty) {
+    // Run cleanup before re-run; values are still the previous commit.
+    runCleanup()
     ++cycle
     if (isDev) effectRunDevtools(e)
     e.depsTail = undefined
@@ -866,15 +884,6 @@ function runEffect(e: EffectNode): void {
       throw err
     }
   } else if (flags & Pending && e.deps) {
-    // Run cleanup before checkDirty which commits signal values
-    if (e.runCleanup) {
-      inCleanup = true
-      try {
-        e.runCleanup()
-      } finally {
-        inCleanup = false
-      }
-    }
     let isDirty = false
     try {
       isDirty = checkDirty(e.deps, e)
@@ -894,6 +903,9 @@ function runEffect(e: EffectNode): void {
       throw err
     }
     if (isDirty) {
+      // Only run cleanup if the effect will actually re-run.
+      // Cleanup reads should observe previous values for this flush.
+      runCleanup()
       ++cycle
       if (isDev) effectRunDevtools(e)
       e.depsTail = undefined
@@ -947,6 +959,7 @@ function flush(): void {
     endFlushGuard()
     return
   }
+  currentFlushId++
   flushScheduled = false
 
   // 1. Process all high-priority effects first
@@ -1071,6 +1084,12 @@ function signalOper<T>(this: SignalNode<T>, value?: T): T | void {
       if (subs !== undefined) shallowPropagate(subs)
     }
   }
+  if (inCleanup) {
+    if (this.prevFlushId === activeCleanupFlushId) {
+      return this.prevValue as T
+    }
+    return this.currentValue
+  }
 
   let sub = activeSub
   while (sub !== undefined) {
@@ -1118,10 +1137,14 @@ export function computed<T>(
   return bound as ComputedAccessor<T>
 }
 function computedOper<T>(this: ComputedNode<T>): T {
-  // fix: During cleanup, return cached value without triggering any updates.
-  // This ensures cleanup functions see the previous state, not the new pending values.
-  // Without this check, checkDirty() could commit pending signal values during cleanup.
-  if (inCleanup) return this.value
+  // fix: During cleanup, return previous value for this flush without triggering updates.
+  // This ensures cleanup functions observe the pre-commit state for this effect.
+  if (inCleanup) {
+    if (this.prevFlushId === activeCleanupFlushId) {
+      return this.prevValue as T
+    }
+    return this.value
+  }
 
   const flags = this.flags
 
@@ -1388,6 +1411,8 @@ export function __resetReactiveState(): void {
   isInTransition = false
   inCleanup = false
   cycle = 0
+  currentFlushId = 0
+  activeCleanupFlushId = 0
 }
 /**
  * Execute a function without tracking dependencies

@@ -811,6 +811,25 @@ describe('array/map rendering', () => {
 
     expect(code).toBeDefined()
   })
+
+  it('should handle map callback with rest params', () => {
+    const ast = parseFile(`
+      function RestList(props) {
+        return (
+          <ul>
+            {props.items.map((item, ...rest) => <li key={item.id}>{item.id}</li>)}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/createKeyedList/)
+    expect(code).toMatch(/item\s*,\s*\.\.\.rest/)
+    expect(code).not.toMatch(/\.\.\.rest\s*,\s*__key/)
+  })
 })
 
 // ============================================================================

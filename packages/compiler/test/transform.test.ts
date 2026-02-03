@@ -382,6 +382,24 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('idx()')
     })
 
+    it('preserves rest params in map callback without injecting __key', () => {
+      const input = `
+        import { $state } from 'fict'
+        function RestList() {
+          let items = $state([{ id: 1 }, { id: 2 }])
+          return (
+            <ul>
+              {items.map((item, ...rest) => <li key={item.id}>{item.id}</li>)}
+            </ul>
+          )
+        }
+      `
+      const output = transformWithOptions(input)
+      expect(output).toContain('createKeyedList')
+      expect(output).toMatch(/item\s*,\s*\.\.\.rest/)
+      expect(output).not.toMatch(/\.\.\.rest\s*,\s*__key/)
+    })
+
     it('lowers conditional branches to fine-grained DOM operations', () => {
       const input = `
         import { $state } from 'fict'

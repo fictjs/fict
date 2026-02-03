@@ -32,6 +32,9 @@ const isDev =
     ? __DEV__
     : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
 
+const isShadowRoot = (node: Node): node is ShadowRoot =>
+  typeof ShadowRoot !== 'undefined' && node instanceof ShadowRoot
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -469,7 +472,7 @@ function reorderByLIS<T>(
  * @param renderItem - Function that creates DOM nodes for each item
  * @returns Binding handle with markers and dispose function
  */
-export function createKeyedList<T extends object>(
+export function createKeyedList<T>(
   getItems: () => T[],
   keyFn: (item: T, index: number) => string | number,
   renderItem: FineGrainedRenderItem<T>,
@@ -489,7 +492,7 @@ export function createKeyedList<T extends object>(
   )
 }
 
-function createFineGrainedKeyedList<T extends object>(
+function createFineGrainedKeyedList<T>(
   getItems: () => T[],
   keyFn: (item: T, index: number) => string | number,
   renderItem: FineGrainedRenderItem<T>,
@@ -533,6 +536,12 @@ function createFineGrainedKeyedList<T extends object>(
       const parentNode = endParent as ParentNode & Node
       if ('isConnected' in parentNode && !parentNode.isConnected) return null
       return parentNode
+    }
+    if (endParent && startParent && endParent === startParent && isShadowRoot(endParent as Node)) {
+      const shadowRoot = endParent as ShadowRoot
+      const host = shadowRoot.host
+      if ('isConnected' in host && !host.isConnected) return null
+      return shadowRoot as unknown as ParentNode & Node
     }
     return null
   }
@@ -589,7 +598,7 @@ function createFineGrainedKeyedList<T extends object>(
                   removeNodes(existing.nodes)
                 }
               }
-              const block = createKeyedBlock(key, item, index, renderItem, needsIndex, hostRoot)
+              const block = createKeyedBlock<T>(key, item, index, renderItem, needsIndex, hostRoot)
               createdBlocks.push(block)
               newBlocks.set(key, block)
               orderedIndexByKey.set(key, nextOrderedBlocks.length)
@@ -716,7 +725,7 @@ function createFineGrainedKeyedList<T extends object>(
             removeNodes(existingBlock.nodes)
           }
           // Create new block
-          block = createKeyedBlock(key, item, index, renderItem, needsIndex, hostRoot)
+          block = createKeyedBlock<T>(key, item, index, renderItem, needsIndex, hostRoot)
           createdBlocks.push(block)
         }
 
@@ -925,6 +934,9 @@ function createFineGrainedKeyedList<T extends object>(
 
   const waitForConnection = () => {
     if (connectObserver || typeof MutationObserver === 'undefined') return
+    const root = container.startMarker.getRootNode?.() ?? document
+    const shadowRoot =
+      root && root.nodeType === 11 && isShadowRoot(root as Node) ? (root as ShadowRoot) : null
     connectObserver = new MutationObserver(() => {
       if (disposed) return
       if (getConnectedParent()) {
@@ -935,6 +947,9 @@ function createFineGrainedKeyedList<T extends object>(
       }
     })
     connectObserver.observe(document, { childList: true, subtree: true })
+    if (shadowRoot) {
+      connectObserver.observe(shadowRoot, { childList: true, subtree: true })
+    }
   }
 
   const scheduleStart = () => {

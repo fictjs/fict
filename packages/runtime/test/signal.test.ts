@@ -92,6 +92,25 @@ describe('signal runtime robustness', () => {
     expect(seen).toEqual([0, 2, 4])
   })
 
+  it('does not run cleanup when memo value is unchanged', async () => {
+    const count = createSignal(0)
+    const stepped = createMemo(() => Math.floor(count() / 2))
+    const cleanups: number[] = []
+
+    createEffect(() => {
+      const current = stepped()
+      onCleanup(() => cleanups.push(current))
+    })
+
+    count(1)
+    await tick()
+    expect(cleanups).toEqual([])
+
+    count(2)
+    await tick()
+    expect(cleanups).toEqual([0])
+  })
+
   it('handles updates triggered inside effects', async () => {
     const signal1 = createSignal(0)
     const signal2 = createSignal(0)

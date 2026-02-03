@@ -476,6 +476,8 @@ export type JSXChild =
 export interface ArrowFunctionExpression extends SourceInfo {
   kind: 'ArrowFunction'
   params: Identifier[]
+  /** Original Babel param AST nodes for preserving patterns/rest params */
+  rawParams?: BabelParamNode[]
   body: Expression | BasicBlock[]
   isExpression: boolean // true if body is Expression, false if block
   isAsync?: boolean
@@ -487,6 +489,8 @@ export interface FunctionExpression extends SourceInfo {
   kind: 'FunctionExpression'
   name?: string
   params: Identifier[]
+  /** Original Babel param AST nodes for preserving patterns/rest params */
+  rawParams?: BabelParamNode[]
   body: BasicBlock[]
   isAsync?: boolean
   /** Marks this function as a reactive scope callback (e.g., renderHook(() => ...)). */
