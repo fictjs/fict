@@ -622,7 +622,7 @@ describe('R015: Derived formal semantics', () => {
     expect(output).toContain('__fictUseMemo')
   })
 
-  it('derived in event handler is event-only usage', () => {
+  it('derived in event handler stays memoized by default', () => {
     const output = transform(`
       import { $state } from 'fict'
       function Component() {
@@ -632,7 +632,7 @@ describe('R015: Derived formal semantics', () => {
         return onClick
       }
     `)
-    // Current implementation uses getter for event-only derived
+    // Derived values are memoized by default; event reads current memo value
     expect(output).toContain('doubled')
     // Verify count is still transformed to signal
     expect(output).toContain('__fictUseSignal')

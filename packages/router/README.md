@@ -1,4 +1,4 @@
-# @fictjs/compiler
+# @fictjs/router
 
 ![Node CI](https://github.com/fictjs/fict/workflows/CI/badge.svg)
 ![npm](https://img.shields.io/npm/v/fict.svg)

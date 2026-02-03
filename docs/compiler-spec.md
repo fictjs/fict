@@ -120,7 +120,7 @@ The compiler needs to:
 
 ---
 
-## 3. Rule C: Select memo / getter / re-execution based on usage type
+## 3. Rule C: Memoization + re-execution based on usage type
 
 Each `DerivedNode` will be used several times in the source code. Usage types include:
 
@@ -130,25 +130,28 @@ Each `DerivedNode` will be used several times in the source code. Usage types in
 - `EventUsage`: Read in JSX event handlers (e.g., `onClick` closure)
 - `PlainUsage`: Read in other plain functions / plain closures
 
-**Important distinction**: Defining a derived value (`const doubled = count * 2`) does NOT count as reading—it creates a memo. The usage types above refer to where the derived value is **read at runtime**.
+**Important distinction**: Defining a derived value (`const doubled = count * 2`) does NOT count as reading—it creates a memo by default (unless `"use no memo"` is active). The usage types above refer to where the derived value is **read at runtime**.
 
 ### Decision Logic
 
-For each `DerivedNode`:
+For each `DerivedNode` (default behavior):
 
-1. If `ControlFlowUsage` exists (derived is **read at runtime** in control flow):
-   → **Triggers component re-execution** when value changes. The entire component body re-runs and re-renders.
+1. **Always memoize** derived values (`MemoNode`), regardless of usage (JSX/effect/event/plain).
+2. If `ControlFlowUsage` exists (derived is **read at runtime** in control flow):
+   → **Triggers component re-execution** when value changes, in addition to memoization.
 
-2. If `JSXBinding` or `EffectUsage` exists (but no `ControlFlowUsage`):
-   → Compile as **memo node** (`MemoNode`), cache maintained by runtime. Only fine-grained DOM updates occur.
+**Opt-out: `"use no memo"` directive**
 
-3. Otherwise (no JSX / Effect / ControlFlow usage):
-   → Compile as **on-demand getter**.
+- When `"use no memo"` is present (file-level or function-level), automatic memoization is disabled.
+- Derived values are lowered as plain getters/expressions, and you can opt in with `$memo` / `createMemo`.
 
-**Special: When both memo usage and event usage exist**
+**Special: Event/Plain usage**
 
-- Still compile as memo.
-- Reads in events become "read current memo value".
+- Event handlers and plain functions read the **current memo value**.
+
+**Optimization note**
+
+- The compiler may inline single-use derived memos when it can prove purity and safety; this does not change observable semantics.
 
 **Special: Control Flow Re-execution**
 
@@ -194,7 +197,7 @@ const doubled = count * 2
 const click = () => console.log(doubled)
 ```
 
-- `doubled` only has `EventUsage` → getter.
+- `doubled` is still memoized by default; events read the current memo value.
 
 ### Example 3: Use in both
 
@@ -497,12 +500,12 @@ function UserProfile() {
 ### Notes
 
 - Module-level `$state` (and any derived values that depend on it) produce a **hard compilation error**.
-- Derived values defined in a component still compile to memos when they feed reactive sinks.
+- Derived values defined in a component compile to memos by default (unless `"use no memo"` disables auto-memoization).
 - `$store` uses runtime Proxy for deep reactivity, but **derived values consuming `$store` are automatically memoized** by the compiler, just like `$state` derivations.
 
-- When reading at import side:
-  - In JSX / effect: Use as memo node;
-  - In event / function: Read latest value.
+- When reading derived values:
+  - JSX / effect / event / plain usage read the current memo value.
+  - Control-flow reads still trigger component re-execution.
 
 ---
 
@@ -647,7 +650,7 @@ Compiler should:
    - Apply Region grouping (control flow)
 
 7. **Apply Rules C–L**:
-   - Classify memo / getter
+   - Memoization + control-flow re-execution
    - Control flow grouping
    - Cycle detection
    - Conservative downgrade & Warning
@@ -701,12 +704,12 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
 
 ### 15.2 Derived Value Semantics
 
-1.  **Implicit Derivation**: `const y = x * 2` is automatically a memo _if_ `y` is used in a reactive sink (Effect/JSX) without control flow usage.
-2.  **Snapshotting**: If `const y = x * 2` is never used in a reactive sink, it remains a one-time calculation (standard JS behavior).
+1.  **Implicit Derivation**: `const y = x * 2` is automatically memoized by default, regardless of usage (JSX/effect/event/plain), unless `"use no memo"` disables auto-memoization.
+2.  **Opt-out / Explicit Memo**: With `"use no memo"`, derived values are lowered as plain getters/expressions. Use `$memo` / `createMemo` to opt back into caching.
 3.  **Closures & Events**:
     - **Rule**: A closure created in the component body that reads `$state` (e.g., `const onClick = () => console.log(count)`) always reads the **live** value.
     - **Implementation**: The compiler ensures `count` inside the closure becomes `count()` (getter), not a captured variable.
-    - **Snapshot**: `const snap = count; const fn = () => snap` reads the definition-time value by design.
+    - **Snapshot**: Use an explicit snapshot: `const snap = count(); const fn = () => snap`.
 4.  **Control Flow Re-execution**: When a signal or derived value is **read at runtime** in control flow statements (`if`, `for`, `while`, `switch`, ternary in statements), the component re-executes and re-renders when that value changes. Note: simply defining a derived (`const x = signal * 2`) doesn't trigger re-execution—only reading in control flow does. This matches developer intuition: conditional logic naturally re-evaluates when its dependencies change.
 5.  **Control Flow Regions**: Derived values defined across `if`/`switch`/early-return paths are grouped into a single region memo that returns the outward-facing values, ensuring consistent dependency tracking and avoiding duplicated condition evaluation.
 6.  **DX Notes (control flow + closures)**:

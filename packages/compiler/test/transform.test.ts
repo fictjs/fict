@@ -149,7 +149,7 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('count()')
     })
 
-    it('creates getter for event-only usage', () => {
+    it('memoizes derived values even for event-only usage', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {
@@ -165,7 +165,7 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('onClick = () => console.log(doubled())')
     })
 
-    it('creates getter for plain function-only usage (non-JSX handler)', () => {
+    it('memoizes derived values for plain function-only usage (non-JSX handler)', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {

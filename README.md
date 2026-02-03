@@ -13,7 +13,7 @@ Fict is a UI library where you write plain JavaScript and the compiler figures o
 ```jsx
 function Counter() {
   let count = $state(0)
-  const doubled = count * 2 // auto-derived, no useMemo needed
+  const doubled = count * 2 // auto-derived
 
   return <button onClick={() => count++}>{doubled}</button>
 }
@@ -60,7 +60,7 @@ import { $state, render } from 'fict'
 
 export function Counter() {
   let count = $state(0)
-  const doubled = count * 2 // auto-derived, no useMemo needed
+  const doubled = count * 2 // auto-derived
 
   return (
     <div class="counter">
@@ -130,6 +130,8 @@ const total = subtotal + tax // auto-derived
 ```
 
 The compiler builds a dependency graph and only recomputes what's needed.
+Single-use derived values may be inlined as an optimization; use `$memo` or set
+`inlineDerivedMemos: false` to force explicit memo nodes.
 
 ### `$effect` — Side effects
 

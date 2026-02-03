@@ -20,7 +20,7 @@ console.log(count()) // ← getter call
 
 ## Rule 1: Derived Values Are Memoized
 
-Any binding that depends on reactive state becomes a memo accessor, whether or not it flows to a JSX/effect “sink.”
+Any binding that depends on reactive state becomes a memo accessor by default, whether or not it flows to JSX, effects, events, or plain functions. The compiler may inline single-use memos as an optimization, but the semantics are memoized. If you need a concrete memo node for a single-use derived value, use `$memo` or disable `inlineDerivedMemos` in compiler options.
 
 | Pattern               | Outcome                       |
 | --------------------- | ----------------------------- |
@@ -46,6 +46,17 @@ If you need a one-time snapshot, read the getter explicitly:
 
 ```js
 const snap = count() // captures current value only
+```
+
+### Opting out (explicit memo)
+
+If you want to disable automatic memoization for a file/function, use the directive `"use no memo"`. In that mode, derived values are lowered as plain getters/expressions and you can opt in to caching with `$memo`:
+
+```js
+// "use no memo"
+
+const doubled = count * 2 // no auto memo
+const cached = $memo(() => count * 2) // explicit memo
 ```
 
 ---
@@ -261,6 +272,14 @@ $effect(() => {
   console.log(value)
 })
 ```
+
+### Q: How do I opt out of automatic memoization?
+
+Use the directive `"use no memo"` at the top of a file or function, then wrap any derived value you want cached with `$memo`/`createMemo`.
+
+### Q: How do I force a memo node even when the compiler would inline it?
+
+Use `$memo` explicitly, or set `inlineDerivedMemos: false` in compiler options to keep user-named derived values as memos.
 
 ### Q: What about `obj[key]` performance?
 

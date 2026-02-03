@@ -44,6 +44,9 @@ Fict is a compiler-first, fine-grained reactive UI framework. This document cove
   - [resource](#resource)
   - [lazy](#lazy)
 - [Advanced APIs (fict/advanced)](#advanced-apis-fictadvanced)
+  - [createScope](#createscope)
+  - [runInScope](#runinscope)
+  - [effectScope](#effectscope)
   - [setCycleProtectionOptions](#setcycleprotectionoptions)
 - [Type Definitions](#type-definitions)
 
@@ -1368,14 +1371,97 @@ function App() {
 
 These APIs are for power users and library authors. They provide lower-level control over Fict's internals.
 
+### createScope
+
+Create an explicit reactive scope that can be re-run and disposed manually.
+
+```typescript
+import { createScope } from 'fict/advanced'
+
+interface ReactiveScope {
+  run<T>(fn: () => T): T
+  stop(): void
+}
+
+function createScope(): ReactiveScope
+```
+
+**Example:**
+
+```tsx
+const scope = createScope()
+
+scope.run(() => {
+  createEffect(() => {
+    /* reactive work */
+  })
+})
+
+// Later
+scope.stop()
+```
+
+---
+
+### runInScope
+
+Run a block of reactive code behind a boolean flag. When the flag becomes false, the scope is disposed and all effects/memos created inside are cleaned up.
+
+```typescript
+import { runInScope } from 'fict/advanced'
+
+function runInScope(flag: boolean | (() => boolean), fn: () => void): void
+```
+
+**Example:**
+
+```tsx
+runInScope(
+  () => show,
+  () => {
+    createEffect(() => {
+      /* ... */
+    })
+  },
+)
+```
+
+---
+
+### effectScope
+
+Create an effect scope that collects reactive subscriptions created during `fn` and returns a disposer.
+
+```typescript
+import { effectScope } from 'fict/advanced'
+
+function effectScope(fn: () => void): () => void
+```
+
+**Example:**
+
+```tsx
+const dispose = effectScope(() => {
+  createEffect(() => {
+    /* ... */
+  })
+})
+
+// Later
+dispose()
+```
+
+---
+
 ### setCycleProtectionOptions
 
-Configure cycle protection thresholds for development mode. This helps tune cycle detection sensitivity for your application.
+Configure cycle protection thresholds and enablement. This helps tune cycle detection sensitivity for your application.
 
 ```typescript
 import { setCycleProtectionOptions } from 'fict/advanced'
 
 interface CycleProtectionOptions {
+  enabled?: boolean // Default: dev-only (NODE_ENV !== 'production')
   maxFlushCyclesPerMicrotask?: number // Default: 10,000
   maxEffectRunsPerFlush?: number // Default: 20,000
   windowSize?: number // Default: 5
@@ -1405,7 +1491,7 @@ setCycleProtectionOptions({
 })
 ```
 
-> **Note:** Cycle protection only runs in development mode. In production, all guards are no-ops.
+> **Note:** Cycle protection is enabled by default only in development mode. In production it is disabled by default, but you can opt-in via `setCycleProtectionOptions({ enabled: true })`.
 
 For detailed documentation, see [Cycle Protection](./cycle-protection.md).
 

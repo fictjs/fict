@@ -176,7 +176,7 @@ $state ──▶ memo ──▶ binding
 
 Fict keeps props reactive even when they are reshaped before reaching JSX:
 
-- **Destructuring**: Compiler rewrites `({ value })` (and nested/default patterns) into lazy getters backed by the original props source. Derived values built from these getters become memos or getters—no stale snapshots.
+- **Destructuring**: Compiler rewrites `({ value })` (and nested/default patterns) into lazy getters backed by the original props source. Derived values built from these getters become memos by default (or plain getters under `"use no memo"`), so no stale snapshots.
 - **Spread into components**: Object literals, const objects (even nested spreads or `useMemo` factories) are scanned and reactive entries are wrapped with lazy getters/`prop` automatically before spreading into child components. This keeps props lazy without forcing DOM insert bindings.
 - **Manual merge**: `mergeProps(a, b, { c })` merges props while preserving getters; later sources override earlier ones. Compiler emits this automatically when needed; explicit calls are only for truly dynamic shapes you build at runtime.
 - **Known limit**: If a spread argument is a runtime-dynamic object whose shape is unknown (e.g., function return with dynamic keys), the compiler cannot safely rewrite its fields. In such cases, mark reactive fields yourself or call `mergeProps` explicitly.
@@ -221,7 +221,7 @@ For everyday props/destructuring/spread patterns, rely on the compiler’s autom
 ### 2.5.2 State destructuring (read-only aliases)
 
 - Declaring `$state` with destructuring is still illegal: `const { id } = $state(...)` → compile error.
-- Destructuring an existing `$state` object, e.g. `let state = $state({ count: 0 }); const { count } = state;`, is rewritten to a memo/getter (`count` reads `state().count`), so reads in JSX/logic stay reactive.
+- Destructuring an existing `$state` object, e.g. `let state = $state({ count: 0 }); const { count } = state;`, is rewritten to a memo accessor (or plain getter under `"use no memo"`), so reads in JSX/logic stay reactive.
 - Writes to the alias (`count++`, `count = ...`) are disallowed. Mutate via the original signal (`state.count++`) or immutable updates (`state = { ...state(), count: state().count + 1 }`, or via immer/mutative).
 - Dynamic keys / deep paths fallback to coarser subscriptions (more recompute). Static paths like `.count` get precise deps.
 
@@ -333,22 +333,22 @@ The compiler does two things:
 
 ---
 
-## 4. Derived Expressions: memo vs getter
+## 4. Derived Expressions: default memoization
 
-A key design of Fict is: **Automatic Classification of Derived Expressions**.
+A key design of Fict is: **Automatic memoization of derived expressions**.
 
-### 4.1 Classification Rules
+### 4.1 Rules
 
-All expressions dependent on `$state` (directly or indirectly) are collected and then classified by usage:
+All expressions dependent on `$state` (directly or indirectly) are memoized by default (unless `"use no memo"` disables auto memoization).
 
-1. **Used in JSX or `$effect`**
-   → Compile to **memo node (derived signal)**
+1. **Read in control flow**
+   → Still memoized, and also **triggers component re-execution** when the value changes.
 
-2. **Used only in events / plain functions**
-   → Compile to **on-demand getter**
+2. **Read in JSX / `$effect` / events / plain functions**
+   → Memoized; events and plain functions read the current memo value.
 
-3. **Used in both**
-   → Compile to memo, event reads current memo value
+3. **Opt-out**
+   → With `"use no memo"`, derived values are lowered to plain getters/expressions; use `$memo` for explicit caching.
 
 ### 4.2 Example: Pure Derivation, Bound in JSX
 
@@ -373,7 +373,9 @@ At runtime level:
 - When `$price` / `$quantity` changes, recompute `memo(total)`
 - Notify binding to update DOM
 
-### 4.3 Example: Used Only in Event → getter
+> Note: When a derived value is used only once, the compiler may inline the memo as an optimization. The conceptual model remains memoized; use `$memo` or `inlineDerivedMemos: false` to force a memo node.
+
+### 4.3 Example: Used Only in Event → memo
 
 ```ts
 let count = $state(0)
@@ -387,15 +389,15 @@ const onClick = () => {
 Conceptually becomes after compilation:
 
 ```ts
-const $doubled = () => $count.get() * 2
+const $doubled = createMemo(() => $count.get() * 2)
 const onClick = () => {
   console.log($doubled())
 }
 ```
 
-No resident memo node is established; instead, it is calculated on demand when the event occurs.
+A memo node is established; the event reads the current memo value.
 
-**This is the core mechanism ensuring "events always read the latest value".**
+If you opt out with `"use no memo"`, the compiler lowers derived values to plain getters/expressions.
 
 ---
 
@@ -609,14 +611,13 @@ const click = () => {
 }
 ```
 
-Fict ensures this via the hard rule "**Event Scenario Derivation → getter**".
+Fict ensures this by rewriting reactive reads to getters and memoizing derived values by default.
 
 To summarize:
 
 - Derived **read at runtime** in **control flow** → triggers component re-execution
-- Derived read only in **JSX / `$effect`** (not in control flow) → memo (reactive binding, fine-grained updates)
-- Derived read only in **events / plain functions** → getter (calculated at call time)
-- Used in both JSX and events → memo, event reads current memo value
+- Derived read in **JSX / `$effect` / events / plain functions** → memo accessor (events read current memo value)
+- With `"use no memo"` → derived values are lowered as plain getters/expressions unless explicitly `$memo`
 - Simply defining a derived (`const x = signal * 2`) does NOT trigger re-execution
 
 This matches developer intuition while optimizing for performance.

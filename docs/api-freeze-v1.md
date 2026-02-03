@@ -126,13 +126,12 @@ export type Ref<T> = RefCallback<T> | RefObject<T>
 
 ```typescript
 export function createScope(): ReactiveScope
-export function runInScope<T>(flag: () => boolean, fn: () => T): T
-export function effectScope<T>(fn: () => T): { value: T; stop: () => void }
+export function runInScope(flag: () => boolean, fn: () => void): void
+export function effectScope(fn: () => void): () => void
 
 export interface ReactiveScope {
   run<T>(fn: () => T): T
   stop(): void
-  active: boolean
 }
 ```
 
@@ -414,7 +413,7 @@ export function createSelector<T, U = T>(
 ): (key: U) => boolean
 
 // Effect scope - collect effects for batch disposal
-export function effectScope<T>(fn: () => T): { value: T; stop: () => void }
+export function effectScope(fn: () => void): () => void
 
 // Render effect - synchronous effect for DOM updates
 export function createRenderEffect(fn: () => void | Cleanup): () => void
@@ -726,8 +725,8 @@ export const $memo = createMemo
 | `createSignal`              | Reactivity | 3    | Cross-component escape hatch |
 | `createSelector`            | Reactivity | 3    | Fine-grained subscription    |
 | `createScope`               | Scope      | 3    | Reactive scope management    |
-| `runInScope`                | Scope      | 3    | Execute in scope             |
-| `effectScope`               | Scope      | 3    | Effect scope                 |
+| `runInScope`                | Scope      | 3    | Flag-driven scope (void)     |
+| `effectScope`               | Scope      | 3    | Returns disposer             |
 | `createContext`             | Context    | 3    | Also in main entry           |
 | `useContext`                | Context    | 3    | Also in main entry           |
 | `hasContext`                | Context    | 3    | Also in main entry           |
@@ -777,13 +776,13 @@ export const $memo = createMemo
 
 ### Additional `fict` Main Entry Exports
 
-| Export           | Category   | Tier | Notes                     |
-| ---------------- | ---------- | ---- | ------------------------- |
-| `$store`         | Store      | 1    | Deep reactive store       |
-| `$memo`          | Reactivity | 1    | Alias of createMemo       |
-| `createSelector` | Reactivity | 1    | Convenience from advanced |
-| `createScope`    | Reactivity | 1    | Convenience from advanced |
-| `runInScope`     | Reactivity | 1    | Convenience from advanced |
+| Export           | Category   | Tier | Notes                            |
+| ---------------- | ---------- | ---- | -------------------------------- |
+| `$store`         | Store      | 1    | Deep reactive store              |
+| `$memo`          | Reactivity | 1    | Alias of createMemo              |
+| `createSelector` | Reactivity | 1    | Convenience from advanced        |
+| `createScope`    | Reactivity | 1    | Convenience from advanced        |
+| `runInScope`     | Reactivity | 1    | Convenience from advanced (void) |
 
 ### `fict/plus`
 

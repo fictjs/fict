@@ -1,6 +1,6 @@
 # Cycle Protection
 
-Fict includes built-in cycle protection to help developers identify and prevent infinite reactive loops during development. This feature detects runaway effects and provides early warnings before they can crash the application.
+Fict includes built-in cycle protection to help developers identify and prevent infinite reactive loops during development. This feature detects runaway effects and provides early warnings before they can crash the application, and can be enabled in production if desired.
 
 ## Overview
 
@@ -10,11 +10,11 @@ Reactive systems can accidentally create infinite loops when:
 - Multiple effects form a circular dependency chain
 - Component re-renders trigger effects that cause more re-renders
 
-Fict's cycle protection monitors these patterns and provides helpful warnings in development mode.
+Fict's cycle protection monitors these patterns and provides helpful warnings in development mode (or in production if you opt in).
 
 ## When Cycle Protection Activates
 
-Cycle protection is **only active in development mode** (`NODE_ENV !== 'production'`). In production, the guards are no-ops for maximum performance.
+Cycle protection is **enabled by default only in development mode** (`NODE_ENV !== 'production'`). In production, it is **disabled by default** for maximum performance, but you can opt-in by calling `setCycleProtectionOptions({ enabled: true })`.
 
 Detection triggers in three scenarios:
 
@@ -34,6 +34,8 @@ Configure cycle protection thresholds and behavior.
 import { setCycleProtectionOptions } from 'fict/advanced'
 
 interface CycleProtectionOptions {
+  /** Enable cycle protection guards (default: dev-only) */
+  enabled?: boolean
   /** Maximum effect runs allowed per microtask flush (default: 10,000) */
   maxFlushCyclesPerMicrotask?: number
 
@@ -80,6 +82,16 @@ setCycleProtectionOptions({
 ---
 
 ## Configuration Options
+
+### `enabled`
+
+**Default:** `NODE_ENV !== 'production'`
+
+Controls whether cycle protection is active. This is enabled by default in development and disabled by default in production. You can opt in for production safety:
+
+```tsx
+setCycleProtectionOptions({ enabled: true })
+```
 
 ### `maxFlushCyclesPerMicrotask`
 
@@ -411,14 +423,23 @@ Each warning includes context to help identify the issue:
 
 ## Production Behavior
 
-In production (`NODE_ENV === 'production'`):
+In production (`NODE_ENV === 'production'`), cycle protection is **disabled by default** for maximum performance. You can opt in:
+
+```tsx
+setCycleProtectionOptions({ enabled: true })
+```
+
+When disabled (default):
 
 - All cycle protection guards are no-ops
 - Zero runtime overhead
 - No warnings are emitted
 - Application continues even if cycles would occur
 
-This ensures maximum performance while providing safety during development.
+When enabled:
+
+- Guards run with the configured thresholds
+- `devMode` remains `false` by default (warn instead of throw)
 
 ---
 

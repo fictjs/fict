@@ -800,7 +800,7 @@ describe('Rule A: $state placement constraints', () => {
 })
 
 // ============================================================================
-// Rule C: memo vs getter selection
+// Rule C: memoization + control-flow re-execution
 // ============================================================================
 
 // ============================================================================
@@ -973,7 +973,7 @@ describe('Rule L: Getter cache in same sync block', () => {
   })
 })
 
-describe('Rule C: memo vs getter selection', () => {
+describe('Rule C: memoization + control-flow re-execution', () => {
   it('JSX usage inlines derived values by default', () => {
     const output = transform(`
       import { $state } from 'fict'
@@ -1000,7 +1000,7 @@ describe('Rule C: memo vs getter selection', () => {
     expect(output).toContain('__fictUseMemo(__fictCtx, () => count() * 2')
   })
 
-  it('event-only usage produces getter', () => {
+  it('event-only usage uses memo accessor', () => {
     const output = transform(`
       import { $state } from 'fict'
       function Component() {

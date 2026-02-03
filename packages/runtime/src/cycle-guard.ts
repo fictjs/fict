@@ -35,7 +35,7 @@ let enterRootGuard: (root: object) => boolean = () => true
 let exitRootGuard: (root: object) => void = () => {}
 
 const defaultOptions = {
-  enabled: true,
+  enabled: isDev,
   maxFlushCyclesPerMicrotask: 10_000,
   maxEffectRunsPerFlush: 20_000,
   windowSize: 5,
