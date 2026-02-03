@@ -148,8 +148,9 @@ export function useTransition(): [() => boolean, (fn: () => void) => void] {
   const pending = signal(false)
 
   const start = (fn: () => void) => {
-    pending(true)
+    // Keep pending updates inside the transition to avoid race conditions
     startTransition(() => {
+      pending(true)
       try {
         fn()
       } finally {

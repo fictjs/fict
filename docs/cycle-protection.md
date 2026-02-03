@@ -186,7 +186,7 @@ setCycleProtectionOptions({
 
 ### `devMode`
 
-**Default:** `false`
+**Default:** `NODE_ENV !== 'production'`
 
 When `true`, cycle protection throws errors instead of logging warnings. Useful for:
 
@@ -439,7 +439,7 @@ When disabled (default):
 When enabled:
 
 - Guards run with the configured thresholds
-- `devMode` remains `false` by default (warn instead of throw)
+- `devMode` defaults to `NODE_ENV !== 'production'` (throw in dev, warn in prod)
 
 ---
 

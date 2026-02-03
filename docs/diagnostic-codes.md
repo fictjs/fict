@@ -7,6 +7,7 @@ This document provides detailed explanations for Fict compiler diagnostics. Each
 - **Fix** — Recommended solutions
 
 Codes surface at compile time and via `@fictjs/eslint-plugin` where applicable.
+Some diagnostics are compiler-only, some are lint-only, and a few are reserved for future checks.
 
 ---
 
@@ -16,9 +17,9 @@ Codes surface at compile time and via `@fictjs/eslint-plugin` where applicable.
 
 **Severity:** Warning
 
-**Why:** Destructuring props with complex patterns (nested destructuring, default values, computed properties) requires runtime handling instead of compile-time optimization.
+**Why:** Destructuring props with unsupported patterns triggers a fallback.
 
-**Impact:** Reactivity is preserved, but with slight runtime overhead. The compiler falls back to runtime prop tracking instead of static analysis.
+**Impact:** Reactivity may be lost — the compiler falls back to plain destructuring (snapshot) for those patterns.
 
 **Fix:** Use simple destructuring patterns:
 
@@ -39,7 +40,7 @@ const { count = 0 } = props
 
 **Why:** Rest patterns in array destructuring cannot be statically analyzed for reactivity.
 
-**Impact:** The rest element may not track updates correctly.
+**Impact:** The compiler falls back to plain destructuring; reactivity for those bindings is not preserved.
 
 **Fix:** Destructure specific indices or use explicit array access.
 
@@ -47,9 +48,9 @@ const { count = 0 } = props
 
 **Severity:** Warning
 
-**Why:** Dynamic property names (`props[key]`) cannot be statically tracked.
+**Why:** Dynamic property names in destructuring (`{ [key]: value }`) cannot be statically tracked.
 
-**Impact:** Coarse-grained tracking — updates to any property trigger re-evaluation.
+**Impact:** The compiler falls back to plain destructuring; reactivity for that binding is not preserved.
 
 **Fix:** Use static property access where possible:
 
@@ -57,59 +58,93 @@ const { count = 0 } = props
 // Fine-grained
 const value = props.name
 
-// Coarse-grained (triggers P003)
+// Computed destructuring (triggers P003)
 const key = 'name'
-const value = props[key]
+const { [key]: value } = props
 ```
+
+### FICT-P004: Nested props destructuring fallback
+
+**Severity:** Warning
+
+**Why:** Nested destructuring patterns require conservative handling.
+
+**Impact:** Some nested patterns may fall back to non-reactive bindings. Prefer direct prop access or `prop(...)` for nested values.
+
+**Fix:** Access nested props directly or use `prop`:
+
+```js
+// Prefer
+const name = props.user.name
+
+// Or
+const name = prop(() => props.user.name)
+```
+
+### FICT-P005: Dynamic props spread
+
+**Severity:** Warning
+
+**Why:** Spreading a dynamic props object makes it hard to preserve reactivity for individual keys.
+
+**Impact:** Updates may be coarser than expected.
+
+**Fix:** Use explicit props or `mergeProps(() => source)` for dynamic shapes.
 
 ---
 
 ## State (FICT-S\*)
 
-### FICT-S001: State variable mutation
+### FICT-S001: State variable mutation outside component scope
 
 **Severity:** Error
 
-**Why:** Direct mutation of state internals bypasses the reactive system.
+**Why:** A `$state` variable is mutated outside the component/hook scope where it was declared.
 
-**Impact:** Changes will not trigger updates. UI will be stale.
+**Impact:** Can cause lifecycle leaks or updates after unmount; reactive tracking may be invalid.
 
-**Fix:** Use assignment to trigger updates:
+**Fix:** Keep mutations inside the declaring component/hook scope, or expose a setter:
 
 ```js
-// Wrong — mutation
-let items = $state([1, 2, 3])
-items.push(4) // FICT-S001
+// Wrong — mutation outside component scope
+let count
+function Counter() {
+  count = $state(0)
+  return <button onClick={() => count++}>Inc</button>
+}
+export const inc = () => count++ // FICT-S001
 
-// Correct — assignment
-items = [...items, 4]
+// Better — keep mutation inside the component
+function CounterSafe() {
+  let count = $state(0)
+  const inc = () => count++
+  return <button onClick={inc}>Inc</button>
+}
 ```
 
 ### FICT-S002: State escapes current scope
 
 **Severity:** Warning
 
-**Why:** A `$state` variable is being passed to or returned from a context where the compiler cannot guarantee proper tracking.
+**Why:** A `$state` variable is passed to an arbitrary function, which captures a snapshot value.
 
 **Impact:** Updates may not propagate correctly to consumers outside the current scope.
 
 **Fix:**
 
-- Keep state within component scope
 - Pass explicit getter functions that read state instead of state itself
-- Use `$store` from `fict/plus` for shared global state
+- Use `$store` from `fict` for shared global state
 
 ```js
-// Risky — state escapes
-export const count = $state(0) // FICT-S002
-
-// Better — export accessors
+// Risky — passes a snapshot
 let count = $state(0)
-export const getCount = () => count
-export const setCount = v => (count = v)
+someFn(count) // FICT-S002
+
+// Better — pass getter
+someFn(() => count)
 
 // Or use $store for shared global state
-import { $store } from 'fict/plus'
+import { $store } from 'fict'
 export const appState = $store({ count: 0 })
 ```
 
@@ -170,7 +205,7 @@ $effect(() => {
 
 ### FICT-M001: Memo has no reactive dependencies
 
-**Severity:** Warning
+**Severity:** Info
 
 **Why:** A memoized value (`$memo` or derived) doesn't depend on any reactive sources.
 
@@ -297,7 +332,7 @@ function Parent() {
 
 ### FICT-J001: Dynamic key expression
 
-**Severity:** Warning
+**Severity:** Info
 
 **Why:** A list item's `key` prop uses a dynamic expression that may not be stable.
 
@@ -351,7 +386,7 @@ items.map(item => <Li key={item.id}>{item.name}</Li>)
 
 ### FICT-R001: Region boundary crossed
 
-**Severity:** Warning
+**Severity:** Info
 
 **Why:** A reactive value is used across region boundaries in a way the compiler cannot optimize.
 
@@ -438,6 +473,40 @@ const style = { color: 'red' }
 const handleClick = () => count++
 <MemoizedButton onClick={handleClick} />
 ```
+
+---
+
+## Misc (Legacy / Generic)
+
+These warnings are emitted by the compiler but are not part of the numbered FICT-\* catalog.
+
+### FICT-M: Direct mutation of nested `$state`
+
+**Severity:** Warning
+
+**Why:** Mutating a nested property of a `$state` object is not tracked.
+
+**Impact:** UI may not update. Use immutable updates or `$store`.
+
+**Fix:**
+
+```js
+// Wrong
+state.user.name = 'Alice' // FICT-M
+
+// Correct
+state = { ...state, user: { ...state.user, name: 'Alice' } }
+```
+
+### FICT-H: Dynamic property access
+
+**Severity:** Warning
+
+**Why:** Dynamic property access (e.g., `obj[key]`) widens dependency tracking.
+
+**Impact:** More updates than necessary.
+
+**Fix:** Prefer static property access where possible.
 
 ---
 

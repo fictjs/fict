@@ -1468,7 +1468,7 @@ interface CycleProtectionOptions {
   highUsageRatio?: number // Default: 0.8
   maxRootReentrantDepth?: number // Default: 10
   enableWindowWarning?: boolean // Default: true
-  devMode?: boolean // Default: false (throw instead of warn)
+  devMode?: boolean // Default: NODE_ENV !== 'production' (throw in dev, warn in prod)
 }
 
 function setCycleProtectionOptions(options: CycleProtectionOptions): void
