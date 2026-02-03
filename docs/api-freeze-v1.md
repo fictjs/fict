@@ -404,7 +404,10 @@ These APIs target advanced use cases. We aim to keep them stable but minor non-b
 
 // Signals - shared scalar/lightweight values across components (escape hatch)
 export function createSignal<T>(initialValue: T): Signal<T>
-export type Signal<T> = [get: () => T, set: (v: T | ((prev: T) => T)) => void]
+export type Signal<T> = {
+  (): T
+  (value: T): void
+}
 
 // Selector - fine-grained subscription optimization
 export function createSelector<T, U = T>(

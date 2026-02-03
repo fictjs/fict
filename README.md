@@ -276,7 +276,7 @@ function Counter() {
 
 // Compiled output (simplified)
 function Counter() {
-  const [count, setCount] = createSignal(0)
+  const count = createSignal(0)
   const doubled = createMemo(() => count() * 2)
 
   const div = document.createElement('div')
@@ -328,8 +328,8 @@ function Profile({ id }) {
 ### `fict/plus` — Advanced APIs
 
 ```tsx
-import { $store, resource, lazy } from 'fict/plus'
-import { untrack } from 'fict'
+import { $store, untrack } from 'fict'
+import { resource, lazy } from 'fict/plus'
 
 // Deep reactivity with path-level tracking
 const user = $store({ name: 'Alice', address: { city: 'London' } })
@@ -439,7 +439,7 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 - [x] Compiler with HIR/SSA
 - [x] Stable `$state` / `$effect` semantics
 - [x] Automatic derived value inference
-- [x] `$store`, `resource`, `lazy` in `fict/plus`
+- [x] `$store` in `fict`, `resource`/`lazy` in `fict/plus`
 - [x] `startTransition`, `useTransition`, `useDeferredValue` in `fict`
 - [x] Vite plugin
 - [x] ESLint plugin
@@ -491,7 +491,7 @@ Alpha. Core is stable, but expect edge cases. Test thoroughly for critical apps.
 No.
 
 **How does Fict handle arrays?**
-Default: immutable style (`todos = [...todos, newTodo]`). For deep mutations, you can use spread operation to create new immutable data, or use Immer/Mutative, or use `$store` from `fict/plus`.
+Default: immutable style (`todos = [...todos, newTodo]`). For deep mutations, you can use spread operation to create new immutable data, or use Immer/Mutative, or use `$store` from `fict`.
 
 **Can I use existing React components?**
 Not directly. Fict compiles to DOM operations, not React elements.

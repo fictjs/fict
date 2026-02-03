@@ -97,7 +97,7 @@ In Fict, they "look like" normal variables:
 - `loading = false`
 - `error = 'Network error'`
 
-You don't need to remember `setXXX`, use `.value`, or `signal()` / `()`.
+You don't need to remember `setXXX`, use `.value`, or `createSignal()` / accessor `()` calls.
 
 ### 3.2 Effect-Producing: $effect
 

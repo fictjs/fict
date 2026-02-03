@@ -12,7 +12,7 @@ let count = $state(0)
 console.log(count)
 
 // Compiled (conceptual)
-const [count, setCount] = signal(0)
+const count = createSignal(0)
 console.log(count()) // ← getter call
 ```
 
@@ -127,7 +127,7 @@ function Component({ count, name }) {
 function Component(__props) {
   const count = prop(() => __props.count)
   const name = prop(() => __props.name)
-  const doubled = memo(() => count() * 2)
+  const doubled = createMemo(() => count() * 2)
   // ...
 }
 ```

@@ -253,7 +253,10 @@ Low-level API: create a reactive signal.
 ```typescript
 function createSignal<T>(initialValue: T): Signal<T>
 
-type Signal<T> = [get: () => T, set: (value: T | ((prev: T) => T)) => void]
+type Signal<T> = {
+  (): T
+  (value: T): void
+}
 ```
 
 **Example:**
@@ -263,15 +266,18 @@ import { createEffect } from 'fict'
 import { createSignal } from 'fict/advanced'
 
 function Counter() {
-  const [count, setCount] = createSignal(0)
+  const count = createSignal(0)
 
   createEffect(() => {
     console.log('Count is now:', count())
   })
 
-  return <button onClick={() => setCount(c => c + 1)}>Count: {count()}</button>
+  return <button onClick={() => count(count() + 1)}>Count: {count()}</button>
 }
 ```
+
+> **Note**: A signal accessor is both getter and setter. To update from the previous value,
+> read first: `count(count() + 1)`.
 
 ### Choosing `$state` vs `createSignal`
 
@@ -300,8 +306,8 @@ import { createMemo } from 'fict'
 import { createSignal } from 'fict/advanced'
 
 function FilteredList() {
-  const [items, setItems] = createSignal([1, 2, 3, 4, 5])
-  const [threshold, setThreshold] = createSignal(3)
+  const items = createSignal([1, 2, 3, 4, 5])
+  const threshold = createSignal(3)
 
   // Recomputes only when items or threshold change
   const filtered = createMemo(() => items().filter(n => n > threshold()))
@@ -309,7 +315,7 @@ function FilteredList() {
   return (
     <div>
       <p>Filtered: {filtered().join(', ')}</p>
-      <button onClick={() => setThreshold(t => t - 1)}>Lower threshold</button>
+      <button onClick={() => threshold(threshold() - 1)}>Lower threshold</button>
     </div>
   )
 }
@@ -332,7 +338,7 @@ import { createEffect } from 'fict'
 import { createSignal } from 'fict/advanced'
 
 function Logger() {
-  const [message, setMessage] = createSignal('Hello')
+  const message = createSignal('Hello')
 
   // Returns a disposer
   const dispose = createEffect(() => {
@@ -346,7 +352,7 @@ function Logger() {
   // Manually stop the effect if needed
   // dispose()
 
-  return <input value={message()} onInput={e => setMessage(e.target.value)} />
+  return <input value={message()} onInput={e => message(e.target.value)} />
 }
 ```
 
@@ -369,7 +375,7 @@ function createSelector<T, U = T>(
 import { createSignal, createSelector } from 'fict/advanced'
 
 function SelectableList() {
-  const [selectedId, setSelectedId] = createSignal<number | null>(null)
+  const selectedId = createSignal<number | null>(null)
   const isSelected = createSelector(selectedId)
 
   const items = [
@@ -384,7 +390,7 @@ function SelectableList() {
         <li
           key={item.id}
           class={isSelected(item.id) ? 'selected' : ''}
-          onClick={() => setSelectedId(item.id)}
+          onClick={() => selectedId(item.id)}
         >
           {item.name}
         </li>
@@ -518,7 +524,8 @@ import { createSignal } from 'fict/advanced'
 
 // Create reactive state outside components
 const { value, dispose } = createRoot(() => {
-  const [count, setCount] = createSignal(0)
+  const count = createSignal(0)
+  const setCount = (next: number) => count(next)
 
   createEffect(() => {
     console.log('Global count:', count())
@@ -529,7 +536,7 @@ const { value, dispose } = createRoot(() => {
 
 // Use global state
 function Counter() {
-  return <button onClick={() => value.setCount(c => c + 1)}>Global: {value.count()}</button>
+  return <button onClick={() => value.setCount(value.count() + 1)}>Global: {value.count()}</button>
 }
 
 // Clean up when done
@@ -1182,13 +1189,14 @@ const CounterContext = createContext({
 })
 
 function CounterProvider(props: { children: any }) {
-  const [count, setCount] = createSignal(0)
+  const count = createSignal(0)
+  const setCount = (next: number) => count(next)
 
   return (
     <CounterContext.Provider
       value={{
         count,
-        increment: () => setCount(c => c + 1),
+        increment: () => count(count() + 1),
       }}
     >
       {props.children}
@@ -1529,7 +1537,10 @@ type PropsWithChildren<P = {}> = P & {
 
 ```typescript
 // Signal type
-type Signal<T> = [get: () => T, set: (v: T | ((prev: T) => T)) => void]
+type Signal<T> = {
+  (): T
+  (value: T): void
+}
 
 // Memo type
 type Memo<T> = () => T

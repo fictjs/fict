@@ -463,13 +463,13 @@ Hook-style helpers named `useX` may create `$state`, but they must be invoked at
 
 Shared logic should be expressed as helpers that receive state from the caller rather than creating state themselves (e.g., `useCounter(count)` that derives from a passed-in signal).
 
-### `$store` — Module-Level Allowed (from `fict/plus`)
+### `$store` — Module-Level Allowed (from `fict`)
 
-For **global/shared state** use cases, `$store` from `fict/plus` **is allowed at module scope**:
+For **global/shared state** use cases, `$store` from `fict` **is allowed at module scope**:
 
 ```ts
 // store.ts — Module-level $store is VALID
-import { $store } from 'fict/plus'
+import { $store } from 'fict'
 
 export const globalState = $store({
   user: { name: 'Alice', address: { city: 'London' } },
@@ -490,7 +490,7 @@ function UserProfile() {
 
 | Aspect          | `$state`                          | `$store`                  |
 | --------------- | --------------------------------- | ------------------------- |
-| Import          | `'fict'`                          | `'fict/plus'`             |
+| Import          | `'fict'`                          | `'fict'`                  |
 | Module scope    | ❌ **Forbidden** (compiler error) | ✅ **Allowed**            |
 | Reactivity type | Signal (getter/setter)            | Proxy (deep reactive)     |
 | Nested mutation | ⚠️ Requires immutable update      | ✅ Direct mutation works  |
@@ -740,8 +740,8 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
   - Read: rewritten to a memoized getter (`count` reads `state().count`), so JSX/logic stays reactive.
   - Write: assignments/`++` to `count` are disallowed; mutate via `state.count++` or immutable updates (e.g., `state = { ...state(), count: state().count + 1 }`).
   - Correct Usage: `const s = $state({ id: 1 }); const id = () => s.id;` or usage in JSX `{s.id}`.
-- **Blackbox Functions**: Passing `$state` to a function `fn(state)` passes the _current value_. `fn` cannot subscribe to updates unless it receives a getter or signal object (`$store` from `fict/plus`).
-- **Function arguments**: When you pass a `$state` accessor to an arbitrary function (e.g. `someFn(count)`), the compiler rewrites it to a snapshot (`someFn(count())`). If the callee expects reactivity, pass an explicit getter (`() => count`) or use `$store` from `fict/plus`. The compiler emits `FICT-S002` as a warning in this case.
+- **Blackbox Functions**: Passing `$state` to a function `fn(state)` passes the _current value_. `fn` cannot subscribe to updates unless it receives a getter or signal object (`$store` from `fict`).
+- **Function arguments**: When you pass a `$state` accessor to an arbitrary function (e.g. `someFn(count)`), the compiler rewrites it to a snapshot (`someFn(count())`). If the callee expects reactivity, pass an explicit getter (`() => count`) or use `$store` from `fict`. The compiler emits `FICT-S002` as a warning in this case.
 - **Arrays**: `$state` arrays track mutations (`push`, index writes, `length` assignment) as writes to the signal. Prefer immutable updates for predictability; mutating `length` is allowed but should be documented as a full write.
 - **Refs**: Both ref callbacks (`ref={node => el = node}`) and ref objects (`ref={divRef}`) are supported. Choose callbacks for inline capture; use objects for reuse and cleanup semantics.
 

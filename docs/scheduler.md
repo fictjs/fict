@@ -145,7 +145,7 @@ function SearchComponent() {
 
 ```typescript
 export function useTransition(): [() => boolean, (fn: () => void) => void] {
-  const pending = signal(false)
+  const pending = createSignal(false)
 
   const start = (fn: () => void) => {
     // Keep pending updates inside the transition to avoid race conditions
@@ -191,7 +191,7 @@ function SearchResults({ query }) {
 
 ```typescript
 export function useDeferredValue<T>(getValue: () => T): () => T {
-  const deferredValue = signal(getValue())
+  const deferredValue = createSignal(getValue())
 
   createEffect(() => {
     const newValue = getValue()

@@ -277,7 +277,7 @@ After compilation, conceptually similar to:
 
 ```ts
 const $count = createSignal(0) // Internal signal
-let count = $count.get() // Current value variable (compiler rewrites reads/writes)
+let count = $count() // Current value variable (compiler rewrites reads/writes)
 ```
 
 But actual implementation does more SSA/control flow analysis rather than simple replacement.
@@ -308,7 +308,7 @@ The compiler does two things:
    ```ts
    // store.ts - Create shared state at module top level
    import { createSignal } from 'fict/advanced'
-   export const [count, setCount] = createSignal(0)
+   export const count = createSignal(0)
    ```
 
 2. **Custom Hook returning a signal**:
@@ -316,8 +316,9 @@ The compiler does two things:
    ```ts
    import { createSignal } from 'fict/advanced'
    export function useCounter(initial = 0) {
-     const [count, setCount] = createSignal(initial)
-     return { count, setCount, increment: () => setCount(c => c + 1) }
+     const count = createSignal(initial)
+     const setCount = (next: number) => count(next)
+     return { count, setCount, increment: () => count(count() + 1) }
    }
    ```
 
@@ -325,11 +326,11 @@ The compiler does two things:
    ```ts
    import { createEffect } from 'fict'
    import { createSignal } from 'fict/advanced'
-   const [value, setValue] = createSignal(0)
+   const value = createSignal(0)
    createEffect(() => console.log(value()))
    ```
 
-> **Note**: For global state, also consider using `$store` (from `fict/plus`), which supports deep reactivity and allows module-level declarations.
+> **Note**: For global state, also consider using `$store` (from `fict`), which supports deep reactivity and allows module-level declarations.
 
 ---
 
@@ -508,10 +509,10 @@ const handleClick = () => {
 
 Implementation uses microtasks (`queueMicrotask`) to collect changes in the same tick.
 
-### 7.2 Scheduling Priority (fict/plus)
+### 7.2 Scheduling Priority (fict)
 
 ```ts
-import { startTransition, useTransition, useDeferredValue } from 'fict/plus'
+import { startTransition, useTransition, useDeferredValue } from 'fict'
 ```
 
 - `startTransition(fn)`: Low priority, interruptible work suitable for page transitions
@@ -626,14 +627,14 @@ This matches developer intuition while optimizing for performance.
 
 ## 10. Advanced: $store / resource / Escape Hatches
 
-This part covers advanced capabilities available in `fict/plus`, not part of the minimal mental surface area.
+This part covers advanced capabilities available in `fict` and `fict/plus`, not part of the minimal mental surface area.
 
 ### 9.1 $store: Path-level reactivity
 
 `$store` enables fine-grained tracking of nested property access:
 
 ```ts
-import { $store } from 'fict/plus'
+import { $store } from 'fict'
 
 let form = $store({
   user: { name: '', email: '' },
@@ -710,7 +711,7 @@ userResource.invalidate(['user', '42']) // drop cached entry
 For areas that cannot be statically analyzed or where dependency collection is not desired, tracking can be explicitly turned off:
 
 ```ts
-import { untrack } from 'fict/plus'
+import { untrack } from 'fict'
 
 $effect(() => {
   untrack(() => {

@@ -13,53 +13,58 @@ The compiler will transform JSX list expressions (`.map()` calls with `key` attr
 ```jsx
 import { $state } from 'fict'
 
-let items = $state([
-  { id: 1, name: 'Alice' },
-  { id: 2, name: 'Bob' },
-  { id: 3, name: 'Charlie' },
-])
+function List() {
+  let items = $state([
+    { id: 1, name: 'Alice' },
+    { id: 2, name: 'Bob' },
+    { id: 3, name: 'Charlie' },
+  ])
 
-const el = (
-  <ul>
-    {items.map(item => (
-      <li key={item.id}>{item.name}</li>
-    ))}
-  </ul>
-)
+  return (
+    <ul>
+      {items.map(item => (
+        <li key={item.id}>{item.name}</li>
+      ))}
+    </ul>
+  )
+}
 ```
 
 ### Expected Output
 
 ```typescript
 import {
-  createSignal as __fictSignal,
+  __fictUseSignal,
   createEffect as __fictEffect,
   createKeyedList,
-} from '@fictjs/runtime'
+} from '@fictjs/runtime/internal'
 
-let [items, setItems] = __fictSignal([
-  { id: 1, name: 'Alice' },
-  { id: 2, name: 'Bob' },
-  { id: 3, name: 'Charlie' },
-])
+function List(__props, __fictCtx) {
+  const items = __fictUseSignal(__fictCtx, [
+    { id: 1, name: 'Alice' },
+    { id: 2, name: 'Bob' },
+    { id: 3, name: 'Charlie' },
+  ])
 
-const el = document.createElement('ul')
+  const el = document.createElement('ul')
 
-const __list = createKeyedList(
-  () => items(),
-  item => item.id,
-  (itemSig, indexSig) => {
-    const li = document.createElement('li')
-    __fictEffect(() => {
-      li.textContent = itemSig().name
-    })
-    return [li]
-  },
-  false,
-)
+  const __list = createKeyedList(
+    () => items(),
+    item => item.id,
+    (itemSig, indexSig) => {
+      const li = document.createElement('li')
+      __fictEffect(() => {
+        li.textContent = itemSig().name
+      })
+      return [li]
+    },
+    false,
+  )
 
-el.appendChild(__list.marker)
-__list.flush?.()
+  el.appendChild(__list.marker)
+  __list.flush?.()
+  return el
+}
 ```
 
 The compiler emits the final boolean argument to indicate whether the map callback uses an index
@@ -131,30 +136,40 @@ createKeyedList(
 When list items contain nested reactive expressions:
 
 ```jsx
-let multiplier = $state(2)
-let items = $state([1, 2, 3])
+function List() {
+  let multiplier = $state(2)
+  let items = $state([1, 2, 3])
 
-const list = items.map(item => <li key={item}>{item * multiplier}</li>)
+  const list = items.map(item => <li key={item}>{item * multiplier}</li>)
+  return <ul>{list}</ul>
+}
 ```
 
 Output:
 
 ```typescript
-const [multiplier, setMultiplier] = __fictSignal(2)
-const [items, setItems] = __fictSignal([1, 2, 3])
+function List(__props, __fictCtx) {
+  const multiplier = __fictUseSignal(__fictCtx, 2)
+  const items = __fictUseSignal(__fictCtx, [1, 2, 3])
 
-const __list = createKeyedList(
-  () => items(),
-  item => item,
-  (itemSig, indexSig) => {
-    const li = document.createElement('li')
-    __fictEffect(() => {
-      // Both itemSig and multiplier are reactive
-      li.textContent = String(itemSig() * multiplier())
-    })
-    return [li]
-  },
-)
+  const el = document.createElement('ul')
+  const __list = createKeyedList(
+    () => items(),
+    item => item,
+    (itemSig, indexSig) => {
+      const li = document.createElement('li')
+      __fictEffect(() => {
+        // Both itemSig and multiplier are reactive
+        li.textContent = String(itemSig() * multiplier())
+      })
+      return [li]
+    },
+  )
+
+  el.appendChild(__list.marker)
+  __list.flush?.()
+  return el
+}
 ```
 
 ## Type Definitions
