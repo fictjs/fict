@@ -1774,6 +1774,55 @@ render(() => <TodoApp />, document.getElementById('app')!)
 
 ---
 
+## SSR (package: @fictjs/ssr)
+
+Server-side rendering utilities live in the `@fictjs/ssr` package.
+
+### renderToString
+
+```typescript
+import { renderToString } from '@fictjs/ssr'
+
+function renderToString(view: () => FictNode, options?: RenderToStringOptions): string
+```
+
+### renderToStream
+
+Shell-first streaming (Web Streams):
+
+```typescript
+import { renderToStream } from '@fictjs/ssr'
+
+function renderToStream(
+  view: () => FictNode,
+  options?: RenderToStreamOptions,
+): ReadableStream<Uint8Array>
+```
+
+Key options:
+
+- `mode: 'shell' | 'all'` — shell-first streaming vs all-ready
+- `snapshotTarget: 'head' | 'body' | 'container'`
+
+### renderToPipeableStream
+
+Node.js streaming variant:
+
+```typescript
+import { renderToPipeableStream } from '@fictjs/ssr'
+
+function renderToPipeableStream(
+  view: () => FictNode,
+  options?: RenderToStreamOptions,
+): {
+  pipe: (writable: NodeJS.WritableStream) => void
+  shellReady: Promise<void>
+  allReady: Promise<void>
+}
+```
+
+---
+
 ## More Resources
 
 - [Architecture](./architecture.md) - Deep dive into Fict's execution model

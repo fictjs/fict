@@ -50,8 +50,11 @@ export {
   __fictIsHydrating,
   __fictRegisterScope,
   __fictGetScopeRegistry,
+  __fictGetScopesForBoundary,
   __fictSerializeSSRState,
+  __fictSerializeSSRStateForScopes,
   __fictSetSSRState,
+  __fictMergeSSRState,
   __fictGetSSRScope,
   __fictEnsureScope,
   __fictUseLexicalScope,
@@ -62,6 +65,7 @@ export {
   serializeValue,
   deserializeValue,
 } from './resume'
+export { __fictGetSSRStreamHooks, __fictSetSSRStreamHooks } from './ssr-stream'
 
 // ============================================================================
 // Props Helpers (Compiler-generated code)

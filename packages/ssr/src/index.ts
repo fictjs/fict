@@ -1,11 +1,16 @@
 import { readFileSync } from 'node:fs'
+import { PassThrough } from 'node:stream'
 
 import { render } from '@fictjs/runtime'
 import type { FictNode } from '@fictjs/runtime'
 import {
   __fictDisableSSR,
   __fictEnableSSR,
+  __fictGetScopeRegistry,
+  __fictGetScopesForBoundary,
   __fictSerializeSSRState,
+  __fictSerializeSSRStateForScopes,
+  __fictSetSSRStreamHooks,
 } from '@fictjs/runtime/internal'
 import { parseHTML } from 'linkedom'
 
@@ -87,6 +92,38 @@ export interface RenderToStringOptions {
    * Defaults to 'container'.
    */
   snapshotTarget?: 'container' | 'body' | 'head'
+}
+
+export interface RenderToStreamOptions extends RenderToStringOptions {
+  /**
+   * Streaming mode:
+   * - 'shell': send fallback shell first, then patch resolved boundaries
+   * - 'all': wait for all suspense boundaries, then send full HTML
+   */
+  mode?: 'shell' | 'all'
+  /**
+   * Called once the initial shell has been written.
+   */
+  onShellReady?: () => void
+  /**
+   * Called once all pending boundaries resolve and the stream completes.
+   */
+  onAllReady?: () => void
+  /**
+   * Called when an error occurs during streaming.
+   */
+  onError?: (err: unknown) => void
+  /**
+   * Abort signal to cancel the stream.
+   */
+  signal?: AbortSignal
+}
+
+export interface PipeableStream {
+  pipe: (writable: NodeJS.WritableStream) => void
+  abort: (reason?: unknown) => void
+  shellReady: Promise<void>
+  allReady: Promise<void>
 }
 
 export interface RenderToDocumentResult extends SSRDom {
@@ -175,6 +212,61 @@ export async function renderToStringAsync(
   return renderToString(view, options)
 }
 
+export function renderToStream(
+  view: () => FictNode,
+  options: RenderToStreamOptions = {},
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder()
+  let controller: ReadableStreamDefaultController<Uint8Array> | null = null
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(ctrl) {
+      controller = ctrl
+      startStreamingRender(view, options, {
+        write(chunk) {
+          if (!controller) return
+          controller.enqueue(encoder.encode(chunk))
+        },
+        close() {
+          controller?.close()
+        },
+        abort(reason?: unknown) {
+          controller?.error(reason)
+        },
+      })
+    },
+  })
+
+  return stream
+}
+
+export function renderToPipeableStream(
+  view: () => FictNode,
+  options: RenderToStreamOptions = {},
+): PipeableStream {
+  const stream = new PassThrough()
+  const { shellReady, allReady, abort } = startStreamingRender(view, options, {
+    write(chunk) {
+      stream.write(chunk)
+    },
+    close() {
+      stream.end()
+    },
+    abort(reason?: unknown) {
+      stream.destroy(reason instanceof Error ? reason : new Error('Stream aborted'))
+    },
+  })
+
+  return {
+    pipe(writable) {
+      stream.pipe(writable)
+    },
+    abort,
+    shellReady,
+    allReady,
+  }
+}
+
 function resolveDom(options: RenderToStringOptions): SSRDom {
   if (options.dom) {
     return options.dom
@@ -205,6 +297,222 @@ function resolveDom(options: RenderToStringOptions): SSRDom {
   return createSSRDocument(options.html)
 }
 
+interface StreamWriter {
+  write: (chunk: string) => void
+  close: () => void
+  abort: (reason?: unknown) => void
+}
+
+function startStreamingRender(
+  view: () => FictNode,
+  options: RenderToStreamOptions,
+  writer: StreamWriter,
+): { shellReady: Promise<void>; allReady: Promise<void>; abort: (reason?: unknown) => void } {
+  const resolvedOptions: RenderToStringOptions = {
+    ...options,
+    // Streaming requires a real document; default to fullDocument when unspecified.
+    fullDocument: options.fullDocument ?? true,
+  }
+
+  let resolveShell!: () => void
+  let resolveAll!: () => void
+  let rejectAll!: (err: unknown) => void
+
+  const shellReady = new Promise<void>(res => {
+    resolveShell = res
+  })
+  const allReady = new Promise<void>((res, rej) => {
+    resolveAll = res
+    rejectAll = rej
+  })
+
+  let dom: SSRDom | null = null
+  let restoreGlobals = () => {}
+  let restoreManifest = () => {}
+  let teardown = () => {}
+  let container: HTMLElement | null = null
+  let closed = false
+  let tailHtml = ''
+  let wroteShell = false
+
+  const mode = options.mode ?? 'shell'
+  const includeSnapshot = options.includeSnapshot !== false
+  const sentScopes = new Set<string>()
+
+  const boundaryMap = new Map<string, { start: Comment; end: Comment; pending: boolean }>()
+  let boundaryId = 0
+  let pendingCount = 0
+
+  const writeSnapshotForScopes = (scopeIds: string[]): void => {
+    if (!includeSnapshot || scopeIds.length === 0) return
+    const registry = __fictGetScopeRegistry()
+    const pending = scopeIds.filter(id => registry.has(id) && !sentScopes.has(id))
+    if (pending.length === 0) return
+    const snapshot = __fictSerializeSSRStateForScopes(pending)
+    const ids = Object.keys(snapshot.scopes)
+    if (ids.length === 0) return
+    const chunk = buildIncrementalSnapshotChunk(snapshot, resolvedOptions)
+    if (chunk) {
+      writer.write(chunk)
+    }
+    for (const id of ids) {
+      sentScopes.add(id)
+    }
+  }
+
+  const writeSnapshotForBoundary = (boundary: string): void => {
+    const scopes = __fictGetScopesForBoundary(boundary)
+    writeSnapshotForScopes(scopes)
+  }
+
+  const writeRemainingSnapshots = (): void => {
+    const scopes = Array.from(__fictGetScopeRegistry().keys())
+    writeSnapshotForScopes(scopes)
+  }
+
+  const cleanup = () => {
+    __fictSetSSRStreamHooks(null)
+    __fictDisableSSR()
+    restoreGlobals()
+    restoreManifest()
+    try {
+      teardown()
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+
+  const finalize = () => {
+    if (closed) return
+    closed = true
+
+    if (mode === 'all' && dom && container && !wroteShell) {
+      if (includeSnapshot) {
+        const snapshot = __fictSerializeSSRState()
+        injectSnapshot(dom.document, container, snapshot, resolvedOptions)
+      }
+      const fullHtml = serializeOutput(dom.document, container, resolvedOptions)
+      writer.write(fullHtml)
+      writer.close()
+      cleanup()
+      resolveShell()
+      resolveAll()
+      options.onShellReady?.()
+      options.onAllReady?.()
+      return
+    }
+
+    writeRemainingSnapshots()
+
+    if (tailHtml) {
+      writer.write(tailHtml)
+    }
+
+    writer.close()
+    cleanup()
+    resolveAll()
+    options.onAllReady?.()
+  }
+
+  const maybeFinalize = () => {
+    if (pendingCount === 0) {
+      finalize()
+    }
+  }
+
+  const hooks = {
+    registerBoundary(start: Comment, end: Comment) {
+      const id = `s${++boundaryId}`
+      boundaryMap.set(id, { start, end, pending: false })
+      return id
+    },
+    boundaryPending(id: string) {
+      const entry = boundaryMap.get(id)
+      if (!entry || entry.pending) return
+      entry.pending = true
+      pendingCount++
+    },
+    boundaryResolved(id: string) {
+      const entry = boundaryMap.get(id)
+      if (!entry) return
+      if (entry.pending) {
+        entry.pending = false
+        pendingCount = Math.max(0, pendingCount - 1)
+      }
+      if (mode === 'shell') {
+        writeSnapshotForBoundary(id)
+        if (dom) {
+          const html = serializeBetween(dom.document, entry.start, entry.end)
+          writer.write(buildPatchChunk(id, html))
+        }
+      }
+      maybeFinalize()
+    },
+  }
+
+  const abort = (reason?: unknown) => {
+    if (closed) return
+    closed = true
+    writer.abort(reason)
+    cleanup()
+    rejectAll(reason ?? new Error('Stream aborted'))
+  }
+
+  if (options.signal) {
+    if (options.signal.aborted) {
+      abort(options.signal.reason)
+    } else {
+      options.signal.addEventListener('abort', () => abort(options.signal?.reason), { once: true })
+    }
+  }
+
+  try {
+    __fictEnableSSR()
+    __fictSetSSRStreamHooks(hooks)
+
+    dom = resolveDom(resolvedOptions)
+    restoreGlobals =
+      resolvedOptions.exposeGlobals !== false ? installGlobals(dom.window, dom.document) : () => {}
+    restoreManifest = installManifest(resolvedOptions.manifest)
+
+    container = resolveContainer(dom.document, resolvedOptions)
+    teardown = render(view, container)
+
+    if (mode === 'all') {
+      if (pendingCount === 0) {
+        finalize()
+      }
+      return { shellReady, allReady, abort }
+    }
+
+    // shell-first mode
+    const shellHtml = serializeOutput(dom.document, container, resolvedOptions)
+    const streamRuntime = boundaryMap.size > 0 ? buildStreamRuntimeScript() : ''
+    if (resolvedOptions.fullDocument) {
+      const split = splitDocumentHtml(shellHtml)
+      if (!split) {
+        throw new Error('[fict/ssr] Failed to locate </body> for streaming output.')
+      }
+      writer.write(split.head + streamRuntime)
+      tailHtml = split.tail
+    } else {
+      writer.write(shellHtml + streamRuntime)
+    }
+    wroteShell = true
+    writeSnapshotForScopes(Array.from(__fictGetScopeRegistry().keys()))
+    resolveShell()
+    options.onShellReady?.()
+
+    // If no pending boundaries, finalize immediately.
+    maybeFinalize()
+  } catch (err) {
+    options.onError?.(err)
+    abort(err)
+  }
+
+  return { shellReady, allReady, abort }
+}
+
 function resolveContainer(document: Document, options: RenderToStringOptions): HTMLElement {
   if (options.container) {
     if (options.container.ownerDocument && options.container.ownerDocument !== document) {
@@ -230,6 +538,74 @@ function resolveContainer(document: Document, options: RenderToStringOptions): H
   }
 
   return container
+}
+
+function buildStreamRuntimeScript(): string {
+  return (
+    '<script>(function(){' +
+    'if(window.__FICT_STREAM)return;' +
+    'var cache=new Map();' +
+    'function find(id){' +
+    'var hit=cache.get(id);if(hit)return hit;' +
+    'var start=null,end=null;' +
+    'var w=document.createTreeWalker(document,NodeFilter.SHOW_COMMENT);' +
+    'while(w.nextNode()){' +
+    'var n=w.currentNode;var d=n.data;' +
+    'if(d==="fict:suspense-start:"+id)start=n;' +
+    'else if(d==="fict:suspense-end:"+id)end=n;' +
+    'if(start&&end)break;' +
+    '}' +
+    'if(start&&end){hit={start:start,end:end};cache.set(id,hit);}return hit;' +
+    '}' +
+    'function apply(id){' +
+    "var tpl=document.querySelector('template[data-fict-suspense=\"' + id + '\"]');" +
+    'if(!tpl)return;' +
+    'var b=find(id);if(!b)return;' +
+    'var node=b.start.nextSibling;' +
+    'while(node&&node!==b.end){var next=node.nextSibling;node.parentNode&&node.parentNode.removeChild(node);node=next;}' +
+    'b.end.parentNode&&b.end.parentNode.insertBefore(tpl.content,b.end);' +
+    'tpl.parentNode&&tpl.parentNode.removeChild(tpl);' +
+    '}' +
+    'window.__FICT_STREAM={apply:apply};' +
+    '})();</script>'
+  )
+}
+
+function buildPatchChunk(id: string, html: string): string {
+  return (
+    `<template data-fict-suspense="${id}">` +
+    html +
+    `</template><script>__FICT_STREAM.apply("${id}")</script>`
+  )
+}
+
+function serializeBetween(document: Document, start: Comment, end: Comment): string {
+  const wrapper = document.createElement('div')
+  let node = start.nextSibling
+  while (node && node !== end) {
+    wrapper.appendChild(node.cloneNode(true) as Node)
+    node = node.nextSibling
+  }
+  return wrapper.innerHTML
+}
+
+function splitDocumentHtml(html: string): { head: string; tail: string } | null {
+  const lower = html.toLowerCase()
+  const idx = lower.lastIndexOf('</body>')
+  if (idx === -1) return null
+  return { head: html.slice(0, idx), tail: html.slice(idx) }
+}
+
+function buildIncrementalSnapshotChunk(
+  state: ReturnType<typeof __fictSerializeSSRState>,
+  options: RenderToStringOptions,
+): string {
+  const json = JSON.stringify(state)
+  if (options.snapshotTarget === 'head') {
+    const jsonLiteral = JSON.stringify(json)
+    return `<script>(function(){var s=document.createElement('script');s.type='application/json';s.setAttribute('data-fict-snapshot','');s.textContent=${jsonLiteral};(document.head||document.documentElement).appendChild(s);}())</script>`
+  }
+  return `<script type="application/json" data-fict-snapshot>${json}</script>`
 }
 
 function serializeOutput(

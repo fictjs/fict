@@ -223,6 +223,17 @@ function serializeSlots(ctx: HookContext): SlotSnapshot[] {
   return slots
 }
 
+### 3.4 Streaming SSR (Shell-first)
+
+Fict can stream SSR output by emitting a shell (fallback UI + boundary markers) first,
+then patching Suspense boundaries as they resolve.
+
+Key pieces:
+
+- **Boundary markers**: `<!--fict:suspense-start:ID--> ... <!--fict:suspense-end:ID-->`
+- **Patch chunks**: `<template data-fict-suspense="ID">...</template><script>__FICT_STREAM.apply("ID")</script>`
+- **Client patcher**: small runtime injected in the shell to apply patches.
+
 function serializeValue(value: unknown): unknown {
   // Handle special types
   if (value === undefined) return { __t: 'u' }

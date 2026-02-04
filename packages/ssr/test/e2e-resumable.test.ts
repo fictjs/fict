@@ -7,10 +7,11 @@
  * 3. Client loader triggers events
  * 4. Partial hydration updates DOM
  */
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { Worker } from 'node:worker_threads'
 
 import { transformSync } from '@babel/core'
 // @ts-expect-error - CommonJS module without proper types
@@ -18,6 +19,7 @@ import presetTypescript from '@babel/preset-typescript'
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
 
 import type { FictNode } from '@fictjs/runtime'
+import { Suspense, createSuspenseToken } from '@fictjs/runtime'
 import {
   installResumableLoader,
   resetHydratedScopes,
@@ -37,7 +39,7 @@ import {
 import createFictPlugin, { type FictCompilerOptions } from '../../compiler/src/index'
 import { parseHTML } from 'linkedom'
 
-import { renderToString, renderToDocument } from '../src/index'
+import { renderToString, renderToDocument, renderToStream } from '../src/index'
 
 // ============================================================================
 // Test Utilities
@@ -49,8 +51,16 @@ interface CompiledModule {
   cleanup: () => void
 }
 
-function compileModule(source: string, options?: Partial<FictCompilerOptions>): CompiledModule {
-  const tempDir = mkdtempSync(path.join(tmpdir(), 'fict-e2e-'))
+function compileModule(
+  source: string,
+  options?: Partial<FictCompilerOptions> & { baseDir?: string },
+): CompiledModule {
+  const { baseDir, ...compilerOverrides } = options ?? {}
+  const tempBase = baseDir ?? tmpdir()
+  if (baseDir) {
+    mkdirSync(baseDir, { recursive: true })
+  }
+  const tempDir = mkdtempSync(path.join(tempBase, 'fict-e2e-'))
   const entryPath = path.join(tempDir, 'entry.mjs')
 
   const compilerOptions: FictCompilerOptions = {
@@ -58,7 +68,7 @@ function compileModule(source: string, options?: Partial<FictCompilerOptions>): 
     fineGrainedDom: true,
     resumable: true,
     emitModuleMetadata: false,
-    ...options,
+    ...compilerOverrides,
   }
 
   const result = transformSync(source, {
@@ -159,6 +169,84 @@ function parseSnapshot(html: string): Record<string, unknown> | null {
   }
 }
 
+const decoder = new TextDecoder()
+
+function applyStreamPatch(document: Document, win: Window, id: string): void {
+  const tpl = document.querySelector(
+    `template[data-fict-suspense="${id}"]`,
+  ) as HTMLTemplateElement | null
+  if (!tpl) return
+
+  let start: Comment | null = null
+  let end: Comment | null = null
+  const showComment = (win as any).NodeFilter?.SHOW_COMMENT ?? 128
+  const walker = document.createTreeWalker(document, showComment)
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Comment
+    if (node.data === `fict:suspense-start:${id}`) start = node
+    if (node.data === `fict:suspense-end:${id}`) end = node
+    if (start && end) break
+  }
+  if (!start || !end || !end.parentNode) return
+
+  let node = start.nextSibling
+  while (node && node !== end) {
+    const next = node.nextSibling
+    node.parentNode?.removeChild(node)
+    node = next
+  }
+
+  const fragment = tpl.content ?? document.createRange().createContextualFragment(tpl.innerHTML)
+  end.parentNode.insertBefore(fragment, end)
+  tpl.parentNode?.removeChild(tpl)
+}
+
+function installMutationObserverStub(): {
+  notify: (nodes: Node[]) => void
+  restore: () => void
+} {
+  const original = (globalThis as Record<string, unknown>).MutationObserver as
+    | typeof MutationObserver
+    | undefined
+  const observers: Array<{ callback: MutationCallback; disconnected: boolean }> = []
+
+  class TestMutationObserver {
+    callback: MutationCallback
+    disconnected = false
+    constructor(cb: MutationCallback) {
+      this.callback = cb
+      observers.push(this)
+    }
+    observe(): void {}
+    disconnect(): void {
+      this.disconnected = true
+    }
+  }
+
+  ;(globalThis as Record<string, unknown>).MutationObserver = TestMutationObserver as
+    | typeof MutationObserver
+    | undefined
+
+  const notify = (nodes: Node[]): void => {
+    if (nodes.length === 0) return
+    for (const observer of observers) {
+      if (!observer.disconnected) {
+        observer.callback([{ addedNodes: nodes } as MutationRecord], observer as any)
+      }
+    }
+  }
+
+  const restore = (): void => {
+    if (original) {
+      ;(globalThis as Record<string, unknown>).MutationObserver = original
+    } else {
+      delete (globalThis as Record<string, unknown>).MutationObserver
+    }
+  }
+
+  return { notify, restore }
+}
+
 async function tick(count = 1): Promise<void> {
   // First wait for any pending async handlers to complete
   await waitForPendingHandlers()
@@ -214,7 +302,7 @@ describe('QRL Generation and Event Handler Resolution', () => {
       }
     `
 
-    const compiled = compileModule(source)
+    const compiled = compileModule(source, { baseDir: path.join(process.cwd(), '.tmp') })
     try {
       // Debug: print compiled code
       // console.log('=== Compiled Code ===')
@@ -248,7 +336,7 @@ describe('QRL Generation and Event Handler Resolution', () => {
       }
     `
 
-    const compiled = compileModule(source)
+    const compiled = compileModule(source, { baseDir: path.join(process.cwd(), '.tmp') })
     try {
       // Verify resume function is exported
       expect(compiled.code).toContain('__fict_r')
@@ -267,7 +355,7 @@ describe('QRL Generation and Event Handler Resolution', () => {
       }
     `
 
-    const compiled = compileModule(source)
+    const compiled = compileModule(source, { baseDir: path.join(process.cwd(), '.tmp') })
     let cleanup = () => {}
 
     try {
@@ -303,7 +391,7 @@ describe('QRL Generation and Event Handler Resolution', () => {
       }
     `
 
-    const compiled = compileModule(source)
+    const compiled = compileModule(source, { baseDir: path.join(process.cwd(), '.tmp') })
     let cleanup = () => {}
 
     try {
@@ -2139,6 +2227,213 @@ describe('Full E2E Integration', () => {
         expect(buttons[i]!.textContent).toBe(String(i + 2))
       }
     } finally {
+      await cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('streams incremental snapshots and resumes after boundary patch', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function Counter() {
+        let count = $state(0)
+        return <button data-btn onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source)
+    let cleanup = () => {}
+    let restoreMutationObserver: (() => void) | null = null
+    let notifyMutationObserver: ((nodes: Node[]) => void) | null = null
+
+    try {
+      const mod = (await import(compiled.url)) as { Counter: () => FictNode }
+      const token = createSuspenseToken()
+      let ready = false
+      const observerStub = installMutationObserverStub()
+      restoreMutationObserver = observerStub.restore
+      notifyMutationObserver = observerStub.notify
+
+      function AsyncChild(): FictNode {
+        if (!ready) throw token.token
+        return { type: mod.Counter, props: {} }
+      }
+
+      function App(): FictNode {
+        return {
+          type: Suspense,
+          props: {
+            fallback: { type: 'div', props: { children: 'Loading' } },
+            children: { type: AsyncChild, props: {} },
+          },
+        }
+      }
+
+      const stream = renderToStream(() => ({ type: App, props: {} }), {
+        mode: 'shell',
+        fullDocument: false,
+      })
+
+      const reader = stream.getReader()
+      const first = await reader.read()
+      expect(first.done).toBe(false)
+      const shellChunk = decoder.decode(first.value)
+
+      expect(shellChunk).toContain('Loading')
+      expect(shellChunk).toContain('fict:suspense-start')
+
+      // Resolve boundary to emit patch + snapshot chunk.
+      ready = true
+      token.resolve()
+
+      let rest = ''
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        if (value) rest += decoder.decode(value, { stream: true })
+      }
+      rest += decoder.decode()
+      expect(rest).toContain('data-fict-snapshot')
+
+      const env = setupClientEnvironment(shellChunk)
+      cleanup = env.cleanup
+
+      installResumableLoader({ document: env.document, events: ['click'] })
+
+      const fragment = env.document.createRange().createContextualFragment(rest)
+      const addedNodes = Array.from(fragment.childNodes)
+      env.document.body.appendChild(fragment)
+      notifyMutationObserver?.(addedNodes)
+
+      const template = env.document.querySelector('template[data-fict-suspense]')
+      expect(template).not.toBeNull()
+      const id = template?.getAttribute('data-fict-suspense')
+      expect(id).toBeTruthy()
+      applyStreamPatch(env.document, env.window, id!)
+
+      const button = env.document.querySelector('[data-btn]') as HTMLElement
+      expect(button.textContent).toBe('0')
+
+      const counterHost = button.closest('[data-fict-s]')
+      const counterScope = counterHost?.getAttribute('data-fict-s') ?? ''
+      expect(counterScope).toBeTruthy()
+      expect(__fictGetSSRScope(counterScope)).toBeDefined()
+
+      dispatchClick(button, env.window)
+      await tick(3)
+
+      expect(button.textContent).toBe('1')
+    } finally {
+      restoreMutationObserver?.()
+      await cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('streams chunk-by-chunk and resumes interaction after patch', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function Counter() {
+        let count = $state(0)
+        return <button data-btn onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source, { baseDir: path.join(process.cwd(), '.tmp') })
+    let cleanup = () => {}
+    let worker: Worker | null = null
+
+    try {
+      const mod = (await import(compiled.url)) as { Counter: () => FictNode }
+      const token = createSuspenseToken()
+      let ready = false
+
+      function AsyncChild(): FictNode {
+        if (!ready) throw token.token
+        return { type: mod.Counter, props: {} }
+      }
+
+      function App(): FictNode {
+        return {
+          type: Suspense,
+          props: {
+            fallback: { type: 'div', props: { children: 'Loading' } },
+            children: { type: AsyncChild, props: {} },
+          },
+        }
+      }
+
+      const stream = renderToStream(() => ({ type: App, props: {} }), {
+        mode: 'shell',
+        fullDocument: false,
+      })
+
+      worker = new Worker(new URL('./streaming-resume.worker.js', import.meta.url), {
+        type: 'module',
+      })
+      let msgId = 0
+      const callWorker = (type: string, payload?: Record<string, unknown>) =>
+        new Promise<unknown>((resolve, reject) => {
+          const id = ++msgId
+          const onMessage = (message: {
+            id: number
+            ok: boolean
+            result?: unknown
+            error?: string
+          }) => {
+            if (message.id !== id) return
+            worker.off('message', onMessage)
+            if (message.ok) {
+              resolve(message.result)
+            } else {
+              reject(new Error(message.error ?? 'Worker error'))
+            }
+          }
+          worker.on('message', onMessage)
+          worker.postMessage({ id, type, payload })
+        })
+
+      const reader = stream.getReader()
+      const first = await reader.read()
+      expect(first.done).toBe(false)
+      const shellChunk = decoder.decode(first.value)
+      const filePath = fileURLToPath(compiled.url)
+      const manifest = { [`/@fs${filePath}`]: compiled.url }
+      await callWorker('init', { html: shellChunk, manifest })
+
+      ready = true
+      token.resolve()
+
+      while (true) {
+        const { value, done } = await reader.read()
+        if (done) break
+        if (value) {
+          const chunk = decoder.decode(value, { stream: true })
+          if (chunk) {
+            await callWorker('chunk', { html: chunk })
+          }
+        }
+      }
+      const tail = decoder.decode()
+      if (tail) {
+        await callWorker('chunk', { html: tail })
+      }
+
+      const initialText = await callWorker('getText', { selector: '[data-btn]' })
+      expect(initialText).toBe('0')
+
+      const nextText = await callWorker('click', { selector: '[data-btn]' })
+      expect(nextText).toBe('1')
+
+      await callWorker('dispose')
+    } finally {
+      if (worker) {
+        try {
+          await worker.terminate()
+        } catch {
+          // ignore worker shutdown errors
+        }
+      }
       await cleanup()
       compiled.cleanup()
     }

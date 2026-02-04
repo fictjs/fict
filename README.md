@@ -325,6 +325,22 @@ function Profile({ id }) {
 }
 ```
 
+### SSR Streaming
+
+Fict SSR supports shell-first streaming with Suspense boundary patching:
+
+```tsx
+import { renderToPipeableStream } from '@fictjs/ssr'
+
+const { pipe, shellReady, allReady } = renderToPipeableStream(() => <App />, {
+  mode: 'shell',
+})
+
+pipe(res)
+await shellReady
+await allReady
+```
+
 ### `fict/plus` — Advanced APIs
 
 ```tsx

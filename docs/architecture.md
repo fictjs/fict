@@ -818,6 +818,33 @@ This means:
 
 ---
 
+---
+
+## 12. SSR & Streaming
+
+Fict’s SSR executes compiled output inside a DOM simulation (linkedom) and serializes HTML.
+`renderToString` returns a full HTML string, while streaming mode can emit a **shell-first**
+response and patch Suspense boundaries as they resolve.
+
+### 12.1 Shell-first streaming
+
+- Initial chunk contains fallback UI and boundary markers.
+- As Suspense resolves, the server sends patch chunks that replace boundary contents.
+- A tiny runtime patcher (`__FICT_STREAM`) applies patches on the client.
+
+### 12.2 All-ready mode
+
+- Waits for all Suspense boundaries to resolve.
+- Emits a single complete HTML string (traditional SSR).
+
+### 12.3 Snapshot timing
+
+- In shell-first streaming, snapshots are emitted incrementally (shell + each
+  resolved boundary) as `data-fict-snapshot` scripts, with any remaining scopes
+  flushed at the end.
+- When `snapshotTarget: 'head'`, each snapshot chunk injects into `<head>` via a
+  small script.
+
 ## 13. Summary
 
 - Fict's goal is not to "reinvent another framework that looks like React", but:

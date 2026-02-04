@@ -4,6 +4,7 @@ import {
   __fictEnsureScope,
   __fictGetResume,
   __fictGetSSRScope,
+  __fictMergeSSRState,
   __fictSetSSRState,
   __fictUseLexicalScope,
 } from './resume'
@@ -82,6 +83,8 @@ const hydratedScopes = new Set<string>()
 const prefetchedUrls = new Set<string>()
 let prefetchCleanup: (() => void) | null = null
 let eventListenerCleanup: (() => void) | null = null
+let snapshotObserver: MutationObserver | null = null
+const processedSnapshots = new Set<HTMLScriptElement>()
 
 /**
  * Reset the hydrated scopes set. Useful for testing.
@@ -131,6 +134,7 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
   // Reset hydrated scopes for fresh loader installation
   hydratedScopes.clear()
   prefetchedUrls.clear()
+  processedSnapshots.clear()
 
   // Clean up previous event listeners
   if (eventListenerCleanup) {
@@ -144,6 +148,11 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
     prefetchCleanup = null
   }
 
+  if (snapshotObserver) {
+    snapshotObserver.disconnect()
+    snapshotObserver = null
+  }
+
   const snapshotEl = doc.getElementById(scriptId)
   if (snapshotEl?.textContent) {
     try {
@@ -152,6 +161,38 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
     } catch {
       // Ignore parse errors
     }
+  }
+
+  const snapshotScripts = doc.querySelectorAll(
+    'script[type="application/json"][data-fict-snapshot]',
+  )
+  for (const script of Array.from(snapshotScripts)) {
+    parseSnapshotScript(script as HTMLScriptElement)
+  }
+
+  if (typeof MutationObserver !== 'undefined') {
+    snapshotObserver = new MutationObserver(mutations => {
+      for (const mutation of mutations) {
+        for (const node of Array.from(mutation.addedNodes)) {
+          if (!(node instanceof Element)) continue
+          if (node.tagName === 'SCRIPT') {
+            const script = node as HTMLScriptElement
+            if (isSnapshotScript(script)) {
+              parseSnapshotScript(script)
+            }
+          }
+          const nested = node.querySelectorAll?.(
+            'script[type="application/json"][data-fict-snapshot]',
+          )
+          if (nested && nested.length) {
+            for (const script of Array.from(nested)) {
+              parseSnapshotScript(script as HTMLScriptElement)
+            }
+          }
+        }
+      }
+    })
+    snapshotObserver.observe(doc.documentElement ?? doc, { childList: true, subtree: true })
   }
 
   __fictEnableResumable()
@@ -171,6 +212,23 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
   // Setup prefetch if enabled
   if (options.prefetch !== false) {
     prefetchCleanup = setupPrefetch(doc, options.prefetch ?? {})
+  }
+}
+
+function isSnapshotScript(script: HTMLScriptElement): boolean {
+  return script.type === 'application/json' && script.hasAttribute('data-fict-snapshot')
+}
+
+function parseSnapshotScript(script: HTMLScriptElement): void {
+  if (processedSnapshots.has(script)) return
+  processedSnapshots.add(script)
+  const text = script.textContent
+  if (!text) return
+  try {
+    const state = JSON.parse(text)
+    __fictMergeSSRState(state)
+  } catch {
+    // Ignore parse errors
   }
 }
 

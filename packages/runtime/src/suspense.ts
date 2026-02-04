@@ -12,6 +12,7 @@ import {
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import { createSignal } from './signal'
+import { __fictGetSSRStreamHooks, __fictPopSSRBoundary, __fictPushSSRBoundary } from './ssr-stream'
 import type { BaseProps, FictNode, SuspenseToken } from './types'
 
 export interface SuspenseProps extends BaseProps {
@@ -49,6 +50,7 @@ const isThenable = (value: unknown): value is PromiseLike<unknown> =>
   typeof (value as PromiseLike<unknown>).then === 'function'
 
 export function Suspense(props: SuspenseProps): FictNode {
+  const streamHooks = __fictGetSSRStreamHooks()
   const pending = createSignal(0)
   let resolvedOnce = false
   let epoch = 0
@@ -76,7 +78,12 @@ export function Suspense(props: SuspenseProps): FictNode {
     const root = createRootContext(hostRoot)
     const prev = pushRoot(root)
     let nodes: Node[] = []
+    let boundaryPushed = false
     try {
+      if (streamBoundaryId) {
+        __fictPushSSRBoundary(streamBoundaryId)
+        boundaryPushed = true
+      }
       const output = createElement(view)
       nodes = toNodeArray(output)
       // Suspended view: child threw a suspense token and was handled upstream.
@@ -90,9 +97,9 @@ export function Suspense(props: SuspenseProps): FictNode {
         destroyRoot(root)
         return
       }
-      const parentNode = marker.parentNode as (ParentNode & Node) | null
+      const parentNode = endMarker.parentNode as (ParentNode & Node) | null
       if (parentNode) {
-        insertNodesBefore(parentNode, nodes, marker)
+        insertNodesBefore(parentNode, nodes, endMarker)
       }
     } catch (err) {
       popRoot(prev)
@@ -101,6 +108,10 @@ export function Suspense(props: SuspenseProps): FictNode {
         throw err
       }
       return
+    } finally {
+      if (boundaryPushed) {
+        __fictPopSSRBoundary(streamBoundaryId ?? undefined)
+      }
     }
     popRoot(prev)
     flushOnMount(root)
@@ -113,10 +124,22 @@ export function Suspense(props: SuspenseProps): FictNode {
   }
 
   const fragment = document.createDocumentFragment()
-  const marker = document.createComment('fict:suspense')
-  fragment.appendChild(marker)
+  const startMarker = document.createComment('fict:suspense-start')
+  const endMarker = document.createComment('fict:suspense-end')
+  fragment.appendChild(startMarker)
+  fragment.appendChild(endMarker)
   let cleanup: (() => void) | undefined
   let activeNodes: Node[] = []
+  let streamBoundaryId: string | null = null
+  let streamPending = false
+
+  if (streamHooks?.registerBoundary) {
+    streamBoundaryId = streamHooks.registerBoundary(startMarker, endMarker) ?? null
+    if (streamBoundaryId) {
+      startMarker.data = `fict:suspense-start:${streamBoundaryId}`
+      endMarker.data = `fict:suspense-end:${streamBoundaryId}`
+    }
+  }
 
   const onResolveMaybe = () => {
     if (!resolvedOnce) {
@@ -127,6 +150,10 @@ export function Suspense(props: SuspenseProps): FictNode {
 
   registerSuspenseHandler(token => {
     const tokenEpoch = epoch
+    if (!streamPending && streamBoundaryId && streamHooks?.boundaryPending) {
+      streamPending = true
+      streamHooks.boundaryPending(streamBoundaryId)
+    }
     pending(pending() + 1)
     // Directly render fallback instead of using switchView to avoid
     // triggering the effect which would cause duplicate renders
@@ -155,6 +182,10 @@ export function Suspense(props: SuspenseProps): FictNode {
           if (newPending === 0) {
             // Directly render children instead of using switchView
             renderView(props.children ?? null)
+            if (streamPending && streamBoundaryId && streamHooks?.boundaryResolved) {
+              streamPending = false
+              streamHooks.boundaryResolved(streamBoundaryId)
+            }
             onResolveMaybe()
           }
         },
@@ -195,6 +226,10 @@ export function Suspense(props: SuspenseProps): FictNode {
         pending(0)
         // Directly render children instead of using switchView
         renderView(props.children ?? null)
+        if (streamPending && streamBoundaryId && streamHooks?.boundaryResolved) {
+          streamPending = false
+          streamHooks.boundaryResolved(streamBoundaryId)
+        }
       }
     })
   }

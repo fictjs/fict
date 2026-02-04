@@ -268,6 +268,34 @@ interface RenderToDocumentResult extends SSRDom {
 
 Returns a DOM object for further manipulation or streaming rendering.
 
+### renderToStream
+
+Stream HTML to a Web `ReadableStream`. In `shell` mode, the fallback shell is
+sent immediately and Suspense boundaries patch in as they resolve.
+
+> Note: In `shell` mode, resumable snapshots are emitted incrementally as
+> `data-fict-snapshot` scripts (shell + each resolved boundary). When
+> `snapshotTarget: 'head'`, each chunk injects into `<head>` via a small script.
+
+```typescript
+import { renderToStream } from '@fictjs/ssr'
+
+const stream = renderToStream(() => <App />, { mode: 'shell' })
+```
+
+### renderToPipeableStream
+
+Node.js stream variant (compatible with `pipe()`).
+
+```typescript
+import { renderToPipeableStream } from '@fictjs/ssr'
+
+const { pipe, shellReady, allReady } = renderToPipeableStream(() => <App />, { mode: 'shell' })
+pipe(res)
+await shellReady
+await allReady
+```
+
 ### createSSRDocument
 
 ```typescript
@@ -604,8 +632,15 @@ onMount(async () => {
 console.log(globalThis.__FICT_MANIFEST__)
 
 // Check snapshot content
-const snapshot = document.getElementById('__FICT_SNAPSHOT__')
-console.log(JSON.parse(snapshot.textContent))
+const fullSnapshot = document.getElementById('__FICT_SNAPSHOT__')
+if (fullSnapshot?.textContent) {
+  console.log(JSON.parse(fullSnapshot.textContent))
+}
+// In streaming shell mode, snapshots are chunked:
+const snapshots = document.querySelectorAll('script[data-fict-snapshot]')
+for (const script of snapshots) {
+  console.log(JSON.parse(script.textContent || '{}'))
+}
 ```
 
 ## Related Packages
