@@ -1810,6 +1810,7 @@ Key options:
 ### renderToPartial
 
 Partial prerendering API: returns a complete shell HTML plus a deferred patch stream.
+Status: **Advanced / Preview** for v1.0.
 
 ```typescript
 import { renderToPartial } from '@fictjs/ssr'

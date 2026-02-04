@@ -434,6 +434,9 @@ interface PipeBridge {
 }
 
 function createPipeBridge(): PipeBridge {
+  const nodeBridge = createNodePipeBridge()
+  if (nodeBridge) return nodeBridge
+
   const targets = new Set<NodeJS.WritableStream>()
   const buffer: string[] = []
   let state: 'open' | 'closed' | 'aborted' = 'open'
@@ -499,7 +502,9 @@ function createPipeBridge(): PipeBridge {
       for (const target of targets) {
         safeEnd(target)
       }
-      buffer.length = 0
+      if (targets.size > 0) {
+        buffer.length = 0
+      }
     },
     abort(reason?: unknown) {
       if (state !== 'open') return
@@ -510,6 +515,47 @@ function createPipeBridge(): PipeBridge {
       }
       buffer.length = 0
     },
+  }
+}
+
+interface NodePassThroughLike {
+  pipe: (destination: NodeJS.WritableStream) => unknown
+  write: (chunk: string | Uint8Array) => boolean
+  end: (...args: unknown[]) => unknown
+  destroy?: (error?: Error) => void
+}
+
+function createNodePipeBridge(): PipeBridge | null {
+  const nodeRequire = getNodeRequire()
+  if (!nodeRequire) return null
+  try {
+    const streamModule = nodeRequire('node:stream') as {
+      PassThrough?: new (...args: unknown[]) => NodePassThroughLike
+    }
+    if (!streamModule.PassThrough) return null
+    const passThrough = new streamModule.PassThrough()
+
+    return {
+      pipe(writable) {
+        passThrough.pipe(writable)
+      },
+      write(chunk) {
+        passThrough.write(chunk)
+      },
+      close() {
+        passThrough.end()
+      },
+      abort(reason?: unknown) {
+        const error = reason instanceof Error ? reason : new Error('Stream aborted')
+        if (typeof passThrough.destroy === 'function') {
+          passThrough.destroy(error)
+        } else {
+          passThrough.end()
+        }
+      },
+    }
+  } catch {
+    return null
   }
 }
 

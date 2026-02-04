@@ -15,6 +15,7 @@ Fict's Server-Side Rendering (SSR) package, providing high-performance server-si
 - [Integration with Vite](#integration-with-vite)
 - [Advanced Usage](#advanced-usage)
 - [Performance Optimization](#performance-optimization)
+- [Production Guides](#production-guides)
 - [Troubleshooting](#troubleshooting)
 
 ## Overview
@@ -303,6 +304,7 @@ await allReady
 ### renderToPartial
 
 Generate a complete shell HTML plus a deferred patch stream for Partial Prerendering workflows.
+This is an advanced API and currently considered **Preview** in v1.0.
 
 ```typescript
 import { renderToPartial } from '@fictjs/ssr'
@@ -611,6 +613,12 @@ let largeData = $state(hugeArray)
 // ✅ Recommended: Serialize only necessary data
 let dataId = $state(id) // Store ID only, fetch on client
 ```
+
+## Production Guides
+
+- [SSR SEO Guide](../../docs/ssr-seo.md)
+- [SSR Performance Tuning](../../docs/ssr-performance.md)
+- [SSR Deployment Guide](../../docs/ssr-deployment.md)
 
 ## Troubleshooting
 

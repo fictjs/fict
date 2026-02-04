@@ -97,6 +97,50 @@ describe('@fictjs/ssr streaming', () => {
     expect(html).toContain('data-fict-suspense')
   })
 
+  it('pipeable stream buffers output before pipe() and flushes after attach', async () => {
+    const token = createSuspenseToken()
+    let ready = false
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      return { type: 'span', props: { children: 'LatePipeDone' } }
+    }
+
+    function App(): FictNode {
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'LatePipeLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    const { pipe, shellReady, allReady } = renderToPipeableStream(
+      () => ({ type: App, props: {} }),
+      {
+        mode: 'shell',
+      },
+    )
+
+    // Wait until shell has been produced before attaching writable.
+    await shellReady
+    await Promise.resolve()
+    ready = true
+    token.resolve()
+
+    const chunks: Buffer[] = []
+    const { PassThrough } = await import('node:stream')
+    const writable = new PassThrough()
+    writable.on('data', chunk => chunks.push(chunk as Buffer))
+    pipe(writable)
+
+    await allReady
+    const html = Buffer.concat(chunks).toString('utf8')
+    expect(html).toContain('LatePipeLoading')
+    expect(html).toContain('LatePipeDone')
+  })
+
   it('all-ready mode emits single HTML with snapshot', async () => {
     const token = createSuspenseToken()
     let ready = false

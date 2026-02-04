@@ -351,6 +351,8 @@ const { shell, stream } = renderToPartial(() => <App />, { mode: 'shell' })
 // stream: deferred boundary patches
 ```
 
+`renderToPartial` is an advanced API (Preview in v1.0).
+
 ### `fict/plus` — Advanced APIs
 
 ```tsx
@@ -489,6 +491,9 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 - [ESLint Rules](./docs/eslint-rules.md) — Linting configuration
 - [Diagnostic Codes](./docs/diagnostic-codes.md) — Compiler warnings reference
 - [Cycle Protection](./docs/cycle-protection.md) — Development-mode infinite loop detection
+- [SSR SEO Guide](./docs/ssr-seo.md) — SEO best practices for SSR and streaming pages
+- [SSR Performance Tuning](./docs/ssr-performance.md) — Snapshot size and render-mode optimization
+- [SSR Deployment Guide](./docs/ssr-deployment.md) — Vercel/Cloudflare/edge deployment patterns
 - [DevTools](./packages/devtools/README.md) — Vite plugin usage and auto-injection notes
 
 ### Linting & diagnostics

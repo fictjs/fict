@@ -17,6 +17,9 @@ This folder holds documentation for the Fict project.
 
 - `fiction-ui.md` — Product/design philosophy around the fiction layer
 - `framework-comparison.md` — Comparison with React, Solid, Vue, Svelte
+- `ssr-seo.md` — SEO best practices for SSR/streaming apps
+- `ssr-performance.md` — SSR performance tuning and snapshot-size optimization
+- `ssr-deployment.md` — Deployment guides for Node, Vercel, Cloudflare Workers, and edge runtimes
 
 ## Technical Details
 
