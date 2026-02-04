@@ -8220,10 +8220,18 @@ function transformControlFlowReturns(
     if (stmts.length === 0) return false
     const tail = stmts[stmts.length - 1]!
     if (t.isReturnStatement(tail)) return true
+    if (t.isBlockStatement(tail)) {
+      return endsWithReturn(tail.body)
+    }
     if (t.isIfStatement(tail) && tail.consequent && tail.alternate) {
       const conseqStmts = toStatements(tail.consequent)
       const altStmts = toStatements(tail.alternate)
       return endsWithReturn(conseqStmts) && endsWithReturn(altStmts)
+    }
+    if (t.isTryStatement(tail)) {
+      if (tail.finalizer && endsWithReturn(tail.finalizer.body)) return true
+      if (!tail.handler) return false
+      return endsWithReturn(tail.block.body) && endsWithReturn(tail.handler.body.body)
     }
     return false
   }
@@ -8264,8 +8272,10 @@ function transformControlFlowReturns(
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const callee = node.callee
         if (t.isIdentifier(callee) && callee.name.startsWith('__fictUse')) {
-          found = true
-          return
+          if (callee.name !== '__fictUseEffect') {
+            found = true
+            return
+          }
         }
       }
 
@@ -8354,62 +8364,10 @@ function transformControlFlowReturns(
     return buildConditionalBindingExpr(ifStmt.test as BabelCore.types.Expression, trueFn, falseFn)
   }
 
-  function isSupportedSwitchDiscriminant(expr: BabelCore.types.Expression): boolean {
-    if (t.isIdentifier(expr) || t.isThisExpression(expr) || t.isSuper(expr) || t.isLiteral(expr)) {
-      return true
-    }
-    if (t.isUnaryExpression(expr)) {
-      return isSupportedSwitchDiscriminant(expr.argument as BabelCore.types.Expression)
-    }
-    if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr)) {
-      if (
-        expr.computed &&
-        !t.isLiteral(expr.property) &&
-        !t.isIdentifier(expr.property) &&
-        !t.isPrivateName(expr.property)
-      ) {
-        return false
-      }
-      return isSupportedSwitchDiscriminant(expr.object as BabelCore.types.Expression)
-    }
-    if (t.isCallExpression(expr) || t.isOptionalCallExpression(expr)) {
-      if (expr.arguments.length > 0) return false
-      if (
-        t.isIdentifier(expr.callee) ||
-        t.isMemberExpression(expr.callee) ||
-        t.isOptionalMemberExpression(expr.callee)
-      ) {
-        return true
-      }
-      return false
-    }
-    return false
-  }
-
-  function splitSwitchCaseBody(
-    caseNode: BabelCore.types.SwitchCase,
-    rest: BabelCore.types.Statement[],
-    isDefaultCase: boolean,
-  ): BabelCore.types.Statement[] | null {
-    const consequent = [...caseNode.consequent]
-    if (consequent.length === 0) {
-      return isDefaultCase ? [...rest] : null
-    }
-
-    const tail = consequent[consequent.length - 1]
-    const hasTerminalBreak = !!tail && t.isBreakStatement(tail) && !tail.label
-    if (hasTerminalBreak) {
-      consequent.pop()
-      return [...consequent, ...rest]
-    }
-
-    if (endsWithReturn(consequent)) return consequent
-
-    if (isDefaultCase) {
-      return [...consequent, ...rest]
-    }
-
-    return null
+  function isSupportedSwitchDiscriminant(_expr: BabelCore.types.Expression): boolean {
+    // Any expression can participate in switch lowering; the discriminant will be
+    // re-used in branch predicates just like a lowered if/else chain.
+    return true
   }
 
   function buildSwitchConditionalExpr(
@@ -8419,14 +8377,83 @@ function transformControlFlowReturns(
     const discriminant = switchStmt.discriminant as BabelCore.types.Expression
     if (!isSupportedSwitchDiscriminant(discriminant)) return null
 
-    const nonDefaultCases = switchStmt.cases.filter(c => c.test) as BabelCore.types.SwitchCase[]
-    const defaultCase = switchStmt.cases.find(c => c.test == null) ?? null
-    if (nonDefaultCases.length === 0 && !defaultCase) return null
+    interface SwitchBranch {
+      tests: BabelCore.types.Expression[]
+      statements: BabelCore.types.Statement[]
+    }
 
-    const fallbackStatements = defaultCase
-      ? splitSwitchCaseBody(defaultCase, rest, true)
-      : [...rest]
-    if (!fallbackStatements) return null
+    const trailingStatements = rest.length > 0 ? buildReturnBlock([...rest]) : []
+    if (rest.length > 0 && !trailingStatements) return null
+
+    const caseEntryCache = new Map<number, BabelCore.types.Statement[] | null>()
+    const resolveCaseEntry = (startIndex: number): BabelCore.types.Statement[] | null => {
+      if (caseEntryCache.has(startIndex)) {
+        return caseEntryCache.get(startIndex) ?? null
+      }
+
+      const entry: BabelCore.types.Statement[] = []
+      for (let i = startIndex; i < switchStmt.cases.length; i++) {
+        const currentCase = switchStmt.cases[i]!
+        const consequent = currentCase.consequent
+
+        for (let stmtIndex = 0; stmtIndex < consequent.length; stmtIndex++) {
+          const stmt = consequent[stmtIndex]!
+          if (t.isBreakStatement(stmt)) {
+            if (stmt.label || stmtIndex !== consequent.length - 1) {
+              caseEntryCache.set(startIndex, null)
+              return null
+            }
+            if (!trailingStatements || trailingStatements.length === 0) {
+              caseEntryCache.set(startIndex, null)
+              return null
+            }
+            const withTrailing = [...entry, ...trailingStatements]
+            caseEntryCache.set(startIndex, withTrailing)
+            return withTrailing
+          }
+          if (t.isContinueStatement(stmt)) {
+            caseEntryCache.set(startIndex, null)
+            return null
+          }
+          entry.push(stmt)
+        }
+
+        if (endsWithReturn(entry)) {
+          caseEntryCache.set(startIndex, entry)
+          return entry
+        }
+      }
+
+      if (!trailingStatements || trailingStatements.length === 0) {
+        caseEntryCache.set(startIndex, null)
+        return null
+      }
+      const withTrailing = [...entry, ...trailingStatements]
+      caseEntryCache.set(startIndex, withTrailing)
+      return withTrailing
+    }
+
+    const branches: SwitchBranch[] = []
+    let defaultStatements: BabelCore.types.Statement[] | null = null
+    for (let i = 0; i < switchStmt.cases.length; i++) {
+      const caseNode = switchStmt.cases[i]!
+      const statements = resolveCaseEntry(i)
+      if (!statements) return null
+
+      if (caseNode.test) {
+        branches.push({
+          tests: [caseNode.test as BabelCore.types.Expression],
+          statements,
+        })
+      } else {
+        defaultStatements = statements
+      }
+    }
+
+    if (branches.length === 0 && !defaultStatements) return null
+
+    const fallbackStatements = defaultStatements ?? trailingStatements
+    if (!fallbackStatements || fallbackStatements.length === 0) return null
     const fallbackFn = buildBranchFunction(fallbackStatements, { disallowRenderHooks: true })
     if (!fallbackFn) return null
 
@@ -8438,25 +8465,29 @@ function transformControlFlowReturns(
       [],
     )
 
-    for (let i = nonDefaultCases.length - 1; i >= 0; i--) {
-      const c = nonDefaultCases[i]
-      const test = c.test
-      if (!test) continue
-
-      const caseStatements = splitSwitchCaseBody(c, rest, false)
-      if (!caseStatements) return null
-      const trueFn = buildBranchFunction(caseStatements, { disallowRenderHooks: true })
+    for (let i = branches.length - 1; i >= 0; i--) {
+      const branch = branches[i]!
+      const trueFn = buildBranchFunction(branch.statements, { disallowRenderHooks: true })
       if (!trueFn) return null
 
       const falseFn = t.arrowFunctionExpression(
         [],
         t.blockStatement([t.returnStatement(currentExpr)]),
       )
-      const testExpr = t.binaryExpression(
-        '===',
-        t.cloneNode(discriminant, true),
-        t.cloneNode(test, true) as BabelCore.types.Expression,
+      const comparisons: BabelCore.types.Expression[] = branch.tests.map(test =>
+        t.binaryExpression(
+          '===',
+          t.cloneNode(discriminant, true),
+          t.cloneNode(test, true) as BabelCore.types.Expression,
+        ),
       )
+      if (comparisons.length === 0) return null
+      const testExpr = comparisons
+        .slice(1)
+        .reduce<BabelCore.types.Expression>(
+          (acc, expr) => t.logicalExpression('||', acc, expr),
+          comparisons[0]!,
+        )
       currentExpr = buildConditionalBindingExpr(testExpr, trueFn, falseFn)
     }
 
@@ -8483,7 +8514,15 @@ function transformControlFlowReturns(
       }
     }
 
-    if (!transformedTryBlock && nextHandler === stmt.handler) {
+    let nextFinalizer = stmt.finalizer
+    if (stmt.finalizer) {
+      const transformedFinalizer = transformControlFlowReturns(stmt.finalizer.body, ctx)
+      if (transformedFinalizer) {
+        nextFinalizer = t.blockStatement(transformedFinalizer)
+      }
+    }
+
+    if (!transformedTryBlock && nextHandler === stmt.handler && nextFinalizer === stmt.finalizer) {
       return stmt
     }
 
@@ -8491,7 +8530,7 @@ function transformControlFlowReturns(
     return t.tryStatement(
       t.blockStatement(nextTryBlockBody),
       nextHandler,
-      stmt.finalizer ? (t.cloneNode(stmt.finalizer, true) as BabelCore.types.BlockStatement) : null,
+      nextFinalizer ? (t.cloneNode(nextFinalizer, true) as BabelCore.types.BlockStatement) : null,
     )
   })
 

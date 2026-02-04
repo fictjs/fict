@@ -240,6 +240,79 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toContain('switch (mode())')
       expect(output).toContain('break;')
     })
+
+    it('handles switch case blocks without dropping branch content', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let mode = $state('a')
+          switch (mode) {
+            case 'a': {
+              return <div>A</div>
+            }
+            default:
+              return <div>B</div>
+          }
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('A')
+      expect(output).toContain('B')
+    })
+
+    it('converts switch fallthrough labels into reactive conditionals', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let mode = $state('a')
+          switch (mode) {
+            case 'a':
+            case 'b':
+              return <div>AB</div>
+            default:
+              return <div>D</div>
+          }
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createConditional')
+    })
+
+    it('converts non-empty switch fallthrough branches into reactive conditionals', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let mode = $state('a')
+          switch (mode) {
+            case 'a':
+              'fallthrough'
+            case 'b':
+              return <div>AB</div>
+            default:
+              return <div>D</div>
+          }
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createConditional')
+    })
+
+    it('supports complex switch discriminants in reactive lowering', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let mode = $state('a')
+          switch (mode + '-v') {
+            case 'a-v':
+              return <div>A</div>
+            default:
+              return <div>D</div>
+          }
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createConditional')
+    })
   })
 
   describe('Try statements', () => {
@@ -255,6 +328,24 @@ describe('Fict Compiler - Control Flow', () => {
             return <div>B: {mode}</div>
           } catch (e) {
             return <div>E: {String(e)}</div>
+          }
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('try')
+      expect(output).toContain('createConditional')
+    })
+
+    it('converts try-finally return branches into reactive conditionals', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let mode = $state('a')
+          try {
+            return <div>Base</div>
+          } finally {
+            if (mode === 'a') return <div>A</div>
+            return <div>B</div>
           }
         }
       `

@@ -104,7 +104,10 @@ function shouldSuppressWarning(
 
 type WarningLevel = 'off' | 'warn' | 'error'
 
+const DEFAULT_ERROR_WARNING_CODES = new Set(['FICT-R004'])
+
 function hasErrorEscalation(options: FictCompilerOptions): boolean {
+  if (DEFAULT_ERROR_WARNING_CODES.size > 0) return true
   if (options.warningsAsErrors === true) return true
   if (Array.isArray(options.warningsAsErrors) && options.warningsAsErrors.length > 0) return true
   if (options.warningLevels) {
@@ -120,6 +123,7 @@ function resolveWarningLevel(code: string, options: FictCompilerOptions): Warnin
   if (Array.isArray(options.warningsAsErrors) && options.warningsAsErrors.includes(code)) {
     return 'error'
   }
+  if (DEFAULT_ERROR_WARNING_CODES.has(code)) return 'error'
   return 'warn'
 }
 
@@ -1055,7 +1059,7 @@ function createHIREntrypointVisitor(
               emitWarning(
                 callPath.node,
                 'FICT-R004',
-                'Reactive creation inside non-JSX control flow will not auto-dispose; wrap it in createScope/runInScope or move it into JSX-managed regions.',
+                'Reactive creation inside non-JSX control flow may not auto-dispose in complex paths. Prefer createScope/runInScope (or JSX-managed regions) for explicit lifecycle control.',
                 warn,
                 fileName,
               )

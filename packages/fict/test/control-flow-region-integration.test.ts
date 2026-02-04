@@ -364,6 +364,165 @@ describe('control-flow region integration', () => {
     dispose()
   })
 
+  it('keeps switch-return branches reactive with case block wrappers', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Switcher() {
+        let mode = $state('a')
+
+        switch (mode) {
+          case 'a': {
+            return (
+              <div data-testid="view-a">
+                <span>A</span>
+                <button data-testid="a-to-b" onClick={() => mode = 'b'}>to-b</button>
+              </div>
+            )
+          }
+          case 'b': {
+            return (
+              <div data-testid="view-b">
+                <span>B</span>
+                <button data-testid="b-to-c" onClick={() => mode = 'c'}>to-c</button>
+              </div>
+            )
+          }
+          default:
+            return (
+              <div data-testid="view-c">
+                <span>Default</span>
+                <button data-testid="c-to-a" onClick={() => mode = 'a'}>to-a</button>
+              </div>
+            )
+        }
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <Switcher />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+
+    await tick()
+    expect(container.querySelector('[data-testid="view-a"]')).not.toBeNull()
+    expect(container.textContent).toContain('A')
+    ;(container.querySelector('[data-testid="a-to-b"]') as HTMLButtonElement).click()
+    await tick()
+    expect(container.querySelector('[data-testid="view-b"]')).not.toBeNull()
+    expect(container.textContent).toContain('B')
+    ;(container.querySelector('[data-testid="b-to-c"]') as HTMLButtonElement).click()
+    await tick()
+    expect(container.querySelector('[data-testid="view-c"]')).not.toBeNull()
+    expect(container.textContent).toContain('Default')
+    ;(container.querySelector('[data-testid="c-to-a"]') as HTMLButtonElement).click()
+    await tick()
+    expect(container.querySelector('[data-testid="view-a"]')).not.toBeNull()
+    expect(container.textContent).toContain('A')
+
+    dispose()
+  })
+
+  it('keeps non-empty switch fallthrough branches reactive', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Switcher() {
+        let mode = $state('a')
+
+        switch (mode) {
+          case 'a':
+            'fallthrough'
+          case 'b':
+            return (
+              <div data-testid="view-ab">
+                <span>AB</span>
+                <button data-testid="ab-to-c" onClick={() => mode = 'c'}>to-c</button>
+              </div>
+            )
+          default:
+            return (
+              <div data-testid="view-c">
+                <span>C</span>
+                <button data-testid="c-to-a" onClick={() => mode = 'a'}>to-a</button>
+              </div>
+            )
+        }
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <Switcher />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+
+    await tick()
+    expect(container.querySelector('[data-testid="view-ab"]')).not.toBeNull()
+    expect(container.textContent).toContain('AB')
+    ;(container.querySelector('[data-testid="ab-to-c"]') as HTMLButtonElement).click()
+    await tick()
+    expect(container.querySelector('[data-testid="view-c"]')).not.toBeNull()
+    expect(container.textContent).toContain('C')
+    ;(container.querySelector('[data-testid="c-to-a"]') as HTMLButtonElement).click()
+    await tick()
+    expect(container.querySelector('[data-testid="view-ab"]')).not.toBeNull()
+    expect(container.textContent).toContain('AB')
+
+    dispose()
+  })
+
+  it('keeps switch-return branches reactive with complex discriminants', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Switcher() {
+        let mode = $state('a')
+
+        switch (mode + '-v') {
+          case 'a-v':
+            return (
+              <div data-testid="view-a">
+                <span>A</span>
+                <button data-testid="a-to-b" onClick={() => mode = 'b'}>to-b</button>
+              </div>
+            )
+          default:
+            return (
+              <div data-testid="view-b">
+                <span>B</span>
+                <button data-testid="b-to-a" onClick={() => mode = 'a'}>to-a</button>
+              </div>
+            )
+        }
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <Switcher />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+
+    await tick()
+    expect(container.querySelector('[data-testid="view-a"]')).not.toBeNull()
+    expect(container.textContent).toContain('A')
+    ;(container.querySelector('[data-testid="a-to-b"]') as HTMLButtonElement).click()
+    await tick()
+    expect(container.querySelector('[data-testid="view-b"]')).not.toBeNull()
+    expect(container.textContent).toContain('B')
+    ;(container.querySelector('[data-testid="b-to-a"]') as HTMLButtonElement).click()
+    await tick()
+    expect(container.querySelector('[data-testid="view-a"]')).not.toBeNull()
+    expect(container.textContent).toContain('A')
+
+    dispose()
+  })
+
   it('keeps try-return branches reactive', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -425,6 +584,58 @@ describe('control-flow region integration', () => {
     expect(container.querySelector('[data-testid="view-a"]')).not.toBeNull()
     expect(container.textContent).toContain('A')
     expect(container.querySelector('[data-testid="view-e"]')).toBeNull()
+
+    dispose()
+  })
+
+  it('keeps try-finally return branches reactive', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Switcher() {
+        let mode = $state('a')
+
+        try {
+          return <div data-testid="base">Base</div>
+        } finally {
+          if (mode === 'a') {
+            return (
+              <div data-testid="view-a">
+                <span>A</span>
+                <button data-testid="a-to-b" onClick={() => mode = 'b'}>to-b</button>
+              </div>
+            )
+          }
+
+          return (
+            <div data-testid="view-b">
+              <span>B</span>
+              <button data-testid="b-to-a" onClick={() => mode = 'a'}>to-a</button>
+            </div>
+          )
+        }
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <Switcher />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+
+    await tick()
+    expect(container.querySelector('[data-testid="view-a"]')).not.toBeNull()
+    expect(container.textContent).toContain('A')
+    expect(container.querySelector('[data-testid="base"]')).toBeNull()
+    ;(container.querySelector('[data-testid="a-to-b"]') as HTMLButtonElement).click()
+    await tick()
+    expect(container.querySelector('[data-testid="view-b"]')).not.toBeNull()
+    expect(container.textContent).toContain('B')
+    ;(container.querySelector('[data-testid="b-to-a"]') as HTMLButtonElement).click()
+    await tick()
+    expect(container.querySelector('[data-testid="view-a"]')).not.toBeNull()
+    expect(container.textContent).toContain('A')
 
     dispose()
   })

@@ -110,7 +110,7 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
   [DiagnosticCode.FICT_R002]: 'Scope escape detected, value may not be tracked.',
   [DiagnosticCode.FICT_R003]: 'Expression cannot be memoized automatically.',
   [DiagnosticCode.FICT_R004]:
-    'Reactive creation inside non-JSX control flow will not auto-dispose; wrap it in createScope/runInScope or move it into JSX-managed regions.',
+    'Reactive creation inside non-JSX control flow may not auto-dispose in complex paths. Prefer createScope/runInScope (or JSX-managed regions) for explicit lifecycle control.',
   [DiagnosticCode.FICT_R005]:
     'Function captures reactive variables from outer scope; pass them as parameters or memoize explicitly to avoid hidden dependencies.',
 
@@ -152,7 +152,7 @@ export const DiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = 
   [DiagnosticCode.FICT_R001]: DiagnosticSeverity.Info,
   [DiagnosticCode.FICT_R002]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_R003]: DiagnosticSeverity.Info,
-  [DiagnosticCode.FICT_R004]: DiagnosticSeverity.Warning,
+  [DiagnosticCode.FICT_R004]: DiagnosticSeverity.Error,
   [DiagnosticCode.FICT_R005]: DiagnosticSeverity.Warning,
 
   [DiagnosticCode.FICT_X001]: DiagnosticSeverity.Hint,

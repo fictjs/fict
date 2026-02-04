@@ -308,7 +308,8 @@ The compiler analyzes and decides which update strategy to adopt at compile time
 - JSX-driven conditions/lists are automatically scoped: when a branch unmounts, its effects/memos are disposed.
 - Simple plain `if` blocks that only set up reactive primitives are auto-wrapped with `runInScope` for cleanup when the condition flips.
 - More complex plain JS control flow (nested conditionals/loops) is **still not auto-scoped**. Creating `createEffect/createMemo/createSelector` inside such blocks can leak unless you manage cleanup.
-- The compiler now emits a warning (`FICT-R004`) when it sees these reactive primitives inside non-JSX control flow that cannot be auto-scoped.
+- The compiler now treats this as a build error (`FICT-R004`) by default when it sees these reactive primitives inside non-JSX control flow that cannot be auto-scoped.
+- If needed, you can explicitly downgrade it with compiler `warningLevels` (for example, `{ 'FICT-R004': 'warn' }`).
 - Use explicit scopes to manage lifetime:
 
 ```ts

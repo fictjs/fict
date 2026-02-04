@@ -5864,7 +5864,32 @@ describe('compiler + fict integration', () => {
       dispose()
     })
 
-    it('auto scopes reactive primitives inside plain if control flow', async () => {
+    it('fails plain-if reactive primitive creation by default with FICT-R004', () => {
+      const source = `
+        import { $state, render, createMemo } from 'fict'
+
+        function App() {
+          let show = $state(true)
+          let count = $state(0)
+
+          if (show) {
+            createMemo(() => count * 2)
+          }
+
+          return <div>{count}</div>
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      expect(() => compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)).toThrow(
+        /FICT-R004/,
+      )
+    })
+
+    it('can auto-scope plain-if reactive primitives when FICT-R004 is explicitly downgraded', async () => {
       const source = `
         import { $state, render, createMemo, createEffect, onCleanup } from 'fict'
 
@@ -5899,7 +5924,7 @@ describe('compiler + fict integration', () => {
       const mod = compileAndLoad<{
         mount: (el: HTMLElement) => () => void
         events: string[]
-      }>(source)
+      }>(source, {}, { warningLevels: { 'FICT-R004': 'warn' } })
       const dispose = mod.mount(container)
       await tick()
 

@@ -929,14 +929,30 @@ function structurizeSwitch(
   const uniqueTargets = Array.from(new Set(term.cases.map(c => c.target)))
   const joinBlock = findSwitchJoinBlock(ctx, uniqueTargets)
   const cases: { test: Expression | null; body: StructuredNode }[] = []
+  const emittedBeforeSwitch = new Set(ctx.emitted)
+  const emittedBySwitchCases = new Set<BlockId>()
 
   for (const c of term.cases) {
+    const caseCtx: StructurizeContext = {
+      ...ctx,
+      emitted: new Set(emittedBeforeSwitch),
+      processing: new Set(ctx.processing),
+    }
     const body =
       joinBlock !== undefined
-        ? structurizeBlockUntilJoin(ctx, c.target, joinBlock)
-        : structurizeBlock(ctx, c.target)
+        ? structurizeBlockUntilJoin(caseCtx, c.target, joinBlock)
+        : structurizeBlock(caseCtx, c.target)
+    for (const emittedBlock of caseCtx.emitted) {
+      if (!emittedBeforeSwitch.has(emittedBlock)) {
+        emittedBySwitchCases.add(emittedBlock)
+      }
+    }
     const normalizedBody = appendSwitchCaseBreak(body)
     cases.push({ test: c.test ?? null, body: normalizedBody })
+  }
+
+  for (const emittedBlock of emittedBySwitchCases) {
+    ctx.emitted.add(emittedBlock)
   }
 
   const switchNode: StructuredNode = {

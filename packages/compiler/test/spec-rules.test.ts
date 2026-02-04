@@ -4,9 +4,12 @@ import type { CompilerWarning, FictCompilerOptions } from '../src/index'
 
 import { transform } from './test-utils'
 
-function transformWithWarnings(source: string): { output: string; warnings: CompilerWarning[] } {
+function transformWithWarnings(
+  source: string,
+  options: FictCompilerOptions = {},
+): { output: string; warnings: CompilerWarning[] } {
   const warnings: CompilerWarning[] = []
-  const output = transform(source, { onWarn: w => warnings.push(w) })
+  const output = transform(source, { ...options, onWarn: w => warnings.push(w) })
   return { output, warnings }
 }
 
@@ -255,8 +258,9 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-S002')).toBe(true)
   })
 
-  it('warns when reactive primitives are created inside non-JSX control flow without a scope (FICT-R004)', () => {
-    const { warnings } = transformWithWarnings(`
+  it('throws when reactive primitives are created inside non-JSX control flow without a scope (FICT-R004)', () => {
+    expect(() =>
+      transform(`
       import { $state, createEffect, createMemo, createSelector } from 'fict'
       function Demo() {
         const count = $state(0)
@@ -267,10 +271,26 @@ describe('Spec rule coverage', () => {
         }
         return <button>{count}</button>
       }
-    `)
+    `),
+    ).toThrow(/FICT-R004/)
+  })
 
-    const r004 = warnings.filter(w => w.code === 'FICT-R004')
-    expect(r004.length).toBeGreaterThan(0)
+  it('can downgrade FICT-R004 to warning via warningLevels', () => {
+    const { warnings } = transformWithWarnings(
+      `
+      import { $state, createEffect } from 'fict'
+      function Demo() {
+        const count = $state(0)
+        if (count > 0) {
+          createEffect(() => console.log(count))
+        }
+        return <button>{count}</button>
+      }
+    `,
+      { warningLevels: { 'FICT-R004': 'warn' } },
+    )
+
+    expect(warnings.some(w => w.code === 'FICT-R004')).toBe(true)
   })
 
   it('detects cyclic derived dependencies inside components', () => {

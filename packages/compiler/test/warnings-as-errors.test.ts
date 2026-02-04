@@ -32,4 +32,40 @@ describe('warnings as errors', () => {
       }),
     ).not.toThrow()
   })
+
+  it('treats FICT-R004 as error by default (including prod)', () => {
+    const r004Source = `
+      import { $state, createEffect } from 'fict'
+      function App() {
+        const state = $state(0)
+        if (state > 0) {
+          createEffect(() => console.log(state))
+        }
+        return <div>{state}</div>
+      }
+    `
+
+    expect(() => transform(r004Source)).toThrow(/FICT-R004/)
+    expect(() => transform(r004Source, { dev: false })).toThrow(/FICT-R004/)
+  })
+
+  it('allows explicitly downgrading FICT-R004', () => {
+    const r004Source = `
+      import { $state, createEffect } from 'fict'
+      function App() {
+        const state = $state(0)
+        if (state > 0) {
+          createEffect(() => console.log(state))
+        }
+        return <div>{state}</div>
+      }
+    `
+
+    expect(() =>
+      transform(r004Source, {
+        dev: false,
+        warningLevels: { 'FICT-R004': 'warn' },
+      }),
+    ).not.toThrow()
+  })
 })

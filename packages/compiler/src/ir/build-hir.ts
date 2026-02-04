@@ -1247,13 +1247,17 @@ function convertFunction(
       const exitBlock = createBlock()
       blocks.push(exitBlock.block)
 
+      const caseBlocks = stmt.cases.map(() => createBlock())
+      for (const caseBlock of caseBlocks) {
+        blocks.push(caseBlock.block)
+      }
+
       const cases: { test?: Expression; target: number }[] = []
       let defaultTarget: number | undefined
 
-      for (const switchCase of stmt.cases) {
-        const caseBlock = createBlock()
-        blocks.push(caseBlock.block)
-
+      for (let index = 0; index < stmt.cases.length; index++) {
+        const switchCase = stmt.cases[index]!
+        const caseBlock = caseBlocks[index]!
         if (switchCase.test) {
           cases.push({
             test: convertExpression(switchCase.test as BabelCore.types.Expression),
@@ -1262,7 +1266,13 @@ function convertFunction(
         } else {
           defaultTarget = caseBlock.block.id
         }
+      }
 
+      for (let index = 0; index < stmt.cases.length; index++) {
+        const switchCase = stmt.cases[index]!
+        const caseBlock = caseBlocks[index]!
+        const nextCaseBlock = caseBlocks[index + 1]
+        const fallthroughTarget = nextCaseBlock ? nextCaseBlock.block.id : exitBlock.block.id
         // Process case statements
         let caseBuilder: BlockBuilder = caseBlock
         for (const s of switchCase.consequent) {
@@ -1276,7 +1286,7 @@ function convertFunction(
 
         // Fall through if not sealed
         if (!caseBuilder.sealed) {
-          caseBuilder.block.terminator = { kind: 'Jump', target: exitBlock.block.id }
+          caseBuilder.block.terminator = { kind: 'Jump', target: fallthroughTarget }
           caseBuilder.sealed = true
         }
       }
@@ -1653,6 +1663,20 @@ function processStatement(
   ctx?: CFGBuildContext,
 ): BlockBuilder {
   const push = (instr: BasicBlock['instructions'][number]) => bb.block.instructions.push(instr)
+
+  // Preserve semantics of lexical blocks (e.g. switch case `{ ... }` consequents)
+  // by recursively lowering contained statements instead of treating the block as
+  // an unsupported statement and sealing with a jump.
+  if (t.isBlockStatement(stmt)) {
+    let current = bb
+    for (const inner of stmt.body) {
+      current = processStatement(inner, current, jumpTarget, ctx)
+      if (current.sealed) {
+        return current
+      }
+    }
+    return current
+  }
 
   if (t.isExpressionStatement(stmt)) {
     if (!handleExpressionStatement(stmt.expression, push)) {
@@ -2135,13 +2159,17 @@ function processStatement(
     const exitBlock = ctx.createBlock()
     ctx.blocks.push(exitBlock.block)
 
+    const caseBlocks = stmt.cases.map(() => ctx.createBlock())
+    for (const caseBlock of caseBlocks) {
+      ctx.blocks.push(caseBlock.block)
+    }
+
     const cases: { test?: Expression; target: number }[] = []
     let defaultTarget: number | undefined
 
-    for (const switchCase of stmt.cases) {
-      const caseBlock = ctx.createBlock()
-      ctx.blocks.push(caseBlock.block)
-
+    for (let index = 0; index < stmt.cases.length; index++) {
+      const switchCase = stmt.cases[index]!
+      const caseBlock = caseBlocks[index]!
       if (switchCase.test) {
         cases.push({
           test: convertExpression(switchCase.test as BabelCore.types.Expression),
@@ -2150,7 +2178,13 @@ function processStatement(
       } else {
         defaultTarget = caseBlock.block.id
       }
+    }
 
+    for (let index = 0; index < stmt.cases.length; index++) {
+      const switchCase = stmt.cases[index]!
+      const caseBlock = caseBlocks[index]!
+      const nextCaseBlock = caseBlocks[index + 1]
+      const fallthroughTarget = nextCaseBlock ? nextCaseBlock.block.id : exitBlock.block.id
       // Process case statements
       let current = caseBlock
       for (const s of switchCase.consequent) {
@@ -2164,7 +2198,7 @@ function processStatement(
 
       // Fall through to next case if not sealed
       if (!current.sealed) {
-        current.block.terminator = { kind: 'Jump', target: exitBlock.block.id }
+        current.block.terminator = { kind: 'Jump', target: fallthroughTarget }
         current.sealed = true
       }
     }

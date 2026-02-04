@@ -15,7 +15,7 @@ Some diagnostics are compiler-only, some are lint-only, and a few are reserved f
 
 ### FICT-P001: Props destructuring fallback
 
-**Severity:** Warning
+**Severity:** Error (default)
 
 **Why:** Destructuring props with unsupported patterns triggers a fallback.
 
@@ -36,7 +36,7 @@ const { count = 0 } = props
 
 ### FICT-P002: Array rest in props destructuring
 
-**Severity:** Warning
+**Severity:** Error (default)
 
 **Why:** Rest patterns in array destructuring cannot be statically analyzed for reactivity.
 
@@ -410,13 +410,21 @@ items.map(item => <Li key={item.id}>{item.name}</Li>)
 
 ### FICT-R004: Reactive primitive in control flow
 
-**Severity:** Warning
+**Severity:** Error (default)
 
 **Why:** A reactive primitive (`$state`, `$effect`, `createMemo`, `createSelector`) is created inside non-JSX control flow without a scope boundary.
 
 **Impact:** May cause memory leaks or unexpected lifecycle behavior.
 
-**Fix:** Ensure reactive primitives are created at component top level.
+**Fix:** Ensure reactive primitives are created at component top level or wrap them with explicit scope management (`createScope`/`runInScope`).
+
+**Downgrade (optional):** If your project needs transitional behavior, set compiler `warningLevels` to override:
+
+```ts
+warningLevels: {
+  'FICT-R004': 'warn',
+}
+```
 
 ### FICT-R005: Closure capture issue
 

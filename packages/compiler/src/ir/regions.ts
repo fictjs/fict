@@ -762,7 +762,9 @@ function ensureSwitchCaseBreak(
   t: typeof BabelCore.types,
 ): BabelCore.types.Statement[] {
   if (stmts.length === 0) {
-    return [t.breakStatement()]
+    // Preserve label-only cases (`case 'a': case 'b': ...`) by keeping the
+    // consequent empty, which allows intentional fallthrough.
+    return stmts
   }
   const tail = stmts[stmts.length - 1]
   if (
