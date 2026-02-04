@@ -846,6 +846,9 @@ function RiskyComponent() {
   and a `reset()` callback to retry rendering the children.
 - `onError` runs when the boundary captures an error.
 - `resetKeys` can be a value or a getter; when it changes, the boundary resets.
+- SSR behavior:
+  - `renderToString`: fallback HTML is rendered when errors are captured.
+  - Streaming (`mode: 'shell'`): handled errors continue the stream; unhandled async errors call `onError` and abort.
 
 ---
 
@@ -1804,6 +1807,25 @@ Key options:
 - `mode: 'shell' | 'all'` — shell-first streaming vs all-ready
 - `snapshotTarget: 'head' | 'body' | 'container'`
 
+### renderToPartial
+
+Partial prerendering API: returns a complete shell HTML plus a deferred patch stream.
+
+```typescript
+import { renderToPartial } from '@fictjs/ssr'
+
+function renderToPartial(
+  view: () => FictNode,
+  options?: RenderToStreamOptions,
+): {
+  shell: string
+  stream: ReadableStream<Uint8Array>
+  shellReady: Promise<void>
+  allReady: Promise<void>
+  abort: (reason?: unknown) => void
+}
+```
+
 ### renderToPipeableStream
 
 Node.js streaming variant:
@@ -1820,6 +1842,8 @@ function renderToPipeableStream(
   allReady: Promise<void>
 }
 ```
+
+For Edge runtimes, prefer `renderToStream()` / `renderToPartial()`.
 
 ---
 

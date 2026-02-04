@@ -341,6 +341,16 @@ await shellReady
 await allReady
 ```
 
+Partial prerendering is also supported:
+
+```tsx
+import { renderToPartial } from '@fictjs/ssr'
+
+const { shell, stream } = renderToPartial(() => <App />, { mode: 'shell' })
+// shell: complete fallback HTML
+// stream: deferred boundary patches
+```
+
 ### `fict/plus` — Advanced APIs
 
 ```tsx

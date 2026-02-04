@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs'
-import { PassThrough } from 'node:stream'
-
 import { render } from '@fictjs/runtime'
 import type { FictNode } from '@fictjs/runtime'
 import {
@@ -76,6 +73,7 @@ export interface RenderToStringOptions {
   /**
    * Manifest mapping module URLs to built client chunk URLs.
    * Can be an object or a path to a JSON file.
+   * File path mode requires Node.js or Deno filesystem access.
    */
   manifest?: Record<string, string> | string
   /**
@@ -126,10 +124,29 @@ export interface PipeableStream {
   allReady: Promise<void>
 }
 
+export interface PartialPrerenderResult {
+  /**
+   * Complete shell HTML (fallbacks + markers + initial snapshot scripts).
+   */
+  shell: string
+  /**
+   * Stream of deferred patch chunks and incremental snapshots.
+   */
+  stream: ReadableStream<Uint8Array>
+  shellReady: Promise<void>
+  allReady: Promise<void>
+  abort: (reason?: unknown) => void
+}
+
 export interface RenderToDocumentResult extends SSRDom {
   html: string
   container: HTMLElement
   dispose: () => void
+}
+
+interface StreamingControlOptions {
+  includeTailInShell?: boolean
+  onShellFlushed?: () => void
 }
 
 export function createSSRDocument(html: string = DEFAULT_HTML): SSRDom {
@@ -222,7 +239,7 @@ export function renderToStream(
   const stream = new ReadableStream<Uint8Array>({
     start(ctrl) {
       controller = ctrl
-      startStreamingRender(view, options, {
+      const started = startStreamingRender(view, options, {
         write(chunk) {
           if (!controller) return
           controller.enqueue(encoder.encode(chunk))
@@ -234,6 +251,9 @@ export function renderToStream(
           controller?.error(reason)
         },
       })
+      // renderToStream doesn't expose readiness promises, so consume rejections
+      // to avoid unhandled promise noise when streaming aborts.
+      started.allReady.catch(() => undefined)
     },
   })
 
@@ -244,26 +264,75 @@ export function renderToPipeableStream(
   view: () => FictNode,
   options: RenderToStreamOptions = {},
 ): PipeableStream {
-  const stream = new PassThrough()
+  const bridge = createPipeBridge()
   const { shellReady, allReady, abort } = startStreamingRender(view, options, {
     write(chunk) {
-      stream.write(chunk)
+      bridge.write(chunk)
     },
     close() {
-      stream.end()
+      bridge.close()
     },
     abort(reason?: unknown) {
-      stream.destroy(reason instanceof Error ? reason : new Error('Stream aborted'))
+      bridge.abort(reason)
     },
   })
 
   return {
     pipe(writable) {
-      stream.pipe(writable)
+      bridge.pipe(writable)
     },
     abort,
     shellReady,
     allReady,
+  }
+}
+
+export function renderToPartial(
+  view: () => FictNode,
+  options: RenderToStreamOptions = {},
+): PartialPrerenderResult {
+  const partialOptions: RenderToStreamOptions = {
+    ...options,
+    mode: 'shell',
+    fullDocument: options.fullDocument ?? true,
+  }
+
+  let shell = ''
+  let shellPhase = true
+  const queued = createQueuedTextStream()
+
+  const { shellReady, allReady, abort } = startStreamingRender(
+    view,
+    partialOptions,
+    {
+      write(chunk) {
+        if (shellPhase) {
+          shell += chunk
+          return
+        }
+        queued.writer.write(chunk)
+      },
+      close() {
+        queued.writer.close()
+      },
+      abort(reason?: unknown) {
+        queued.writer.abort(reason)
+      },
+    },
+    {
+      includeTailInShell: true,
+      onShellFlushed() {
+        shellPhase = false
+      },
+    },
+  )
+
+  return {
+    shell,
+    stream: queued.stream,
+    shellReady,
+    allReady,
+    abort,
   }
 }
 
@@ -303,10 +372,152 @@ interface StreamWriter {
   abort: (reason?: unknown) => void
 }
 
+interface QueuedTextStream {
+  stream: ReadableStream<Uint8Array>
+  writer: StreamWriter
+}
+
+function createQueuedTextStream(): QueuedTextStream {
+  const encoder = new TextEncoder()
+  const queue: Uint8Array[] = []
+  let controller: ReadableStreamDefaultController<Uint8Array> | null = null
+  let closed = false
+  let aborted: unknown
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(ctrl) {
+      controller = ctrl
+      for (const chunk of queue) {
+        ctrl.enqueue(chunk)
+      }
+      queue.length = 0
+      if (aborted !== undefined) {
+        ctrl.error(aborted)
+        return
+      }
+      if (closed) {
+        ctrl.close()
+      }
+    },
+  })
+
+  const writer: StreamWriter = {
+    write(chunk) {
+      if (closed || aborted !== undefined) return
+      const data = encoder.encode(chunk)
+      if (controller) {
+        controller.enqueue(data)
+      } else {
+        queue.push(data)
+      }
+    },
+    close() {
+      if (closed || aborted !== undefined) return
+      closed = true
+      controller?.close()
+    },
+    abort(reason?: unknown) {
+      if (closed || aborted !== undefined) return
+      aborted = reason ?? new Error('Stream aborted')
+      controller?.error(aborted)
+    },
+  }
+
+  return { stream, writer }
+}
+
+interface PipeBridge {
+  pipe: (writable: NodeJS.WritableStream) => void
+  write: (chunk: string) => void
+  close: () => void
+  abort: (reason?: unknown) => void
+}
+
+function createPipeBridge(): PipeBridge {
+  const targets = new Set<NodeJS.WritableStream>()
+  const buffer: string[] = []
+  let state: 'open' | 'closed' | 'aborted' = 'open'
+  let abortReason: Error | null = null
+
+  const safeWrite = (target: NodeJS.WritableStream, chunk: string) => {
+    try {
+      target.write(chunk)
+    } catch {
+      // Ignore target write errors to keep stream lifecycle deterministic.
+    }
+  }
+
+  const safeEnd = (target: NodeJS.WritableStream) => {
+    try {
+      target.end()
+    } catch {
+      // Ignore end errors from downstream writable.
+    }
+  }
+
+  const safeDestroy = (target: NodeJS.WritableStream, reason: Error) => {
+    const withDestroy = target as NodeJS.WritableStream & { destroy?: (error?: Error) => void }
+    if (typeof withDestroy.destroy === 'function') {
+      try {
+        withDestroy.destroy(reason)
+      } catch {
+        // Ignore destroy errors from downstream writable.
+      }
+      return
+    }
+    safeEnd(target)
+  }
+
+  return {
+    pipe(writable) {
+      targets.add(writable)
+      if (buffer.length > 0) {
+        for (const chunk of buffer) {
+          safeWrite(writable, chunk)
+        }
+        buffer.length = 0
+      }
+      if (state === 'closed') {
+        safeEnd(writable)
+      } else if (state === 'aborted') {
+        safeDestroy(writable, abortReason ?? new Error('Stream aborted'))
+      }
+    },
+    write(chunk) {
+      if (state !== 'open') return
+      if (targets.size === 0) {
+        buffer.push(chunk)
+        return
+      }
+      for (const target of targets) {
+        safeWrite(target, chunk)
+      }
+    },
+    close() {
+      if (state !== 'open') return
+      state = 'closed'
+      for (const target of targets) {
+        safeEnd(target)
+      }
+      buffer.length = 0
+    },
+    abort(reason?: unknown) {
+      if (state !== 'open') return
+      state = 'aborted'
+      abortReason = reason instanceof Error ? reason : new Error('Stream aborted')
+      for (const target of targets) {
+        safeDestroy(target, abortReason)
+      }
+      buffer.length = 0
+    },
+  }
+}
+
 function startStreamingRender(
   view: () => FictNode,
   options: RenderToStreamOptions,
   writer: StreamWriter,
+  control: StreamingControlOptions = {},
 ): { shellReady: Promise<void>; allReady: Promise<void>; abort: (reason?: unknown) => void } {
   const resolvedOptions: RenderToStringOptions = {
     ...options,
@@ -334,6 +545,7 @@ function startStreamingRender(
   let closed = false
   let tailHtml = ''
   let wroteShell = false
+  let shellCarriesTail = false
 
   const mode = options.mode ?? 'shell'
   const includeSnapshot = options.includeSnapshot !== false
@@ -448,6 +660,10 @@ function startStreamingRender(
       }
       maybeFinalize()
     },
+    onError(err: unknown) {
+      options.onError?.(err)
+      abort(err)
+    },
   }
 
   const abort = (reason?: unknown) => {
@@ -493,13 +709,25 @@ function startStreamingRender(
       if (!split) {
         throw new Error('[fict/ssr] Failed to locate </body> for streaming output.')
       }
-      writer.write(split.head + streamRuntime)
-      tailHtml = split.tail
+      if (control.includeTailInShell) {
+        writer.write(split.head + streamRuntime)
+        tailHtml = split.tail
+        shellCarriesTail = true
+      } else {
+        writer.write(split.head + streamRuntime)
+        tailHtml = split.tail
+      }
     } else {
       writer.write(shellHtml + streamRuntime)
     }
     wroteShell = true
     writeSnapshotForScopes(Array.from(__fictGetScopeRegistry().keys()))
+    if (shellCarriesTail && tailHtml) {
+      writer.write(tailHtml)
+      tailHtml = ''
+      shellCarriesTail = false
+    }
+    control.onShellFlushed?.()
     resolveShell()
     options.onShellReady?.()
 
@@ -774,12 +1002,49 @@ function restoreGlobals(snapshot: GlobalSnapshot[]): void {
   }
 }
 
+function readTextFileFromPath(path: string): string {
+  const g = globalThis as Record<string, unknown>
+
+  const deno = g.Deno as { readTextFileSync?: (path: string) => string } | undefined
+  if (deno && typeof deno.readTextFileSync === 'function') {
+    return deno.readTextFileSync(path)
+  }
+
+  const nodeRequire = getNodeRequire()
+  if (nodeRequire) {
+    const fs = nodeRequire('node:fs') as {
+      readFileSync: (path: string, encoding: string) => string
+    }
+    return fs.readFileSync(path, 'utf8')
+  }
+
+  throw new Error(
+    '[fict/ssr] `manifest` as file path is only supported in Node.js or Deno. ' +
+      'Pass a manifest object in edge runtimes.',
+  )
+}
+
+function getNodeRequire(): ((specifier: string) => unknown) | null {
+  const g = globalThis as Record<string, unknown>
+  const direct = g.require
+  if (typeof direct === 'function') {
+    return direct as (specifier: string) => unknown
+  }
+  try {
+    return Function('return typeof require === "function" ? require : null')() as
+      | ((specifier: string) => unknown)
+      | null
+  } catch {
+    return null
+  }
+}
+
 function installManifest(manifest?: Record<string, string> | string): () => void {
   if (!manifest) return () => {}
 
   let resolved: Record<string, string>
   if (typeof manifest === 'string') {
-    const raw = readFileSync(manifest, 'utf8')
+    const raw = readTextFileFromPath(manifest)
     resolved = JSON.parse(raw) as Record<string, string>
   } else {
     resolved = manifest

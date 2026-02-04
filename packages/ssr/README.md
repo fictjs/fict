@@ -10,6 +10,8 @@ Fict's Server-Side Rendering (SSR) package, providing high-performance server-si
 - [Core Concepts](#core-concepts)
 - [API Reference](#api-reference)
 - [Architecture Design](#architecture-design)
+- [Partial Prerendering](#partial-prerendering)
+- [Edge Runtime](#edge-runtime)
 - [Integration with Vite](#integration-with-vite)
 - [Advanced Usage](#advanced-usage)
 - [Performance Optimization](#performance-optimization)
@@ -285,7 +287,7 @@ const stream = renderToStream(() => <App />, { mode: 'shell' })
 
 ### renderToPipeableStream
 
-Node.js stream variant (compatible with `pipe()`).
+Node.js-style stream variant (compatible with `pipe()`).
 
 ```typescript
 import { renderToPipeableStream } from '@fictjs/ssr'
@@ -295,6 +297,25 @@ pipe(res)
 await shellReady
 await allReady
 ```
+
+> Use `renderToStream()` in Edge runtimes (Cloudflare Workers, Vercel Edge, Deno Deploy).
+
+### renderToPartial
+
+Generate a complete shell HTML plus a deferred patch stream for Partial Prerendering workflows.
+
+```typescript
+import { renderToPartial } from '@fictjs/ssr'
+
+const { shell, stream, shellReady, allReady } = renderToPartial(() => <App />, {
+  mode: 'shell',
+  fullDocument: true,
+})
+```
+
+- `shell`: complete HTML document (fallbacks + boundary markers + initial snapshots)
+- `stream`: patch chunks (`data-fict-suspense` + incremental snapshots) for deferred delivery
+- `shellReady` / `allReady`: readiness signals for orchestration
 
 ### createSSRDocument
 
@@ -410,6 +431,25 @@ Generated detailed `fict.manifest.json` during production build, mapping virtual
 
 ## Integration with Vite
 
+## Partial Prerendering
+
+`renderToPartial()` enables a PPR-style split:
+
+1. **Shell phase**: serve/cache `shell` as static-first HTML.
+2. **Deferred phase**: deliver `stream` patches for resolved Suspense boundaries.
+
+This keeps shell TTFB low while still allowing server-resolved dynamic islands.
+
+## Edge Runtime
+
+`@fictjs/ssr` can run in Edge environments via `renderToStream()` and `renderToString()`.
+
+Notes:
+
+- `manifest` as an object works in all runtimes.
+- `manifest` as a file path string requires Node.js or Deno sync file access.
+- Prefer `renderToStream()` over `renderToPipeableStream()` for Edge.
+
 ### vite.config.ts
 
 ```typescript
@@ -491,23 +531,21 @@ app.get('*', async (req, res) => {
 })
 ```
 
-### Streaming Rendering (Experimental)
+### Streaming Rendering
 
 ```typescript
-import { renderToDocument } from '@fictjs/ssr'
+import { renderToPipeableStream } from '@fictjs/ssr'
 
 app.get('*', async (req, res) => {
-  const result = renderToDocument(() => <App />, {
-    includeSnapshot: true,
+  const { pipe, shellReady, allReady } = renderToPipeableStream(() => <App />, {
+    mode: 'shell',
   })
 
-  // Can send in chunks
-  res.write('<!DOCTYPE html><html><head>...</head><body>')
-  res.write(result.html)
-  res.write('</body></html>')
-  res.end()
+  res.setHeader('Content-Type', 'text/html; charset=utf-8')
+  pipe(res)
 
-  result.dispose()
+  await shellReady
+  await allReady
 })
 ```
 

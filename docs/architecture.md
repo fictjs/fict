@@ -826,6 +826,9 @@ Fict’s SSR executes compiled output inside a DOM simulation (linkedom) and ser
 `renderToString` returns a full HTML string, while streaming mode can emit a **shell-first**
 response and patch Suspense boundaries as they resolve.
 
+`renderToPartial` is available for Partial Prerendering workflows: it returns a
+complete shell HTML plus a deferred patch stream.
+
 ### 12.1 Shell-first streaming
 
 - Initial chunk contains fallback UI and boundary markers.
@@ -844,6 +847,13 @@ response and patch Suspense boundaries as they resolve.
   flushed at the end.
 - When `snapshotTarget: 'head'`, each snapshot chunk injects into `<head>` via a
   small script.
+
+### 12.4 Edge runtime notes
+
+- Use `renderToStream` / `renderToPartial` in Edge runtimes.
+- `renderToPipeableStream` targets Node-style writable streams.
+- `manifest` file path strings rely on runtime filesystem access (Node/Deno);
+  edge environments should pass manifest objects.
 
 ## 13. Summary
 

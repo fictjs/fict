@@ -11,6 +11,14 @@ This note documents the runtime semantics for error capture in Fict 1.0.
 
 If no boundary handles the error (handler returns `false` or there is no boundary), the error is re-thrown.
 
+## SSR semantics
+
+- `renderToString` / `renderToDocument`: captured render errors produce fallback HTML directly.
+- `renderToStream` (`mode: 'shell'`):
+  - handled errors keep streaming active and complete normally;
+  - unhandled async errors (for example Suspense token rejection without a boundary) trigger `onError` and abort the stream.
+- `renderToStream` (`mode: 'all'`): unhandled errors reject readiness and abort output.
+
 ## ErrorBoundary API
 
 ```tsx

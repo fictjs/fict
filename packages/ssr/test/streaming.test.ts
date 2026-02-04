@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 import type { FictNode } from '@fictjs/runtime'
 import { Suspense, createSuspenseToken } from '@fictjs/runtime'
 
-import { renderToPipeableStream, renderToStream } from '../src/index'
+import { renderToPartial, renderToPipeableStream, renderToStream } from '../src/index'
 
 const decoder = new TextDecoder()
 
@@ -202,5 +202,171 @@ describe('@fictjs/ssr streaming', () => {
     const snapshotIndex = html.indexOf('__FICT_SNAPSHOT__')
     expect(headIndex).toBeGreaterThan(-1)
     expect(snapshotIndex).toBeGreaterThan(headIndex)
+  })
+
+  it('aborts shell stream when suspense token rejects without a boundary', async () => {
+    const token = createSuspenseToken()
+
+    function AsyncChild(): FictNode {
+      throw token.token
+    }
+
+    function App(): FictNode {
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'RejectLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    let error: unknown
+    const stream = renderToStream(() => ({ type: App, props: {} }), {
+      mode: 'shell',
+      onError(err) {
+        error = err
+      },
+    })
+    const readAll = readReadableStream(stream)
+
+    await Promise.resolve()
+    token.reject(new Error('reject-boom'))
+
+    await expect(readAll).rejects.toThrow('reject-boom')
+    expect(error).toBeInstanceOf(Error)
+    expect((error as Error).message).toContain('reject-boom')
+  })
+
+  it('streams multiple suspense boundaries in resolve order', async () => {
+    const first = createSuspenseToken()
+    const second = createSuspenseToken()
+    let firstReady = false
+    let secondReady = false
+
+    function FirstChild(): FictNode {
+      if (!firstReady) throw first.token
+      return { type: 'span', props: { children: 'FirstDone' } }
+    }
+
+    function SecondChild(): FictNode {
+      if (!secondReady) throw second.token
+      return { type: 'span', props: { children: 'SecondDone' } }
+    }
+
+    function App(): FictNode {
+      return {
+        type: 'div',
+        props: {
+          children: [
+            {
+              type: Suspense,
+              props: {
+                fallback: { type: 'div', props: { children: 'FirstLoading' } },
+                children: { type: FirstChild, props: {} },
+              },
+            },
+            {
+              type: Suspense,
+              props: {
+                fallback: { type: 'div', props: { children: 'SecondLoading' } },
+                children: { type: SecondChild, props: {} },
+              },
+            },
+          ],
+        },
+      }
+    }
+
+    const stream = renderToStream(() => ({ type: App, props: {} }), { mode: 'shell' })
+    const readAll = readReadableStream(stream)
+
+    await Promise.resolve()
+    secondReady = true
+    second.resolve()
+    await Promise.resolve()
+    firstReady = true
+    first.resolve()
+
+    const html = await readAll
+    expect(html).toContain('FirstLoading')
+    expect(html).toContain('SecondLoading')
+    expect(html).toContain('FirstDone')
+    expect(html).toContain('SecondDone')
+    expect((html.match(/data-fict-suspense=/g) ?? []).length).toBeGreaterThanOrEqual(2)
+    expect(html.indexOf('SecondDone')).toBeLessThan(html.indexOf('FirstDone'))
+  })
+
+  it('renderToPartial returns full shell and patch stream separately', async () => {
+    const token = createSuspenseToken()
+    let ready = false
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      return { type: 'span', props: { children: 'PartialDone' } }
+    }
+
+    function App(): FictNode {
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'PartialLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    const partial = renderToPartial(() => ({ type: App, props: {} }), {
+      fullDocument: true,
+      mode: 'shell',
+    })
+
+    expect(partial.shell).toContain('<!DOCTYPE html')
+    expect(partial.shell).toContain('PartialLoading')
+    expect(partial.shell).toContain('__FICT_STREAM')
+    expect(partial.shell).toContain('data-fict-snapshot')
+    expect(partial.shell).toContain('</html>')
+    expect(partial.shell).not.toContain('PartialDone')
+
+    const readPatches = readReadableStream(partial.stream)
+    await Promise.resolve()
+    ready = true
+    token.resolve()
+    await partial.shellReady
+
+    const patches = await readPatches
+    expect(patches).toContain('PartialDone')
+    expect(patches).toContain('data-fict-suspense')
+    await expect(partial.allReady).resolves.toBeUndefined()
+  })
+
+  it('respects AbortSignal cancellation in shell mode', async () => {
+    const token = createSuspenseToken()
+    const controller = new AbortController()
+
+    function AsyncChild(): FictNode {
+      throw token.token
+    }
+
+    function App(): FictNode {
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'AbortLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    const stream = renderToStream(() => ({ type: App, props: {} }), {
+      mode: 'shell',
+      signal: controller.signal,
+    })
+    const readAll = readReadableStream(stream)
+
+    await Promise.resolve()
+    controller.abort(new Error('abort-shell'))
+
+    await expect(readAll).rejects.toThrow('abort-shell')
   })
 })

@@ -196,9 +196,29 @@ export function Suspense(props: SuspenseProps): FictNode {
           }
           const newPending = Math.max(0, pending() - 1)
           pending(newPending)
-          props.onReject?.(err)
-          if (!handleError(err, { source: 'render' }, hostRoot)) {
-            throw err
+          let rejectionError = err
+          try {
+            props.onReject?.(err)
+          } catch (callbackError) {
+            rejectionError = callbackError
+          }
+
+          const handled = handleError(rejectionError, { source: 'render' }, hostRoot)
+          if (!handled) {
+            if (streamHooks?.onError) {
+              streamHooks.onError(rejectionError, streamBoundaryId ?? undefined)
+              return
+            }
+            throw rejectionError
+          }
+          if (
+            newPending === 0 &&
+            streamPending &&
+            streamBoundaryId &&
+            streamHooks?.boundaryResolved
+          ) {
+            streamPending = false
+            streamHooks.boundaryResolved(streamBoundaryId)
           }
         },
       )

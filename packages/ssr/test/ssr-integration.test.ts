@@ -10,6 +10,7 @@ import presetTypescript from '@babel/preset-typescript'
 import { describe, it, expect, afterEach } from 'vitest'
 
 import type { FictNode } from '@fictjs/runtime'
+import { ErrorBoundary } from '@fictjs/runtime'
 import { installResumableLoader } from '@fictjs/runtime/loader'
 import {
   __fictUseContext,
@@ -218,6 +219,28 @@ describe('SSR Output + Loader Event Recovery', () => {
     // The data-onclick attribute should be in the HTML
     expect(html).toContain('data-onclick="/assets/handler.js#handleClick"')
     expect(html).toContain('Click me')
+  })
+
+  it('ErrorBoundary captures render errors during SSR', () => {
+    function ThrowingChild(): FictNode {
+      throw new Error('boundary-ssr-error')
+    }
+
+    function App(): FictNode {
+      return {
+        type: ErrorBoundary,
+        props: {
+          fallback: (error: unknown) => ({
+            type: 'div',
+            props: { children: `Caught:${(error as Error).message}` },
+          }),
+          children: { type: ThrowingChild, props: {} },
+        },
+      }
+    }
+
+    const html = renderToString(() => ({ type: App, props: {} }))
+    expect(html).toContain('Caught:boundary-ssr-error')
   })
 })
 
