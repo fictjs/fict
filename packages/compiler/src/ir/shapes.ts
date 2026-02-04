@@ -225,6 +225,7 @@ function resolveKeySet(
           const values: (string | number)[] = []
           for (const prop of arg.properties) {
             if (prop.kind !== 'Property') return null
+            if (prop.computed) return null
             if (prop.key.kind === 'Identifier') {
               values.push(prop.key.name)
             } else if (prop.key.kind === 'Literal') {
@@ -712,7 +713,10 @@ function analyzeExpression(
           }
           analyzeExpression(prop.argument, shapes, propertyReads, ctx)
         } else if (prop.kind === 'Property') {
-          if (prop.key.kind === 'Identifier') {
+          if (prop.computed) {
+            shape.dynamicAccess = true
+            analyzeExpression(prop.key, shapes, propertyReads, ctx)
+          } else if (prop.key.kind === 'Identifier') {
             shape.knownKeys.add(prop.key.name)
           } else if (prop.key.kind === 'Literal' && typeof prop.key.value === 'string') {
             shape.knownKeys.add(prop.key.value)
@@ -1026,6 +1030,7 @@ function markEscaping(expr: Expression, shapes: Map<string, ObjectShape>): void 
         if (prop.kind === 'SpreadElement') {
           markEscaping(prop.argument, shapes)
         } else if (prop.kind === 'Property') {
+          if (prop.computed) markEscaping(prop.key, shapes)
           markEscaping(prop.value, shapes)
         }
       }

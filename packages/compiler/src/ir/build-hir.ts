@@ -1268,6 +1268,11 @@ function convertFunction(
         }
       }
 
+      // Allow `break` inside switch cases (including nested block statements)
+      cfgContext.loopStack.push({
+        breakTarget: exitBlock.block.id,
+      })
+
       for (let index = 0; index < stmt.cases.length; index++) {
         const switchCase = stmt.cases[index]!
         const caseBlock = caseBlocks[index]!
@@ -1276,11 +1281,7 @@ function convertFunction(
         // Process case statements
         let caseBuilder: BlockBuilder = caseBlock
         for (const s of switchCase.consequent) {
-          if (t.isBreakStatement(s)) {
-            caseBuilder.block.terminator = { kind: 'Jump', target: exitBlock.block.id }
-            caseBuilder.sealed = true
-            break
-          }
+          if (caseBuilder.sealed) break
           caseBuilder = processStatement(s, caseBuilder, exitBlock.block.id, cfgContext)
         }
 
@@ -1290,6 +1291,8 @@ function convertFunction(
           caseBuilder.sealed = true
         }
       }
+
+      cfgContext.loopStack.pop()
 
       // Add default case
       if (defaultTarget === undefined) {
@@ -1471,6 +1474,13 @@ function convertFunction(
       current = exitBlock as BlockBuilder
       continue
     }
+
+    // Route any remaining statement kinds through the generic statement handler.
+    // This prevents silent statement loss when top-level handling misses a node kind.
+    current = processStatement(stmt, current, current.block.id, cfgContext)
+    if (current.sealed) {
+      current = startNewBlock()
+    }
   }
 
   // Seal final block if not sealed
@@ -1602,7 +1612,7 @@ function handleExpressionStatement(
  */
 interface LoopContext {
   breakTarget: number
-  continueTarget: number
+  continueTarget?: number
   label?: string
 }
 
@@ -1611,6 +1621,32 @@ interface CFGBuildContext {
   nextBlockId: () => number
   createBlock: () => BlockBuilder
   loopStack: LoopContext[]
+}
+
+function findBreakContext(ctx: CFGBuildContext, label?: string): LoopContext | undefined {
+  if (label) {
+    for (let i = ctx.loopStack.length - 1; i >= 0; i--) {
+      const entry = ctx.loopStack[i]
+      if (entry?.label === label) return entry
+    }
+    return undefined
+  }
+  return ctx.loopStack[ctx.loopStack.length - 1]
+}
+
+function findContinueContext(ctx: CFGBuildContext, label?: string): LoopContext | undefined {
+  if (label) {
+    for (let i = ctx.loopStack.length - 1; i >= 0; i--) {
+      const entry = ctx.loopStack[i]
+      if (entry?.label === label && entry.continueTarget !== undefined) return entry
+    }
+    return undefined
+  }
+  for (let i = ctx.loopStack.length - 1; i >= 0; i--) {
+    const entry = ctx.loopStack[i]
+    if (entry?.continueTarget !== undefined) return entry
+  }
+  return undefined
 }
 
 /**
@@ -1661,21 +1697,63 @@ function processStatement(
   bb: BlockBuilder,
   jumpTarget: number,
   ctx?: CFGBuildContext,
+  labelOverride?: string,
 ): BlockBuilder {
   const push = (instr: BasicBlock['instructions'][number]) => bb.block.instructions.push(instr)
 
+  if (t.isLabeledStatement(stmt) && ctx) {
+    const label = stmt.label.name
+    const body = stmt.body as BabelCore.types.Statement
+    if (
+      t.isWhileStatement(body) ||
+      t.isForStatement(body) ||
+      t.isDoWhileStatement(body) ||
+      t.isForInStatement(body) ||
+      t.isForOfStatement(body) ||
+      t.isSwitchStatement(body)
+    ) {
+      return processStatement(body, bb, jumpTarget, ctx, label)
+    }
+
+    ctx.loopStack.push({
+      breakTarget: jumpTarget,
+      label,
+    })
+    try {
+      return processStatement(body, bb, jumpTarget, ctx)
+    } finally {
+      ctx.loopStack.pop()
+    }
+  }
+
+  if (t.isEmptyStatement(stmt)) {
+    return bb
+  }
+
   // Preserve semantics of lexical blocks (e.g. switch case `{ ... }` consequents)
-  // by recursively lowering contained statements instead of treating the block as
-  // an unsupported statement and sealing with a jump.
+  // by recursively lowering contained statements.
   if (t.isBlockStatement(stmt)) {
+    const shouldScopeLabel = !!labelOverride && !!ctx
+    if (shouldScopeLabel) {
+      ctx!.loopStack.push({
+        breakTarget: jumpTarget,
+        label: labelOverride,
+      })
+    }
     let current = bb
-    for (const inner of stmt.body) {
-      current = processStatement(inner, current, jumpTarget, ctx)
-      if (current.sealed) {
-        return current
+    try {
+      for (const inner of stmt.body) {
+        current = processStatement(inner, current, jumpTarget, ctx)
+        if (current.sealed) {
+          return current
+        }
+      }
+      return current
+    } finally {
+      if (shouldScopeLabel) {
+        ctx!.loopStack.pop()
       }
     }
-    return current
   }
 
   if (t.isExpressionStatement(stmt)) {
@@ -1807,6 +1885,22 @@ function processStatement(
     return bb
   }
 
+  if (t.isClassDeclaration(stmt) && stmt.id) {
+    const classExpr = t.classExpression(
+      stmt.id,
+      stmt.superClass as BabelCore.types.Expression | null | undefined,
+      stmt.body,
+      stmt.decorators ?? null,
+    )
+    push({
+      kind: 'Assign',
+      target: { kind: 'Identifier', name: stmt.id.name },
+      value: convertExpression(classExpr),
+      declarationKind: 'let',
+    })
+    return bb
+  }
+
   if (t.isReturnStatement(stmt)) {
     bb.block.terminator = {
       kind: 'Return',
@@ -1828,9 +1922,7 @@ function processStatement(
   // Handle break statement
   if (t.isBreakStatement(stmt) && ctx) {
     const label = stmt.label?.name
-    const loopCtx = label
-      ? ctx.loopStack.find(l => l.label === label)
-      : ctx.loopStack[ctx.loopStack.length - 1]
+    const loopCtx = findBreakContext(ctx, label)
     if (loopCtx) {
       bb.block.terminator = { kind: 'Break', target: loopCtx.breakTarget, label }
       bb.sealed = true
@@ -1847,11 +1939,9 @@ function processStatement(
   // Handle continue statement
   if (t.isContinueStatement(stmt) && ctx) {
     const label = stmt.label?.name
-    const loopCtx = label
-      ? ctx.loopStack.find(l => l.label === label)
-      : ctx.loopStack[ctx.loopStack.length - 1]
+    const loopCtx = findContinueContext(ctx, label)
     if (loopCtx) {
-      bb.block.terminator = { kind: 'Continue', target: loopCtx.continueTarget, label }
+      bb.block.terminator = { kind: 'Continue', target: loopCtx.continueTarget!, label }
       bb.sealed = true
     } else {
       // Continue statement outside of loop
@@ -1921,6 +2011,7 @@ function processStatement(
     ctx.loopStack.push({
       breakTarget: exitBlock.block.id,
       continueTarget: condBlock.block.id,
+      label: labelOverride,
     })
 
     // Body loops back to condition
@@ -1984,6 +2075,7 @@ function processStatement(
     ctx.loopStack.push({
       breakTarget: exitBlock.block.id,
       continueTarget: updateBlock.block.id, // continue goes to update in for loop
+      label: labelOverride,
     })
 
     // Body goes to update
@@ -2021,6 +2113,7 @@ function processStatement(
     ctx.loopStack.push({
       breakTarget: exitBlock.block.id,
       continueTarget: condBlock.block.id,
+      label: labelOverride,
     })
 
     // Body goes to condition
@@ -2087,6 +2180,7 @@ function processStatement(
     ctx.loopStack.push({
       breakTarget: exitBlock.block.id,
       continueTarget: bodyBlock.block.id,
+      label: labelOverride,
     })
 
     // Process body
@@ -2143,6 +2237,7 @@ function processStatement(
     ctx.loopStack.push({
       breakTarget: exitBlock.block.id,
       continueTarget: bodyBlock.block.id,
+      label: labelOverride,
     })
 
     // Process body
@@ -2180,6 +2275,12 @@ function processStatement(
       }
     }
 
+    // Allow `break` inside switch cases (including nested block statements)
+    ctx.loopStack.push({
+      breakTarget: exitBlock.block.id,
+      label: labelOverride,
+    })
+
     for (let index = 0; index < stmt.cases.length; index++) {
       const switchCase = stmt.cases[index]!
       const caseBlock = caseBlocks[index]!
@@ -2188,11 +2289,7 @@ function processStatement(
       // Process case statements
       let current = caseBlock
       for (const s of switchCase.consequent) {
-        if (t.isBreakStatement(s)) {
-          current.block.terminator = { kind: 'Jump', target: exitBlock.block.id }
-          current.sealed = true
-          break
-        }
+        if (current.sealed) break
         current = processStatement(s, current, exitBlock.block.id, ctx)
       }
 
@@ -2202,6 +2299,8 @@ function processStatement(
         current.sealed = true
       }
     }
+
+    ctx.loopStack.pop()
 
     // Add default case if not present
     if (defaultTarget === undefined) {
@@ -2269,12 +2368,9 @@ function processStatement(
     return exitBlock
   }
 
-  // Fallback: seal with jump
-  if (!bb.sealed) {
-    bb.block.terminator = { kind: 'Jump', target: jumpTarget }
-    bb.sealed = true
-  }
-  return bb
+  throw new HIRError(`Unsupported statement in HIR lowering: ${stmt.type}`, 'BUILD_ERROR', {
+    blockId: bb.block.id,
+  })
 }
 
 function convertExpression(
@@ -2513,14 +2609,17 @@ function convertExpression(
             } as HSpreadElement
           }
           if (t.isObjectMethod(prop)) {
-            if (prop.computed) return undefined
-            const keyExpr = t.isIdentifier(prop.key)
-              ? ({ kind: 'Identifier', name: prop.key.name } as HIdentifier)
-              : t.isStringLiteral(prop.key)
-                ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
-                : t.isNumericLiteral(prop.key)
+            const keyExpr = prop.computed
+              ? t.isExpression(prop.key)
+                ? convertExpression(prop.key)
+                : undefined
+              : t.isIdentifier(prop.key)
+                ? ({ kind: 'Identifier', name: prop.key.name } as HIdentifier)
+                : t.isStringLiteral(prop.key)
                   ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
-                  : undefined
+                  : t.isNumericLiteral(prop.key)
+                    ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
+                    : undefined
             if (!keyExpr) return undefined
             const fnExpr = t.functionExpression(
               null,
@@ -2533,23 +2632,29 @@ function convertExpression(
               kind: 'Property',
               key: keyExpr,
               value: convertExpression(fnExpr),
+              computed: prop.computed,
               loc: getLoc(prop),
             }
           }
-          if (!t.isObjectProperty(prop) || prop.computed) return undefined
-          const keyExpr = t.isIdentifier(prop.key)
-            ? ({ kind: 'Identifier', name: prop.key.name } as HIdentifier)
-            : t.isStringLiteral(prop.key)
-              ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
-              : t.isNumericLiteral(prop.key)
+          if (!t.isObjectProperty(prop)) return undefined
+          const keyExpr = prop.computed
+            ? t.isExpression(prop.key)
+              ? convertExpression(prop.key)
+              : undefined
+            : t.isIdentifier(prop.key)
+              ? ({ kind: 'Identifier', name: prop.key.name } as HIdentifier)
+              : t.isStringLiteral(prop.key)
                 ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
-                : undefined
+                : t.isNumericLiteral(prop.key)
+                  ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
+                  : undefined
           if (!keyExpr) return undefined
           if (!t.isExpression(prop.value)) return undefined
           return {
             kind: 'Property',
             key: keyExpr,
             value: convertExpression(prop.value),
+            computed: prop.computed,
             shorthand: prop.shorthand && t.isIdentifier(prop.value),
             loc: getLoc(prop),
           }
@@ -2847,7 +2952,10 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
     tagName = convertJSXMemberExpr(opening.name)
     isComponent = true
   } else {
-    tagName = 'div' // fallback
+    return reportUnsupportedExpression(
+      opening.name,
+      `Unsupported JSX tag syntax '${opening.name.type}' in HIR conversion`,
+    )
   }
 
   const attributes: HJSXAttribute[] = []

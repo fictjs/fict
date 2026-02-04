@@ -8,6 +8,17 @@ function runTransform(source: string): string {
   return transform(source)
 }
 
+function runTransformWithWarnings(source: string): { output: string; warnings: string[] } {
+  const warnings: string[] = []
+  const output = transform(source, {
+    dev: true,
+    onWarn(warning) {
+      warnings.push(`${warning.code}:${warning.message}`)
+    },
+  })
+  return { output, warnings }
+}
+
 describe('Fict Compiler - Control Flow', () => {
   describe('Conditional expressions', () => {
     it('handles conditional in JSX (&&)', () => {
@@ -260,6 +271,27 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toContain('B')
     })
 
+    it('keeps switch case block return when followed by case-level break', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let mode = $state('a')
+          switch (mode) {
+            case 'a': {
+              return <div>A</div>
+            }
+            break
+            default:
+              return <div>B</div>
+          }
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('A')
+      expect(output).toContain('B')
+      expect(output).toContain('createConditional')
+    })
+
     it('converts switch fallthrough labels into reactive conditionals', () => {
       const input = `
         import { $state } from 'fict'
@@ -312,6 +344,29 @@ describe('Fict Compiler - Control Flow', () => {
       `
       const output = runTransform(input)
       expect(output).toContain('createConditional')
+      expect(output).toContain('createMemo')
+    })
+
+    it('memoizes switch discriminant reads to avoid duplicated side effects', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let mode = $state('a')
+          function next() {
+            console.log('next')
+            return mode
+          }
+          switch (next()) {
+            case 'a':
+              return <div>A</div>
+            default:
+              return <div>B</div>
+          }
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createMemo')
+      expect(output).toContain('createMemo(() => next())')
     })
   })
 
@@ -431,6 +486,61 @@ describe('Fict Compiler - Control Flow', () => {
       const output = runTransform(input)
       expect(output).toContain('items()')
       expect(output).toContain('threshold()')
+    })
+  })
+
+  describe('Unsupported statement handling', () => {
+    it('preserves class declarations in JSX-bearing components', () => {
+      const input = `
+        function Component() {
+          class X {
+            value() { return 1 }
+          }
+          return <div>{new X().value()}</div>
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('class X')
+      expect(output).toContain('new X().value()')
+    })
+
+    it('handles labeled loops without dropping behavior', () => {
+      const input = `
+        function Component() {
+          let total = 0
+          outer: for (const row of [[1, 2], [3]]) {
+            for (const cell of row) {
+              if (cell === 2) continue outer
+              total = total + cell
+            }
+          }
+          return <div>{total}</div>
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('continue outer')
+      expect(output).toContain('total')
+    })
+
+    it('emits FICT-R003 when reactive if-return lowering is skipped', () => {
+      const input = `
+        function Component({ mode }) {
+          if (mode) {
+            while (true) {
+              break
+            }
+          }
+          return <div>{mode}</div>
+        }
+      `
+      const { warnings } = runTransformWithWarnings(input)
+      expect(
+        warnings.some(
+          warning =>
+            warning.includes('FICT-R003') &&
+            warning.includes('Reactive if-return lowering was skipped'),
+        ),
+      ).toBe(true)
     })
   })
 })

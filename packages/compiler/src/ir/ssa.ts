@@ -245,7 +245,11 @@ function rewriteExprWithMap(expr: any, rewrites: Map<string, string>): any {
           if (p.kind === 'SpreadElement') {
             return { ...p, argument: rewriteExprWithMap(p.argument, rewrites) }
           }
-          return { ...p, value: rewriteExprWithMap(p.value, rewrites) }
+          return {
+            ...p,
+            key: p.computed ? rewriteExprWithMap(p.key, rewrites) : p.key,
+            value: rewriteExprWithMap(p.value, rewrites),
+          }
         }),
       }
     case 'ImportExpression':
@@ -412,7 +416,11 @@ function toSSA(fn: HIRFunction): HIRFunction {
             if (p.kind === 'SpreadElement') {
               return { ...p, argument: renameExpr(p.argument) }
             }
-            return { ...p, value: renameExpr(p.value) }
+            return {
+              ...p,
+              key: p.computed ? renameExpr(p.key) : p.key,
+              value: renameExpr(p.value),
+            }
           }),
         }
       default:

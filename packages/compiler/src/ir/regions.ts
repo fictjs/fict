@@ -157,7 +157,8 @@ function expressionContainsReactiveCreation(
       return expr.properties.some(prop =>
         prop.kind === 'SpreadElement'
           ? expressionContainsReactiveCreation(prop.argument, memoMacroNames)
-          : expressionContainsReactiveCreation(prop.value, memoMacroNames),
+          : (prop.computed && expressionContainsReactiveCreation(prop.key, memoMacroNames)) ||
+            expressionContainsReactiveCreation(prop.value, memoMacroNames),
       )
     case 'ArrowFunction':
       if (expr.isExpression) {
@@ -548,7 +549,10 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
     case 'ObjectExpression':
       return expr.properties.some(p => {
         if (p.kind === 'SpreadElement') return expressionUsesTracked(p.argument as Expression, ctx)
-        return expressionUsesTracked(p.value as Expression, ctx)
+        return (
+          (p.computed && expressionUsesTracked(p.key as Expression, ctx)) ||
+          expressionUsesTracked(p.value as Expression, ctx)
+        )
       })
     case 'TemplateLiteral':
       return expr.expressions.some(e => expressionUsesTracked(e as Expression, ctx))
@@ -2166,6 +2170,7 @@ function collectExprDependencies(expr: Expression): Set<string> {
           if (p.kind === 'SpreadElement') {
             visit(p.argument)
           } else {
+            if (p.computed) visit(p.key)
             visit(p.value)
           }
         })

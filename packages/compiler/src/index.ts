@@ -275,24 +275,38 @@ function isDynamicPropertyAccess(
 
 function runWarningPass(
   programPath: BabelCore.NodePath<BabelCore.types.Program>,
-  stateVars: Set<string>,
-  derivedVars: Set<string>,
+  stateBindingIds: Set<BabelCore.types.Identifier>,
+  derivedBindingIds: Set<BabelCore.types.Identifier>,
   warn: WarningSink,
   fileName: string,
   t: typeof BabelCore.types,
 ): void {
-  const isStateRoot = (expr: BabelCore.types.Expression): boolean => {
-    const root = getRootIdentifier(expr, t)
-    return !!(root && stateVars.has(root.name))
+  const reactiveBindingIds = new Set<BabelCore.types.Identifier>([
+    ...stateBindingIds,
+    ...derivedBindingIds,
+  ])
+
+  const hasTrackedBinding = (
+    path: BabelCore.NodePath,
+    name: string,
+    tracked: Set<BabelCore.types.Identifier>,
+  ): boolean => {
+    const binding = path.scope.getBinding(name)
+    return !!(binding && tracked.has(binding.identifier as BabelCore.types.Identifier))
   }
-  const reactiveNames = new Set<string>([...stateVars, ...derivedVars])
+
+  const isStateRoot = (expr: BabelCore.types.Expression, path: BabelCore.NodePath): boolean => {
+    const root = getRootIdentifier(expr, t)
+    if (!root) return false
+    return hasTrackedBinding(path, root.name, stateBindingIds)
+  }
 
   programPath.traverse({
     AssignmentExpression(path) {
       const { left } = path.node
       if (t.isIdentifier(left)) return
       if (t.isMemberExpression(left) || t.isOptionalMemberExpression(left)) {
-        if (isStateRoot(left.object as BabelCore.types.Expression)) {
+        if (isStateRoot(left.object as BabelCore.types.Expression, path)) {
           emitWarning(
             path.node,
             'FICT-M',
@@ -315,7 +329,7 @@ function runWarningPass(
     UpdateExpression(path) {
       const arg = path.node.argument
       if (t.isMemberExpression(arg) || t.isOptionalMemberExpression(arg)) {
-        if (isStateRoot(arg.object as BabelCore.types.Expression)) {
+        if (isStateRoot(arg.object as BabelCore.types.Expression, path)) {
           emitWarning(
             path.node,
             'FICT-M',
@@ -339,7 +353,10 @@ function runWarningPass(
       if (!path.node.computed) return
       if (path.parentPath.isAssignmentExpression({ left: path.node })) return
       if (path.parentPath.isUpdateExpression({ argument: path.node as any })) return
-      if (isDynamicPropertyAccess(path.node, t) && isStateRoot(path.node.object as any)) {
+      if (
+        isDynamicPropertyAccess(path.node, t) &&
+        isStateRoot(path.node.object as BabelCore.types.Expression, path)
+      ) {
         emitWarning(
           path.node,
           'FICT-H',
@@ -359,9 +376,9 @@ function runWarningPass(
           },
           Identifier(idPath) {
             const name = idPath.node.name
-            if (!reactiveNames.has(name)) return
             const binding = idPath.scope.getBinding(name)
             if (!binding) return
+            if (!reactiveBindingIds.has(binding.identifier as BabelCore.types.Identifier)) return
             if (binding.scope === idPath.scope || binding.scope === path.scope) return
             captured.add(name)
           },
@@ -401,7 +418,10 @@ function runWarningPass(
               const binding = idPath.scope.getBinding(idPath.node.name)
               if (binding && binding.scope === argPath.scope) return
 
-              if (stateVars.has(idPath.node.name) || derivedVars.has(idPath.node.name)) {
+              if (
+                binding &&
+                reactiveBindingIds.has(binding.identifier as BabelCore.types.Identifier)
+              ) {
                 hasReactiveDependency = true
                 idPath.stop()
               }
@@ -438,7 +458,7 @@ function runWarningPass(
 
       for (const arg of path.node.arguments) {
         if (!t.isExpression(arg)) continue
-        if (isStateRoot(arg)) {
+        if (isStateRoot(arg, path)) {
           emitWarning(
             arg,
             'FICT-H',
@@ -454,7 +474,10 @@ function runWarningPass(
       if (!path.node.computed) return
       if (path.parentPath.isAssignmentExpression({ left: path.node })) return
       if (path.parentPath.isUpdateExpression({ argument: path.node as any })) return
-      if (isDynamicPropertyAccess(path.node, t) && isStateRoot(path.node.object as any)) {
+      if (
+        isDynamicPropertyAccess(path.node, t) &&
+        isStateRoot(path.node.object as BabelCore.types.Expression, path)
+      ) {
         emitWarning(
           path.node,
           'FICT-H',
@@ -883,8 +906,27 @@ function createHIREntrypointVisitor(
 
         // Validate macro placement consistently for HIR path
         const stateVars = new Set<string>()
-        const derivedVars = new Set<string>()
-        const destructuredAliases = new Set<string>()
+        const stateBindingIds = new Set<BabelCore.types.Identifier>()
+        const derivedBindingIds = new Set<BabelCore.types.Identifier>()
+        const destructuredAliases = new Set<BabelCore.types.Identifier>()
+
+        const hasTrackedBinding = (
+          path: BabelCore.NodePath,
+          name: string,
+          tracked: Set<BabelCore.types.Identifier>,
+        ): boolean => {
+          const binding = path.scope.getBinding(name)
+          return !!(binding && tracked.has(binding.identifier as BabelCore.types.Identifier))
+        }
+
+        const trackBindingByName = (
+          path: BabelCore.NodePath,
+          name: string,
+          tracked: Set<BabelCore.types.Identifier>,
+        ): void => {
+          const binding = path.scope.getBinding(name)
+          if (binding) tracked.add(binding.identifier as BabelCore.types.Identifier)
+        }
         path.traverse({
           VariableDeclarator(varPath) {
             const init = varPath.node.init
@@ -917,6 +959,7 @@ function createHIREntrypointVisitor(
                 )
               }
               stateVars.add(varPath.node.id.name)
+              trackBindingByName(varPath, varPath.node.id.name, stateBindingIds)
               if (isInsideLoop(varPath) || isInsideConditional(varPath)) {
                 throw varPath.buildCodeFrameError(
                   `$state() cannot be declared inside loops or conditionals.\n\n` +
@@ -938,22 +981,24 @@ function createHIREntrypointVisitor(
                 let dependsOnState = false
                 varPath.get('init').traverse({
                   Identifier(idPath: BabelCore.NodePath<BabelCore.types.Identifier>) {
-                    if (stateVars.has(idPath.node.name)) {
+                    if (hasTrackedBinding(idPath, idPath.node.name, stateBindingIds)) {
                       dependsOnState = true
                       idPath.stop()
                     }
                   },
                 })
                 if (dependsOnState) {
-                  derivedVars.add(varPath.node.id.name)
+                  trackBindingByName(varPath, varPath.node.id.name, derivedBindingIds)
                 }
               }
             } else if (
               (t.isObjectPattern(varPath.node.id) || t.isArrayPattern(varPath.node.id)) &&
               t.isIdentifier(init) &&
-              stateVars.has(init.name)
+              hasTrackedBinding(varPath, init.name, stateBindingIds)
             ) {
-              collectPatternIdentifiers(varPath.node.id).forEach(id => destructuredAliases.add(id))
+              collectPatternIdentifiers(varPath.node.id).forEach(id =>
+                trackBindingByName(varPath, id, destructuredAliases),
+              )
             }
           },
           Function(fnPath) {
@@ -1109,7 +1154,7 @@ function createHIREntrypointVisitor(
             callPath.node.arguments.forEach(arg => {
               if (
                 t.isIdentifier(arg) &&
-                stateVars.has(arg.name) &&
+                hasTrackedBinding(callPath, arg.name, stateBindingIds) &&
                 (!calleeId || !allowedStateCallees.has(calleeId))
               ) {
                 const loc = arg.loc?.start ?? callPath.node.loc?.start
@@ -1154,14 +1199,14 @@ function createHIREntrypointVisitor(
           if (
             exprPath.isIdentifier() &&
             t.isIdentifier(exprPath.node) &&
-            stateVars.has(exprPath.node.name)
+            hasTrackedBinding(exprPath, exprPath.node.name, stateBindingIds)
           ) {
             return true
           }
           let usesState = false
           exprPath.traverse({
             Identifier(idPath: BabelCore.NodePath<BabelCore.types.Identifier>) {
-              if (stateVars.has(idPath.node.name)) {
+              if (hasTrackedBinding(idPath, idPath.node.name, stateBindingIds)) {
                 usesState = true
                 idPath.stop()
               }
@@ -1233,18 +1278,23 @@ function createHIREntrypointVisitor(
         })
 
         // Validate derived variable reassignments
-        if (derivedVars.size > 0) {
+        if (derivedBindingIds.size > 0) {
           path.traverse({
             AssignmentExpression(assignPath) {
               const { left } = assignPath.node
-              if (t.isIdentifier(left) && derivedVars.has(left.name)) {
+              if (
+                t.isIdentifier(left) &&
+                hasTrackedBinding(assignPath, left.name, derivedBindingIds)
+              ) {
                 throw assignPath.buildCodeFrameError(
                   `Cannot reassign derived value '${left.name}'. Derived values are read-only.`,
                 )
               }
               if (t.isObjectPattern(left) || t.isArrayPattern(left)) {
                 const targets = collectPatternIdentifiers(left)
-                const derivedTarget = targets.find(target => derivedVars.has(target))
+                const derivedTarget = targets.find(target =>
+                  hasTrackedBinding(assignPath, target, derivedBindingIds),
+                )
                 if (derivedTarget) {
                   throw assignPath.buildCodeFrameError(
                     `Cannot reassign derived value '${derivedTarget}'. Derived values are read-only.`,
@@ -1260,14 +1310,19 @@ function createHIREntrypointVisitor(
           path.traverse({
             AssignmentExpression(assignPath) {
               const { left } = assignPath.node
-              if (t.isIdentifier(left) && destructuredAliases.has(left.name)) {
+              if (
+                t.isIdentifier(left) &&
+                hasTrackedBinding(assignPath, left.name, destructuredAliases)
+              ) {
                 throw assignPath.buildCodeFrameError(
                   `Cannot write to destructured state alias '${left.name}'. Update the original state (e.g. state.count++ or immutable update).`,
                 )
               }
               if (t.isObjectPattern(left) || t.isArrayPattern(left)) {
                 const targets = collectPatternIdentifiers(left)
-                const aliasTarget = targets.find(target => destructuredAliases.has(target))
+                const aliasTarget = targets.find(target =>
+                  hasTrackedBinding(assignPath, target, destructuredAliases),
+                )
                 if (aliasTarget) {
                   throw assignPath.buildCodeFrameError(
                     `Cannot write to destructured state alias '${aliasTarget}'. Update the original state (e.g. state.count++ or immutable update).`,
@@ -1277,7 +1332,10 @@ function createHIREntrypointVisitor(
             },
             UpdateExpression(updatePath) {
               const arg = updatePath.node.argument
-              if (t.isIdentifier(arg) && destructuredAliases.has(arg.name)) {
+              if (
+                t.isIdentifier(arg) &&
+                hasTrackedBinding(updatePath, arg.name, destructuredAliases)
+              ) {
                 throw updatePath.buildCodeFrameError(
                   `Cannot write to destructured state alias '${arg.name}'. Update the original state (e.g. state.count++ or immutable update).`,
                 )
@@ -1289,7 +1347,7 @@ function createHIREntrypointVisitor(
         // Emit conservative warnings for mutation/dynamic access
         const shouldRunWarnings = dev || hasErrorEscalation(options)
         if (shouldRunWarnings) {
-          runWarningPass(path as any, stateVars, derivedVars, warn, fileName, t)
+          runWarningPass(path as any, stateBindingIds, derivedBindingIds, warn, fileName, t)
         }
 
         // NOTE: Reactive scope callbacks (like renderHook(() => {...})) are NOT hoisted.

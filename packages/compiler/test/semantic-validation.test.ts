@@ -241,4 +241,58 @@ describe('semantic validation', () => {
     `
     expect(() => transform(source)).toThrow(/destructured state alias/)
   })
+
+  it('allows alias reassignment when state-like name is shadowed by a parameter', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        function inner(count) {
+          let x = count
+          x = 1
+          return x
+        }
+        return <button>{inner(2)}</button>
+      }
+    `
+    expect(() => transform(source)).not.toThrow()
+  })
+
+  it('allows reassignment of shadowed derived names', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        const doubled = count * 2
+        function inner() {
+          let doubled = 1
+          doubled = 2
+          return doubled
+        }
+        return <button>{inner()}</button>
+      }
+    `
+    expect(() => transform(source)).not.toThrow()
+  })
+
+  it('does not warn state escape for shadowed local arguments', () => {
+    const source = `
+      import { $state } from 'fict'
+      function consume(value) {
+        return value
+      }
+      function App() {
+        let count = $state(0)
+        function inner() {
+          const count = 1
+          consume(count)
+        }
+        return <button>{inner()}</button>
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-S002')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-H')).toBe(false)
+  })
 })

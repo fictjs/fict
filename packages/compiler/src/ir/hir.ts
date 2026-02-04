@@ -443,7 +443,8 @@ export interface ArrayExpression extends SourceInfo {
 
 export interface ObjectProperty extends SourceInfo {
   kind: 'Property'
-  key: Identifier | Literal
+  key: Expression
+  computed?: boolean
   value: Expression
   shorthand?: boolean
 }

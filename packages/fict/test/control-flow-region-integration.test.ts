@@ -425,6 +425,53 @@ describe('control-flow region integration', () => {
     dispose()
   })
 
+  it('keeps switch-return branches reactive with case block + trailing break', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Switcher() {
+        let mode = $state('a')
+
+        switch (mode) {
+          case 'a': {
+            return (
+              <div data-testid="view-a">
+                <span>A</span>
+                <button data-testid="a-to-b" onClick={() => mode = 'b'}>to-b</button>
+              </div>
+            )
+          }
+          break
+          default:
+            return (
+              <div data-testid="view-b">
+                <span>B</span>
+                <button data-testid="b-to-a" onClick={() => mode = 'a'}>to-a</button>
+              </div>
+            )
+        }
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <Switcher />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+
+    await tick()
+    expect(container.querySelector('[data-testid="view-a"]')).not.toBeNull()
+    ;(container.querySelector('[data-testid="a-to-b"]') as HTMLButtonElement).click()
+    await tick()
+    expect(container.querySelector('[data-testid="view-b"]')).not.toBeNull()
+    ;(container.querySelector('[data-testid="b-to-a"]') as HTMLButtonElement).click()
+    await tick()
+    expect(container.querySelector('[data-testid="view-a"]')).not.toBeNull()
+
+    dispose()
+  })
+
   it('keeps non-empty switch fallthrough branches reactive', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -658,6 +705,63 @@ describe('control-flow region integration', () => {
           default:
             label = 'D'
             break
+        }
+
+        return (
+          <button data-testid="cycle" onClick={() => mode = (mode + 1) % 3}>
+            {label}-{mode}
+          </button>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <Switcher />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source)
+    const dispose = mod.mount(container)
+    const cycle = () => container.querySelector('[data-testid="cycle"]') as HTMLButtonElement
+
+    await tick()
+    expect(cycle().textContent).toContain('A-0')
+
+    cycle().click()
+    await tick()
+    expect(cycle().textContent).toContain('B-1')
+
+    cycle().click()
+    await tick()
+    expect(cycle().textContent).toContain('D-2')
+
+    cycle().click()
+    await tick()
+    expect(cycle().textContent).toContain('A-0')
+
+    dispose()
+  })
+
+  it('preserves switch break semantics with case block wrappers before trailing return', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Switcher() {
+        let mode = $state(0)
+        let label = 'A'
+
+        switch (mode) {
+          case 0: {
+            label = 'A'
+            break
+          }
+          case 1: {
+            label = 'B'
+            break
+          }
+          default: {
+            label = 'D'
+            break
+          }
         }
 
         return (

@@ -463,6 +463,7 @@ function collectRootNodesFromExpression(
           if (prop.kind === 'SpreadElement') {
             visit(prop.argument as Expression, shadowed)
           } else {
+            if (prop.computed) visit(prop.key as Expression, shadowed)
             visit(prop.value as Expression, shadowed)
           }
         })
@@ -617,6 +618,14 @@ function collectDependenciesFromExpression(
             shadowed,
           )
         } else {
+          if (prop.computed) {
+            collectDependenciesFromExpression(
+              prop.key as Expression,
+              deps,
+              includeFunctionBodies,
+              shadowed,
+            )
+          }
           collectDependenciesFromExpression(
             prop.value as Expression,
             deps,
@@ -1770,8 +1779,10 @@ function expressionDependsOnReactive(expr: Expression, ctx: ReactiveContext): bo
         if (prop.kind === 'SpreadElement') {
           return expressionDependsOnReactive(prop.argument as Expression, ctx)
         }
-        // HIR ObjectProperty doesn't have computed keys - computed is only on MemberExpression
-        return expressionDependsOnReactive(prop.value as Expression, ctx)
+        return (
+          (prop.computed && expressionDependsOnReactive(prop.key as Expression, ctx)) ||
+          expressionDependsOnReactive(prop.value as Expression, ctx)
+        )
       })
     case 'TemplateLiteral':
       return expr.expressions.some(e => expressionDependsOnReactive(e as Expression, ctx))
@@ -1876,6 +1887,7 @@ function collectWriteTargets(expr: Expression): Set<string> {
           if (prop.kind === 'SpreadElement') {
             visit(prop.argument as Expression)
           } else {
+            if (prop.computed) visit(prop.key as Expression)
             visit(prop.value as Expression)
           }
         })
@@ -1950,6 +1962,7 @@ function collectMemberCallTargets(expr: Expression): Set<string> {
           if (prop.kind === 'SpreadElement') {
             visit(prop.argument as Expression)
           } else {
+            if (prop.computed) visit(prop.key as Expression)
             visit(prop.value as Expression)
           }
         })
@@ -2090,7 +2103,10 @@ function expressionContainsImpureMarkers(expr: Expression): boolean {
         if (prop.kind === 'SpreadElement') {
           return expressionContainsImpureMarkers(prop.argument as Expression)
         }
-        return expressionContainsImpureMarkers(prop.value as Expression)
+        return (
+          (prop.computed && expressionContainsImpureMarkers(prop.key as Expression)) ||
+          expressionContainsImpureMarkers(prop.value as Expression)
+        )
       })
     case 'TemplateLiteral':
       return expr.expressions.some(e => expressionContainsImpureMarkers(e as Expression))
@@ -2320,6 +2336,7 @@ function extractConstObjectFields(
   const fields: ConstObjectFields = new Map()
   for (const prop of expr.properties) {
     if (prop.kind === 'SpreadElement') return null
+    if (prop.computed) return null
     const key = getObjectLiteralKey(prop.key as Expression)
     if (!key) return null
     const value = evaluateLiteral(prop.value as Expression, constants)
@@ -2459,6 +2476,9 @@ function replaceConstMemberExpressions(
           }
           return {
             ...prop,
+            key: prop.computed
+              ? replaceConstMemberExpressions(prop.key as Expression, constObjects, constArrays)
+              : prop.key,
             value: replaceConstMemberExpressions(
               prop.value as Expression,
               constObjects,
@@ -2795,6 +2815,9 @@ function simplifyChildren(
           if (prop.kind === 'Property') {
             return {
               ...prop,
+              key: prop.computed
+                ? simplifyAlgebraically(prop.key as Expression, constants, options)
+                : prop.key,
               value: simplifyAlgebraically(prop.value as Expression, constants, options),
             }
           }
@@ -2929,8 +2952,10 @@ function replaceIdentifiersWithConstants(
           }
           return {
             ...prop,
+            key: prop.computed
+              ? replaceIdentifiersWithConstants(prop.key as Expression, constants)
+              : prop.key,
             value: replaceIdentifiersWithConstants(prop.value as Expression, constants),
-            key: prop.key,
           }
         }),
       }
@@ -3541,6 +3566,7 @@ function walkExpression(
         if (prop.kind === 'SpreadElement') {
           walkExpression(prop.argument as Expression, add, ctx)
         } else {
+          if (prop.computed) walkExpression(prop.key as Expression, add, ctx)
           walkExpression(prop.value as Expression, add, ctx)
         }
       })
@@ -3703,7 +3729,9 @@ function hashExpression(expr: Expression): string {
         .map(p =>
           p.kind === 'SpreadElement'
             ? `...${hashExpression(p.argument as Expression)}`
-            : `${hashExpression(p.key as Expression)}:${hashExpression(p.value as Expression)}`,
+            : `${p.computed ? '[]' : '.'}${hashExpression(p.key as Expression)}:${hashExpression(
+                p.value as Expression,
+              )}`,
         )
         .join(',')}`
     case 'TemplateLiteral':
@@ -3764,7 +3792,10 @@ function isPureExpression(expr: Expression, ctx: PurityContext): boolean {
     case 'ObjectExpression':
       return expr.properties.every(prop => {
         if (prop.kind === 'SpreadElement') return isPureExpression(prop.argument as Expression, ctx)
-        return isPureExpression(prop.value as Expression, ctx)
+        return (
+          (!prop.computed || isPureExpression(prop.key as Expression, ctx)) &&
+          isPureExpression(prop.value as Expression, ctx)
+        )
       })
     case 'MemberExpression':
     case 'OptionalMemberExpression':
@@ -4010,7 +4041,9 @@ function replaceIdentifier(
           }
           return {
             ...prop,
-            key: prop.key,
+            key: prop.computed
+              ? replaceIdentifier(prop.key as Expression, target, replacement, inFunctionBody)
+              : prop.key,
             value: replaceIdentifier(prop.value as Expression, target, replacement, inFunctionBody),
           }
         }),

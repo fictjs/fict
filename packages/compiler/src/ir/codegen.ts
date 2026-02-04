@@ -204,7 +204,15 @@ function expressionContainsJSX(expr: any): boolean {
     case 'ArrayExpression':
       return expr.elements?.some((el: Expression) => expressionContainsJSX(el)) ?? false
     case 'ObjectExpression':
-      return expr.properties?.some((p: any) => expressionContainsJSX(p.value)) ?? false
+      return (
+        expr.properties?.some((p: any) => {
+          if (p.kind === 'SpreadElement') return expressionContainsJSX(p.argument)
+          return (
+            ((p.computed ?? false) && expressionContainsJSX(p.key)) ||
+            expressionContainsJSX(p.value)
+          )
+        }) ?? false
+      )
     case 'ConditionalExpression':
       return (
         expressionContainsJSX(expr.test as Expression) ||
@@ -356,7 +364,9 @@ function expressionHasAwait(expr: Expression): boolean {
     case 'ObjectExpression':
       return expr.properties.some(
         prop =>
-          (prop.kind === 'Property' && expressionHasAwait(prop.value as Expression)) ||
+          (prop.kind === 'Property' &&
+            (((prop.computed ?? false) && expressionHasAwait(prop.key as Expression)) ||
+              expressionHasAwait(prop.value as Expression))) ||
           (prop.kind === 'SpreadElement' && expressionHasAwait(prop.argument as Expression)),
       )
     case 'TemplateLiteral':
@@ -439,6 +449,7 @@ function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
           if (p.kind === 'SpreadElement') {
             visitExpr(p.argument as Expression)
           } else {
+            if (p.computed) visitExpr(p.key as Expression)
             visitExpr(p.value as Expression)
           }
         })
@@ -857,6 +868,7 @@ function analyzeHookReturnInfo(fn: HIRFunction, ctx: CodegenContext): HookReturn
     if (expr.kind === 'ObjectExpression') {
       expr.properties.forEach(prop => {
         if (prop.kind !== 'Property') return
+        if (prop.computed) return
         const keyName =
           prop.key.kind === 'Identifier'
             ? prop.key.name
@@ -1284,7 +1296,7 @@ function collectExpressionIdentifiers(expr: Expression, into: Set<string>): void
           collectExpressionIdentifiers(prop.argument as Expression, into)
           return
         }
-        // HIR ObjectProperty keys are always Identifier | Literal, not computed expressions
+        if (prop.computed) collectExpressionIdentifiers(prop.key as Expression, into)
         collectExpressionIdentifiers(prop.value as Expression, into)
       })
       return
@@ -1419,7 +1431,7 @@ function collectExpressionIdentifiersDeep(
           collectExpressionIdentifiersDeep(prop.argument as Expression, into, bound)
           return
         }
-        // HIR ObjectProperty keys are always Identifier | Literal, not computed expressions
+        if (prop.computed) collectExpressionIdentifiersDeep(prop.key as Expression, into, bound)
         collectExpressionIdentifiersDeep(prop.value as Expression, into, bound)
       })
       return
@@ -3446,21 +3458,32 @@ function lowerExpressionImpl(
                   ])
                 })()
               : valueExprRaw
-          const keyName = p.key.kind === 'Identifier' ? p.key.name : String(p.key.value ?? '')
-          const keyNode =
-            p.key.kind === 'Identifier' ? t.identifier(keyName) : t.stringLiteral(keyName)
+          const keyName =
+            !p.computed && p.key.kind === 'Identifier'
+              ? p.key.name
+              : !p.computed &&
+                  p.key.kind === 'Literal' &&
+                  (typeof p.key.value === 'string' || typeof p.key.value === 'number')
+                ? String(p.key.value)
+                : ''
+          const keyNode = p.computed
+            ? lowerExpression(p.key, ctx)
+            : p.key.kind === 'Identifier'
+              ? t.identifier(keyName)
+              : t.stringLiteral(keyName)
 
           // If shorthand and value is identifier, use de-versioned name for key too
           const useShorthand =
             p.shorthand &&
             t.isIdentifier(valueExpr) &&
             p.key.kind === 'Identifier' &&
+            !p.computed &&
             deSSAVarName(keyName) === valueExpr.name
 
           return t.objectProperty(
             useShorthand ? t.identifier(valueExpr.name) : keyNode,
             valueExpr,
-            false,
+            !!p.computed,
             useShorthand,
           )
         }),
@@ -4079,6 +4102,7 @@ function collectExpressionDependencies(expr: Expression, deps: Set<string>): voi
       if (p.kind === 'SpreadElement') {
         collectExpressionDependencies(p.argument, deps)
       } else {
+        if (p.computed) collectExpressionDependencies(p.key, deps)
         collectExpressionDependencies(p.value, deps)
       }
     })
@@ -4999,6 +5023,7 @@ function countExpressionNodes(expr: Expression | undefined): number {
     case 'ObjectExpression':
       for (const prop of expr.properties) {
         if (prop.kind === 'Property') {
+          if (prop.computed) count += countExpressionNodes(prop.key)
           count += countExpressionNodes(prop.value)
         } else if (prop.kind === 'SpreadElement') {
           count += countExpressionNodes(prop.argument)
@@ -6935,7 +6960,7 @@ function hirExpressionUsesIdentifiers(expr: Expression, names: Set<string>): boo
           return hirExpressionUsesIdentifiers(prop.argument, names)
         }
         return (
-          hirExpressionUsesIdentifiers(prop.key, names) ||
+          ((prop.computed ?? false) && hirExpressionUsesIdentifiers(prop.key, names)) ||
           hirExpressionUsesIdentifiers(prop.value, names)
         )
       })
@@ -8212,6 +8237,13 @@ function transformControlFlowReturns(
   ctx: CodegenContext,
 ): BabelCore.types.Statement[] | null {
   const { t } = ctx
+  const reactiveAccessorNames = new Set<string>([
+    ...ctx.trackedVars,
+    ...(ctx.signalVars ?? []),
+    ...(ctx.memoVars ?? []),
+    ...(ctx.aliasVars ?? []),
+    ...(ctx.storeVars ?? []),
+  ])
 
   const toStatements = (node: BabelCore.types.Statement | BabelCore.types.BlockStatement) =>
     t.isBlockStatement(node) ? node.body : [node]
@@ -8234,6 +8266,74 @@ function transformControlFlowReturns(
       return endsWithReturn(tail.block.body) && endsWithReturn(tail.handler.body.body)
     }
     return false
+  }
+
+  function hasNodeMatch(
+    nodes: BabelCore.types.Node[],
+    predicate: (node: BabelCore.types.Node) => boolean,
+  ): boolean {
+    let found = false
+
+    const visit = (node: BabelCore.types.Node | null | undefined): void => {
+      if (!node || found) return
+      if (predicate(node)) {
+        found = true
+        return
+      }
+
+      const keys = (t as unknown as { VISITOR_KEYS?: Record<string, string[]> }).VISITOR_KEYS
+      const visitorKeys = keys?.[(node as { type: string }).type] ?? []
+      for (const key of visitorKeys) {
+        const value = (node as unknown as Record<string, unknown>)[key]
+        if (Array.isArray(value)) {
+          for (const child of value) {
+            if (child && typeof child === 'object' && 'type' in (child as object)) {
+              visit(child as BabelCore.types.Node)
+            }
+            if (found) return
+          }
+        } else if (value && typeof value === 'object' && 'type' in (value as object)) {
+          visit(value as BabelCore.types.Node)
+        }
+        if (found) return
+      }
+    }
+
+    for (const node of nodes) {
+      visit(node)
+      if (found) return true
+    }
+
+    return found
+  }
+
+  const containsReturnStatement = (nodes: BabelCore.types.Node[]) =>
+    hasNodeMatch(nodes, node => t.isReturnStatement(node))
+
+  const containsReactiveAccessorRead = (nodes: BabelCore.types.Node[]) =>
+    hasNodeMatch(nodes, node => {
+      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return false
+      const callee = node.callee
+      return t.isIdentifier(callee) && reactiveAccessorNames.has(callee.name)
+    })
+
+  const emitControlFlowFallbackWarning = (
+    node: BabelCore.types.Node,
+    kind: 'if' | 'switch',
+  ): void => {
+    const onWarn = ctx.options?.onWarn
+    if (!onWarn) return
+    const loc = node.loc?.start
+    onWarn({
+      code: DiagnosticCode.FICT_R003,
+      message:
+        `Reactive ${kind}-return lowering was skipped for this branch. ` +
+        `The branch structure will not update reactively; refactor to a supported ` +
+        `${kind} form or use explicit runtime conditionals.`,
+      fileName: ctx.options?.filename ?? '<unknown>',
+      line: loc?.line ?? 0,
+      column: loc ? loc.column + 1 : 0,
+    })
   }
 
   function buildReturnBlock(
@@ -8457,6 +8557,22 @@ function transformControlFlowReturns(
     const fallbackFn = buildBranchFunction(fallbackStatements, { disallowRenderHooks: true })
     if (!fallbackFn) return null
 
+    // Preserve switch discriminant semantics: compute once per reactive evaluation
+    // and reuse across case predicate checks.
+    ctx.helpersUsed.add('memo')
+    const discriminantAccessor = genTemp(ctx, 'switchDisc')
+    const discriminantMemoDecl = t.variableDeclaration('const', [
+      t.variableDeclarator(
+        discriminantAccessor,
+        t.callExpression(t.identifier(RUNTIME_ALIASES.memo), [
+          t.arrowFunctionExpression(
+            [],
+            t.cloneNode(discriminant, true) as BabelCore.types.Expression,
+          ),
+        ]),
+      ),
+    ])
+
     let currentExpr: BabelCore.types.Expression = t.callExpression(
       t.arrowFunctionExpression(
         [],
@@ -8477,7 +8593,7 @@ function transformControlFlowReturns(
       const comparisons: BabelCore.types.Expression[] = branch.tests.map(test =>
         t.binaryExpression(
           '===',
-          t.cloneNode(discriminant, true),
+          t.callExpression(t.cloneNode(discriminantAccessor), []),
           t.cloneNode(test, true) as BabelCore.types.Expression,
         ),
       )
@@ -8491,7 +8607,13 @@ function transformControlFlowReturns(
       currentExpr = buildConditionalBindingExpr(testExpr, trueFn, falseFn)
     }
 
-    return currentExpr
+    return t.callExpression(
+      t.arrowFunctionExpression(
+        [],
+        t.blockStatement([discriminantMemoDecl, t.returnStatement(currentExpr)]),
+      ),
+      [],
+    )
   }
 
   let nestedChanged = false
@@ -8537,8 +8659,16 @@ function transformControlFlowReturns(
   for (let i = 0; i < rewrittenStatements.length; i++) {
     const stmt = rewrittenStatements[i]
     if (!t.isIfStatement(stmt)) continue
-    const conditionalExpr = buildConditionalExpr(stmt, rewrittenStatements.slice(i + 1))
-    if (!conditionalExpr) continue
+    const rest = rewrittenStatements.slice(i + 1)
+    const conditionalExpr = buildConditionalExpr(stmt, rest)
+    if (!conditionalExpr) {
+      const hasReturn = containsReturnStatement([stmt, ...rest])
+      const hasReactiveReads = containsReactiveAccessorRead([stmt, ...rest])
+      if (hasReturn && hasReactiveReads) {
+        emitControlFlowFallbackWarning(stmt, 'if')
+      }
+      continue
+    }
     const prefix = rewrittenStatements.slice(0, i)
     return [...prefix, t.returnStatement(conditionalExpr)]
   }
@@ -8546,8 +8676,16 @@ function transformControlFlowReturns(
   for (let i = 0; i < rewrittenStatements.length; i++) {
     const stmt = rewrittenStatements[i]
     if (!t.isSwitchStatement(stmt)) continue
-    const conditionalExpr = buildSwitchConditionalExpr(stmt, rewrittenStatements.slice(i + 1))
-    if (!conditionalExpr) continue
+    const rest = rewrittenStatements.slice(i + 1)
+    const conditionalExpr = buildSwitchConditionalExpr(stmt, rest)
+    if (!conditionalExpr) {
+      const hasReturn = containsReturnStatement([stmt, ...rest])
+      const hasReactiveReads = containsReactiveAccessorRead([stmt, ...rest])
+      if (hasReturn && hasReactiveReads) {
+        emitControlFlowFallbackWarning(stmt, 'switch')
+      }
+      continue
+    }
     const prefix = rewrittenStatements.slice(0, i)
     return [...prefix, t.returnStatement(conditionalExpr)]
   }

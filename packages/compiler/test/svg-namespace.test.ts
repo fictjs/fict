@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest'
 import { transform } from './test-utils'
 
 describe('SVG/MathML Namespace Support ()', () => {
+  it('throws for unsupported JSX namespaced tags', () => {
+    const source = `
+      export function App() {
+        return <svg:rect />
+      }
+    `
+    expect(() => transform(source)).toThrow(/Unsupported JSX tag syntax/)
+  })
+
   describe('SVG elements', () => {
     it('does not add isSVG flag for root svg element', () => {
       const source = `

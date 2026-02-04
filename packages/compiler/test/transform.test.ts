@@ -83,6 +83,20 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('count(count() + 1)')
       expect(output).toContain('count(count() - 1)')
     })
+
+    it('preserves computed object properties instead of dropping them', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let key = $state('x')
+          const obj = { [key]: 1, fixed: 2 }
+          return <div>{obj.fixed}</div>
+        }
+      `
+      const output = transform(input)
+      expect(output).toMatch(/\[key\(\)\]:\s*1/)
+      expect(output).toContain('fixed: 2')
+    })
   })
 
   describe('Derived values', () => {
