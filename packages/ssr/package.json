@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/ssr",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Fict server-side rendering",
   "publishConfig": {
     "access": "public",
@@ -29,6 +29,7 @@
     "build": "tsup src/index.ts --format cjs,esm --dts",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "test": "vitest run",
+    "test:edge": "node test/edge-runtime.smoke.mjs",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",

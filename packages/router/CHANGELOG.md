@@ -1,5 +1,13 @@
 # @fictjs/router
 
+## 0.5.2
+
+### Patch Changes
+
+- fix ssr
+- Updated dependencies
+  - @fictjs/runtime@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @fictjs/eslint-plugin
 
+## 0.5.2
+
+### Patch Changes
+
+- fix ssr
+
 ## 0.5.1
 
 ### Patch Changes
