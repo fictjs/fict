@@ -8,6 +8,8 @@ import _generate from '@babel/generator'
 import { parse } from '@babel/parser'
 import _traverse from '@babel/traverse'
 import * as t from '@babel/types'
+import { createFictPlugin, type FictCompilerOptions } from '@fictjs/compiler'
+import type { Plugin, ResolvedConfig, TransformResult } from 'vite'
 
 // Handle ESM/CJS interop for Babel packages
 const traverse = (
@@ -16,8 +18,6 @@ const traverse = (
 const generate = (
   typeof _generate === 'function' ? _generate : (_generate as { default: typeof _generate }).default
 ) as typeof _generate
-import { createFictPlugin, type FictCompilerOptions } from '@fictjs/compiler'
-import type { Plugin, ResolvedConfig, TransformResult } from 'vite'
 
 export interface FictPluginOptions extends FictCompilerOptions {
   /**
@@ -58,6 +58,12 @@ export interface FictPluginOptions extends FictCompilerOptions {
    * @default false for dev, true for production build
    */
   functionSplitting?: boolean
+  /**
+   * Enable verbose debug logs from the plugin.
+   * Can also be enabled via `FICT_VITE_PLUGIN_DEBUG=1`.
+   * @default false
+   */
+  debug?: boolean
 }
 
 interface NormalizedCacheOptions {
@@ -76,9 +82,83 @@ interface TypeScriptProject {
   configHash: string
   readonly projectVersion: number
   updateFile: (fileName: string, code: string) => void
-  getProgram: () => unknown | null
+  getProgram: () => TypeScriptProgram | null
   resolveModuleName: (specifier: string, containingFile: string) => string | null
   dispose: () => void
+}
+
+interface TypeScriptProgram {
+  getTypeChecker?: () => unknown
+}
+
+interface TypeScriptSystem {
+  fileExists: (path: string) => boolean
+  readFile: (path: string) => string | undefined
+  readDirectory: (...args: unknown[]) => string[]
+  directoryExists?: (path: string) => boolean
+  getDirectories?: (path: string) => string[]
+  useCaseSensitiveFileNames: boolean
+  newLine: string
+}
+
+interface TypeScriptParsedConfig {
+  fileNames: string[]
+  options: unknown
+}
+
+interface TypeScriptLanguageService {
+  getProgram?: () => TypeScriptProgram | null
+  dispose?: () => void
+}
+
+interface TypeScriptLanguageServiceHost {
+  getScriptFileNames: () => string[]
+  getScriptVersion: (fileName: string) => string
+  getScriptSnapshot: (fileName: string) => unknown
+  getCurrentDirectory: () => string
+  getCompilationSettings: () => unknown
+  getDefaultLibFileName: (options: unknown) => string
+  fileExists: TypeScriptSystem['fileExists']
+  readFile: TypeScriptSystem['readFile']
+  readDirectory: TypeScriptSystem['readDirectory']
+  directoryExists?: TypeScriptSystem['directoryExists']
+  getDirectories?: TypeScriptSystem['getDirectories']
+  useCaseSensitiveFileNames: () => boolean
+  getNewLine: () => string
+  getProjectVersion: () => string
+}
+
+interface TypeScriptApi {
+  sys: TypeScriptSystem
+  findConfigFile: (
+    searchPath: string,
+    fileExists: TypeScriptSystem['fileExists'],
+    configName: string,
+  ) => string | undefined
+  readConfigFile: (
+    configPath: string,
+    readFile: TypeScriptSystem['readFile'],
+  ) => { config: unknown; error?: unknown }
+  parseJsonConfigFileContent: (
+    config: unknown,
+    host: TypeScriptSystem,
+    basePath: string,
+  ) => TypeScriptParsedConfig
+  ScriptSnapshot: {
+    fromString: (text: string) => unknown
+  }
+  getDefaultLibFilePath: (options: unknown) => string
+  createLanguageService: (
+    host: TypeScriptLanguageServiceHost,
+    registry: unknown,
+  ) => TypeScriptLanguageService
+  createDocumentRegistry: () => unknown
+  resolveModuleName: (
+    specifier: string,
+    containingFile: string,
+    options: unknown,
+    host: TypeScriptSystem,
+  ) => { resolvedModule?: { resolvedFileName?: string } } | undefined
 }
 
 const CACHE_VERSION = 1
@@ -132,6 +212,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     cache: cacheOption,
     tsconfigPath,
     useTypeScriptProject = true,
+    debug: debugOption,
     ...compilerOptions
   } = options
 
@@ -141,6 +222,16 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   let tsProject: TypeScriptProject | null = null
   let tsProjectInit: Promise<TypeScriptProject | null> | null = null
   const moduleMetadata: FictCompilerOptions['moduleMetadata'] = new Map()
+  const debugEnabled =
+    debugOption === true ||
+    process.env.FICT_VITE_PLUGIN_DEBUG === '1' ||
+    process.env.FICT_VITE_PLUGIN_DEBUG === 'true'
+
+  const debugLog = (message: string, details?: unknown) => {
+    if (!debugEnabled) return
+    const payload = details === undefined ? '' : ` ${safeDebugString(details)}`
+    config?.logger?.info(`[fict-plugin] ${message}${payload}`)
+  }
 
   const ensureCache = () => {
     if (cache) return cache
@@ -208,16 +299,16 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
 
       const handlerId = id.slice(VIRTUAL_HANDLER_PREFIX.length)
-      console.log(`[fict-plugin] Loading virtual module: ${handlerId}`)
-      console.log(
-        `[fict-plugin] Registry has ${extractedHandlers.size} handlers:`,
-        Array.from(extractedHandlers.keys()),
-      )
+      debugLog(`Loading virtual module: ${handlerId}`, {
+        registrySize: extractedHandlers.size,
+        handlers: Array.from(extractedHandlers.keys()),
+      })
       const handler = extractedHandlers.get(handlerId)
       if (handler) {
         const generatedCode = generateHandlerModule(handler)
-        console.log(`[fict-plugin] Generated code length: ${generatedCode.length}`)
-        console.log(`[fict-plugin] Generated code preview: ${generatedCode.slice(0, 200)}...`)
+        debugLog(`Generated virtual module (${generatedCode.length} chars)`, {
+          preview: generatedCode.slice(0, 200),
+        })
         return generatedCode
       }
 
@@ -398,8 +489,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         tsProject.updateFile(resolvedName, code)
         const program = tsProject.getProgram()
         const checker =
-          program && typeof (program as any).getTypeChecker === 'function'
-            ? (program as any).getTypeChecker()
+          program && typeof program.getTypeChecker === 'function'
+            ? program.getTypeChecker()
             : undefined
         fictOptions.typescript = {
           program: program ?? undefined,
@@ -451,23 +542,27 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           options.functionSplitting ??
           (config?.command === 'build' && (compilerOptions.resumable || !config?.build?.ssr))
 
-        console.log(
-          `[fict-plugin] shouldSplit=${shouldSplit}, ssr=${config?.build?.ssr}, resumable=${compilerOptions.resumable}, file=${filename}`,
-        )
+        debugLog('Function split decision', {
+          shouldSplit,
+          ssr: config?.build?.ssr,
+          resumable: compilerOptions.resumable,
+          file: filename,
+        })
         if (shouldSplit) {
           let splitResult: { code: string; handlers: string[] } | null = null
           try {
             splitResult = extractAndRewriteHandlers(finalCode, filename)
-          } catch (e) {
-            console.error('[fict-plugin] extractAndRewriteHandlers error:', e)
+          } catch (error) {
+            this.warn(buildPluginMessage('extractAndRewriteHandlers failed', filename, error))
           }
-          console.log(
-            `[fict-plugin] splitResult: ${splitResult ? splitResult.handlers.length + ' handlers' : 'null'}`,
-          )
+          debugLog('Split result', {
+            file: filename,
+            handlers: splitResult?.handlers.length ?? 0,
+          })
           if (splitResult) {
-            console.log(
-              `[fict-plugin] Function splitting: ${filename} - ${splitResult.handlers.length} handlers extracted`,
-            )
+            debugLog(`Function splitting extracted ${splitResult.handlers.length} handlers`, {
+              file: filename,
+            })
             finalCode = splitResult.code
             // Note: source maps are invalidated by this rewrite
             // For production builds, this is acceptable
@@ -821,16 +916,59 @@ class TransformCache {
   }
 }
 
-async function loadTypeScript(): Promise<any | null> {
+function isTypeScriptApi(value: unknown): value is TypeScriptApi {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Partial<TypeScriptApi>
+  return (
+    typeof candidate.findConfigFile === 'function' &&
+    typeof candidate.readConfigFile === 'function' &&
+    typeof candidate.parseJsonConfigFileContent === 'function' &&
+    typeof candidate.createLanguageService === 'function' &&
+    typeof candidate.createDocumentRegistry === 'function' &&
+    typeof candidate.resolveModuleName === 'function' &&
+    !!candidate.sys &&
+    typeof candidate.sys === 'object' &&
+    typeof candidate.sys.fileExists === 'function' &&
+    typeof candidate.sys.readFile === 'function'
+  )
+}
+
+function safeDebugString(value: unknown): string {
+  try {
+    return typeof value === 'string' ? value : JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof Error) return error.message
+  try {
+    return JSON.stringify(error)
+  } catch {
+    return String(error)
+  }
+}
+
+function buildPluginMessage(context: string, file: string, error: unknown): string {
+  return `[fict-plugin] ${context} (${file}): ${formatError(error)}`
+}
+
+async function loadTypeScript(): Promise<TypeScriptApi | null> {
   try {
     const mod = await import('typescript')
-    return (mod as any).default ?? mod
+    const candidate = (mod as { default?: unknown }).default ?? mod
+    return isTypeScriptApi(candidate) ? candidate : null
   } catch {
     return null
   }
 }
 
-function resolveTsconfigPath(ts: any, rootDir: string, explicitPath?: string): string | null {
+function resolveTsconfigPath(
+  ts: TypeScriptApi,
+  rootDir: string,
+  explicitPath?: string,
+): string | null {
   if (explicitPath) {
     return path.resolve(rootDir, explicitPath)
   }
@@ -838,7 +976,7 @@ function resolveTsconfigPath(ts: any, rootDir: string, explicitPath?: string): s
 }
 
 async function createTypeScriptProject(
-  ts: any,
+  ts: TypeScriptApi,
   rootDir: string,
   configPath: string,
 ): Promise<TypeScriptProject | null> {
@@ -859,7 +997,7 @@ async function createTypeScriptProject(
 
   const normalizeName = (fileName: string) => normalizeFileName(fileName, rootDir)
 
-  const serviceHost = {
+  const serviceHost: TypeScriptLanguageServiceHost = {
     getScriptFileNames: () => Array.from(fileSet),
     getScriptVersion: (fileName: string) => {
       const normalized = normalizeName(fileName)
@@ -1353,10 +1491,14 @@ function extractAndRewriteHandlers(
       sourceType: 'module',
       plugins: ['jsx', 'typescript'],
     })
-  } catch (e) {
-    // If parsing fails, fall back to no extraction
-    console.error('[fict-plugin] Parse error in extractAndRewriteHandlers:', e)
-    return null
+  } catch (error) {
+    throw new Error(
+      buildPluginMessage(
+        'Failed to parse transformed code for handler extraction',
+        sourceModule,
+        error,
+      ),
+    )
   }
 
   // Collect all top-level declarations that could be referenced by handlers
