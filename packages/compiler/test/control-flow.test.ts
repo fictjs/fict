@@ -196,6 +196,72 @@ describe('Fict Compiler - Control Flow', () => {
       const output = runTransform(input)
       expect(output).toContain('status()')
     })
+
+    it('converts switch-return branches into reactive conditionals', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let mode = $state('a')
+          switch (mode) {
+            case 'a':
+              return <div>A: {mode}</div>
+            case 'b':
+              return <div>B: {mode}</div>
+            default:
+              return <div>D: {mode}</div>
+          }
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createConditional')
+    })
+
+    it('preserves break boundaries for switch with trailing return', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let mode = $state(0)
+          let label = 'A'
+          switch (mode) {
+            case 0:
+              label = 'A'
+              break
+            case 1:
+              label = 'B'
+              break
+            default:
+              label = 'D'
+              break
+          }
+          return <div>{label}</div>
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('switch (mode())')
+      expect(output).toContain('break;')
+    })
+  })
+
+  describe('Try statements', () => {
+    it('converts try-return branches into reactive conditionals', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let mode = $state('a')
+          try {
+            if (mode === 'a') {
+              return <div>A: {mode}</div>
+            }
+            return <div>B: {mode}</div>
+          } catch (e) {
+            return <div>E: {String(e)}</div>
+          }
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('try')
+      expect(output).toContain('createConditional')
+    })
   })
 
   describe('Loops and derived values', () => {

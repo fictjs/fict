@@ -120,7 +120,7 @@ The compiler needs to:
 
 ---
 
-## 3. Rule C: Memoization + re-execution based on usage type
+## 3. Rule C: Memoization + control-flow branch reactivity
 
 Each `DerivedNode` will be used several times in the source code. Usage types include:
 
@@ -138,7 +138,7 @@ For each `DerivedNode` (default behavior):
 
 1. **Always memoize** derived values (`MemoNode`), regardless of usage (JSX/effect/event/plain).
 2. If `ControlFlowUsage` exists (derived is **read at runtime** in control flow):
-   → **Triggers component re-execution** when value changes, in addition to memoization.
+   → The compiler emits reactive control-flow bindings (instead of re-running the whole component).
 
 **Opt-out: `"use no memo"` directive**
 
@@ -153,7 +153,7 @@ For each `DerivedNode` (default behavior):
 
 - The compiler may inline single-use derived memos when it can prove purity and safety; this does not change observable semantics.
 
-**Special: Control Flow Re-execution**
+**Special: Control Flow Branch Reactivity**
 
 When a signal or derived memo is **read at runtime** in control flow:
 
@@ -168,7 +168,9 @@ if (doubled) {
 return <>{count}</>
 ```
 
-The compiler marks the component for re-execution when `count` changes, because `doubled` is **read at runtime** in the `if` statement.
+The compiler lowers this shape to reactive branch bindings when supported (e.g. sequential
+`if-return` / `switch-return` and equivalent `try` branch returns), so branch output updates
+without re-running the full component body.
 
 **Contrast with JSX-only usage**:
 
@@ -179,7 +181,7 @@ const doubled = count * 2  // just defines a memo
 return <>{count}</>  // only JSX reads, no control flow read
 ```
 
-Here `doubled` is defined but never read. Only `count` is read in JSX, so only fine-grained DOM updates occur.
+Here `doubled` is defined but never read. Only `count` is read in JSX, so updates stay fine-grained.
 
 ### Example 1: Bind only to JSX
 
@@ -505,7 +507,7 @@ function UserProfile() {
 
 - When reading derived values:
   - JSX / effect / event / plain usage read the current memo value.
-  - Control-flow reads still trigger component re-execution.
+  - Supported control-flow return shapes are lowered into reactive branch bindings.
 
 ---
 
@@ -650,7 +652,7 @@ Compiler should:
    - Apply Region grouping (control flow)
 
 7. **Apply Rules C–L**:
-   - Memoization + control-flow re-execution
+   - Memoization + control-flow branch bindings
    - Control flow grouping
    - Cycle detection
    - Conservative downgrade & Warning
@@ -698,7 +700,7 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
     - `x = v` where `x` is a `$state` variable compiles to `x(v)` (write).
     - `x` appearing in an expression compiles to `x()` (read).
     - **Aliasing**: `const y = x` creates a **reactive getter** `() => x()`.
-      - The on-demand execution model keeps `y` live across re-executions.
+      - The getter model keeps `y` live across updates.
       - To create a **snapshot**, use an explicit escape such as `untrack(() => x)` (or future helper).
     - **Destructuring**: `const { x } = $state(...)` is **illegal**. The compiler errors rather than emitting a silent snapshot.
 
@@ -710,7 +712,7 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
     - **Rule**: A closure created in the component body that reads `$state` (e.g., `const onClick = () => console.log(count)`) always reads the **live** value.
     - **Implementation**: The compiler ensures `count` inside the closure becomes `count()` (getter), not a captured variable.
     - **Snapshot**: Use an explicit snapshot: `const snap = count(); const fn = () => snap`.
-4.  **Control Flow Re-execution**: When a signal or derived value is **read at runtime** in control flow statements (`if`, `for`, `while`, `switch`, ternary in statements), the component re-executes and re-renders when that value changes. Note: simply defining a derived (`const x = signal * 2`) doesn't trigger re-execution—only reading in control flow does. This matches developer intuition: conditional logic naturally re-evaluates when its dependencies change.
+4.  **Control Flow Branch Reactivity**: When a signal or derived value is **read at runtime** in supported control-flow return shapes (e.g. sequential `if-return`, `switch-return`, and equivalent `try` return branches), the compiler emits reactive branch bindings so branch output updates without full component re-execution. Note: simply defining a derived (`const x = signal * 2`) does not trigger this; runtime reads in control flow do.
 5.  **Control Flow Regions**: Derived values defined across `if`/`switch`/early-return paths are grouped into a single region memo that returns the outward-facing values, ensuring consistent dependency tracking and avoiding duplicated condition evaluation.
 6.  **DX Notes (control flow + closures)**:
     - Branch-local bindings stay branch-local: SSA + structurize restore `let`/assignments at merge points, so JSX/effects read the live value for the active path; no “wrong branch” capture.

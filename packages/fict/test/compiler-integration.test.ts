@@ -1629,9 +1629,6 @@ describe('compiler + fict integration', () => {
   })
 
   // Edge case 7: Early return before the conditional pattern
-  // LIMITATION: Multiple sequential if statements with returns are not fully supported.
-  // Only the last if-return pair gets converted to createConditional.
-  // The first if (disabled) remains as a regular if statement in the render function.
   it('handles early return before conditional pattern', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -1757,11 +1754,8 @@ describe('compiler + fict integration', () => {
     logSpy.mockRestore()
   })
 
-  // Edge case 9: Only side effects in if block, no return (should not transform)
-  // LIMITATION: If blocks without return are not converted to createConditional.
-  // The console.log inside the if block only executes once during initial render,
-  // not reactively when the signal changes. This is by design - use $effect for
-  // reactive side effects.
+  // Edge case 9: Side effects in if block without return
+  // This should remain reactive via compiler-inserted effect wrapping.
 
   it('handles if block without return correctly', async () => {
     const source = `
@@ -1798,25 +1792,21 @@ describe('compiler + fict integration', () => {
 
     btn().click()
     await tick()
-
-    // DOM updates via bindText, but the if block doesn't re-execute
-    // because it's not wrapped in createConditional (no return in if block)
+    await waitFor(() => logSpy.mock.calls.length > 0)
     expect(btn().textContent).toContain('Count: 1')
-    // Note: console.log is NOT called - if blocks without return don't re-execute
+    expect(logSpy).toHaveBeenLastCalledWith('positive:', 1)
 
     btn().click()
     await tick()
-
+    await waitFor(() => logSpy.mock.calls.some(call => call[1] === 2))
     expect(btn().textContent).toContain('Count: 2')
-    // Note: console.log is still NOT called
+    expect(logSpy).toHaveBeenLastCalledWith('positive:', 2)
 
     dispose()
     logSpy.mockRestore()
   })
 
   // Edge case 10: Three-way condition with multiple ifs
-  // LIMITATION: Only the last if-return pair is converted to createConditional.
-  // The first if (count >= 4) remains as a regular if statement.
   it('handles multiple sequential if statements with returns', async () => {
     const source = `
       import { $state, render } from 'fict'

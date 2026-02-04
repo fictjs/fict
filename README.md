@@ -389,9 +389,9 @@ const result = untrack(() => externalLib.compute(count))
 
 ---
 
-## Control Flow and Re-execution
+## Control Flow and Branch Reactivity
 
-When does a component re-execute vs just update DOM?
+Fict components execute once on mount. Reactive updates happen through bindings/memos.
 
 **JSX-only reads → Fine-grained DOM updates:**
 
@@ -400,15 +400,16 @@ let count = $state(0)
 return <div>{count}</div> // Only the text node updates
 ```
 
-**Control flow reads → Component re-executes:**
+**Control flow returns → Compiler emits reactive branch bindings:**
 
 ```tsx
 let count = $state(0)
-if (count > 10) return <Special /> // Component re-runs when count changes
+if (count > 10) return <Special /> // branch swaps reactively when count changes
 return <Normal />
 ```
 
-The compiler detects this automatically. You don't need to think about it — write natural `if`/`for` and Fict does the right thing.
+The compiler detects supported patterns (`if-return`, `switch-return`, `try` blocks containing
+return branches) and lowers them to reactive conditionals.
 
 ---
 
@@ -536,77 +537,15 @@ Not directly. Fict compiles to DOM operations, not React elements.
 
 The compiler has some limitations when handling conditional rendering patterns. Understanding these can help you avoid unexpected behavior:
 
-### Multiple Sequential `if-return` Statements
+### Control-flow patterns supported
 
-```tsx
-// ⚠️ Only the last if-return pair is converted to createConditional
-function Component() {
-  let count = $state(0)
-  let disabled = $state(false)
-
-  if (disabled) {
-    return <div>Disabled</div> // Treated as regular if statement
-  }
-
-  if (count >= 3) {
-    return <div>High: {count}</div> // ✅ Converted to createConditional
-  }
-  return <div>Low: {count}</div>
-}
-```
-
-**Workaround**: Use nested ternary expressions or restructure with `else if`:
-
-```tsx
-function Component() {
-  let count = $state(0)
-  let disabled = $state(false)
-
-  if (disabled) {
-    return <div>Disabled</div>
-  } else if (count >= 3) {
-    return <div>High: {count}</div>
-  } else {
-    return <div>Low: {count}</div>
-  }
-}
-```
-
-### `if` Blocks Without `return`
-
-```tsx
-// ⚠️ Side effects in if blocks only execute during initial render
-function Component() {
-  let count = $state(0)
-
-  if (count > 0) {
-    console.log('positive:', count) // Only runs once at initial render if true
-  }
-
-  return <button onClick={() => count++}>Count: {count}</button>
-}
-```
-
-**Workaround**: Use `$effect` for reactive side effects:
-
-```tsx
-function Component() {
-  let count = $state(0)
-
-  $effect(() => {
-    if (count > 0) {
-      console.log('positive:', count) // ✅ Runs reactively
-    }
-  })
-
-  return <button onClick={() => count++}>Count: {count}</button>
-}
-```
+- Multiple sequential `if-return` branches are compiled into reactive conditionals.
+- `if` blocks without `return` are auto-wrapped so reactive side effects still update.
 
 ### Nested `if` Statements Inside Branches
 
 ```tsx
-// ⚠️ Inner if-else doesn't re-execute when signal changes within the same branch
+// ⚠️ Inner if-else is not auto-lowered as a branch binding in this nested shape
 function Component() {
   let count = $state(0)
 

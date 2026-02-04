@@ -59,9 +59,9 @@ From a toolchain perspective, it goes through several stages:
 
 ## 2. Component Execution Model
 
-### 2.1 On-Demand Execution
+### 2.1 Single-Pass Component Execution
 
-Fict uses an **on-demand execution model**: components execute when needed, not on every state change like React, but also not strictly "run once" like Solid.
+Fict components execute once at mount time. Updates are handled by compiler-emitted reactive bindings/memos, not by re-running the whole component body.
 
 ```ts
 function Component(props) {
@@ -70,25 +70,26 @@ function Component(props) {
 }
 ```
 
-**The key insight**: Whether a component re-executes depends on whether reactive values are **read at runtime** in control flow.
+**The key insight**: control-flow reads are lowered into reactive branch bindings for supported return shapes.
 
-#### Control Flow Triggers Re-Execution
+#### Control Flow Triggers Branch Reactivity
 
-When a signal or derived memo is **read at runtime** in **control flow statements** (`if`, `for`, `while`, `switch`, ternary in statements), the entire component re-executes when that value changes:
+When a signal or derived memo is **read at runtime** in supported control-flow return shapes, the compiler emits branch bindings that swap output reactively:
 
 ```tsx
-// Component RE-EXECUTES on count change
+// Branch output updates when count changes
 let count = $state(0)
 const doubled = count * 2 // just defines a derived memo
 
 if (doubled) {
-  // `doubled` is READ at runtime in control flow → triggers re-execution
+  // `doubled` is READ at runtime in control flow
 }
 
 return <>{count}</>
 ```
 
-When `count` changes, the component body re-runs because `doubled` is **read at runtime** in the `if` statement. Note: simply defining `const doubled = count * 2` doesn't trigger re-execution—it's the runtime read in control flow that matters.
+When `count` changes, branch output is re-evaluated without re-running the entire component body.
+Note: simply defining `const doubled = count * 2` doesn't trigger branch bindings by itself.
 
 #### JSX-Only Usage Triggers Fine-Grained Updates
 
@@ -102,7 +103,7 @@ const doubled = count * 2 // defined but never read in control flow
 return <>{count}</>
 ```
 
-When `count` changes, only the text node updates. The component body doesn't re-execute because `doubled` is defined but never read at runtime in control flow.
+When `count` changes, only the text node updates. The component body still does not re-run.
 
 #### Concrete Example: What Runs When?
 
@@ -162,14 +163,14 @@ During initial execution, the compiled code will:
 - Assign "Derived Nodes" (memo) for each required derived expression
 - Register a "Side Effect Node" for each `$effect`
 - Create "Binding Nodes" (update functions) for dynamic parts in JSX
-- Track which signals/memos are **read at runtime** in control flow for re-execution triggers
+- Track which signals/memos are **read at runtime** in control flow for branch-binding lowering
 
 Eventually forming a graph:
 
 ```text
 $state ──▶ memo ──▶ binding
        └──▶ effect
-       └──▶ control flow (triggers re-execution)
+       └──▶ control flow (triggers branch binding)
 ```
 
 ### 2.5 Props Stay Reactive Outside Render
@@ -227,17 +228,17 @@ For everyday props/destructuring/spread patterns, rely on the compiler’s autom
 
 ### 2.2 Comparison with React / Solid
 
-| Framework | Component Execution Count                                           | Update Granularity       |
-| :-------- | :------------------------------------------------------------------ | :----------------------- |
-| React     | Re-executes entire component on every state change                  | Component-level + VDOM   |
-| Solid     | Component executes once, internal signal graph                      | DOM-level                |
-| Fict      | On-demand: re-executes when control flow depends on changed signals | DOM-level (Fine-grained) |
+| Framework | Component Execution Count                                            | Update Granularity       |
+| :-------- | :------------------------------------------------------------------- | :----------------------- |
+| React     | Re-executes entire component on every state change                   | Component-level + VDOM   |
+| Solid     | Component executes once, internal signal graph                       | DOM-level                |
+| Fict      | Component executes once; control-flow branches are reactive bindings | DOM-level (Fine-grained) |
 
-Fict is a **hybrid model**:
+Fict uses a compiler-first fine-grained model:
 
 - Like Solid: Fine-grained DOM updates when signals are only used in JSX
-- More intuitive than Solid: Re-executes when control flow depends on state (matching developer expectations)
-- Unlike React: No unnecessary re-renders when state doesn't affect control flow
+- Branch returns (`if-return` / `switch-return` / equivalent `try` returns) are lowered to reactive conditionals
+- Unlike React: No full component re-renders on each state update
 
 ---
 
@@ -343,7 +344,7 @@ A key design of Fict is: **Automatic memoization of derived expressions**.
 All expressions dependent on `$state` (directly or indirectly) are memoized by default (unless `"use no memo"` disables auto memoization).
 
 1. **Read in control flow**
-   → Still memoized, and also **triggers component re-execution** when the value changes.
+   → Still memoized; supported return-branch shapes are lowered into reactive conditionals.
 
 2. **Read in JSX / `$effect` / events / plain functions**
    → Memoized; events and plain functions read the current memo value.
@@ -601,7 +602,7 @@ This way:
 
 ## 9. Events and Closures: Snapshot vs Live
 
-With Fict's on-demand execution model, event handlers always see the latest values. However, the compilation strategy differs based on usage:
+With Fict's getter/memo lowering model, event handlers always see the latest values. However, the compilation strategy differs based on usage:
 
 ```ts
 let count = $state(0)
@@ -616,10 +617,10 @@ Fict ensures this by rewriting reactive reads to getters and memoizing derived v
 
 To summarize:
 
-- Derived **read at runtime** in **control flow** → triggers component re-execution
+- Derived **read at runtime** in supported control-flow return shapes → lowered to reactive branch bindings
 - Derived read in **JSX / `$effect` / events / plain functions** → memo accessor (events read current memo value)
 - With `"use no memo"` → derived values are lowered as plain getters/expressions unless explicitly `$memo`
-- Simply defining a derived (`const x = signal * 2`) does NOT trigger re-execution
+- Simply defining a derived (`const x = signal * 2`) does NOT by itself create branch bindings
 
 This matches developer intuition while optimizing for performance.
 
@@ -862,7 +863,7 @@ complete shell HTML plus a deferred patch stream.
   - To hand over complex reactive wiring and performance optimization to the compiler and runtime;
   - To retain the engineering advantages brought by TSX and existing toolchains.
 
-- **On-demand execution model**: Components re-execute when signals/derived values are **read at runtime** in control flow; otherwise, only fine-grained DOM updates occur. Simply defining a derived value (`const x = signal * 2`) doesn't trigger re-execution. This hybrid approach combines the intuitive behavior of React's mental model with the performance of Solid's fine-grained reactivity.
+- **Compiler-first fine-grained model**: Components execute once; updates flow through memo/binding nodes. Supported control-flow return shapes are lowered into reactive branch bindings while normal JSX reads stay fine-grained.
 
 - From an architectural perspective, it stands on the shoulders of several predecessors:
   - React Compiler's automatic derivation idea

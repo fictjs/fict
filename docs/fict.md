@@ -167,7 +167,7 @@ React Compiler's design positioning is: **Improve performance through automatic 
 Svelte's typical path is: **Compile templates to DOM update code** (no VDOM), and use runes (`$state/$derived/$effect`) to explicitly write out the intent of "this is state/derived/side-effect".
 
 The key point: Svelte 5's `$derived` documentation clearly states dependency rules—**any value read synchronously inside a `$derived` expression (or `$derived.by` function body) becomes a dependency**; when dependencies change, it is marked dirty and re-calculated on next read.
-`$effect` similarly drives re-execution based on dependency changes.
+`$effect` similarly schedules updates based on dependency changes.
 
 ```svelte
 <script>
@@ -249,7 +249,7 @@ The compiler is only half the story; the other half is the execution model.
 | Solid                 | Executes once on init; subsequent fine-grained updates driven by signal subscriptions (no VDOM/diff). | DOM Binding Level                                         | Commonly uses `<Show>/<For>` control flow components |
 | Svelte 5              | Executes once on init; `$derived/$effect` scheduled on dependency change.                             | DOM update code + runes scheduling                        | Template blocks (`{#if}/{#each}`)                    |
 | Vue Vapor             | 🧪 Exploring: Goal is rendering path not dependent on VDOM.                                           | 🧪                                                        | Template/Directives centric                          |
-| Fict                  | On-demand (Mixed)                                                                                     | Fine-grained DOM update                                   | Native JS (if/for)                                   |
+| Fict                  | Run once + reactive bindings                                                                          | Fine-grained DOM update                                   | Native JS (if/for)                                   |
 
 ### An Intuitive Example: Re-execution Strategy and Slot Reuse
 
@@ -257,12 +257,12 @@ The compiler is only half the story; the other half is the execution model.
 function Demo() {
   console.log('mount once') // First run
   let count = $state(0)
-  console.log('re-run with', count) // Re-runs when count changes
+  $effect(() => console.log('count changed', count))
   return <button onClick={() => count++}>{count}</button>
 }
 ```
 
-- After clicking the button, the console will only append `re-run with 1/2/...`. `mount once` will not repeat, indicating that only the region reading the state is re-executed. The compiler achieves this by hoisting static parts outside the reactive region, or splitting the function into multiple regions.
+- After clicking the button, `mount once` will not repeat. Reactive updates are handled by bindings/effects, not by re-running the whole component body.
 - DOM will not be recreated: Signal slot reuse + binding updates ensure the button node, events, and refs remain in place, only the text node updates.
 
 ---
@@ -289,7 +289,7 @@ Main processing stages of the Fict compiler:
 1.  **Build HIR (High-Level Intermediate Representation)**: Function body → Basic Blocks + CFG (including if/for/while/switch)
 2.  **Convert to SSA**: Make assignment versions unique, facilitating explicit dependency edges
 3.  **Analyze Reactive Scopes**: Automatically turn expression regions dependent on `$state` into memo/effect/bindings
-4.  **Detect Control Flow Reads**: When reactive values appear in branch tests etc., choose paths that "need re-execution"
+4.  **Detect Control Flow Reads**: When reactive values appear in branch tests, lower supported return branches into reactive conditionals
 5.  **Generate Fine-grained DOM**: JSX → DOM instructions; Bindings → Precise effects
 
 ---
@@ -298,8 +298,8 @@ Main processing stages of the Fict compiler:
 
 The execution model designed by Fict:
 
-- If state is **only read in JSX** → Component does not re-execute, only relevant DOM nodes update
-- If state is **read in control flow** (e.g., branch conditions in if/switch/loop) → Component needs re-execution
+- If state is **only read in JSX** → only relevant DOM nodes update
+- If state is **read in supported control-flow return branches** (e.g., sequential `if-return`, `switch-return`, equivalent `try` return branches) → compiler emits reactive branch bindings
 
 The compiler analyzes and decides which update strategy to adopt at compile time. Developers don't need to rewrite code into special syntax like `<Show>/<For>` or `{#if}`; native `if/for` works directly.
 
@@ -501,24 +501,21 @@ function App() {
 // Output (Simplified)
 function App() {
   const __ctx = __fictUseContext()
+  const show = __fictUseSignal(__ctx, true, 0)
 
-  return __fictRender(__ctx, () => {
-    const show = __fictUseSignal(__ctx, true, 0)
-
-    // Control flow triggers re-execution, so the whole render function logic runs again
-    // But signals are reused via slots, not recreated
-
-    return createConditional(
-      () => show(),
-      () => /* Panel's fine-grained DOM */,
-      createElement,
-      () => /* Fallback's fine-grained DOM */
-    )
-  })
+  // Supported control-flow return branches are lowered to reactive conditionals
+  const binding = createConditional(
+    () => show(),
+    () => /* Panel's fine-grained DOM */,
+    createElement,
+    () => /* Fallback's fine-grained DOM */
+  )
+  __fictOnDestroy(() => binding.dispose())
+  return binding
 }
 ```
 
-`__fictRender` re-executes the internal function when `show` changes, but `__fictUseSignal` reuses state via slots, so state is not lost.
+The conditional binding updates branch output when `show` changes, while signal slots are reused.
 
 ### Reactivity of Props
 
@@ -602,7 +599,7 @@ const result = someExternalLib.compute(() => count)
 // Compiler cannot see inside compute callback, dependency tracking might be incomplete
 ```
 
-Solution: The compiler issues a warning (FICT-S002), you can use explicit getters or let the component take the re-execution path.
+Solution: The compiler issues a warning (FICT-S002); use explicit getters or `untrack`/manual memo boundaries.
 
 **2. Dynamic property access is limited**
 
@@ -624,10 +621,10 @@ Fict's execution model differs from React (see Section 2.3):
 ```tsx
 console.log('A') // Executes once
 let count = $state(0)
-console.log('B', count) // Executes every time count changes
+$effect(() => console.log('B', count)) // Runs when count changes
 ```
 
-Developers from a React background might be confused: "Why doesn't A execute every time?" This requires understanding Fict's concept of reactive regions.
+Developers from a React background might be confused: "Why doesn't A execute every time?" This requires understanding Fict's binding/memo graph model.
 
 We will provide Fict DevTools to visualize these regions to aid debugging.
 
@@ -639,7 +636,7 @@ Fict's compiler is much more complex than Solid's. More code means more potentia
 
 - Explicit `$memo` / `$effect`: When automatic inference doesn't meet expectations, manually declare derivation or side-effect boundaries.
 - `prop/mergeProps` helpers: Manually maintain reactivity when props access patterns are special.
-- Control Flow Degradation: Scenarios that cannot be statically analyzed are handed over to the re-execution model, prioritizing correctness.
+- Control Flow Degradation: Scenarios that cannot be statically analyzed degrade to conservative reactive bindings / warnings, prioritizing correctness.
 
 ### Why I still think it's worth it
 

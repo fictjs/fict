@@ -757,6 +757,26 @@ function lowerStructuredNodeInternal(
   return lowerNodeWithRegionContext(node, t, ctx, declaredVars, regionCtx)
 }
 
+function ensureSwitchCaseBreak(
+  stmts: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): BabelCore.types.Statement[] {
+  if (stmts.length === 0) {
+    return [t.breakStatement()]
+  }
+  const tail = stmts[stmts.length - 1]
+  if (
+    tail &&
+    (t.isBreakStatement(tail) ||
+      t.isReturnStatement(tail) ||
+      t.isThrowStatement(tail) ||
+      t.isContinueStatement(tail))
+  ) {
+    return stmts
+  }
+  return [...stmts, t.breakStatement()]
+}
+
 /**
  * Lower a node with region context
  */
@@ -1023,10 +1043,20 @@ function lowerNodeWithRegionContext(
     }
 
     case 'switch': {
-      const cases = node.cases.map(c => {
-        const stmts = lowerNodeWithRegionContext(c.body, t, ctx, declaredVars, regionCtx)
-        return t.switchCase(c.test ? lowerExpressionWithDeSSA(c.test, ctx) : null, stmts)
-      })
+      const prevConditional = ctx.inConditional ?? 0
+      ctx.inConditional = prevConditional + 1
+      let cases: BabelCore.types.SwitchCase[]
+      try {
+        cases = node.cases.map(c => {
+          const stmts = ensureSwitchCaseBreak(
+            lowerNodeWithRegionContext(c.body, t, ctx, declaredVars, regionCtx),
+            t,
+          )
+          return t.switchCase(c.test ? lowerExpressionWithDeSSA(c.test, ctx) : null, stmts)
+        })
+      } finally {
+        ctx.inConditional = prevConditional
+      }
       return [t.switchStatement(lowerExpressionWithDeSSA(node.discriminant, ctx), cases)]
     }
 
@@ -1413,21 +1443,31 @@ function lowerStructuredNodeForRegion(
     }
 
     case 'switch': {
-      const cases = node.cases
-        .map(c => {
-          const stmts = lowerStructuredNodeForRegion(
-            c.body,
-            region,
-            t,
-            ctx,
-            declaredVars,
-            regionCtx,
-            skipInstructions,
-          )
-          if (stmts.length === 0) return null
-          return t.switchCase(c.test ? lowerExpressionWithDeSSA(c.test, ctx) : null, stmts)
-        })
-        .filter((c): c is BabelCore.types.SwitchCase => !!c)
+      const prevConditional = ctx.inConditional ?? 0
+      ctx.inConditional = prevConditional + 1
+      let cases: BabelCore.types.SwitchCase[]
+      try {
+        cases = node.cases
+          .map(c => {
+            const stmts = ensureSwitchCaseBreak(
+              lowerStructuredNodeForRegion(
+                c.body,
+                region,
+                t,
+                ctx,
+                declaredVars,
+                regionCtx,
+                skipInstructions,
+              ),
+              t,
+            )
+            if (stmts.length === 0) return null
+            return t.switchCase(c.test ? lowerExpressionWithDeSSA(c.test, ctx) : null, stmts)
+          })
+          .filter((c): c is BabelCore.types.SwitchCase => !!c)
+      } finally {
+        ctx.inConditional = prevConditional
+      }
       if (cases.length === 0) return []
       return [t.switchStatement(lowerExpressionWithDeSSA(node.discriminant, ctx), cases)]
     }

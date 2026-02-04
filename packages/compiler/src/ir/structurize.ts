@@ -926,17 +926,122 @@ function structurizeSwitch(
     cases: { test?: Expression; target: BlockId }[]
   },
 ): StructuredNode {
+  const uniqueTargets = Array.from(new Set(term.cases.map(c => c.target)))
+  const joinBlock = findSwitchJoinBlock(ctx, uniqueTargets)
   const cases: { test: Expression | null; body: StructuredNode }[] = []
 
   for (const c of term.cases) {
-    const body = structurizeBlock(ctx, c.target)
-    cases.push({ test: c.test ?? null, body })
+    const body =
+      joinBlock !== undefined
+        ? structurizeBlockUntilJoin(ctx, c.target, joinBlock)
+        : structurizeBlock(ctx, c.target)
+    const normalizedBody = appendSwitchCaseBreak(body)
+    cases.push({ test: c.test ?? null, body: normalizedBody })
   }
 
-  return {
+  const switchNode: StructuredNode = {
     kind: 'switch',
     discriminant: term.discriminant,
     cases,
+  }
+
+  if (joinBlock !== undefined && !ctx.emitted.has(joinBlock)) {
+    const joinNode = structurizeBlock(ctx, joinBlock)
+    return { kind: 'sequence', nodes: [switchNode, joinNode] }
+  }
+
+  return switchNode
+}
+
+function findSwitchJoinBlock(ctx: StructurizeContext, caseTargets: BlockId[]): BlockId | undefined {
+  const uniqueTargets = Array.from(new Set(caseTargets))
+  if (uniqueTargets.length === 0) return undefined
+
+  const reachableByCase = uniqueTargets.map(target =>
+    collectReachableBlocks(ctx, target, new Set<BlockId>()),
+  )
+  const reachableUnion = new Set<BlockId>()
+  for (const set of reachableByCase) {
+    for (const id of set) reachableUnion.add(id)
+  }
+
+  const minCaseCoverage = uniqueTargets.length > 1 ? 2 : 1
+  interface Candidate {
+    id: BlockId
+    reachableCases: number
+    predecessorCount: number
+    isJoinPoint: boolean
+  }
+  const candidates: Candidate[] = []
+
+  for (const id of reachableUnion) {
+    if (uniqueTargets.includes(id)) continue
+
+    let reachableCases = 0
+    for (const set of reachableByCase) {
+      if (set.has(id)) reachableCases++
+    }
+    if (reachableCases < minCaseCoverage) continue
+
+    const predecessors = ctx.predecessors.get(id) ?? []
+    const predecessorCount = predecessors.filter(pred => reachableUnion.has(pred)).length
+
+    candidates.push({
+      id,
+      reachableCases,
+      predecessorCount,
+      isJoinPoint: predecessors.length > 1,
+    })
+  }
+
+  if (candidates.length === 0) return undefined
+
+  candidates.sort((a, b) => {
+    if (a.reachableCases !== b.reachableCases) return b.reachableCases - a.reachableCases
+    if (a.predecessorCount !== b.predecessorCount) return b.predecessorCount - a.predecessorCount
+    if (a.isJoinPoint !== b.isJoinPoint) return Number(b.isJoinPoint) - Number(a.isJoinPoint)
+    return a.id - b.id
+  })
+
+  return candidates[0]?.id
+}
+
+function appendSwitchCaseBreak(body: StructuredNode): StructuredNode {
+  if (isSwitchCaseTerminated(body)) return body
+  if (body.kind === 'sequence') {
+    return { kind: 'sequence', nodes: [...body.nodes, { kind: 'break' }] }
+  }
+  return { kind: 'sequence', nodes: [body, { kind: 'break' }] }
+}
+
+function isSwitchCaseTerminated(node: StructuredNode | null | undefined): boolean {
+  if (!node) return false
+  switch (node.kind) {
+    case 'return':
+    case 'throw':
+    case 'break':
+    case 'continue':
+      return true
+    case 'sequence':
+      return node.nodes.length > 0 && isSwitchCaseTerminated(node.nodes[node.nodes.length - 1])
+    case 'block':
+      return (
+        node.statements.length > 0 &&
+        isSwitchCaseTerminated(node.statements[node.statements.length - 1])
+      )
+    case 'if':
+      return (
+        isSwitchCaseTerminated(node.consequent) &&
+        isSwitchCaseTerminated(node.alternate ?? undefined)
+      )
+    case 'try':
+      if (node.finalizer && isSwitchCaseTerminated(node.finalizer)) return true
+      return (
+        isSwitchCaseTerminated(node.block) &&
+        isSwitchCaseTerminated(node.handler?.body ?? undefined)
+      )
+    default:
+      return false
   }
 }
 
