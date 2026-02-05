@@ -295,4 +295,154 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-S002')).toBe(false)
     expect(warnings.some(w => w.code === 'FICT-H')).toBe(false)
   })
+
+  it('does not warn for JSX map callbacks', () => {
+    const source = `
+      function App() {
+        const items = [1, 2, 3]
+        return (
+          <ul>
+            {items.map(item => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        )
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-C003')).toBe(false)
+  })
+
+  it('does not warn effects that read aliases of reactive bindings', () => {
+    const source = `
+      import { $state, $effect } from 'fict'
+      function App() {
+        let count = $state(0)
+        let alias = count
+        const state = $state({ total: 0 })
+        const { total } = state
+        $effect(() => {
+          console.log(alias, total)
+        })
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-E001')).toBe(false)
+  })
+
+  it('warns when list rendering returns a fragment without a key', () => {
+    const source = `
+      function App() {
+        const items = [1, 2, 3]
+        return (
+          <div>
+            {items.map(item => (
+              <>
+                <span>{item}</span>
+              </>
+            ))}
+          </div>
+        )
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
+  })
+
+  it('does not warn effects that read props', () => {
+    const source = `
+      import { $effect } from 'fict'
+      function App(props) {
+        const { count } = props
+        $effect(() => {
+          console.log(props.count, count)
+        })
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-E001')).toBe(false)
+  })
+
+  it('does not warn effects that read imported reactive bindings', () => {
+    const source = `
+      import { $effect } from 'fict'
+      import { count } from './state'
+      function App() {
+        $effect(() => {
+          console.log(count)
+        })
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    const moduleMetadata = new Map<string, any>([['./state', { exports: { count: 'signal' } }]])
+    transform(source, {
+      moduleMetadata,
+      onWarn: warning => warnings.push(warning as { code: string }),
+    })
+    expect(warnings.some(w => w.code === 'FICT-E001')).toBe(false)
+  })
+
+  it('warns empty effects when $effect is aliased', () => {
+    const source = `
+      import { $effect as fx } from 'fict'
+      function App() {
+        fx(() => {
+          console.log('once')
+        })
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-E001')).toBe(true)
+  })
+
+  it('throws when updating a reactive alias with ++', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        let alias = count
+        alias++
+        return <div />
+      }
+    `
+    expect(() => transform(source)).toThrow(/Alias reassignment/)
+  })
+
+  it('throws when writing to a destructured alias from a state alias', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const state = $state({ count: 0 })
+        const alias = state
+        const { count } = alias
+        count++
+        return <div />
+      }
+    `
+    expect(() => transform(source)).toThrow(/destructured state alias/)
+  })
+
+  it('warns on nested mutation through a state alias', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const state = $state({ nested: { value: 1 } })
+        const alias = state
+        alias.nested.value = 2
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-M')).toBe(true)
+  })
 })

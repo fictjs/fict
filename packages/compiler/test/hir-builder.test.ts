@@ -320,6 +320,33 @@ describe('buildHIR - Advanced Patterns', () => {
     expect(hir.functions[0].blocks.length).toBeGreaterThanOrEqual(3)
   })
 
+  it('preserves computed object literal keys', () => {
+    const ast = parseFile(`
+      function Obj(key) {
+        const obj = { [key]: 1, fixed: 2 }
+        return obj
+      }
+    `)
+    const hir = buildHIR(ast)
+    const fn = hir.functions.find(f => f.name === 'Obj') ?? hir.functions[0]
+    const assign = fn.blocks
+      .flatMap(b => b.instructions)
+      .find(instr => instr.kind === 'Assign' && (instr as any).target?.name === 'obj') as any
+    expect(assign).toBeDefined()
+    const objExpr = assign.value
+    expect(objExpr?.kind).toBe('ObjectExpression')
+    const props = objExpr.properties as any[]
+    expect(props.length).toBe(2)
+    const computedProp = props.find(p => p.kind === 'Property' && p.computed)
+    expect(computedProp).toBeDefined()
+    expect(computedProp.key.kind).toBe('Identifier')
+    expect(computedProp.key.name).toBe('key')
+    const fixedProp = props.find(p => p.kind === 'Property' && !p.computed)
+    expect(fixedProp).toBeDefined()
+    expect(fixedProp.key.kind).toBe('Identifier')
+    expect(fixedProp.key.name).toBe('fixed')
+  })
+
   it('handles JSX with conditional children', () => {
     const ast = parseFile(`
       function ConditionalJSX(props) {

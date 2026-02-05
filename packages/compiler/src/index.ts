@@ -6,6 +6,7 @@ import { debugLog } from './debug'
 import { buildHIR } from './ir/build-hir'
 import { lowerHIRWithRegions } from './ir/codegen'
 import { optimizeHIR } from './ir/optimize'
+import { resolveModuleMetadata } from './module-metadata'
 import type { CompilerWarning, FictCompilerOptions } from './types'
 import { getRootIdentifier, isEffectCall, isMemoCall, isStateCall } from './utils'
 
@@ -275,17 +276,13 @@ function isDynamicPropertyAccess(
 
 function runWarningPass(
   programPath: BabelCore.NodePath<BabelCore.types.Program>,
-  stateBindingIds: Set<BabelCore.types.Identifier>,
-  derivedBindingIds: Set<BabelCore.types.Identifier>,
+  stateRootBindingIds: Set<BabelCore.types.Identifier>,
+  reactiveBindingIds: Set<BabelCore.types.Identifier>,
+  effectMacroNames: Set<string>,
   warn: WarningSink,
   fileName: string,
   t: typeof BabelCore.types,
 ): void {
-  const reactiveBindingIds = new Set<BabelCore.types.Identifier>([
-    ...stateBindingIds,
-    ...derivedBindingIds,
-  ])
-
   const hasTrackedBinding = (
     path: BabelCore.NodePath,
     name: string,
@@ -298,7 +295,7 @@ function runWarningPass(
   const isStateRoot = (expr: BabelCore.types.Expression, path: BabelCore.NodePath): boolean => {
     const root = getRootIdentifier(expr, t)
     if (!root) return false
-    return hasTrackedBinding(path, root.name, stateBindingIds)
+    return hasTrackedBinding(path, root.name, stateRootBindingIds)
   }
 
   programPath.traverse({
@@ -396,7 +393,8 @@ function runWarningPass(
       }
     },
     CallExpression(path) {
-      if (t.isIdentifier(path.node.callee, { name: '$effect' })) {
+      const isEffect = isEffectCall(path.node, t, effectMacroNames)
+      if (isEffect) {
         const argPath = path.get('arguments.0')
         if (argPath?.isFunctionExpression() || argPath?.isArrowFunctionExpression()) {
           let hasReactiveDependency = false
@@ -666,6 +664,27 @@ function createHIREntrypointVisitor(
             functionUsesStateLike(fnPath, t)
           )
         }
+        const isBoundDefinition = (fnPath: BabelCore.NodePath<BabelCore.types.Function>): boolean =>
+          fnPath.isFunctionDeclaration() ||
+          (fnPath.parentPath.isVariableDeclarator() && fnPath.parentPath.node.init === fnPath.node)
+        const isExportDefaultDefinition = (
+          fnPath: BabelCore.NodePath<BabelCore.types.Function>,
+        ): boolean =>
+          fnPath.parentPath?.isExportDefaultDeclaration() &&
+          fnPath.parentPath.node.declaration === fnPath.node
+        const isNamedComponentOrHookDefinition = (
+          fnPath: BabelCore.NodePath<BabelCore.types.Function>,
+        ): boolean => {
+          if (!isBoundDefinition(fnPath)) return false
+          const name = getFunctionName(fnPath)
+          return !!name && (isComponentName(name) || isHookName(name))
+        }
+        const isComponentDefinitionForProps = (
+          fnPath: BabelCore.NodePath<BabelCore.types.Function>,
+        ): boolean => {
+          if (!isComponentDefinition(fnPath)) return false
+          return isBoundDefinition(fnPath) || isExportDefaultDefinition(fnPath)
+        }
         const memoHasSideEffects = (
           fn: BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression,
         ): boolean => {
@@ -820,6 +839,7 @@ function createHIREntrypointVisitor(
         const stateMacroNames = new Set<string>(['$state'])
         const effectMacroNames = new Set<string>(['$effect'])
         const memoMacroNames = new Set<string>(['$memo', 'createMemo'])
+        const importedReactiveBindingIds = new Set<BabelCore.types.Identifier>()
         path.traverse({
           ImportDeclaration(importPath) {
             if (
@@ -846,6 +866,46 @@ function createHIREntrypointVisitor(
             }
           },
         })
+        path.traverse({
+          ImportDeclaration(importPath) {
+            const meta = resolveModuleMetadata(
+              importPath.node.source.value,
+              fileName,
+              optionsWithWarnings,
+            )
+            if (!meta) return
+            const hasReactiveExports = Object.keys(meta.exports).length > 0
+            for (const spec of importPath.node.specifiers) {
+              if (t.isImportSpecifier(spec)) {
+                const importedName = t.isIdentifier(spec.imported)
+                  ? spec.imported.name
+                  : String(spec.imported.value)
+                if (meta.exports[importedName]) {
+                  const binding = importPath.scope.getBinding(spec.local.name)
+                  if (binding) {
+                    importedReactiveBindingIds.add(binding.identifier as BabelCore.types.Identifier)
+                  }
+                }
+                continue
+              }
+              if (t.isImportDefaultSpecifier(spec)) {
+                if (meta.exports.default) {
+                  const binding = importPath.scope.getBinding(spec.local.name)
+                  if (binding) {
+                    importedReactiveBindingIds.add(binding.identifier as BabelCore.types.Identifier)
+                  }
+                }
+                continue
+              }
+              if (t.isImportNamespaceSpecifier(spec) && hasReactiveExports) {
+                const binding = importPath.scope.getBinding(spec.local.name)
+                if (binding) {
+                  importedReactiveBindingIds.add(binding.identifier as BabelCore.types.Identifier)
+                }
+              }
+            }
+          },
+        })
         // Warn on list rendering without key
         path.traverse({
           JSXExpressionContainer(exprPath) {
@@ -862,15 +922,15 @@ function createHIREntrypointVisitor(
 
             const getReturnedJsx = (
               fn: BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression,
-            ): BabelCore.types.JSXElement | null => {
-              if (t.isJSXElement(fn.body)) return fn.body
+            ): BabelCore.types.JSXElement | BabelCore.types.JSXFragment | null => {
+              if (t.isJSXElement(fn.body) || t.isJSXFragment(fn.body)) return fn.body
               if (t.isBlockStatement(fn.body)) {
                 const ret = fn.body.body.find(stmt => t.isReturnStatement(stmt))
                 if (
                   ret &&
                   t.isReturnStatement(ret) &&
                   ret.argument &&
-                  t.isJSXElement(ret.argument)
+                  (t.isJSXElement(ret.argument) || t.isJSXFragment(ret.argument))
                 ) {
                   return ret.argument
                 }
@@ -880,6 +940,16 @@ function createHIREntrypointVisitor(
 
             const jsx = getReturnedJsx(cb as any)
             if (!jsx) return
+            if (t.isJSXFragment(jsx)) {
+              warn({
+                code: 'FICT-J002',
+                message: 'Missing key prop in list rendering.',
+                fileName,
+                line: expr.loc?.start.line ?? 0,
+                column: expr.loc ? expr.loc.start.column + 1 : 0,
+              })
+              return
+            }
 
             let hasKey = false
             let hasUnknownSpread = false
@@ -909,6 +979,9 @@ function createHIREntrypointVisitor(
         const stateBindingIds = new Set<BabelCore.types.Identifier>()
         const derivedBindingIds = new Set<BabelCore.types.Identifier>()
         const destructuredAliases = new Set<BabelCore.types.Identifier>()
+        const aliasBindingIds = new Set<BabelCore.types.Identifier>()
+        const stateAliasBindingIds = new Set<BabelCore.types.Identifier>()
+        const propsBindingIds = new Set<BabelCore.types.Identifier>()
 
         const hasTrackedBinding = (
           path: BabelCore.NodePath,
@@ -926,6 +999,45 @@ function createHIREntrypointVisitor(
         ): void => {
           const binding = path.scope.getBinding(name)
           if (binding) tracked.add(binding.identifier as BabelCore.types.Identifier)
+        }
+        const hasReactiveAliasSourceBinding = (path: BabelCore.NodePath, name: string): boolean =>
+          hasTrackedBinding(path, name, stateBindingIds) ||
+          hasTrackedBinding(path, name, derivedBindingIds) ||
+          hasTrackedBinding(path, name, aliasBindingIds) ||
+          hasTrackedBinding(path, name, destructuredAliases) ||
+          hasTrackedBinding(path, name, importedReactiveBindingIds)
+        const hasStateRootBinding = (path: BabelCore.NodePath, name: string): boolean =>
+          hasTrackedBinding(path, name, stateBindingIds) ||
+          hasTrackedBinding(path, name, stateAliasBindingIds)
+        const unwrapIdentifier = (
+          node: BabelCore.types.Node | null | undefined,
+        ): BabelCore.types.Identifier | null => {
+          if (!node) return null
+          let current: BabelCore.types.Node = node
+          while (true) {
+            if (t.isTSAsExpression(current)) {
+              current = current.expression
+              continue
+            }
+            if (t.isTSNonNullExpression(current)) {
+              current = current.expression
+              continue
+            }
+            if (t.isTypeCastExpression?.(current)) {
+              current = current.expression
+              continue
+            }
+            break
+          }
+          return t.isIdentifier(current) ? current : null
+        }
+        const isStateRootIdentifier = (
+          exprPath: BabelCore.NodePath | null | undefined,
+        ): BabelCore.types.Identifier | null => {
+          if (!exprPath) return null
+          const id = unwrapIdentifier(exprPath.node)
+          if (!id) return null
+          return hasStateRootBinding(exprPath, id.name) ? id : null
         }
         path.traverse({
           VariableDeclarator(varPath) {
@@ -991,21 +1103,26 @@ function createHIREntrypointVisitor(
                   trackBindingByName(varPath, varPath.node.id.name, derivedBindingIds)
                 }
               }
-            } else if (
-              (t.isObjectPattern(varPath.node.id) || t.isArrayPattern(varPath.node.id)) &&
-              t.isIdentifier(init) &&
-              hasTrackedBinding(varPath, init.name, stateBindingIds)
-            ) {
-              collectPatternIdentifiers(varPath.node.id).forEach(id =>
-                trackBindingByName(varPath, id, destructuredAliases),
-              )
             }
           },
           Function(fnPath) {
+            if (isComponentDefinitionForProps(fnPath as any)) {
+              for (const param of fnPath.node.params) {
+                if (t.isIdentifier(param)) {
+                  trackBindingByName(fnPath, param.name, propsBindingIds)
+                  continue
+                }
+                if (t.isPatternLike(param)) {
+                  collectPatternIdentifiers(param).forEach(name =>
+                    trackBindingByName(fnPath, name, propsBindingIds),
+                  )
+                }
+              }
+            }
             const parentFn = fnPath.getFunctionParent()
             if (!parentFn) return
             if (!isComponentLike(parentFn as any)) return
-            if (!isComponentLike(fnPath as any)) return
+            if (!isNamedComponentOrHookDefinition(fnPath as any)) return
             emitWarning(
               fnPath.node,
               'FICT-C003',
@@ -1192,21 +1309,51 @@ function createHIREntrypointVisitor(
         })
 
         // Validate alias reassignments now that state variables are known
-        const aliasStack: Set<string>[] = [new Set()]
+        const aliasStack: Set<BabelCore.types.Identifier>[] = [new Set()]
         const currentAliasSet = () => aliasStack[aliasStack.length - 1]
-        const rhsUsesState = (exprPath: BabelCore.NodePath | null | undefined): boolean => {
+        const getBindingIdentifier = (
+          path: BabelCore.NodePath,
+          name: string,
+        ): BabelCore.types.Identifier | null => {
+          const binding = path.scope.getBinding(name)
+          return binding ? (binding.identifier as BabelCore.types.Identifier) : null
+        }
+        const addAliasBinding = (path: BabelCore.NodePath, name: string): void => {
+          const aliasSet = currentAliasSet()
+          if (!aliasSet) return
+          const bindingId = getBindingIdentifier(path, name)
+          if (!bindingId) return
+          aliasSet.add(bindingId)
+          aliasBindingIds.add(bindingId)
+        }
+        const addStateAliasBinding = (path: BabelCore.NodePath, name: string): void => {
+          const bindingId = getBindingIdentifier(path, name)
+          if (!bindingId) return
+          stateAliasBindingIds.add(bindingId)
+        }
+        const isAliasBinding = (path: BabelCore.NodePath, name: string): boolean => {
+          const aliasSet = currentAliasSet()
+          if (!aliasSet) return false
+          const bindingId = getBindingIdentifier(path, name)
+          return !!(bindingId && aliasSet.has(bindingId))
+        }
+        const isDestructuredAliasBinding = (path: BabelCore.NodePath, name: string): boolean => {
+          const bindingId = getBindingIdentifier(path, name)
+          return !!(bindingId && destructuredAliases.has(bindingId))
+        }
+        const rhsUsesReactive = (exprPath: BabelCore.NodePath | null | undefined): boolean => {
           if (!exprPath) return false
           if (
             exprPath.isIdentifier() &&
             t.isIdentifier(exprPath.node) &&
-            hasTrackedBinding(exprPath, exprPath.node.name, stateBindingIds)
+            hasReactiveAliasSourceBinding(exprPath, exprPath.node.name)
           ) {
             return true
           }
           let usesState = false
           exprPath.traverse({
             Identifier(idPath: BabelCore.NodePath<BabelCore.types.Identifier>) {
-              if (hasTrackedBinding(idPath, idPath.node.name, stateBindingIds)) {
+              if (hasReactiveAliasSourceBinding(idPath, idPath.node.name)) {
                 usesState = true
                 idPath.stop()
               }
@@ -1225,30 +1372,47 @@ function createHIREntrypointVisitor(
             },
           },
           VariableDeclarator(varPath) {
-            const aliasSet = currentAliasSet()
-            if (
-              aliasSet &&
-              t.isIdentifier(varPath.node.id) &&
-              rhsUsesState(varPath.get('init') as any)
-            ) {
+            const initPath = varPath.get('init') as BabelCore.NodePath | null
+            const stateRootId = isStateRootIdentifier(initPath)
+            if (t.isIdentifier(varPath.node.id) && rhsUsesReactive(initPath as any)) {
               debugLog('alias', 'add from decl', varPath.node.id.name)
-              aliasSet.add(varPath.node.id.name)
+              addAliasBinding(varPath, varPath.node.id.name)
+            }
+            if (t.isIdentifier(varPath.node.id) && stateRootId) {
+              addStateAliasBinding(varPath, varPath.node.id.name)
+            }
+            if (t.isObjectPattern(varPath.node.id) || t.isArrayPattern(varPath.node.id)) {
+              if (rhsUsesReactive(initPath as any)) {
+                const targets = collectPatternIdentifiers(varPath.node.id)
+                for (const target of targets) {
+                  debugLog('alias', 'add from destructuring decl', target)
+                  addAliasBinding(varPath, target)
+                }
+              }
+              if (stateRootId) {
+                collectPatternIdentifiers(varPath.node.id).forEach(id =>
+                  trackBindingByName(varPath, id, destructuredAliases),
+                )
+              }
             }
           },
           AssignmentExpression(assignPath) {
-            const aliasSet = currentAliasSet()
-            if (!aliasSet) return
             const rightPath = assignPath.get('right') as BabelCore.NodePath | null
-            const usesState = rhsUsesState(rightPath)
+            const usesState = rhsUsesReactive(rightPath)
+            const stateRootId = isStateRootIdentifier(rightPath)
             const left = assignPath.node.left
             if (t.isIdentifier(left)) {
               const targetName = left.name
               if (usesState) {
                 debugLog('alias', 'add from assign', targetName)
-                aliasSet.add(targetName)
+                addAliasBinding(assignPath, targetName)
+                if (stateRootId) {
+                  addStateAliasBinding(assignPath, targetName)
+                }
                 return
               }
-              if (aliasSet.has(targetName)) {
+              if (isAliasBinding(assignPath, targetName)) {
+                if (isDestructuredAliasBinding(assignPath, targetName)) return
                 debugLog('alias', 'reassignment detected', targetName)
                 throw assignPath.buildCodeFrameError(
                   `Alias reassignment is not supported for "${targetName}"`,
@@ -1262,17 +1426,39 @@ function createHIREntrypointVisitor(
               if (usesState) {
                 for (const target of targets) {
                   debugLog('alias', 'add from destructuring assign', target)
-                  aliasSet.add(target)
+                  addAliasBinding(assignPath, target)
+                }
+                if (stateRootId) {
+                  targets.forEach(target =>
+                    trackBindingByName(assignPath, target, destructuredAliases),
+                  )
                 }
                 return
               }
-              const reassigned = targets.find(target => aliasSet.has(target))
+              const reassigned = targets.find(
+                target =>
+                  isAliasBinding(assignPath, target) &&
+                  !isDestructuredAliasBinding(assignPath, target),
+              )
               if (reassigned) {
                 debugLog('alias', 'reassignment detected', reassigned)
                 throw assignPath.buildCodeFrameError(
                   `Alias reassignment is not supported for "${reassigned}"`,
                 )
               }
+            }
+          },
+          UpdateExpression(updatePath) {
+            const arg = updatePath.node.argument
+            if (
+              t.isIdentifier(arg) &&
+              isAliasBinding(updatePath, arg.name) &&
+              !isDestructuredAliasBinding(updatePath, arg.name)
+            ) {
+              debugLog('alias', 'reassignment detected', arg.name)
+              throw updatePath.buildCodeFrameError(
+                `Alias reassignment is not supported for "${arg.name}"`,
+              )
             }
           },
         })
@@ -1347,7 +1533,27 @@ function createHIREntrypointVisitor(
         // Emit conservative warnings for mutation/dynamic access
         const shouldRunWarnings = dev || hasErrorEscalation(options)
         if (shouldRunWarnings) {
-          runWarningPass(path as any, stateBindingIds, derivedBindingIds, warn, fileName, t)
+          const stateRootBindingIds = new Set<BabelCore.types.Identifier>([
+            ...stateBindingIds,
+            ...stateAliasBindingIds,
+          ])
+          const reactiveBindingIds = new Set<BabelCore.types.Identifier>([
+            ...stateBindingIds,
+            ...derivedBindingIds,
+            ...aliasBindingIds,
+            ...destructuredAliases,
+            ...propsBindingIds,
+            ...importedReactiveBindingIds,
+          ])
+          runWarningPass(
+            path as any,
+            stateRootBindingIds,
+            reactiveBindingIds,
+            effectMacroNames,
+            warn,
+            fileName,
+            t,
+          )
         }
 
         // NOTE: Reactive scope callbacks (like renderHook(() => {...})) are NOT hoisted.
