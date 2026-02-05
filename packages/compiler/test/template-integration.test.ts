@@ -73,6 +73,28 @@ describe('compiled templates DOM integration', () => {
     __fictResetContext()
   })
 
+  it('preserves object literal getter/setter semantics at runtime', () => {
+    const source = `
+      export function run() {
+        const obj = {
+          _v: 0,
+          get value() {
+            return this._v + 1
+          },
+          set value(v) {
+            this._v = v * 2
+          },
+        }
+        obj.value = 2
+        return { raw: obj._v, computed: obj.value }
+      }
+    `
+
+    const mod = compileAndLoad<{ run: () => { raw: number; computed: number } }>(source)
+    const result = mod.run()
+    expect(result).toEqual({ raw: 4, computed: 5 })
+  })
+
   it('mounts and cleans up fragment output produced via insert', { timeout: 10000 }, async () => {
     const source = `
       import { $state, onDestroy } from 'fict'

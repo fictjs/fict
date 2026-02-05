@@ -516,6 +516,33 @@ state = { ...state, user: { ...state.user, name: 'Alice' } }
 
 **Fix:** Prefer static property access where possible.
 
+### FICT-HIR-UNSUPPORTED: Unsupported syntax in HIR conversion
+
+**Severity:** Error
+
+**Why:** The HIR conversion encountered syntax that it cannot faithfully represent.
+
+**Impact:** Compilation fails to avoid silently changing runtime behavior.
+
+**Common triggers:**
+
+- Array literal holes: `[ , 1 ]`
+- JSX spread children: `<div>{...items}</div>`
+- Unsupported destructuring patterns in variable declarations/assignments (e.g. computed keys, nested patterns, or rest elements that are not simple identifiers)
+
+**Fix:** Rewrite to supported forms:
+
+```js
+// Array holes: use explicit undefined values
+const arr = [undefined, 1]
+
+// JSX spread children: render explicitly
+<div>{items}</div>
+
+// Destructuring: use simple identifiers
+const { value } = obj
+```
+
 ---
 
 ## Notes

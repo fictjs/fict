@@ -753,3 +753,7 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
 - Destructuring a `$state` return value.
 - Assigning directly to the return of `$state()` (must assign to an identifier).
 - `$effect` outside top-level placement (module/component body).
+- Unsupported syntax during HIR conversion (hard error):
+  - Array literal holes (`[ , 1 ]`) — use explicit `undefined` values.
+  - JSX spread children (`<div>{...items}</div>`) — render explicitly.
+  - Complex destructuring patterns in variable declarations/assignments (computed keys, nested patterns, or rest elements that are not identifiers).

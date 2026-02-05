@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import * as BabelCore from '@babel/core'
 import { parseSync } from '@babel/core'
 import { buildHIR } from '../src/ir/build-hir'
 import { printHIR } from '../src/ir/printer'
@@ -211,6 +212,22 @@ describe('buildHIR - Advanced Patterns', () => {
     expect(hir.functions[0]).toBeDefined()
     const printed = printHIR(hir)
     expect(printed).toContain('name')
+  })
+
+  it('handles optional chaining when isChainExpression is unavailable', () => {
+    const types = BabelCore.types as any
+    const prev = types.isChainExpression
+    try {
+      types.isChainExpression = undefined
+      const ast = parseFile(`
+        function Compat(props) {
+          return props?.user?.name
+        }
+      `)
+      expect(() => buildHIR(ast)).not.toThrow()
+    } finally {
+      types.isChainExpression = prev
+    }
   })
 
   it('handles nested destructuring with spread', () => {
