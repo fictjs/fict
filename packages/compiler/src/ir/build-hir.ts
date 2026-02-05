@@ -2548,6 +2548,10 @@ function convertExpression(
     return undefined
   }
 
+  if ((t as any).isChainExpression?.(node) || (node as any).type === 'ChainExpression') {
+    return convertExpression((node as any).expression as BabelCore.types.Expression, options)
+  }
+
   if (t.isParenthesizedExpression(node) && t.isExpression(node.expression)) {
     return convertExpression(node.expression)
   }
@@ -2778,6 +2782,7 @@ function convertExpression(
           key: keyExpr,
           value: convertExpression(fnExpr),
           computed: prop.computed,
+          propertyKind: prop.kind ?? 'method',
           loc: getLoc(prop),
         })
         continue

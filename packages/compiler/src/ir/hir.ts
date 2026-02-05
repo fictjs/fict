@@ -447,6 +447,11 @@ export interface ObjectProperty extends SourceInfo {
   computed?: boolean
   value: Expression
   shorthand?: boolean
+  /**
+   * Property kind for object methods/getters/setters.
+   * Undefined or 'init' indicates a standard property initializer.
+   */
+  propertyKind?: 'init' | 'method' | 'get' | 'set'
 }
 
 export interface ObjectExpression extends SourceInfo {

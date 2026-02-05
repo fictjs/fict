@@ -3428,6 +3428,33 @@ function lowerExpressionImpl(
           if (p.kind === 'SpreadElement') {
             return t.spreadElement(lowerExpression(p.argument, ctx))
           }
+          const keyIsIdentifier = !p.computed && p.key.kind === 'Identifier'
+          const keyIdent = keyIsIdentifier ? (p.key as any).name : ''
+          const keyNode = p.computed
+            ? lowerExpression(p.key, ctx)
+            : keyIsIdentifier
+              ? t.identifier(keyIdent)
+              : lowerExpression(p.key, ctx)
+
+          if (p.propertyKind && p.propertyKind !== 'init') {
+            const valueExpr = lowerExpression(p.value, ctx)
+            if (!t.isFunctionExpression(valueExpr)) {
+              throw new HIRError(
+                `Object method property did not lower to function expression.`,
+                'CODEGEN_ERROR',
+              )
+            }
+            const method = t.objectMethod(
+              p.propertyKind === 'method' ? 'method' : p.propertyKind,
+              keyNode as any,
+              valueExpr.params as any,
+              valueExpr.body as any,
+              !!p.computed,
+            )
+            method.async = valueExpr.async
+            method.generator = valueExpr.generator
+            return method
+          }
           // For shorthand properties, ensure key matches the de-versioned value name
           const usesTracked =
             !!ctx.inPropsContext &&
@@ -3458,27 +3485,12 @@ function lowerExpressionImpl(
                   ])
                 })()
               : valueExprRaw
-          const keyName =
-            !p.computed && p.key.kind === 'Identifier'
-              ? p.key.name
-              : !p.computed &&
-                  p.key.kind === 'Literal' &&
-                  (typeof p.key.value === 'string' || typeof p.key.value === 'number')
-                ? String(p.key.value)
-                : ''
-          const keyNode = p.computed
-            ? lowerExpression(p.key, ctx)
-            : p.key.kind === 'Identifier'
-              ? t.identifier(keyName)
-              : t.stringLiteral(keyName)
-
           // If shorthand and value is identifier, use de-versioned name for key too
           const useShorthand =
             p.shorthand &&
             t.isIdentifier(valueExpr) &&
-            p.key.kind === 'Identifier' &&
-            !p.computed &&
-            deSSAVarName(keyName) === valueExpr.name
+            keyIsIdentifier &&
+            deSSAVarName(keyIdent) === valueExpr.name
 
           return t.objectProperty(
             useShorthand ? t.identifier(valueExpr.name) : keyNode,

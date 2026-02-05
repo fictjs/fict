@@ -401,6 +401,33 @@ describe('buildHIR - Advanced Patterns', () => {
     expect(fixedProp.key.name).toBe('fixed')
   })
 
+  it('captures object method kinds', () => {
+    const ast = parseFile(`
+      function ObjMethods() {
+        const obj = {
+          get foo() { return 1 },
+          set foo(v) { },
+          bar() { return 2 }
+        }
+        return obj
+      }
+    `)
+    const hir = buildHIR(ast)
+    const fn = hir.functions.find(f => f.name === 'ObjMethods') ?? hir.functions[0]
+    const assign = fn.blocks
+      .flatMap(b => b.instructions)
+      .find(instr => instr.kind === 'Assign' && (instr as any).target?.name === 'obj') as any
+    expect(assign).toBeDefined()
+    const objExpr = assign.value
+    const props = objExpr.properties as any[]
+    const getter = props.find(p => p.kind === 'Property' && p.propertyKind === 'get')
+    const setter = props.find(p => p.kind === 'Property' && p.propertyKind === 'set')
+    const method = props.find(p => p.kind === 'Property' && p.propertyKind === 'method')
+    expect(getter).toBeDefined()
+    expect(setter).toBeDefined()
+    expect(method).toBeDefined()
+  })
+
   it('handles JSX with conditional children', () => {
     const ast = parseFile(`
       function ConditionalJSX(props) {
