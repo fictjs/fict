@@ -320,6 +320,32 @@ describe('buildHIR - Advanced Patterns', () => {
     expect(hir.functions[0].blocks.length).toBeGreaterThanOrEqual(3)
   })
 
+  it('throws on array literal holes', () => {
+    const ast = parseFile(`
+      function Hole() {
+        const arr = [, 1]
+        return arr
+      }
+    `)
+    expect(() => buildHIR(ast)).toThrow(/Array literal holes are not supported/)
+  })
+
+  it('extracts identifiers from rest parameter patterns', () => {
+    const ast = parseFile(`
+      function Rest(...[a, b]) {
+        return a + b
+      }
+      function RestObj(...{ c, d }) {
+        return c + d
+      }
+    `)
+    const hir = buildHIR(ast)
+    const restFn = hir.functions.find(f => f.name === 'Rest') ?? hir.functions[0]
+    const restObjFn = hir.functions.find(f => f.name === 'RestObj') ?? hir.functions[1]
+    expect(restFn.params.map(p => p.name)).toEqual(expect.arrayContaining(['a', 'b']))
+    expect(restObjFn.params.map(p => p.name)).toEqual(expect.arrayContaining(['c', 'd']))
+  })
+
   it('preserves computed object literal keys', () => {
     const ast = parseFile(`
       function Obj(key) {
@@ -362,6 +388,48 @@ describe('buildHIR - Advanced Patterns', () => {
     expect(hir.functions[0]).toBeDefined()
     const printed = printHIR(hir)
     expect(printed.toLowerCase()).toContain('jsx')
+  })
+
+  it('preserves JSX attribute values and namespaced attributes', () => {
+    const ast = parseFile(`
+      function App() {
+        const url = '/icon'
+        return (
+          <Comp
+            icon={<Icon />}
+            frag={<><span /></>}
+            xlink:href={url}
+            xml:space="preserve"
+          />
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const fn = hir.functions.find(f => f.name === 'App') ?? hir.functions[0]
+    const returnTerm = fn.blocks
+      .map(b => b.terminator)
+      .find(t => t.kind === 'Return' && (t as any).argument) as any
+    const jsx = returnTerm.argument
+    expect(jsx.kind).toBe('JSXElement')
+    const attrs = jsx.attributes as any[]
+    const iconAttr = attrs.find(a => a.name === 'icon')
+    expect(iconAttr).toBeDefined()
+    expect(iconAttr.value?.kind).toBe('JSXElement')
+    const iconVal = iconAttr.value as any
+    expect(iconVal.tagName?.kind ?? null).toBe('Identifier')
+    expect(iconVal.tagName?.name ?? '').toBe('Icon')
+    const fragAttr = attrs.find(a => a.name === 'frag')
+    expect(fragAttr).toBeDefined()
+    expect(fragAttr.value?.kind).toBe('JSXElement')
+    const fragVal = fragAttr.value as any
+    expect(fragVal.tagName?.kind ?? null).toBe('Identifier')
+    expect(fragVal.tagName?.name ?? '').toBe('Fragment')
+    const xlinkAttr = attrs.find(a => a.name === 'xlink:href')
+    expect(xlinkAttr).toBeDefined()
+    const xmlAttr = attrs.find(a => a.name === 'xml:space')
+    expect(xmlAttr).toBeDefined()
+    expect(xmlAttr.value?.kind).toBe('Literal')
+    expect(xmlAttr.value?.value).toBe('preserve')
   })
 
   it('handles callback with reactive closure', () => {

@@ -296,6 +296,24 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-H')).toBe(false)
   })
 
+  it('warns when passing derived reactive value to unknown function', () => {
+    const source = `
+      import { $state } from 'fict'
+      function sink(value) {
+        return value
+      }
+      function App() {
+        let count = $state(0)
+        const doubled = count * 2
+        sink(doubled)
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-H')).toBe(true)
+  })
+
   it('does not warn for JSX map callbacks', () => {
     const source = `
       function App() {

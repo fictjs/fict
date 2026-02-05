@@ -297,13 +297,20 @@ function runWarningPass(
     if (!root) return false
     return hasTrackedBinding(path, root.name, stateRootBindingIds)
   }
+  const isReactiveRoot = (expr: BabelCore.types.Expression, path: BabelCore.NodePath): boolean => {
+    const root = getRootIdentifier(expr, t)
+    if (!root) return false
+    return hasTrackedBinding(path, root.name, reactiveBindingIds)
+  }
 
   programPath.traverse({
     AssignmentExpression(path) {
       const { left } = path.node
       if (t.isIdentifier(left)) return
       if (t.isMemberExpression(left) || t.isOptionalMemberExpression(left)) {
-        if (isStateRoot(left.object as BabelCore.types.Expression, path)) {
+        const stateRoot = isStateRoot(left.object as BabelCore.types.Expression, path)
+        const reactiveRoot = isReactiveRoot(left.object as BabelCore.types.Expression, path)
+        if (stateRoot) {
           emitWarning(
             path.node,
             'FICT-M',
@@ -320,13 +327,25 @@ function runWarningPass(
               fileName,
             )
           }
+          return
+        }
+        if (reactiveRoot && isDynamicPropertyAccess(left as any, t)) {
+          emitWarning(
+            path.node,
+            'FICT-H',
+            'Dynamic property access widens dependency tracking',
+            warn,
+            fileName,
+          )
         }
       }
     },
     UpdateExpression(path) {
       const arg = path.node.argument
       if (t.isMemberExpression(arg) || t.isOptionalMemberExpression(arg)) {
-        if (isStateRoot(arg.object as BabelCore.types.Expression, path)) {
+        const stateRoot = isStateRoot(arg.object as BabelCore.types.Expression, path)
+        const reactiveRoot = isReactiveRoot(arg.object as BabelCore.types.Expression, path)
+        if (stateRoot) {
           emitWarning(
             path.node,
             'FICT-M',
@@ -343,6 +362,16 @@ function runWarningPass(
               fileName,
             )
           }
+          return
+        }
+        if (reactiveRoot && isDynamicPropertyAccess(arg as any, t)) {
+          emitWarning(
+            path.node,
+            'FICT-H',
+            'Dynamic property access widens dependency tracking',
+            warn,
+            fileName,
+          )
         }
       }
     },
@@ -352,7 +381,7 @@ function runWarningPass(
       if (path.parentPath.isUpdateExpression({ argument: path.node as any })) return
       if (
         isDynamicPropertyAccess(path.node, t) &&
-        isStateRoot(path.node.object as BabelCore.types.Expression, path)
+        isReactiveRoot(path.node.object as BabelCore.types.Expression, path)
       ) {
         emitWarning(
           path.node,
@@ -456,11 +485,11 @@ function runWarningPass(
 
       for (const arg of path.node.arguments) {
         if (!t.isExpression(arg)) continue
-        if (isStateRoot(arg, path)) {
+        if (isReactiveRoot(arg, path)) {
           emitWarning(
             arg,
             'FICT-H',
-            'State value passed to unknown function (black box); dependency tracking may be imprecise',
+            'Reactive value passed to unknown function (black box); dependency tracking may be imprecise',
             warn,
             fileName,
           )
@@ -474,7 +503,7 @@ function runWarningPass(
       if (path.parentPath.isUpdateExpression({ argument: path.node as any })) return
       if (
         isDynamicPropertyAccess(path.node, t) &&
-        isStateRoot(path.node.object as BabelCore.types.Expression, path)
+        isReactiveRoot(path.node.object as BabelCore.types.Expression, path)
       ) {
         emitWarning(
           path.node,

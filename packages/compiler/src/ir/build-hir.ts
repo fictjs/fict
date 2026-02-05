@@ -329,8 +329,17 @@ export function parseFictReturnAnnotation(
  * Extract identifiers from destructuring patterns.
  * Handles object patterns, array patterns, rest elements, and assignment patterns.
  */
-function extractIdentifiersFromPattern(pattern: BabelCore.types.Pattern): HIdentifier[] {
+function extractIdentifiersFromPattern(pattern: BabelCore.types.PatternLike): HIdentifier[] {
   const ids: HIdentifier[] = []
+
+  if (t.isRestElement(pattern)) {
+    if (t.isIdentifier(pattern.argument)) {
+      ids.push({ kind: 'Identifier', name: pattern.argument.name })
+    } else if (t.isPatternLike(pattern.argument)) {
+      ids.push(...extractIdentifiersFromPattern(pattern.argument))
+    }
+    return ids
+  }
 
   if (t.isObjectPattern(pattern)) {
     for (const prop of pattern.properties) {
@@ -341,14 +350,18 @@ function extractIdentifiersFromPattern(pattern: BabelCore.types.Pattern): HIdent
           // Handle default values: { a = 1 }
           if (t.isIdentifier(prop.value.left)) {
             ids.push({ kind: 'Identifier', name: prop.value.left.name })
-          } else if (t.isPattern(prop.value.left)) {
+          } else if (t.isPatternLike(prop.value.left)) {
             ids.push(...extractIdentifiersFromPattern(prop.value.left))
           }
-        } else if (t.isObjectPattern(prop.value) || t.isArrayPattern(prop.value)) {
+        } else if (t.isPatternLike(prop.value)) {
           ids.push(...extractIdentifiersFromPattern(prop.value))
         }
-      } else if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) {
-        ids.push({ kind: 'Identifier', name: prop.argument.name })
+      } else if (t.isRestElement(prop)) {
+        if (t.isIdentifier(prop.argument)) {
+          ids.push({ kind: 'Identifier', name: prop.argument.name })
+        } else if (t.isPatternLike(prop.argument)) {
+          ids.push(...extractIdentifiersFromPattern(prop.argument))
+        }
       }
     }
   } else if (t.isArrayPattern(pattern)) {
@@ -356,16 +369,20 @@ function extractIdentifiersFromPattern(pattern: BabelCore.types.Pattern): HIdent
       if (!elem) continue
       if (t.isIdentifier(elem)) {
         ids.push({ kind: 'Identifier', name: elem.name })
-      } else if (t.isPattern(elem)) {
+      } else if (t.isRestElement(elem)) {
+        if (t.isIdentifier(elem.argument)) {
+          ids.push({ kind: 'Identifier', name: elem.argument.name })
+        } else if (t.isPatternLike(elem.argument)) {
+          ids.push(...extractIdentifiersFromPattern(elem.argument))
+        }
+      } else if (t.isPatternLike(elem)) {
         ids.push(...extractIdentifiersFromPattern(elem))
-      } else if (t.isRestElement(elem) && t.isIdentifier(elem.argument)) {
-        ids.push({ kind: 'Identifier', name: elem.argument.name })
       }
     }
   } else if (t.isAssignmentPattern(pattern)) {
     if (t.isIdentifier(pattern.left)) {
       ids.push({ kind: 'Identifier', name: pattern.left.name })
-    } else if (t.isPattern(pattern.left)) {
+    } else if (t.isPatternLike(pattern.left)) {
       ids.push(...extractIdentifiersFromPattern(pattern.left))
     }
   }
@@ -850,9 +867,13 @@ function convertFunction(
       } else if (t.isObjectPattern(p.left) || t.isArrayPattern(p.left)) {
         paramIds.push(...extractIdentifiersFromPattern(p.left))
       }
-    } else if (t.isRestElement(p) && t.isIdentifier(p.argument)) {
-      // Handle rest parameters: (...args)
-      paramIds.push({ kind: 'Identifier', name: p.argument.name })
+    } else if (t.isRestElement(p)) {
+      // Handle rest parameters: (...args) or rest patterns
+      if (t.isIdentifier(p.argument)) {
+        paramIds.push({ kind: 'Identifier', name: p.argument.name })
+      } else if (t.isPattern(p.argument)) {
+        paramIds.push(...extractIdentifiersFromPattern(p.argument))
+      }
     }
     // Other unsupported patterns are skipped to keep builder total
   }
@@ -2575,6 +2596,12 @@ function convertExpression(
     return cond
   }
   if (t.isArrayExpression(node)) {
+    if ((node.elements ?? []).some(el => el == null)) {
+      return reportUnsupportedExpression(
+        node,
+        'Array literal holes are not supported in HIR conversion. Use explicit undefined values instead.',
+      )
+    }
     const arr: HArrayExpression = {
       kind: 'ArrayExpression',
       elements: (node.elements ?? [])
@@ -2968,7 +2995,19 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
         spreadExpr: convertExpression(attr.argument as BabelCore.types.Expression),
         loc: getLoc(attr),
       })
-    } else if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name)) {
+    } else if (t.isJSXAttribute(attr)) {
+      const nameNode = attr.name as BabelCore.types.Node
+      let attrName: string | null = null
+      if (t.isJSXIdentifier(attr.name)) {
+        attrName = attr.name.name
+      } else if (t.isJSXNamespacedName(attr.name)) {
+        attrName = `${attr.name.namespace.name}:${attr.name.name.name}`
+      } else {
+        return reportUnsupportedExpression(
+          nameNode,
+          'Unsupported JSX attribute name in HIR conversion',
+        )
+      }
       let value: Expression | null = null
       if (attr.value) {
         if (t.isStringLiteral(attr.value)) {
@@ -2978,10 +3017,14 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
           !t.isJSXEmptyExpression(attr.value.expression)
         ) {
           value = convertExpression(attr.value.expression as BabelCore.types.Expression)
+        } else if (t.isJSXElement(attr.value)) {
+          value = convertJSXElement(attr.value)
+        } else if (t.isJSXFragment(attr.value)) {
+          value = convertExpression(attr.value as unknown as BabelCore.types.Expression)
         }
       }
       attributes.push({
-        name: attr.name.name,
+        name: attrName,
         value,
         loc: getLoc(attr),
       })
