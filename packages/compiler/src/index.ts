@@ -302,6 +302,51 @@ function runWarningPass(
     if (!root) return false
     return hasTrackedBinding(path, root.name, reactiveBindingIds)
   }
+  const argumentHasReactive = (argPath: BabelCore.NodePath): boolean => {
+    if (argPath.isSpreadElement()) {
+      const inner = argPath.get('argument') as BabelCore.NodePath
+      return argumentHasReactive(inner)
+    }
+    if (argPath.isJSXElement() || argPath.isJSXFragment()) return false
+    if (argPath.isIdentifier()) {
+      return hasTrackedBinding(argPath, argPath.node.name, reactiveBindingIds)
+    }
+    if (!argPath.isExpression()) return false
+    let found = false
+    argPath.traverse({
+      Function(path) {
+        path.skip()
+      },
+      JSXElement(path) {
+        path.skip()
+      },
+      JSXFragment(path) {
+        path.skip()
+      },
+      Identifier(idPath) {
+        // Ignore property keys and non-computed member properties (except shorthand)
+        if (
+          idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
+          !(idPath.parent as BabelCore.types.MemberExpression).computed
+        ) {
+          return
+        }
+        if (
+          idPath.parentPath.isObjectProperty({ key: idPath.node }) &&
+          !(idPath.parent as BabelCore.types.ObjectProperty).computed &&
+          !(idPath.parent as BabelCore.types.ObjectProperty).shorthand
+        ) {
+          return
+        }
+        const binding = idPath.scope.getBinding(idPath.node.name)
+        if (binding && reactiveBindingIds.has(binding.identifier as BabelCore.types.Identifier)) {
+          found = true
+          idPath.stop()
+        }
+      },
+    })
+    return found
+  }
 
   programPath.traverse({
     AssignmentExpression(path) {
@@ -310,7 +355,7 @@ function runWarningPass(
       if (t.isMemberExpression(left) || t.isOptionalMemberExpression(left)) {
         const stateRoot = isStateRoot(left.object as BabelCore.types.Expression, path)
         const reactiveRoot = isReactiveRoot(left.object as BabelCore.types.Expression, path)
-        if (stateRoot) {
+        if (stateRoot || reactiveRoot) {
           emitWarning(
             path.node,
             'FICT-M',
@@ -329,15 +374,6 @@ function runWarningPass(
           }
           return
         }
-        if (reactiveRoot && isDynamicPropertyAccess(left as any, t)) {
-          emitWarning(
-            path.node,
-            'FICT-H',
-            'Dynamic property access widens dependency tracking',
-            warn,
-            fileName,
-          )
-        }
       }
     },
     UpdateExpression(path) {
@@ -345,7 +381,7 @@ function runWarningPass(
       if (t.isMemberExpression(arg) || t.isOptionalMemberExpression(arg)) {
         const stateRoot = isStateRoot(arg.object as BabelCore.types.Expression, path)
         const reactiveRoot = isReactiveRoot(arg.object as BabelCore.types.Expression, path)
-        if (stateRoot) {
+        if (stateRoot || reactiveRoot) {
           emitWarning(
             path.node,
             'FICT-M',
@@ -363,15 +399,6 @@ function runWarningPass(
             )
           }
           return
-        }
-        if (reactiveRoot && isDynamicPropertyAccess(arg as any, t)) {
-          emitWarning(
-            path.node,
-            'FICT-H',
-            'Dynamic property access widens dependency tracking',
-            warn,
-            fileName,
-          )
         }
       }
     },
@@ -483,11 +510,11 @@ function runWarningPass(
       const isSafe = calleeName && SAFE_FUNCTIONS.has(calleeName)
       if (isSafe) return
 
-      for (const arg of path.node.arguments) {
-        if (!t.isExpression(arg)) continue
-        if (isReactiveRoot(arg, path)) {
+      const argPaths = path.get('arguments') as BabelCore.NodePath[]
+      for (const argPath of argPaths) {
+        if (argumentHasReactive(argPath)) {
           emitWarning(
-            arg,
+            argPath.node as any,
             'FICT-H',
             'Reactive value passed to unknown function (black box); dependency tracking may be imprecise',
             warn,

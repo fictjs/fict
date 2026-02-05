@@ -2646,7 +2646,9 @@ function convertExpression(
                   ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
                   : t.isNumericLiteral(prop.key)
                     ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
-                    : undefined
+                    : t.isBigIntLiteral(prop.key)
+                      ? ({ kind: 'Literal', value: BigInt(prop.key.value) } as HLiteral)
+                      : undefined
             if (!keyExpr) return undefined
             const fnExpr = t.functionExpression(
               null,
@@ -2674,7 +2676,9 @@ function convertExpression(
                 ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
                 : t.isNumericLiteral(prop.key)
                   ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
-                  : undefined
+                  : t.isBigIntLiteral(prop.key)
+                    ? ({ kind: 'Literal', value: BigInt(prop.key.value) } as HLiteral)
+                    : undefined
           if (!keyExpr) return undefined
           if (!t.isExpression(prop.value)) return undefined
           return {
@@ -2720,6 +2724,11 @@ function convertExpression(
           value: convertJSXElement(child),
           loc: getLoc(child),
         })
+      } else if (t.isJSXSpreadChild(child)) {
+        return reportUnsupportedExpression(
+          child,
+          'JSX spread children are not supported in HIR conversion.',
+        )
       } else if (t.isJSXFragment(child)) {
         // Nested fragment - flatten its children
         for (const fragChild of child.children) {
@@ -2742,6 +2751,11 @@ function convertExpression(
               value: convertJSXElement(fragChild),
               loc: getLoc(fragChild),
             })
+          } else if (t.isJSXSpreadChild(fragChild)) {
+            return reportUnsupportedExpression(
+              fragChild,
+              'JSX spread children are not supported in HIR conversion.',
+            )
           }
         }
       }
@@ -3052,6 +3066,11 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
         value: convertJSXElement(child),
         loc: getLoc(child),
       })
+    } else if (t.isJSXSpreadChild(child)) {
+      return reportUnsupportedExpression(
+        child,
+        'JSX spread children are not supported in HIR conversion.',
+      )
     } else if (t.isJSXFragment(child)) {
       // Flatten fragment children
       for (const fragChild of child.children) {
@@ -3074,6 +3093,11 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
             value: convertJSXElement(fragChild),
             loc: getLoc(fragChild),
           })
+        } else if (t.isJSXSpreadChild(fragChild)) {
+          return reportUnsupportedExpression(
+            fragChild,
+            'JSX spread children are not supported in HIR conversion.',
+          )
         }
       }
     }

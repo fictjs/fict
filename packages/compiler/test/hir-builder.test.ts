@@ -432,6 +432,15 @@ describe('buildHIR - Advanced Patterns', () => {
     expect(xmlAttr.value?.value).toBe('preserve')
   })
 
+  it('throws on JSX spread children', () => {
+    const ast = parseFile(`
+      function App(items) {
+        return <>{...items}</>
+      }
+    `)
+    expect(() => buildHIR(ast)).toThrow(/JSX spread children are not supported/)
+  })
+
   it('handles callback with reactive closure', () => {
     const ast = parseFile(`
       function ReactiveCallback(items, onClick) {

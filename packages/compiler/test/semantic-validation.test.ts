@@ -314,6 +314,54 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-H')).toBe(true)
   })
 
+  it('warns when passing reactive value inside object to unknown function', () => {
+    const source = `
+      import { $state } from 'fict'
+      function sink(value) {
+        return value
+      }
+      function App() {
+        let count = $state(0)
+        sink({ count })
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-H')).toBe(true)
+  })
+
+  it('warns on nested mutation through a state member alias', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const state = $state({ nested: { value: 1 } })
+        const nested = state.nested
+        nested.value = 2
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-M')).toBe(true)
+  })
+
+  it('warns on dynamic property access through a state member alias', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const state = $state({ nested: { value: 1 } })
+        const nested = state.nested
+        const key = 'value'
+        nested[key] = 2
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-H')).toBe(true)
+  })
+
   it('does not warn for JSX map callbacks', () => {
     const source = `
       function App() {
