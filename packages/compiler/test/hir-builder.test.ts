@@ -330,6 +330,34 @@ describe('buildHIR - Advanced Patterns', () => {
     expect(() => buildHIR(ast)).toThrow(/Array literal holes are not supported/)
   })
 
+  it('preserves class expressions', () => {
+    const ast = parseFile(`
+      function Klass() {
+        const C = class {
+          method() {
+            return 1
+          }
+        }
+        return new C()
+      }
+    `)
+    expect(() => buildHIR(ast)).not.toThrow()
+  })
+
+  it('preserves class declarations', () => {
+    const ast = parseFile(`
+      function KlassDecl() {
+        class C {
+          method() {
+            return 1
+          }
+        }
+        return new C()
+      }
+    `)
+    expect(() => buildHIR(ast)).not.toThrow()
+  })
+
   it('extracts identifiers from rest parameter patterns', () => {
     const ast = parseFile(`
       function Rest(...[a, b]) {

@@ -473,6 +473,13 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
 
             decl.id.properties.forEach(prop => {
               if (t.isObjectProperty(prop)) {
+                if (prop.computed) {
+                  reportUnsupportedExpression(
+                    prop.key,
+                    'Computed keys in object destructuring are not supported in HIR conversion.',
+                  )
+                  return
+                }
                 const keyName = t.isIdentifier(prop.key)
                   ? prop.key.name
                   : t.isStringLiteral(prop.key)
@@ -480,7 +487,13 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
                     : t.isNumericLiteral(prop.key)
                       ? String(prop.key.value)
                       : null
-                if (!keyName) return
+                if (!keyName) {
+                  reportUnsupportedExpression(
+                    prop.key,
+                    'Unsupported object destructuring key in HIR conversion.',
+                  )
+                  return
+                }
                 excludeKeys.push(t.stringLiteral(keyName))
                 if (t.isIdentifier(prop.value)) {
                   const memberExpr = t.memberExpression(
@@ -494,8 +507,21 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
                     value: convertExpression(memberExpr),
                     declarationKind: declKind,
                   })
+                } else {
+                  reportUnsupportedExpression(
+                    prop.value as unknown as BabelCore.types.Node,
+                    'Unsupported object destructuring pattern in HIR conversion.',
+                  )
+                  return
                 }
-              } else if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) {
+              } else if (t.isRestElement(prop)) {
+                if (!t.isIdentifier(prop.argument)) {
+                  reportUnsupportedExpression(
+                    prop.argument as unknown as BabelCore.types.Node,
+                    'Rest destructuring patterns must be identifiers in HIR conversion.',
+                  )
+                  return
+                }
                 const restExpr = t.callExpression(t.identifier('__fictPropsRest'), [
                   t.identifier(tempName),
                   t.arrayExpression(excludeKeys),
@@ -506,6 +532,12 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
                   value: convertExpression(restExpr),
                   declarationKind: declKind,
                 })
+              } else {
+                reportUnsupportedExpression(
+                  prop as unknown as BabelCore.types.Node,
+                  'Unsupported object destructuring property in HIR conversion.',
+                )
+                return
               }
             })
           }
@@ -535,7 +567,14 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
                   value: convertExpression(memberExpr),
                   declarationKind: declKind,
                 })
-              } else if (t.isRestElement(elem) && t.isIdentifier(elem.argument)) {
+              } else if (t.isRestElement(elem)) {
+                if (!t.isIdentifier(elem.argument)) {
+                  reportUnsupportedExpression(
+                    elem.argument as unknown as BabelCore.types.Node,
+                    'Rest destructuring patterns must be identifiers in HIR conversion.',
+                  )
+                  return
+                }
                 const sliceCall = t.callExpression(
                   t.memberExpression(t.identifier(tempName), t.identifier('slice')),
                   [t.numericLiteral(index)],
@@ -546,6 +585,12 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
                   value: convertExpression(sliceCall),
                   declarationKind: declKind,
                 })
+              } else {
+                reportUnsupportedExpression(
+                  elem as unknown as BabelCore.types.Node,
+                  'Unsupported array destructuring pattern in HIR conversion.',
+                )
+                return
               }
             })
           }
@@ -977,6 +1022,13 @@ function convertFunction(
 
           decl.id.properties.forEach(prop => {
             if (t.isObjectProperty(prop)) {
+              if (prop.computed) {
+                reportUnsupportedExpression(
+                  prop.key,
+                  'Computed keys in object destructuring are not supported in HIR conversion.',
+                )
+                return
+              }
               const keyName = t.isIdentifier(prop.key)
                 ? prop.key.name
                 : t.isStringLiteral(prop.key)
@@ -984,7 +1036,13 @@ function convertFunction(
                   : t.isNumericLiteral(prop.key)
                     ? String(prop.key.value)
                     : null
-              if (!keyName) return
+              if (!keyName) {
+                reportUnsupportedExpression(
+                  prop.key,
+                  'Unsupported object destructuring key in HIR conversion.',
+                )
+                return
+              }
               excludeKeys.push(t.stringLiteral(keyName))
               if (t.isIdentifier(prop.value)) {
                 const memberExpr = t.memberExpression(
@@ -1000,8 +1058,21 @@ function convertFunction(
                   value: convertExpression(memberExpr),
                   declarationKind: declKind,
                 })
+              } else {
+                reportUnsupportedExpression(
+                  prop.value as unknown as BabelCore.types.Node,
+                  'Unsupported object destructuring pattern in HIR conversion.',
+                )
+                return
               }
-            } else if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) {
+            } else if (t.isRestElement(prop)) {
+              if (!t.isIdentifier(prop.argument)) {
+                reportUnsupportedExpression(
+                  prop.argument as unknown as BabelCore.types.Node,
+                  'Rest destructuring patterns must be identifiers in HIR conversion.',
+                )
+                return
+              }
               const restExpr = t.callExpression(t.identifier('__fictPropsRest'), [
                 useTemp ? t.identifier(tempName) : (babelSourceExpr as BabelCore.types.Expression),
                 t.arrayExpression(excludeKeys),
@@ -1012,6 +1083,12 @@ function convertFunction(
                 value: convertExpression(restExpr),
                 declarationKind: declKind,
               })
+            } else {
+              reportUnsupportedExpression(
+                prop as unknown as BabelCore.types.Node,
+                'Unsupported object destructuring property in HIR conversion.',
+              )
+              return
             }
           })
         }
@@ -1041,7 +1118,14 @@ function convertFunction(
                 value: convertExpression(memberExpr),
                 declarationKind: declKind,
               })
-            } else if (t.isRestElement(elem) && t.isIdentifier(elem.argument)) {
+            } else if (t.isRestElement(elem)) {
+              if (!t.isIdentifier(elem.argument)) {
+                reportUnsupportedExpression(
+                  elem.argument as unknown as BabelCore.types.Node,
+                  'Rest destructuring patterns must be identifiers in HIR conversion.',
+                )
+                return
+              }
               const sliceCall = t.callExpression(
                 t.memberExpression(t.identifier(tempName), t.identifier('slice')),
                 [t.numericLiteral(index)],
@@ -1052,6 +1136,12 @@ function convertFunction(
                 value: convertExpression(sliceCall),
                 declarationKind: declKind,
               })
+            } else {
+              reportUnsupportedExpression(
+                elem as unknown as BabelCore.types.Node,
+                'Unsupported array destructuring pattern in HIR conversion.',
+              )
+              return
             }
           })
         }
@@ -2406,29 +2496,39 @@ function convertExpression(
       | BabelCore.types.ArgumentPlaceholder
     )[],
     reactiveScope?: string,
-  ): Expression[] =>
-    args
-      .map(arg => {
-        if (t.isSpreadElement(arg)) {
-          return {
-            kind: 'SpreadElement',
-            argument: convertExpression(arg.argument as BabelCore.types.Expression),
-            loc: getLoc(arg),
-          } as HSpreadElement
+  ): Expression[] => {
+    const converted: Expression[] = []
+    for (const arg of args) {
+      if (t.isSpreadElement(arg)) {
+        converted.push({
+          kind: 'SpreadElement',
+          argument: convertExpression(arg.argument as BabelCore.types.Expression),
+          loc: getLoc(arg),
+        } as HSpreadElement)
+        continue
+      }
+      if (t.isExpression(arg)) {
+        if (
+          reactiveScope &&
+          arg === args[0] &&
+          (t.isArrowFunctionExpression(arg) || t.isFunctionExpression(arg))
+        ) {
+          converted.push(convertExpression(arg, { reactiveScope }))
+          continue
         }
-        if (t.isExpression(arg)) {
-          if (
-            reactiveScope &&
-            arg === args[0] &&
-            (t.isArrowFunctionExpression(arg) || t.isFunctionExpression(arg))
-          ) {
-            return convertExpression(arg, { reactiveScope })
-          }
-          return convertExpression(arg)
-        }
-        return undefined
-      })
-      .filter(Boolean) as Expression[]
+        converted.push(convertExpression(arg))
+        continue
+      }
+      if (t.isArgumentPlaceholder?.(arg)) {
+        return reportUnsupportedExpression(
+          arg,
+          'Argument placeholders are not supported in HIR conversion.',
+        )
+      }
+      return reportUnsupportedExpression(arg, 'Unsupported call argument in HIR conversion.')
+    }
+    return converted
+  }
 
   const resolveReactiveScope = (
     callee: BabelCore.types.Expression | BabelCore.types.V8IntrinsicIdentifier,
@@ -2523,9 +2623,13 @@ function convertExpression(
     return call
   }
   if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-    const propertyNode = t.isPrivateName(node.property)
-      ? t.identifier(node.property.id.name)
-      : (node.property as BabelCore.types.Node)
+    if (t.isPrivateName(node.property)) {
+      return reportUnsupportedExpression(
+        node.property,
+        'Private field access is not supported in HIR conversion.',
+      )
+    }
+    const propertyNode = node.property as BabelCore.types.Node
     const isOptional = t.isOptionalMemberExpression(node)
     const object = convertExpression(node.object as BabelCore.types.Expression)
     const property = t.isExpression(propertyNode)
@@ -2602,96 +2706,122 @@ function convertExpression(
         'Array literal holes are not supported in HIR conversion. Use explicit undefined values instead.',
       )
     }
+    const elements: Expression[] = []
+    for (const el of node.elements ?? []) {
+      if (!el) continue
+      if (t.isSpreadElement(el)) {
+        elements.push({
+          kind: 'SpreadElement',
+          argument: convertExpression(el.argument as BabelCore.types.Expression),
+          loc: getLoc(el),
+        } as HSpreadElement)
+        continue
+      }
+      if (t.isExpression(el)) {
+        elements.push(convertExpression(el))
+        continue
+      }
+      return reportUnsupportedExpression(el, 'Unsupported array literal element in HIR conversion.')
+    }
     const arr: HArrayExpression = {
       kind: 'ArrayExpression',
-      elements: (node.elements ?? [])
-        .map(el => {
-          if (!el) return undefined
-          if (t.isSpreadElement(el)) {
-            return {
-              kind: 'SpreadElement',
-              argument: convertExpression(el.argument as BabelCore.types.Expression),
-              loc: getLoc(el),
-            } as HSpreadElement
-          }
-          if (t.isExpression(el)) return convertExpression(el)
-          return undefined
-        })
-        .filter(Boolean) as Expression[],
+      elements,
       loc,
     }
     return arr
   }
   if (t.isObjectExpression(node)) {
+    const properties: HObjectExpression['properties'] = []
     const obj: HObjectExpression = {
       kind: 'ObjectExpression',
-      properties: node.properties
-        .map(prop => {
-          if (t.isSpreadElement(prop)) {
-            // Handle spread elements
-            return {
-              kind: 'SpreadElement',
-              argument: convertExpression(prop.argument as BabelCore.types.Expression),
-              loc: getLoc(prop),
-            } as HSpreadElement
-          }
-          if (t.isObjectMethod(prop)) {
-            const keyExpr = prop.computed
-              ? t.isExpression(prop.key)
-                ? convertExpression(prop.key)
-                : undefined
-              : t.isIdentifier(prop.key)
-                ? ({ kind: 'Identifier', name: prop.key.name } as HIdentifier)
-                : t.isStringLiteral(prop.key)
-                  ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
-                  : t.isNumericLiteral(prop.key)
-                    ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
-                    : t.isBigIntLiteral(prop.key)
-                      ? ({ kind: 'Literal', value: BigInt(prop.key.value) } as HLiteral)
-                      : undefined
-            if (!keyExpr) return undefined
-            const fnExpr = t.functionExpression(
-              null,
-              prop.params,
-              prop.body,
-              prop.generator,
-              prop.async,
-            )
-            return {
-              kind: 'Property',
-              key: keyExpr,
-              value: convertExpression(fnExpr),
-              computed: prop.computed,
-              loc: getLoc(prop),
-            }
-          }
-          if (!t.isObjectProperty(prop)) return undefined
-          const keyExpr = prop.computed
-            ? t.isExpression(prop.key)
-              ? convertExpression(prop.key)
-              : undefined
-            : t.isIdentifier(prop.key)
-              ? ({ kind: 'Identifier', name: prop.key.name } as HIdentifier)
-              : t.isStringLiteral(prop.key)
-                ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
-                : t.isNumericLiteral(prop.key)
-                  ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
-                  : t.isBigIntLiteral(prop.key)
-                    ? ({ kind: 'Literal', value: BigInt(prop.key.value) } as HLiteral)
-                    : undefined
-          if (!keyExpr) return undefined
-          if (!t.isExpression(prop.value)) return undefined
-          return {
-            kind: 'Property',
-            key: keyExpr,
-            value: convertExpression(prop.value),
-            computed: prop.computed,
-            shorthand: prop.shorthand && t.isIdentifier(prop.value),
-            loc: getLoc(prop),
-          }
-        })
-        .filter(Boolean) as HObjectExpression['properties'],
+      properties,
       loc,
+    }
+    for (const prop of node.properties) {
+      if (t.isSpreadElement(prop)) {
+        properties.push({
+          kind: 'SpreadElement',
+          argument: convertExpression(prop.argument as BabelCore.types.Expression),
+          loc: getLoc(prop),
+        } as HSpreadElement)
+        continue
+      }
+      if (t.isObjectMethod(prop)) {
+        const keyExpr = prop.computed
+          ? t.isExpression(prop.key)
+            ? convertExpression(prop.key)
+            : undefined
+          : t.isIdentifier(prop.key)
+            ? ({ kind: 'Identifier', name: prop.key.name } as HIdentifier)
+            : t.isStringLiteral(prop.key)
+              ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
+              : t.isNumericLiteral(prop.key)
+                ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
+                : t.isBigIntLiteral(prop.key)
+                  ? ({ kind: 'Literal', value: BigInt(prop.key.value) } as HLiteral)
+                  : undefined
+        if (!keyExpr) {
+          return reportUnsupportedExpression(
+            prop.key,
+            'Unsupported object literal key in HIR conversion.',
+          )
+        }
+        const fnExpr = t.functionExpression(
+          null,
+          prop.params,
+          prop.body,
+          prop.generator,
+          prop.async,
+        )
+        properties.push({
+          kind: 'Property',
+          key: keyExpr,
+          value: convertExpression(fnExpr),
+          computed: prop.computed,
+          loc: getLoc(prop),
+        })
+        continue
+      }
+      if (t.isObjectProperty(prop)) {
+        const keyExpr = prop.computed
+          ? t.isExpression(prop.key)
+            ? convertExpression(prop.key)
+            : undefined
+          : t.isIdentifier(prop.key)
+            ? ({ kind: 'Identifier', name: prop.key.name } as HIdentifier)
+            : t.isStringLiteral(prop.key)
+              ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
+              : t.isNumericLiteral(prop.key)
+                ? ({ kind: 'Literal', value: prop.key.value } as HLiteral)
+                : t.isBigIntLiteral(prop.key)
+                  ? ({ kind: 'Literal', value: BigInt(prop.key.value) } as HLiteral)
+                  : undefined
+        if (!keyExpr) {
+          return reportUnsupportedExpression(
+            prop.key,
+            'Unsupported object literal key in HIR conversion.',
+          )
+        }
+        if (!t.isExpression(prop.value)) {
+          return reportUnsupportedExpression(
+            prop.value as unknown as BabelCore.types.Node,
+            'Unsupported object literal value in HIR conversion.',
+          )
+        }
+        properties.push({
+          kind: 'Property',
+          key: keyExpr,
+          value: convertExpression(prop.value),
+          computed: prop.computed,
+          shorthand: prop.shorthand && t.isIdentifier(prop.value),
+          loc: getLoc(prop),
+        })
+        continue
+      }
+      return reportUnsupportedExpression(
+        prop,
+        'Unsupported object literal property in HIR conversion.',
+      )
     }
     return obj
   }

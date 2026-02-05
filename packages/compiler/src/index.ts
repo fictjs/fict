@@ -276,6 +276,7 @@ function isDynamicPropertyAccess(
 
 function runWarningPass(
   programPath: BabelCore.NodePath<BabelCore.types.Program>,
+  stateBindingIds: Set<BabelCore.types.Identifier>,
   stateRootBindingIds: Set<BabelCore.types.Identifier>,
   reactiveBindingIds: Set<BabelCore.types.Identifier>,
   effectMacroNames: Set<string>,
@@ -512,11 +513,18 @@ function runWarningPass(
 
       const argPaths = path.get('arguments') as BabelCore.NodePath[]
       for (const argPath of argPaths) {
+        if (
+          argPath.isIdentifier() &&
+          hasTrackedBinding(argPath, argPath.node.name, stateBindingIds)
+        ) {
+          // Direct state bindings already warn via FICT-S002 elsewhere.
+          continue
+        }
         if (argumentHasReactive(argPath)) {
           emitWarning(
             argPath.node as any,
-            'FICT-H',
-            'Reactive value passed to unknown function (black box); dependency tracking may be imprecise',
+            'FICT-R002',
+            'Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise',
             warn,
             fileName,
           )
@@ -1603,6 +1611,7 @@ function createHIREntrypointVisitor(
           ])
           runWarningPass(
             path as any,
+            stateBindingIds,
             stateRootBindingIds,
             reactiveBindingIds,
             effectMacroNames,

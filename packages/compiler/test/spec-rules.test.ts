@@ -440,8 +440,8 @@ describe('Rule H: Conservative downgrade and warning', () => {
         return null
       }
     `)
-    expect(warnings.some(w => w.code === 'FICT-H')).toBe(true)
-    expect(warnings.some(w => w.message.includes('black box'))).toBe(true)
+    expect(warnings.some(w => w.code === 'FICT-S002')).toBe(true)
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
   })
 
   it('does not warn when state is passed to console.log', () => {
@@ -453,9 +453,7 @@ describe('Rule H: Conservative downgrade and warning', () => {
         return null
       }
     `)
-    expect(
-      warnings.filter(w => w.code === 'FICT-H' && w.message.includes('black box')).length,
-    ).toBe(0)
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
   })
 
   it('does not warn when state is passed to JSON.stringify', () => {
@@ -467,9 +465,7 @@ describe('Rule H: Conservative downgrade and warning', () => {
         return json
       }
     `)
-    expect(
-      warnings.filter(w => w.code === 'FICT-H' && w.message.includes('black box')).length,
-    ).toBe(0)
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
   })
 
   it('warns when state property is passed to unknown method', () => {
@@ -481,7 +477,7 @@ describe('Rule H: Conservative downgrade and warning', () => {
         return null
       }
     `)
-    expect(warnings.some(w => w.code === 'FICT-H')).toBe(true)
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
   })
 })
 

@@ -294,6 +294,7 @@ describe('semantic validation', () => {
     transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
     expect(warnings.some(w => w.code === 'FICT-S002')).toBe(false)
     expect(warnings.some(w => w.code === 'FICT-H')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
   })
 
   it('warns when passing derived reactive value to unknown function', () => {
@@ -311,7 +312,7 @@ describe('semantic validation', () => {
     `
     const warnings: Array<{ code: string }> = []
     transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
-    expect(warnings.some(w => w.code === 'FICT-H')).toBe(true)
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
   })
 
   it('warns when passing reactive value inside object to unknown function', () => {
@@ -328,7 +329,25 @@ describe('semantic validation', () => {
     `
     const warnings: Array<{ code: string }> = []
     transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
-    expect(warnings.some(w => w.code === 'FICT-H')).toBe(true)
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
+  })
+
+  it('warns only with FICT-S002 for direct state argument', () => {
+    const source = `
+      import { $state } from 'fict'
+      function sink(value) {
+        return value
+      }
+      function App() {
+        let count = $state(0)
+        sink(count)
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-S002')).toBe(true)
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
   })
 
   it('warns on nested mutation through a state member alias', () => {
