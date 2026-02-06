@@ -1168,6 +1168,44 @@ function matchesListKeyPattern(expr: Expression, ctx: CodegenContext): boolean {
   return exprPropName === keyPropName
 }
 
+function isListKeyParamIdentifier(name: string, ctx: CodegenContext): boolean {
+  if (!ctx.listKeyParamName) return false
+  return deSSAVarName(name) === deSSAVarName(ctx.listKeyParamName)
+}
+
+function isListKeyConstExpression(expr: Expression, ctx: CodegenContext): boolean {
+  if (!ctx.inListRender || !ctx.listKeyParamName) return false
+  if (expr.kind === 'Identifier' && isListKeyParamIdentifier(expr.name, ctx)) {
+    return true
+  }
+  return matchesListKeyPattern(expr, ctx)
+}
+
+function isListKeyDependency(dep: string, ctx: CodegenContext): boolean {
+  if (!ctx.inListRender || !ctx.listKeyParamName) return false
+  const key = deSSAVarName(ctx.listKeyParamName)
+  return dep === key || dep.startsWith(`${key}.`)
+}
+
+function isStaticDelegatedDataExpression(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind === 'Literal') return true
+  return isListKeyConstExpression(expr, ctx)
+}
+
+function isStaticDelegatedDataAst(expr: BabelCore.types.Expression, ctx: CodegenContext): boolean {
+  const { t } = ctx
+  if (
+    t.isStringLiteral(expr) ||
+    t.isNumericLiteral(expr) ||
+    t.isBooleanLiteral(expr) ||
+    t.isNullLiteral(expr) ||
+    t.isBigIntLiteral(expr)
+  ) {
+    return true
+  }
+  return t.isIdentifier(expr) && isListKeyParamIdentifier(expr.name, ctx)
+}
+
 function detectDerivedCycles(
   fn: HIRFunction,
   _scopeResult: ReactiveScopeResult,
@@ -4654,6 +4692,7 @@ function isExpressionReactive(expr: Expression, ctx: CodegenContext): boolean {
 
   // Check if any dependency is tracked (includes $state, signals, etc.)
   for (const dep of deps) {
+    if (isListKeyDependency(dep, ctx)) continue
     if (ctx.trackedVars.has(dep)) return true
   }
 
@@ -4661,6 +4700,7 @@ function isExpressionReactive(expr: Expression, ctx: CodegenContext): boolean {
   // Memo vars are reactive because they wrap getters that depend on signals
   if (ctx.memoVars) {
     for (const dep of deps) {
+      if (isListKeyDependency(dep, ctx)) continue
       if (ctx.memoVars.has(dep)) return true
     }
   }
@@ -4668,6 +4708,7 @@ function isExpressionReactive(expr: Expression, ctx: CodegenContext): boolean {
   // Check if any dependency is an explicit signal variable
   if (ctx.signalVars) {
     for (const dep of deps) {
+      if (isListKeyDependency(dep, ctx)) continue
       if (ctx.signalVars.has(dep)) return true
     }
   }
@@ -4675,6 +4716,7 @@ function isExpressionReactive(expr: Expression, ctx: CodegenContext): boolean {
   // Check if any dependency is in a reactive region's declarations
   for (const region of regionsToCheck) {
     for (const dep of deps) {
+      if (isListKeyDependency(dep, ctx)) continue
       if (region.declarations.has(dep) || region.dependencies.has(dep)) {
         return true
       }
@@ -4704,6 +4746,7 @@ function _getReactiveDependencies(expr: Expression, ctx: CodegenContext): Set<st
 
   // Check tracked vars ($state, signals, etc.)
   for (const dep of deps) {
+    if (isListKeyDependency(dep, ctx)) continue
     if (ctx.trackedVars.has(dep)) {
       reactiveDeps.add(dep)
     }
@@ -4712,6 +4755,7 @@ function _getReactiveDependencies(expr: Expression, ctx: CodegenContext): Set<st
   // Check memo vars (derived values)
   if (ctx.memoVars) {
     for (const dep of deps) {
+      if (isListKeyDependency(dep, ctx)) continue
       if (ctx.memoVars.has(dep)) {
         reactiveDeps.add(dep)
       }
@@ -4721,6 +4765,7 @@ function _getReactiveDependencies(expr: Expression, ctx: CodegenContext): Set<st
   // Check signal vars
   if (ctx.signalVars) {
     for (const dep of deps) {
+      if (isListKeyDependency(dep, ctx)) continue
       if (ctx.signalVars.has(dep)) {
         reactiveDeps.add(dep)
       }
@@ -4730,6 +4775,7 @@ function _getReactiveDependencies(expr: Expression, ctx: CodegenContext): Set<st
   // Also check region declarations
   for (const region of regionsToCheck) {
     for (const dep of deps) {
+      if (isListKeyDependency(dep, ctx)) continue
       if (region.declarations.has(dep) || region.dependencies.has(dep)) {
         reactiveDeps.add(dep)
       }
@@ -5748,6 +5794,122 @@ function lowerIntrinsicElement(
   }
   statements.push(...pathStatements)
 
+  const optimizeLevel = ctx.options?.optimizeLevel ?? 'safe'
+  interface FusedPatchEntry {
+    patch: BabelCore.types.Statement
+    fallback: BabelCore.types.Statement
+    patchHelper: 'setText' | 'setAttr' | 'setProp' | 'setClass' | 'setStyle'
+    fallbackHelper: 'bindText' | 'bindAttribute' | 'bindProperty' | 'bindClass' | 'bindStyle'
+  }
+
+  const fusedPatchGroups = new Map<string, FusedPatchEntry[]>()
+  let fusedUniqueId = 0
+
+  const isFusibleBindingExpression = (expr: Expression): boolean => {
+    switch (expr.kind) {
+      case 'Identifier':
+      case 'Literal':
+      case 'ThisExpression':
+      case 'SuperExpression':
+        return true
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        return (
+          isFusibleBindingExpression(expr.object) &&
+          (!expr.computed || isFusibleBindingExpression(expr.property))
+        )
+      case 'BinaryExpression':
+      case 'LogicalExpression':
+        return (
+          isFusibleBindingExpression(expr.left as Expression) &&
+          isFusibleBindingExpression(expr.right as Expression)
+        )
+      case 'UnaryExpression':
+        return expr.operator !== 'delete' && isFusibleBindingExpression(expr.argument as Expression)
+      case 'ConditionalExpression':
+        return (
+          isFusibleBindingExpression(expr.test as Expression) &&
+          isFusibleBindingExpression(expr.consequent as Expression) &&
+          isFusibleBindingExpression(expr.alternate as Expression)
+        )
+      case 'ArrayExpression':
+        return expr.elements.every(el => isFusibleBindingExpression(el as Expression))
+      case 'ObjectExpression':
+        return expr.properties.every(prop => {
+          if (prop.kind === 'SpreadElement') {
+            return isFusibleBindingExpression(prop.argument as Expression)
+          }
+          if (prop.key.kind === 'Identifier' || prop.key.kind === 'Literal') {
+            return isFusibleBindingExpression(prop.value as Expression)
+          }
+          return isFusibleBindingExpression(prop.value as Expression)
+        })
+      case 'TemplateLiteral':
+        return expr.expressions.every(e => isFusibleBindingExpression(e as Expression))
+      default:
+        return false
+    }
+  }
+
+  const getFusedPatchGroupKey = (expr: Expression): string => {
+    if (optimizeLevel === 'full') return '__full__'
+    const deps = _getReactiveDependencies(expr, ctx)
+    if (deps.size === 0) {
+      fusedUniqueId += 1
+      return `__dep_empty_${fusedUniqueId}`
+    }
+    return Array.from(deps).sort().join('|')
+  }
+
+  const queueFusedPatch = (expr: Expression, entry: FusedPatchEntry): boolean => {
+    if (!isFusibleBindingExpression(expr)) return false
+    const key = getFusedPatchGroupKey(expr)
+    const group = fusedPatchGroups.get(key)
+    if (group) {
+      group.push(entry)
+    } else {
+      fusedPatchGroups.set(key, [entry])
+    }
+    return true
+  }
+
+  const lowerBindingValueExpression = (expr?: Expression): BabelCore.types.Expression => {
+    const valueExpr = expr
+      ? lowerDomExpression(expr, ctx, containingRegion)
+      : t.booleanLiteral(true)
+    const valueIdentifier = t.isIdentifier(valueExpr) ? deSSAVarName(valueExpr.name) : undefined
+    return valueIdentifier &&
+      (regionMeta?.dependencies.has(valueIdentifier) || ctx.trackedVars.has(valueIdentifier))
+      ? buildDependencyGetter(valueIdentifier, ctx)
+      : valueExpr
+  }
+
+  const flushFusedPatchGroups = (): void => {
+    if (fusedPatchGroups.size === 0) return
+    for (const groupEntries of fusedPatchGroups.values()) {
+      if (optimizeLevel !== 'full' && groupEntries.length === 1) {
+        const single = groupEntries[0]!
+        ctx.helpersUsed.add(single.fallbackHelper)
+        statements.push(single.fallback)
+        continue
+      }
+
+      ctx.helpersUsed.add('renderEffect')
+      const patchStatements: BabelCore.types.Statement[] = []
+      for (const entry of groupEntries) {
+        ctx.helpersUsed.add(entry.patchHelper)
+        patchStatements.push(entry.patch)
+      }
+      statements.push(
+        t.expressionStatement(
+          t.callExpression(t.identifier(RUNTIME_ALIASES.renderEffect), [
+            t.arrowFunctionExpression([], t.blockStatement(patchStatements)),
+          ]),
+        ),
+      )
+    }
+  }
+
   // Apply bindings using path navigation
   for (const binding of bindings) {
     const targetId = resolveHIRBindingPath(binding.path, nodeCache, statements, ctx)
@@ -5809,14 +5971,16 @@ function lowerIntrinsicElement(
           ),
         )
 
-        // Assign data getter
-        const dataGetter = t.arrowFunctionExpression([], dataExpr)
+        // Assign static delegated data directly for list keys/literals to avoid per-row closures.
+        const dataValue = isStaticDelegatedDataExpression(hirDataBinding.data, ctx)
+          ? dataExpr
+          : t.arrowFunctionExpression([], dataExpr)
         statements.push(
           t.expressionStatement(
             t.assignmentExpression(
               '=',
               t.memberExpression(targetId, t.identifier(`$$${eventName}Data`)),
-              dataGetter,
+              dataValue,
             ),
           ),
         )
@@ -5969,7 +6133,9 @@ function lowerIntrinsicElement(
             (t.isArrowFunctionExpression(dataBinding.data) ||
             t.isFunctionExpression(dataBinding.data)
               ? dataBinding.data
-              : t.arrowFunctionExpression([], dataBinding.data))
+              : isStaticDelegatedDataAst(dataBinding.data, ctx)
+                ? dataBinding.data
+                : t.arrowFunctionExpression([], dataBinding.data))
 
           const handlerForDelegate =
             normalizedDataHandler ??
@@ -6046,67 +6212,157 @@ function lowerIntrinsicElement(
     } else if (binding.type === 'attr' && binding.name) {
       // Attribute binding
       const attrName = binding.name
-      const valueExpr = binding.expr
-        ? lowerDomExpression(binding.expr, ctx, containingRegion)
-        : t.booleanLiteral(true)
-      const valueIdentifier = ctx.t.isIdentifier(valueExpr)
-        ? deSSAVarName(valueExpr.name)
-        : undefined
-      const valueWithRegion =
-        valueIdentifier &&
-        (regionMeta?.dependencies.has(valueIdentifier) || ctx.trackedVars.has(valueIdentifier))
-          ? buildDependencyGetter(valueIdentifier, ctx)
-          : valueExpr
+      const valueWithRegion = lowerBindingValueExpression(binding.expr)
+      const isReactiveAttr =
+        !!binding.expr &&
+        !isListKeyConstExpression(binding.expr, ctx) &&
+        isExpressionReactive(binding.expr, ctx)
 
       if (attrName === 'ref') {
         ctx.helpersUsed.add('bindRef')
         statements.push(
           t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.bindRef), [targetId, valueExpr]),
+            t.callExpression(t.identifier(RUNTIME_ALIASES.bindRef), [targetId, valueWithRegion]),
           ),
         )
       } else if (attrName === 'class' || attrName === 'className') {
-        ctx.helpersUsed.add('bindClass')
-        statements.push(
-          t.expressionStatement(
+        if (isReactiveAttr && binding.expr) {
+          const patch = t.expressionStatement(
+            t.callExpression(t.identifier(RUNTIME_ALIASES.setClass), [targetId, valueWithRegion]),
+          )
+          const fallback = t.expressionStatement(
             t.callExpression(t.identifier(RUNTIME_ALIASES.bindClass), [
               targetId,
               t.arrowFunctionExpression([], valueWithRegion),
             ]),
-          ),
-        )
+          )
+          if (
+            !queueFusedPatch(binding.expr, {
+              patch,
+              fallback,
+              patchHelper: 'setClass',
+              fallbackHelper: 'bindClass',
+            })
+          ) {
+            ctx.helpersUsed.add('bindClass')
+            statements.push(fallback)
+          }
+        } else {
+          ctx.helpersUsed.add('setClass')
+          statements.push(
+            t.expressionStatement(
+              t.callExpression(t.identifier(RUNTIME_ALIASES.setClass), [targetId, valueWithRegion]),
+            ),
+          )
+        }
       } else if (attrName === 'style') {
-        ctx.helpersUsed.add('bindStyle')
-        statements.push(
-          t.expressionStatement(
+        if (isReactiveAttr && binding.expr) {
+          const patch = t.expressionStatement(
+            t.callExpression(t.identifier(RUNTIME_ALIASES.setStyle), [targetId, valueWithRegion]),
+          )
+          const fallback = t.expressionStatement(
             t.callExpression(t.identifier(RUNTIME_ALIASES.bindStyle), [
               targetId,
               t.arrowFunctionExpression([], valueWithRegion),
             ]),
-          ),
-        )
+          )
+          if (
+            !queueFusedPatch(binding.expr, {
+              patch,
+              fallback,
+              patchHelper: 'setStyle',
+              fallbackHelper: 'bindStyle',
+            })
+          ) {
+            ctx.helpersUsed.add('bindStyle')
+            statements.push(fallback)
+          }
+        } else {
+          ctx.helpersUsed.add('setStyle')
+          statements.push(
+            t.expressionStatement(
+              t.callExpression(t.identifier(RUNTIME_ALIASES.setStyle), [targetId, valueWithRegion]),
+            ),
+          )
+        }
       } else if (isDOMProperty(attrName)) {
-        ctx.helpersUsed.add('bindProperty')
-        statements.push(
-          t.expressionStatement(
+        if (isReactiveAttr && binding.expr) {
+          const patch = t.expressionStatement(
+            t.callExpression(t.identifier(RUNTIME_ALIASES.setProp), [
+              targetId,
+              t.stringLiteral(attrName),
+              valueWithRegion,
+            ]),
+          )
+          const fallback = t.expressionStatement(
             t.callExpression(t.identifier(RUNTIME_ALIASES.bindProperty), [
               targetId,
               t.stringLiteral(attrName),
               t.arrowFunctionExpression([], valueWithRegion),
             ]),
-          ),
-        )
+          )
+          if (
+            !queueFusedPatch(binding.expr, {
+              patch,
+              fallback,
+              patchHelper: 'setProp',
+              fallbackHelper: 'bindProperty',
+            })
+          ) {
+            ctx.helpersUsed.add('bindProperty')
+            statements.push(fallback)
+          }
+        } else {
+          ctx.helpersUsed.add('setProp')
+          statements.push(
+            t.expressionStatement(
+              t.callExpression(t.identifier(RUNTIME_ALIASES.setProp), [
+                targetId,
+                t.stringLiteral(attrName),
+                valueWithRegion,
+              ]),
+            ),
+          )
+        }
       } else {
-        ctx.helpersUsed.add('bindAttribute')
-        statements.push(
-          t.expressionStatement(
+        if (isReactiveAttr && binding.expr) {
+          const patch = t.expressionStatement(
+            t.callExpression(t.identifier(RUNTIME_ALIASES.setAttr), [
+              targetId,
+              t.stringLiteral(attrName),
+              valueWithRegion,
+            ]),
+          )
+          const fallback = t.expressionStatement(
             t.callExpression(t.identifier(RUNTIME_ALIASES.bindAttribute), [
               targetId,
               t.stringLiteral(attrName),
               t.arrowFunctionExpression([], valueWithRegion),
             ]),
-          ),
-        )
+          )
+          if (
+            !queueFusedPatch(binding.expr, {
+              patch,
+              fallback,
+              patchHelper: 'setAttr',
+              fallbackHelper: 'bindAttribute',
+            })
+          ) {
+            ctx.helpersUsed.add('bindAttribute')
+            statements.push(fallback)
+          }
+        } else {
+          ctx.helpersUsed.add('setAttr')
+          statements.push(
+            t.expressionStatement(
+              t.callExpression(t.identifier(RUNTIME_ALIASES.setAttr), [
+                targetId,
+                t.stringLiteral(attrName),
+                valueWithRegion,
+              ]),
+            ),
+          )
+        }
       }
     } else if (binding.type === 'key' && binding.expr) {
       statements.push(
@@ -6115,16 +6371,27 @@ function lowerIntrinsicElement(
     } else if (binding.type === 'text' && binding.expr) {
       const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
       // Only use bindText for reactive expressions; static text uses direct assignment
-      if (isExpressionReactive(binding.expr, ctx)) {
-        ctx.helpersUsed.add('bindText')
-        statements.push(
-          t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.bindText), [
-              targetId,
-              t.arrowFunctionExpression([], valueExpr),
-            ]),
-          ),
+      if (!isListKeyConstExpression(binding.expr, ctx) && isExpressionReactive(binding.expr, ctx)) {
+        const patch = t.expressionStatement(
+          t.callExpression(t.identifier(RUNTIME_ALIASES.setText), [targetId, valueExpr]),
         )
+        const fallback = t.expressionStatement(
+          t.callExpression(t.identifier(RUNTIME_ALIASES.bindText), [
+            targetId,
+            t.arrowFunctionExpression([], valueExpr),
+          ]),
+        )
+        if (
+          !queueFusedPatch(binding.expr, {
+            patch,
+            fallback,
+            patchHelper: 'setText',
+            fallbackHelper: 'bindText',
+          })
+        ) {
+          ctx.helpersUsed.add('bindText')
+          statements.push(fallback)
+        }
       } else {
         // Static text: direct assignment - no effect needed
         statements.push(
@@ -6150,6 +6417,8 @@ function lowerIntrinsicElement(
       )
     }
   }
+
+  flushFusedPatchGroups()
 
   // Restore previous region
   applyRegionToContext(ctx, prevRegion ?? null)
@@ -7237,6 +7506,21 @@ function applySelectorHoist(
         const handler = node.arguments[1]
         if (handler && (t.isArrowFunctionExpression(handler) || t.isFunctionExpression(handler))) {
           rewriteInFunction(handler)
+        }
+      }
+      if (calleeName === RUNTIME_ALIASES.setClass || calleeName === 'setClass') {
+        const classValue = node.arguments[1]
+        if (classValue && t.isExpression(classValue)) {
+          const result = rewriteSelectorExpression(
+            classValue,
+            itemParamName,
+            keyParamName,
+            getSelectorId,
+            ctx,
+          )
+          if (result.changed) {
+            node.arguments[1] = result.expr
+          }
         }
       }
     }

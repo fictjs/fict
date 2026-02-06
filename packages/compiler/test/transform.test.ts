@@ -351,8 +351,8 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transformWithOptions(input)
-      expect(output).toContain('bindAttribute')
-      expect(output).toContain('bindText')
+      expect(output).toMatch(/bindAttribute|setAttr/)
+      expect(output).toMatch(/bindText|setText/)
       expect(output).toContain('count()')
     })
 

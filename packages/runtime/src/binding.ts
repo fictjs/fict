@@ -46,6 +46,25 @@ const isDev =
     ? __DEV__
     : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
 
+const TEXT_CACHE = Symbol('fict:text')
+const ATTR_CACHE = Symbol('fict:attr')
+const PROP_CACHE = Symbol('fict:prop')
+const STYLE_CACHE = Symbol('fict:style')
+const CLASS_STATE_CACHE = Symbol('fict:class-state')
+const CLASS_VALUE_CACHE = Symbol('fict:class-value')
+
+const PROPERTY_BINDING_KEYS = new Set([
+  'value',
+  'checked',
+  'selected',
+  'disabled',
+  'readOnly',
+  'multiple',
+  'muted',
+])
+
+const STYLE_PROP_CACHE = new Map<string, string>()
+
 // ============================================================================
 // Type Definitions
 // ============================================================================
@@ -202,15 +221,11 @@ export function createTextBinding(value: MaybeReactive<unknown>): Text {
   if (isReactive(value)) {
     // Reactive: create effect to update text when value changes
     createRenderEffect(() => {
-      const v = (value as () => unknown)()
-      const fmt = formatTextValue(v)
-      if (text.data !== fmt) {
-        text.data = fmt
-      }
+      setText(text, (value as () => unknown)())
     })
   } else {
     // Static: set once
-    text.data = formatTextValue(value)
+    setText(text, value)
   }
 
   return text
@@ -221,12 +236,22 @@ export function createTextBinding(value: MaybeReactive<unknown>): Text {
  * This is a convenience function for binding to existing DOM nodes.
  */
 export function bindText(textNode: Text, getValue: () => unknown): Cleanup {
-  return createRenderEffect(() => {
-    const value = formatTextValue(getValue())
-    if (textNode.data !== value) {
-      textNode.data = value
-    }
-  })
+  return createRenderEffect(() => setText(textNode, getValue()))
+}
+
+/**
+ * Patch text node content with per-node value caching.
+ * This is the low-level primitive used by compiled render effects.
+ */
+export function setText(textNode: Text, value: unknown): void {
+  const next = formatTextValue(value)
+  const cache = textNode as unknown as Record<PropertyKey, unknown>
+  const prev = cache[TEXT_CACHE]
+  if (prev === next) return
+  cache[TEXT_CACHE] = next
+  if (textNode.data !== next) {
+    textNode.data = next
+  }
 }
 
 /**
@@ -279,52 +304,53 @@ export function createAttributeBinding(
  * Bind a reactive value to an element's attribute.
  */
 export function bindAttribute(el: Element, key: string, getValue: () => unknown): Cleanup {
-  let prevValue: unknown = undefined
-  return createRenderEffect(() => {
-    const value = getValue()
-    if (value === prevValue) return
-    prevValue = value
+  return createRenderEffect(() => setAttr(el, key, getValue()))
+}
 
-    if (value === undefined || value === null || value === false) {
-      el.removeAttribute(key)
-    } else if (value === true) {
-      el.setAttribute(key, '')
-    } else {
-      el.setAttribute(key, String(value))
-    }
-  })
+/**
+ * Patch attribute value with per-node, per-attribute cache.
+ */
+export function setAttr(el: Element, key: string, value: unknown): void {
+  const cacheTarget = el as unknown as Record<PropertyKey, unknown>
+  const attrCache =
+    (cacheTarget[ATTR_CACHE] as Record<string, unknown> | undefined) ??
+    (cacheTarget[ATTR_CACHE] = Object.create(null))
+  if (attrCache[key] === value) return
+  attrCache[key] = value
+
+  if (value === undefined || value === null || value === false) {
+    el.removeAttribute(key)
+  } else if (value === true) {
+    el.setAttribute(key, '')
+  } else {
+    el.setAttribute(key, String(value))
+  }
 }
 
 /**
  * Bind a reactive value to an element's property.
  */
 export function bindProperty(el: Element, key: string, getValue: () => unknown): Cleanup {
-  // Keep behavior aligned with the legacy createElement+applyProps path in `dom.ts`,
-  // where certain keys must behave like DOM properties and nullish clears should
-  // reset to sensible defaults (e.g. value -> '', checked -> false).
-  const PROPERTY_BINDING_KEYS = new Set([
-    'value',
-    'checked',
-    'selected',
-    'disabled',
-    'readOnly',
-    'multiple',
-    'muted',
-  ])
+  return createRenderEffect(() => setProp(el, key, getValue()))
+}
 
-  let prevValue: unknown = undefined
-  return createRenderEffect(() => {
-    const next = getValue()
-    if (next === prevValue) return
-    prevValue = next
+/**
+ * Patch DOM property with per-node, per-property cache.
+ */
+export function setProp(el: Element, key: string, value: unknown): void {
+  const cacheTarget = el as unknown as Record<PropertyKey, unknown>
+  const propCache =
+    (cacheTarget[PROP_CACHE] as Record<string, unknown> | undefined) ??
+    (cacheTarget[PROP_CACHE] = Object.create(null))
+  if (propCache[key] === value) return
+  propCache[key] = value
 
-    if (PROPERTY_BINDING_KEYS.has(key) && (next === undefined || next === null)) {
-      const fallback = key === 'checked' || key === 'selected' ? false : ''
-      ;(el as unknown as Record<string, unknown>)[key] = fallback
-      return
-    }
-    ;(el as unknown as Record<string, unknown>)[key] = next
-  })
+  if (PROPERTY_BINDING_KEYS.has(key) && (value === undefined || value === null)) {
+    const fallback = key === 'checked' || key === 'selected' ? false : ''
+    ;(el as unknown as Record<string, unknown>)[key] = fallback
+    return
+  }
+  ;(el as unknown as Record<string, unknown>)[key] = value
 }
 
 // ============================================================================
@@ -338,16 +364,12 @@ export function createStyleBinding(
   el: Element,
   value: MaybeReactive<string | Record<string, string | number> | null | undefined>,
 ): void {
-  const target = el as Element & { style: CSSStyleDeclaration }
   if (isReactive(value)) {
-    let prev: unknown
     createRenderEffect(() => {
-      const next = (value as () => unknown)()
-      applyStyle(target, next, prev)
-      prev = next
+      setStyle(el, (value as () => unknown)() as string | Record<string, string | number> | null)
     })
   } else {
-    applyStyle(target, value, undefined)
+    setStyle(el, value)
   }
 }
 
@@ -358,13 +380,23 @@ export function bindStyle(
   el: Element,
   getValue: () => string | Record<string, string | number> | null | undefined,
 ): Cleanup {
+  return createRenderEffect(() => setStyle(el, getValue()))
+}
+
+/**
+ * Patch style value with cached previous style payload.
+ */
+export function setStyle(
+  el: Element,
+  value: string | Record<string, string | number> | null | undefined,
+): void {
   const target = el as Element & { style: CSSStyleDeclaration }
-  let prev: unknown
-  return createRenderEffect(() => {
-    const next = getValue()
-    applyStyle(target, next, prev)
-    prev = next
-  })
+  const cache = target as unknown as Record<PropertyKey, unknown>
+  const prev = cache[STYLE_CACHE]
+  if (typeof value === 'string' && prev === value) return
+  if ((value === null || value === undefined) && (prev === null || prev === undefined)) return
+  applyStyle(target, value, prev)
+  cache[STYLE_CACHE] = value
 }
 
 /**
@@ -388,23 +420,23 @@ function applyStyle(
     // Remove styles that were present in prev but not in current
     if (prev && typeof prev === 'object') {
       const prevStyles = prev as Record<string, string | number>
-      for (const key of Object.keys(prevStyles)) {
+      for (const key in prevStyles) {
         if (!(key in styles)) {
-          const cssProperty = key.replace(/([A-Z])/g, '-$1').toLowerCase()
+          const cssProperty = normalizeStyleProperty(key)
           el.style.removeProperty(cssProperty)
         }
       }
     }
 
-    for (const [prop, v] of Object.entries(styles)) {
+    for (const prop in styles) {
+      const v = styles[prop]
       if (v != null) {
-        // Handle camelCase to kebab-case conversion
-        const cssProperty = prop.replace(/([A-Z])/g, '-$1').toLowerCase()
+        const cssProperty = normalizeStyleProperty(prop)
         const unitless = isUnitlessStyleProperty(prop) || isUnitlessStyleProperty(cssProperty)
         const valueStr = typeof v === 'number' && !unitless ? `${v}px` : String(v)
         el.style.setProperty(cssProperty, valueStr)
       } else {
-        const cssProperty = prop.replace(/([A-Z])/g, '-$1').toLowerCase()
+        const cssProperty = normalizeStyleProperty(prop)
         el.style.removeProperty(cssProperty) // Handle null/undefined values by removing
       }
     }
@@ -414,8 +446,8 @@ function applyStyle(
     // Ideally we remove keys from prev.
     if (prev && typeof prev === 'object') {
       const prevStyles = prev as Record<string, string | number>
-      for (const key of Object.keys(prevStyles)) {
-        const cssProperty = key.replace(/([A-Z])/g, '-$1').toLowerCase()
+      for (const key in prevStyles) {
+        const cssProperty = normalizeStyleProperty(key)
         el.style.removeProperty(cssProperty)
       }
     } else if (typeof prev === 'string') {
@@ -427,6 +459,14 @@ function applyStyle(
 const isUnitlessStyleProperty = isDev
   ? (prop: string): boolean => UnitlessStyles.has(prop)
   : (prop: string): boolean => prop === 'opacity' || prop === 'zIndex'
+
+function normalizeStyleProperty(prop: string): string {
+  const cached = STYLE_PROP_CACHE.get(prop)
+  if (cached) return cached
+  const normalized = prop.includes('-') ? prop : prop.replace(/([A-Z])/g, '-$1').toLowerCase()
+  STYLE_PROP_CACHE.set(prop, normalized)
+  return normalized
+}
 
 // ============================================================================
 // Class Binding
@@ -440,13 +480,11 @@ export function createClassBinding(
   value: MaybeReactive<string | Record<string, boolean> | null | undefined>,
 ): void {
   if (isReactive(value)) {
-    let prev: Record<string, boolean> = {}
-    createRenderEffect(() => {
-      const next = (value as () => unknown)()
-      prev = applyClass(el, next, prev)
-    })
+    createRenderEffect(() =>
+      setClass(el, (value as () => string | Record<string, boolean> | null | undefined)()),
+    )
   } else {
-    applyClass(el, value, {})
+    setClass(el, value)
   }
 }
 
@@ -457,21 +495,31 @@ export function bindClass(
   el: Element,
   getValue: () => string | Record<string, boolean> | null | undefined,
 ): Cleanup {
-  let prev: Record<string, boolean> = {}
-  let prevString: string | undefined
-  return createRenderEffect(() => {
-    const next = getValue()
-    // Short-circuit for string values to avoid DOM writes when unchanged
-    if (typeof next === 'string') {
-      if (next === prevString) return
-      prevString = next
-      el.className = next
-      prev = {}
-      return
-    }
-    prevString = undefined
-    prev = applyClass(el, next, prev)
-  })
+  return createRenderEffect(() => setClass(el, getValue()))
+}
+
+/**
+ * Patch class value using per-node cached class state.
+ */
+export function setClass(
+  el: Element,
+  value: string | Record<string, boolean> | null | undefined,
+): void {
+  const cache = el as unknown as Record<PropertyKey, unknown>
+  const prevValue = cache[CLASS_VALUE_CACHE]
+  const prevState = (cache[CLASS_STATE_CACHE] as Record<string, boolean> | undefined) ?? {}
+
+  // Preserve existing behavior: short-circuit only for stable string values.
+  if (typeof value === 'string') {
+    if (typeof prevValue === 'string' && prevValue === value) return
+    el.className = value
+    cache[CLASS_STATE_CACHE] = {}
+    cache[CLASS_VALUE_CACHE] = value
+    return
+  }
+
+  cache[CLASS_STATE_CACHE] = applyClass(el, value, prevState)
+  cache[CLASS_VALUE_CACHE] = value
 }
 
 /**

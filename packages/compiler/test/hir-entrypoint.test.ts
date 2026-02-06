@@ -32,7 +32,7 @@ describe('HIR entrypoint (default)', () => {
     )
 
     expect(code).toContain('__fictUseEffect(__fictCtx')
-    expect(code).toContain('bindClass')
+    expect(code).toMatch(/bindClass|setClass/)
     expect(code).toContain('count()')
   })
 
@@ -48,6 +48,6 @@ describe('HIR entrypoint (default)', () => {
     )
 
     expect(code).toContain('state().user.name')
-    expect(code).toContain('bindClass')
+    expect(code).toMatch(/bindClass|setClass/)
   })
 })

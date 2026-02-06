@@ -31,8 +31,8 @@ describe('P1: Selector Hoist Optimization', () => {
     // The selector should be created with the signal accessor
     expect(output).toMatch(/const __sel_\d+ = createSelector\(\(\) => selected\(\)\)/)
 
-    // bindClass should use the selector instead of direct comparison
-    expect(output).toMatch(/bindClass\([^,]+,\s*\(\)\s*=>\s*__sel_\d+\(__key\)/)
+    // Class binding should use the selector instead of direct comparison
+    expect(output).toMatch(/__sel_\d+\(__key\)/)
 
     // Should NOT have the original pattern
     expect(output).not.toMatch(/bindClass\([^,]+,\s*\(\)\s*=>\s*__key\s*===\s*selected\(\)/)
@@ -62,8 +62,8 @@ describe('P1: Selector Hoist Optimization', () => {
     // Should have createSelector
     expect(output).toContain('createSelector')
 
-    // bindClass should use the selector
-    expect(output).toMatch(/bindClass\([^,]+,\s*\(\)\s*=>\s*__sel_\d+\(__key\)/)
+    // Class binding should use the selector
+    expect(output).toMatch(/__sel_\d+\(__key\)/)
   })
 
   it('should not hoist selector for non-keyed list', () => {
@@ -159,7 +159,14 @@ describe('P1: Selector Hoist Optimization', () => {
     // Should have createSelector for the selection pattern
     expect(output).toContain('createSelector')
 
-    // bindClass should use the selector
-    expect(output).toMatch(/bindClass\([^,]+,\s*\(\)\s*=>\s*__sel_\d+\(__key\)/)
+    // Class binding should use the selector
+    expect(output).toMatch(/__sel_\d+\(__key\)/)
+
+    // row.id text should be treated as static key text (no per-row bindText effect)
+    expect(output).not.toMatch(/bindText\([^,]+,\s*\(\)\s*=>\s*__key\)/)
+
+    // Delegated event key payload should be assigned directly (no per-row data getter closure)
+    expect(output).toMatch(/\$\$clickData\s*=\s*__key/)
+    expect(output).not.toMatch(/\$\$clickData\s*=\s*\(\)\s*=>\s*__key/)
   })
 })

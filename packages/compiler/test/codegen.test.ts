@@ -145,7 +145,55 @@ describe('region metadata → DOM', () => {
     const { code } = generate(file)
 
     expect(code).toMatch(/state\(\)\.user\.name/)
-    expect(code).toContain('bindClass')
+    expect(code).toMatch(/bindClass|setClass/)
+  })
+
+  it('fuses multiple reactive bindings sharing deps in safe mode', () => {
+    const ast = parseFile(`
+      function View() {
+        const count = $state(0)
+        return <div className={count}>{count}</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { optimizeLevel: 'safe' })
+    const { code } = generate(file)
+
+    expect(code).toContain('createRenderEffect')
+    expect(code).toContain('setClass')
+    expect(code).toContain('setText')
+  })
+
+  it('keeps single reactive text binding on bindText in safe mode', () => {
+    const ast = parseFile(`
+      function View() {
+        const count = $state(0)
+        return <div>{count}</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { optimizeLevel: 'safe' })
+    const { code } = generate(file)
+
+    expect(code).toContain('bindText')
+    expect(code).not.toContain('setText(')
+  })
+
+  it('fuses reactive bindings across different deps in full mode', () => {
+    const ast = parseFile(`
+      function View() {
+        const left = $state(1)
+        const right = $state(2)
+        return <div data-left={left}>{right}</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { optimizeLevel: 'full' })
+    const { code } = generate(file)
+
+    expect(code).toContain('createRenderEffect')
+    expect(code).toContain('setAttr')
+    expect(code).toContain('setText')
   })
 })
 
@@ -378,6 +426,38 @@ describe('event handler transformation', () => {
     expect(code).toContain('$$click')
     expect(code).toMatch(/props/)
   })
+
+  it('optimizes keyed list event payload/data and key text as static', () => {
+    const ast = parseFile(`
+      function Table() {
+        let rows = $state([])
+        let selected = $state(null)
+        const pick = (id) => selected = id
+        return (
+          <table>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.id}</td>
+                  <td><a onClick={() => pick(row.id)}>{row.label}</a></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    // __key text should not create a per-row bindText effect
+    expect(code).not.toMatch(/bindText\([^,]+,\s*\(\)\s*=>\s*__key\)/)
+
+    // Delegated event payload for __key should be assigned directly (no closure)
+    expect(code).toMatch(/\$\$clickData\s*=\s*__key/)
+    expect(code).not.toMatch(/\$\$clickData\s*=\s*\(\)\s*=>\s*__key/)
+  })
 })
 
 // ============================================================================
@@ -572,8 +652,8 @@ describe('style binding', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    // Style uses bindStyle helper
-    expect(code).toContain('bindStyle')
+    // Style uses bindStyle for reactive paths and setStyle for static paths
+    expect(code).toMatch(/bindStyle|setStyle/)
     expect(code).toMatch(/color/)
   })
 
