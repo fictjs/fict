@@ -4,7 +4,7 @@ import type { Cleanup, ErrorInfo, SuspenseToken } from './types'
 const isDev =
   typeof __DEV__ !== 'undefined'
     ? __DEV__
-    : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
+    : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
 
 type LifecycleFn = () => void | Cleanup
 

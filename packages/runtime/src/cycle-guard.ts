@@ -3,7 +3,7 @@ import { getDevtoolsHook } from './devtools'
 const isDev =
   typeof __DEV__ !== 'undefined'
     ? __DEV__
-    : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
+    : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
 
 export interface CycleProtectionOptions {
   /** Enable cycle protection guards (defaults to dev-only) */

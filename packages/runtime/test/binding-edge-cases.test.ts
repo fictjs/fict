@@ -115,6 +115,7 @@ describe('Binding Edge Cases', () => {
       expect(ref2.current).toBe(el)
 
       dispose()
+      expect(ref2.current).toBe(null)
     })
 
     it('handles reactive callback ref', async () => {
@@ -287,6 +288,25 @@ describe('Binding Edge Cases', () => {
       await tick()
       expect(text.data).toBe('0')
     })
+
+    it('reconciles text when DOM is externally mutated but value cache is unchanged', async () => {
+      const text = document.createTextNode('')
+      const value = createSignal('hello')
+      const trigger = createSignal(0)
+
+      bindText(text, () => {
+        trigger()
+        return value()
+      })
+      expect(text.data).toBe('hello')
+
+      // Simulate third-party/manual DOM mutation.
+      text.data = 'tampered'
+      trigger(1)
+      await tick()
+
+      expect(text.data).toBe('hello')
+    })
   })
 
   describe('bindAttribute', () => {
@@ -458,6 +478,20 @@ describe('Binding Edge Cases', () => {
 
       style(null)
       await tick()
+      expect(el.style.color).toBe('')
+    })
+
+    it('ignores inherited style keys and removes stale own keys', async () => {
+      const el = document.createElement('div')
+      const style = createSignal<Record<string, string | number>>({ color: 'red' })
+
+      bindStyle(el, () => style())
+      expect(el.style.color).toBe('red')
+
+      const inheritedOnly = Object.create({ color: 'blue' }) as Record<string, string | number>
+      style(inheritedOnly)
+      await tick()
+
       expect(el.style.color).toBe('')
     })
   })

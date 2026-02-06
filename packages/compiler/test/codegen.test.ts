@@ -635,6 +635,31 @@ describe('component ref handling', () => {
     expect(code).toMatch(/ref1/)
     expect(code).toMatch(/ref2/)
   })
+
+  it('preserves ref expressions for props, signal, and callback refs', () => {
+    const ast = parseFile(`
+      function RefMatrix(props) {
+        const liveRef = $state(null)
+        const cb = (el) => el
+        return (
+          <div>
+            <input ref={props.inputRef} />
+            <input ref={liveRef} />
+            <input ref={cb} />
+          </div>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('bindRef')
+    expect(code).toMatch(/bindRef\([^,]+,\s*props(?:\(\))?\.inputRef\)/)
+    expect(code).toMatch(/bindRef\([^,]+,\s*liveRef\(\)\)/)
+    expect(code).toMatch(/bindRef\([^,]+,\s*cb\)/)
+    expect(code).not.toMatch(/bindRef\([^,]+,\s*\(\)\s*=>/)
+  })
 })
 
 // ============================================================================

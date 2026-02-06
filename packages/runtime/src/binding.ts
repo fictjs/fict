@@ -44,7 +44,7 @@ import type { Cleanup, FictNode } from './types'
 const isDev =
   typeof __DEV__ !== 'undefined'
     ? __DEV__
-    : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
+    : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
 
 const TEXT_CACHE = Symbol('fict:text')
 const ATTR_CACHE = Symbol('fict:attr')
@@ -64,6 +64,7 @@ const PROPERTY_BINDING_KEYS = new Set([
 ])
 
 const STYLE_PROP_CACHE = new Map<string, string>()
+const hasOwn = Object.prototype.hasOwnProperty
 
 // ============================================================================
 // Type Definitions
@@ -247,7 +248,7 @@ export function setText(textNode: Text, value: unknown): void {
   const next = formatTextValue(value)
   const cache = textNode as unknown as Record<PropertyKey, unknown>
   const prev = cache[TEXT_CACHE]
-  if (prev === next) return
+  if (prev === next && textNode.data === next) return
   cache[TEXT_CACHE] = next
   if (textNode.data !== next) {
     textNode.data = next
@@ -421,7 +422,8 @@ function applyStyle(
     if (prev && typeof prev === 'object') {
       const prevStyles = prev as Record<string, string | number>
       for (const key in prevStyles) {
-        if (!(key in styles)) {
+        if (!hasOwn.call(prevStyles, key)) continue
+        if (!hasOwn.call(styles, key)) {
           const cssProperty = normalizeStyleProperty(key)
           el.style.removeProperty(cssProperty)
         }
@@ -429,6 +431,7 @@ function applyStyle(
     }
 
     for (const prop in styles) {
+      if (!hasOwn.call(styles, prop)) continue
       const v = styles[prop]
       if (v != null) {
         const cssProperty = normalizeStyleProperty(prop)
@@ -447,6 +450,7 @@ function applyStyle(
     if (prev && typeof prev === 'object') {
       const prevStyles = prev as Record<string, string | number>
       for (const key in prevStyles) {
+        if (!hasOwn.call(prevStyles, key)) continue
         const cssProperty = normalizeStyleProperty(key)
         el.style.removeProperty(cssProperty)
       }
