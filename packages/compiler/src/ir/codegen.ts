@@ -743,6 +743,10 @@ function withGetterCache<T>(
   ctx: CodegenContext,
   fn: () => T,
 ): { result: T; cacheDeclarations: BabelCore.types.Statement[] } {
+  if (ctx.options?.getterCache === false) {
+    return { result: fn(), cacheDeclarations: [] }
+  }
+
   const prevCache = ctx.getterCache
   const prevDeclarations = ctx.getterCacheDeclarations
   const prevEnabled = ctx.getterCacheEnabled
@@ -4025,7 +4029,7 @@ function lowerJSXElement(
     ])
   }
 
-  const useFineGrainedDom = !ctx.noMemo
+  const useFineGrainedDom = (ctx.options?.fineGrainedDom ?? true) && !ctx.noMemo
   if (!useFineGrainedDom) {
     return lowerIntrinsicElementAsVNode(jsx, ctx)
   }
@@ -8248,6 +8252,10 @@ function transformControlFlowReturns(
   statements: BabelCore.types.Statement[],
   ctx: CodegenContext,
 ): BabelCore.types.Statement[] | null {
+  if (ctx.options?.lazyConditional === false) {
+    return null
+  }
+
   const { t } = ctx
   const reactiveAccessorNames = new Set<string>([
     ...ctx.trackedVars,

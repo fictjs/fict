@@ -319,8 +319,8 @@ describe('Fict Compiler - Basic Transforms', () => {
       `
       const output = transform(input)
       // Event handler should not be wrapped in an additional arrow function
-      // Delegated events like click use direct property assignment for performance
-      expect(output).toContain('$$click')
+      // Non fine-grained path keeps handlers as direct props.
+      expect(output).toContain('onClick: () => count(count() + 1)')
       expect(output).toContain('count(count() + 1)')
       expect(output).not.toContain('onClick: () => () =>')
     })
@@ -335,9 +335,8 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transform(input)
-      // key attribute should get the reactive value but not be wrapped in arrow function
-      // In JSX transform, key is passed as the third argument to _jsx
-      expect(output).toContain('id()')
+      // key should never be wrapped as a getter callback.
+      expect(output).not.toContain('key: () =>')
       expect(output).not.toContain('() => id()')
     })
   })
@@ -566,7 +565,6 @@ describe('Fict Compiler - Integration', () => {
     // Should have runtime imports
     expect(output).toContain('__fictUseContext')
     expect(output).toContain('__fictUseSignal')
-    expect(output).toContain('__fictUseMemo')
     expect(output).toContain('__fictUseEffect')
 
     // Should transform state

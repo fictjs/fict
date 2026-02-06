@@ -2,21 +2,21 @@
   "samples": {
     "counter-basic": {
       "helpers": 4,
-      "regions": 1,
-      "sizeBytes": 1035,
-      "gzipBytes": 429
+      "regions": 0,
+      "sizeBytes": 969,
+      "gzipBytes": 425
     },
     "optional-chain": {
       "helpers": 3,
       "regions": 0,
-      "sizeBytes": 551,
-      "gzipBytes": 307
+      "sizeBytes": 662,
+      "gzipBytes": 350
     },
     "no-jsx": {
       "helpers": 4,
       "regions": 1,
-      "sizeBytes": 464,
-      "gzipBytes": 231
+      "sizeBytes": 489,
+      "gzipBytes": 244
     }
   }
 }

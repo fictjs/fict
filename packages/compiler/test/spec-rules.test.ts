@@ -869,6 +869,23 @@ describe('Rule J: Lazy evaluation of conditional derivation', () => {
     expect(output).toContain('heading')
     expect(output).toContain('extra')
   })
+
+  it('does not lower control-flow returns when lazyConditional is disabled', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          if (count > 0) {
+            return <div>{count}</div>
+          }
+          return <span>{count}</span>
+        }
+      `,
+      { lazyConditional: false },
+    )
+    expect(output).not.toContain('createConditional')
+  })
 })
 
 // ============================================================================
@@ -986,6 +1003,25 @@ describe('Rule L: Getter cache in same sync block', () => {
     expect(output).toContain('__fictUseMemo(__fictCtx')
     expect(output).toContain('count() * 2')
     expect(output).toMatch(/console\.log\(doubled\(\)\)/)
+  })
+
+  it('allows disabling getter cache via compiler option', () => {
+    const source = `
+      import { $state } from 'fict'
+      function Component() {
+        let count = $state(0)
+        const click = () => {
+          console.log(count)
+          console.log(count)
+          console.log(count)
+        }
+        return click
+      }
+    `
+    const withCache = transform(source, { getterCache: true })
+    const withoutCache = transform(source, { getterCache: false })
+    expect(withCache).toMatch(/__cached_count_\d+/)
+    expect(withoutCache).not.toContain('__cached_count_')
   })
 })
 

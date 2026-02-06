@@ -520,6 +520,22 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).toContain('bindText')
       expect(output).toContain('count()')
     })
+
+    it('falls back to vnode output when fineGrainedDom is disabled', () => {
+      const output = transform(
+        `
+          import { $state } from 'fict'
+          function Component() {
+            let count = $state(0)
+            return <div>{count}</div>
+          }
+        `,
+        { fineGrainedDom: false },
+      )
+
+      expect(output).toContain('type: "div"')
+      expect(output).not.toContain('bindText')
+    })
   })
 
   describe('Event delegation data-binding', () => {

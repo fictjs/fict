@@ -1405,25 +1405,13 @@ function createHIREntrypointVisitor(
           const bindingId = getBindingIdentifier(path, name)
           return !!(bindingId && destructuredAliases.has(bindingId))
         }
-        const rhsUsesReactive = (exprPath: BabelCore.NodePath | null | undefined): boolean => {
+        const isDirectReactiveAliasSource = (
+          exprPath: BabelCore.NodePath | null | undefined,
+        ): boolean => {
           if (!exprPath) return false
-          if (
-            exprPath.isIdentifier() &&
-            t.isIdentifier(exprPath.node) &&
-            hasReactiveAliasSourceBinding(exprPath, exprPath.node.name)
-          ) {
-            return true
-          }
-          let usesState = false
-          exprPath.traverse({
-            Identifier(idPath: BabelCore.NodePath<BabelCore.types.Identifier>) {
-              if (hasReactiveAliasSourceBinding(idPath, idPath.node.name)) {
-                usesState = true
-                idPath.stop()
-              }
-            },
-          })
-          return usesState
+          const id = unwrapIdentifier(exprPath.node)
+          if (!id) return false
+          return hasReactiveAliasSourceBinding(exprPath, id.name)
         }
         debugLog('alias', 'state vars', Array.from(stateVars))
         path.traverse({
@@ -1438,7 +1426,7 @@ function createHIREntrypointVisitor(
           VariableDeclarator(varPath) {
             const initPath = varPath.get('init') as BabelCore.NodePath | null
             const stateRootId = isStateRootIdentifier(initPath)
-            if (t.isIdentifier(varPath.node.id) && rhsUsesReactive(initPath as any)) {
+            if (t.isIdentifier(varPath.node.id) && isDirectReactiveAliasSource(initPath)) {
               debugLog('alias', 'add from decl', varPath.node.id.name)
               addAliasBinding(varPath, varPath.node.id.name)
             }
@@ -1446,14 +1434,12 @@ function createHIREntrypointVisitor(
               addStateAliasBinding(varPath, varPath.node.id.name)
             }
             if (t.isObjectPattern(varPath.node.id) || t.isArrayPattern(varPath.node.id)) {
-              if (rhsUsesReactive(initPath as any)) {
+              if (stateRootId) {
                 const targets = collectPatternIdentifiers(varPath.node.id)
                 for (const target of targets) {
                   debugLog('alias', 'add from destructuring decl', target)
                   addAliasBinding(varPath, target)
                 }
-              }
-              if (stateRootId) {
                 collectPatternIdentifiers(varPath.node.id).forEach(id =>
                   trackBindingByName(varPath, id, destructuredAliases),
                 )
@@ -1462,12 +1448,12 @@ function createHIREntrypointVisitor(
           },
           AssignmentExpression(assignPath) {
             const rightPath = assignPath.get('right') as BabelCore.NodePath | null
-            const usesState = rhsUsesReactive(rightPath)
+            const directAliasSource = isDirectReactiveAliasSource(rightPath)
             const stateRootId = isStateRootIdentifier(rightPath)
             const left = assignPath.node.left
             if (t.isIdentifier(left)) {
               const targetName = left.name
-              if (usesState) {
+              if (directAliasSource) {
                 debugLog('alias', 'add from assign', targetName)
                 addAliasBinding(assignPath, targetName)
                 if (stateRootId) {
@@ -1487,16 +1473,14 @@ function createHIREntrypointVisitor(
             if (t.isObjectPattern(left) || t.isArrayPattern(left)) {
               const targets = collectPatternIdentifiers(left)
               if (targets.length === 0) return
-              if (usesState) {
+              if (stateRootId) {
                 for (const target of targets) {
                   debugLog('alias', 'add from destructuring assign', target)
                   addAliasBinding(assignPath, target)
                 }
-                if (stateRootId) {
-                  targets.forEach(target =>
-                    trackBindingByName(assignPath, target, destructuredAliases),
-                  )
-                }
+                targets.forEach(target =>
+                  trackBindingByName(assignPath, target, destructuredAliases),
+                )
                 return
               }
               const reassigned = targets.find(

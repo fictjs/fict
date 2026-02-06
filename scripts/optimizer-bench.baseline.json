@@ -6,22 +6,22 @@
   },
   "samples": {
     "reactive-branch": {
-      "optimized_ms": 1.39,
-      "unoptimized_ms": 1,
-      "optimized_bytes": 757,
-      "unoptimized_bytes": 757
+      "optimized_ms": 2.59,
+      "unoptimized_ms": 1.96,
+      "optimized_bytes": 782,
+      "unoptimized_bytes": 782
     },
     "array-map": {
-      "optimized_ms": 0.97,
-      "unoptimized_ms": 0.74,
-      "optimized_bytes": 314,
-      "unoptimized_bytes": 314
+      "optimized_ms": 1.81,
+      "unoptimized_ms": 1.68,
+      "optimized_bytes": 339,
+      "unoptimized_bytes": 339
     },
     "no-jsx": {
-      "optimized_ms": 0.85,
-      "unoptimized_ms": 0.8,
-      "optimized_bytes": 464,
-      "unoptimized_bytes": 464
+      "optimized_ms": 1.83,
+      "unoptimized_ms": 1.59,
+      "optimized_bytes": 489,
+      "unoptimized_bytes": 489
     }
   }
 }

@@ -502,6 +502,35 @@ describe('semantic validation', () => {
     expect(() => transform(source)).toThrow(/Alias reassignment/)
   })
 
+  it('allows loop counters initialized from reactive expressions', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const items = $state([1, 2, 3, 4])
+        const shuffled = [...items]
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1))
+          ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+        }
+        return <div>{shuffled.length}</div>
+      }
+    `
+    expect(() => transform(source)).not.toThrow()
+  })
+
+  it('allows reassigning locals initialized from reactive member reads', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const items = $state([1, 2, 3, 4])
+        let count = items.length
+        count++
+        return <div>{count}</div>
+      }
+    `
+    expect(() => transform(source)).not.toThrow()
+  })
+
   it('throws when writing to a destructured alias from a state alias', () => {
     const source = `
       import { $state } from 'fict'
