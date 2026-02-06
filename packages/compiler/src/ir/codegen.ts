@@ -1,5 +1,6 @@
-import type * as BabelCore from '@babel/core'
 import { pathToFileURL } from 'node:url'
+
+import type * as BabelCore from '@babel/core'
 
 import { DelegatedEvents, RUNTIME_ALIASES, RUNTIME_HELPERS, RUNTIME_MODULE } from '../constants'
 import { debugEnabled, debugLog } from '../debug'
@@ -186,26 +187,35 @@ function reserveHookSlot(ctx: CodegenContext): number {
   return slot
 }
 
-function expressionContainsJSX(expr: any): boolean {
+const hasInstructionArray = (value: unknown): value is { instructions: Instruction[] } => {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as { instructions?: unknown }
+  return Array.isArray(candidate.instructions)
+}
+
+function expressionContainsJSX(expr: unknown): boolean {
   if (Array.isArray(expr)) {
     return expr.some(item => expressionContainsJSX(item))
   }
   if (!expr || typeof expr !== 'object') return false
-  if (expr.kind === 'JSXElement') return true
+  const candidate = expr as Expression
+  if (candidate.kind === 'JSXElement') return true
 
-  if (Array.isArray((expr as any).instructions)) {
-    return (expr as any).instructions.some((i: any) => expressionContainsJSX(i?.value ?? i))
+  if (hasInstructionArray(expr)) {
+    return expr.instructions.some(i =>
+      i.kind === 'Assign' || i.kind === 'Expression' ? expressionContainsJSX(i.value) : false,
+    )
   }
 
-  switch (expr.kind) {
+  switch (candidate.kind) {
     case 'CallExpression':
-      if (expressionContainsJSX(expr.callee as Expression)) return true
-      return expr.arguments?.some((arg: Expression) => expressionContainsJSX(arg)) ?? false
+      if (expressionContainsJSX(candidate.callee)) return true
+      return candidate.arguments.some(arg => expressionContainsJSX(arg))
     case 'ArrayExpression':
-      return expr.elements?.some((el: Expression) => expressionContainsJSX(el)) ?? false
+      return candidate.elements.some(el => expressionContainsJSX(el))
     case 'ObjectExpression':
       return (
-        expr.properties?.some((p: any) => {
+        candidate.properties.some(p => {
           if (p.kind === 'SpreadElement') return expressionContainsJSX(p.argument)
           return (
             ((p.computed ?? false) && expressionContainsJSX(p.key)) ||
@@ -215,19 +225,25 @@ function expressionContainsJSX(expr: any): boolean {
       )
     case 'ConditionalExpression':
       return (
-        expressionContainsJSX(expr.test as Expression) ||
-        expressionContainsJSX(expr.consequent as Expression) ||
-        expressionContainsJSX(expr.alternate as Expression)
+        expressionContainsJSX(candidate.test) ||
+        expressionContainsJSX(candidate.consequent) ||
+        expressionContainsJSX(candidate.alternate)
       )
     case 'ArrowFunction':
-      return expressionContainsJSX(expr.body as Expression)
-    case 'FunctionExpression':
-      if (Array.isArray((expr as any).body)) {
-        return (expr as any).body.some((block: any) =>
-          block.instructions?.some((i: any) => expressionContainsJSX(i.value)),
+      if (Array.isArray(candidate.body)) {
+        return candidate.body.some(block =>
+          block.instructions.some(i =>
+            i.kind === 'Assign' || i.kind === 'Expression' ? expressionContainsJSX(i.value) : false,
+          ),
         )
       }
-      return false
+      return expressionContainsJSX(candidate.body)
+    case 'FunctionExpression':
+      return candidate.body.some(block =>
+        block.instructions.some(i =>
+          i.kind === 'Assign' || i.kind === 'Expression' ? expressionContainsJSX(i.value) : false,
+        ),
+      )
     default:
       return false
   }
@@ -251,14 +267,14 @@ function functionContainsJSX(fn: HIRFunction): boolean {
     for (const instr of block.instructions) {
       if (
         (instr.kind === 'Assign' || instr.kind === 'Expression') &&
-        expressionContainsJSX((instr as any).value)
+        expressionContainsJSX(instr.value)
       ) {
         return true
       }
     }
 
     const term = block.terminator
-    if (term.kind === 'Return' && term.argument && expressionContainsJSX(term.argument as any)) {
+    if (term.kind === 'Return' && term.argument && expressionContainsJSX(term.argument)) {
       return true
     }
   }
@@ -460,7 +476,7 @@ function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
           expr.body.forEach(block => {
             block.instructions.forEach(instr => {
               if (instr.kind === 'Assign' || instr.kind === 'Expression') {
-                visitExpr((instr as any).value as Expression)
+                visitExpr(instr.value)
               }
             })
           })
@@ -945,16 +961,16 @@ function getHookReturnInfo(name: string, ctx: CodegenContext): HookReturnInfo | 
 
 function getStaticPropName(expr: Expression, computed: boolean): string | number | null {
   if (!computed) {
-    if ((expr as any).kind === 'Identifier') {
-      return deSSAVarName((expr as any).name as string)
+    if (expr.kind === 'Identifier') {
+      return deSSAVarName(expr.name)
     }
-    if ((expr as any).kind === 'Literal') {
-      return (expr as any).value as any
+    if (expr.kind === 'Literal') {
+      return typeof expr.value === 'string' || typeof expr.value === 'number' ? expr.value : null
     }
     return null
   }
   if (expr.kind === 'Literal') {
-    return expr.value as any
+    return typeof expr.value === 'string' || typeof expr.value === 'number' ? expr.value : null
   }
   return null
 }
@@ -2036,8 +2052,12 @@ function extractKeyFromAttributes(attributes: JSXAttribute[]): Expression | unde
 
 function getReturnedJSXFromCallback(callback: Expression): JSXElementExpression | null {
   if (callback.kind === 'ArrowFunction') {
-    if (callback.isExpression && callback.body && (callback.body as any).kind === 'JSXElement') {
-      return callback.body as JSXElementExpression
+    if (
+      callback.isExpression &&
+      !Array.isArray(callback.body) &&
+      callback.body.kind === 'JSXElement'
+    ) {
+      return callback.body
     }
     if (Array.isArray(callback.body)) {
       for (const block of callback.body) {
@@ -2191,7 +2211,11 @@ function lowerTrackedExpression(expr: Expression, ctx: CodegenContext): BabelCor
       ctx,
       regionOverride ?? undefined,
     )
-    return ctx.t.updateExpression(lowered.operator, arg as any, lowered.prefix)
+    return ctx.t.updateExpression(
+      lowered.operator,
+      arg as BabelCore.types.Expression,
+      lowered.prefix,
+    )
   }
   return applyRegionMetadataToExpression(lowered, ctx, regionOverride ?? undefined)
 }
@@ -2214,7 +2238,7 @@ function lowerInstruction(
     const isFunctionDecl =
       instr.value.kind === 'FunctionExpression' &&
       (instr.declarationKind === 'function' ||
-        (!instr.declarationKind && (instr.value as any).name === baseName))
+        (!instr.declarationKind && instr.value.name === baseName))
     if (isFunctionDecl) {
       const loweredFn = lowerExpression(instr.value, ctx)
       if (t.isFunctionExpression(loweredFn)) {
@@ -3384,28 +3408,30 @@ function lowerExpressionImpl(
           ? lowerExpression(expr.property, ctx)
           : expr.property.kind === 'Identifier'
             ? t.identifier(expr.property.name) // Property names are NOT SSA-versioned
-            : t.stringLiteral(String((expr.property as any).value ?? '')),
+            : t.stringLiteral(
+                String(expr.property.kind === 'Literal' ? (expr.property.value ?? '') : ''),
+              ),
         expr.computed,
         expr.optional,
       )
 
     case 'BinaryExpression':
       return t.binaryExpression(
-        expr.operator as any,
+        expr.operator as BabelCore.types.BinaryExpression['operator'],
         lowerExpression(expr.left, ctx),
         lowerExpression(expr.right, ctx),
       )
 
     case 'UnaryExpression':
       return t.unaryExpression(
-        expr.operator as any,
+        expr.operator as BabelCore.types.UnaryExpression['operator'],
         lowerExpression(expr.argument, ctx),
         expr.prefix,
       )
 
     case 'LogicalExpression':
       return t.logicalExpression(
-        expr.operator as any,
+        expr.operator as BabelCore.types.LogicalExpression['operator'],
         lowerExpression(expr.left, ctx),
         lowerExpression(expr.right, ctx),
       )
@@ -3433,7 +3459,7 @@ function lowerExpressionImpl(
             return t.spreadElement(lowerExpression(p.argument, ctx))
           }
           const keyIsIdentifier = !p.computed && p.key.kind === 'Identifier'
-          const keyIdent = keyIsIdentifier ? (p.key as any).name : ''
+          const keyIdent = keyIsIdentifier && p.key.kind === 'Identifier' ? p.key.name : ''
           const keyNode = p.computed
             ? lowerExpression(p.key, ctx)
             : keyIsIdentifier
@@ -3450,9 +3476,9 @@ function lowerExpressionImpl(
             }
             const method = t.objectMethod(
               p.propertyKind === 'method' ? 'method' : p.propertyKind,
-              keyNode as any,
-              valueExpr.params as any,
-              valueExpr.body as any,
+              keyNode as BabelCore.types.Expression,
+              valueExpr.params as BabelCore.types.FunctionParameter[],
+              valueExpr.body,
               !!p.computed,
             )
             method.async = valueExpr.async
@@ -3643,7 +3669,9 @@ function lowerExpressionImpl(
                 ? lowerExpression(expr.left.property as Expression, ctx)
                 : expr.left.property.kind === 'Identifier'
                   ? t.identifier(expr.left.property.name)
-                  : t.stringLiteral(String((expr.left.property as any).value ?? '')),
+                  : t.stringLiteral(
+                      String(expr.left.property.kind === 'Literal' ? expr.left.property.value : ''),
+                    ),
               expr.left.computed,
               expr.left.optional,
             )
@@ -3704,8 +3732,8 @@ function lowerExpressionImpl(
       }
 
       return t.assignmentExpression(
-        expr.operator as any,
-        lowerExpression(expr.left, ctx) as any,
+        expr.operator as BabelCore.types.AssignmentExpression['operator'],
+        lowerExpression(expr.left, ctx) as BabelCore.types.LVal,
         lowerExpression(expr.right, ctx),
       )
 
@@ -3737,7 +3765,13 @@ function lowerExpressionImpl(
                 ? lowerExpression(expr.argument.property as Expression, ctx)
                 : expr.argument.property.kind === 'Identifier'
                   ? t.identifier(expr.argument.property.name)
-                  : t.stringLiteral(String((expr.argument.property as any).value ?? '')),
+                  : t.stringLiteral(
+                      String(
+                        expr.argument.property.kind === 'Literal'
+                          ? expr.argument.property.value
+                          : '',
+                      ),
+                    ),
               expr.argument.computed,
               expr.argument.optional,
             )
@@ -3767,7 +3801,7 @@ function lowerExpressionImpl(
 
       return t.updateExpression(
         expr.operator,
-        lowerExpression(expr.argument, ctx) as any,
+        lowerExpression(expr.argument, ctx) as BabelCore.types.Expression,
         expr.prefix,
       )
 
@@ -3838,7 +3872,9 @@ function lowerExpressionImpl(
           ? lowerExpression(expr.property, ctx)
           : expr.property.kind === 'Identifier'
             ? t.identifier(expr.property.name)
-            : t.stringLiteral(String((expr.property as any).value ?? '')),
+            : t.stringLiteral(
+                String(expr.property.kind === 'Literal' ? (expr.property.value ?? '') : ''),
+              ),
         expr.computed,
         expr.optional,
       )
@@ -4041,7 +4077,7 @@ function lowerJSXElement(
 /**
  * Collect all dependency variable names from an expression (de-versioned).
  */
-function getMemberDependencyPath(expr: any): string | undefined {
+function getMemberDependencyPath(expr: Expression): string | undefined {
   if (expr.kind === 'MemberExpression') {
     const prop = expr.property
     let propName: string | undefined
@@ -4194,16 +4230,16 @@ function getDependencyPathFromNode(
     return normalizeDependencyKey(node.name)
   }
 
-  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node as any)) {
-    const object = (node as any).object as BabelCore.types.Node
-    const property = (node as any).property as BabelCore.types.Node
+  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+    const object = node.object as BabelCore.types.Node
+    const property = node.property as BabelCore.types.Node
     const objectPath = getDependencyPathFromNode(object, t)
     if (!objectPath) return null
 
     let propName: string | null = null
-    if ((node as any).computed) {
+    if (node.computed) {
       if (t.isStringLiteral(property) || t.isNumericLiteral(property)) {
-        propName = String((property as any).value)
+        propName = String(property.value)
       } else {
         // Dynamic computed property - fall back to tracking the base object
         return objectPath
@@ -4240,7 +4276,7 @@ export function applyRegionMetadataToExpression(
   const metadata = regionInfoToMetadata(region)
   const state: { identifierOverrides?: RegionOverrideMap } = {}
 
-  applyRegionMetadata(state as any, {
+  applyRegionMetadata(state, {
     region: metadata,
     dependencyGetter: name => buildDependencyGetter(name, ctx),
   })
@@ -4343,7 +4379,7 @@ function replaceIdentifiersWithOverrides(
       if (t.isIdentifier(p)) {
         addName(p.name)
       } else if (t.isTSParameterProperty(p)) {
-        visitPattern(p.parameter as any)
+        visitPattern(p.parameter)
       } else if (t.isRestElement(p) && t.isIdentifier(p.argument)) {
         addName(p.argument.name)
       } else if (t.isAssignmentPattern(p)) {
@@ -4361,7 +4397,7 @@ function replaceIdentifiersWithOverrides(
       } else if (t.isArrayPattern(p)) {
         p.elements.forEach(el => {
           if (t.isIdentifier(el)) addName(el.name)
-          else if (el && t.isPatternLike(el)) visitPattern(el as any)
+          else if (el && t.isPatternLike(el)) visitPattern(el)
         })
       }
     }
@@ -4369,13 +4405,10 @@ function replaceIdentifiersWithOverrides(
     return names
   }
 
-  if (
-    !skipCurrentNode &&
-    (t.isMemberExpression(node) || t.isOptionalMemberExpression(node as any))
-  ) {
-    const propertyNode = (node as any).property as BabelCore.types.Node
+  if (!skipCurrentNode && (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))) {
+    const propertyNode = node.property as BabelCore.types.Node
     const isDynamicComputed =
-      ((node as any).computed ?? false) &&
+      (node.computed ?? false) &&
       !t.isStringLiteral(propertyNode) &&
       !t.isNumericLiteral(propertyNode)
     const path = getDependencyPathFromNode(node, t)
@@ -4423,7 +4456,7 @@ function replaceIdentifiersWithOverrides(
   // skip replacing the object identifier. These method calls need the original function
   // reference for proper `this` binding.
   const isMethodCallMember =
-    (t.isMemberExpression(node) || t.isOptionalMemberExpression(node as any)) &&
+    (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
     !(node as BabelCore.types.MemberExpression).computed &&
     t.isIdentifier((node as BabelCore.types.MemberExpression).property) &&
     ['call', 'apply', 'bind'].includes(
@@ -4432,13 +4465,13 @@ function replaceIdentifiersWithOverrides(
 
   for (const key of Object.keys(node)) {
     if (key === 'type' || key === 'loc' || key === 'start' || key === 'end') continue
-    if (t.isObjectProperty(node as any) && key === 'key' && !(node as any).computed) {
+    if (t.isObjectProperty(node) && key === 'key' && !node.computed) {
       continue
     }
     if (
-      (t.isMemberExpression(node as any) || t.isOptionalMemberExpression(node as any)) &&
+      (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
       key === 'property' &&
-      !(node as any).computed
+      !node.computed
     ) {
       continue
     }
@@ -4449,7 +4482,7 @@ function replaceIdentifiersWithOverrides(
     const value = (node as unknown as Record<string, unknown>)[key]
     if (Array.isArray(value)) {
       for (const item of value) {
-        if (item && typeof item === 'object' && 'type' in (item as any)) {
+        if (item && typeof item === 'object' && 'type' in item) {
           replaceIdentifiersWithOverrides(
             item as BabelCore.types.Node,
             overrides,
@@ -4460,7 +4493,7 @@ function replaceIdentifiersWithOverrides(
           )
         }
       }
-    } else if (value && typeof value === 'object' && 'type' in (value as any)) {
+    } else if (value && typeof value === 'object' && 'type' in value) {
       replaceIdentifiersWithOverrides(value as BabelCore.types.Node, overrides, t, node.type, key)
     }
   }
@@ -7727,7 +7760,7 @@ function lowerInstructionWithScopes(
     const isFunctionDecl =
       instr.value.kind === 'FunctionExpression' &&
       (instr.declarationKind === 'function' ||
-        (!instr.declarationKind && (instr.value as any).name === targetBase))
+        (!instr.declarationKind && instr.value.name === targetBase))
     if (isFunctionDecl) {
       const loweredFn = lowerExpression(instr.value, ctx)
       if (t.isFunctionExpression(loweredFn)) {

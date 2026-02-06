@@ -2555,48 +2555,54 @@ function evaluateBinary(
   left: ConstantValue,
   right: ConstantValue,
 ): ConstantValue | typeof UNKNOWN_CONST {
+  const toNumber = (value: ConstantValue): number => Number(value)
+  const toRelationalOperand = (value: ConstantValue): string | number =>
+    typeof value === 'string' ? value : Number(value)
+
   try {
     switch (operator) {
       case '+':
-        return (left as any) + (right as any)
+        return typeof left === 'string' || typeof right === 'string'
+          ? `${String(left)}${String(right)}`
+          : toNumber(left) + toNumber(right)
       case '-':
-        return (left as any) - (right as any)
+        return toNumber(left) - toNumber(right)
       case '*':
-        return (left as any) * (right as any)
+        return toNumber(left) * toNumber(right)
       case '/':
-        return (left as any) / (right as any)
+        return toNumber(left) / toNumber(right)
       case '%':
-        return (left as any) % (right as any)
+        return toNumber(left) % toNumber(right)
       case '**':
-        return (left as any) ** (right as any)
+        return toNumber(left) ** toNumber(right)
       case '===':
         return left === right
       case '!==':
         return left !== right
       case '==':
-        return (left as any) == (right as any)
+        return left == right
       case '!=':
-        return (left as any) != (right as any)
+        return left != right
       case '<':
-        return (left as any) < (right as any)
+        return toRelationalOperand(left) < toRelationalOperand(right)
       case '<=':
-        return (left as any) <= (right as any)
+        return toRelationalOperand(left) <= toRelationalOperand(right)
       case '>':
-        return (left as any) > (right as any)
+        return toRelationalOperand(left) > toRelationalOperand(right)
       case '>=':
-        return (left as any) >= (right as any)
+        return toRelationalOperand(left) >= toRelationalOperand(right)
       case '|':
-        return (left as any) | (right as any)
+        return toNumber(left) | toNumber(right)
       case '&':
-        return (left as any) & (right as any)
+        return toNumber(left) & toNumber(right)
       case '^':
-        return (left as any) ^ (right as any)
+        return toNumber(left) ^ toNumber(right)
       case '<<':
-        return (left as any) << (right as any)
+        return toNumber(left) << toNumber(right)
       case '>>':
-        return (left as any) >> (right as any)
+        return toNumber(left) >> toNumber(right)
       case '>>>':
-        return (left as any) >>> (right as any)
+        return toNumber(left) >>> toNumber(right)
       default:
         return UNKNOWN_CONST
     }

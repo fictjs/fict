@@ -1,6 +1,15 @@
 import { debugWarn } from '../debug'
 
-import type { BasicBlock, BlockId, HIRFunction, HIRProgram, Identifier, Instruction } from './hir'
+import type {
+  BasicBlock,
+  BlockId,
+  Expression,
+  HIRFunction,
+  HIRProgram,
+  Identifier,
+  Instruction,
+  Terminator,
+} from './hir'
 import { makeSSAName, getSSABaseName } from './hir'
 
 /**
@@ -107,15 +116,12 @@ function eliminateRedundantPhis(fn: HIRFunction): HIRFunction {
     for (const block of blocks) {
       for (const instr of block.instructions) {
         if (instr.kind === 'Phi') {
-          const phi = instr as any
-          const sources = phi.sources as { block: BlockId; id: Identifier }[]
+          const sources = instr.sources
 
           if (sources.length === 0) continue
 
           // Filter out self-references
-          const nonSelfSources = sources.filter(
-            (s: { id: Identifier }) => s.id.name !== phi.target.name,
-          )
+          const nonSelfSources = sources.filter(s => s.id.name !== instr.target.name)
 
           if (nonSelfSources.length === 0) {
             // All sources are self-references - this is dead, remove it
@@ -130,7 +136,7 @@ function eliminateRedundantPhis(fn: HIRFunction): HIRFunction {
 
           if (allSame) {
             // This Phi can be replaced with its unique source
-            phiRewrites.set(phi.target.name, firstName)
+            phiRewrites.set(instr.target.name, firstName)
             changed = true
           }
         }
@@ -144,8 +150,7 @@ function eliminateRedundantPhis(fn: HIRFunction): HIRFunction {
       const newInstructions = block.instructions
         .filter(instr => {
           if (instr.kind === 'Phi') {
-            const phi = instr as any
-            return !phiRewrites.has(phi.target.name)
+            return !phiRewrites.has(instr.target.name)
           }
           return true
         })
@@ -181,10 +186,9 @@ function rewriteInstruction(instr: Instruction, rewrites: Map<string, string>): 
     }
   }
   if (instr.kind === 'Phi') {
-    const phi = instr as any
     return {
-      ...phi,
-      sources: phi.sources.map((s: any) => ({
+      ...instr,
+      sources: instr.sources.map(s => ({
         ...s,
         id: { ...s.id, name: rewrites.get(s.id.name) ?? s.id.name },
       })),
@@ -196,7 +200,7 @@ function rewriteInstruction(instr: Instruction, rewrites: Map<string, string>): 
 /**
  * Rewrite references in an expression based on Phi elimination
  */
-function rewriteExprWithMap(expr: any, rewrites: Map<string, string>): any {
+function rewriteExprWithMap(expr: Expression, rewrites: Map<string, string>): Expression {
   if (!expr) return expr
 
   switch (expr.kind) {
@@ -206,7 +210,7 @@ function rewriteExprWithMap(expr: any, rewrites: Map<string, string>): any {
       return {
         ...expr,
         callee: rewriteExprWithMap(expr.callee, rewrites),
-        arguments: expr.arguments.map((a: any) => rewriteExprWithMap(a, rewrites)),
+        arguments: expr.arguments.map(a => rewriteExprWithMap(a, rewrites)),
       }
     case 'MemberExpression':
       return {
@@ -237,11 +241,11 @@ function rewriteExprWithMap(expr: any, rewrites: Map<string, string>): any {
         alternate: rewriteExprWithMap(expr.alternate, rewrites),
       }
     case 'ArrayExpression':
-      return { ...expr, elements: expr.elements.map((el: any) => rewriteExprWithMap(el, rewrites)) }
+      return { ...expr, elements: expr.elements.map(el => rewriteExprWithMap(el, rewrites)) }
     case 'ObjectExpression':
       return {
         ...expr,
-        properties: expr.properties.map((p: any) => {
+        properties: expr.properties.map(p => {
           if (p.kind === 'SpreadElement') {
             return { ...p, argument: rewriteExprWithMap(p.argument, rewrites) }
           }
@@ -265,7 +269,7 @@ function rewriteExprWithMap(expr: any, rewrites: Map<string, string>): any {
 /**
  * Rewrite terminator with rewrites map
  */
-function rewriteTerminator(term: any, rewrites: Map<string, string>): any {
+function rewriteTerminator(term: Terminator, rewrites: Map<string, string>): Terminator {
   switch (term.kind) {
     case 'Return':
       return {
@@ -280,7 +284,7 @@ function rewriteTerminator(term: any, rewrites: Map<string, string>): any {
       return {
         ...term,
         discriminant: rewriteExprWithMap(term.discriminant, rewrites),
-        cases: term.cases.map((c: any) => ({
+        cases: term.cases.map(c => ({
           ...c,
           test: c.test ? rewriteExprWithMap(c.test, rewrites) : c.test,
         })),
@@ -373,7 +377,7 @@ function toSSA(fn: HIRFunction): HIRFunction {
     if (stack) stack.pop()
   }
 
-  const renameExpr = (expr: any): any => {
+  const renameExpr = (expr: Expression): Expression => {
     switch (expr?.kind) {
       case 'Identifier':
         return { ...expr, name: currentName(expr.name) }
@@ -381,7 +385,7 @@ function toSSA(fn: HIRFunction): HIRFunction {
         return {
           ...expr,
           callee: renameExpr(expr.callee),
-          arguments: expr.arguments.map((a: any) => renameExpr(a)),
+          arguments: expr.arguments.map(a => renameExpr(a)),
         }
       case 'MemberExpression':
         return {
@@ -408,11 +412,11 @@ function toSSA(fn: HIRFunction): HIRFunction {
           alternate: renameExpr(expr.alternate),
         }
       case 'ArrayExpression':
-        return { ...expr, elements: expr.elements.map((el: any) => renameExpr(el)) }
+        return { ...expr, elements: expr.elements.map(el => renameExpr(el)) }
       case 'ObjectExpression':
         return {
           ...expr,
-          properties: expr.properties.map((p: any) => {
+          properties: expr.properties.map(p => {
             if (p.kind === 'SpreadElement') {
               return { ...p, argument: renameExpr(p.argument) }
             }
@@ -529,12 +533,11 @@ function toSSA(fn: HIRFunction): HIRFunction {
     // Apply pending phi sources immutably
     const newInstructions = renamed.instructions.map(instr => {
       if (instr.kind !== 'Phi') return instr
-      const phi = instr as any
-      const relevantUpdates = updates.filter(u => u.variable === phi.variable)
+      const relevantUpdates = updates.filter(u => u.variable === instr.variable)
       if (relevantUpdates.length === 0) return instr
       return {
-        ...phi,
-        sources: [...phi.sources, ...relevantUpdates.map(u => u.source)],
+        ...instr,
+        sources: [...instr.sources, ...relevantUpdates.map(u => u.source)],
       }
     })
     return { ...renamed, instructions: newInstructions }
@@ -758,7 +761,10 @@ function computeDominanceFrontier(
   return df
 }
 
-function renameTerminator(term: any, renameExpr: (expr: any) => any) {
+function renameTerminator(
+  term: Terminator,
+  renameExpr: (expr: Expression) => Expression,
+): Terminator {
   switch (term.kind) {
     case 'Return':
       return {
@@ -776,7 +782,7 @@ function renameTerminator(term: any, renameExpr: (expr: any) => any) {
       return {
         ...term,
         discriminant: renameExpr(term.discriminant),
-        cases: term.cases.map((c: any) => ({
+        cases: term.cases.map(c => ({
           ...c,
           test: c.test ? renameExpr(c.test) : c.test,
         })),
@@ -801,11 +807,10 @@ function validatePhiSources(fn: HIRFunction): void {
     for (const instr of block.instructions) {
       if (instr.kind !== 'Phi') continue
 
-      const phi = instr as any
-      const sources = phi.sources as { block: number }[]
+      const sources = instr.sources
 
       // Collect blocks that provided sources
-      const sourceBlocks = new Set(sources.map((s: { block: number }) => s.block))
+      const sourceBlocks = new Set(sources.map(s => s.block))
 
       // Check if all predecessors provided a source
       const missingPreds = blockPreds.filter(pred => !sourceBlocks.has(pred))
@@ -815,7 +820,7 @@ function validatePhiSources(fn: HIRFunction): void {
         // This is not an error in valid SSA, just a diagnostic
         debugWarn(
           'ssa',
-          `Phi node for '${phi.variable}' in block ${block.id} missing sources from predecessors: ${missingPreds.join(', ')}`,
+          `Phi node for '${instr.variable}' in block ${block.id} missing sources from predecessors: ${missingPreds.join(', ')}`,
         )
       }
     }

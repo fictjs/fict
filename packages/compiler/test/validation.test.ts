@@ -7,7 +7,11 @@ import {
   getAllDiagnosticCodes,
   getDiagnosticInfo,
   createDiagnostic,
+  validateFunction,
+  validateListKeys,
+  validateNoConditionalHooks,
 } from '../src/validation'
+import type { TransformContext } from '../src/types'
 import * as t from '@babel/types'
 
 describe('DiagnosticCode', () => {
@@ -82,5 +86,182 @@ describe('getAllDiagnosticCodes', () => {
     expect(codes.length).toBeGreaterThan(20)
     expect(codes).toContain(DiagnosticCode.FICT_P001)
     expect(codes).toContain(DiagnosticCode.FICT_X003)
+  })
+})
+
+describe('rule validations', () => {
+  const ctx = {
+    file: { opts: { filename: 'test.tsx' } },
+  } as unknown as TransformContext
+
+  it('reports conditional hook calls (FICT_C001)', () => {
+    const call = t.callExpression(t.identifier('useMemo'), [
+      t.arrowFunctionExpression([], t.nullLiteral()),
+    ])
+    const ifNode = t.ifStatement(t.identifier('flag'), t.blockStatement([]))
+    const diagnostic = validateNoConditionalHooks(call, ctx, t, [ifNode])
+    expect(diagnostic?.code).toBe(DiagnosticCode.FICT_C001)
+  })
+
+  it('reports loop hook calls (FICT_C002)', () => {
+    const call = t.callExpression(t.identifier('useEffect'), [
+      t.arrowFunctionExpression([], t.nullLiteral()),
+    ])
+    const loop = t.whileStatement(t.identifier('flag'), t.blockStatement([]))
+    const diagnostic = validateNoConditionalHooks(call, ctx, t, [loop])
+    expect(diagnostic?.code).toBe(DiagnosticCode.FICT_C002)
+  })
+
+  it('reports missing list keys inside map callbacks (FICT_J002)', () => {
+    const jsx = t.jsxElement(
+      t.jsxOpeningElement(t.jsxIdentifier('li'), [], false),
+      t.jsxClosingElement(t.jsxIdentifier('li')),
+      [t.jsxExpressionContainer(t.identifier('item'))],
+      false,
+    )
+    const callback = t.arrowFunctionExpression([t.identifier('item')], jsx)
+    const mapCall = t.callExpression(
+      t.memberExpression(t.identifier('items'), t.identifier('map')),
+      [callback],
+    )
+    const diagnostic = validateListKeys(jsx, ctx, t, [mapCall, callback])
+    expect(diagnostic?.code).toBe(DiagnosticCode.FICT_J002)
+  })
+
+  it('does not report keyed list items inside map callbacks', () => {
+    const keyed = t.jsxElement(
+      t.jsxOpeningElement(
+        t.jsxIdentifier('li'),
+        [t.jsxAttribute(t.jsxIdentifier('key'), t.jsxExpressionContainer(t.identifier('item')))],
+        false,
+      ),
+      t.jsxClosingElement(t.jsxIdentifier('li')),
+      [t.jsxExpressionContainer(t.identifier('item'))],
+      false,
+    )
+    const callback = t.arrowFunctionExpression([t.identifier('item')], keyed)
+    const mapCall = t.callExpression(
+      t.memberExpression(t.identifier('items'), t.identifier('map')),
+      [callback],
+    )
+    const diagnostic = validateListKeys(keyed, ctx, t, [mapCall, callback])
+    expect(diagnostic).toBeNull()
+  })
+
+  it('collects diagnostics across function body validation', () => {
+    const listItem = t.jsxElement(
+      t.jsxOpeningElement(t.jsxIdentifier('li'), [], false),
+      t.jsxClosingElement(t.jsxIdentifier('li')),
+      [t.jsxExpressionContainer(t.identifier('item'))],
+      false,
+    )
+    const mapCallback = t.arrowFunctionExpression([t.identifier('item')], listItem)
+    const rowsDecl = t.variableDeclaration('const', [
+      t.variableDeclarator(
+        t.identifier('rows'),
+        t.callExpression(t.memberExpression(t.identifier('items'), t.identifier('map')), [
+          mapCallback,
+        ]),
+      ),
+    ])
+    const button = t.jsxElement(
+      t.jsxOpeningElement(
+        t.jsxIdentifier('button'),
+        [
+          t.jsxAttribute(
+            t.jsxIdentifier('onClick'),
+            t.jsxExpressionContainer(
+              t.arrowFunctionExpression(
+                [],
+                t.memberExpression(t.identifier('rows'), t.identifier('length')),
+              ),
+            ),
+          ),
+        ],
+        false,
+      ),
+      t.jsxClosingElement(t.jsxIdentifier('button')),
+      [t.jsxText('Click')],
+      false,
+    )
+    const fn = t.functionDeclaration(
+      t.identifier('App'),
+      [],
+      t.blockStatement([
+        t.ifStatement(
+          t.identifier('flag'),
+          t.blockStatement([
+            t.expressionStatement(
+              t.callExpression(t.identifier('useEffect'), [
+                t.arrowFunctionExpression([], t.blockStatement([])),
+              ]),
+            ),
+          ]),
+        ),
+        rowsDecl,
+        t.returnStatement(button),
+      ]),
+    )
+    const diagnostics = validateFunction(fn, ctx, t)
+    const codes = diagnostics.map(d => d.code)
+    expect(codes).toContain(DiagnosticCode.FICT_C001)
+    expect(codes).toContain(DiagnosticCode.FICT_J002)
+    expect(codes).toContain(DiagnosticCode.FICT_X003)
+  })
+
+  it('does not report outer conditional context for hooks inside nested functions', () => {
+    const nestedFn = t.arrowFunctionExpression(
+      [],
+      t.callExpression(t.identifier('useEffect'), [
+        t.arrowFunctionExpression([], t.blockStatement([])),
+      ]),
+    )
+    const fn = t.functionDeclaration(
+      t.identifier('App'),
+      [],
+      t.blockStatement([
+        t.ifStatement(
+          t.identifier('flag'),
+          t.blockStatement([
+            t.variableDeclaration('const', [
+              t.variableDeclarator(t.identifier('runner'), nestedFn),
+            ]),
+          ]),
+        ),
+      ]),
+    )
+    const diagnostics = validateFunction(fn, ctx, t)
+    expect(diagnostics.some(d => d.code === DiagnosticCode.FICT_C001)).toBe(false)
+    expect(diagnostics.some(d => d.code === DiagnosticCode.FICT_C002)).toBe(false)
+  })
+
+  it('reports missing list keys for block-bodied map callback returns', () => {
+    const listItem = t.jsxElement(
+      t.jsxOpeningElement(t.jsxIdentifier('li'), [], false),
+      t.jsxClosingElement(t.jsxIdentifier('li')),
+      [t.jsxExpressionContainer(t.identifier('item'))],
+      false,
+    )
+    const mapCallback = t.arrowFunctionExpression(
+      [t.identifier('item')],
+      t.blockStatement([t.returnStatement(listItem)]),
+    )
+    const fn = t.functionDeclaration(
+      t.identifier('App'),
+      [],
+      t.blockStatement([
+        t.variableDeclaration('const', [
+          t.variableDeclarator(
+            t.identifier('rows'),
+            t.callExpression(t.memberExpression(t.identifier('items'), t.identifier('map')), [
+              mapCallback,
+            ]),
+          ),
+        ]),
+      ]),
+    )
+
+    const diagnostics = validateFunction(fn, ctx, t)
+    expect(diagnostics.some(d => d.code === DiagnosticCode.FICT_J002)).toBe(true)
   })
 })

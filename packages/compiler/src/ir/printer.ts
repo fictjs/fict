@@ -3,6 +3,7 @@ import type {
   Expression,
   HIRFunction,
   HIRProgram,
+  Instruction,
   JSXChild,
   JSXElementExpression,
 } from './hir'
@@ -97,13 +98,13 @@ function formatJSXChild(child: JSXChild, depth: number): string {
   }
 }
 
-function formatInstruction(i: any): string {
+function formatInstruction(i: Instruction): string {
   if (i.kind === 'Assign' && i.target) {
     const value = i.value ? ` = ${formatExpression(i.value, 0)}` : ''
     return `    ${i.kind} ${i.target.name}${value}`
   }
   if (i.kind === 'Phi' && i.target) {
-    const sources = i.sources?.map((s: any) => `${s.block}:${s.id.name}`).join(', ') ?? ''
+    const sources = i.sources?.map(source => `${source.block}:${source.id.name}`).join(', ') ?? ''
     return `    Phi ${i.variable} -> ${i.target.name} <- ${sources}`
   }
   if (i.kind === 'Expression' && i.value) {

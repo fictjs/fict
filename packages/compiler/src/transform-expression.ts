@@ -169,16 +169,18 @@ export function transformExpression(
         isTrackedAndNotShadowed(expr.callee.name, ctx.stateVars, ctx.memoVars, shadowed) ||
         (ctx.getterOnlyVars.has(expr.callee.name) && !shadowed.has(expr.callee.name)))
 
+    const transformedArgs = expr.arguments.map(arg => {
+      if (t.isSpreadElement(arg)) {
+        return t.spreadElement(transformExpression(arg.argument, ctx, t))
+      }
+      return t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg
+    }) as BabelCore.types.CallExpression['arguments']
+
     return t.callExpression(
       t.isExpression(expr.callee) && !shouldSkipCalleeTransform
         ? transformExpression(expr.callee, ctx, t)
         : expr.callee,
-      expr.arguments.map(arg => {
-        if (t.isSpreadElement(arg)) {
-          return t.spreadElement(transformExpression(arg.argument, ctx, t))
-        }
-        return t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg
-      }) as any,
+      transformedArgs,
     )
   }
 
@@ -189,16 +191,18 @@ export function transformExpression(
         isTrackedAndNotShadowed(expr.callee.name, ctx.stateVars, ctx.memoVars, shadowed) ||
         (ctx.getterOnlyVars.has(expr.callee.name) && !shadowed.has(expr.callee.name)))
 
+    const transformedArgs = expr.arguments.map(arg => {
+      if (t.isSpreadElement(arg)) {
+        return t.spreadElement(transformExpression(arg.argument, ctx, t))
+      }
+      return t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg
+    }) as BabelCore.types.OptionalCallExpression['arguments']
+
     return t.optionalCallExpression(
       t.isExpression(expr.callee) && !shouldSkipCalleeTransform
         ? transformExpression(expr.callee, ctx, t)
         : expr.callee,
-      expr.arguments.map(arg => {
-        if (t.isSpreadElement(arg)) {
-          return t.spreadElement(transformExpression(arg.argument, ctx, t))
-        }
-        return t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg
-      }) as any,
+      transformedArgs,
       expr.optional,
     )
   }
@@ -210,16 +214,18 @@ export function transformExpression(
         isTrackedAndNotShadowed(expr.callee.name, ctx.stateVars, ctx.memoVars, shadowed) ||
         (ctx.getterOnlyVars.has(expr.callee.name) && !shadowed.has(expr.callee.name)))
 
+    const transformedArgs = (expr.arguments ?? []).map(arg => {
+      if (t.isSpreadElement(arg)) {
+        return t.spreadElement(transformExpression(arg.argument, ctx, t))
+      }
+      return t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg
+    }) as BabelCore.types.NewExpression['arguments']
+
     return t.newExpression(
       t.isExpression(expr.callee) && !shouldSkipCalleeTransform
         ? transformExpression(expr.callee, ctx, t)
         : expr.callee,
-      expr.arguments?.map(arg => {
-        if (t.isSpreadElement(arg)) {
-          return t.spreadElement(transformExpression(arg.argument, ctx, t))
-        }
-        return t.isExpression(arg) ? transformExpression(arg, ctx, t) : arg
-      }) as any,
+      transformedArgs,
     )
   }
 
@@ -329,9 +335,7 @@ export function transformExpression(
     // Still transform nested reads like arr[index]++ where index is tracked.
     return t.updateExpression(
       expr.operator,
-      (t.isExpression(expr.argument)
-        ? (transformExpression(expr.argument, ctx, t) as any)
-        : expr.argument) as any,
+      transformExpression(expr.argument, ctx, t),
       expr.prefix,
     )
   }
@@ -370,12 +374,15 @@ export function transformExpression(
     }
 
     const transformedRight = transformExpression(expr.right, ctx, t)
-    const transformedLeft =
-      !t.isIdentifier(expr.left) && t.isExpression(expr.left)
-        ? (transformExpression(expr.left, ctx, t) as any)
-        : expr.left
+    let transformedLeft: BabelCore.types.LVal | BabelCore.types.OptionalMemberExpression = expr.left
+    if (t.isMemberExpression(expr.left) || t.isOptionalMemberExpression(expr.left)) {
+      const candidate = transformExpression(expr.left, ctx, t)
+      if (t.isMemberExpression(candidate) || t.isOptionalMemberExpression(candidate)) {
+        transformedLeft = candidate
+      }
+    }
 
-    return t.assignmentExpression(expr.operator, transformedLeft as any, transformedRight)
+    return t.assignmentExpression(expr.operator, transformedLeft, transformedRight)
   }
 
   return expr

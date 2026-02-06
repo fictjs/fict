@@ -1,6 +1,6 @@
-import type { BlockId, HIRFunction, Instruction, DependencyPath } from './hir'
-import { extractDependencyPath, pathToString, getSSABaseName } from './hir'
-
+import { extractDependencyPath, getSSABaseName, pathToString } from './hir'
+import type { BlockId, DependencyPath, Expression, HIRFunction, Instruction } from './hir'
+import { analyzeCFG } from './ssa'
 /**
  * Get the base name of a variable, stripping any SSA version suffix.
  * Uses the centralized SSA naming utilities from hir.ts.
@@ -384,9 +384,9 @@ function collectReads(
   bound?: Set<string>,
 ) {
   if (instr.kind === 'Assign') {
-    collectExprReads(instr.value as any, into, paths, bound)
+    collectExprReads(instr.value, into, paths, bound)
   } else if (instr.kind === 'Expression') {
-    collectExprReads(instr.value as any, into, paths, bound)
+    collectExprReads(instr.value, into, paths, bound)
   }
 }
 
@@ -399,7 +399,7 @@ function accumulateAllReads(byName: Map<string, ReactiveScope>): Set<string> {
 }
 
 function collectExprReads(
-  expr: any,
+  expr: Expression | null | undefined,
   into: Set<string>,
   paths?: Map<string, DependencyPath[]>,
   bound = new Set<string>(),
@@ -430,7 +430,7 @@ function collectExprReads(
         collectExprReads(expr.callee, into, paths, bound)
       }
 
-      expr.arguments?.forEach((a: any) => collectExprReads(a, into, paths, bound))
+      expr.arguments?.forEach(arg => collectExprReads(arg, into, paths, bound))
       return
     }
     case 'ImportExpression':
@@ -472,27 +472,27 @@ function collectExprReads(
       collectExprReads(expr.alternate, into, paths, bound)
       return
     case 'ArrayExpression':
-      expr.elements?.forEach((el: any) => collectExprReads(el, into, paths, bound))
+      expr.elements?.forEach(element => collectExprReads(element, into, paths, bound))
       return
     case 'ObjectExpression':
-      expr.properties?.forEach((p: any) => {
-        if (p.kind === 'SpreadElement') {
-          collectExprReads(p.argument, into, paths, bound)
+      expr.properties?.forEach(property => {
+        if (property.kind === 'SpreadElement') {
+          collectExprReads(property.argument, into, paths, bound)
           return
         }
 
         // Only collect computed keys; static keys are not dependencies
-        if (p.computed) {
-          collectExprReads(p.key, into, paths, bound)
+        if (property.computed) {
+          collectExprReads(property.key, into, paths, bound)
         }
 
-        collectExprReads(p.value, into, paths, bound)
+        collectExprReads(property.value, into, paths, bound)
       })
       return
     case 'ArrowFunction': {
       if (!includeFunctionBodies) return
       const nextBound = new Set(bound)
-      expr.params?.forEach((p: any) => nextBound.add(baseName(p.name)))
+      expr.params?.forEach(param => nextBound.add(baseName(param.name)))
       if (expr.isExpression && expr.body && !Array.isArray(expr.body)) {
         collectExprReads(expr.body, into, paths, nextBound, includeFunctionBodies)
       } else if (Array.isArray(expr.body)) {
@@ -503,7 +503,7 @@ function collectExprReads(
             } else if (instr.kind === 'Expression') {
               collectExprReads(instr.value, into, paths, nextBound, includeFunctionBodies)
             } else if (instr.kind === 'Phi') {
-              instr.sources.forEach((src: any) => {
+              instr.sources.forEach(src => {
                 if (!nextBound.has(baseName(src.id.name))) {
                   into.add(src.id.name)
                 }
@@ -515,8 +515,10 @@ function collectExprReads(
             collectExprReads(term.test, into, paths, nextBound, includeFunctionBodies)
           } else if (term.kind === 'Switch') {
             collectExprReads(term.discriminant, into, paths, nextBound, includeFunctionBodies)
-            term.cases.forEach((c: any) => {
-              if (c.test) collectExprReads(c.test, into, paths, nextBound, includeFunctionBodies)
+            term.cases.forEach(caseItem => {
+              if (caseItem.test) {
+                collectExprReads(caseItem.test, into, paths, nextBound, includeFunctionBodies)
+              }
             })
           } else if (term.kind === 'ForOf') {
             collectExprReads(term.iterable, into, paths, nextBound, includeFunctionBodies)
@@ -534,7 +536,7 @@ function collectExprReads(
     case 'FunctionExpression': {
       if (!includeFunctionBodies) return
       const nextBound = new Set(bound)
-      expr.params?.forEach((p: any) => nextBound.add(baseName(p.name)))
+      expr.params?.forEach(param => nextBound.add(baseName(param.name)))
       for (const block of expr.body ?? []) {
         for (const instr of block.instructions) {
           if (instr.kind === 'Assign') {
@@ -542,7 +544,7 @@ function collectExprReads(
           } else if (instr.kind === 'Expression') {
             collectExprReads(instr.value, into, paths, nextBound, includeFunctionBodies)
           } else if (instr.kind === 'Phi') {
-            instr.sources.forEach((src: any) => {
+            instr.sources.forEach(src => {
               if (!nextBound.has(baseName(src.id.name))) {
                 into.add(src.id.name)
               }
@@ -554,8 +556,10 @@ function collectExprReads(
           collectExprReads(term.test, into, paths, nextBound, includeFunctionBodies)
         } else if (term.kind === 'Switch') {
           collectExprReads(term.discriminant, into, paths, nextBound, includeFunctionBodies)
-          term.cases.forEach((c: any) => {
-            if (c.test) collectExprReads(c.test, into, paths, nextBound, includeFunctionBodies)
+          term.cases.forEach(caseItem => {
+            if (caseItem.test) {
+              collectExprReads(caseItem.test, into, paths, nextBound, includeFunctionBodies)
+            }
           })
         } else if (term.kind === 'ForOf') {
           collectExprReads(term.iterable, into, paths, nextBound, includeFunctionBodies)
@@ -571,11 +575,11 @@ function collectExprReads(
     }
     case 'JSXElement':
       // Collect from JSX attributes and children
-      expr.attributes?.forEach((attr: any) => {
+      expr.attributes?.forEach(attr => {
         if (attr.value) collectExprReads(attr.value, into, paths, bound)
         if (attr.spreadExpr) collectExprReads(attr.spreadExpr, into, paths, bound)
       })
-      expr.children?.forEach((child: any) => {
+      expr.children?.forEach(child => {
         if (child.kind === 'expression') collectExprReads(child.value, into, paths, bound)
         if (child.kind === 'element') collectExprReads(child.value, into, paths, bound)
       })
@@ -828,8 +832,6 @@ export function getUpdateStrategy(
 // ============================================================================
 // SSA-Enhanced Reactive Scope Analysis
 // ============================================================================
-
-import { analyzeCFG } from './ssa'
 
 /**
  * Enhanced scope result with SSA/CFG information

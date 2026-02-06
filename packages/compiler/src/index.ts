@@ -216,7 +216,9 @@ function functionHasReturn(node: BabelCore.types.Function): boolean {
   return false
 }
 
-function functionHasJSX(fnPath: BabelCore.NodePath<BabelCore.types.Function>): boolean {
+function functionHasJSX<T extends BabelCore.types.Function>(
+  fnPath: BabelCore.NodePath<T>,
+): boolean {
   let found = false
   fnPath.traverse({
     JSXElement(p) {
@@ -235,8 +237,8 @@ function functionHasJSX(fnPath: BabelCore.NodePath<BabelCore.types.Function>): b
   return found
 }
 
-function functionUsesStateLike(
-  fnPath: BabelCore.NodePath<BabelCore.types.Function>,
+function functionUsesStateLike<T extends BabelCore.types.Function>(
+  fnPath: BabelCore.NodePath<T>,
   t: typeof BabelCore.types,
 ): boolean {
   let found = false
@@ -364,7 +366,7 @@ function runWarningPass(
             warn,
             fileName,
           )
-          if (isDynamicPropertyAccess(left as any, t)) {
+          if (isDynamicPropertyAccess(left, t)) {
             emitWarning(
               path.node,
               'FICT-H',
@@ -390,7 +392,7 @@ function runWarningPass(
             warn,
             fileName,
           )
-          if (isDynamicPropertyAccess(arg as any, t)) {
+          if (isDynamicPropertyAccess(arg, t)) {
             emitWarning(
               path.node,
               'FICT-H',
@@ -406,7 +408,9 @@ function runWarningPass(
     MemberExpression(path) {
       if (!path.node.computed) return
       if (path.parentPath.isAssignmentExpression({ left: path.node })) return
-      if (path.parentPath.isUpdateExpression({ argument: path.node as any })) return
+      if (path.parentPath.isUpdateExpression() && path.parentPath.node.argument === path.node) {
+        return
+      }
       if (
         isDynamicPropertyAccess(path.node, t) &&
         isReactiveRoot(path.node.object as BabelCore.types.Expression, path)
@@ -522,7 +526,7 @@ function runWarningPass(
         }
         if (argumentHasReactive(argPath)) {
           emitWarning(
-            argPath.node as any,
+            argPath.node,
             'FICT-R002',
             'Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise',
             warn,
@@ -535,7 +539,9 @@ function runWarningPass(
     OptionalMemberExpression(path) {
       if (!path.node.computed) return
       if (path.parentPath.isAssignmentExpression({ left: path.node })) return
-      if (path.parentPath.isUpdateExpression({ argument: path.node as any })) return
+      if (path.parentPath.isUpdateExpression() && path.parentPath.node.argument === path.node) {
+        return
+      }
       if (
         isDynamicPropertyAccess(path.node, t) &&
         isReactiveRoot(path.node.object as BabelCore.types.Expression, path)
@@ -598,9 +604,11 @@ function createHIREntrypointVisitor(
   return {
     Program: {
       exit(path) {
-        const fileName = (path.hub as any)?.file?.opts?.filename || '<unknown>'
-        const comments =
-          ((path.hub as any)?.file?.ast as BabelCore.types.File | undefined)?.comments || []
+        const hub = path.hub as unknown as {
+          file?: { opts?: { filename?: string }; ast?: BabelCore.types.File }
+        }
+        const fileName = hub.file?.opts?.filename ?? '<unknown>'
+        const comments = hub.file?.ast?.comments ?? []
         const suppressions = parseSuppressions(comments)
         const dev = options.dev !== false
         const warn = createWarningDispatcher(options.onWarn, suppressions, options, dev)
@@ -642,7 +650,7 @@ function createHIREntrypointVisitor(
           // Check if the function is the first argument
           if (parent.node.arguments[0] !== fnPath.node) return false
           const callee = parent.node.callee
-          return !!resolveReactiveScopeName(callee as any)
+          return !!resolveReactiveScopeName(callee)
         }
 
         // Check if a function node is a reactive scope callback
@@ -657,7 +665,7 @@ function createHIREntrypointVisitor(
           }
           // Check if the function is the first argument
           if (parentNode.arguments[0] !== fnNode) return false
-          return !!resolveReactiveScopeName(parentNode.callee as any)
+          return !!resolveReactiveScopeName(parentNode.callee)
         }
 
         // Local version of isInsideNestedFunction that respects reactive scope boundaries.
@@ -846,20 +854,16 @@ function createHIREntrypointVisitor(
             if (t.isAwaitExpression(node)) return true
             if (t.isExpressionStatement(node)) return checkNode(node.expression)
             if (t.isBlockStatement(node)) return node.body.some(stmt => checkNode(stmt))
-            if (t.isReturnStatement(node)) return checkNode(node.argument as any)
+            if (t.isReturnStatement(node)) return checkNode(node.argument)
             if (t.isSequenceExpression(node)) return node.expressions.some(expr => checkNode(expr))
             if (t.isConditionalExpression(node))
-              return (
-                checkNode(node.test as any) ||
-                checkNode(node.consequent as any) ||
-                checkNode(node.alternate as any)
-              )
+              return checkNode(node.test) || checkNode(node.consequent) || checkNode(node.alternate)
             if (t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)) {
-              return checkNode(node.body as any)
+              return checkNode(node.body)
             }
             return false
           }
-          return checkNode(fn.body as any)
+          return checkNode(fn.body)
         }
 
         // Warn on component-like functions missing a return
@@ -887,8 +891,8 @@ function createHIREntrypointVisitor(
             const fnPath = varPath.get('init') as BabelCore.NodePath<
               BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression
             >
-            if (!functionHasJSX(fnPath as any) && !functionUsesStateLike(fnPath as any, t)) return
-            if (functionHasReturn(init as any)) return
+            if (!functionHasJSX(fnPath) && !functionUsesStateLike(fnPath, t)) return
+            if (functionHasReturn(init)) return
             emitWarning(
               init,
               'FICT-C004',
@@ -1002,7 +1006,7 @@ function createHIREntrypointVisitor(
               return null
             }
 
-            const jsx = getReturnedJsx(cb as any)
+            const jsx = getReturnedJsx(cb)
             if (!jsx) return
             if (t.isJSXFragment(jsx)) {
               warn({
@@ -1126,7 +1130,7 @@ function createHIREntrypointVisitor(
                 )
               }
               const ownerComponent = varPath.getFunctionParent()
-              if (!ownerComponent || !isComponentOrHookDefinition(ownerComponent as any)) {
+              if (!ownerComponent || !isComponentOrHookDefinition(ownerComponent)) {
                 throw varPath.buildCodeFrameError(
                   `$state() must be declared inside a component or hook function body.\n\n` +
                     `For module-level shared state, use one of these alternatives:\n` +
@@ -1170,7 +1174,7 @@ function createHIREntrypointVisitor(
             }
           },
           Function(fnPath) {
-            if (isComponentDefinitionForProps(fnPath as any)) {
+            if (isComponentDefinitionForProps(fnPath)) {
               for (const param of fnPath.node.params) {
                 if (t.isIdentifier(param)) {
                   trackBindingByName(fnPath, param.name, propsBindingIds)
@@ -1185,8 +1189,8 @@ function createHIREntrypointVisitor(
             }
             const parentFn = fnPath.getFunctionParent()
             if (!parentFn) return
-            if (!isComponentLike(parentFn as any)) return
-            if (!isNamedComponentOrHookDefinition(fnPath as any)) return
+            if (!isComponentLike(parentFn)) return
+            if (!isNamedComponentOrHookDefinition(fnPath)) return
             emitWarning(
               fnPath.node,
               'FICT-C003',
@@ -1223,7 +1227,7 @@ function createHIREntrypointVisitor(
               }
 
               const ownerComponent = callPath.getFunctionParent()
-              if (!ownerComponent || !isComponentOrHookDefinition(ownerComponent as any)) {
+              if (!ownerComponent || !isComponentOrHookDefinition(ownerComponent)) {
                 throw callPath.buildCodeFrameError(
                   `$state() must be declared inside a component or hook function body.\n\n` +
                     `For module-level shared state, use one of these alternatives:\n` +
@@ -1298,18 +1302,17 @@ function createHIREntrypointVisitor(
                 bindingPath?.isImportSpecifier() ||
                 bindingPath?.isImportDefaultSpecifier() ||
                 (bindingPath?.isFunctionDeclaration() &&
-                  isHookDefinition(bindingPath as unknown as BabelCore.NodePath<any>)) ||
+                  isHookDefinition(bindingPath as BabelCore.NodePath<BabelCore.types.Function>)) ||
                 (bindingPath?.isVariableDeclarator() &&
                   (() => {
-                    const init = (bindingPath as any).get?.('init') as
-                      | BabelCore.NodePath<BabelCore.types.Function>
-                      | undefined
-                    return init ? isHookDefinition(init as any) : false
+                    const init = bindingPath.get('init')
+                    if (!init?.isFunction()) return false
+                    return isHookDefinition(init as BabelCore.NodePath<BabelCore.types.Function>)
                   })())
 
               if (bindingIsHook) {
                 const ownerFunction = callPath.getFunctionParent()
-                if (!ownerFunction || !isComponentOrHookDefinition(ownerFunction as any)) {
+                if (!ownerFunction || !isComponentOrHookDefinition(ownerFunction)) {
                   throw callPath.buildCodeFrameError(
                     `${calleeId}() must be called inside a component or hook (useX)`,
                   )
@@ -1594,7 +1597,7 @@ function createHIREntrypointVisitor(
             ...importedReactiveBindingIds,
           ])
           runWarningPass(
-            path as any,
+            path,
             stateBindingIds,
             stateRootBindingIds,
             reactiveBindingIds,
@@ -1644,7 +1647,7 @@ function createHIREntrypointVisitor(
         if (!process.env.FICT_SKIP_SCOPE_CRAWL) {
           path.scope.crawl()
         }
-        stripMacroImports(path as any, t)
+        stripMacroImports(path, t)
       },
     },
   }

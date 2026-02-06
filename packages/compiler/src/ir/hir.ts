@@ -1,4 +1,4 @@
-import type { SourceLocation, Statement, ClassBody, Node } from '@babel/types'
+import type { ClassBody, LVal, Node, SourceLocation, Statement } from '@babel/types'
 
 /**
  * High-level Intermediate Representation (HIR) scaffolding.
@@ -176,7 +176,7 @@ export type Terminator =
       /** Variable declaration kind (const, let, var) */
       variableKind: 'const' | 'let' | 'var'
       /** Original pattern for destructuring (stored as Babel AST node) */
-      pattern?: any
+      pattern?: LVal
       iterable: Expression
       body: BlockId
       exit: BlockId
@@ -187,7 +187,7 @@ export type Terminator =
       /** Variable declaration kind (const, let, var) */
       variableKind: 'const' | 'let' | 'var'
       /** Original pattern for destructuring (stored as Babel AST node) */
-      pattern?: any
+      pattern?: LVal
       object: Expression
       body: BlockId
       exit: BlockId

@@ -21,7 +21,14 @@ import {
   propagateHookResultAlias,
   resolveHookMemberValue,
 } from './codegen'
-import type { BlockId, HIRFunction, Expression, Instruction } from './hir'
+import type {
+  BlockId,
+  HIRFunction,
+  Expression,
+  Instruction,
+  JSXElementExpression as HJSXElementExpression,
+  Terminator,
+} from './hir'
 import { getSSABaseName, HIRError } from './hir'
 import type { ReactiveScope, ReactiveScopeResult } from './scopes'
 import { getScopeDependencies } from './scopes'
@@ -478,34 +485,42 @@ function containsJSX(instr: Instruction): boolean {
   return false
 }
 
-function containsJSXExpr(expr: any): boolean {
-  if (!expr || typeof expr !== 'object') return false
+function containsJSXExpr(expr: Expression | null | undefined): boolean {
+  if (!expr) return false
   if (expr.kind === 'JSXElement') return true
 
   // Recursively check nested expressions
   switch (expr.kind) {
     case 'CallExpression':
       if (containsJSXExpr(expr.callee)) return true
-      return expr.arguments?.some((a: any) => containsJSXExpr(a)) ?? false
+      return expr.arguments.some(a => containsJSXExpr(a))
     case 'ArrayExpression':
-      return expr.elements?.some((el: any) => containsJSXExpr(el)) ?? false
+      return expr.elements.some(el => containsJSXExpr(el))
     case 'ObjectExpression':
-      return (
-        expr.properties?.some((p: any) =>
-          p.kind === 'SpreadElement' ? containsJSXExpr(p.argument) : containsJSXExpr(p.value),
-        ) ?? false
+      return expr.properties.some(p =>
+        p.kind === 'SpreadElement' ? containsJSXExpr(p.argument) : containsJSXExpr(p.value),
       )
     case 'ConditionalExpression':
       return containsJSXExpr(expr.consequent) || containsJSXExpr(expr.alternate)
     case 'ArrowFunction':
-      return containsJSXExpr(expr.body)
+      if (expr.isExpression && !Array.isArray(expr.body)) {
+        return containsJSXExpr(expr.body)
+      }
+      if (Array.isArray(expr.body)) {
+        return expr.body.some(block =>
+          block.instructions.some(i => i.kind !== 'Phi' && containsJSXExpr(i.value)),
+        )
+      }
+      return false
+    case 'FunctionExpression':
+      return expr.body.some(block =>
+        block.instructions.some(i => i.kind !== 'Phi' && containsJSXExpr(i.value)),
+      )
     case 'SpreadElement':
       return containsJSXExpr(expr.argument)
     default:
       return false
   }
-
-  return false
 }
 
 export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): boolean {
@@ -1155,7 +1170,7 @@ function lowerNodeWithRegionContext(
  * Lower a terminator for state machine fallback
  */
 function lowerTerminatorForStateMachine(
-  term: any,
+  term: Terminator,
   t: typeof BabelCore.types,
   ctx: CodegenContext,
   stateVar: BabelCore.types.Identifier,
@@ -2436,7 +2451,7 @@ function instructionToStatement(
     const declKind = declKindRaw && declKindRaw !== 'function' ? declKindRaw : undefined
     const isFunctionDecl =
       instr.value.kind === 'FunctionExpression' &&
-      (declKindRaw === 'function' || (!declKindRaw && (instr.value as any).name === baseName))
+      (declKindRaw === 'function' || (!declKindRaw && instr.value.name === baseName))
     if (isFunctionDecl) {
       const loweredFn = lowerExpressionWithDeSSA(instr.value, ctx)
       if (t.isFunctionExpression(loweredFn)) {
@@ -2869,7 +2884,11 @@ function lowerExpressionWithDeSSA(
       ctx,
       (regionOverride as RegionInfo | null) ?? undefined,
     )
-    regionApplied = ctx.t.updateExpression(lowered.operator, arg as any, lowered.prefix)
+    regionApplied = ctx.t.updateExpression(
+      lowered.operator,
+      arg as BabelCore.types.Expression,
+      lowered.prefix,
+    )
   } else {
     regionApplied = applyRegionMetadataToExpression(
       lowered,
@@ -3198,7 +3217,10 @@ function deSSAJSXChild(
 /**
  * Convert HIR Expression to Babel AST Expression
  */
-function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expression {
+function exprToAST(
+  expr: Expression | null | undefined,
+  t: typeof BabelCore.types,
+): BabelCore.types.Expression {
   if (!expr) return t.identifier('undefined')
 
   switch (expr.kind) {
@@ -3225,14 +3247,14 @@ function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expres
 
     case 'BinaryExpression':
       return t.binaryExpression(
-        expr.operator as any,
+        expr.operator as BabelCore.types.BinaryExpression['operator'],
         exprToAST(expr.left, t),
         exprToAST(expr.right, t),
       )
 
     case 'UnaryExpression':
       return t.unaryExpression(
-        expr.operator as any,
+        expr.operator as BabelCore.types.UnaryExpression['operator'],
         exprToAST(expr.argument, t),
         expr.prefix !== false,
       )
@@ -3254,7 +3276,7 @@ function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expres
     case 'CallExpression':
       return t.callExpression(
         exprToAST(expr.callee, t),
-        (expr.arguments || []).map((a: any) => exprToAST(a, t)),
+        expr.arguments.map(a => exprToAST(a, t)),
       )
 
     case 'MemberExpression':
@@ -3266,14 +3288,14 @@ function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expres
 
     case 'ArrayExpression':
       return t.arrayExpression(
-        (expr.elements || []).map((el: any) =>
+        expr.elements.map(el =>
           el ? exprToAST(el, t) : null,
         ) as (BabelCore.types.Expression | null)[],
       )
 
     case 'ObjectExpression':
       return t.objectExpression(
-        (expr.properties || []).map((p: any) => {
+        expr.properties.map(p => {
           if (p.kind === 'SpreadElement') {
             return t.spreadElement(exprToAST(p.argument, t))
           }
@@ -3287,8 +3309,8 @@ function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expres
       )
 
     case 'ArrowFunction': {
-      const params = (expr.params || []).map((p: any) => t.identifier(p.name))
-      if (expr.isExpression) {
+      const params = expr.params.map(p => t.identifier(p.name))
+      if (expr.isExpression && !Array.isArray(expr.body)) {
         return t.arrowFunctionExpression(params, exprToAST(expr.body, t))
       } else {
         // Block body - need to convert blocks to statements
@@ -3325,7 +3347,7 @@ function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expres
     }
 
     case 'FunctionExpression': {
-      const fnParams = (expr.params || []).map((p: any) => t.identifier(p.name))
+      const fnParams = expr.params.map(p => t.identifier(p.name))
       return t.functionExpression(
         expr.name ? t.identifier(expr.name) : null,
         fnParams,
@@ -3348,10 +3370,10 @@ function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expres
       )
 
     case 'TemplateLiteral': {
-      const quasis = (expr.quasis || []).map((q: string, i: number, arr: any[]) =>
+      const quasis = expr.quasis.map((q, i, arr) =>
         t.templateElement({ raw: q, cooked: q }, i === arr.length - 1),
       )
-      const expressions = (expr.expressions || []).map((e: any) => exprToAST(e, t))
+      const expressions = expr.expressions.map(e => exprToAST(e, t))
       return t.templateLiteral(quasis, expressions)
     }
 
@@ -3375,15 +3397,18 @@ function exprToAST(expr: any, t: typeof BabelCore.types): BabelCore.types.Expres
 /**
  * Convert JSX HIR to Babel JSX AST
  */
-function jsxToAST(jsx: any, t: typeof BabelCore.types): BabelCore.types.Expression {
+function jsxToAST(
+  jsx: HJSXElementExpression | null | undefined,
+  t: typeof BabelCore.types,
+): BabelCore.types.JSXElement {
   if (!jsx || jsx.kind !== 'JSXElement') {
-    return t.identifier('undefined')
+    return t.jsxElement(t.jsxOpeningElement(t.jsxIdentifier('div'), [], true), null, [], true)
   }
 
   const tagName = typeof jsx.tagName === 'string' ? jsx.tagName : undefined
   const openingName = tagName ? t.jsxIdentifier(tagName) : t.jsxIdentifier('div')
 
-  const attrs = (jsx.attributes || []).map((attr: any) => {
+  const attrs = jsx.attributes.map(attr => {
     if (attr.isSpread) {
       return t.jsxSpreadAttribute(exprToAST(attr.spreadExpr, t))
     }
@@ -3399,12 +3424,12 @@ function jsxToAST(jsx: any, t: typeof BabelCore.types): BabelCore.types.Expressi
     return t.jsxAttribute(name, value)
   })
 
-  const children = (jsx.children || []).map((child: any) => {
+  const children = jsx.children.map(child => {
     if (child.kind === 'text') {
       return t.jsxText(child.value)
     }
     if (child.kind === 'element') {
-      return jsxToAST(child.value, t) as any
+      return jsxToAST(child.value, t)
     }
     if (child.kind === 'expression') {
       return t.jsxExpressionContainer(exprToAST(child.value, t))

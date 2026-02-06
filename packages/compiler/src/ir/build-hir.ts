@@ -56,19 +56,42 @@ const getLoc = (node?: BabelCore.types.Node | null): BabelCore.types.SourceLocat
   return node?.loc ?? null
 }
 
-const resolveDestructuringPlugin = (): any => {
-  const mod: any = transformDestructuring
-  return mod?.default ?? mod
+const resolveDestructuringPlugin = (): BabelCore.PluginItem => {
+  const mod = transformDestructuring as unknown as { default?: BabelCore.PluginItem }
+  return mod.default ?? (transformDestructuring as unknown as BabelCore.PluginItem)
 }
 
-const resolveTraverse = (): any => {
-  const mod: any = traverseModule
-  return mod?.default ?? mod
+const resolveTraverse = (): typeof traverseModule => {
+  const mod = traverseModule as unknown as { default?: typeof traverseModule }
+  return mod.default ?? traverseModule
 }
 
 const OBJECT_REST_HELPERS = new Set(['_objectWithoutProperties', '_objectWithoutPropertiesLoose'])
 const OBJECT_DESTRUCTURING_EMPTY_HELPER = '_objectDestructuringEmpty'
 const EXTENDS_HELPER = '_extends'
+
+const isExpressionOrSpreadElement = (
+  value: BabelCore.types.Node | null | undefined,
+): value is BabelCore.types.Expression | BabelCore.types.SpreadElement => {
+  return !!value && (t.isExpression(value) || t.isSpreadElement(value))
+}
+
+const toFunctionExpressionParams = (
+  params:
+    | BabelCore.types.FunctionDeclaration['params']
+    | BabelCore.types.FunctionExpression['params']
+    | BabelCore.types.ArrowFunctionExpression['params'],
+): BabelCore.types.FunctionExpression['params'] => {
+  return params.map(param => {
+    if (t.isTSParameterProperty(param)) {
+      return reportUnsupportedExpression(
+        param,
+        'TypeScript parameter properties are not supported in HIR conversion.',
+      )
+    }
+    return param
+  })
+}
 
 const isSameIdentifier = (
   left: BabelCore.types.Expression | BabelCore.types.SpreadElement,
@@ -104,7 +127,7 @@ const rewriteObjectRestHelpers = (ast: BabelCore.types.File): void => {
           checkExpr.arguments.length === 1
         ) {
           const [checkArg] = checkExpr.arguments
-          if (checkArg && isSameIdentifier(checkArg as any, sourceExpr as any)) {
+          if (isExpressionOrSpreadElement(checkArg) && isSameIdentifier(checkArg, sourceExpr)) {
             const restCall = t.callExpression(t.identifier('__fictPropsRest'), [
               t.cloneNode(sourceExpr, true),
               t.arrayExpression([]),
@@ -604,7 +627,7 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
           value: convertExpression(
             t.functionExpression(
               stmt.id,
-              stmt.params as any,
+              toFunctionExpressionParams(stmt.params),
               stmt.body,
               stmt.generator,
               stmt.async,
@@ -773,7 +796,7 @@ export function buildHIR(
                     isAsync: v.init.async,
                     astNode: [v.init, v, decl, stmt],
                   })
-                : convertFunction(name, params, [t.returnStatement(body as any)], {
+                : convertFunction(name, params, [t.returnStatement(body)], {
                     noMemo: programNoMemo,
                     pure: programPure,
                     loc: getLoc(v.init ?? v),
@@ -1152,7 +1175,7 @@ function convertFunction(
       // Nested function declarations are converted to assignments of function expressions
       const fnExpr = t.functionExpression(
         stmt.id,
-        stmt.params as any,
+        toFunctionExpressionParams(stmt.params),
         stmt.body,
         stmt.generator,
         stmt.async,
@@ -1433,7 +1456,7 @@ function convertFunction(
       const left = stmt.left
       let varName = '_item'
       let varKind: 'const' | 'let' | 'var' = 'const'
-      let pattern: any = undefined
+      let pattern: BabelCore.types.LVal | undefined
 
       if (t.isVariableDeclaration(left) && left.declarations[0]) {
         varKind = left.kind as 'const' | 'let' | 'var'
@@ -1490,7 +1513,7 @@ function convertFunction(
       const left = stmt.left
       let varName = '_item'
       let varKind: 'const' | 'let' | 'var' = 'const'
-      let pattern: any = undefined
+      let pattern: BabelCore.types.LVal | undefined
 
       if (t.isVariableDeclaration(left) && left.declarations[0]) {
         varKind = left.kind as 'const' | 'let' | 'var'
@@ -1982,7 +2005,7 @@ function processStatement(
   if (t.isFunctionDeclaration(stmt) && stmt.id) {
     const fnExpr = t.functionExpression(
       stmt.id,
-      stmt.params as any,
+      toFunctionExpressionParams(stmt.params),
       stmt.body,
       stmt.generator,
       stmt.async,
@@ -2257,7 +2280,7 @@ function processStatement(
     const left = stmt.left
     let varName = '_item'
     let varKind: 'const' | 'let' | 'var' = 'const'
-    let pattern: any = undefined
+    let pattern: BabelCore.types.LVal | undefined
 
     if (t.isVariableDeclaration(left) && left.declarations[0]) {
       varKind = left.kind as 'const' | 'let' | 'var'
@@ -2314,7 +2337,7 @@ function processStatement(
     const left = stmt.left
     let varName = '_item'
     let varKind: 'const' | 'let' | 'var' = 'const'
-    let pattern: any = undefined
+    let pattern: BabelCore.types.LVal | undefined
 
     if (t.isVariableDeclaration(left) && left.declarations[0]) {
       varKind = left.kind as 'const' | 'let' | 'var'
@@ -2548,8 +2571,13 @@ function convertExpression(
     return undefined
   }
 
-  if ((t as any).isChainExpression?.(node) || (node as any).type === 'ChainExpression') {
-    return convertExpression((node as any).expression as BabelCore.types.Expression, options)
+  const chainCandidate = node as unknown as { type?: string; expression?: BabelCore.types.Node }
+  if (
+    chainCandidate.type === 'ChainExpression' &&
+    chainCandidate.expression !== undefined &&
+    t.isExpression(chainCandidate.expression)
+  ) {
+    return convertExpression(chainCandidate.expression, options)
   }
 
   if (t.isParenthesizedExpression(node) && t.isExpression(node.expression)) {
@@ -2592,13 +2620,10 @@ function convertExpression(
   if (t.isBigIntLiteral(node)) {
     return { kind: 'Literal', value: BigInt(node.value), loc } as HLiteral
   }
-  if (
-    t.isStringLiteral(node) ||
-    t.isNumericLiteral(node) ||
-    t.isBooleanLiteral(node) ||
-    t.isNullLiteral(node)
-  )
-    return { kind: 'Literal', value: (node as any).value ?? null, loc } as HLiteral
+  if (t.isNullLiteral(node)) return { kind: 'Literal', value: null, loc } as HLiteral
+  if (t.isStringLiteral(node) || t.isNumericLiteral(node) || t.isBooleanLiteral(node)) {
+    return { kind: 'Literal', value: node.value, loc } as HLiteral
+  }
   if (t.isRegExpLiteral(node)) {
     return {
       kind: 'Literal',
@@ -2615,7 +2640,7 @@ function convertExpression(
   }
   if (t.isCallExpression(node)) {
     const callee = normalizeMacroCallee(node.callee as BabelCore.types.Expression)
-    const pure = hasPureAnnotation(node) || hasPureAnnotation(node.callee as any)
+    const pure = hasPureAnnotation(node) || hasPureAnnotation(node.callee)
     const reactiveScope = resolveReactiveScope(node.callee as BabelCore.types.Expression)
     const call: HCallExpression = {
       kind: 'CallExpression',
@@ -2978,7 +3003,7 @@ function convertExpression(
       const isDestructuring = t.isArrayPattern(node.left) || t.isObjectPattern(node.left)
       const message = isDestructuring
         ? 'Destructuring assignment should have been expanded before HIR conversion.'
-        : `Unsupported assignment target '${(node.left as any).type}' in HIR conversion`
+        : `Unsupported assignment target '${node.left.type}' in HIR conversion`
       return reportUnsupportedExpression(node.left, message)
     }
     const assign: HAssignmentExpression = {
@@ -3061,7 +3086,7 @@ function convertExpression(
       callee: convertExpression(callee),
       arguments: convertCallArguments(node.arguments, reactiveScope),
       optional: node.optional,
-      ...(hasPureAnnotation(node) || hasPureAnnotation(node.callee as any) ? { pure: true } : null),
+      ...(hasPureAnnotation(node) || hasPureAnnotation(node.callee) ? { pure: true } : null),
       loc,
     }
   }

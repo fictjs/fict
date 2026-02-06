@@ -587,7 +587,7 @@ function analyzeStructuredNode(
         if (node.iterable.kind === 'Identifier') {
           const keySet = ctx.keySets.get(node.iterable.name)
           if (keySet) {
-            if (node.pattern && t.isIdentifier(node.pattern as any)) {
+            if (node.pattern && t.isIdentifier(node.pattern)) {
               bodyCtx.values.set(node.pattern.name, new Set(keySet))
             } else {
               bodyCtx.values.set(node.variable, new Set(keySet))
@@ -616,7 +616,7 @@ function analyzeStructuredNode(
             shape.mutableKeys.size === 0
           ) {
             const keySet = new Set(shape.knownKeys)
-            if (node.pattern && t.isIdentifier(node.pattern as any)) {
+            if (node.pattern && t.isIdentifier(node.pattern)) {
               bodyCtx.values.set(node.pattern.name, keySet)
             } else {
               bodyCtx.values.set(node.variable, keySet)
@@ -987,7 +987,7 @@ function analyzeExpression(
         if (child.kind === 'expression') {
           analyzeExpression(child.value, shapes, propertyReads, ctx)
         } else if (child.kind === 'element') {
-          analyzeExpression(child.value as any, shapes, propertyReads, ctx)
+          analyzeExpression(child.value, shapes, propertyReads, ctx)
         }
       }
       return null

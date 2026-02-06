@@ -29,6 +29,25 @@ interface RegionMemoResult {
   regionId: BabelCore.types.Identifier
 }
 
+function getNodeField(node: BabelCore.types.Node, key: string): unknown {
+  return (node as unknown as Record<string, unknown>)[key]
+}
+
+function collectFunctionParameterBindings(
+  fn:
+    | BabelCore.types.FunctionDeclaration
+    | BabelCore.types.FunctionExpression
+    | BabelCore.types.ArrowFunctionExpression,
+  names: Set<string>,
+  t: typeof BabelCore.types,
+): void {
+  for (const param of fn.params) {
+    if (t.isLVal(param)) {
+      collectBindingNames(param, names, t)
+    }
+  }
+}
+
 // ============================================================================
 // Main Functions
 // ============================================================================
@@ -157,7 +176,7 @@ function collectLocalStateVars(
     }
 
     for (const key of Object.keys(node) as (keyof typeof node)[]) {
-      const child = (node as any)[key]
+      const child = getNodeField(node, key as string)
       if (Array.isArray(child)) {
         for (const c of child) {
           if (
@@ -215,7 +234,7 @@ function referencesNames(
     }
 
     for (const key of Object.keys(node) as (keyof typeof node)[]) {
-      const child = (node as any)[key]
+      const child = getNodeField(node, key as string)
       if (Array.isArray(child)) {
         for (const c of child) {
           if (
@@ -356,7 +375,7 @@ function collectOutputsFromStatement(
       const nextShadow = new Set(shadow)
       collectBindingNames(node.id, nextShadow, t)
       for (const key of Object.keys(node) as (keyof typeof node)[]) {
-        const child = (node as any)[key]
+        const child = getNodeField(node, key as string)
         if (Array.isArray(child)) {
           for (const c of child) {
             if (
@@ -381,7 +400,7 @@ function collectOutputsFromStatement(
     }
 
     for (const key of Object.keys(node) as (keyof typeof node)[]) {
-      const child = (node as any)[key]
+      const child = getNodeField(node, key as string)
       if (Array.isArray(child)) {
         for (const c of child) {
           if (
@@ -463,8 +482,8 @@ function dependsOnTrackedSetWithShadow(
       t.isArrowFunctionExpression(node)
     ) {
       const nextShadow = new Set(locals)
-      node.params.forEach(param => collectBindingNames(param as any, nextShadow, t))
-      if (functionBodyDependsOnTracked(node as any, tracked, nextShadow, ctx, t)) {
+      collectFunctionParameterBindings(node, nextShadow, t)
+      if (functionBodyDependsOnTracked(node, tracked, nextShadow, ctx, t)) {
         depends = true
       }
       return
@@ -484,7 +503,7 @@ function dependsOnTrackedSetWithShadow(
     }
 
     for (const key of Object.keys(node) as (keyof typeof node)[]) {
-      const child = (node as any)[key]
+      const child = getNodeField(node, key as string)
       if (Array.isArray(child)) {
         for (const c of child) {
           if (
@@ -512,7 +531,10 @@ function dependsOnTrackedSetWithShadow(
 }
 
 function functionBodyDependsOnTracked(
-  fn: BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression,
+  fn:
+    | BabelCore.types.ArrowFunctionExpression
+    | BabelCore.types.FunctionExpression
+    | BabelCore.types.FunctionDeclaration,
   tracked: Set<string>,
   shadow: Set<string>,
   ctx: TransformContext,
@@ -834,7 +856,7 @@ function containsEarlyReturn(stmt: BabelCore.types.Statement, t: typeof BabelCor
       return
     }
     for (const key of Object.keys(node) as (keyof typeof node)[]) {
-      const child = (node as any)[key]
+      const child = getNodeField(node, key as string)
       if (Array.isArray(child)) {
         for (const c of child) {
           if (

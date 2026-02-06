@@ -12,7 +12,9 @@
  * 4. Emit structured code in a single pass
  */
 
-import type { BasicBlock, BlockId, Expression, Instruction, HIRFunction } from './hir'
+import type { LVal } from '@babel/types'
+
+import type { BasicBlock, BlockId, Expression, HIRFunction, Instruction } from './hir'
 import { analyzeCFG } from './ssa'
 
 /**
@@ -94,7 +96,7 @@ export type StructuredNode =
       kind: 'forOf'
       variable: string
       variableKind: 'const' | 'let' | 'var'
-      pattern?: any
+      pattern?: LVal
       iterable: Expression
       body: StructuredNode
     }
@@ -102,7 +104,7 @@ export type StructuredNode =
       kind: 'forIn'
       variable: string
       variableKind: 'const' | 'let' | 'var'
-      pattern?: any
+      pattern?: LVal
       object: Expression
       body: StructuredNode
     }
@@ -1071,7 +1073,7 @@ function structurizeForOf(
     kind: 'ForOf'
     variable: string
     variableKind: 'const' | 'let' | 'var'
-    pattern?: any
+    pattern?: LVal
     iterable: Expression
     body: BlockId
     exit: BlockId
@@ -1105,7 +1107,7 @@ function structurizeForIn(
     kind: 'ForIn'
     variable: string
     variableKind: 'const' | 'let' | 'var'
-    pattern?: any
+    pattern?: LVal
     object: Expression
     body: BlockId
     exit: BlockId

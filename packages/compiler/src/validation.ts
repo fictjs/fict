@@ -241,6 +241,133 @@ export function reportDiagnostic(
 // Validation Rules
 // ============================================================================
 
+const HOOK_CALLEE_NAMES = new Set([
+  '$state',
+  '$effect',
+  '$memo',
+  'createSignal',
+  'createMemo',
+  'createEffect',
+  'createStore',
+  'createSelector',
+  '__fictUseSignal',
+  '__fictUseMemo',
+  '__fictUseEffect',
+])
+
+function getCallExpressionCalleeName(
+  node: BabelCore.types.CallExpression,
+  t: typeof BabelCore.types,
+): string | null {
+  const { callee } = node
+  if (t.isIdentifier(callee)) {
+    return callee.name
+  }
+  if (t.isMemberExpression(callee) && !callee.computed && t.isIdentifier(callee.property)) {
+    return callee.property.name
+  }
+  return null
+}
+
+function isHookLikeCalleeName(name: string): boolean {
+  if (HOOK_CALLEE_NAMES.has(name)) return true
+  return /^use[A-Z0-9_]/.test(name)
+}
+
+function isLoopNode(node: BabelCore.types.Node, t: typeof BabelCore.types): boolean {
+  return (
+    t.isForStatement(node) ||
+    t.isForInStatement(node) ||
+    t.isForOfStatement(node) ||
+    t.isWhileStatement(node) ||
+    t.isDoWhileStatement(node)
+  )
+}
+
+function isConditionalNode(node: BabelCore.types.Node, t: typeof BabelCore.types): boolean {
+  return (
+    t.isIfStatement(node) ||
+    t.isSwitchStatement(node) ||
+    t.isSwitchCase(node) ||
+    t.isConditionalExpression(node)
+  )
+}
+
+function getAncestorsInsideCurrentFunction(
+  ancestors: readonly BabelCore.types.Node[],
+  t: typeof BabelCore.types,
+): readonly BabelCore.types.Node[] {
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    if (t.isFunction(ancestors[i])) {
+      return ancestors.slice(i + 1)
+    }
+  }
+  return ancestors
+}
+
+function isMapCallbackContext(
+  ancestors: readonly BabelCore.types.Node[],
+  t: typeof BabelCore.types,
+): number {
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    const candidate = ancestors[i]
+    if (!t.isArrowFunctionExpression(candidate) && !t.isFunctionExpression(candidate)) {
+      continue
+    }
+    if (i === 0) continue
+    const parent = ancestors[i - 1]
+    if (!parent || !t.isCallExpression(parent)) continue
+    if (!parent.arguments.includes(candidate)) continue
+    const callee = parent.callee
+    if (t.isMemberExpression(callee) && !callee.computed && t.isIdentifier(callee.property)) {
+      if (callee.property.name === 'map') {
+        return i
+      }
+    }
+  }
+  return -1
+}
+
+function isNode(value: unknown): value is BabelCore.types.Node {
+  return !!value && typeof value === 'object' && 'type' in value
+}
+
+function getNodeChildren(
+  node: BabelCore.types.Node,
+  t: typeof BabelCore.types,
+): BabelCore.types.Node[] {
+  const keys = (t as unknown as { VISITOR_KEYS?: Record<string, string[]> }).VISITOR_KEYS
+  const visitorKeys = keys?.[node.type] ?? []
+  const children: BabelCore.types.Node[] = []
+  for (const key of visitorKeys) {
+    const value = (node as unknown as Record<string, unknown>)[key]
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (isNode(item)) children.push(item)
+      }
+    } else if (isNode(value)) {
+      children.push(value)
+    }
+  }
+  return children
+}
+
+function walkNode(
+  node: BabelCore.types.Node | null | undefined,
+  t: typeof BabelCore.types,
+  ancestors: readonly BabelCore.types.Node[],
+  visit: (node: BabelCore.types.Node, ancestors: readonly BabelCore.types.Node[]) => boolean | void,
+): void {
+  if (!node) return
+  const shouldContinue = visit(node, ancestors)
+  if (shouldContinue === false) return
+  const nextAncestors = [...ancestors, node]
+  const children = getNodeChildren(node, t)
+  for (const child of children) {
+    walkNode(child, t, nextAncestors, visit)
+  }
+}
+
 /**
  * Validate that hooks are not called conditionally
  */
@@ -248,16 +375,19 @@ export function validateNoConditionalHooks(
   node: BabelCore.types.CallExpression,
   ctx: TransformContext,
   t: typeof BabelCore.types,
+  ancestors: readonly BabelCore.types.Node[] = [],
 ): Diagnostic | null {
-  // Check if this is a hook call
-  const callee = node.callee
-  if (!t.isIdentifier(callee)) return null
+  const calleeName = getCallExpressionCalleeName(node, t)
+  if (!calleeName || !isHookLikeCalleeName(calleeName)) return null
 
-  const hookNames = ['useSignal', 'useMemo', 'useEffect', 'useState', 'useMemo', 'useCallback']
-  if (!hookNames.some(h => callee.name.includes(h))) return null
-
-  // This would require path context to check if inside conditional
-  // For now, return null - full implementation needs path traversal
+  const fileName = ctx.file.opts.filename || '<unknown>'
+  const localAncestors = getAncestorsInsideCurrentFunction(ancestors, t)
+  if (localAncestors.some(ancestor => isLoopNode(ancestor, t))) {
+    return createDiagnostic(DiagnosticCode.FICT_C002, node, fileName, { callee: calleeName })
+  }
+  if (localAncestors.some(ancestor => isConditionalNode(ancestor, t))) {
+    return createDiagnostic(DiagnosticCode.FICT_C001, node, fileName, { callee: calleeName })
+  }
   return null
 }
 
@@ -265,14 +395,40 @@ export function validateNoConditionalHooks(
  * Validate that lists have keys
  */
 export function validateListKeys(
-  _node: BabelCore.types.JSXElement,
-  _ctx: TransformContext,
-  _t: typeof BabelCore.types,
+  node: BabelCore.types.JSXElement | BabelCore.types.JSXFragment,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+  ancestors: readonly BabelCore.types.Node[] = [],
 ): Diagnostic | null {
-  // Check if this is inside a .map() call
-  // This would require parent context
-  // For now, return null - full implementation needs path traversal
-  return null
+  const callbackIndex = isMapCallbackContext(ancestors, t)
+  if (callbackIndex < 0) return null
+
+  // Only validate the top-level JSX returned by the map callback.
+  for (let i = callbackIndex + 1; i < ancestors.length; i++) {
+    const ancestor = ancestors[i]
+    if (t.isJSXElement(ancestor) || t.isJSXFragment(ancestor)) {
+      return null
+    }
+  }
+
+  const fileName = ctx.file.opts.filename || '<unknown>'
+  if (t.isJSXFragment(node)) {
+    return createDiagnostic(DiagnosticCode.FICT_J002, node, fileName)
+  }
+
+  let hasKey = false
+  let hasUnknownSpread = false
+  for (const attr of node.openingElement.attributes) {
+    if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name, { name: 'key' })) {
+      hasKey = true
+      break
+    }
+    if (t.isJSXSpreadAttribute(attr)) {
+      hasUnknownSpread = true
+    }
+  }
+  if (hasKey || hasUnknownSpread) return null
+  return createDiagnostic(DiagnosticCode.FICT_J002, node, fileName)
 }
 
 /**
@@ -291,6 +447,43 @@ export function validateNoInlineFunctions(
   return null
 }
 
+function pushDiagnostic(diagnostics: Diagnostic[], diagnostic: Diagnostic | null): void {
+  if (!diagnostic) return
+  const duplicate = diagnostics.some(
+    existing =>
+      existing.code === diagnostic.code &&
+      existing.line === diagnostic.line &&
+      existing.column === diagnostic.column,
+  )
+  if (!duplicate) {
+    diagnostics.push(diagnostic)
+  }
+}
+
+function validateNode(
+  node: BabelCore.types.Node,
+  ancestors: readonly BabelCore.types.Node[],
+  diagnostics: Diagnostic[],
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): boolean | void {
+  if (t.isFunction(node)) {
+    // Nested function bodies are validated separately.
+    return false
+  }
+
+  if (t.isCallExpression(node)) {
+    pushDiagnostic(diagnostics, validateNoConditionalHooks(node, ctx, t, ancestors))
+  }
+  if (t.isJSXElement(node) || t.isJSXFragment(node)) {
+    pushDiagnostic(diagnostics, validateListKeys(node, ctx, t, ancestors))
+  }
+  if (t.isJSXAttribute(node)) {
+    pushDiagnostic(diagnostics, validateNoInlineFunctions(node, ctx, t))
+  }
+  return undefined
+}
+
 // ============================================================================
 // Batch Validation
 // ============================================================================
@@ -299,13 +492,25 @@ export function validateNoInlineFunctions(
  * Run all validations on a function body and collect diagnostics
  */
 export function validateFunction(
-  _node: BabelCore.types.Function,
-  _ctx: TransformContext,
-  _t: typeof BabelCore.types,
+  node: BabelCore.types.Function,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+  parentAncestors: readonly BabelCore.types.Node[] = [],
 ): Diagnostic[] {
   const diagnostics: Diagnostic[] = []
-  // Validation logic would go here
-  // Full implementation would traverse the AST
+  const root = node.body
+  const functionAncestors = [...parentAncestors, node]
+  walkNode(root, t, functionAncestors, (current, ancestors) =>
+    validateNode(current, ancestors, diagnostics, ctx, t),
+  )
+  if (t.isBlockStatement(root)) {
+    // Validate nested functions independently.
+    walkNode(root, t, functionAncestors, (current, ancestors) => {
+      if (!t.isFunction(current)) return
+      diagnostics.push(...validateFunction(current, ctx, t, ancestors))
+      return false
+    })
+  }
   return diagnostics
 }
 
