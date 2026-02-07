@@ -15,6 +15,11 @@ import type { FictCompilerOptions, ModuleReactiveMetadata } from './types'
 
 const globalMetadata = new Map<string, ModuleReactiveMetadata>()
 const lastWrittenMetadataPayload = new Map<string, string>()
+const defaultResolutionCache = new Map<string, ModuleReactiveMetadata | null>()
+let resolutionCacheByOptions = new WeakMap<
+  FictCompilerOptions,
+  Map<string, ModuleReactiveMetadata | null>
+>()
 
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
 const DEFAULT_META_EXTENSION = '.fict.meta.json'
@@ -36,6 +41,30 @@ const VIRTUAL_FILENAME_PREFIXES = [
 type MetadataWriteMode = 'none' | 'adjacent' | 'cache'
 
 type FsProbeCache = Map<string, boolean>
+
+function shouldUseResolutionCache(options?: FictCompilerOptions): boolean {
+  return !options?.resolveModuleMetadata && !options?.moduleMetadata
+}
+
+function getResolutionCache(
+  options?: FictCompilerOptions,
+): Map<string, ModuleReactiveMetadata | null> {
+  if (!options) return defaultResolutionCache
+  let cache = resolutionCacheByOptions.get(options)
+  if (!cache) {
+    cache = new Map<string, ModuleReactiveMetadata | null>()
+    resolutionCacheByOptions.set(options, cache)
+  }
+  return cache
+}
+
+function clearResolutionCaches(): void {
+  defaultResolutionCache.clear()
+  resolutionCacheByOptions = new WeakMap<
+    FictCompilerOptions,
+    Map<string, ModuleReactiveMetadata | null>
+  >()
+}
 
 function isWindowsDrivePath(fileName: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(fileName) || fileName.startsWith('\\\\')
@@ -279,6 +308,16 @@ export function resolveModuleMetadata(
   importer: string | undefined,
   options?: FictCompilerOptions,
 ): ModuleReactiveMetadata | undefined {
+  const useResolutionCache = shouldUseResolutionCache(options)
+  const cacheKey = `${importer ?? ''}\0${source}`
+  if (useResolutionCache) {
+    const cache = getResolutionCache(options)
+    const cached = cache.get(cacheKey)
+    if (cached !== undefined) {
+      return cached ?? undefined
+    }
+  }
+
   if (options?.resolveModuleMetadata) {
     const resolved = options.resolveModuleMetadata(source, importer)
     if (resolved) return resolved
@@ -297,18 +336,35 @@ export function resolveModuleMetadata(
   if (!resolvedKey && shouldProbeFs) {
     resolvedKey = resolveImportSourceByMetadata(source, importer, options, fsCache)
   }
+  let resolvedMetadata: ModuleReactiveMetadata | undefined
   if (resolvedKey) {
     const existing = store.get(resolvedKey)
-    if (existing) return existing
-    const loaded = shouldProbeFs
-      ? readMetadataFromDisk(resolvedKey, store, options, fsCache)
-      : undefined
-    if (loaded) return loaded
+    if (existing) {
+      resolvedMetadata = existing
+    } else {
+      const loaded = shouldProbeFs
+        ? readMetadataFromDisk(resolvedKey, store, options, fsCache)
+        : undefined
+      if (loaded) {
+        resolvedMetadata = loaded
+      }
+    }
   }
-  if (store.has(source)) return store.get(source)
-  const loaded = shouldProbeFs ? readMetadataFromDisk(source, store, options, fsCache) : undefined
-  if (loaded) return loaded
-  return undefined
+  if (!resolvedMetadata && store.has(source)) {
+    resolvedMetadata = store.get(source)
+  }
+  if (!resolvedMetadata) {
+    const loaded = shouldProbeFs ? readMetadataFromDisk(source, store, options, fsCache) : undefined
+    if (loaded) {
+      resolvedMetadata = loaded
+    }
+  }
+
+  if (useResolutionCache) {
+    const cache = getResolutionCache(options)
+    cache.set(cacheKey, resolvedMetadata ?? null)
+  }
+  return resolvedMetadata
 }
 
 export function setModuleMetadata(
@@ -330,6 +386,7 @@ export function setModuleMetadata(
   }
   const store = getMetadataStore(options)
   store.set(normalized, metadata)
+  clearResolutionCaches()
   const metaPath = getMetadataWritePath(normalized, writeMode, options)
   if (!metaPath) return
   const payload = JSON.stringify(metadata)
@@ -349,4 +406,5 @@ export function clearModuleMetadata(options?: FictCompilerOptions): void {
   const store = getMetadataStore(options)
   store.clear()
   lastWrittenMetadataPayload.clear()
+  clearResolutionCaches()
 }

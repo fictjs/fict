@@ -106,4 +106,58 @@ describe('module metadata safety', () => {
       }
     }
   })
+
+  it('does not cache external metadata resolver callbacks', () => {
+    let resolveCalls = 0
+    const pluginOptions = {
+      emitModuleMetadata: 'auto' as const,
+      dev: false,
+      resolveModuleMetadata: (source: string) => {
+        if (source === './dep') {
+          resolveCalls += 1
+          return {
+            exports: {
+              value: 'signal' as const,
+            },
+          }
+        }
+        return undefined
+      },
+    }
+
+    const source = `
+      import { value } from './dep'
+      export function useValue() {
+        return value
+      }
+    `
+
+    transformSync(source, {
+      filename: '/tmp/consumer.ts',
+      configFile: false,
+      babelrc: false,
+      sourceType: 'module',
+      parserOpts: {
+        sourceType: 'module',
+        plugins: ['typescript'],
+      },
+      plugins: [[createFictPlugin, pluginOptions]],
+    })
+    const firstPassCalls = resolveCalls
+
+    transformSync(source, {
+      filename: '/tmp/consumer.ts',
+      configFile: false,
+      babelrc: false,
+      sourceType: 'module',
+      parserOpts: {
+        sourceType: 'module',
+        plugins: ['typescript'],
+      },
+      plugins: [[createFictPlugin, pluginOptions]],
+    })
+
+    expect(firstPassCalls).toBeGreaterThan(0)
+    expect(resolveCalls).toBeGreaterThan(firstPassCalls)
+  })
 })
