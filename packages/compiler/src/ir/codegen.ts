@@ -35,7 +35,7 @@ import {
   type Region,
 } from './regions'
 import { generateRegions, generateRegionCode, regionToMetadata } from './regions'
-import type { ReactiveScopeResult } from './scopes'
+import type { ReactiveScopeResult, SSAEnhancedScopeResult } from './scopes'
 import { analyzeReactiveScopesWithSSA } from './scopes'
 import { analyzeCFG } from './ssa'
 import { structurizeCFG, structurizeCFGWithDiagnostics, type StructuredNode } from './structurize'
@@ -304,6 +304,54 @@ function functionContainsJSX(fn: HIRFunction): boolean {
     }
   }
   return false
+}
+
+function emitReactiveControlFlowReexecutionWarning(
+  fn: HIRFunction,
+  scopeResult: SSAEnhancedScopeResult,
+  ctx: CodegenContext,
+  options: { hasJSX: boolean; isComponent: boolean },
+): void {
+  if (!options.hasJSX || !options.isComponent) return
+  const onWarn = ctx.options?.onWarn
+  if (!onWarn) return
+
+  const warningKey = `${fn.name ?? '<anonymous>'}:${fn.loc?.start.line ?? 0}:${fn.loc?.start.column ?? 0}`
+  const warned = ctx.controlFlowReexecWarnings ?? (ctx.controlFlowReexecWarnings = new Set())
+  if (warned.has(warningKey)) return
+
+  const reactiveVars = new Set<string>(ctx.trackedVars)
+  ;(ctx.signalVars ?? []).forEach(name => reactiveVars.add(name))
+  ;(ctx.storeVars ?? []).forEach(name => reactiveVars.add(name))
+  ;(ctx.memoVars ?? []).forEach(name => reactiveVars.add(name))
+  ;(ctx.aliasVars ?? []).forEach(name => reactiveVars.add(name))
+  if (reactiveVars.size === 0) return
+
+  const controlFlowReactiveReads = new Set<string>()
+  for (const name of scopeResult.controlFlowAnalysis.controlFlowReads) {
+    const base = deSSAVarName(name)
+    if (reactiveVars.has(base)) controlFlowReactiveReads.add(base)
+  }
+  for (const name of scopeResult.controlFlowAnalysis.mixedReads) {
+    const base = deSSAVarName(name)
+    if (reactiveVars.has(base)) controlFlowReactiveReads.add(base)
+  }
+  if (controlFlowReactiveReads.size === 0) return
+
+  warned.add(warningKey)
+  const vars = Array.from(controlFlowReactiveReads).sort()
+  const displayed = vars.slice(0, 5).join(', ')
+  const remainder = vars.length > 5 ? ` (+${vars.length - 5} more)` : ''
+  const loc = fn.loc?.start
+  onWarn({
+    code: 'FICT-R006',
+    message:
+      `Reactive control-flow reads (${displayed}${remainder}) force region re-execution. ` +
+      `Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates.`,
+    fileName: ctx.options?.filename ?? '<unknown>',
+    line: loc?.line ?? 0,
+    column: loc ? loc.column + 1 : 0,
+  })
 }
 
 /**
@@ -716,6 +764,8 @@ export interface CodegenContext {
   listItemParamName?: string
   /** Current namespace context for SVG/MathML element creation */
   namespaceContext?: NamespaceContext
+  /** Dedupe set for control-flow re-execution diagnostics */
+  controlFlowReexecWarnings?: Set<string>
 }
 
 /**
@@ -773,6 +823,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     componentFunctionDefs: new Map(),
     hoistedFunctionDepCounter: 0,
     hoistedFunctionDepNames: new Map(),
+    controlFlowReexecWarnings: new Set(),
   }
 }
 
@@ -9479,6 +9530,7 @@ function lowerFunctionWithRegions(
   })
 
   const hasJSX = regionResult.regions.some(r => r.hasJSX) || functionContainsJSX(fn)
+  emitReactiveControlFlowReexecutionWarning(fn, scopeResult, ctx, { hasJSX, isComponent })
   ctx.wrapTrackedExpressions = hasJSX
   const hasTrackedValues =
     ctx.trackedVars.size > 0 ||

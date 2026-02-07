@@ -542,6 +542,35 @@ describe('Fict Compiler - Control Flow', () => {
         ),
       ).toBe(true)
     })
+
+    it('emits FICT-R006 when reactive state is read in control-flow conditions', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          if (count > 10) {
+            return <Big />
+          }
+          return <Small />
+        }
+      `
+      const { warnings } = runTransformWithWarnings(input)
+      expect(
+        warnings.some(warning => warning.includes('FICT-R006') && warning.includes('count')),
+      ).toBe(true)
+    })
+
+    it('does not emit FICT-R006 for expression-only branching in JSX', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          return <div>{count > 10 ? <Big /> : <Small />}</div>
+        }
+      `
+      const { warnings } = runTransformWithWarnings(input)
+      expect(warnings.some(warning => warning.includes('FICT-R006'))).toBe(false)
+    })
   })
 })
 
