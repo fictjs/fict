@@ -1059,10 +1059,10 @@ export function signal<T>(initialValue: T, options?: SignalOptions<T>): SignalAc
     subsTail: undefined,
     flags: Mutable,
     __id: undefined as number | undefined,
-    ...(options?.equals !== undefined ? { equals: options.equals } : {}),
-    ...(options?.name !== undefined ? { name: options.name } : {}),
-    ...(options?.devToolsSource !== undefined ? { devToolsSource: options.devToolsSource } : {}),
   }
+  if (options?.equals !== undefined) s.equals = options.equals
+  if (options?.name !== undefined) s.name = options.name
+  if (options?.devToolsSource !== undefined) s.devToolsSource = options.devToolsSource
   if (isDev) registerSignalDevtools(s)
   const accessor = signalOper.bind(s as any) as SignalAccessor<T> & Record<symbol, boolean>
   accessor[SIGNAL_MARKER] = true
@@ -1134,10 +1134,10 @@ export function computed<T>(
     flags: 0,
     getter,
     __id: undefined as number | undefined,
-    ...(options?.equals !== undefined ? { equals: options.equals } : {}),
-    ...(options?.name !== undefined ? { name: options.name } : {}),
-    ...(options?.devToolsSource !== undefined ? { devToolsSource: options.devToolsSource } : {}),
   }
+  if (options?.equals !== undefined) c.equals = options.equals
+  if (options?.name !== undefined) c.name = options.name
+  if (options?.devToolsSource !== undefined) c.devToolsSource = options.devToolsSource
   if (isDev) registerComputedDevtools(c)
   const bound = (computedOper as (this: ComputedNode<T>) => T).bind(
     c as any,

@@ -184,6 +184,25 @@ describe('Multi-Priority Scheduler', () => {
       expect(effectRuns).toBe(1)
       expect(value()).toBe(1)
     })
+
+    it('keeps pending true until async transition work resolves', async () => {
+      const [isPending, start] = useTransition()
+      let resolveWork: (() => void) | undefined
+      const work = new Promise<void>(resolve => {
+        resolveWork = resolve
+      })
+
+      start(() => work)
+      expect(isPending()).toBe(true)
+
+      await tick()
+      expect(isPending()).toBe(true)
+
+      resolveWork!()
+      await tick()
+      await tick()
+      expect(isPending()).toBe(false)
+    })
   })
 
   describe('useDeferredValue', () => {

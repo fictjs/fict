@@ -67,21 +67,56 @@ export function startTransition(fn: () => void): void {
  * }
  * ```
  */
-export function useTransition(): [() => boolean, (fn: () => void) => void] {
+export function useTransition(): [() => boolean, (fn: () => void | PromiseLike<unknown>) => void] {
   const pending = signal(false)
+  let pendingCount = 0
 
-  const start = (fn: () => void) => {
-    // Both pending(true) and pending(false) are now low-priority updates,
-    // preventing the race condition where isPending() could be inconsistent
-    // with the actual transition execution state.
-    startTransition(() => {
+  const beginPending = () => {
+    pendingCount += 1
+    if (pendingCount === 1) {
       pending(true)
+    }
+  }
+
+  const endPending = () => {
+    if (pendingCount === 0) return
+    pendingCount -= 1
+    if (pendingCount === 0) {
+      pending(false)
+    }
+  }
+
+  const start = (fn: () => void | PromiseLike<unknown>) => {
+    beginPending()
+    let result: void | PromiseLike<unknown> | undefined
+    let thrown: unknown
+
+    startTransition(() => {
       try {
-        fn()
-      } finally {
-        pending(false)
+        result = fn()
+      } catch (err) {
+        thrown = err
       }
     })
+
+    if (thrown !== undefined) {
+      endPending()
+      throw thrown
+    }
+
+    if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+      Promise.resolve(result).finally(() => {
+        endPending()
+      })
+      return
+    }
+
+    // Keep pending true for at least one microtask so UI can observe it.
+    if (typeof queueMicrotask === 'function') {
+      queueMicrotask(endPending)
+    } else {
+      Promise.resolve().then(endPending)
+    }
   }
 
   return [() => pending(), start]
