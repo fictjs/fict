@@ -4,6 +4,11 @@ const PROXY = Symbol('fict:store-proxy')
 const TARGET = Symbol('fict:store-target')
 const ITERATE_KEY = Symbol('fict:iterate')
 
+const isDev =
+  typeof __DEV__ !== 'undefined'
+    ? __DEV__
+    : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
+
 // ============================================================================
 // Store (Deep Proxy)
 // ============================================================================
@@ -38,6 +43,18 @@ export function createStore<T extends object>(
 const proxyCache = new WeakMap<object, unknown>()
 // Map of target object -> Map<key, Signal>
 const signalCache = new WeakMap<object, Map<string | symbol, SignalAccessor<unknown>>>()
+// Map of target object -> monotonically increasing iterate version
+const iterateVersionCache = new WeakMap<object, number>()
+
+function getIterateVersion(target: object): number {
+  return iterateVersionCache.get(target) ?? 0
+}
+
+function bumpIterateVersion(target: object): number {
+  const next = getIterateVersion(target) + 1
+  iterateVersionCache.set(target, next)
+  return next
+}
 
 function wrap<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value
@@ -148,8 +165,7 @@ function track(target: object, prop: string | symbol) {
 
   let s = signals.get(prop)
   if (!s) {
-    const initial =
-      prop === ITERATE_KEY ? (Reflect.ownKeys(target).length as number) : getLastValue(target, prop)
+    const initial = prop === ITERATE_KEY ? getIterateVersion(target) : getLastValue(target, prop)
     s = signal(initial)
     signals.set(prop, s)
   }
@@ -162,7 +178,7 @@ function trigger(target: object, prop: string | symbol) {
     const s = signals.get(prop)
     if (s) {
       if (prop === ITERATE_KEY) {
-        s(Reflect.ownKeys(target).length)
+        s(bumpIterateVersion(target))
       } else {
         s(getLastValue(target, prop)) // notify with new value
       }
@@ -222,6 +238,17 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
   let currentValue = unwrap(initialValue)
   const signals = new Map<string | symbol, SignalAccessor<unknown>>()
   let iterateSignal: SignalAccessor<number> | undefined
+  let iterateVersion = 0
+
+  const hasSameKeySet = (a: object, b: object): boolean => {
+    const aKeys = Reflect.ownKeys(a)
+    const bKeys = Reflect.ownKeys(b)
+    if (aKeys.length !== bKeys.length) return false
+    for (const key of aKeys) {
+      if (!Object.prototype.hasOwnProperty.call(b, key)) return false
+    }
+    return true
+  }
 
   const getPropSignal = (prop: string | symbol) => {
     let s = signals.get(prop)
@@ -234,15 +261,16 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
 
   const trackIterate = () => {
     if (!iterateSignal) {
-      iterateSignal = signal(Reflect.ownKeys(currentValue).length)
+      iterateSignal = signal(iterateVersion)
     }
     iterateSignal()
   }
 
-  const updateIterate = (value: T) => {
-    if (iterateSignal) {
-      iterateSignal(Reflect.ownKeys(value).length)
-    }
+  const updateIterateIfNeeded = (prev: object, next: object) => {
+    if (!iterateSignal) return
+    if (prev === next || hasSameKeySet(prev, next)) return
+    iterateVersion += 1
+    iterateSignal(iterateVersion)
   }
 
   // The stable proxy we return
@@ -267,6 +295,16 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
       getPropSignal(prop)()
       return Reflect.getOwnPropertyDescriptor(currentValue, prop)
     },
+    set(_, prop) {
+      if (isDev) {
+        throw new Error(
+          `[Fict] Cannot set "${String(
+            prop,
+          )}" on a diffing signal proxy directly. Update the source value and call its writer instead.`,
+        )
+      }
+      return true
+    },
   })
 
   const read = () => proxy
@@ -283,7 +321,7 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
         const newVal = Reflect.get(next as object, prop)
         s(newVal)
       }
-      updateIterate(next)
+      updateIterateIfNeeded(prev as object, next as object)
       return
     }
 
@@ -297,7 +335,7 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
         s(newVal)
       }
     }
-    updateIterate(next)
+    updateIterateIfNeeded(prev as object, next as object)
 
     // Note: If new properties appeared that weren't tracked, we don't care
     // because no one is listening.

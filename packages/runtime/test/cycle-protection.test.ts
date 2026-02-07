@@ -570,6 +570,29 @@ describe('framework cycle protection', () => {
 
       warn.mockRestore()
     })
+
+    it('keeps guards enabled by default even when only devMode is overridden', () => {
+      setCycleProtectionOptions({
+        maxFlushCyclesPerMicrotask: 1,
+        maxEffectRunsPerFlush: 1,
+        devMode: false,
+      })
+
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      beginFlushGuard()
+      expect(beforeEffectRunGuard()).toBe(true)
+      expect(beforeEffectRunGuard()).toBe(false)
+      endFlushGuard()
+
+      expect(
+        warn.mock.calls.some(
+          ([msg]) => typeof msg === 'string' && msg.includes('flush-budget-exceeded'),
+        ),
+      ).toBe(true)
+
+      warn.mockRestore()
+    })
   })
 
   describe('integration with reactive system', () => {

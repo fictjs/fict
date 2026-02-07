@@ -30,6 +30,26 @@ describe('createStore iteration tracking', () => {
     await tick()
     expect(seen[seen.length - 1]).toEqual(['bar'])
   })
+
+  it('tracks ownKeys when key set changes but length stays the same', async () => {
+    const [state, setState] = createStore<{ foo?: string; bar?: string }>({ foo: 'a' })
+    const seen: string[][] = []
+
+    createEffect(() => {
+      seen.push(Object.keys(state))
+    })
+
+    await tick()
+    expect(seen[seen.length - 1]).toEqual(['foo'])
+
+    setState(s => {
+      delete (s as any).foo
+      ;(s as any).bar = 'b'
+    })
+    await tick()
+
+    expect(seen[seen.length - 1]).toEqual(['bar'])
+  })
 })
 
 describe('createStore reconciliation', () => {
@@ -151,6 +171,22 @@ describe('createDiffingSignal reactivity', () => {
     expect(seen[seen.length - 1]).toContain('bar')
   })
 
+  it('tracks key iteration updates when key set changes with same length', async () => {
+    const [read, write] = createDiffingSignal<{ foo?: number; bar?: number }>({ foo: 1 })
+    const seen: string[][] = []
+
+    createEffect(() => {
+      seen.push(Object.keys(read()))
+    })
+
+    await tick()
+    expect(seen[seen.length - 1]).toEqual(['foo'])
+
+    write({ bar: 2 })
+    await tick()
+    expect(seen[seen.length - 1]).toEqual(['bar'])
+  })
+
   it('tracks "in" checks for key presence', async () => {
     const [read, write] = createDiffingSignal<{ foo?: number; bar?: number }>({ foo: 1 })
     const seen: boolean[] = []
@@ -165,5 +201,12 @@ describe('createDiffingSignal reactivity', () => {
     write({ foo: 1, bar: 2 })
     await tick()
     expect(seen[seen.length - 1]).toBe(true)
+  })
+
+  it('throws on direct proxy writes in dev mode', () => {
+    const [read] = createDiffingSignal<{ foo?: number }>({ foo: 1 })
+    expect(() => {
+      ;(read() as any).foo = 2
+    }).toThrow('[Fict] Cannot set "foo" on a diffing signal proxy directly.')
   })
 })

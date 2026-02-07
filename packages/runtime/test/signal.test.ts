@@ -1,7 +1,14 @@
 import { describe, it, expect } from 'vitest'
 
-import { batch, createEffect, createMemo, onCleanup, render } from '../src/index'
+import { batch, createEffect, createMemo, createRoot, onCleanup, render } from '../src/index'
 import { createSelector, createSignal } from '../src/advanced'
+import { registerErrorHandler } from '../src/lifecycle'
+import {
+  __resetReactiveState,
+  batch as rawBatch,
+  effect as rawEffect,
+  signal as rawSignal,
+} from '../src/signal'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -251,5 +258,96 @@ describe('signal runtime robustness', () => {
     expect(select!(2)).toBe(false)
 
     container.remove()
+  })
+
+  it('removes stale dependencies when low-level effects throw during re-run', () => {
+    const mode = rawSignal(false)
+    const active = rawSignal(0)
+    const stale = rawSignal(0)
+    let runs = 0
+    let shouldThrow = true
+
+    const dispose = rawEffect(() => {
+      runs++
+      if (mode()) {
+        active()
+        if (shouldThrow) {
+          shouldThrow = false
+          throw new Error('boom')
+        }
+        return
+      }
+      stale()
+    })
+
+    expect(runs).toBe(1)
+
+    expect(() =>
+      rawBatch(() => {
+        mode(true)
+      }),
+    ).toThrow('boom')
+    expect(runs).toBe(2)
+
+    // Clear queue state left by the thrown flush so we only observe dependency behavior.
+    __resetReactiveState()
+
+    rawBatch(() => {
+      stale(1)
+    })
+    expect(runs).toBe(2)
+
+    rawBatch(() => {
+      active(1)
+    })
+    expect(runs).toBe(3)
+
+    dispose()
+  })
+
+  it('removes stale dependencies when computed throws during update', async () => {
+    const mode = createSignal(false)
+    const active = createSignal(0)
+    const stale = createSignal(0)
+    let runs = 0
+    let errors = 0
+
+    const root = createRoot(() => {
+      registerErrorHandler(() => {
+        errors++
+        return true
+      })
+      const derived = createMemo(() => {
+        if (mode()) {
+          active()
+          throw new Error('boom')
+        }
+        return stale()
+      })
+
+      return createEffect(() => {
+        runs++
+        derived()
+      })
+    })
+
+    expect(runs).toBe(1)
+
+    mode(true)
+    await tick()
+    expect(runs).toBe(1)
+    expect(errors).toBe(1)
+
+    stale(1)
+    await tick()
+    expect(runs).toBe(1)
+    expect(errors).toBe(1)
+
+    active(1)
+    await tick()
+    expect(runs).toBe(1)
+    expect(errors).toBe(2)
+
+    root.dispose()
   })
 })

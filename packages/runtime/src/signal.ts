@@ -844,6 +844,9 @@ function updateComputed<T>(c: ComputedNode<T>): boolean {
   } catch (e) {
     activeSub = prevSub
     c.flags &= ~Running
+    // Keep dependency graph consistent even when getter throws.
+    // Without this, stale old deps can remain subscribed.
+    purgeDeps(c)
     throw e
   }
 }
@@ -881,6 +884,9 @@ function runEffect(e: EffectNode): void {
     } catch (err) {
       activeSub = prevSub
       e.flags = Watching
+      // Keep dependency graph consistent even when effect throws.
+      // Without this, stale old deps can remain subscribed.
+      purgeDeps(e)
       throw err
     }
   } else if (flags & Pending && e.deps) {
@@ -920,6 +926,9 @@ function runEffect(e: EffectNode): void {
       } catch (err) {
         activeSub = prevSub
         e.flags = Watching
+        // Keep dependency graph consistent even when effect throws.
+        // Without this, stale old deps can remain subscribed.
+        purgeDeps(e)
         throw err
       }
     } else {
