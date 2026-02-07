@@ -92,9 +92,9 @@ export interface FictCompilerOptions {
   onWarn?: (warning: CompilerWarning) => void
   /** Internal: filename of the module being compiled. */
   filename?: string
-  /** Enable lazy evaluation of conditional derived values (Rule J optimization) */
+  /** Enable lazy evaluation of conditional derived values (Rule J optimization). Default: true. */
   lazyConditional?: boolean
-  /** Enable getter caching within the same sync block (Rule L optimization) */
+  /** Enable getter caching within the same sync block (Rule L optimization). Default: true. */
   getterCache?: boolean
   /** Emit fine-grained DOM creation/binding code for supported JSX templates */
   fineGrainedDom?: boolean
@@ -142,6 +142,7 @@ export interface FictCompilerOptions {
    * Fail-closed reactivity guarantee mode.
    * When enabled, diagnostics that indicate non-guaranteed reactive behavior are
    * treated as hard errors and cannot be suppressed/downgraded.
+   * Default: true.
    */
   strictGuarantee?: boolean
   /**

@@ -6,7 +6,7 @@ const isDev =
     : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
 
 export interface CycleProtectionOptions {
-  /** Enable cycle protection guards (enabled by default in all modes) */
+  /** Enable cycle protection guards (enabled by default in dev mode) */
   enabled?: boolean
   maxFlushCyclesPerMicrotask?: number
   maxEffectRunsPerFlush?: number
@@ -35,8 +35,8 @@ let enterRootGuard: (root: object) => boolean = () => true
 let exitRootGuard: (root: object) => void = () => {}
 
 const defaultOptions = {
-  // Keep cycle guards on in production to avoid infinite flush loops.
-  enabled: true,
+  // DX-first in development, performance-first in production.
+  enabled: isDev,
   maxFlushCyclesPerMicrotask: 10_000,
   maxEffectRunsPerFlush: 20_000,
   windowSize: 5,

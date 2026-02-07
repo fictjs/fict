@@ -39,6 +39,11 @@ createFictPlugin({
 
 - `dev` (default: `NODE_ENV !== 'production' && NODE_ENV !== 'test'`): enables compiler warnings/diagnostics. Set to `false` to silence warnings.
 - `onWarn`: custom warning handler (only called when `dev` is enabled).
+- `fineGrainedDom` (default: `true`): emits template-first fine-grained DOM operations for supported JSX.
+- `lazyConditional` (default: `true`): enables control-flow lazy lowering for reactive branch returns where supported.
+- `getterCache` (default: `true`): caches repeated getter reads within the same synchronous block.
+- `optimize` (default: `true`): enables optimizer passes.
+- `optimizeLevel` (default: `'safe'`): conservative algebraic optimization level.
 - `inlineDerivedMemos` (default: `true`): allow the compiler to inline single-use derived values. Set to `false` for a “strict memo” mode where user-named derived values keep explicit memo accessors (unless `"use no memo"` disables memoization).
 - `strictReactivity` (default: `false`): treat control-flow fallback diagnostics (`FICT-R003`, `FICT-R006`) as build errors. Useful for CI gates that require deterministic fine-grained reactivity without fallback paths.
 - `strictGuarantee` (default: `true`): fail-closed mode for reactivity guarantees. Non-guaranteed reactivity diagnostics (including control-flow fallback and props fallback classes) are treated as hard errors and cannot be suppressed/downgraded.
@@ -54,3 +59,5 @@ createFictPlugin({
 - `reactiveScopes`: function names whose **first callback argument** is treated as a component-like reactive scope.
   - Only **direct calls** are recognized (e.g., `renderHook(() => ...)` or `utils.renderHook(() => ...)`).
   - **Aliases/indirect calls** are not recognized (e.g., `const rh = renderHook; rh(() => ...)`).
+
+Recommended environment presets: `docs/config-profiles.md`.

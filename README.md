@@ -491,6 +491,7 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 - [Compiler Spec](./docs/compiler-spec.md) — Formal semantics
 - [ESLint Rules](./docs/eslint-rules.md) — Linting configuration
 - [Diagnostic Codes](./docs/diagnostic-codes.md) — Compiler warnings reference
+- [Config Profiles](./docs/config-profiles.md) — Recommended dev/CI/prod compiler and runtime settings
 - [Cycle Protection](./docs/cycle-protection.md) — Development-mode infinite loop detection
 - [SSR SEO Guide](./docs/ssr-seo.md) — SEO best practices for SSR and streaming pages
 - [SSR Performance Tuning](./docs/ssr-performance.md) — Snapshot size and render-mode optimization

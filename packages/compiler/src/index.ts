@@ -1815,6 +1815,8 @@ export const createFictPlugin = declare(
     const normalizedOptions: FictCompilerOptions = {
       ...options,
       fineGrainedDom: options.fineGrainedDom ?? true,
+      lazyConditional: options.lazyConditional ?? true,
+      getterCache: options.getterCache ?? true,
       optimize: options.optimize ?? true,
       optimizeLevel: options.optimizeLevel ?? 'safe',
       inlineDerivedMemos: options.inlineDerivedMemos ?? true,

@@ -570,6 +570,7 @@ reactivity diagnostics are treated as hard errors and cannot be suppressed/downg
 Set `strictGuarantee: false` only when intentionally opting out.
 CI/build pipelines can force strict mode via `FICT_STRICT_GUARANTEE=1`.
 Guarantee boundary reference: `docs/reactivity-guarantee-matrix.md`.
+Profile presets (dev/CI/prod): `docs/config-profiles.md`.
 
 Purity annotations:
 
