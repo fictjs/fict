@@ -3844,9 +3844,28 @@ function transformControlFlowReturns(
     return false
   }
 
+  const hasRiskyImmediateInvocationReads = (stmts: BabelCore.types.Statement[]): boolean =>
+    hasNodeMatch(
+      stmts,
+      node => {
+        if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return false
+        const callee = node.callee
+        if (!t.isFunctionExpression(callee) && !t.isArrowFunctionExpression(callee)) {
+          return false
+        }
+        const bodyNodes = t.isBlockStatement(callee.body) ? callee.body.body : [callee.body]
+        return containsReactiveAccessorRead(bodyNodes, { skipNestedFunctions: true })
+      },
+      { skipNestedFunctions: true },
+    )
+
   const needsTrackedBranchReads = (stmts: BabelCore.types.Statement[]): boolean => {
     if (stmts.length === 0) return false
-    return hasRiskyBranchControlFlow(stmts) || hasRiskyBranchPreludeReads(stmts)
+    return (
+      hasRiskyBranchControlFlow(stmts) ||
+      hasRiskyBranchPreludeReads(stmts) ||
+      hasRiskyImmediateInvocationReads(stmts)
+    )
   }
 
   const emitControlFlowFallbackWarning = (
