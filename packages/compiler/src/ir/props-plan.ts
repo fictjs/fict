@@ -56,6 +56,16 @@ export function buildPropsPlan(
       (t.isArrowFunctionExpression(expr) || t.isFunctionExpression(expr)) &&
       expr.params.length === 0
 
+    const wrapNonReactiveFunction = (
+      expr: BabelCore.types.Expression,
+    ): BabelCore.types.Expression => {
+      if (t.isArrowFunctionExpression(expr) || t.isFunctionExpression(expr)) {
+        ctx.helpersUsed.add('nonReactive')
+        return t.callExpression(t.identifier(RUNTIME_ALIASES.nonReactive), [expr])
+      }
+      return expr
+    }
+
     const wrapAccessorSource = (node: BabelCore.types.Expression): BabelCore.types.Expression => {
       if (t.isCallExpression(node) && t.isIdentifier(node.callee) && node.arguments.length === 0) {
         const baseName = helpers.deSSAVarName(node.callee.name)
@@ -355,7 +365,12 @@ export function buildPropsPlan(
                   ])
                 })()
               : lowered
-        bucket.push(t.objectProperty(toPropKey(attr.name), valueExpr))
+        bucket.push(
+          t.objectProperty(
+            toPropKey(attr.name),
+            isFunctionLike ? wrapNonReactiveFunction(valueExpr) : valueExpr,
+          ),
+        )
         continue
       }
 
@@ -364,9 +379,14 @@ export function buildPropsPlan(
     }
 
     if (children.length === 1 && children[0]) {
-      bucket.push(t.objectProperty(t.identifier('children'), children[0]))
+      bucket.push(t.objectProperty(t.identifier('children'), wrapNonReactiveFunction(children[0])))
     } else if (children.length > 1) {
-      bucket.push(t.objectProperty(t.identifier('children'), t.arrayExpression(children)))
+      bucket.push(
+        t.objectProperty(
+          t.identifier('children'),
+          t.arrayExpression(children.map(child => wrapNonReactiveFunction(child))),
+        ),
+      )
     }
 
     flushBucket()

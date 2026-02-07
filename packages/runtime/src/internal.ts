@@ -91,6 +91,7 @@ export {
   callEventHandler,
   bindProperty,
   bindRef,
+  nonReactive,
   insert,
   insertBetween,
   createConditional,

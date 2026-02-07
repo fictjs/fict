@@ -339,6 +339,35 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).not.toContain('key: () =>')
       expect(output).not.toContain('() => id()')
     })
+
+    it('marks component callback props as non-reactive', () => {
+      const input = `
+        function Empty() {
+          return <span>Empty</span>
+        }
+        function List(props) {
+          return <div>{props.renderEmpty()}</div>
+        }
+        function Component() {
+          return <List renderEmpty={() => <Empty />} />
+        }
+      `
+      const output = transform(input)
+      expect(output).toContain('renderEmpty: nonReactive(() =>')
+    })
+
+    it('marks function-as-child callbacks for components as non-reactive', () => {
+      const input = `
+        function Layout(props) {
+          return <section>{props.children}</section>
+        }
+        function Component() {
+          return <Layout>{() => <span>Slot</span>}</Layout>
+        }
+      `
+      const output = transform(input)
+      expect(output).toContain('children: nonReactive(() =>')
+    })
   })
 
   describe('Fine-grained DOM lowering (default)', () => {
