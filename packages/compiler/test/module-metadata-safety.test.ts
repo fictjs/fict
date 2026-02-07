@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 import { transformSync } from '@babel/core'
@@ -58,5 +58,52 @@ describe('module metadata safety', () => {
 
     const warning = warnings.find(item => item.code === 'FICT-P002')
     expect(warning?.fileName).toBe(filename)
+  })
+
+  it('skips rewriting unchanged metadata payloads', async () => {
+    const baseDir = path.join(process.cwd(), '__fict_metadata_safety__')
+    mkdirSync(baseDir, { recursive: true })
+    const filePath = path.join(baseDir, 'module.ts')
+    const metaPath = `${filePath}.fict.meta.json`
+    const source = 'export const value = 1'
+
+    try {
+      transformSync(source, {
+        filename: filePath,
+        configFile: false,
+        babelrc: false,
+        sourceType: 'module',
+        parserOpts: {
+          sourceType: 'module',
+          plugins: ['typescript'],
+        },
+        plugins: [[createFictPlugin, { emitModuleMetadata: true, dev: false }]],
+      })
+
+      const firstMtime = statSync(metaPath).mtimeMs
+      await new Promise(resolve => setTimeout(resolve, 20))
+
+      transformSync(source, {
+        filename: filePath,
+        configFile: false,
+        babelrc: false,
+        sourceType: 'module',
+        parserOpts: {
+          sourceType: 'module',
+          plugins: ['typescript'],
+        },
+        plugins: [[createFictPlugin, { emitModuleMetadata: true, dev: false }]],
+      })
+
+      const secondMtime = statSync(metaPath).mtimeMs
+      expect(secondMtime).toBe(firstMtime)
+    } finally {
+      if (existsSync(metaPath)) {
+        rmSync(metaPath, { force: true })
+      }
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+    }
   })
 })

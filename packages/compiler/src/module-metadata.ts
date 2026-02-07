@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import type { FictCompilerOptions, ModuleReactiveMetadata } from './types'
 
 const globalMetadata = new Map<string, ModuleReactiveMetadata>()
+const lastWrittenMetadataPayload = new Map<string, string>()
 
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
 const DEFAULT_META_EXTENSION = '.fict.meta.json'
@@ -331,9 +332,13 @@ export function setModuleMetadata(
   store.set(normalized, metadata)
   const metaPath = getMetadataWritePath(normalized, writeMode, options)
   if (!metaPath) return
+  const payload = JSON.stringify(metadata)
+  if (lastWrittenMetadataPayload.get(metaPath) === payload && pathIsFile(metaPath)) return
   try {
-    writeMetadataAtomically(metaPath, JSON.stringify(metadata))
+    writeMetadataAtomically(metaPath, payload)
+    lastWrittenMetadataPayload.set(metaPath, payload)
   } catch {
+    lastWrittenMetadataPayload.delete(metaPath)
     if (writeMode === 'adjacent') {
       warnMetadata(options, normalized, 'Failed to write module metadata sidecar')
     }
@@ -343,4 +348,5 @@ export function setModuleMetadata(
 export function clearModuleMetadata(options?: FictCompilerOptions): void {
   const store = getMetadataStore(options)
   store.clear()
+  lastWrittenMetadataPayload.clear()
 }
