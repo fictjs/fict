@@ -5,12 +5,11 @@ import type * as BabelCore from '@babel/core'
 import { DelegatedEvents, RUNTIME_ALIASES, RUNTIME_MODULE } from '../constants'
 import { debugEnabled, debugLog } from '../debug'
 import { applyRegionMetadata, shouldMemoizeRegion, type RegionMetadata } from '../fine-grained-dom'
-import { resolveModuleMetadata, setModuleMetadata } from '../module-metadata'
+import { setModuleMetadata } from '../module-metadata'
 import type {
   FictCompilerOptions,
   HookReturnInfoSerializable,
   ModuleReactiveMetadata,
-  ReactiveExportKind,
 } from '../types'
 import { DiagnosticCode, reportDiagnostic } from '../validation'
 
@@ -22,6 +21,10 @@ import {
   structuredNodeHasComplexControlFlow,
 } from './codegen-analysis'
 import { attachHelperImports, collectDeclaredNames } from './codegen-imports'
+import {
+  applyImportedReactiveMetadata,
+  buildModuleReactiveMetadata,
+} from './codegen-module-metadata'
 import {
   getReactiveCallKind,
   getReactiveCallKindFromBabel,
@@ -2270,202 +2273,6 @@ function collectRuntimeImports(
   }
 
   return { names, importMap, namespaces }
-}
-
-function addImportedReactiveBinding(
-  name: string,
-  kind: ReactiveExportKind,
-  ctx: CodegenContext,
-): void {
-  const base = deSSAVarName(name)
-  if (kind === 'signal') {
-    ctx.signalVars?.add(base)
-  } else if (kind === 'store') {
-    ctx.storeVars?.add(base)
-  } else if (kind === 'memo') {
-    ctx.memoVars?.add(base)
-  }
-  ctx.trackedVars.add(base)
-}
-
-function applyImportedReactiveMetadata(
-  body: BabelCore.types.Statement[],
-  ctx: CodegenContext,
-  t: typeof BabelCore.types,
-  options?: FictCompilerOptions,
-): void {
-  const importer = options?.filename
-  const namespaces = new Map<string, ModuleReactiveMetadata>()
-
-  for (const stmt of body) {
-    if (!t.isImportDeclaration(stmt)) continue
-    const meta = resolveModuleMetadata(stmt.source.value, importer, options)
-    if (!meta) continue
-
-    for (const spec of stmt.specifiers) {
-      if (t.isImportSpecifier(spec)) {
-        const importedName = t.isIdentifier(spec.imported)
-          ? spec.imported.name
-          : String(spec.imported.value)
-        const localName = spec.local.name
-        const kind = meta.exports[importedName]
-        if (kind) {
-          addImportedReactiveBinding(localName, kind, ctx)
-        }
-        const hookInfo = meta.hooks?.[importedName]
-        if (hookInfo) {
-          ctx.hookReturnInfo = ctx.hookReturnInfo ?? new Map()
-          ctx.hookReturnInfo.set(localName, deserializeHookReturnInfo(hookInfo))
-        }
-        continue
-      }
-      if (t.isImportDefaultSpecifier(spec)) {
-        const localName = spec.local.name
-        const kind = meta.exports.default
-        if (kind) {
-          addImportedReactiveBinding(localName, kind, ctx)
-        }
-        const hookInfo = meta.hooks?.default
-        if (hookInfo) {
-          ctx.hookReturnInfo = ctx.hookReturnInfo ?? new Map()
-          ctx.hookReturnInfo.set(localName, deserializeHookReturnInfo(hookInfo))
-        }
-        continue
-      }
-      if (t.isImportNamespaceSpecifier(spec)) {
-        namespaces.set(spec.local.name, meta)
-      }
-    }
-  }
-
-  if (namespaces.size > 0) {
-    ctx.importedNamespaces = namespaces
-  }
-}
-
-function classifyReactiveExport(name: string, ctx: CodegenContext): ReactiveExportKind | null {
-  const base = deSSAVarName(name)
-  if (ctx.storeVars?.has(base)) return 'store'
-  if (ctx.signalVars?.has(base)) return 'signal'
-  if (ctx.aliasVars?.has(base)) return 'signal'
-  if (ctx.memoVars?.has(base)) return 'memo'
-  return null
-}
-
-function buildModuleReactiveMetadata(
-  body: BabelCore.types.Statement[],
-  ctx: CodegenContext,
-  t: typeof BabelCore.types,
-  options: FictCompilerOptions | undefined,
-): ModuleReactiveMetadata {
-  const metadata: ModuleReactiveMetadata = { exports: {} }
-  const hookExports: Record<string, HookReturnInfoSerializable> = {}
-  const addExport = (exportName: string, localName: string) => {
-    const kind = classifyReactiveExport(localName, ctx)
-    if (kind) {
-      metadata.exports[exportName] = kind
-    }
-    const hookInfo = getHookReturnInfo(localName, ctx)
-    if (hookInfo) {
-      hookExports[exportName] = serializeHookReturnInfo(hookInfo)
-    }
-  }
-  const addExportFromSource = (source: string, importedName: string, exportName: string) => {
-    const sourceMeta = resolveModuleMetadata(source, options?.filename, options)
-    if (!sourceMeta) return
-    const kind = sourceMeta.exports[importedName]
-    if (kind) {
-      metadata.exports[exportName] = kind
-    }
-    const hookInfo = sourceMeta.hooks?.[importedName]
-    if (hookInfo) {
-      hookExports[exportName] = hookInfo
-    }
-  }
-  const addDefaultExportKind = (kind: ReactiveExportKind | null) => {
-    if (kind) {
-      metadata.exports.default = kind
-    }
-  }
-
-  for (const stmt of body) {
-    if (t.isExportNamedDeclaration(stmt)) {
-      if (stmt.source && stmt.specifiers.length > 0) {
-        for (const spec of stmt.specifiers) {
-          if (!t.isExportSpecifier(spec)) continue
-          const importedName = spec.local.name
-          const exportName = t.isIdentifier(spec.exported)
-            ? spec.exported.name
-            : t.isStringLiteral(spec.exported)
-              ? spec.exported.value
-              : String(spec.exported)
-          addExportFromSource(stmt.source.value, importedName, exportName)
-        }
-        continue
-      }
-      if (stmt.declaration) {
-        const decl = stmt.declaration
-        if (t.isFunctionDeclaration(decl) && decl.id) {
-          addExport(decl.id.name, decl.id.name)
-        } else if (t.isClassDeclaration(decl) && decl.id) {
-          addExport(decl.id.name, decl.id.name)
-        } else if (t.isVariableDeclaration(decl)) {
-          for (const v of decl.declarations) {
-            if (t.isIdentifier(v.id)) {
-              addExport(v.id.name, v.id.name)
-            }
-          }
-        }
-      } else {
-        for (const spec of stmt.specifiers) {
-          if (!t.isExportSpecifier(spec)) continue
-          const localName = spec.local.name
-          const exportName = t.isIdentifier(spec.exported)
-            ? spec.exported.name
-            : t.isStringLiteral(spec.exported)
-              ? spec.exported.value
-              : String(spec.exported)
-          addExport(exportName, localName)
-        }
-      }
-      continue
-    }
-
-    if (t.isExportAllDeclaration(stmt)) {
-      const sourceMeta = resolveModuleMetadata(stmt.source.value, options?.filename, options)
-      if (!sourceMeta) continue
-      for (const [exportName, kind] of Object.entries(sourceMeta.exports)) {
-        if (exportName === 'default') continue
-        metadata.exports[exportName] = kind
-      }
-      if (sourceMeta.hooks) {
-        for (const [exportName, info] of Object.entries(sourceMeta.hooks)) {
-          if (exportName === 'default') continue
-          hookExports[exportName] = info
-        }
-      }
-      continue
-    }
-
-    if (t.isExportDefaultDeclaration(stmt)) {
-      const decl = stmt.declaration
-      if (t.isIdentifier(decl)) {
-        addExport('default', decl.name)
-      } else if (t.isFunctionDeclaration(decl) && decl.id) {
-        addExport('default', decl.id.name)
-      } else if (t.isClassDeclaration(decl) && decl.id) {
-        addExport('default', decl.id.name)
-      } else if (t.isCallExpression(decl) || t.isOptionalCallExpression(decl)) {
-        const kind = getReactiveCallKindFromBabel(decl, ctx, t)
-        addDefaultExportKind(kind)
-      }
-    }
-  }
-
-  if (Object.keys(hookExports).length > 0) {
-    metadata.hooks = hookExports
-  }
-  return metadata
 }
 
 function collectLocalDeclaredNames(
@@ -7659,7 +7466,12 @@ export function lowerHIRWithRegions(
   ctx.moduleRuntimeNames = runtimeImports.names
   ctx.moduleRuntimeImportMap = runtimeImports.importMap
   ctx.moduleRuntimeNamespaceImports = runtimeImports.namespaces
-  applyImportedReactiveMetadata(originalBody, ctx, t, options)
+  applyImportedReactiveMetadata(originalBody, ctx, t, options, {
+    setImportedHookInfo(localName, info) {
+      ctx.hookReturnInfo = ctx.hookReturnInfo ?? new Map()
+      ctx.hookReturnInfo.set(localName, deserializeHookReturnInfo(info))
+    },
+  })
   const stateMacroNames = new Set<string>(['$state', ...(macroAliases?.state ?? [])])
   const memoMacroNames = new Set<string>(macroAliases?.memo ?? ctx.memoMacroNames ?? [])
   if (!memoMacroNames.has('$memo')) memoMacroNames.add('$memo')
@@ -7963,7 +7775,12 @@ export function lowerHIRWithRegions(
     body.push(t.expressionStatement(t.callExpression(t.identifier(RUNTIME_ALIASES.popContext), [])))
   }
 
-  const moduleMeta = buildModuleReactiveMetadata(originalBody, ctx, t, options)
+  const moduleMeta = buildModuleReactiveMetadata(originalBody, ctx, t, options, {
+    getLocalHookInfo(localName) {
+      const info = getHookReturnInfo(localName, ctx)
+      return info ? serializeHookReturnInfo(info) : undefined
+    },
+  })
   setModuleMetadata(options?.filename, moduleMeta, options)
   return t.file(t.program(attachHelperImports(ctx, body, t)))
 }
