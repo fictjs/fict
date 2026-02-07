@@ -455,6 +455,29 @@ describe('DOM Module', () => {
         teardown()
       })
 
+      it('creates child binding when child is a signal accessor', async () => {
+        const count = createSignal(0)
+
+        const teardown = render(
+          () => ({
+            type: 'div',
+            props: {
+              children: count,
+            },
+            key: undefined,
+          }),
+          container,
+        )
+
+        expect(container.textContent).toBe('0')
+
+        count(7)
+        await tick()
+        expect(container.textContent).toBe('7')
+
+        teardown()
+      })
+
       it('does not execute non-reactive function children', () => {
         let invoked = 0
         const callbackChild = nonReactive(() => {

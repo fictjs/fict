@@ -513,17 +513,15 @@ function appendChildNode(
     return
   }
 
-  // Handle getter function (recursive)
-  if (typeof child === 'function' && (child as () => FictNode).length === 0) {
+  // Handle function children:
+  // - reactive accessors (signals/computed/getters) become child bindings
+  // - non-reactive callbacks stay inert
+  if (typeof child === 'function') {
     const childGetter = child as () => FictNode
     if (isReactive(childGetter)) {
       createChildBinding(parent, childGetter, node => createElementWithContext(node, namespace))
       return
     }
-  }
-
-  // Non-reactive function values are callbacks, not DOM children.
-  if (typeof child === 'function') {
     return
   }
 
