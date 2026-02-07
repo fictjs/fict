@@ -193,28 +193,46 @@ const hasInstructionArray = (value: unknown): value is { instructions: Instructi
   return Array.isArray(candidate.instructions)
 }
 
+const expressionContainsJSXCache = new WeakMap<object, boolean>()
+
 function expressionContainsJSX(expr: unknown): boolean {
-  if (Array.isArray(expr)) {
-    return expr.some(item => expressionContainsJSX(item))
-  }
   if (!expr || typeof expr !== 'object') return false
+  const cached = expressionContainsJSXCache.get(expr)
+  if (cached !== undefined) return cached
+
+  let result = false
+  if (Array.isArray(expr)) {
+    result = expr.some(item => expressionContainsJSX(item))
+    expressionContainsJSXCache.set(expr, result)
+    return result
+  }
   const candidate = expr as Expression
-  if (candidate.kind === 'JSXElement') return true
+  if (candidate.kind === 'JSXElement') {
+    expressionContainsJSXCache.set(expr, true)
+    return true
+  }
 
   if (hasInstructionArray(expr)) {
-    return expr.instructions.some(i =>
+    result = expr.instructions.some(i =>
       i.kind === 'Assign' || i.kind === 'Expression' ? expressionContainsJSX(i.value) : false,
     )
+    expressionContainsJSXCache.set(expr, result)
+    return result
   }
 
   switch (candidate.kind) {
     case 'CallExpression':
-      if (expressionContainsJSX(candidate.callee)) return true
-      return candidate.arguments.some(arg => expressionContainsJSX(arg))
+      if (expressionContainsJSX(candidate.callee)) {
+        result = true
+        break
+      }
+      result = candidate.arguments.some(arg => expressionContainsJSX(arg))
+      break
     case 'ArrayExpression':
-      return candidate.elements.some(el => expressionContainsJSX(el))
+      result = candidate.elements.some(el => expressionContainsJSX(el))
+      break
     case 'ObjectExpression':
-      return (
+      result =
         candidate.properties.some(p => {
           if (p.kind === 'SpreadElement') return expressionContainsJSX(p.argument)
           return (
@@ -222,31 +240,38 @@ function expressionContainsJSX(expr: unknown): boolean {
             expressionContainsJSX(p.value)
           )
         }) ?? false
-      )
+      break
     case 'ConditionalExpression':
-      return (
+      result =
         expressionContainsJSX(candidate.test) ||
         expressionContainsJSX(candidate.consequent) ||
         expressionContainsJSX(candidate.alternate)
-      )
+      break
     case 'ArrowFunction':
       if (Array.isArray(candidate.body)) {
-        return candidate.body.some(block =>
+        result = candidate.body.some(block =>
           block.instructions.some(i =>
             i.kind === 'Assign' || i.kind === 'Expression' ? expressionContainsJSX(i.value) : false,
           ),
         )
+        break
       }
-      return expressionContainsJSX(candidate.body)
+      result = expressionContainsJSX(candidate.body)
+      break
     case 'FunctionExpression':
-      return candidate.body.some(block =>
+      result = candidate.body.some(block =>
         block.instructions.some(i =>
           i.kind === 'Assign' || i.kind === 'Expression' ? expressionContainsJSX(i.value) : false,
         ),
       )
+      break
     default:
-      return false
+      result = false
+      break
   }
+
+  expressionContainsJSXCache.set(expr, result)
+  return result
 }
 
 function withNoMemoAndDynamicHooks<T>(ctx: CodegenContext, fn: () => T): T {
