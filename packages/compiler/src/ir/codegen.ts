@@ -3772,6 +3772,16 @@ function transformControlFlowReturns(
   const containsReturnStatement = (nodes: BabelCore.types.Node[]) =>
     hasNodeMatch(nodes, node => t.isReturnStatement(node))
 
+  const getMemberRootIdentifier = (
+    expr: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
+  ): BabelCore.types.Identifier | null => {
+    let current: BabelCore.types.Expression = expr.object as BabelCore.types.Expression
+    while (t.isMemberExpression(current) || t.isOptionalMemberExpression(current)) {
+      current = current.object as BabelCore.types.Expression
+    }
+    return t.isIdentifier(current) ? current : null
+  }
+
   const containsReactiveAccessorRead = (
     nodes: BabelCore.types.Node[],
     options?: { skipNestedFunctions?: boolean },
@@ -3779,9 +3789,15 @@ function transformControlFlowReturns(
     hasNodeMatch(
       nodes,
       node => {
-        if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return false
-        const callee = node.callee
-        return t.isIdentifier(callee) && reactiveAccessorNames.has(callee.name)
+        if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+          const callee = node.callee
+          return t.isIdentifier(callee) && reactiveAccessorNames.has(callee.name)
+        }
+        if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+          const root = getMemberRootIdentifier(node)
+          return !!(root && ctx.storeVars?.has(root.name))
+        }
+        return false
       },
       options,
     )
