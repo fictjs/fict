@@ -435,9 +435,10 @@ warningLevels: {
 
 **Severity:** Warning
 
-**Why:** A closure captures a reactive value in a way that may cause stale reads.
+**Why:** A closure that captures reactive values escapes through an unknown callback boundary.
 
-**Impact:** This is rare in Fict due to automatic getter conversion. Usually indicates an edge case.
+**Impact:** Dependency boundaries may become implicit and harder to reason about.
+Non-escaping callbacks (for common iterator patterns like `map`/`filter`/`forEach`) are not flagged.
 
 ### FICT-R006: Reactive control-flow re-execution
 

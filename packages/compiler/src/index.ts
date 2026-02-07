@@ -357,6 +357,127 @@ function runWarningPass(
     if (!root) return false
     return hasTrackedBinding(path, root.name, reactiveBindingIds)
   }
+  const NON_ESCAPING_CALLBACK_METHODS = new Set([
+    'map',
+    'forEach',
+    'filter',
+    'some',
+    'every',
+    'find',
+    'findIndex',
+    'findLast',
+    'findLastIndex',
+    'flatMap',
+    'reduce',
+    'reduceRight',
+    'sort',
+    'toSorted',
+    'then',
+    'catch',
+    'finally',
+  ])
+  const capturedClosureByBinding = new Map<BabelCore.types.Identifier, Set<string>>()
+  const shouldIgnoreIdentifierReference = (
+    idPath: BabelCore.NodePath<BabelCore.types.Identifier>,
+  ): boolean => {
+    if (
+      idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
+      !(idPath.parent as BabelCore.types.MemberExpression).computed
+    ) {
+      return true
+    }
+    if (
+      idPath.parentPath.isObjectProperty({ key: idPath.node }) &&
+      !(idPath.parent as BabelCore.types.ObjectProperty).computed &&
+      !(idPath.parent as BabelCore.types.ObjectProperty).shorthand
+    ) {
+      return true
+    }
+    return false
+  }
+  const collectCapturedReactiveNames = (fnPath: BabelCore.NodePath): Set<string> => {
+    const captured = new Set<string>()
+    fnPath.traverse({
+      Function(inner) {
+        if (inner === fnPath) return
+        inner.skip()
+      },
+      Identifier(idPath) {
+        if (shouldIgnoreIdentifierReference(idPath)) return
+        const name = idPath.node.name
+        const binding = idPath.scope.getBinding(name)
+        if (!binding) return
+        if (!reactiveBindingIds.has(binding.identifier as BabelCore.types.Identifier)) return
+        if (binding.scope === idPath.scope || binding.scope === fnPath.scope) return
+        captured.add(name)
+      },
+    })
+    return captured
+  }
+  const registerClosureCaptureBinding = (
+    fnPath: BabelCore.NodePath<
+      | BabelCore.types.Function
+      | BabelCore.types.FunctionDeclaration
+      | BabelCore.types.ArrowFunctionExpression
+    >,
+    captured: Set<string>,
+  ): void => {
+    if (captured.size === 0) return
+    if (fnPath.isFunctionDeclaration() && fnPath.node.id) {
+      const binding = fnPath.parentPath.scope.getBinding(fnPath.node.id.name)
+      if (binding) {
+        capturedClosureByBinding.set(binding.identifier as BabelCore.types.Identifier, captured)
+      }
+      return
+    }
+    if (
+      (fnPath.isFunctionExpression() || fnPath.isArrowFunctionExpression()) &&
+      fnPath.parentPath.isVariableDeclarator()
+    ) {
+      const id = fnPath.parentPath.node.id
+      if (!t.isIdentifier(id)) return
+      const binding = fnPath.parentPath.scope.getBinding(id.name)
+      if (binding) {
+        capturedClosureByBinding.set(binding.identifier as BabelCore.types.Identifier, captured)
+      }
+      return
+    }
+    if (fnPath.parentPath.isAssignmentExpression({ right: fnPath.node })) {
+      const left = fnPath.parentPath.node.left
+      if (!t.isIdentifier(left)) return
+      const binding = fnPath.parentPath.scope.getBinding(left.name)
+      if (binding) {
+        capturedClosureByBinding.set(binding.identifier as BabelCore.types.Identifier, captured)
+      }
+    }
+  }
+  const collectCapturedForArgument = (argPath: BabelCore.NodePath): Set<string> | null => {
+    if (argPath.isArrowFunctionExpression() || argPath.isFunctionExpression()) {
+      const captured = collectCapturedReactiveNames(argPath)
+      return captured.size > 0 ? captured : null
+    }
+    if (!argPath.isIdentifier()) return null
+    const binding = argPath.scope.getBinding(argPath.node.name)
+    if (!binding) return null
+    const captured = capturedClosureByBinding.get(binding.identifier as BabelCore.types.Identifier)
+    return captured && captured.size > 0 ? captured : null
+  }
+  const isNonEscapingCallbackHost = (callee: BabelCore.types.Expression): boolean => {
+    const member =
+      t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee) ? callee : null
+    if (!member || member.computed || !t.isIdentifier(member.property)) return false
+    return NON_ESCAPING_CALLBACK_METHODS.has(member.property.name)
+  }
+  const emitClosureCaptureWarning = (node: BabelCore.types.Node, captured: Set<string>): void => {
+    const names = Array.from(captured).sort().join(', ')
+    emitWarning(
+      node,
+      'FICT-R005',
+      `Function captures reactive variable(s): ${names}. Pass them as parameters or memoize explicitly to avoid hidden dependencies.`,
+      warn,
+      fileName,
+    )
+  }
   const argumentHasReactive = (argPath: BabelCore.NodePath): boolean => {
     if (argPath.isSpreadElement()) {
       const inner = argPath.get('argument') as BabelCore.NodePath
@@ -379,20 +500,7 @@ function runWarningPass(
         path.skip()
       },
       Identifier(idPath) {
-        // Ignore property keys and non-computed member properties (except shorthand)
-        if (
-          idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
-          !(idPath.parent as BabelCore.types.MemberExpression).computed
-        ) {
-          return
-        }
-        if (
-          idPath.parentPath.isObjectProperty({ key: idPath.node }) &&
-          !(idPath.parent as BabelCore.types.ObjectProperty).computed &&
-          !(idPath.parent as BabelCore.types.ObjectProperty).shorthand
-        ) {
-          return
-        }
+        if (shouldIgnoreIdentifierReference(idPath)) return
         const binding = idPath.scope.getBinding(idPath.node.name)
         if (binding && reactiveBindingIds.has(binding.identifier as BabelCore.types.Identifier)) {
           found = true
@@ -477,33 +585,8 @@ function runWarningPass(
       }
     },
     Function(path) {
-      const captured = new Set<string>()
-      path.traverse(
-        {
-          Function(inner) {
-            if (inner === path) return
-            inner.skip()
-          },
-          Identifier(idPath) {
-            const name = idPath.node.name
-            const binding = idPath.scope.getBinding(name)
-            if (!binding) return
-            if (!reactiveBindingIds.has(binding.identifier as BabelCore.types.Identifier)) return
-            if (binding.scope === idPath.scope || binding.scope === path.scope) return
-            captured.add(name)
-          },
-        },
-        {},
-      )
-      if (captured.size > 0) {
-        emitWarning(
-          path.node,
-          'FICT-R005',
-          `Function captures reactive variable(s): ${Array.from(captured).join(', ')}. Pass them as parameters or memoize explicitly to avoid hidden dependencies.`,
-          warn,
-          fileName,
-        )
-      }
+      const captured = collectCapturedReactiveNames(path)
+      registerClosureCaptureBinding(path, captured)
     },
     CallExpression(path) {
       const isEffect = isEffectCall(path.node, t, effectMacroNames)
@@ -568,6 +651,7 @@ function runWarningPass(
       if (isSafe) return
 
       const argPaths = path.get('arguments') as BabelCore.NodePath[]
+      const nonEscapingCallbackHost = isNonEscapingCallbackHost(callee)
       for (const argPath of argPaths) {
         if (
           argPath.isIdentifier() &&
@@ -586,6 +670,14 @@ function runWarningPass(
           )
           break
         }
+      }
+      if (nonEscapingCallbackHost) return
+
+      for (const argPath of argPaths) {
+        const captured = collectCapturedForArgument(argPath)
+        if (!captured) continue
+        emitClosureCaptureWarning(argPath.node, captured)
+        break
       }
     },
     OptionalMemberExpression(path) {

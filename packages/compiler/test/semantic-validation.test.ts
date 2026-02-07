@@ -332,6 +332,71 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
   })
 
+  it('does not warn FICT-R005 for non-escaping array callbacks', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        const items = [1, 2, 3]
+        return <ul>{items.map(item => <li>{count + item}</li>)}</ul>
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R005')).toBe(false)
+  })
+
+  it('warns FICT-R005 when inline closure escapes via unknown callback boundary', () => {
+    const source = `
+      import { $state } from 'fict'
+      function consume(fn) {
+        return fn()
+      }
+      function App() {
+        let count = $state(0)
+        consume(() => count)
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
+  })
+
+  it('warns FICT-R005 when named closure escapes via unknown callback boundary', () => {
+    const source = `
+      import { $state } from 'fict'
+      function consume(fn) {
+        return fn()
+      }
+      function App() {
+        let count = $state(0)
+        const readCount = () => count
+        consume(readCount)
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
+  })
+
+  it('does not warn FICT-R005 for JSX event handlers capturing reactive values', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        const handleClick = () => {
+          count = count + 1
+        }
+        return <button onClick={handleClick}>{count}</button>
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R005')).toBe(false)
+  })
+
   it('warns only with FICT-S002 for direct state argument', () => {
     const source = `
       import { $state } from 'fict'
