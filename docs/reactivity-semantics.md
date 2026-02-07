@@ -2,6 +2,8 @@
 
 This document defines the semantic contract between Fict developers and the compiler. It explains **"when you write this, Fict does that"** — the predictable rules that govern how your code behaves.
 
+For fail-closed CI boundaries and unsupported/fallback classifications, see `docs/reactivity-guarantee-matrix.md`.
+
 ## Core Principle: Getter-Based Reactivity
 
 Fict's compiler transforms all reactive value access into **getter calls**. This single principle solves most "implicit semantics" problems elegantly:

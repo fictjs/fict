@@ -49,6 +49,26 @@ jobs:
       - run: pnpm install
       - run: pnpm typecheck
 
+  strict-guarantee:
+    name: Strict Guarantee Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install
+      - run: FICT_STRICT_GUARANTEE=1 pnpm -C packages/compiler test -- reactivity-guarantee-contract.test.ts
+      - run: FICT_STRICT_GUARANTEE=1 pnpm build
+      - run: FICT_STRICT_GUARANTEE=1 pnpm test:bundlers
+
   test:
     name: Test
     runs-on: ubuntu-latest

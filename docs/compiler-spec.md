@@ -568,6 +568,7 @@ Set `strictReactivity: true` to escalate control-flow fallback diagnostics
 Set `strictGuarantee: true` for fail-closed compilation: non-guaranteed reactivity
 diagnostics are treated as hard errors and cannot be suppressed/downgraded.
 CI/build pipelines can force this via `FICT_STRICT_GUARANTEE=1`.
+Guarantee boundary reference: `docs/reactivity-guarantee-matrix.md`.
 
 Purity annotations:
 

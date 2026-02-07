@@ -458,6 +458,7 @@ when you need tighter update granularity.
 Set `strictGuarantee: true` for fail-closed behavior where non-guaranteed reactivity
 diagnostics cannot be suppressed or downgraded.
 Set `FICT_STRICT_GUARANTEE=1` in CI to force-enable the same gate globally.
+For the overall guarantee/fallback/unsupported map, see `docs/reactivity-guarantee-matrix.md`.
 
 ---
 

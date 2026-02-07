@@ -43,6 +43,7 @@ createFictPlugin({
 - `strictReactivity` (default: `false`): treat control-flow fallback diagnostics (`FICT-R003`, `FICT-R006`) as build errors. Useful for CI gates that require deterministic fine-grained reactivity without fallback paths.
 - `strictGuarantee` (default: `false`): fail-closed mode for reactivity guarantees. Non-guaranteed reactivity diagnostics (including control-flow fallback and props fallback classes) are treated as hard errors and cannot be suppressed/downgraded.
   - CI override: set `FICT_STRICT_GUARANTEE=1` to force-enable `strictGuarantee` even when not passed in plugin options.
+  - Contract fixtures: see `packages/compiler/test/reactivity-guarantee-contract.test.ts` for the maintained guarantee/fallback/unsupported matrix checks.
 - `emitModuleMetadata`:
   - `true`: always write adjacent `.fict.meta.json` sidecar files next to source files.
   - `false`: never write metadata files.
