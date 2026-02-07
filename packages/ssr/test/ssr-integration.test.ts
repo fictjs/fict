@@ -1021,6 +1021,9 @@ function compileResumableModule(source: string): {
     dev: false,
     fineGrainedDom: true,
     resumable: true,
+    // SSR integration fixtures validate end-to-end rendering/rehydration behavior and
+    // are not intended to enforce strict guarantee diagnostics.
+    strictGuarantee: false,
     emitModuleMetadata: false,
   }
 

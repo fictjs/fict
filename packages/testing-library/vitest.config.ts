@@ -9,6 +9,8 @@ export default defineConfig({
       include: ['**/*.compiled.test.tsx'],
       // Enable $state/$effect in renderHook callbacks
       reactiveScopes: ['renderHook'],
+      // This suite validates testing-library behavior, not strict compiler guarantees.
+      strictGuarantee: false,
     }),
   ],
   test: {

@@ -2,7 +2,12 @@ import { defineConfig } from 'vitest/config'
 import fict from '@fictjs/vite-plugin'
 
 export default defineConfig({
-  plugins: [fict()],
+  plugins: [
+    fict({
+      // Router package tests validate routing behavior, not strict guarantee diagnostics.
+      strictGuarantee: false,
+    }),
+  ],
   test: {
     globals: true,
     environment: 'jsdom',

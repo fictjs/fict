@@ -513,27 +513,36 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
 
       try {
-        const isTypeScript = filename.endsWith('.tsx') || filename.endsWith('.ts')
+        const precompiledInput = isPrecompiledFictModule(code)
+        let finalCode: string
+        let finalMap: TransformResult['map']
 
-        const result = await transformAsync(code, {
-          filename,
-          sourceMaps: fictOptions.sourcemap,
-          sourceFileName: filename,
-          presets: isTypeScript
-            ? [['@babel/preset-typescript', { isTSX: true, allExtensions: true }]]
-            : [],
-          plugins: [
-            ['@babel/plugin-syntax-jsx', {}],
-            [createFictPlugin, fictOptions],
-          ],
-        })
+        if (precompiledInput) {
+          finalCode = code
+          finalMap = null
+        } else {
+          const isTypeScript = filename.endsWith('.tsx') || filename.endsWith('.ts')
 
-        if (!result || !result.code) {
-          return null
+          const result = await transformAsync(code, {
+            filename,
+            sourceMaps: fictOptions.sourcemap,
+            sourceFileName: filename,
+            presets: isTypeScript
+              ? [['@babel/preset-typescript', { isTSX: true, allExtensions: true }]]
+              : [],
+            plugins: [
+              ['@babel/plugin-syntax-jsx', {}],
+              [createFictPlugin, fictOptions],
+            ],
+          })
+
+          if (!result || !result.code) {
+            return null
+          }
+
+          finalCode = result.code
+          finalMap = result.map as TransformResult['map']
         }
-
-        let finalCode = result.code
-        let finalMap = result.map as TransformResult['map']
 
         // Apply function-level code splitting in production builds
         // For SSR builds with resumable enabled, we also need to rewrite QRLs to virtual URLs
@@ -766,6 +775,23 @@ function normalizeFileName(id: string, root?: string): string {
   if (path.isAbsolute(clean)) return path.normalize(clean)
   if (root) return path.normalize(path.resolve(root, clean))
   return path.normalize(path.resolve(clean))
+}
+
+/**
+ * Detect modules that already contain compiler output.
+ * Re-running the compiler on these inputs can produce false diagnostics.
+ */
+function isPrecompiledFictModule(code: string): boolean {
+  const hasCompilerMarker =
+    code.includes('__fict_hir_codegen__') ||
+    code.includes('__fictQrl(') ||
+    code.includes('__fictUseLexicalScope')
+
+  if (!hasCompilerMarker) {
+    return false
+  }
+
+  return /export\s+(?:const|function)\s+__fict_[er]\d+/.test(code)
 }
 
 function joinBasePath(base: string, fileName: string): string {

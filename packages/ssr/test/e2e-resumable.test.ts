@@ -67,6 +67,9 @@ function compileModule(
     dev: false,
     fineGrainedDom: true,
     resumable: true,
+    // Resumable fixture tests intentionally cover fallback patterns (e.g. state snapshots
+    // passed through helper boundaries) and should not fail-closed on guarantee diagnostics.
+    strictGuarantee: false,
     emitModuleMetadata: false,
     ...compilerOverrides,
   }
