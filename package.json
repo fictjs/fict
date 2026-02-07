@@ -36,7 +36,8 @@
     "perf:results": "cd js-framework-benchmark && npm run results",
     "bench:optimizer": "pnpm --filter @fictjs/compiler build && node scripts/optimizer-bench.mjs",
     "bench:optimizer:update": "pnpm --filter @fictjs/compiler build && node scripts/optimizer-bench.mjs --update",
-    "bench:optimizer:guard": "pnpm --filter @fictjs/compiler build && node scripts/optimizer-bench.mjs --compare"
+    "bench:optimizer:guard": "pnpm --filter @fictjs/compiler build && node scripts/optimizer-bench.mjs --compare",
+    "release:compiler:verify": "pnpm --dir packages/compiler lint && pnpm --dir packages/compiler typecheck && pnpm --dir packages/compiler test && pnpm guardrails:hir && pnpm bench:optimizer:guard"
   },
   "devDependencies": {
     "@babel/core": "^7.28.6",

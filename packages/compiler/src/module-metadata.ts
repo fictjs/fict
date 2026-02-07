@@ -1,4 +1,13 @@
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -8,6 +17,39 @@ const globalMetadata = new Map<string, ModuleReactiveMetadata>()
 
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
 const DEFAULT_META_EXTENSION = '.fict.meta.json'
+const DEFAULT_META_CACHE_DIR = path.join('.fict-cache', 'metadata')
+const UNKNOWN_FILENAME_TOKENS = new Set(['<unknown>', 'unknown', 'stdin', '[stdin]'])
+const VIRTUAL_FILENAME_PREFIXES = [
+  'virtual:',
+  'vite:',
+  'rollup:',
+  'webpack:',
+  'rspack:',
+  'esbuild:',
+  'astro:',
+  'data:',
+  'http://',
+  'https://',
+]
+
+type MetadataWriteMode = 'none' | 'adjacent' | 'cache'
+
+function isWindowsDrivePath(fileName: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(fileName) || fileName.startsWith('\\\\')
+}
+
+function isVirtualFileName(fileName: string): boolean {
+  const trimmed = fileName.trim()
+  if (!trimmed) return true
+  const lower = trimmed.toLowerCase()
+  if (UNKNOWN_FILENAME_TOKENS.has(lower)) return true
+  if (trimmed.startsWith('\0')) return true
+  if (VIRTUAL_FILENAME_PREFIXES.some(prefix => lower.startsWith(prefix))) return true
+  if (trimmed.includes('://') && !lower.startsWith('file://') && !isWindowsDrivePath(trimmed)) {
+    return true
+  }
+  return false
+}
 
 function normalizeFileName(fileName: string): string {
   let normalized = fileName
@@ -28,6 +70,20 @@ function normalizeFileName(fileName: string): string {
   return path.resolve(normalized)
 }
 
+function resolveMetadataWriteMode(options?: FictCompilerOptions): MetadataWriteMode {
+  const opt = options?.emitModuleMetadata
+  if (opt === true) return 'adjacent'
+  if (opt === false) return 'none'
+  // auto: emit only when no external store/resolver is supplied
+  if (options?.moduleMetadata || options?.resolveModuleMetadata) return 'none'
+  return 'cache'
+}
+
+function normalizeConcreteFileName(fileName: string | undefined): string | null {
+  if (!fileName || isVirtualFileName(fileName)) return null
+  return normalizeFileName(fileName)
+}
+
 function getMetadataStore(options?: FictCompilerOptions): Map<string, ModuleReactiveMetadata> {
   return options?.moduleMetadata ?? globalMetadata
 }
@@ -36,17 +92,75 @@ function getMetadataExtension(options?: FictCompilerOptions): string {
   return options?.moduleMetadataExtension ?? DEFAULT_META_EXTENSION
 }
 
-function getMetadataFilePath(fileName: string, options?: FictCompilerOptions): string {
-  return `${normalizeFileName(fileName)}${getMetadataExtension(options)}`
+function getMetadataCacheDir(options?: FictCompilerOptions): string {
+  if (options?.moduleMetadataCacheDir && options.moduleMetadataCacheDir.trim().length > 0) {
+    return path.resolve(options.moduleMetadataCacheDir)
+  }
+  return path.resolve(DEFAULT_META_CACHE_DIR)
 }
 
-function shouldEmitModuleMetadata(options?: FictCompilerOptions): boolean {
-  const opt = options?.emitModuleMetadata
-  if (opt === true) return true
-  if (opt === false) return false
-  // auto: emit only when no external store/resolver is supplied
-  if (options?.moduleMetadata || options?.resolveModuleMetadata) return false
-  return true
+function getAdjacentMetadataFilePath(
+  normalizedFileName: string,
+  options?: FictCompilerOptions,
+): string {
+  return `${normalizedFileName}${getMetadataExtension(options)}`
+}
+
+function getCachedMetadataFilePath(
+  normalizedFileName: string,
+  options?: FictCompilerOptions,
+): string {
+  const cacheDir = getMetadataCacheDir(options)
+  const hash = createHash('sha256').update(normalizedFileName).digest('hex')
+  return path.join(cacheDir, `${hash}${getMetadataExtension(options)}`)
+}
+
+function getMetadataReadPaths(normalizedFileName: string, options?: FictCompilerOptions): string[] {
+  return [
+    getAdjacentMetadataFilePath(normalizedFileName, options),
+    getCachedMetadataFilePath(normalizedFileName, options),
+  ]
+}
+
+function getMetadataWritePath(
+  normalizedFileName: string,
+  writeMode: MetadataWriteMode,
+  options?: FictCompilerOptions,
+): string | null {
+  if (writeMode === 'adjacent') {
+    return getAdjacentMetadataFilePath(normalizedFileName, options)
+  }
+  if (writeMode === 'cache') {
+    return getCachedMetadataFilePath(normalizedFileName, options)
+  }
+  return null
+}
+
+function warnMetadata(
+  options: FictCompilerOptions | undefined,
+  normalizedFileName: string | null,
+  message: string,
+): void {
+  if (options?.dev === false) return
+  const label = normalizedFileName ?? '<unknown>'
+  console.warn(`[fict:metadata] ${message} (${label})`)
+}
+
+function writeMetadataAtomically(metaPath: string, payload: string): void {
+  const dir = path.dirname(metaPath)
+  mkdirSync(dir, { recursive: true })
+  const tempPath = `${metaPath}.${process.pid}.${Date.now().toString(36)}.tmp`
+  try {
+    writeFileSync(tempPath, payload, 'utf8')
+    renameSync(tempPath, metaPath)
+  } catch (error) {
+    try {
+      if (existsSync(tempPath)) unlinkSync(tempPath)
+    } catch {
+      // Best-effort cleanup.
+    }
+    throw error
+  }
 }
 
 function readMetadataFromDisk(
@@ -54,16 +168,21 @@ function readMetadataFromDisk(
   store: Map<string, ModuleReactiveMetadata>,
   options?: FictCompilerOptions,
 ): ModuleReactiveMetadata | undefined {
-  const metaPath = getMetadataFilePath(fileName, options)
-  if (!existsSync(metaPath)) return undefined
-  try {
-    const raw = readFileSync(metaPath, 'utf8')
-    const parsed = JSON.parse(raw) as ModuleReactiveMetadata
-    store.set(normalizeFileName(fileName), parsed)
-    return parsed
-  } catch {
-    return undefined
+  const normalized = normalizeConcreteFileName(fileName)
+  if (!normalized) return undefined
+  const paths = getMetadataReadPaths(normalized, options)
+  for (const metaPath of paths) {
+    if (!existsSync(metaPath)) continue
+    try {
+      const raw = readFileSync(metaPath, 'utf8')
+      const parsed = JSON.parse(raw) as ModuleReactiveMetadata
+      store.set(normalized, parsed)
+      return parsed
+    } catch {
+      // Ignore malformed/partial metadata files and try the next path.
+    }
   }
+  return undefined
 }
 
 function isFile(pathName: string): boolean {
@@ -118,8 +237,6 @@ function resolveImportSourceByMetadata(
 
   const base = isAbsolute ? source : path.resolve(path.dirname(importer), source)
   const normalized = normalizeFileName(base)
-  const metaExt = getMetadataExtension(options)
-
   const candidates: string[] = []
   const ext = path.extname(normalized)
   if (ext) {
@@ -134,7 +251,8 @@ function resolveImportSourceByMetadata(
   }
 
   for (const candidate of candidates) {
-    if (existsSync(`${candidate}${metaExt}`)) {
+    const metaPaths = getMetadataReadPaths(candidate, options)
+    if (metaPaths.some(metaPath => existsSync(metaPath))) {
       return candidate
     }
   }
@@ -173,16 +291,28 @@ export function setModuleMetadata(
   metadata: ModuleReactiveMetadata,
   options?: FictCompilerOptions,
 ): void {
-  if (!fileName) return
+  const writeMode = resolveMetadataWriteMode(options)
+  const normalized = normalizeConcreteFileName(fileName)
+  if (!normalized) {
+    if (writeMode === 'adjacent') {
+      warnMetadata(
+        options,
+        null,
+        'Skipping module metadata emission because filename is missing or virtual',
+      )
+    }
+    return
+  }
   const store = getMetadataStore(options)
-  const normalized = normalizeFileName(fileName)
   store.set(normalized, metadata)
-  if (!shouldEmitModuleMetadata(options)) return
+  const metaPath = getMetadataWritePath(normalized, writeMode, options)
+  if (!metaPath) return
   try {
-    const metaPath = getMetadataFilePath(normalized, options)
-    writeFileSync(metaPath, JSON.stringify(metadata), 'utf8')
+    writeMetadataAtomically(metaPath, JSON.stringify(metadata))
   } catch {
-    // Ignore filesystem errors for metadata emission.
+    if (writeMode === 'adjacent') {
+      warnMetadata(options, normalized, 'Failed to write module metadata sidecar')
+    }
   }
 }
 

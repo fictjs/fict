@@ -35,6 +35,8 @@ jobs:
 
       - run: pnpm install
       - run: pnpm build
+      - name: Verify compiler release gate
+        run: pnpm release:compiler:verify
 
       - name: Create .npmrc
         run: |

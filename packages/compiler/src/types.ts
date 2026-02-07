@@ -138,12 +138,19 @@ export interface FictCompilerOptions {
    */
   moduleMetadata?: Map<string, ModuleReactiveMetadata>
   /**
-   * Emit module metadata sidecar files to enable cross-process metadata resolution.
-   * - true: always emit
-   * - false: never emit
-   * - 'auto' or undefined: emit only when no external metadata store/resolver is provided
+   * Emit module metadata files to enable cross-process metadata resolution.
+   * - true: always emit adjacent sidecar files next to source modules
+   * - false: never emit metadata files
+   * - 'auto' or undefined:
+   *   - emit to cache directory only when no external metadata store/resolver is provided
+   *   - avoid source tree pollution while keeping cross-process resolution available
    */
   emitModuleMetadata?: boolean | 'auto'
+  /**
+   * Cache directory for metadata files when `emitModuleMetadata` is `'auto'`.
+   * Defaults to `<cwd>/.fict-cache/metadata`.
+   */
+  moduleMetadataCacheDir?: string
   /**
    * File extension suffix for module metadata sidecars.
    * Defaults to '.fict.meta.json'.

@@ -210,7 +210,7 @@ export function createDiagnostic(
 /** Context type for diagnostics - compatible with both TransformContext and CodegenContext */
 export interface DiagnosticContext {
   file?: { opts?: { filename?: string | null } }
-  options?: Pick<FictCompilerOptions, 'onWarn'>
+  options?: Pick<FictCompilerOptions, 'onWarn' | 'filename'>
 }
 
 /**
@@ -222,7 +222,7 @@ export function reportDiagnostic(
   node: DiagnosticNode,
   context?: Record<string, unknown>,
 ): void {
-  const fileName = ctx.file?.opts?.filename || '<unknown>'
+  const fileName = ctx.file?.opts?.filename ?? ctx.options?.filename ?? '<unknown>'
   const diagnostic = createDiagnostic(code, node, fileName, context)
 
   // Use existing warning mechanism

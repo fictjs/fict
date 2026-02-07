@@ -32,7 +32,14 @@ To release packages to NPM:
 # Merge the "Version Packages" PR created by changesets
 ```
 
-#### Step 2: Create and Push a Tag
+#### Step 2: Run Release Verification
+
+```bash
+# Verify compiler release gate locally before tagging
+pnpm release:compiler:verify
+```
+
+#### Step 3: Create and Push a Tag
 
 ```bash
 # Pull the latest main branch
@@ -46,7 +53,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-#### Step 3: Automatic Publishing
+#### Step 4: Automatic Publishing
 
 - Pushing the tag triggers the Release workflow
 - Packages are automatically built and published to NPM

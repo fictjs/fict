@@ -298,5 +298,58 @@ describe('Cross-Module Reactivity', () => {
         }
       }
     })
+
+    it('auto mode emits metadata to cache and avoids adjacent sidecar files', () => {
+      clearModuleMetadata()
+      const hookSource = `
+        import { $state } from 'fict'
+        export function useCounter() {
+          const count = $state(0)
+          return count
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter'
+        export function App() {
+          const count = useCounter()
+          return <div>{count}</div>
+        }
+      `
+      mkdirSync(baseDir, { recursive: true })
+      const cacheDir = path.join(baseDir, '.cache-meta')
+      const hookPath = path.join(baseDir, 'use-counter.tsx')
+      const appPath = path.join(baseDir, 'app.tsx')
+      const hookMetaPath = `${hookPath}.fict.meta.json`
+      const appMetaPath = `${appPath}.fict.meta.json`
+
+      try {
+        transform(
+          hookSource,
+          {
+            emitModuleMetadata: 'auto',
+            moduleMetadataCacheDir: cacheDir,
+          },
+          hookPath,
+        )
+        expect(existsSync(hookMetaPath)).toBe(false)
+
+        clearModuleMetadata()
+        const output = transform(
+          appSource,
+          {
+            fineGrainedDom: true,
+            emitModuleMetadata: false,
+            moduleMetadataCacheDir: cacheDir,
+          },
+          appPath,
+        )
+        expect(output).toMatch(/count\(\)/)
+      } finally {
+        clearModuleMetadata()
+        if (existsSync(hookMetaPath)) rmSync(hookMetaPath)
+        if (existsSync(appMetaPath)) rmSync(appMetaPath)
+        if (existsSync(cacheDir)) rmSync(cacheDir, { recursive: true, force: true })
+      }
+    })
   })
 })
