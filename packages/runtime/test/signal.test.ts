@@ -8,6 +8,7 @@ import {
   batch as rawBatch,
   computed as rawComputed,
   effect as rawEffect,
+  effectScope as rawEffectScope,
   effectWithCleanup as rawEffectWithCleanup,
   signal as rawSignal,
 } from '../src/signal'
@@ -359,6 +360,32 @@ describe('signal runtime robustness', () => {
     ).not.toThrow()
     expect(runs).toBe(1)
     expect(cleanupRuns).toBe(0)
+  })
+
+  it('disposes partially created effect scopes when initialization throws', () => {
+    const source = rawSignal(0)
+    let innerRuns = 0
+
+    expect(() =>
+      rawEffectScope(() => {
+        rawEffect(() => {
+          innerRuns++
+          source()
+        })
+        throw new Error('boom')
+      }),
+    ).toThrow('boom')
+    expect(innerRuns).toBe(1)
+
+    __resetReactiveState()
+
+    expect(() =>
+      rawBatch(() => {
+        source(1)
+      }),
+    ).not.toThrow()
+    // The inner effect must be disposed with the failed scope.
+    expect(innerRuns).toBe(1)
   })
 
   it('retries computed after initial throw and drops stale dependencies', () => {

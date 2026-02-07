@@ -1325,11 +1325,21 @@ export function effectScope(fn: () => void): EffectScopeDisposer {
   if (prevSub !== undefined) link(e, prevSub, 0)
   activeSub = e
 
+  let didThrow = false
+  let thrown: unknown
   try {
     fn()
+  } catch (err) {
+    didThrow = true
+    thrown = err
   } finally {
     activeSub = prevSub
+    if (didThrow) {
+      // Scope construction failed: detach nested effects/memos linked to this scope.
+      disposeNode(e)
+    }
   }
+  if (didThrow) throw thrown
 
   const disposer = effectScopeOper.bind(e) as EffectScopeDisposer & Record<symbol, boolean>
   disposer[EFFECT_SCOPE_MARKER] = true
