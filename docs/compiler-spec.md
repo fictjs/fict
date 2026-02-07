@@ -563,6 +563,8 @@ Guardrails: `pnpm guardrails:hir` compares current output to `scripts/hir-guardr
 Use `pnpm guardrails:hir:update` to refresh the baseline when changes are intentional.
 Warning escalation: `warningsAsErrors` (boolean or list of diagnostic codes) and
 `warningLevels` let you turn warnings into errors or suppress specific codes.
+Set `strictReactivity: true` to escalate control-flow fallback diagnostics
+(`FICT-R003`, `FICT-R006`) into hard build errors by default.
 
 Purity annotations:
 

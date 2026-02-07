@@ -400,13 +400,18 @@ items.map(item => <Li key={item.id}>{item.name}</Li>)
 
 **Impact:** Similar to FICT-S002. Updates may not propagate correctly.
 
-### FICT-R003: Non-memoizable expression
+### FICT-R003: Control-flow fallback lowering
 
 **Severity:** Info
 
-**Why:** An expression cannot be memoized due to its structure (e.g., contains function calls with unknown purity).
+**Why:** Reactive `if`/`switch` return lowering was skipped for a branch shape the compiler
+cannot safely lower into fine-grained branch bindings.
 
-**Impact:** Expression re-evaluated on every reactive update.
+**Impact:** Branch structure may rely on a fallback path instead of strict fine-grained lowering.
+Reactivity is preserved, but updates can be coarser than expected.
+
+**Fix:** Refactor to supported return-branch control flow, or keep fallback behavior and
+monitor/update performance with tests.
 
 ### FICT-R004: Reactive primitive in control flow
 
@@ -433,6 +438,22 @@ warningLevels: {
 **Why:** A closure captures a reactive value in a way that may cause stale reads.
 
 **Impact:** This is rare in Fict due to automatic getter conversion. Usually indicates an edge case.
+
+### FICT-R006: Reactive control-flow re-execution
+
+**Severity:** Info
+
+**Why:** Reactive values are read in control-flow predicates in a way that forces region or
+branch re-execution.
+
+**Impact:** Reactivity remains correct, but updates may execute broader code paths than pure
+expression-level branching.
+
+**Fix:** Prefer expression-only branching in JSX (`cond ? <A/> : <B/>`, logical expressions)
+when you need tighter update granularity.
+
+**Strict mode (optional):** Set compiler `strictReactivity: true` to treat `FICT-R003` and
+`FICT-R006` as build errors by default. You can still override per code with `warningLevels`.
 
 ---
 

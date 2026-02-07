@@ -511,6 +511,8 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 ```
 
 - Recommended config mirrors compiler warnings so IDE diagnostics stay aligned with build output.
+- For strict CI gates, enable compiler `strictReactivity: true` to escalate
+  control-flow fallback diagnostics (`FICT-R003`, `FICT-R006`) to build errors.
 
 ---
 
