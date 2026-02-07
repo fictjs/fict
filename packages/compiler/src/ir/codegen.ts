@@ -1,5 +1,3 @@
-import { pathToFileURL } from 'node:url'
-
 import type * as BabelCore from '@babel/core'
 
 import { DelegatedEvents, RUNTIME_ALIASES } from '../constants'
@@ -60,6 +58,7 @@ import {
   getReactiveCallKindFromBabel,
   getStaticPropName,
 } from './codegen-reactive-kind'
+import { genModuleUrlExpr, renameIdentifiersInExpr } from './codegen-resumable-utils'
 import { collectRuntimeImports } from './codegen-runtime-imports'
 import {
   extractHIRStaticHtml,
@@ -524,90 +523,6 @@ function isStaticDelegatedDataAst(expr: BabelCore.types.Expression, ctx: Codegen
  */
 function genTemp(ctx: CodegenContext, prefix = 'tmp'): BabelCore.types.Identifier {
   return ctx.t.identifier(`__${prefix}_${ctx.tempCounter++}`)
-}
-
-/**
- * Rename identifiers in a Babel AST expression according to a rename map.
- * This is used to update references to hoisted function dependencies in handlers.
- */
-function renameIdentifiersInExpr(
-  expr: BabelCore.types.Expression,
-  renames: Map<string, string>,
-  _t: typeof BabelCore.types,
-): BabelCore.types.Expression {
-  // Deep clone the expression to avoid mutating the original
-  const cloned = JSON.parse(JSON.stringify(expr)) as BabelCore.types.Expression
-
-  function visit(node: unknown): void {
-    if (!node || typeof node !== 'object') return
-    const n = node as Record<string, unknown>
-
-    // Rename identifiers
-    if (n.type === 'Identifier' && typeof n.name === 'string') {
-      const newName = renames.get(n.name)
-      if (newName) {
-        n.name = newName
-      }
-    }
-
-    // Recursively visit all properties
-    for (const key of Object.keys(n)) {
-      // Skip metadata keys
-      if (
-        key === 'loc' ||
-        key === 'start' ||
-        key === 'end' ||
-        key === 'extra' ||
-        key === 'comments' ||
-        key === 'leadingComments' ||
-        key === 'trailingComments'
-      ) {
-        continue
-      }
-      const value = n[key]
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          visit(item)
-        }
-      } else if (value && typeof value === 'object') {
-        visit(value)
-      }
-    }
-  }
-
-  visit(cloned)
-  return cloned
-}
-
-/**
- * Generate the module URL expression for QRL generation.
- * Uses filename from options as a constant if available, otherwise falls back to import.meta.url.
- * Using a constant ensures the source file path is preserved in bundled SSR code.
- */
-function genModuleUrlExpr(ctx: CodegenContext): BabelCore.types.Expression {
-  const { t } = ctx
-  const filename = ctx.options?.filename
-  if (filename) {
-    // Use the filename as a constant file:// URL
-    // This ensures the path is preserved even in bundled SSR builds
-    // Use pathToFileURL for proper handling of Windows paths and special characters
-    let fileUrl: string
-    if (filename.startsWith('file://')) {
-      fileUrl = filename
-    } else {
-      // pathToFileURL properly handles:
-      // - Windows paths: C:\Users\... -> file:///C:/Users/...
-      // - Spaces and special characters: URL encoding
-      // - Forward/back slash normalization
-      fileUrl = pathToFileURL(filename).href
-    }
-    return t.stringLiteral(fileUrl)
-  }
-  // Fallback: use import.meta.url at runtime (for unbundled dev scenarios)
-  return t.memberExpression(
-    t.metaProperty(t.identifier('import'), t.identifier('meta')),
-    t.identifier('url'),
-  )
 }
 
 /**
@@ -3637,7 +3552,7 @@ function emitResumableEventBinding(
   // If we have function deps, we need to rename references in the handler
   let finalHandlerExpr = handlerExpr
   if (functionDepRenames.size > 0) {
-    finalHandlerExpr = renameIdentifiersInExpr(handlerExpr, functionDepRenames, t)
+    finalHandlerExpr = renameIdentifiersInExpr(handlerExpr, functionDepRenames)
   }
 
   const bodyStatements: BabelCore.types.Statement[] = []
