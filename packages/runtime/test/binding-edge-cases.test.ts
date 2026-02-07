@@ -1105,6 +1105,63 @@ describe('Binding Edge Cases', () => {
 
       dispose()
     })
+
+    it('reuses dom nodes for nested fragment arrays in tracked branch patching', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+
+      const { marker, dispose, flush } = createConditional(
+        () => condition(),
+        () => {
+          const value = counter()
+          return {
+            type: Fragment,
+            props: {
+              children: [
+                {
+                  type: Fragment,
+                  props: {
+                    children: [{ type: 'span', props: { children: 'A' }, key: undefined }],
+                  },
+                  key: undefined,
+                },
+                {
+                  type: Fragment,
+                  props: {
+                    children: [
+                      { type: 'span', props: { children: String(value) }, key: undefined },
+                    ],
+                  },
+                  key: undefined,
+                },
+              ],
+            },
+            key: undefined,
+          }
+        },
+        createElement,
+        () => 'OFF',
+        undefined,
+        undefined,
+        { trackBranchReads: true },
+      )
+      container.appendChild(marker)
+      flush?.()
+
+      expect(container.textContent).toBe('A0')
+      const spansBefore = Array.from(container.querySelectorAll('span'))
+      expect(spansBefore).toHaveLength(2)
+
+      counter(1)
+      await tick()
+      expect(container.textContent).toBe('A1')
+      const spansAfter = Array.from(container.querySelectorAll('span'))
+      expect(spansAfter).toHaveLength(2)
+      expect(spansAfter[0]).toBe(spansBefore[0])
+      expect(spansAfter[1]).toBe(spansBefore[1])
+
+      dispose()
+    })
   })
 
   describe('insert edge cases', () => {

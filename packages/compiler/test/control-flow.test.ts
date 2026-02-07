@@ -583,6 +583,23 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toContain('trackBranchReads: true')
     })
 
+    it('enables tracked branch fallback for reactive props member reads before return', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component(props) {
+          let show = $state(true)
+          if (show) {
+            console.log(props.value)
+            return <div>{props.value}</div>
+          }
+          return <div>OFF</div>
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createConditional')
+      expect(output).toContain('trackBranchReads: true')
+    })
+
     it('keeps pure jsx return branches on fine-grained path', () => {
       const input = `
         import { $state } from 'fict'

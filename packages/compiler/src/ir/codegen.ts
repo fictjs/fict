@@ -3795,7 +3795,7 @@ function transformControlFlowReturns(
         }
         if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
           const root = getMemberRootIdentifier(node)
-          return !!(root && ctx.storeVars?.has(root.name))
+          return !!(root && reactiveAccessorNames.has(root.name))
         }
         return false
       },

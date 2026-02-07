@@ -2311,6 +2311,9 @@ function normalizeChildren(
   if (children === null || children === false) {
     return result
   }
+  if (_isFragmentVNode(children)) {
+    return normalizeChildren(children.props?.children, result)
+  }
   result.push(children)
   return result
 }
