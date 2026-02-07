@@ -1,5 +1,5 @@
 import { createEffect } from '@fictjs/runtime'
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 import { $store } from '../src/store'
 
@@ -14,6 +14,10 @@ const tick = () =>
 const moduleStore = $store({ count: 0, user: { name: 'Alice' } })
 
 describe('$store', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   describe('module-scope store (allowed)', () => {
     beforeEach(() => {
       // Reset between tests
@@ -818,10 +822,8 @@ describe('$store', () => {
       expect(store.value).toBe(2) // Still returns current value
 
       expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[fict] $store detected direct mutation'),
+        expect.stringContaining('[fict] Direct mutation detected for "value"'),
       )
-
-      warnSpy.mockRestore()
     })
 
     it('should not warn when mutations go through proxy', async () => {
@@ -839,8 +841,6 @@ describe('$store', () => {
 
       // No warning should be issued for proper proxy mutation
       expect(warnSpy).not.toHaveBeenCalled()
-
-      warnSpy.mockRestore()
     })
 
     it('should not warn for built-in properties like constructor', () => {
@@ -854,8 +854,6 @@ describe('$store', () => {
 
       // Should not warn about constructor access
       expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('constructor'))
-
-      warnSpy.mockRestore()
     })
 
     it('should handle nested proxies correctly without double-wrapping', () => {
