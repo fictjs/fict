@@ -4,6 +4,18 @@ import { transform } from './test-utils'
 
 const STRICT_GUARANTEE_OPTIONS = { strictGuarantee: true, dev: false } as const
 
+function collectWarningCodes(
+  source: string,
+  options: Parameters<typeof transform>[1] = {},
+): string[] {
+  const warnings: Array<{ code: string }> = []
+  transform(source, {
+    ...options,
+    onWarn: warning => warnings.push(warning as { code: string }),
+  })
+  return warnings.map(warning => warning.code)
+}
+
 describe('reactivity guarantee contract', () => {
   describe('Guaranteed', () => {
     const guaranteedCases: Array<{ name: string; source: string }> = [
@@ -42,6 +54,14 @@ describe('reactivity guarantee contract', () => {
           }
         `,
       },
+      {
+        name: 'supported nested props destructuring remains reactive',
+        source: `
+          function App({ user: { name } }) {
+            return <div>{name}</div>
+          }
+        `,
+      },
     ]
 
     for (const testCase of guaranteedCases) {
@@ -54,13 +74,68 @@ describe('reactivity guarantee contract', () => {
   describe('Fallback (strictGuarantee => error)', () => {
     const fallbackCases: Array<{ name: string; source: string; error: RegExp }> = [
       {
-        name: 'props destructuring fallback',
+        name: 'props array pattern fallback',
+        source: `
+          function App({ list: [first, second] }) {
+            return <div>{first}{second}</div>
+          }
+        `,
+        error: /FICT-P001/,
+      },
+      {
+        name: 'props array rest fallback',
         source: `
           function App({ list: [first, ...rest] }) {
             return <div>{first}</div>
           }
         `,
-        error: /FICT-P00[1-5]/,
+        error: /FICT-P002/,
+      },
+      {
+        name: 'computed props key fallback (dynamic key)',
+        source: `
+          const key = 'name'
+          function App({ [key]: value }) {
+            return <div>{value}</div>
+          }
+        `,
+        error: /FICT-P003/,
+      },
+      {
+        name: 'nested rest props pattern fallback',
+        source: `
+          function App({ user: { ...userRest } }) {
+            return <pre>{JSON.stringify(userRest)}</pre>
+          }
+        `,
+        error: /FICT-P004/,
+      },
+      {
+        name: 'dynamic props spread fallback',
+        source: `
+          function Parent(props) {
+            return <Child {...props()} id="next" />
+          }
+          function Child(allProps) {
+            return <div>{allProps.id}</div>
+          }
+        `,
+        error: /FICT-P005/,
+      },
+      {
+        name: 'direct state argument escape fallback',
+        source: `
+          import { $state } from 'fict'
+          function sink(value) {
+            return value
+          }
+          function App() {
+            let count = $state(0)
+            sink(count)
+            return <div />
+          }
+        `,
+        error: /FICT-S002/,
       },
       {
         name: 'reactive value escaping through unknown function call',
@@ -73,6 +148,38 @@ describe('reactivity guarantee contract', () => {
             let count = $state(0)
             const doubled = count * 2
             sink(doubled)
+            return <div />
+          }
+        `,
+        error: /FICT-R002/,
+      },
+      {
+        name: 'reactive callback escaping through unknown function boundary',
+        source: `
+          import { $state } from 'fict'
+          function consume(fn) {
+            return fn()
+          }
+          function App() {
+            let count = $state(0)
+            consume(() => count + 1)
+            return <div />
+          }
+        `,
+        error: /FICT-R002/,
+      },
+      {
+        name: 'reactive callback escaping through unknown member boundary',
+        source: `
+          import { $state } from 'fict'
+          function App() {
+            let count = $state(0)
+            const bus = {
+              subscribe(fn) {
+                return fn()
+              },
+            }
+            bus.subscribe(() => count + 1)
             return <div />
           }
         `,
@@ -99,6 +206,87 @@ describe('reactivity guarantee contract', () => {
         expect(() => transform(testCase.source, STRICT_GUARANTEE_OPTIONS)).toThrow(testCase.error)
       })
     }
+  })
+
+  describe('Warning-only boundary signals', () => {
+    it('warns FICT-R005 for inline closure escaping unknown callback boundary', () => {
+      const warningCodes = collectWarningCodes(
+        `
+          import { $state } from 'fict'
+          function consume(fn) {
+            return fn()
+          }
+          function App() {
+            let count = $state(0)
+            consume(() => count)
+            return <div />
+          }
+        `,
+      )
+      expect(warningCodes).toContain('FICT-R005')
+    })
+
+    it('warns FICT-R005 for named closure escaping unknown callback boundary', () => {
+      const warningCodes = collectWarningCodes(
+        `
+          import { $state } from 'fict'
+          function consume(fn) {
+            return fn()
+          }
+          function App() {
+            let count = $state(0)
+            const readCount = () => count
+            consume(readCount)
+            return <div />
+          }
+        `,
+      )
+      expect(warningCodes).toContain('FICT-R005')
+    })
+
+    it('warns FICT-R005 for external member callback boundary', () => {
+      const warningCodes = collectWarningCodes(
+        `
+          import { $state } from 'fict'
+          function App() {
+            let count = $state(0)
+            const bus = { subscribe(fn) { return fn() } }
+            bus.subscribe(() => count)
+            return <div />
+          }
+        `,
+      )
+      expect(warningCodes).toContain('FICT-R005')
+    })
+
+    it('does not warn FICT-R005 for non-escaping iterator callback host', () => {
+      const warningCodes = collectWarningCodes(
+        `
+          import { $state } from 'fict'
+          function App() {
+            let count = $state(0)
+            const items = [1, 2, 3]
+            items.map(item => count + item)
+            return <div>{count}</div>
+          }
+        `,
+      )
+      expect(warningCodes).not.toContain('FICT-R005')
+    })
+
+    it('does not warn FICT-R005 for promise then callback host', () => {
+      const warningCodes = collectWarningCodes(
+        `
+          import { $state } from 'fict'
+          function App() {
+            let count = $state(0)
+            Promise.resolve(1).then(() => count)
+            return <div>{count}</div>
+          }
+        `,
+      )
+      expect(warningCodes).not.toContain('FICT-R005')
+    })
   })
 
   describe('Unsupported (always compile-time error)', () => {
