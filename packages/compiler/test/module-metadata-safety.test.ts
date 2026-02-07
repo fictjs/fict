@@ -183,4 +183,30 @@ describe('module metadata safety', () => {
       clearModuleMetadata()
     }
   })
+
+  it('does not read disk sidecars when moduleMetadata store is explicitly provided', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_store_only__')
+    const importer = path.join(baseDir, 'consumer.ts')
+    const depPath = path.join(baseDir, 'dep.ts')
+    const depMetaPath = `${depPath}.fict.meta.json`
+    mkdirSync(baseDir, { recursive: true })
+
+    try {
+      writeFileSync(depMetaPath, JSON.stringify({ exports: { value: 'signal' } }), 'utf8')
+      const resolved = resolveModuleMetadata('./dep', importer, {
+        emitModuleMetadata: false,
+        moduleMetadata: new Map(),
+      })
+      expect(resolved).toBeUndefined()
+    } finally {
+      if (existsSync(depMetaPath)) {
+        rmSync(depMetaPath, { force: true })
+      }
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
 })

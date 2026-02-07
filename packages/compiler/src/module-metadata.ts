@@ -315,10 +315,10 @@ export function resolveModuleMetadata(
     if (resolved) return resolved
   }
   const store = getMetadataStore(options)
-  const hasExternalMetadataIntegration = !!(
-    options?.moduleMetadata && options?.resolveModuleMetadata
-  )
-  const shouldProbeFs = options?.emitModuleMetadata === true || !hasExternalMetadataIntegration
+  const hasExternalMetadataStore = !!options?.moduleMetadata
+  // When a caller provides an explicit metadata store, treat it as the source
+  // of truth and avoid disk probing unless adjacent emission is explicitly enabled.
+  const shouldProbeFs = options?.emitModuleMetadata === true || !hasExternalMetadataStore
   const fsCache = shouldProbeFs ? new Map<string, boolean>() : undefined
   const isFileLikeSource = path.isAbsolute(source) || source.startsWith('.')
 
