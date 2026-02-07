@@ -33,6 +33,13 @@ import {
 } from './codegen-hook-returns'
 import { attachHelperImports, collectDeclaredNames } from './codegen-imports'
 import {
+  isListKeyConstExpression,
+  isListKeyDependency,
+  isListKeyParamIdentifier,
+  isStaticDelegatedDataExpression,
+  matchesListKeyPattern,
+} from './codegen-list-keys'
+import {
   applyImportedReactiveMetadata,
   buildModuleReactiveMetadata,
 } from './codegen-module-metadata'
@@ -542,94 +549,6 @@ function withNonReactiveScope<T>(ctx: CodegenContext, fn: () => T): T {
   } finally {
     ctx.nonReactiveScopeDepth = prevDepth
   }
-}
-
-/**
- * Check if a MemberExpression matches the list key pattern.
- * Matches `item.prop` when key expression is `item.prop`.
- *
- * For example, if keyExpr is `row.id` and we see `row.id` in the HIR,
- * this returns true allowing replacement with `__key`.
- *
- * Note: This matches the HIR pattern BEFORE signal accessor transform.
- * The signal transform (`row` -> `row()`) happens after lowering via replaceIdentifiersWithOverrides.
- */
-function matchesListKeyPattern(expr: Expression, ctx: CodegenContext): boolean {
-  // Must have active key constification context
-  if (!ctx.listKeyExpr || !ctx.listItemParamName || !ctx.listKeyParamName) {
-    return false
-  }
-
-  // Expression must be MemberExpression: X.prop
-  if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') {
-    return false
-  }
-
-  // Key expression must also be MemberExpression: item.prop
-  const keyExpr = ctx.listKeyExpr
-  if (keyExpr.kind !== 'MemberExpression' && keyExpr.kind !== 'OptionalMemberExpression') {
-    return false
-  }
-
-  // Key expression object must be the item param: row.id -> row
-  if (keyExpr.object.kind !== 'Identifier') {
-    return false
-  }
-  const keyItemName = deSSAVarName(keyExpr.object.name)
-  if (keyItemName !== ctx.listItemParamName) {
-    return false
-  }
-
-  // Key expression property must be static: row.id -> id
-  if (keyExpr.property.kind !== 'Identifier' && keyExpr.property.kind !== 'Literal') {
-    return false
-  }
-  const keyPropName =
-    keyExpr.property.kind === 'Identifier' ? keyExpr.property.name : String(keyExpr.property.value)
-
-  // Current expression object must be the item param identifier: row
-  // (At HIR level, before signal accessor transform, it's still Identifier not CallExpression)
-  const exprObj = expr.object
-  if (exprObj.kind !== 'Identifier') {
-    return false
-  }
-  const exprItemName = deSSAVarName(exprObj.name)
-  if (exprItemName !== ctx.listItemParamName) {
-    return false
-  }
-
-  // Property must match: row.id -> id
-  if (expr.property.kind !== 'Identifier' && expr.property.kind !== 'Literal') {
-    return false
-  }
-  const exprPropName =
-    expr.property.kind === 'Identifier' ? expr.property.name : String(expr.property.value)
-
-  return exprPropName === keyPropName
-}
-
-function isListKeyParamIdentifier(name: string, ctx: CodegenContext): boolean {
-  if (!ctx.listKeyParamName) return false
-  return deSSAVarName(name) === deSSAVarName(ctx.listKeyParamName)
-}
-
-function isListKeyConstExpression(expr: Expression, ctx: CodegenContext): boolean {
-  if (!ctx.inListRender || !ctx.listKeyParamName) return false
-  if (expr.kind === 'Identifier' && isListKeyParamIdentifier(expr.name, ctx)) {
-    return true
-  }
-  return matchesListKeyPattern(expr, ctx)
-}
-
-function isListKeyDependency(dep: string, ctx: CodegenContext): boolean {
-  if (!ctx.inListRender || !ctx.listKeyParamName) return false
-  const key = deSSAVarName(ctx.listKeyParamName)
-  return dep === key || dep.startsWith(`${key}.`)
-}
-
-function isStaticDelegatedDataExpression(expr: Expression, ctx: CodegenContext): boolean {
-  if (expr.kind === 'Literal') return true
-  return isListKeyConstExpression(expr, ctx)
 }
 
 function isStaticDelegatedDataAst(expr: BabelCore.types.Expression, ctx: CodegenContext): boolean {
