@@ -2526,6 +2526,19 @@ function instructionToStatement(
     const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
     const lowerAssignedValue = (forceAssigned = false) =>
       lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
+    const throwAliasReassignment = (): never => {
+      const fileName = ctx.options?.filename ?? '<unknown>'
+      const loc = instr.loc?.start
+      const location = loc ? `${fileName}:${loc.line}:${loc.column + 1}` : fileName
+      throw new Error(
+        `Alias reassignment is not supported for "${baseName}".\n\n` +
+          `"${baseName}" was assigned from a reactive value and cannot be reassigned.\n` +
+          `Consider:\n` +
+          `  - Using a new variable name for the new value\n` +
+          `  - Updating the original reactive source instead\n` +
+          `Context: ${location}`,
+      )
+    }
     const buildDerivedMemoCall = (expr: BabelCore.types.Expression) => {
       const slot = !ctx.inModule && inRegionMemo ? reserveHookSlot(ctx) : undefined
       return buildMemoCall(ctx, t, t.arrowFunctionExpression([], expr), slot)
@@ -2651,13 +2664,7 @@ function instructionToStatement(
     }
 
     if (aliasVars.has(baseName) && declaredVars.has(baseName)) {
-      throw new Error(
-        `Alias reassignment is not supported for "${baseName}".\n\n` +
-          `"${baseName}" was assigned from a reactive value and cannot be reassigned.\n` +
-          `Consider:\n` +
-          `  - Using a new variable name for the new value\n` +
-          `  - Updating the original reactive source instead`,
-      )
+      throwAliasReassignment()
     }
 
     if (capturedTracked && isSignal) {
@@ -2668,13 +2675,7 @@ function instructionToStatement(
     }
 
     if (aliasVars.has(baseName) && !declaredVars.has(baseName)) {
-      throw new Error(
-        `Alias reassignment is not supported for "${baseName}".\n\n` +
-          `"${baseName}" was assigned from a reactive value and cannot be reassigned.\n` +
-          `Consider:\n` +
-          `  - Using a new variable name for the new value\n` +
-          `  - Updating the original reactive source instead`,
-      )
+      throwAliasReassignment()
     }
 
     // Handle tracked assignments to already-declared vars (e.g., let alias; alias = count)
@@ -2718,13 +2719,7 @@ function instructionToStatement(
 
     if (declaredVars.has(baseName)) {
       if (aliasVars.has(baseName)) {
-        throw new Error(
-          `Alias reassignment is not supported for "${baseName}".\n\n` +
-            `"${baseName}" was assigned from a reactive value and cannot be reassigned.\n` +
-            `Consider:\n` +
-            `  - Using a new variable name for the new value\n` +
-            `  - Updating the original reactive source instead`,
-        )
+        throwAliasReassignment()
       }
 
       // Already declared - use assignment expression

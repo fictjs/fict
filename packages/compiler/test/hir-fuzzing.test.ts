@@ -68,11 +68,15 @@ function createContext(seed: number): GeneratorContext {
 }
 
 function generateIdentifier(ctx: GeneratorContext, forDefinition = false): Identifier {
-  if (forDefinition || ctx.definedVars.length === 0 || ctx.rng.bool(0.3)) {
+  if (forDefinition) {
     const name = `v${ctx.varCounter++}`
-    if (forDefinition) {
-      ctx.definedVars.push(name)
-    }
+    ctx.definedVars.push(name)
+    return { kind: 'Identifier', name }
+  }
+  if (ctx.definedVars.length === 0) {
+    // Keep generated programs closed over declared bindings.
+    const name = `v${ctx.varCounter++}`
+    ctx.definedVars.push(name)
     return { kind: 'Identifier', name }
   }
   return { kind: 'Identifier', name: ctx.rng.pick(ctx.definedVars) }
@@ -200,7 +204,7 @@ function generateExpression(ctx: GeneratorContext): Expression {
 }
 
 function generateInstruction(ctx: GeneratorContext): Instruction {
-  if (ctx.rng.bool(0.7)) {
+  if (ctx.definedVars.length === 0 || ctx.rng.bool(0.7)) {
     const target = generateIdentifier(ctx, true)
     return {
       kind: 'Assign',
@@ -339,21 +343,65 @@ function collectDefinedVariables(program: HIRProgram): Set<string> {
           defined.add(instr.target.name)
         }
       }
+      if (block.terminator.kind === 'ForOf' || block.terminator.kind === 'ForIn') {
+        defined.add(block.terminator.variable)
+      } else if (block.terminator.kind === 'Try' && block.terminator.catchParam) {
+        defined.add(block.terminator.catchParam)
+      }
     }
   }
 
   return defined
 }
 
-function collectUsedVariables(program: HIRProgram): Set<string> {
-  const used = new Set<string>()
+interface ReferenceSummary {
+  used: Set<string>
+  maybeExternal: Set<string>
+}
 
-  function visitExpr(expr: Expression): void {
+const KNOWN_GLOBAL_IDENTIFIERS = new Set([
+  'undefined',
+  'Infinity',
+  'NaN',
+  'globalThis',
+  'window',
+  'document',
+  'navigator',
+  'console',
+  'Math',
+  'Number',
+  'String',
+  'Boolean',
+  'Object',
+  'Array',
+  'Date',
+  'JSON',
+  'Promise',
+  'Symbol',
+  'Set',
+  'Map',
+  'WeakMap',
+  'WeakSet',
+  'Reflect',
+  'Error',
+  'TypeError',
+  'RegExp',
+])
+
+function collectReferenceSummary(program: HIRProgram): ReferenceSummary {
+  const used = new Set<string>()
+  const maybeExternal = new Set<string>()
+
+  function visitExpr(expr: Expression, options?: { calleePosition?: boolean }): void {
     switch (expr.kind) {
       case 'Identifier':
         used.add(expr.name)
+        if (options?.calleePosition) {
+          maybeExternal.add(expr.name)
+        }
         break
       case 'BinaryExpression':
+      case 'LogicalExpression':
         visitExpr(expr.left)
         visitExpr(expr.right)
         break
@@ -361,8 +409,20 @@ function collectUsedVariables(program: HIRProgram): Set<string> {
         visitExpr(expr.argument)
         break
       case 'CallExpression':
-        visitExpr(expr.callee)
+      case 'OptionalCallExpression':
+        visitExpr(expr.callee, { calleePosition: true })
         expr.arguments.forEach(visitExpr)
+        break
+      case 'NewExpression':
+        visitExpr(expr.callee, { calleePosition: true })
+        expr.arguments.forEach(visitExpr)
+        break
+      case 'TaggedTemplateExpression':
+        visitExpr(expr.tag, { calleePosition: true })
+        visitExpr(expr.quasi)
+        break
+      case 'ImportExpression':
+        visitExpr(expr.source)
         break
       case 'ConditionalExpression':
         visitExpr(expr.test)
@@ -375,6 +435,9 @@ function collectUsedVariables(program: HIRProgram): Set<string> {
       case 'ObjectExpression':
         for (const prop of expr.properties) {
           if (prop.kind === 'Property') {
+            if (prop.computed) {
+              visitExpr(prop.key)
+            }
             visitExpr(prop.value)
           } else if (prop.kind === 'SpreadElement') {
             visitExpr(prop.argument)
@@ -382,14 +445,44 @@ function collectUsedVariables(program: HIRProgram): Set<string> {
         }
         break
       case 'MemberExpression':
+      case 'OptionalMemberExpression':
         visitExpr(expr.object)
-        visitExpr(expr.property)
+        if (expr.computed) {
+          visitExpr(expr.property)
+        }
         break
-      case 'LogicalExpression':
+      case 'AssignmentExpression':
         visitExpr(expr.left)
         visitExpr(expr.right)
         break
-      // Add other expression types as needed
+      case 'UpdateExpression':
+        visitExpr(expr.argument)
+        break
+      case 'TemplateLiteral':
+        expr.expressions.forEach(visitExpr)
+        break
+      case 'SpreadElement':
+        visitExpr(expr.argument)
+        break
+      case 'AwaitExpression':
+        visitExpr(expr.argument)
+        break
+      case 'SequenceExpression':
+        expr.expressions.forEach(visitExpr)
+        break
+      case 'YieldExpression':
+        if (expr.argument) visitExpr(expr.argument)
+        break
+      case 'ArrowFunction':
+      case 'FunctionExpression':
+      case 'ClassExpression':
+      case 'JSXElement':
+      case 'Literal':
+      case 'MetaProperty':
+      case 'ThisExpression':
+      case 'SuperExpression':
+        // Skip nested scopes or non-reference nodes.
+        break
     }
   }
 
@@ -411,8 +504,16 @@ function collectUsedVariables(program: HIRProgram): Set<string> {
         })
         break
       case 'ForOf':
+        visitExpr(term.iterable)
+        break
       case 'ForIn':
-        visitExpr('iterable' in term ? term.iterable : term.object)
+        visitExpr(term.object)
+        break
+      case 'Jump':
+      case 'Unreachable':
+      case 'Break':
+      case 'Continue':
+      case 'Try':
         break
     }
   }
@@ -434,7 +535,204 @@ function collectUsedVariables(program: HIRProgram): Set<string> {
     }
   }
 
-  return used
+  return { used, maybeExternal }
+}
+
+interface SideEffectEvent {
+  kind: string
+}
+
+function collectSideEffectEvents(program: HIRProgram): SideEffectEvent[] {
+  const events: SideEffectEvent[] = []
+
+  const record = (kind: string): void => {
+    events.push({ kind })
+  }
+
+  function visitExpr(expr: Expression): void {
+    switch (expr.kind) {
+      case 'CallExpression':
+        visitExpr(expr.callee)
+        expr.arguments.forEach(visitExpr)
+        if (expr.pure !== true) {
+          record('call')
+        }
+        break
+      case 'OptionalCallExpression':
+        visitExpr(expr.callee)
+        expr.arguments.forEach(visitExpr)
+        if (expr.pure !== true) {
+          record('optional_call')
+        }
+        break
+      case 'NewExpression':
+        visitExpr(expr.callee)
+        expr.arguments.forEach(visitExpr)
+        record('new')
+        break
+      case 'ConditionalExpression':
+        visitExpr(expr.test)
+        visitExpr(expr.consequent)
+        visitExpr(expr.alternate)
+        break
+      case 'ArrayExpression':
+        expr.elements.forEach(visitExpr)
+        break
+      case 'ObjectExpression':
+        for (const prop of expr.properties) {
+          if (prop.kind === 'Property') {
+            if (prop.computed) {
+              visitExpr(prop.key)
+            }
+            visitExpr(prop.value)
+          } else {
+            visitExpr(prop.argument)
+          }
+        }
+        break
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        visitExpr(expr.object)
+        if (expr.computed) {
+          visitExpr(expr.property)
+        }
+        break
+      case 'AssignmentExpression':
+        visitExpr(expr.left)
+        visitExpr(expr.right)
+        record(`assign:${expr.operator}`)
+        break
+      case 'UpdateExpression':
+        visitExpr(expr.argument)
+        record(`update:${expr.operator}`)
+        break
+      case 'AwaitExpression':
+        visitExpr(expr.argument)
+        record('await')
+        break
+      case 'YieldExpression':
+        if (expr.argument) {
+          visitExpr(expr.argument)
+        }
+        record(expr.delegate ? 'yield*' : 'yield')
+        break
+      case 'TaggedTemplateExpression':
+        visitExpr(expr.tag)
+        visitExpr(expr.quasi)
+        record('tagged_template')
+        break
+      case 'ImportExpression':
+        visitExpr(expr.source)
+        record('import')
+        break
+      case 'TemplateLiteral':
+        expr.expressions.forEach(visitExpr)
+        break
+      case 'SpreadElement':
+        visitExpr(expr.argument)
+        break
+      case 'SequenceExpression':
+        expr.expressions.forEach(visitExpr)
+        break
+      case 'LogicalExpression':
+        visitExpr(expr.left)
+        visitExpr(expr.right)
+        break
+      case 'ArrowFunction':
+      case 'FunctionExpression':
+      case 'ClassExpression':
+      case 'JSXElement':
+      case 'Identifier':
+      case 'Literal':
+      case 'MetaProperty':
+      case 'ThisExpression':
+      case 'SuperExpression':
+        break
+    }
+  }
+
+  function visitTerminator(term: Terminator): void {
+    switch (term.kind) {
+      case 'Return':
+        if (term.argument) {
+          visitExpr(term.argument)
+        }
+        break
+      case 'Throw':
+        visitExpr(term.argument)
+        record('throw')
+        break
+      case 'Branch':
+        visitExpr(term.test)
+        break
+      case 'Switch':
+        visitExpr(term.discriminant)
+        term.cases.forEach(c => {
+          if (c.test) {
+            visitExpr(c.test)
+          }
+        })
+        break
+      case 'ForOf':
+        visitExpr(term.iterable)
+        break
+      case 'ForIn':
+        visitExpr(term.object)
+        break
+      case 'Jump':
+      case 'Unreachable':
+      case 'Break':
+      case 'Continue':
+      case 'Try':
+        break
+    }
+  }
+
+  for (const fn of program.functions) {
+    for (const block of fn.blocks) {
+      for (const instr of block.instructions) {
+        if (instr.kind === 'Assign') {
+          visitExpr(instr.value)
+        } else if (instr.kind === 'Expression') {
+          visitExpr(instr.value)
+        }
+      }
+      visitTerminator(block.terminator)
+    }
+  }
+
+  return events
+}
+
+function isSubsequence<T>(source: T[], candidate: T[], equals: (a: T, b: T) => boolean): boolean {
+  let cursor = 0
+  for (const item of candidate) {
+    while (cursor < source.length && !equals(source[cursor]!, item)) {
+      cursor++
+    }
+    if (cursor === source.length) {
+      return false
+    }
+    cursor++
+  }
+  return true
+}
+
+function countByKind(events: SideEffectEvent[]): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (const event of events) {
+    counts.set(event.kind, (counts.get(event.kind) ?? 0) + 1)
+  }
+  return counts
+}
+
+function summarizeEvents(events: SideEffectEvent[]): string {
+  const MAX = 20
+  const kinds = events.slice(0, MAX).map(event => event.kind)
+  if (events.length > MAX) {
+    kinds.push(`...(+${events.length - MAX})`)
+  }
+  return kinds.join(' -> ')
 }
 
 interface InvariantResult {
@@ -442,16 +740,31 @@ interface InvariantResult {
   errors: string[]
 }
 
+function collectDanglingReferenceNames(program: HIRProgram): string[] {
+  const defined = collectDefinedVariables(program)
+  const { used, maybeExternal } = collectReferenceSummary(program)
+
+  const dangling = [...used].filter(
+    name =>
+      !defined.has(name) &&
+      !maybeExternal.has(name) &&
+      !KNOWN_GLOBAL_IDENTIFIERS.has(name) &&
+      !name.startsWith('__fict'),
+  )
+  dangling.sort()
+  return dangling
+}
+
 /**
  * Verify that no variable is used without being defined.
- * Note: We skip checking identifiers that look like external references (function calls, globals).
+ * Allows unresolved identifiers only for likely external references.
  */
 function verifyNoDanglingReferences(program: HIRProgram): InvariantResult {
-  const errors: string[] = []
-  // We don't verify dangling references in generated programs because
-  // identifiers might refer to external functions/globals
-  // In a real compiler, this would be verified differently
-  return { valid: true, errors }
+  const dangling = collectDanglingReferenceNames(program)
+  return {
+    valid: dangling.length === 0,
+    errors: dangling.map(name => `Dangling reference: "${name}" is used but never defined`),
+  }
 }
 
 /**
@@ -483,74 +796,38 @@ function verifyPhiNodeCorrectness(program: HIRProgram): InvariantResult {
 
 /**
  * Verify that optimization doesn't introduce new side effects.
- * This is a simplified check - just ensures we don't add more call expressions.
+ * We compare both aggregate counts and event ordering to catch duplicate/reordered effects.
  */
 function verifyNoDuplicateSideEffects(
   original: HIRProgram,
   optimized: HIRProgram,
 ): InvariantResult {
   const errors: string[] = []
+  const originalEvents = collectSideEffectEvents(original)
+  const optimizedEvents = collectSideEffectEvents(optimized)
 
-  function countCalls(program: HIRProgram): number {
-    let count = 0
-
-    function visitExpr(expr: Expression): void {
-      if (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') {
-        // Only count impure calls
-        if (!('pure' in expr) || !expr.pure) {
-          count++
-        }
-      }
-      // Visit children
-      switch (expr.kind) {
-        case 'BinaryExpression':
-          visitExpr(expr.left)
-          visitExpr(expr.right)
-          break
-        case 'UnaryExpression':
-          visitExpr(expr.argument)
-          break
-        case 'CallExpression':
-        case 'OptionalCallExpression':
-          visitExpr(expr.callee)
-          expr.arguments.forEach(visitExpr)
-          break
-        case 'ConditionalExpression':
-          visitExpr(expr.test)
-          visitExpr(expr.consequent)
-          visitExpr(expr.alternate)
-          break
-        case 'ArrayExpression':
-          expr.elements.forEach(visitExpr)
-          break
-        case 'MemberExpression':
-          visitExpr(expr.object)
-          visitExpr(expr.property)
-          break
-      }
-    }
-
-    for (const fn of program.functions) {
-      for (const block of fn.blocks) {
-        for (const instr of block.instructions) {
-          if (instr.kind === 'Assign') {
-            visitExpr(instr.value)
-          } else if (instr.kind === 'Expression') {
-            visitExpr(instr.value)
-          }
-        }
-      }
-    }
-
-    return count
+  if (optimizedEvents.length > originalEvents.length) {
+    errors.push(
+      `Optimization increased side-effect event count from ${originalEvents.length} to ${optimizedEvents.length}`,
+    )
   }
 
-  const originalCalls = countCalls(original)
-  const optimizedCalls = countCalls(optimized)
+  const originalCounts = countByKind(originalEvents)
+  const optimizedCounts = countByKind(optimizedEvents)
+  for (const [kind, optimizedCount] of optimizedCounts) {
+    const originalCount = originalCounts.get(kind) ?? 0
+    if (optimizedCount > originalCount) {
+      errors.push(
+        `Optimization increased "${kind}" events from ${originalCount} to ${optimizedCount}`,
+      )
+    }
+  }
 
-  if (optimizedCalls > originalCalls) {
+  if (!isSubsequence(originalEvents, optimizedEvents, (left, right) => left.kind === right.kind)) {
     errors.push(
-      `Optimization increased impure call count from ${originalCalls} to ${optimizedCalls}`,
+      `Optimization changed side-effect ordering.\n` +
+        `Original: ${summarizeEvents(originalEvents)}\n` +
+        `Optimized: ${summarizeEvents(optimizedEvents)}`,
     )
   }
 
@@ -593,6 +870,22 @@ function verifyTerminators(program: HIRProgram): InvariantResult {
   return { valid: errors.length === 0, errors }
 }
 
+const DEFAULT_RANDOM_FUZZ_SEED = 20260207
+
+function resolveRandomFuzzSeed(): number {
+  const raw = process.env.FICT_HIR_FUZZ_SEED
+  if (!raw) return DEFAULT_RANDOM_FUZZ_SEED
+  const parsed = Number.parseInt(raw, 10)
+  return Number.isFinite(parsed) ? parsed : DEFAULT_RANDOM_FUZZ_SEED
+}
+
+function assertInvariant(seed: number, name: string, result: InvariantResult): void {
+  if (!result.valid) {
+    const details = result.errors.length > 0 ? `\n${result.errors.join('\n')}` : ''
+    throw new Error(`seed ${seed}: ${name} failed${details}`)
+  }
+}
+
 // ============================================================================
 // Test Cases
 // ============================================================================
@@ -606,42 +899,42 @@ describe('HIR Optimizer Fuzz Tests', () => {
         const original = generateHIRProgram(seed)
 
         // Verify original is valid
-        expect(verifyUniqueBlockIds(original).valid).toBe(true)
-        expect(verifyTerminators(original).valid).toBe(true)
-        expect(verifyPhiNodeCorrectness(original).valid).toBe(true)
+        assertInvariant(seed, 'original unique block IDs', verifyUniqueBlockIds(original))
+        assertInvariant(seed, 'original terminators', verifyTerminators(original))
+        assertInvariant(seed, 'original phi correctness', verifyPhiNodeCorrectness(original))
 
         // Run optimizer
         const optimized = optimizeHIR(original)
 
         // Verify optimized maintains invariants
-        const blockIdResult = verifyUniqueBlockIds(optimized)
-        expect(blockIdResult.valid).toBe(true)
-
-        const terminatorResult = verifyTerminators(optimized)
-        expect(terminatorResult.valid).toBe(true)
-
-        const phiResult = verifyPhiNodeCorrectness(optimized)
-        expect(phiResult.valid).toBe(true)
+        assertInvariant(seed, 'optimized unique block IDs', verifyUniqueBlockIds(optimized))
+        assertInvariant(seed, 'optimized terminators', verifyTerminators(optimized))
+        assertInvariant(seed, 'optimized phi correctness', verifyPhiNodeCorrectness(optimized))
 
         // Verify no new side effects introduced
-        const sideEffectResult = verifyNoDuplicateSideEffects(original, optimized)
-        expect(sideEffectResult.valid).toBe(true)
+        assertInvariant(
+          seed,
+          'optimized side-effect preservation',
+          verifyNoDuplicateSideEffects(original, optimized),
+        )
       })
     }
   })
 
   describe('random program crash tests', () => {
     it('optimizer does not crash on 100 random programs', () => {
-      const baseSeed = Date.now()
+      const baseSeed = resolveRandomFuzzSeed()
 
       for (let i = 0; i < 100; i++) {
         const seed = baseSeed + i
         const program = generateHIRProgram(seed)
 
-        // Should not throw
-        expect(() => {
+        try {
           optimizeHIR(program)
-        }).not.toThrow()
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          throw new Error(`optimizer crashed for seed ${seed}: ${message}`)
+        }
       }
     })
   })
@@ -828,6 +1121,76 @@ describe('HIR Optimizer Fuzz Tests', () => {
 
       const optimized = optimizeHIR(program)
       expect(optimized.functions.length).toBe(1)
+    })
+
+    it('detects dangling references when present', () => {
+      const program: HIRProgram = {
+        functions: [
+          {
+            name: 'dangling',
+            params: [],
+            blocks: [
+              {
+                id: 0,
+                instructions: [],
+                terminator: {
+                  kind: 'Return',
+                  argument: { kind: 'Identifier', name: 'missing' },
+                },
+              },
+            ],
+          },
+        ],
+        preamble: [],
+        postamble: [],
+      }
+
+      const result = verifyNoDanglingReferences(program)
+      expect(result.valid).toBe(false)
+      expect(result.errors[0]).toContain('missing')
+    })
+
+    it('keeps closed programs free of dangling references after optimization', () => {
+      const program: HIRProgram = {
+        functions: [
+          {
+            name: 'closed',
+            params: [],
+            blocks: [
+              {
+                id: 0,
+                instructions: [
+                  {
+                    kind: 'Assign',
+                    target: { kind: 'Identifier', name: 'a' },
+                    value: { kind: 'Literal', value: 1 },
+                  },
+                  {
+                    kind: 'Assign',
+                    target: { kind: 'Identifier', name: 'b' },
+                    value: {
+                      kind: 'BinaryExpression',
+                      operator: '+',
+                      left: { kind: 'Identifier', name: 'a' },
+                      right: { kind: 'Literal', value: 2 },
+                    },
+                  },
+                ],
+                terminator: {
+                  kind: 'Return',
+                  argument: { kind: 'Identifier', name: 'b' },
+                },
+              },
+            ],
+          },
+        ],
+        preamble: [],
+        postamble: [],
+      }
+
+      expect(verifyNoDanglingReferences(program).valid).toBe(true)
+      const optimized = optimizeHIR(program)
+      expect(verifyNoDanglingReferences(optimized).valid).toBe(true)
     })
   })
 })
