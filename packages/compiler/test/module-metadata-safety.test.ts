@@ -209,4 +209,25 @@ describe('module metadata safety', () => {
       clearModuleMetadata()
     }
   })
+
+  it('does not fall back to cwd sidecars for unresolved relative imports', () => {
+    clearModuleMetadata()
+    const marker = '__fict_relative_probe__'
+    const source = `./${marker}`
+    const importer = '/tmp/consumer.ts'
+    const cwdMetaPath = path.resolve(`${marker}.fict.meta.json`)
+
+    try {
+      writeFileSync(cwdMetaPath, JSON.stringify({ exports: { value: 'signal' } }), 'utf8')
+      const resolved = resolveModuleMetadata(source, importer, {
+        emitModuleMetadata: false,
+      })
+      expect(resolved).toBeUndefined()
+    } finally {
+      if (existsSync(cwdMetaPath)) {
+        rmSync(cwdMetaPath, { force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
 })

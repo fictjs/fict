@@ -320,7 +320,8 @@ export function resolveModuleMetadata(
   // of truth and avoid disk probing unless adjacent emission is explicitly enabled.
   const shouldProbeFs = options?.emitModuleMetadata === true || !hasExternalMetadataStore
   const fsCache = shouldProbeFs ? new Map<string, boolean>() : undefined
-  const isFileLikeSource = path.isAbsolute(source) || source.startsWith('.')
+  const canReadSourceDirectly =
+    path.isAbsolute(source) || source.startsWith('/@fs/') || source.startsWith('file://')
 
   let resolvedKey = resolveImportSource(source, importer, store, {
     probeFs: false,
@@ -346,7 +347,7 @@ export function resolveModuleMetadata(
   if (!resolvedMetadata && store.has(source)) {
     resolvedMetadata = store.get(source)
   }
-  if (!resolvedMetadata && isFileLikeSource) {
+  if (!resolvedMetadata && canReadSourceDirectly) {
     const loaded = shouldProbeFs ? readMetadataFromDisk(source, store, options, fsCache) : undefined
     if (loaded) {
       resolvedMetadata = loaded
