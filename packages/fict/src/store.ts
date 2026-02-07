@@ -170,8 +170,7 @@ export function $store<T extends object>(initialValue: T): T {
         if (!warnedProps.has(prop)) {
           warnedProps.add(prop)
           console.warn(
-            `[fict] $store detected direct mutation of underlying object for property "${String(prop)}". ` +
-              `This is undefined behavior. Always mutate through the store proxy, not the original object.`,
+            `[fict] Direct mutation detected for "${String(prop)}"; mutate via $store proxy.`,
           )
         }
       }

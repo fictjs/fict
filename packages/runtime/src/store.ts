@@ -4,11 +4,6 @@ const PROXY = Symbol('fict:store-proxy')
 const TARGET = Symbol('fict:store-target')
 const ITERATE_KEY = Symbol('fict:iterate')
 
-const isDev =
-  typeof __DEV__ !== 'undefined'
-    ? __DEV__
-    : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
-
 // ============================================================================
 // Store (Deep Proxy)
 // ============================================================================
@@ -293,10 +288,7 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
   let iterateVersion = 0
   let ownKeysSnapshot = Reflect.ownKeys(currentValue as object)
 
-  const hasSameOwnKeys = (
-    aKeys: Array<string | symbol>,
-    bKeys: Array<string | symbol>,
-  ): boolean => {
+  const hasSameOwnKeys = (aKeys: (string | symbol)[], bKeys: (string | symbol)[]): boolean => {
     if (aKeys.length !== bKeys.length) return false
     for (let i = 0; i < aKeys.length; i++) {
       if (aKeys[i] !== bKeys[i]) return false
