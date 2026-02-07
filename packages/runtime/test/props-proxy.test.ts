@@ -96,6 +96,16 @@ describe('Props proxy', () => {
     expect((resolved as () => number)()).toBe(42)
   })
 
+  it('marks frozen zero-arg callback props as non-reactive', () => {
+    const callback = Object.freeze(() => 42)
+    const proxied = createPropsProxy({ callback })
+    const resolved = proxied.callback as unknown
+
+    expect(typeof resolved).toBe('function')
+    expect(isReactive(resolved)).toBe(false)
+    expect((resolved as () => number)()).toBe(42)
+  })
+
   it('does not execute function children passed through component props', () => {
     let called = 0
     const slot = () => {

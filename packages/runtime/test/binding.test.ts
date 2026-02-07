@@ -92,6 +92,13 @@ describe('Reactive DOM Binding', () => {
       const callback = nonReactive(() => 1)
       expect(isReactive(callback)).toBe(false)
     })
+
+    it('keeps frozen callbacks non-reactive when explicitly marked', () => {
+      const callback = Object.freeze(() => 1)
+      const marked = nonReactive(callback)
+      expect(marked).toBe(callback)
+      expect(isReactive(marked)).toBe(false)
+    })
   })
 
   describe('unwrap', () => {

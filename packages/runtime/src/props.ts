@@ -3,9 +3,24 @@ import { isComputed, isEffect, isEffectScope, isSignal } from './signal'
 
 const PROP_GETTER_MARKER = Symbol.for('fict:prop-getter')
 const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
+const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
 const propGetters = new WeakSet<(...args: unknown[]) => unknown>()
 const rawToProxy = new WeakMap<object, object>()
 const proxyToRaw = new WeakMap<object, object>()
+
+type NonReactiveRegistryHost = typeof globalThis & {
+  [NON_REACTIVE_FN_REGISTRY_KEY]?: WeakSet<(...args: unknown[]) => unknown>
+}
+
+function getNonReactiveFnRegistry(): WeakSet<(...args: unknown[]) => unknown> {
+  const host = globalThis as NonReactiveRegistryHost
+  let registry = host[NON_REACTIVE_FN_REGISTRY_KEY]
+  if (!registry) {
+    registry = new WeakSet<(...args: unknown[]) => unknown>()
+    host[NON_REACTIVE_FN_REGISTRY_KEY] = registry
+  }
+  return registry
+}
 
 /**
  * @internal
@@ -34,6 +49,7 @@ function isPropGetter(value: unknown): value is () => unknown {
 
 function isNonReactiveFn(value: unknown): boolean {
   if (typeof value !== 'function') return false
+  if (getNonReactiveFnRegistry().has(value as (...args: unknown[]) => unknown)) return true
   return (
     (value as ((...args: unknown[]) => unknown) & { [NON_REACTIVE_FN_MARKER]?: boolean })[
       NON_REACTIVE_FN_MARKER
@@ -42,6 +58,7 @@ function isNonReactiveFn(value: unknown): boolean {
 }
 
 function markNonReactiveFn<T extends (...args: unknown[]) => unknown>(fn: T): T {
+  getNonReactiveFnRegistry().add(fn as (...args: unknown[]) => unknown)
   if (Object.isExtensible(fn)) {
     try {
       ;(fn as T & { [NON_REACTIVE_FN_MARKER]?: boolean })[NON_REACTIVE_FN_MARKER] = true
