@@ -47,6 +47,8 @@ export function Demo(flag) {
       return 3 + count();
     }, createElement, () => {
       return 3 + count();
+    }, void 0, void 0, {
+      trackBranchReads: true
     });
     onDestroy(__cond_0.dispose);
     return __cond_0;
