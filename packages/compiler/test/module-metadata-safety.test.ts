@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { transformSync } from '@babel/core'
@@ -6,6 +6,7 @@ import syntaxJsx from '@babel/plugin-syntax-jsx'
 import { describe, expect, it } from 'vitest'
 
 import createFictPlugin from '../src'
+import { clearModuleMetadata, resolveModuleMetadata } from '../src'
 
 describe('module metadata safety', () => {
   it('does not write metadata sidecar for unknown filename', () => {
@@ -159,5 +160,27 @@ describe('module metadata safety', () => {
 
     expect(firstPassCalls).toBeGreaterThan(0)
     expect(resolveCalls).toBeGreaterThan(firstPassCalls)
+  })
+
+  it('does not resolve bare package imports from cwd metadata sidecars', () => {
+    clearModuleMetadata()
+    const bareSource = '__fict_bare_pkg__'
+    const fakeResolvedPath = path.resolve(bareSource)
+    const fakeMetaPath = `${fakeResolvedPath}.fict.meta.json`
+
+    try {
+      writeFileSync(fakeMetaPath, JSON.stringify({ exports: { value: 'signal' } }), 'utf8')
+
+      const resolved = resolveModuleMetadata(bareSource, '/tmp/consumer.ts', {
+        emitModuleMetadata: false,
+      })
+
+      expect(resolved).toBeUndefined()
+    } finally {
+      if (existsSync(fakeMetaPath)) {
+        rmSync(fakeMetaPath, { force: true })
+      }
+      clearModuleMetadata()
+    }
   })
 })

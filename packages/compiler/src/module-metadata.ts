@@ -320,9 +320,10 @@ export function resolveModuleMetadata(
   )
   const shouldProbeFs = options?.emitModuleMetadata === true || !hasExternalMetadataIntegration
   const fsCache = shouldProbeFs ? new Map<string, boolean>() : undefined
+  const isFileLikeSource = path.isAbsolute(source) || source.startsWith('.')
 
   let resolvedKey = resolveImportSource(source, importer, store, {
-    probeFs: shouldProbeFs,
+    probeFs: false,
     fsCache,
   })
   if (!resolvedKey && shouldProbeFs) {
@@ -345,7 +346,7 @@ export function resolveModuleMetadata(
   if (!resolvedMetadata && store.has(source)) {
     resolvedMetadata = store.get(source)
   }
-  if (!resolvedMetadata) {
+  if (!resolvedMetadata && isFileLikeSource) {
     const loaded = shouldProbeFs ? readMetadataFromDisk(source, store, options, fsCache) : undefined
     if (loaded) {
       resolvedMetadata = loaded
