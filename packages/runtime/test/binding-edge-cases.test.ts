@@ -1039,16 +1039,20 @@ describe('Binding Edge Cases', () => {
 
       expect(container.textContent).toBe('E')
       expect(logs).toEqual(['even'])
+      const firstDiv = container.querySelector('div')
+      expect(firstDiv).not.toBeNull()
 
       counter(1)
       await tick()
       expect(container.textContent).toBe('O')
       expect(logs).toEqual(['even', 'odd'])
+      expect(container.querySelector('div')).toBe(firstDiv)
 
       counter(2)
       await tick()
       expect(container.textContent).toBe('E')
       expect(logs).toEqual(['even', 'odd', 'even'])
+      expect(container.querySelector('div')).toBe(firstDiv)
 
       dispose()
     })

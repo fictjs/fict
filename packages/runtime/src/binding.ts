@@ -1856,6 +1856,41 @@ export function createConditional(
       if (lastCondition === cond && lastCondition === false && renderFalse === undefined) {
         return
       }
+    } else if (lastCondition === cond) {
+      const render = cond ? renderTrue : renderFalse
+      if (!render) {
+        return
+      }
+
+      let patched = false
+      const scratchRoot = createRootContext(hostRoot)
+      const prevScratch = pushRoot(scratchRoot)
+      try {
+        const output = render()
+        if (output != null && output !== false) {
+          if (currentNodes.length === 1) {
+            patched = patchNode(currentNodes[0] ?? null, output)
+          }
+          if (!patched && _isFragmentVNode(output)) {
+            patched = _patchFragmentChildren(currentNodes, output.props?.children)
+          }
+        }
+      } catch (err) {
+        if (handleSuspend(err as any, scratchRoot)) {
+          return
+        }
+        if (handleError(err, { source: 'renderChild' }, scratchRoot)) {
+          return
+        }
+        throw err
+      } finally {
+        popRoot(prevScratch)
+        destroyRoot(scratchRoot)
+      }
+
+      if (patched) {
+        return
+      }
     }
     lastCondition = cond
 
