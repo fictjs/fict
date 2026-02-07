@@ -1215,13 +1215,24 @@ export function effect(fn: () => void): EffectDisposer {
   if (prevSub !== undefined) link(e, prevSub, 0)
   activeSub = e
 
+  let didThrow = false
+  let thrown: unknown
   try {
     if (isDev) effectRunDevtools(e)
     fn()
+  } catch (err) {
+    didThrow = true
+    thrown = err
   } finally {
     activeSub = prevSub
-    e.flags &= ~Running
+    if (didThrow) {
+      // Initial execution failed: fully detach partially collected graph links.
+      disposeNode(e)
+    } else {
+      e.flags &= ~Running
+    }
   }
+  if (didThrow) throw thrown
 
   const disposer = effectOper.bind(e) as EffectDisposer & Record<symbol, boolean>
   disposer[EFFECT_MARKER] = true
@@ -1263,13 +1274,24 @@ export function effectWithCleanup(
   if (prevSub !== undefined) link(e, prevSub, 0)
   activeSub = e
 
+  let didThrow = false
+  let thrown: unknown
   try {
     if (isDev) effectRunDevtools(e)
     fn()
+  } catch (err) {
+    didThrow = true
+    thrown = err
   } finally {
     activeSub = prevSub
-    e.flags &= ~Running
+    if (didThrow) {
+      // Initial execution failed: fully detach partially collected graph links.
+      disposeNode(e)
+    } else {
+      e.flags &= ~Running
+    }
   }
+  if (didThrow) throw thrown
 
   const disposer = effectOper.bind(e) as EffectDisposer & Record<symbol, boolean>
   disposer[EFFECT_MARKER] = true

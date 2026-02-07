@@ -7,6 +7,7 @@ import {
   __resetReactiveState,
   batch as rawBatch,
   effect as rawEffect,
+  effectWithCleanup as rawEffectWithCleanup,
   signal as rawSignal,
 } from '../src/signal'
 
@@ -303,6 +304,60 @@ describe('signal runtime robustness', () => {
     expect(runs).toBe(3)
 
     dispose()
+  })
+
+  it('does not retain dependencies when low-level effect throws on initial run', () => {
+    const source = rawSignal(0)
+    let runs = 0
+
+    expect(() =>
+      rawEffect(() => {
+        runs++
+        source()
+        throw new Error('boom')
+      }),
+    ).toThrow('boom')
+    expect(runs).toBe(1)
+
+    __resetReactiveState()
+
+    expect(() =>
+      rawBatch(() => {
+        source(1)
+      }),
+    ).not.toThrow()
+    expect(runs).toBe(1)
+  })
+
+  it('does not retain dependencies when effectWithCleanup throws on initial run', () => {
+    const source = rawSignal(0)
+    let runs = 0
+    let cleanupRuns = 0
+
+    expect(() =>
+      rawEffectWithCleanup(
+        () => {
+          runs++
+          source()
+          throw new Error('boom')
+        },
+        () => {
+          cleanupRuns++
+        },
+      ),
+    ).toThrow('boom')
+    expect(runs).toBe(1)
+    expect(cleanupRuns).toBe(0)
+
+    __resetReactiveState()
+
+    expect(() =>
+      rawBatch(() => {
+        source(1)
+      }),
+    ).not.toThrow()
+    expect(runs).toBe(1)
+    expect(cleanupRuns).toBe(0)
   })
 
   it('removes stale dependencies when computed throws during update', async () => {
