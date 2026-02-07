@@ -6,7 +6,7 @@ import syntaxJsx from '@babel/plugin-syntax-jsx'
 import { describe, expect, it } from 'vitest'
 
 import createFictPlugin from '../src'
-import { clearModuleMetadata, resolveModuleMetadata } from '../src'
+import { clearModuleMetadata, resolveModuleMetadata, setModuleMetadata } from '../src'
 
 describe('module metadata safety', () => {
   it('does not write metadata sidecar for unknown filename', () => {
@@ -199,6 +199,53 @@ describe('module metadata safety', () => {
         moduleMetadata: new Map(),
       })
       expect(resolved).toBeUndefined()
+    } finally {
+      if (existsSync(depMetaPath)) {
+        rmSync(depMetaPath, { force: true })
+      }
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
+  it('invalidates fs probe cache when metadata sidecars are created', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_probe_cache__')
+    const importer = path.join(baseDir, 'consumer.ts')
+    const depPath = path.join(baseDir, 'dep.ts')
+    const depMetaPath = `${depPath}.fict.meta.json`
+    mkdirSync(baseDir, { recursive: true })
+
+    try {
+      const first = resolveModuleMetadata('./dep', importer, {
+        emitModuleMetadata: false,
+      })
+      expect(first).toBeUndefined()
+
+      setModuleMetadata(
+        depPath,
+        {
+          exports: {
+            value: 'signal',
+          },
+        },
+        {
+          emitModuleMetadata: true,
+          dev: false,
+        },
+      )
+
+      const resolved = resolveModuleMetadata('./dep', importer, {
+        emitModuleMetadata: false,
+      })
+
+      expect(resolved).toEqual({
+        exports: {
+          value: 'signal',
+        },
+      })
     } finally {
       if (existsSync(depMetaPath)) {
         rmSync(depMetaPath, { force: true })

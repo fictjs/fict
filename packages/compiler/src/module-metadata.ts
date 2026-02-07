@@ -16,6 +16,8 @@ let resolutionCacheByOptions = new WeakMap<
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
 const DEFAULT_META_EXTENSION = '.fict.meta.json'
 const DEFAULT_META_CACHE_DIR = path.join('.fict-cache', 'metadata')
+const FS_PROBE_CACHE_TTL_MS = 250
+const FS_PROBE_CACHE_MAX_SIZE = 50_000
 const UNKNOWN_FILENAME_TOKENS = new Set(['<unknown>', 'unknown', 'stdin', '[stdin]'])
 const VIRTUAL_FILENAME_PREFIXES = [
   'virtual:',
@@ -32,7 +34,14 @@ const VIRTUAL_FILENAME_PREFIXES = [
 
 type MetadataWriteMode = 'none' | 'adjacent' | 'cache'
 
-type FsProbeCache = Map<string, boolean>
+interface FsProbeCacheEntry {
+  exists: boolean
+  expiresAt: number
+}
+
+type FsProbeCache = Map<string, FsProbeCacheEntry>
+
+const sharedFsProbeCache: FsProbeCache = new Map()
 
 function shouldUseResolutionCache(options?: FictCompilerOptions): boolean {
   return !options?.resolveModuleMetadata && !options?.moduleMetadata
@@ -56,6 +65,20 @@ function clearResolutionCaches(): void {
     FictCompilerOptions,
     Map<string, ModuleReactiveMetadata | null>
   >()
+}
+
+function clearFsProbeCache(): void {
+  sharedFsProbeCache.clear()
+}
+
+function cacheFsProbeResult(cache: FsProbeCache, pathName: string, exists: boolean): void {
+  if (cache.size >= FS_PROBE_CACHE_MAX_SIZE) {
+    cache.clear()
+  }
+  cache.set(pathName, {
+    exists,
+    expiresAt: Date.now() + FS_PROBE_CACHE_TTL_MS,
+  })
 }
 
 function isWindowsDrivePath(fileName: string): boolean {
@@ -188,9 +211,10 @@ function writeMetadataAtomically(metaPath: string, payload: string): void {
 }
 
 function pathIsFile(pathName: string, cache?: FsProbeCache): boolean {
+  const now = Date.now()
   if (cache) {
     const cached = cache.get(pathName)
-    if (cached !== undefined) return cached
+    if (cached && cached.expiresAt > now) return cached.exists
   }
   let exists = false
   try {
@@ -198,7 +222,7 @@ function pathIsFile(pathName: string, cache?: FsProbeCache): boolean {
   } catch {
     exists = false
   }
-  if (cache) cache.set(pathName, exists)
+  if (cache) cacheFsProbeResult(cache, pathName, exists)
   return exists
 }
 
@@ -319,7 +343,7 @@ export function resolveModuleMetadata(
   // When a caller provides an explicit metadata store, treat it as the source
   // of truth and avoid disk probing unless adjacent emission is explicitly enabled.
   const shouldProbeFs = options?.emitModuleMetadata === true || !hasExternalMetadataStore
-  const fsCache = shouldProbeFs ? new Map<string, boolean>() : undefined
+  const fsCache = shouldProbeFs ? sharedFsProbeCache : undefined
   const canReadSourceDirectly =
     path.isAbsolute(source) || source.startsWith('/@fs/') || source.startsWith('file://')
 
@@ -384,12 +408,16 @@ export function setModuleMetadata(
   const metaPath = getMetadataWritePath(normalized, writeMode, options)
   if (!metaPath) return
   const payload = JSON.stringify(metadata)
-  if (lastWrittenMetadataPayload.get(metaPath) === payload && pathIsFile(metaPath)) return
+  const hasMetaFile = pathIsFile(metaPath)
+  cacheFsProbeResult(sharedFsProbeCache, metaPath, hasMetaFile)
+  if (lastWrittenMetadataPayload.get(metaPath) === payload && hasMetaFile) return
   try {
     writeMetadataAtomically(metaPath, payload)
     lastWrittenMetadataPayload.set(metaPath, payload)
+    cacheFsProbeResult(sharedFsProbeCache, metaPath, true)
   } catch {
     lastWrittenMetadataPayload.delete(metaPath)
+    cacheFsProbeResult(sharedFsProbeCache, metaPath, pathIsFile(metaPath))
     if (writeMode === 'adjacent') {
       warnMetadata(options, normalized, 'Failed to write module metadata sidecar')
     }
@@ -401,4 +429,5 @@ export function clearModuleMetadata(options?: FictCompilerOptions): void {
   store.clear()
   lastWrittenMetadataPayload.clear()
   clearResolutionCaches()
+  clearFsProbeCache()
 }
