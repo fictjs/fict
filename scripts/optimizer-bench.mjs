@@ -94,9 +94,39 @@ function measureSize(sample, optimize) {
   return Buffer.byteLength(code, 'utf8')
 }
 
+function median(values) {
+  if (values.length === 0) return 1
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  if (sorted.length % 2 === 1) return sorted[mid]
+  return (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+function deriveRuntimeScale(rows, baseline) {
+  const factors = []
+  for (const row of rows) {
+    const expected = baseline?.samples?.[row.sample]
+    if (!expected) continue
+    if (
+      typeof row.unoptimized_ms !== 'number' ||
+      typeof expected.unoptimized_ms !== 'number' ||
+      !Number.isFinite(row.unoptimized_ms) ||
+      !Number.isFinite(expected.unoptimized_ms) ||
+      row.unoptimized_ms <= 0 ||
+      expected.unoptimized_ms <= 0
+    ) {
+      continue
+    }
+    factors.push(row.unoptimized_ms / expected.unoptimized_ms)
+  }
+  // Only relax limits on slower machines/runners; never tighten on faster ones.
+  return Math.max(1, median(factors))
+}
+
 function compareWithBaseline(rows, baseline) {
   const budgets = { ...DEFAULT_BUDGETS, ...(baseline?.budgets ?? {}) }
   const failures = []
+  const runtimeScale = deriveRuntimeScale(rows, baseline)
 
   for (const row of rows) {
     const expected = baseline?.samples?.[row.sample]
@@ -105,7 +135,7 @@ function compareWithBaseline(rows, baseline) {
       continue
     }
 
-    const timeLimit = expected.optimized_ms * (1 + budgets.timeRegressionRatio)
+    const timeLimit = expected.optimized_ms * runtimeScale * (1 + budgets.timeRegressionRatio)
     if (row.optimized_ms > timeLimit) {
       failures.push(`${row.sample}: optimized_ms ${row.optimized_ms} > ${timeLimit.toFixed(2)}`)
     }
@@ -128,7 +158,9 @@ function compareWithBaseline(rows, baseline) {
 
   if (failures.length > 0) {
     const message = failures.join('\n')
-    throw new Error(`[optimizer-bench] Baseline regressions:\n${message}`)
+    throw new Error(
+      `[optimizer-bench] Baseline regressions (runtimeScale=${runtimeScale.toFixed(2)}x):\n${message}`,
+    )
   }
 }
 
