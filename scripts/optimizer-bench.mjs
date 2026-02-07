@@ -16,6 +16,7 @@ const { default: createFictPlugin } = require('../packages/compiler/dist/index.c
 
 const iterations = Number(process.env.BENCH_ITERS ?? 50)
 const warmup = Number(process.env.BENCH_WARMUP ?? 5)
+const repeats = Number(process.env.BENCH_REPEATS ?? 5)
 const updateBaseline = process.argv.includes('--update')
 const compareBaseline = process.argv.includes('--compare')
 
@@ -86,6 +87,14 @@ function runSample(sample, optimize) {
   }
   const end = performance.now()
   return (end - start) / iterations
+}
+
+function runSampleStable(sample, optimize) {
+  const runs = []
+  for (let i = 0; i < repeats; i++) {
+    runs.push(runSample(sample, optimize))
+  }
+  return median(runs)
 }
 
 function measureSize(sample, optimize) {
@@ -167,8 +176,8 @@ function compareWithBaseline(rows, baseline) {
 function main() {
   const rows = []
   for (const sample of samples) {
-    const optimized = Number(runSample(sample, true).toFixed(2))
-    const unoptimized = Number(runSample(sample, false).toFixed(2))
+    const optimized = Number(runSampleStable(sample, true).toFixed(2))
+    const unoptimized = Number(runSampleStable(sample, false).toFixed(2))
     const optimizedBytes = measureSize(sample, true)
     const unoptimizedBytes = measureSize(sample, false)
     rows.push({

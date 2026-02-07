@@ -10,6 +10,7 @@ import type {
   Instruction,
   Terminator,
 } from '../src/ir/hir'
+import { getSSABaseName } from '../src/ir/hir'
 import { optimizeHIR } from '../src/ir/optimize'
 
 // ============================================================================
@@ -205,11 +206,14 @@ function generateExpression(ctx: GeneratorContext): Expression {
 
 function generateInstruction(ctx: GeneratorContext): Instruction {
   if (ctx.definedVars.length === 0 || ctx.rng.bool(0.7)) {
-    const target = generateIdentifier(ctx, true)
+    const targetName = `v${ctx.varCounter++}`
+    const target: Identifier = { kind: 'Identifier', name: targetName }
+    const value = generateExpression(ctx)
+    ctx.definedVars.push(targetName)
     return {
       kind: 'Assign',
       target,
-      value: generateExpression(ctx),
+      value,
       declarationKind: ctx.rng.pick(['const', 'let', 'var']),
     }
   }
@@ -269,42 +273,48 @@ function generateBasicBlock(
 }
 
 function generateHIRFunction(ctx: GeneratorContext): HIRFunction {
-  const blockCount = ctx.rng.nextInt(1, 4)
-  const blocks: BasicBlock[] = []
+  const previousDefinedVars = ctx.definedVars
+  ctx.definedVars = []
+  try {
+    const paramCount = ctx.rng.nextInt(0, 3)
+    const params: Identifier[] = []
+    for (let i = 0; i < paramCount; i++) {
+      params.push(generateIdentifier(ctx, true))
+    }
 
-  // Generate block IDs first
-  const blockIds: BlockId[] = []
-  for (let i = 0; i < blockCount; i++) {
-    blockIds.push(ctx.blockIdCounter++)
-  }
+    const blockCount = ctx.rng.nextInt(1, 4)
+    const blocks: BasicBlock[] = []
 
-  // Generate blocks - each block can only jump forward to prevent cycles
-  for (let i = 0; i < blockCount; i++) {
-    const forwardTargets = blockIds.slice(i + 1)
-    blocks.push(generateBasicBlock(ctx, blockIds[i]!, forwardTargets))
-  }
+    // Generate block IDs first
+    const blockIds: BlockId[] = []
+    for (let i = 0; i < blockCount; i++) {
+      blockIds.push(ctx.blockIdCounter++)
+    }
 
-  // Ensure last block always returns
-  if (blocks.length > 0) {
-    const lastBlock = blocks[blocks.length - 1]!
-    if (lastBlock.terminator.kind !== 'Return' && lastBlock.terminator.kind !== 'Unreachable') {
-      lastBlock.terminator = {
-        kind: 'Return',
-        argument: ctx.rng.bool(0.7) ? generateExpression(ctx) : undefined,
+    // Generate blocks - each block can only jump forward to prevent cycles
+    for (let i = 0; i < blockCount; i++) {
+      const forwardTargets = blockIds.slice(i + 1)
+      blocks.push(generateBasicBlock(ctx, blockIds[i]!, forwardTargets))
+    }
+
+    // Ensure last block always returns
+    if (blocks.length > 0) {
+      const lastBlock = blocks[blocks.length - 1]!
+      if (lastBlock.terminator.kind !== 'Return' && lastBlock.terminator.kind !== 'Unreachable') {
+        lastBlock.terminator = {
+          kind: 'Return',
+          argument: ctx.rng.bool(0.7) ? generateExpression(ctx) : undefined,
+        }
       }
     }
-  }
 
-  const paramCount = ctx.rng.nextInt(0, 3)
-  const params: Identifier[] = []
-  for (let i = 0; i < paramCount; i++) {
-    params.push(generateIdentifier(ctx, true))
-  }
-
-  return {
-    name: `fn_${ctx.rng.nextInt(0, 99)}`,
-    params,
-    blocks,
+    return {
+      name: `fn_${ctx.rng.nextInt(0, 99)}`,
+      params,
+      blocks,
+    }
+  } finally {
+    ctx.definedVars = previousDefinedVars
   }
 }
 
@@ -328,25 +338,181 @@ function generateHIRProgram(seed: number): HIRProgram {
 // Invariant Verification
 // ============================================================================
 
+interface ReferenceCollectionOptions {
+  reachableOnly?: boolean
+}
+
+function getTerminatorTargets(term: Terminator): BlockId[] {
+  switch (term.kind) {
+    case 'Jump':
+    case 'Break':
+    case 'Continue':
+      return [term.target]
+    case 'Branch':
+      return [term.consequent, term.alternate]
+    case 'Switch':
+      return term.cases.map(c => c.target)
+    case 'ForOf':
+    case 'ForIn':
+      return [term.body, term.exit]
+    case 'Try':
+      return [term.tryBlock, term.catchBlock, term.finallyBlock, term.exit].filter(
+        (id): id is BlockId => typeof id === 'number',
+      )
+    case 'Return':
+    case 'Throw':
+    case 'Unreachable':
+      return []
+  }
+}
+
+function collectReachableBlockIds(fn: HIRFunction): Set<BlockId> {
+  const reachable = new Set<BlockId>()
+  if (fn.blocks.length === 0) return reachable
+
+  const blockMap = new Map<BlockId, BasicBlock>()
+  fn.blocks.forEach(block => blockMap.set(block.id, block))
+
+  const entry = fn.blocks[0]!.id
+  const stack: BlockId[] = [entry]
+
+  while (stack.length > 0) {
+    const blockId = stack.pop()!
+    if (reachable.has(blockId)) continue
+    reachable.add(blockId)
+
+    const block = blockMap.get(blockId)
+    if (!block) continue
+    for (const target of getTerminatorTargets(block.terminator)) {
+      if (!reachable.has(target) && blockMap.has(target)) {
+        stack.push(target)
+      }
+    }
+  }
+
+  return reachable
+}
+
 function collectDefinedVariables(program: HIRProgram): Set<string> {
   const defined = new Set<string>()
+  const addDefinedName = (name: string): void => {
+    defined.add(name)
+    defined.add(getSSABaseName(name))
+  }
+
+  function collectExprAssignedIdentifiers(expr: Expression): void {
+    switch (expr.kind) {
+      case 'AssignmentExpression':
+        if (expr.left.kind === 'Identifier') {
+          addDefinedName(expr.left.name)
+        } else {
+          collectExprAssignedIdentifiers(expr.left)
+        }
+        collectExprAssignedIdentifiers(expr.right)
+        break
+      case 'BinaryExpression':
+      case 'LogicalExpression':
+        collectExprAssignedIdentifiers(expr.left)
+        collectExprAssignedIdentifiers(expr.right)
+        break
+      case 'UnaryExpression':
+      case 'AwaitExpression':
+      case 'SpreadElement':
+        collectExprAssignedIdentifiers(expr.argument)
+        break
+      case 'CallExpression':
+      case 'OptionalCallExpression':
+      case 'NewExpression':
+        collectExprAssignedIdentifiers(expr.callee)
+        expr.arguments.forEach(collectExprAssignedIdentifiers)
+        break
+      case 'ConditionalExpression':
+        collectExprAssignedIdentifiers(expr.test)
+        collectExprAssignedIdentifiers(expr.consequent)
+        collectExprAssignedIdentifiers(expr.alternate)
+        break
+      case 'ArrayExpression':
+        expr.elements.forEach(collectExprAssignedIdentifiers)
+        break
+      case 'ObjectExpression':
+        for (const prop of expr.properties) {
+          if (prop.kind === 'Property') {
+            if (prop.computed) {
+              collectExprAssignedIdentifiers(prop.key)
+            }
+            collectExprAssignedIdentifiers(prop.value)
+          } else {
+            collectExprAssignedIdentifiers(prop.argument)
+          }
+        }
+        break
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        collectExprAssignedIdentifiers(expr.object)
+        if (expr.computed) {
+          collectExprAssignedIdentifiers(expr.property)
+        }
+        break
+      case 'TemplateLiteral':
+      case 'SequenceExpression':
+        expr.expressions.forEach(collectExprAssignedIdentifiers)
+        break
+      case 'TaggedTemplateExpression':
+        collectExprAssignedIdentifiers(expr.tag)
+        collectExprAssignedIdentifiers(expr.quasi)
+        break
+      case 'ImportExpression':
+        collectExprAssignedIdentifiers(expr.source)
+        break
+      case 'YieldExpression':
+        if (expr.argument) {
+          collectExprAssignedIdentifiers(expr.argument)
+        }
+        break
+      case 'ArrowFunction':
+      case 'FunctionExpression':
+      case 'ClassExpression':
+      case 'JSXElement':
+      case 'Identifier':
+      case 'Literal':
+      case 'MetaProperty':
+      case 'ThisExpression':
+      case 'SuperExpression':
+      case 'UpdateExpression':
+        break
+    }
+  }
 
   for (const fn of program.functions) {
     for (const param of fn.params) {
-      defined.add(param.name)
+      addDefinedName(param.name)
     }
     for (const block of fn.blocks) {
       for (const instr of block.instructions) {
         if (instr.kind === 'Assign') {
-          defined.add(instr.target.name)
+          addDefinedName(instr.target.name)
+          collectExprAssignedIdentifiers(instr.value)
         } else if (instr.kind === 'Phi') {
-          defined.add(instr.target.name)
+          addDefinedName(instr.target.name)
+        } else if (instr.kind === 'Expression') {
+          collectExprAssignedIdentifiers(instr.value)
         }
       }
       if (block.terminator.kind === 'ForOf' || block.terminator.kind === 'ForIn') {
-        defined.add(block.terminator.variable)
+        addDefinedName(block.terminator.variable)
       } else if (block.terminator.kind === 'Try' && block.terminator.catchParam) {
-        defined.add(block.terminator.catchParam)
+        addDefinedName(block.terminator.catchParam)
+      } else if (block.terminator.kind === 'Return' && block.terminator.argument) {
+        collectExprAssignedIdentifiers(block.terminator.argument)
+      } else if (block.terminator.kind === 'Throw') {
+        collectExprAssignedIdentifiers(block.terminator.argument)
+      } else if (block.terminator.kind === 'Branch') {
+        collectExprAssignedIdentifiers(block.terminator.test)
+      } else if (block.terminator.kind === 'Switch') {
+        collectExprAssignedIdentifiers(block.terminator.discriminant)
+        block.terminator.cases.forEach(c => {
+          if (c.test) collectExprAssignedIdentifiers(c.test)
+        })
       }
     }
   }
@@ -388,7 +554,10 @@ const KNOWN_GLOBAL_IDENTIFIERS = new Set([
   'RegExp',
 ])
 
-function collectReferenceSummary(program: HIRProgram): ReferenceSummary {
+function collectReferenceSummary(
+  program: HIRProgram,
+  options: ReferenceCollectionOptions = {},
+): ReferenceSummary {
   const used = new Set<string>()
   const maybeExternal = new Set<string>()
 
@@ -452,7 +621,9 @@ function collectReferenceSummary(program: HIRProgram): ReferenceSummary {
         }
         break
       case 'AssignmentExpression':
-        visitExpr(expr.left)
+        if (expr.left.kind !== 'Identifier') {
+          visitExpr(expr.left)
+        }
         visitExpr(expr.right)
         break
       case 'UpdateExpression':
@@ -519,7 +690,9 @@ function collectReferenceSummary(program: HIRProgram): ReferenceSummary {
   }
 
   for (const fn of program.functions) {
+    const reachable = options.reachableOnly ? collectReachableBlockIds(fn) : null
     for (const block of fn.blocks) {
+      if (reachable && !reachable.has(block.id)) continue
       for (const instr of block.instructions) {
         if (instr.kind === 'Assign') {
           visitExpr(instr.value)
@@ -740,13 +913,17 @@ interface InvariantResult {
   errors: string[]
 }
 
-function collectDanglingReferenceNames(program: HIRProgram): string[] {
+function collectDanglingReferenceNames(
+  program: HIRProgram,
+  options: ReferenceCollectionOptions = {},
+): string[] {
   const defined = collectDefinedVariables(program)
-  const { used, maybeExternal } = collectReferenceSummary(program)
+  const { used, maybeExternal } = collectReferenceSummary(program, options)
 
   const dangling = [...used].filter(
     name =>
       !defined.has(name) &&
+      !defined.has(getSSABaseName(name)) &&
       !maybeExternal.has(name) &&
       !KNOWN_GLOBAL_IDENTIFIERS.has(name) &&
       !name.startsWith('__fict'),
@@ -761,6 +938,14 @@ function collectDanglingReferenceNames(program: HIRProgram): string[] {
  */
 function verifyNoDanglingReferences(program: HIRProgram): InvariantResult {
   const dangling = collectDanglingReferenceNames(program)
+  return {
+    valid: dangling.length === 0,
+    errors: dangling.map(name => `Dangling reference: "${name}" is used but never defined`),
+  }
+}
+
+function verifyNoDanglingReferencesOnReachable(program: HIRProgram): InvariantResult {
+  const dangling = collectDanglingReferenceNames(program, { reachableOnly: true })
   return {
     valid: dangling.length === 0,
     errors: dangling.map(name => `Dangling reference: "${name}" is used but never defined`),
@@ -886,6 +1071,20 @@ function assertInvariant(seed: number, name: string, result: InvariantResult): v
   }
 }
 
+function generateReachableClosedProgram(seed: number): HIRProgram {
+  const MAX_ATTEMPTS = 25
+  for (let i = 0; i < MAX_ATTEMPTS; i++) {
+    const candidateSeed = seed + i * 7919
+    const candidate = generateHIRProgram(candidateSeed)
+    if (verifyNoDanglingReferencesOnReachable(candidate).valid) {
+      return candidate
+    }
+  }
+  throw new Error(
+    `seed ${seed}: could not generate a reachable-closed HIR program in ${MAX_ATTEMPTS} attempts`,
+  )
+}
+
 // ============================================================================
 // Test Cases
 // ============================================================================
@@ -896,12 +1095,17 @@ describe('HIR Optimizer Fuzz Tests', () => {
 
     for (const seed of FIXED_SEEDS) {
       it(`seed ${seed}: optimizer maintains invariants`, () => {
-        const original = generateHIRProgram(seed)
+        const original = generateReachableClosedProgram(seed)
 
         // Verify original is valid
         assertInvariant(seed, 'original unique block IDs', verifyUniqueBlockIds(original))
         assertInvariant(seed, 'original terminators', verifyTerminators(original))
         assertInvariant(seed, 'original phi correctness', verifyPhiNodeCorrectness(original))
+        assertInvariant(
+          seed,
+          'original reachable dangling references',
+          verifyNoDanglingReferencesOnReachable(original),
+        )
 
         // Run optimizer
         const optimized = optimizeHIR(original)
@@ -910,6 +1114,18 @@ describe('HIR Optimizer Fuzz Tests', () => {
         assertInvariant(seed, 'optimized unique block IDs', verifyUniqueBlockIds(optimized))
         assertInvariant(seed, 'optimized terminators', verifyTerminators(optimized))
         assertInvariant(seed, 'optimized phi correctness', verifyPhiNodeCorrectness(optimized))
+        const optimizedReachableDangling = verifyNoDanglingReferencesOnReachable(optimized)
+        if (!optimizedReachableDangling.valid && process.env.FICT_HIR_FUZZ_DEBUG === '1') {
+          // Debug dump to inspect optimizer-introduced dangling references.
+          console.error(
+            `[debug] seed ${seed} dangling: ${optimizedReachableDangling.errors.join(', ')}`,
+          )
+          console.error('[debug] original:')
+          console.error(JSON.stringify(original, null, 2))
+          console.error('[debug] optimized:')
+          console.error(JSON.stringify(optimized, null, 2))
+        }
+        assertInvariant(seed, 'optimized reachable dangling references', optimizedReachableDangling)
 
         // Verify no new side effects introduced
         assertInvariant(
@@ -1191,6 +1407,37 @@ describe('HIR Optimizer Fuzz Tests', () => {
       expect(verifyNoDanglingReferences(program).valid).toBe(true)
       const optimized = optimizeHIR(program)
       expect(verifyNoDanglingReferences(optimized).valid).toBe(true)
+    })
+
+    it('ignores dangling references inside unreachable blocks when configured', () => {
+      const program: HIRProgram = {
+        functions: [
+          {
+            name: 'unreachable-dangling',
+            params: [],
+            blocks: [
+              {
+                id: 0,
+                instructions: [],
+                terminator: { kind: 'Return', argument: { kind: 'Literal', value: 1 } },
+              },
+              {
+                id: 1,
+                instructions: [],
+                terminator: {
+                  kind: 'Return',
+                  argument: { kind: 'Identifier', name: 'missing_unreachable' },
+                },
+              },
+            ],
+          },
+        ],
+        preamble: [],
+        postamble: [],
+      }
+
+      expect(verifyNoDanglingReferences(program).valid).toBe(false)
+      expect(verifyNoDanglingReferencesOnReachable(program).valid).toBe(true)
     })
   })
 })
