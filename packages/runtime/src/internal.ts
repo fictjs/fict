@@ -92,6 +92,7 @@ export {
   bindProperty,
   bindRef,
   nonReactive,
+  reactive,
   insert,
   insertBetween,
   createConditional,

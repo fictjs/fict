@@ -48,7 +48,7 @@ export {
 // Utilities
 // ============================================================================
 
-export { isReactive, nonReactive, unwrap } from './binding'
+export { isReactive, nonReactive, reactive, unwrap } from './binding'
 
 // ============================================================================
 // Debugging & DevTools

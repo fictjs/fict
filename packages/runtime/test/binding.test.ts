@@ -11,6 +11,7 @@ import {
   createShow,
   isReactive,
   nonReactive,
+  reactive,
   unwrap,
 } from '../src/advanced'
 import {
@@ -90,6 +91,17 @@ describe('Reactive DOM Binding', () => {
 
     it('supports explicitly marking zero-arg callbacks as non-reactive', () => {
       const callback = nonReactive(() => 1)
+      expect(isReactive(callback)).toBe(false)
+    })
+
+    it('supports explicitly marking zero-arg getters as reactive', () => {
+      const getter = reactive(() => 1)
+      expect(isReactive(getter)).toBe(true)
+    })
+
+    it('nonReactive marker overrides explicit reactive marker', () => {
+      const getter = reactive(() => 1)
+      const callback = nonReactive(getter)
       expect(isReactive(callback)).toBe(false)
     })
 

@@ -53,6 +53,7 @@ const STYLE_CACHE = Symbol('fict:style')
 const CLASS_STATE_CACHE = Symbol('fict:class-state')
 const CLASS_VALUE_CACHE = Symbol('fict:class-value')
 const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
+const REACTIVE_FN_MARKER = Symbol.for('fict:reactive-fn')
 const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
 
 type NonReactiveRegistryHost = typeof globalThis & {
@@ -80,6 +81,15 @@ function getNonReactiveFnRegistry(): WeakSet<(...args: unknown[]) => unknown> {
     host[NON_REACTIVE_FN_REGISTRY_KEY] = registry
   }
   return registry
+}
+
+function isExplicitReactiveFn(value: unknown): boolean {
+  if (typeof value !== 'function') return false
+  return (
+    (value as ((...args: unknown[]) => unknown) & { [REACTIVE_FN_MARKER]?: boolean })[
+      REACTIVE_FN_MARKER
+    ] === true
+  )
 }
 
 // ============================================================================
@@ -135,13 +145,18 @@ export interface BindingHandle {
 export function isReactive(value: unknown): value is () => unknown {
   if (typeof value !== 'function') return false
 
+  // Explicit non-reactive marker always wins.
+  if (isNonReactiveFn(value)) return false
+
   // Check for runtime-created signals/computed (most reliable)
   if (isSignal(value) || isComputed(value)) return true
+
+  // Explicit marker for user-authored reactive getters.
+  if (isExplicitReactiveFn(value)) return true
 
   // Exclude effect disposers and effect scopes - they are zero-arg
   // functions but not reactive getters
   if (isEffect(value) || isEffectScope(value)) return false
-  if (isNonReactiveFn(value)) return false
 
   // Fall back to length check for compiler-generated getters
   // Zero-argument functions are treated as reactive getters
@@ -191,6 +206,22 @@ export function nonReactive<T extends (...args: unknown[]) => unknown>(fn: T): T
   if (Object.isExtensible(fn)) {
     try {
       ;(fn as T & { [NON_REACTIVE_FN_MARKER]?: boolean })[NON_REACTIVE_FN_MARKER] = true
+    } catch {
+      // Ignore marker failures on non-standard function objects.
+    }
+  }
+  return fn
+}
+
+/**
+ * Mark a zero-arg function as an explicit reactive getter.
+ * Useful when authoring runtime code manually and you need function values
+ * to participate in reactive binding without relying on heuristics.
+ */
+export function reactive<T>(fn: () => T): () => T {
+  if (Object.isExtensible(fn)) {
+    try {
+      ;(fn as (() => T) & { [REACTIVE_FN_MARKER]?: boolean })[REACTIVE_FN_MARKER] = true
     } catch {
       // Ignore marker failures on non-standard function objects.
     }

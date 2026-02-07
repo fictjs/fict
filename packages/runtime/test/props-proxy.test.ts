@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createElement, mergeProps, prop, render } from '../src/index'
-import { createSignal } from '../src/advanced'
+import { createSignal, reactive } from '../src/advanced'
 import {
   __fictProp,
   __fictPropsRest,
@@ -93,6 +93,16 @@ describe('Props proxy', () => {
 
     expect(typeof resolved).toBe('function')
     expect(isReactive(resolved)).toBe(false)
+    expect((resolved as () => number)()).toBe(42)
+  })
+
+  it('preserves explicitly reactive getter props', () => {
+    const getter = reactive(() => 42)
+    const proxied = createPropsProxy({ getter })
+    const resolved = proxied.getter as unknown
+
+    expect(resolved).toBe(getter)
+    expect(isReactive(resolved)).toBe(true)
     expect((resolved as () => number)()).toBe(42)
   })
 

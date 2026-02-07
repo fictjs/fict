@@ -3,6 +3,7 @@ import { isComputed, isEffect, isEffectScope, isSignal } from './signal'
 
 const PROP_GETTER_MARKER = Symbol.for('fict:prop-getter')
 const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
+const REACTIVE_FN_MARKER = Symbol.for('fict:reactive-fn')
 const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
 const propGetters = new WeakSet<(...args: unknown[]) => unknown>()
 const rawToProxy = new WeakMap<object, object>()
@@ -69,10 +70,21 @@ function markNonReactiveFn<T extends (...args: unknown[]) => unknown>(fn: T): T 
   return fn
 }
 
+function isExplicitReactiveFn(value: unknown): boolean {
+  if (typeof value !== 'function') return false
+  return (
+    (value as ((...args: unknown[]) => unknown) & { [REACTIVE_FN_MARKER]?: boolean })[
+      REACTIVE_FN_MARKER
+    ] === true
+  )
+}
+
 function normalizePropsFunction(value: unknown): unknown {
   if (typeof value !== 'function') return value
   if (value.length !== 0) return value
-  if (isPropGetter(value) || isSignal(value) || isComputed(value)) return value
+  if (isPropGetter(value) || isSignal(value) || isComputed(value) || isExplicitReactiveFn(value)) {
+    return value
+  }
   if (isEffect(value) || isEffectScope(value) || isNonReactiveFn(value)) return value
   return markNonReactiveFn(value as (...args: unknown[]) => unknown)
 }
