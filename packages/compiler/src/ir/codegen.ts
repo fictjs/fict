@@ -34,6 +34,7 @@ import {
   type HookReturnInfoAnalysisOps,
 } from './codegen-hook-returns'
 import { attachHelperImports, collectDeclaredNames } from './codegen-imports'
+import { extractKeyFromMapCallback } from './codegen-jsx-keys'
 import {
   isListKeyConstExpression,
   isListKeyDependency,
@@ -72,7 +73,6 @@ import {
   type HIRFunction,
   type HIRProgram,
   type Instruction,
-  type JSXAttribute,
   type JSXChild,
   type JSXElementExpression,
 } from './hir'
@@ -608,133 +608,6 @@ function genModuleUrlExpr(ctx: CodegenContext): BabelCore.types.Expression {
     t.metaProperty(t.identifier('import'), t.identifier('meta')),
     t.identifier('url'),
   )
-}
-
-/**
- * Normalized attribute information for HIR codegen
- */
-interface NormalizedAttribute {
-  name: string
-  kind: 'attr' | 'class' | 'style' | 'event' | 'ref' | 'property' | 'skip'
-  eventName?: string
-  capture?: boolean
-  passive?: boolean
-  once?: boolean
-}
-
-/**
- * Normalize an attribute name for HIR codegen
- * Mirrors the logic from fine-grained-dom.ts normalizeAttributeName
- */
-function _normalizeAttribute(name: string): NormalizedAttribute {
-  // Event handlers: onClick, onSubmit, etc.
-  if (name.length > 2 && name.startsWith('on') && name[2]?.toUpperCase() === name[2]) {
-    let eventName = name.slice(2)
-    let capture = false
-    let passive = false
-    let once = false
-
-    // Support suffix modifiers (Capture/Passive/Once)
-    let changed = true
-    while (changed) {
-      changed = false
-      if (eventName.endsWith('Capture')) {
-        eventName = eventName.slice(0, -7)
-        capture = true
-        changed = true
-      }
-      if (eventName.endsWith('Passive')) {
-        eventName = eventName.slice(0, -7)
-        passive = true
-        changed = true
-      }
-      if (eventName.endsWith('Once')) {
-        eventName = eventName.slice(0, -4)
-        once = true
-        changed = true
-      }
-    }
-
-    return {
-      name,
-      kind: 'event',
-      eventName: eventName.toLowerCase(),
-      capture,
-      passive,
-      once,
-    }
-  }
-
-  switch (name) {
-    case 'key':
-      return { name, kind: 'skip' }
-    case 'ref':
-      return { name, kind: 'ref' }
-    case 'value':
-    case 'checked':
-    case 'selected':
-    case 'disabled':
-    case 'readOnly':
-    case 'multiple':
-    case 'muted':
-      return { name, kind: 'property' }
-    case 'class':
-    case 'className':
-      return { name: 'class', kind: 'class' }
-    case 'style':
-      return { name: 'style', kind: 'style' }
-    case 'htmlFor':
-      return { name: 'for', kind: 'attr' }
-    default:
-      return { name, kind: 'attr' }
-  }
-}
-
-/**
- * Extract key attribute value from JSX attributes
- */
-function extractKeyFromAttributes(attributes: JSXAttribute[]): Expression | undefined {
-  for (const attr of attributes) {
-    if (attr.name === 'key' && attr.value) {
-      return attr.value
-    }
-  }
-  return undefined
-}
-
-function getReturnedJSXFromCallback(callback: Expression): JSXElementExpression | null {
-  if (callback.kind === 'ArrowFunction') {
-    if (
-      callback.isExpression &&
-      !Array.isArray(callback.body) &&
-      callback.body.kind === 'JSXElement'
-    ) {
-      return callback.body
-    }
-    if (Array.isArray(callback.body)) {
-      for (const block of callback.body) {
-        const term = block.terminator
-        if (term.kind === 'Return' && term.argument?.kind === 'JSXElement') {
-          return term.argument as JSXElementExpression
-        }
-      }
-    }
-  }
-  if (callback.kind === 'FunctionExpression') {
-    for (const block of callback.body ?? []) {
-      const term = block.terminator
-      if (term.kind === 'Return' && term.argument?.kind === 'JSXElement') {
-        return term.argument as JSXElementExpression
-      }
-    }
-  }
-  return null
-}
-
-function extractKeyFromMapCallback(callback: Expression): Expression | undefined {
-  const jsx = getReturnedJSXFromCallback(callback)
-  if (!jsx) return undefined
-  return extractKeyFromAttributes(jsx.attributes)
 }
 
 /**
