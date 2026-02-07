@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createElement, mergeProps, prop, render } from '../src/index'
 import { createSignal } from '../src/advanced'
-import { __fictProp, __fictPropsRest, bindText, spread, createPropsProxy } from '../src/internal'
+import {
+  __fictProp,
+  __fictPropsRest,
+  bindText,
+  spread,
+  createPropsProxy,
+  isReactive,
+} from '../src/internal'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -76,6 +83,38 @@ describe('Props proxy', () => {
 
     expect(received).toBe(handler)
     expect(called).toBe(false)
+    dispose()
+  })
+
+  it('marks plain zero-arg callback props as non-reactive', () => {
+    const callback = () => 42
+    const proxied = createPropsProxy({ callback })
+    const resolved = proxied.callback as unknown
+
+    expect(typeof resolved).toBe('function')
+    expect(isReactive(resolved)).toBe(false)
+    expect((resolved as () => number)()).toBe(42)
+  })
+
+  it('does not execute function children passed through component props', () => {
+    let called = 0
+    const slot = () => {
+      called += 1
+      return { type: 'span', props: { children: 'slot' } }
+    }
+
+    const Child = (props: Record<string, unknown>) => {
+      return { type: 'section', props: { children: props.children }, key: undefined }
+    }
+
+    const dispose = render(
+      () => createElement({ type: Child, props: { children: slot }, key: undefined }),
+      container,
+    )
+
+    expect(called).toBe(0)
+    expect(container.querySelector('section')).toBeTruthy()
+    expect(container.querySelector('span')).toBeNull()
     dispose()
   })
 

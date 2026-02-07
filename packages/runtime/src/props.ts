@@ -1,6 +1,8 @@
 import { createMemo } from './memo'
+import { isComputed, isEffect, isEffectScope, isSignal } from './signal'
 
 const PROP_GETTER_MARKER = Symbol.for('fict:prop-getter')
+const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
 const propGetters = new WeakSet<(...args: unknown[]) => unknown>()
 const rawToProxy = new WeakMap<object, object>()
 const proxyToRaw = new WeakMap<object, object>()
@@ -30,6 +32,34 @@ function isPropGetter(value: unknown): value is () => unknown {
   return propGetters.has(fn as (...args: unknown[]) => unknown) || fn[PROP_GETTER_MARKER] === true
 }
 
+function isNonReactiveFn(value: unknown): boolean {
+  if (typeof value !== 'function') return false
+  return (
+    (value as ((...args: unknown[]) => unknown) & { [NON_REACTIVE_FN_MARKER]?: boolean })[
+      NON_REACTIVE_FN_MARKER
+    ] === true
+  )
+}
+
+function markNonReactiveFn<T extends (...args: unknown[]) => unknown>(fn: T): T {
+  if (Object.isExtensible(fn)) {
+    try {
+      ;(fn as T & { [NON_REACTIVE_FN_MARKER]?: boolean })[NON_REACTIVE_FN_MARKER] = true
+    } catch {
+      // Ignore marker failures on non-standard function objects.
+    }
+  }
+  return fn
+}
+
+function normalizePropsFunction(value: unknown): unknown {
+  if (typeof value !== 'function') return value
+  if (value.length !== 0) return value
+  if (isPropGetter(value) || isSignal(value) || isComputed(value)) return value
+  if (isEffect(value) || isEffectScope(value) || isNonReactiveFn(value)) return value
+  return markNonReactiveFn(value as (...args: unknown[]) => unknown)
+}
+
 export function createPropsProxy<T extends Record<string, unknown>>(props: T): T {
   if (!props || typeof props !== 'object') {
     return props
@@ -50,7 +80,7 @@ export function createPropsProxy<T extends Record<string, unknown>>(props: T): T
       if (isPropGetter(value)) {
         return value()
       }
-      return value
+      return normalizePropsFunction(value)
     },
     set(target, prop, value, receiver) {
       return Reflect.set(target, prop, value, receiver)
