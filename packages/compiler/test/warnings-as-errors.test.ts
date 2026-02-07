@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { transform } from './test-utils'
+import { transform, transformWithCompilerDefaults } from './test-utils'
 
 describe('warnings as errors', () => {
   const source = `
@@ -64,6 +64,7 @@ describe('warnings as errors', () => {
     expect(() =>
       transform(r004Source, {
         dev: false,
+        strictGuarantee: false,
         warningLevels: { 'FICT-R004': 'warn' },
       }),
     ).not.toThrow()
@@ -97,6 +98,7 @@ describe('warnings as errors', () => {
     expect(() =>
       transform(source, {
         strictReactivity: true,
+        strictGuarantee: false,
         dev: false,
         warningLevels: { 'FICT-R006': 'warn' },
       }),
@@ -117,6 +119,7 @@ describe('warnings as errors', () => {
     expect(() =>
       transform(source, {
         strictReactivity: true,
+        strictGuarantee: false,
         dev: false,
         warningLevels: { 'FICT-R006': 'warn' },
       }),
@@ -130,6 +133,24 @@ describe('warnings as errors', () => {
       }
     `
     expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-P00[1-5]/)
+  })
+
+  it('strictGuarantee is enabled by default and escalates props fallback diagnostics', () => {
+    const source = `
+      function App({ list: [first, ...rest] }) {
+        return <div>{first}</div>
+      }
+    `
+    expect(() => transformWithCompilerDefaults(source, { dev: false })).toThrow(/FICT-P00[1-5]/)
+  })
+
+  it('strictGuarantee can be explicitly disabled', () => {
+    const source = `
+      function App({ list: [first, ...rest] }) {
+        return <div>{first}</div>
+      }
+    `
+    expect(() => transform(source, { strictGuarantee: false, dev: false })).not.toThrow()
   })
 
   it('strictGuarantee disallows fict-ignore suppression comments', () => {

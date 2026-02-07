@@ -13,6 +13,7 @@ function collectWarningCodes(
   const warnings: Array<{ code: string }> = []
   try {
     transform(source, {
+      strictGuarantee: false,
       ...options,
       onWarn: warning => warnings.push(warning as { code: string }),
     })

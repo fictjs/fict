@@ -565,9 +565,10 @@ Warning escalation: `warningsAsErrors` (boolean or list of diagnostic codes) and
 `warningLevels` let you turn warnings into errors or suppress specific codes.
 Set `strictReactivity: true` to escalate control-flow fallback diagnostics
 (`FICT-R003`, `FICT-R006`) into hard build errors by default.
-Set `strictGuarantee: true` for fail-closed compilation: non-guaranteed reactivity
-diagnostics are treated as hard errors and cannot be suppressed/downgraded.
-CI/build pipelines can force this via `FICT_STRICT_GUARANTEE=1`.
+`strictGuarantee` is enabled by default for fail-closed compilation: non-guaranteed
+reactivity diagnostics are treated as hard errors and cannot be suppressed/downgraded.
+Set `strictGuarantee: false` only when intentionally opting out.
+CI/build pipelines can force strict mode via `FICT_STRICT_GUARANTEE=1`.
 Guarantee boundary reference: `docs/reactivity-guarantee-matrix.md`.
 
 Purity annotations:

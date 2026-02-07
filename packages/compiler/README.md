@@ -41,8 +41,9 @@ createFictPlugin({
 - `onWarn`: custom warning handler (only called when `dev` is enabled).
 - `inlineDerivedMemos` (default: `true`): allow the compiler to inline single-use derived values. Set to `false` for a “strict memo” mode where user-named derived values keep explicit memo accessors (unless `"use no memo"` disables memoization).
 - `strictReactivity` (default: `false`): treat control-flow fallback diagnostics (`FICT-R003`, `FICT-R006`) as build errors. Useful for CI gates that require deterministic fine-grained reactivity without fallback paths.
-- `strictGuarantee` (default: `false`): fail-closed mode for reactivity guarantees. Non-guaranteed reactivity diagnostics (including control-flow fallback and props fallback classes) are treated as hard errors and cannot be suppressed/downgraded.
-  - CI override: set `FICT_STRICT_GUARANTEE=1` to force-enable `strictGuarantee` even when not passed in plugin options.
+- `strictGuarantee` (default: `true`): fail-closed mode for reactivity guarantees. Non-guaranteed reactivity diagnostics (including control-flow fallback and props fallback classes) are treated as hard errors and cannot be suppressed/downgraded.
+  - Opt-out: set `strictGuarantee: false` to compile in non-strict mode.
+  - CI override: set `FICT_STRICT_GUARANTEE=1` to force-enable `strictGuarantee` even when options request opt-out.
   - Contract fixtures: see `packages/compiler/test/reactivity-guarantee-contract.test.ts` for the maintained guarantee/fallback/unsupported matrix checks.
 - `emitModuleMetadata`:
   - `true`: always write adjacent `.fict.meta.json` sidecar files next to source files.

@@ -33,7 +33,12 @@ function compileWithSourcemap(
       plugins: ['typescript', 'jsx'],
       allowReturnOutsideFunction: true,
     },
-    plugins: [[createFictPlugin, { sourcemap: true, emitModuleMetadata: false, ...options }]],
+    plugins: [
+      [
+        createFictPlugin,
+        { sourcemap: true, emitModuleMetadata: false, strictGuarantee: false, ...options },
+      ],
+    ],
     presets: [[presetTypescript, { isTSX: true, allExtensions: true, allowDeclareFields: true }]],
     generatorOpts: { compact: false },
   })

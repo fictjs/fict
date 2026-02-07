@@ -1819,7 +1819,7 @@ export const createFictPlugin = declare(
       optimizeLevel: options.optimizeLevel ?? 'safe',
       inlineDerivedMemos: options.inlineDerivedMemos ?? true,
       emitModuleMetadata: options.emitModuleMetadata ?? 'auto',
-      strictGuarantee: strictGuaranteeFromEnv || options.strictGuarantee === true,
+      strictGuarantee: strictGuaranteeFromEnv || options.strictGuarantee !== false,
       dev:
         options.dev ?? (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'),
     }

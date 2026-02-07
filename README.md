@@ -513,9 +513,9 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 - Recommended config mirrors compiler warnings so IDE diagnostics stay aligned with build output.
 - For strict CI gates, enable compiler `strictReactivity: true` to escalate
   control-flow fallback diagnostics (`FICT-R003`, `FICT-R006`) to build errors.
-- For fail-closed guarantees, enable `strictGuarantee: true` to disallow
-  suppression/downgrades of non-guaranteed reactivity diagnostics.
-- CI can force this gate with `FICT_STRICT_GUARANTEE=1` during build steps.
+- `strictGuarantee` is enabled by default for fail-closed guarantees.
+- Set `strictGuarantee: false` only when you intentionally opt out.
+- CI can force strict mode with `FICT_STRICT_GUARANTEE=1` during build steps.
 - Guarantee boundary reference: `docs/reactivity-guarantee-matrix.md`.
 
 ---

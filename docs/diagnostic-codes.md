@@ -453,11 +453,12 @@ expression-level branching.
 **Fix:** Prefer expression-only branching in JSX (`cond ? <A/> : <B/>`, logical expressions)
 when you need tighter update granularity.
 
-**Strict mode (optional):** Set compiler `strictReactivity: true` to treat `FICT-R003` and
+**Strict mode:** Set compiler `strictReactivity: true` to treat `FICT-R003` and
 `FICT-R006` as build errors by default. You can still override per code with `warningLevels`.
-Set `strictGuarantee: true` for fail-closed behavior where non-guaranteed reactivity
-diagnostics cannot be suppressed or downgraded.
-Set `FICT_STRICT_GUARANTEE=1` in CI to force-enable the same gate globally.
+`strictGuarantee` is enabled by default for fail-closed behavior where non-guaranteed reactivity
+diagnostics cannot be suppressed or downgraded. Set `strictGuarantee: false` only when
+intentionally opting out.
+Set `FICT_STRICT_GUARANTEE=1` in CI to force-enable strict mode globally.
 For the overall guarantee/fallback/unsupported map, see `docs/reactivity-guarantee-matrix.md`.
 
 ---

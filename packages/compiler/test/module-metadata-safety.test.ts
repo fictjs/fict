@@ -51,7 +51,12 @@ describe('module metadata safety', () => {
           [syntaxJsx, {}],
           [
             createFictPlugin,
-            { emitModuleMetadata: false, dev: true, onWarn: warning => warnings.push(warning) },
+            {
+              emitModuleMetadata: false,
+              dev: true,
+              strictGuarantee: false,
+              onWarn: warning => warnings.push(warning),
+            },
           ],
         ],
       },

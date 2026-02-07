@@ -11,6 +11,7 @@ function runTransform(
   options: FictCompilerOptions = {},
   filename = 'module.tsx',
   extraPlugins: PluginItem[] = [],
+  useCompilerDefaults = false,
 ): string {
   const mergedOptions: FictCompilerOptions = { ...options }
   if (mergedOptions.dev === undefined) {
@@ -18,6 +19,11 @@ function runTransform(
   }
   if (mergedOptions.emitModuleMetadata === undefined) {
     mergedOptions.emitModuleMetadata = false
+  }
+  if (!useCompilerDefaults && mergedOptions.strictGuarantee === undefined) {
+    // Most transform snapshot/spec tests validate legacy non-strict behavior.
+    // Keep strict default assertions explicit in dedicated tests.
+    mergedOptions.strictGuarantee = false
   }
 
   const result = transformSync(source, {
@@ -52,6 +58,17 @@ export function transformFineGrained(
 }
 
 export const transform = transformFineGrained
+
+/**
+ * Uses compiler defaults as-is (including strictGuarantee defaults).
+ */
+export function transformWithCompilerDefaults(
+  source: string,
+  options: FictCompilerOptions = {},
+  filename = 'module.tsx',
+): string {
+  return runTransform(source, options, filename, [], true)
+}
 
 /**
  * HIR transform function - uses HIR codegen path (for function-based code only)
