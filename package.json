@@ -34,6 +34,8 @@
     "perf:run": "cd js-framework-benchmark && npm run bench -- --framework keyed/fict --headless",
     "perf:data": "pnpm build && pnpm perf:build && pnpm perf:run",
     "perf:results": "cd js-framework-benchmark && npm run results",
+    "stress:runtime": "pnpm --dir packages/runtime test:stress",
+    "stress:runtime:long": "pnpm --dir packages/runtime test:stress:long",
     "bench:optimizer": "pnpm --filter @fictjs/compiler build && node scripts/optimizer-bench.mjs",
     "bench:optimizer:update": "pnpm --filter @fictjs/compiler build && node scripts/optimizer-bench.mjs --update",
     "bench:optimizer:guard": "pnpm --filter @fictjs/compiler build && node scripts/optimizer-bench.mjs --compare",

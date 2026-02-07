@@ -62,6 +62,8 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "test": "vitest run",
+    "test:stress": "FICT_RUNTIME_STRESS=1 vitest run test/runtime-stability.stress.test.ts",
+    "test:stress:long": "FICT_RUNTIME_STRESS=1 FICT_RUNTIME_SOAK_ITERS=12000 FICT_RUNTIME_CHURN_CYCLES=500 FICT_RUNTIME_LEAK_ROUNDS=120 FICT_RUNTIME_LEAK_EFFECTS_PER_ROUND=200 FICT_RUNTIME_BACKPRESSURE_UPDATES=16000 FICT_RUNTIME_MAX_DRAIN_LATENCY_MS=2500 vitest run test/runtime-stability.stress.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "bench": "vitest bench --run",
