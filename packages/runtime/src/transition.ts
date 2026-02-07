@@ -90,16 +90,18 @@ export function useTransition(): [() => boolean, (fn: () => void | PromiseLike<u
     beginPending()
     let result: void | PromiseLike<unknown> | undefined
     let thrown: unknown
+    let didThrow = false
 
     startTransition(() => {
       try {
         result = fn()
       } catch (err) {
         thrown = err
+        didThrow = true
       }
     })
 
-    if (thrown !== undefined) {
+    if (didThrow) {
       endPending()
       throw thrown
     }

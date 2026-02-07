@@ -153,6 +153,27 @@ describe('createStore reconciliation', () => {
     )
   })
 
+  it('preserves explicit undefined keys during reconciliation', async () => {
+    const [state, setState] = createStore<{ foo?: number }>({ foo: 1 })
+    const hasFooSnapshots: boolean[] = []
+
+    createEffect(() => {
+      hasFooSnapshots.push('foo' in state)
+      state.foo
+    })
+
+    await tick()
+    expect(hasFooSnapshots[hasFooSnapshots.length - 1]).toBe(true)
+
+    setState(() => ({ foo: undefined }))
+    await tick()
+
+    expect('foo' in state).toBe(true)
+    expect(Object.keys(state)).toEqual(['foo'])
+    expect(state.foo).toBeUndefined()
+    expect(hasFooSnapshots[hasFooSnapshots.length - 1]).toBe(true)
+  })
+
   it('does not retrigger nested subscribers for structurally equal object updates', async () => {
     const [state, setState] = createStore<{ user: { name: string; profile: { age: number } } }>({
       user: { name: 'Ada', profile: { age: 30 } },
@@ -246,6 +267,26 @@ describe('createDiffingSignal reactivity', () => {
     write({ foo: 1, bar: 2 })
     await tick()
     expect(seen[seen.length - 1]).toBe(true)
+  })
+
+  it('notifies iterate subscribers for same-reference writes', async () => {
+    const value: { foo?: number; bar?: number } = { foo: 1 }
+    const [read, write] = createDiffingSignal(value)
+    const seen: string[][] = []
+
+    createEffect(() => {
+      seen.push(Object.keys(read()))
+    })
+
+    await tick()
+    expect(seen[seen.length - 1]).toEqual(['foo'])
+
+    delete value.foo
+    value.bar = 2
+    write(value)
+    await tick()
+
+    expect(seen[seen.length - 1]).toEqual(['bar'])
   })
 
   it('throws on direct proxy writes in dev mode', () => {

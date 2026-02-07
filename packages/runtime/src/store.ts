@@ -250,13 +250,15 @@ function reconcile(target: object, value: unknown, seenPairs?: WeakMap<object, W
   for (const key of keys) {
     const rTarget = realTarget as Record<string, unknown>
     const rValue = realValue as Record<string, unknown>
+    const hasCurrent = Object.prototype.hasOwnProperty.call(rTarget, key)
+    const hasNext = Object.prototype.hasOwnProperty.call(rValue, key)
     const current = rTarget[key]
     const next = rValue[key]
 
-    if (next === undefined && current !== undefined) {
+    if (!hasNext && hasCurrent) {
       // deleted
       delete (target as Record<string, unknown>)[key] // Triggers proxy trap
-    } else if (current !== next) {
+    } else if (hasNext && (!hasCurrent || current !== next)) {
       if (canReconcileNestedValues(current, next)) {
         reconcile((target as Record<string, unknown>)[key] as object, next, seen)
       } else {
@@ -323,6 +325,12 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
     iterateSignal(iterateVersion)
   }
 
+  const bumpIterate = () => {
+    if (!iterateSignal) return
+    iterateVersion += 1
+    iterateSignal(iterateVersion)
+  }
+
   // The stable proxy we return
   const proxy = new Proxy({} as T, {
     get(_, prop) {
@@ -368,7 +376,8 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
         const newVal = Reflect.get(next as object, prop)
         s(newVal)
       }
-      updateIterateIfNeeded(prev as object, next as object)
+      // Same-reference writes may have mutated key sets in place.
+      bumpIterate()
       return
     }
 

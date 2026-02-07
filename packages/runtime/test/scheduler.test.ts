@@ -203,6 +203,22 @@ describe('Multi-Priority Scheduler', () => {
       await tick()
       expect(isPending()).toBe(false)
     })
+
+    it('rethrows undefined errors from transition callbacks and clears pending', () => {
+      const [isPending, start] = useTransition()
+      let caught: unknown = null
+
+      try {
+        start(() => {
+          throw undefined
+        })
+      } catch (err) {
+        caught = err
+      }
+
+      expect(caught).toBe(undefined)
+      expect(isPending()).toBe(false)
+    })
   })
 
   describe('useDeferredValue', () => {
