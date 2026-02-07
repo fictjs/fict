@@ -28,6 +28,11 @@ import { emitReactiveControlFlowReexecutionWarning } from './codegen-diagnostics
 import { isDOMProperty, isStaticDelegatedDataAst } from './codegen-dom-utils'
 import { collectExpressionDependencies } from './codegen-expression-deps'
 import {
+  emitHIRChildBinding,
+  resolveHIRBindingPath,
+  type HIRChildBindingOps,
+} from './codegen-hir-bindings'
+import {
   analyzeHookReturnInfo as analyzeHookReturnInfoWithOps,
   deserializeHookReturnInfo,
   getHookReturnInfo as getHookReturnInfoWithOps,
@@ -224,6 +229,17 @@ function createRegionLoweringOps(): RegionLoweringOps {
     lowerExpression,
     propagateHookResultAlias,
     resolveHookMemberValue,
+  }
+}
+
+function createHIRChildBindingOps(): HIRChildBindingOps {
+  return {
+    emitConditionalChild,
+    emitListChild,
+    genTemp,
+    lowerDomExpression,
+    lowerExpression,
+    lowerJSXElement: (expr, ctx) => lowerJSXElement(expr as JSXElementExpression, ctx),
   }
 }
 
@@ -2337,7 +2353,7 @@ function lowerIntrinsicElement(
   // Precompute node references before any binding mutates the DOM tree
   const pathStatements: BabelCore.types.Statement[] = []
   for (const binding of bindings) {
-    resolveHIRBindingPath(binding.path, nodeCache, pathStatements, ctx)
+    resolveHIRBindingPath(binding.path, nodeCache, pathStatements, ctx, genTemp)
   }
   statements.push(...pathStatements)
 
@@ -2459,7 +2475,7 @@ function lowerIntrinsicElement(
 
   // Apply bindings using path navigation
   for (const binding of bindings) {
-    const targetId = resolveHIRBindingPath(binding.path, nodeCache, statements, ctx)
+    const targetId = resolveHIRBindingPath(binding.path, nodeCache, statements, ctx, genTemp)
 
     if (binding.type === 'event' && binding.expr && binding.name) {
       // Event binding
@@ -2960,6 +2976,7 @@ function lowerIntrinsicElement(
         statements,
         ctx,
         containingRegion,
+        createHIRChildBindingOps(),
         binding.namespace,
       )
     }
@@ -2997,165 +3014,6 @@ function lowerIntrinsicElement(
 
   // Wrap in IIFE
   return t.callExpression(t.arrowFunctionExpression([], body), [])
-}
-
-/**
- * Resolve a path to a DOM node using firstChild/nextSibling navigation.
- * Caches intermediate nodes for efficiency.
- */
-function resolveHIRBindingPath(
-  path: number[],
-  cache: Map<string, BabelCore.types.Identifier>,
-  statements: BabelCore.types.Statement[],
-  ctx: CodegenContext,
-): BabelCore.types.Identifier {
-  const key = path.join(',')
-  if (cache.has(key)) return cache.get(key)!
-
-  const { t } = ctx
-
-  // Find closest ancestor in cache
-  const ancestorPath = [...path]
-  let ancestorId: BabelCore.types.Identifier | undefined
-  let relativePath: number[] = []
-
-  while (ancestorPath.length > 0) {
-    ancestorPath.pop()
-    const ancestorKey = ancestorPath.join(',')
-    if (cache.has(ancestorKey)) {
-      ancestorId = cache.get(ancestorKey)
-      relativePath = path.slice(ancestorPath.length)
-      break
-    }
-  }
-
-  if (!ancestorId) {
-    ancestorId = cache.get('')!
-    relativePath = path
-  }
-
-  if (relativePath.length === 0) {
-    cache.set(key, ancestorId)
-    return ancestorId
-  }
-
-  // Navigate relative path using runtime helper that skips slot ranges
-  ctx.helpersUsed.add('resolvePath')
-  const pathExpr = t.arrayExpression(relativePath.map(index => t.numericLiteral(index)))
-  const currentExpr = t.callExpression(t.identifier(RUNTIME_ALIASES.resolvePath), [
-    ancestorId,
-    pathExpr,
-  ])
-
-  const varId = genTemp(ctx, 'el')
-  statements.push(t.variableDeclaration('const', [t.variableDeclarator(varId, currentExpr)]))
-  cache.set(key, varId)
-  return varId
-}
-
-/**
- * Emit a child binding at a placeholder comment node.
- * Now accepts namespace parameter for proper SVG/MathML context.
- */
-function emitHIRChildBinding(
-  markerId: BabelCore.types.Identifier,
-  expr: Expression,
-  statements: BabelCore.types.Statement[],
-  ctx: CodegenContext,
-  containingRegion: RegionInfo | null,
-  namespace?: NamespaceContext,
-): void {
-  const { t } = ctx
-  ctx.helpersUsed.add('getSlotEnd')
-  const endMarkerId = genTemp(ctx, 'end')
-  statements.push(
-    t.variableDeclaration('const', [
-      t.variableDeclarator(
-        endMarkerId,
-        t.callExpression(t.identifier(RUNTIME_ALIASES.getSlotEnd), [markerId]),
-      ),
-    ]),
-  )
-
-  // Set namespace context for child element lowering
-  if (namespace !== undefined) {
-    ctx.namespaceContext = namespace
-  }
-
-  // createPortal call inside JSX child: register cleanup but don't insert marker into parent
-  if (
-    expr.kind === 'CallExpression' &&
-    expr.callee.kind === 'Identifier' &&
-    expr.callee.name === 'createPortal'
-  ) {
-    ctx.helpersUsed.add('onDestroy')
-    const portalId = genTemp(ctx, 'portal')
-    const portalExpr = lowerExpression(expr, ctx)
-    statements.push(
-      t.variableDeclaration('const', [t.variableDeclarator(portalId, portalExpr)]),
-      t.expressionStatement(
-        t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [
-          t.memberExpression(portalId, t.identifier('dispose')),
-        ]),
-      ),
-    )
-    return
-  }
-
-  // Check if it's a conditional
-  if (
-    expr.kind === 'ConditionalExpression' ||
-    (expr.kind === 'LogicalExpression' && expr.operator === '&&')
-  ) {
-    emitConditionalChild(markerId, endMarkerId, expr, statements, ctx)
-    return
-  }
-
-  // Check if it's a list (.map call), including optional chaining
-  if (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') {
-    const callee = expr.callee
-    if (
-      (callee.kind === 'MemberExpression' || callee.kind === 'OptionalMemberExpression') &&
-      callee.property.kind === 'Identifier' &&
-      callee.property.name === 'map'
-    ) {
-      emitListChild(markerId, endMarkerId, expr, statements, ctx)
-      return
-    }
-  }
-
-  // Check if it's a JSX element
-  if (expr.kind === 'JSXElement') {
-    const childExpr = lowerJSXElement(expr, ctx)
-    ctx.helpersUsed.add('insertBetween')
-    ctx.helpersUsed.add('createElement')
-    statements.push(
-      t.expressionStatement(
-        t.callExpression(t.identifier(RUNTIME_ALIASES.insertBetween), [
-          markerId,
-          endMarkerId,
-          t.arrowFunctionExpression([], childExpr),
-          t.identifier(RUNTIME_ALIASES.createElement),
-        ]),
-      ),
-    )
-    return
-  }
-
-  // Default: insert dynamic expression
-  const valueExpr = lowerDomExpression(expr, ctx, containingRegion)
-  ctx.helpersUsed.add('insertBetween')
-  ctx.helpersUsed.add('createElement')
-  statements.push(
-    t.expressionStatement(
-      t.callExpression(t.identifier(RUNTIME_ALIASES.insertBetween), [
-        markerId,
-        endMarkerId,
-        t.arrowFunctionExpression([], valueExpr),
-        t.identifier(RUNTIME_ALIASES.createElement),
-      ]),
-    ),
-  )
 }
 
 function emitResumableEventBinding(
