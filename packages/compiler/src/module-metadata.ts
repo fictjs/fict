@@ -34,6 +34,8 @@ const VIRTUAL_FILENAME_PREFIXES = [
 
 type MetadataWriteMode = 'none' | 'adjacent' | 'cache'
 
+type FsProbeCache = Map<string, boolean>
+
 function isWindowsDrivePath(fileName: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(fileName) || fileName.startsWith('\\\\')
 }
@@ -155,7 +157,7 @@ function writeMetadataAtomically(metaPath: string, payload: string): void {
     renameSync(tempPath, metaPath)
   } catch (error) {
     try {
-      if (existsSync(tempPath)) unlinkSync(tempPath)
+      unlinkSync(tempPath)
     } catch {
       // Best-effort cleanup.
     }
@@ -163,16 +165,32 @@ function writeMetadataAtomically(metaPath: string, payload: string): void {
   }
 }
 
+function pathIsFile(pathName: string, cache?: FsProbeCache): boolean {
+  if (cache) {
+    const cached = cache.get(pathName)
+    if (cached !== undefined) return cached
+  }
+  let exists = false
+  try {
+    exists = existsSync(pathName) && statSync(pathName).isFile()
+  } catch {
+    exists = false
+  }
+  if (cache) cache.set(pathName, exists)
+  return exists
+}
+
 function readMetadataFromDisk(
   fileName: string,
   store: Map<string, ModuleReactiveMetadata>,
   options?: FictCompilerOptions,
+  fsCache?: FsProbeCache,
 ): ModuleReactiveMetadata | undefined {
   const normalized = normalizeConcreteFileName(fileName)
   if (!normalized) return undefined
   const paths = getMetadataReadPaths(normalized, options)
   for (const metaPath of paths) {
-    if (!existsSync(metaPath)) continue
+    if (!pathIsFile(metaPath, fsCache)) continue
     try {
       const raw = readFileSync(metaPath, 'utf8')
       const parsed = JSON.parse(raw) as ModuleReactiveMetadata
@@ -185,20 +203,14 @@ function readMetadataFromDisk(
   return undefined
 }
 
-function isFile(pathName: string): boolean {
-  try {
-    return statSync(pathName).isFile()
-  } catch {
-    return false
-  }
-}
-
 function resolveImportSource(
   source: string,
   importer: string | undefined,
   store: Map<string, ModuleReactiveMetadata>,
+  options?: { probeFs?: boolean; fsCache?: FsProbeCache },
 ): string | undefined {
   if (!importer) return undefined
+  const probeFs = options?.probeFs ?? true
   const isAbsolute = path.isAbsolute(source)
   if (!isAbsolute && !source.startsWith('.')) return undefined
 
@@ -206,21 +218,21 @@ function resolveImportSource(
   const normalized = normalizeFileName(base)
 
   if (store.has(normalized)) return normalized
-  if (existsSync(normalized) && isFile(normalized)) return normalized
+  if (probeFs && pathIsFile(normalized, options?.fsCache)) return normalized
 
   const ext = path.extname(normalized)
   if (!ext) {
     for (const suffix of MODULE_EXTENSIONS) {
       const candidate = `${normalized}${suffix}`
       if (store.has(candidate)) return candidate
-      if (existsSync(candidate) && isFile(candidate)) return candidate
+      if (probeFs && pathIsFile(candidate, options?.fsCache)) return candidate
     }
   }
 
   for (const suffix of MODULE_EXTENSIONS) {
     const candidate = path.join(normalized, `index${suffix}`)
     if (store.has(candidate)) return candidate
-    if (existsSync(candidate) && isFile(candidate)) return candidate
+    if (probeFs && pathIsFile(candidate, options?.fsCache)) return candidate
   }
 
   return undefined
@@ -230,6 +242,7 @@ function resolveImportSourceByMetadata(
   source: string,
   importer: string | undefined,
   options?: FictCompilerOptions,
+  fsCache?: FsProbeCache,
 ): string | undefined {
   if (!importer) return undefined
   const isAbsolute = path.isAbsolute(source)
@@ -252,7 +265,7 @@ function resolveImportSourceByMetadata(
 
   for (const candidate of candidates) {
     const metaPaths = getMetadataReadPaths(candidate, options)
-    if (metaPaths.some(metaPath => existsSync(metaPath))) {
+    if (metaPaths.some(metaPath => pathIsFile(metaPath, fsCache))) {
       return candidate
     }
   }
@@ -270,18 +283,29 @@ export function resolveModuleMetadata(
     if (resolved) return resolved
   }
   const store = getMetadataStore(options)
-  let resolvedKey = resolveImportSource(source, importer, store)
-  if (!resolvedKey) {
-    resolvedKey = resolveImportSourceByMetadata(source, importer, options)
+  const hasExternalMetadataIntegration = !!(
+    options?.moduleMetadata && options?.resolveModuleMetadata
+  )
+  const shouldProbeFs = options?.emitModuleMetadata === true || !hasExternalMetadataIntegration
+  const fsCache = shouldProbeFs ? new Map<string, boolean>() : undefined
+
+  let resolvedKey = resolveImportSource(source, importer, store, {
+    probeFs: shouldProbeFs,
+    fsCache,
+  })
+  if (!resolvedKey && shouldProbeFs) {
+    resolvedKey = resolveImportSourceByMetadata(source, importer, options, fsCache)
   }
   if (resolvedKey) {
     const existing = store.get(resolvedKey)
     if (existing) return existing
-    const loaded = readMetadataFromDisk(resolvedKey, store, options)
+    const loaded = shouldProbeFs
+      ? readMetadataFromDisk(resolvedKey, store, options, fsCache)
+      : undefined
     if (loaded) return loaded
   }
   if (store.has(source)) return store.get(source)
-  const loaded = readMetadataFromDisk(source, store, options)
+  const loaded = shouldProbeFs ? readMetadataFromDisk(source, store, options, fsCache) : undefined
   if (loaded) return loaded
   return undefined
 }
