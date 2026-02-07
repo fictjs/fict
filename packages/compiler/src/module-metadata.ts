@@ -1,13 +1,5 @@
 import { createHash } from 'node:crypto'
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  statSync,
-  unlinkSync,
-  writeFileSync,
-} from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -202,7 +194,7 @@ function pathIsFile(pathName: string, cache?: FsProbeCache): boolean {
   }
   let exists = false
   try {
-    exists = existsSync(pathName) && statSync(pathName).isFile()
+    exists = statSync(pathName).isFile()
   } catch {
     exists = false
   }
