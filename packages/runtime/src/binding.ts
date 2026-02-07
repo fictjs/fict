@@ -164,20 +164,22 @@ export function isReactive(value: unknown): value is () => unknown {
 }
 
 /**
- * fix: Stricter reactive check that only considers explicitly marked values.
- * Used for event handlers where we don't want to misidentify regular callbacks
- * (like `onClick={() => doSomething()}`) as reactive getters.
+ * Stricter reactive check that only considers explicitly marked values.
+ * Used in DOM/event paths where regular callbacks must not be treated as
+ * reactive getters.
  *
  * Only returns true for:
  * - Signal accessors (created by createSignal)
  * - Computed accessors (created by createMemo)
  * - Prop getters (marked by __fictProp)
+ * - Explicitly marked getters (reactive(...))
  */
-function isStrictlyReactive(value: unknown): value is () => unknown {
+export function isStrictlyReactive(value: unknown): value is () => unknown {
   if (typeof value !== 'function') return false
-  // Only check for explicitly marked reactive values
-  // Do NOT use length === 0 as fallback - many callbacks have 0 params
-  return isSignal(value) || isComputed(value) || isPropGetterFn(value)
+  // Do NOT use length === 0 as fallback - many callbacks have 0 params.
+  return (
+    isSignal(value) || isComputed(value) || isPropGetterFn(value) || isExplicitReactiveFn(value)
+  )
 }
 
 // Import-like check for prop getter marker without circular dependency
