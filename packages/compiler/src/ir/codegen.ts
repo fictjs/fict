@@ -16,6 +16,11 @@ import {
   functionHasAsyncAwait,
   structuredNodeHasComplexControlFlow,
 } from './codegen-analysis'
+import {
+  getCachedGetterExpression,
+  getOrCreateHoistedTemplate,
+  withGetterCache,
+} from './codegen-cache'
 import { collectExpressionDependencies } from './codegen-expression-deps'
 import {
   analyzeHookReturnInfo as analyzeHookReturnInfoWithOps,
@@ -486,48 +491,6 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
   }
 }
 
-/**
- * Rule L: Enable getter caching for a sync function scope.
- * Returns a function to collect the cache declarations after processing.
- */
-function withGetterCache<T>(
-  ctx: CodegenContext,
-  fn: () => T,
-): { result: T; cacheDeclarations: BabelCore.types.Statement[] } {
-  if (ctx.options?.getterCache === false) {
-    return { result: fn(), cacheDeclarations: [] }
-  }
-
-  const prevCache = ctx.getterCache
-  const prevDeclarations = ctx.getterCacheDeclarations
-  const prevEnabled = ctx.getterCacheEnabled
-
-  ctx.getterCache = new Map()
-  ctx.getterCacheDeclarations = new Map()
-  ctx.getterCacheEnabled = true
-
-  const result = fn()
-
-  // Collect cache declarations
-  const cacheDeclarations: BabelCore.types.Statement[] = []
-  if (ctx.getterCacheDeclarations && ctx.getterCacheDeclarations.size > 0) {
-    for (const [varName, initExpr] of ctx.getterCacheDeclarations) {
-      cacheDeclarations.push(
-        ctx.t.variableDeclaration('const', [
-          ctx.t.variableDeclarator(ctx.t.identifier(varName), initExpr),
-        ]),
-      )
-    }
-  }
-
-  // Restore previous state
-  ctx.getterCache = prevCache
-  ctx.getterCacheDeclarations = prevDeclarations
-  ctx.getterCacheEnabled = prevEnabled
-
-  return { result, cacheDeclarations }
-}
-
 const hookReturnInfoAnalysisOps: HookReturnInfoAnalysisOps = {
   createCodegenContext,
   detectDerivedCycles,
@@ -579,96 +542,6 @@ function withNonReactiveScope<T>(ctx: CodegenContext, fn: () => T): T {
   } finally {
     ctx.nonReactiveScopeDepth = prevDepth
   }
-}
-
-/**
- * Get or create a cached getter expression.
- * Rule L: Only cache when a getter is accessed multiple times in the same sync block.
- * First access returns the call expression directly; subsequent accesses use the cache.
- */
-function getCachedGetterExpression(
-  ctx: CodegenContext,
-  getterName: string,
-  callExpr: BabelCore.types.Expression,
-): BabelCore.types.Expression {
-  if (!ctx.getterCacheEnabled || !ctx.getterCache || !ctx.getterCacheDeclarations) {
-    return callExpr
-  }
-
-  // Skip caching for memo variables - memos already cache internally
-  if (ctx.memoVars?.has(getterName)) {
-    return callExpr
-  }
-
-  const existingEntry = ctx.getterCache.get(getterName)
-
-  if (existingEntry === undefined) {
-    // First access - just record that we've seen it, don't cache yet
-    // Use empty string as marker for "seen once"
-    ctx.getterCache.set(getterName, '')
-    return callExpr
-  }
-
-  if (existingEntry === '') {
-    // Second access - NOW create the cache variable
-    const cacheVar = `__cached_${getterName}_${ctx.tempCounter++}`
-    ctx.getterCache.set(getterName, cacheVar)
-    ctx.getterCacheDeclarations.set(cacheVar, callExpr)
-    return ctx.t.identifier(cacheVar)
-  }
-
-  // Third+ access - use existing cache variable
-  return ctx.t.identifier(existingEntry)
-}
-
-/**
- * Get or create a hoisted template identifier for the given HTML.
- * When in list render context, templates are hoisted outside the render callback
- * to avoid repeated HTML parsing (1000 items = 1000 parses -> 1 parse + 1000 clones).
- * Now accepts isSVG/isMathML parameters for namespace-aware template creation.
- */
-function getOrCreateHoistedTemplate(
-  html: string,
-  ctx: CodegenContext,
-  isSVG?: boolean,
-  isMathML?: boolean,
-): BabelCore.types.Identifier | null {
-  if (!ctx.inListRender || !ctx.hoistedTemplates || !ctx.hoistedTemplateStatements) {
-    return null
-  }
-
-  // Include namespace in cache key to avoid collisions
-  const cacheKey = isSVG ? `svg:${html}` : isMathML ? `mathml:${html}` : html
-  const existing = ctx.hoistedTemplates.get(cacheKey)
-  if (existing) {
-    return existing
-  }
-
-  const { t } = ctx
-  ctx.helpersUsed.add('template')
-  const tmplId = genTemp(ctx, 'htmpl')
-  ctx.hoistedTemplates.set(cacheKey, tmplId)
-
-  // Build template call arguments with namespace flags
-  const templateArgs: BabelCore.types.Expression[] = [t.stringLiteral(html)]
-  if (isSVG || isMathML) {
-    // template(html, isImportNode, isSVG, isMathML)
-    templateArgs.push(t.identifier('undefined')) // isImportNode
-    templateArgs.push(isSVG ? t.booleanLiteral(true) : t.identifier('undefined'))
-    if (isMathML) {
-      templateArgs.push(t.booleanLiteral(true))
-    }
-  }
-
-  ctx.hoistedTemplateStatements.push(
-    t.variableDeclaration('const', [
-      t.variableDeclarator(
-        tmplId,
-        t.callExpression(t.identifier(RUNTIME_ALIASES.template), templateArgs),
-      ),
-    ]),
-  )
-  return tmplId
 }
 
 /**
