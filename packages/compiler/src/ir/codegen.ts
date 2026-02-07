@@ -3721,11 +3721,23 @@ function transformControlFlowReturns(
   function hasNodeMatch(
     nodes: BabelCore.types.Node[],
     predicate: (node: BabelCore.types.Node) => boolean,
+    options?: { skipNestedFunctions?: boolean },
   ): boolean {
     let found = false
 
-    const visit = (node: BabelCore.types.Node | null | undefined): void => {
+    const visit = (node: BabelCore.types.Node | null | undefined, isRoot = false): void => {
       if (!node || found) return
+      if (
+        !isRoot &&
+        options?.skipNestedFunctions &&
+        (t.isFunctionExpression(node) ||
+          t.isArrowFunctionExpression(node) ||
+          t.isFunctionDeclaration(node) ||
+          t.isObjectMethod(node) ||
+          t.isClassMethod(node))
+      ) {
+        return
+      }
       if (predicate(node)) {
         found = true
         return
@@ -3750,7 +3762,7 @@ function transformControlFlowReturns(
     }
 
     for (const node of nodes) {
-      visit(node)
+      visit(node, true)
       if (found) return true
     }
 
@@ -3760,12 +3772,57 @@ function transformControlFlowReturns(
   const containsReturnStatement = (nodes: BabelCore.types.Node[]) =>
     hasNodeMatch(nodes, node => t.isReturnStatement(node))
 
-  const containsReactiveAccessorRead = (nodes: BabelCore.types.Node[]) =>
-    hasNodeMatch(nodes, node => {
-      if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return false
-      const callee = node.callee
-      return t.isIdentifier(callee) && reactiveAccessorNames.has(callee.name)
-    })
+  const containsReactiveAccessorRead = (
+    nodes: BabelCore.types.Node[],
+    options?: { skipNestedFunctions?: boolean },
+  ) =>
+    hasNodeMatch(
+      nodes,
+      node => {
+        if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return false
+        const callee = node.callee
+        return t.isIdentifier(callee) && reactiveAccessorNames.has(callee.name)
+      },
+      options,
+    )
+
+  const containsReactiveControlFlowRead = (nodes: BabelCore.types.Node[]): boolean =>
+    hasNodeMatch(
+      nodes,
+      node => {
+        if (t.isIfStatement(node)) {
+          return containsReactiveAccessorRead([node.test], { skipNestedFunctions: true })
+        }
+        if (t.isSwitchStatement(node)) {
+          return containsReactiveAccessorRead([node.discriminant], { skipNestedFunctions: true })
+        }
+        if (t.isConditionalExpression(node)) {
+          return containsReactiveAccessorRead([node.test], { skipNestedFunctions: true })
+        }
+        if (t.isWhileStatement(node) || t.isDoWhileStatement(node)) {
+          return containsReactiveAccessorRead([node.test], { skipNestedFunctions: true })
+        }
+        if (t.isForStatement(node)) {
+          const parts: BabelCore.types.Node[] = []
+          if (node.init) parts.push(node.init)
+          if (node.test) parts.push(node.test)
+          if (node.update) parts.push(node.update)
+          return (
+            parts.length > 0 && containsReactiveAccessorRead(parts, { skipNestedFunctions: true })
+          )
+        }
+        if (t.isForOfStatement(node) || t.isForInStatement(node)) {
+          return containsReactiveAccessorRead([node.right], { skipNestedFunctions: true })
+        }
+        return false
+      },
+      { skipNestedFunctions: true },
+    )
+
+  const hasRiskyBranchControlFlow = (stmts: BabelCore.types.Statement[]): boolean => {
+    if (stmts.length === 0) return false
+    return containsReactiveControlFlowRead(stmts)
+  }
 
   const emitControlFlowFallbackWarning = (
     node: BabelCore.types.Node,
@@ -3859,6 +3916,7 @@ function transformControlFlowReturns(
     testExpr: BabelCore.types.Expression,
     trueFn: BabelCore.types.ArrowFunctionExpression,
     falseFn: BabelCore.types.ArrowFunctionExpression,
+    options?: { trackBranchReads?: boolean },
   ): BabelCore.types.Expression {
     ctx.helpersUsed.add('conditional')
     ctx.helpersUsed.add('createElement')
@@ -3870,6 +3928,16 @@ function transformControlFlowReturns(
       t.identifier(RUNTIME_ALIASES.createElement),
       falseFn,
     ]
+    if (options?.trackBranchReads) {
+      const undefinedExpr = t.unaryExpression('void', t.numericLiteral(0))
+      args.push(
+        undefinedExpr,
+        t.cloneNode(undefinedExpr) as BabelCore.types.Expression,
+        t.objectExpression([
+          t.objectProperty(t.identifier('trackBranchReads'), t.booleanLiteral(true)),
+        ]),
+      )
+    }
     const bindingCall = t.callExpression(t.identifier(RUNTIME_ALIASES.conditional), args)
 
     return t.callExpression(
@@ -3910,8 +3978,16 @@ function transformControlFlowReturns(
     const trueFn = buildBranchFunction(consequentStmts)
     const falseFn = alternateStmts ? buildBranchFunction(alternateStmts) : null
     if (!trueFn || !falseFn) return null
+    const needsTrackedBranchReads =
+      hasRiskyBranchControlFlow(consequentStmts) ||
+      (alternateStmts ? hasRiskyBranchControlFlow(alternateStmts) : false)
 
-    return buildConditionalBindingExpr(ifStmt.test as BabelCore.types.Expression, trueFn, falseFn)
+    return buildConditionalBindingExpr(
+      ifStmt.test as BabelCore.types.Expression,
+      trueFn,
+      falseFn,
+      needsTrackedBranchReads ? { trackBranchReads: true } : undefined,
+    )
   }
 
   function isSupportedSwitchDiscriminant(_expr: BabelCore.types.Expression): boolean {
@@ -4030,11 +4106,15 @@ function transformControlFlowReturns(
       ),
       [],
     )
+    let currentExprNeedsTrackedBranchReads = hasRiskyBranchControlFlow(fallbackStatements)
 
     for (let i = branches.length - 1; i >= 0; i--) {
       const branch = branches[i]!
       const trueFn = buildBranchFunction(branch.statements, { disallowRenderHooks: true })
       if (!trueFn) return null
+      const trueBranchNeedsTrackedBranchReads = hasRiskyBranchControlFlow(branch.statements)
+      const trackBranchReads =
+        trueBranchNeedsTrackedBranchReads || currentExprNeedsTrackedBranchReads
 
       const falseFn = t.arrowFunctionExpression(
         [],
@@ -4054,7 +4134,13 @@ function transformControlFlowReturns(
           (acc, expr) => t.logicalExpression('||', acc, expr),
           comparisons[0]!,
         )
-      currentExpr = buildConditionalBindingExpr(testExpr, trueFn, falseFn)
+      currentExpr = buildConditionalBindingExpr(
+        testExpr,
+        trueFn,
+        falseFn,
+        trackBranchReads ? { trackBranchReads: true } : undefined,
+      )
+      currentExprNeedsTrackedBranchReads = trackBranchReads
     }
 
     return t.callExpression(

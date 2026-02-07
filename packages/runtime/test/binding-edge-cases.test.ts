@@ -1008,6 +1008,50 @@ describe('Binding Edge Cases', () => {
 
       dispose()
     })
+
+    it('re-runs active branch when trackBranchReads is enabled', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+      const logs: string[] = []
+
+      const { marker, dispose, flush } = createConditional(
+        () => condition(),
+        () => {
+          if (counter() % 2 === 0) {
+            logs.push('even')
+          } else {
+            logs.push('odd')
+          }
+          return {
+            type: 'div',
+            props: { children: counter() % 2 === 0 ? 'E' : 'O' },
+            key: undefined,
+          }
+        },
+        createElement,
+        () => 'OFF',
+        undefined,
+        undefined,
+        { trackBranchReads: true },
+      )
+      container.appendChild(marker)
+      flush?.()
+
+      expect(container.textContent).toBe('E')
+      expect(logs).toEqual(['even'])
+
+      counter(1)
+      await tick()
+      expect(container.textContent).toBe('O')
+      expect(logs).toEqual(['even', 'odd'])
+
+      counter(2)
+      await tick()
+      expect(container.textContent).toBe('E')
+      expect(logs).toEqual(['even', 'odd', 'even'])
+
+      dispose()
+    })
   })
 
   describe('insert edge cases', () => {

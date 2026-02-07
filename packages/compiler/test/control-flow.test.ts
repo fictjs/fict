@@ -487,6 +487,27 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toContain('items()')
       expect(output).toContain('threshold()')
     })
+
+    it('enables tracked branch fallback for nested reactive if side effects', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          if (count >= 2) {
+            if (count % 2 === 0) {
+              console.log('high and even')
+            } else {
+              console.log('high and odd')
+            }
+            return <div>High: {count}</div>
+          }
+          return <div>Low: {count}</div>
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createConditional')
+      expect(output).toContain('trackBranchReads: true')
+    })
   })
 
   describe('Unsupported statement handling', () => {

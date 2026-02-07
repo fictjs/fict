@@ -541,27 +541,9 @@ The compiler has some limitations when handling conditional rendering patterns. 
 
 - Multiple sequential `if-return` branches are compiled into reactive conditionals.
 - `if` blocks without `return` are auto-wrapped so reactive side effects still update.
-
-### Nested `if` Statements Inside Branches
-
-```tsx
-// ⚠️ Inner if-else is not auto-lowered as a branch binding in this nested shape
-function Component() {
-  let count = $state(0)
-
-  if (count >= 2) {
-    if (count % 2 === 0) {
-      console.log('high and even') // Only runs when branch first renders
-    } else {
-      console.log('high and odd') // Never runs after initial branch render
-    }
-    return <div>High: {count}</div>
-  }
-  return <div>Low: {count}</div>
-}
-```
-
-**Workaround**: Use `$effect` for reactive logic within branches.
+- Nested branch control flow (`if`/`switch` inside lowered conditional branches) is now
+  automatically kept reactive. When fine-grained lowering is not possible, the compiler
+  enables a safe runtime fallback that tracks branch reads and re-runs the active branch.
 
 ---
 

@@ -112,6 +112,16 @@ export interface BindingHandle {
   dispose: Cleanup
 }
 
+export interface ConditionalBindingOptions {
+  /**
+   * When true, track signal reads inside active branch render callbacks and
+   * re-run the branch callback on updates even if the top-level condition stays
+   * the same. This preserves reactivity for control-flow callbacks that cannot
+   * be lowered into fine-grained bindings.
+   */
+  trackBranchReads?: boolean
+}
+
 /** Managed child node with its dispose function */
 // ============================================================================
 // Utility Functions
@@ -1743,7 +1753,9 @@ export function createConditional(
   renderFalse?: () => FictNode,
   startOverride?: Comment,
   endOverride?: Comment,
+  options?: ConditionalBindingOptions,
 ): BindingHandle {
+  const trackBranchReads = options?.trackBranchReads === true
   const useProvided = !!(startOverride && endOverride)
   const startMarker = useProvided ? startOverride! : document.createComment('fict:cond:start')
   const endMarker = useProvided ? endOverride! : document.createComment('fict:cond:end')
@@ -1805,7 +1817,7 @@ export function createConditional(
           endMarker,
           parent.ownerDocument ?? document,
           () => {
-            const output = untrack(render)
+            const output = trackBranchReads ? render() : untrack(render)
             if (output == null || output === false) {
               return
             }
@@ -1837,11 +1849,13 @@ export function createConditional(
       return
     }
 
-    if (lastCondition === cond && currentNodes.length > 0) {
-      return
-    }
-    if (lastCondition === cond && lastCondition === false && renderFalse === undefined) {
-      return
+    if (!trackBranchReads) {
+      if (lastCondition === cond && currentNodes.length > 0) {
+        return
+      }
+      if (lastCondition === cond && lastCondition === false && renderFalse === undefined) {
+        return
+      }
     }
     lastCondition = cond
 
@@ -1865,7 +1879,7 @@ export function createConditional(
       // tracked by createConditional's effect. This ensures that signals used
       // inside the render function (e.g., nested if conditions) don't cause
       // createConditional to re-run, which would purge child effect deps.
-      const output = untrack(render)
+      const output = trackBranchReads ? render() : untrack(render)
       if (output == null || output === false) {
         return
       }
