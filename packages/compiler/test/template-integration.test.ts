@@ -147,6 +147,38 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps function-as-child callbacks inert when passed to components', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      function Layout(props: { children?: unknown }) {
+        return <section data-testid="layout">{props.children as any}</section>
+      }
+
+      export function App() {
+        return <Layout>{() => <span data-testid="slot">slot</span>}</Layout>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+    expect(container.querySelector('[data-testid="layout"]')).toBeTruthy()
+    expect(container.querySelector('[data-testid="slot"]')).toBeNull()
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps todo list DOM in sync with keyed state updates', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
