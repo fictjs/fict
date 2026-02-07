@@ -3042,35 +3042,6 @@ function lowerIntrinsicElement(
 }
 
 /**
- * Emit a dynamic text child
- */
-function _emitDynamicTextChild(
-  parentId: BabelCore.types.Identifier,
-  expr: Expression,
-  statements: BabelCore.types.Statement[],
-  ctx: CodegenContext,
-): void {
-  const { t } = ctx
-  ctx.helpersUsed.add('bindText')
-  ctx.helpersUsed.add('insert')
-  ctx.helpersUsed.add('createElement')
-
-  statements.push(
-    t.expressionStatement(
-      t.callExpression(t.identifier(RUNTIME_ALIASES.insert), [
-        parentId,
-        t.arrowFunctionExpression(
-          [],
-          applyRegionMetadataToExpression(lowerExpression(expr, ctx), ctx),
-        ),
-        t.nullLiteral(),
-        t.identifier(RUNTIME_ALIASES.createElement),
-      ]),
-    ),
-  )
-}
-
-/**
  * Lower a JSX child to a Babel expression
  */
 function lowerJSXChild(child: JSXChild, ctx: CodegenContext): BabelCore.types.Expression {
