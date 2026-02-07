@@ -2154,23 +2154,6 @@ export function createPortal(
 }
 
 function patchElement(el: Element, output: FictNode): boolean {
-  if (
-    output === null ||
-    output === undefined ||
-    output === false ||
-    typeof output === 'string' ||
-    typeof output === 'number'
-  ) {
-    el.textContent =
-      output === null || output === undefined || output === false ? '' : String(output)
-    return true
-  }
-
-  if (output instanceof Text) {
-    el.textContent = output.data
-    return true
-  }
-
   if (output && typeof output === 'object' && !(output instanceof Node)) {
     const vnode = output as { type?: unknown; props?: Record<string, unknown> }
     if (typeof vnode.type === 'string' && vnode.type.toLowerCase() === el.tagName.toLowerCase()) {
@@ -2232,19 +2215,6 @@ function patchElement(el: Element, output: FictNode): boolean {
       }
 
       return false
-    }
-  }
-
-  if (output instanceof Node) {
-    if (output.nodeType === Node.ELEMENT_NODE) {
-      const nextEl = output as Element
-      if (nextEl.tagName.toLowerCase() === el.tagName.toLowerCase()) {
-        el.textContent = nextEl.textContent
-        return true
-      }
-    } else if (output.nodeType === Node.TEXT_NODE) {
-      el.textContent = (output as Text).data
-      return true
     }
   }
 

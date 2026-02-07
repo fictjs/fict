@@ -1162,6 +1162,44 @@ describe('Binding Edge Cases', () => {
 
       dispose()
     })
+
+    it('falls back to structural replace when node kind changes', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+
+      const { marker, dispose, flush } = createConditional(
+        () => condition(),
+        () =>
+          counter() % 2 === 0
+            ? { type: 'span', props: { children: 'EVEN' }, key: undefined }
+            : 'ODD',
+        createElement,
+        () => 'OFF',
+        undefined,
+        undefined,
+        { trackBranchReads: true },
+      )
+      container.appendChild(marker)
+      flush?.()
+
+      expect(container.textContent).toBe('EVEN')
+      const firstSpan = container.querySelector('span')
+      expect(firstSpan).not.toBeNull()
+
+      counter(1)
+      await tick()
+      expect(container.textContent).toBe('ODD')
+      expect(container.querySelector('span')).toBeNull()
+
+      counter(2)
+      await tick()
+      expect(container.textContent).toBe('EVEN')
+      const secondSpan = container.querySelector('span')
+      expect(secondSpan).not.toBeNull()
+      expect(secondSpan).not.toBe(firstSpan)
+
+      dispose()
+    })
   })
 
   describe('insert edge cases', () => {
