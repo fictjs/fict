@@ -355,7 +355,31 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
     },
     getOwnPropertyDescriptor(target, prop) {
       getPropSignal(prop)()
-      return Reflect.getOwnPropertyDescriptor(currentValue, prop)
+      const descriptor = Reflect.getOwnPropertyDescriptor(currentValue, prop)
+      if (!descriptor) return undefined
+
+      // Proxy target is a synthetic empty object. Returning a non-configurable
+      // descriptor from the wrapped value can violate Proxy invariants.
+      if (descriptor.configurable !== false) {
+        return descriptor
+      }
+
+      if ('value' in descriptor) {
+        return {
+          configurable: true,
+          enumerable: descriptor.enumerable ?? true,
+          writable: descriptor.writable ?? true,
+          value: descriptor.value,
+        }
+      }
+
+      const normalized: PropertyDescriptor = {
+        configurable: true,
+        enumerable: descriptor.enumerable ?? true,
+      }
+      if (descriptor.get) normalized.get = descriptor.get
+      if (descriptor.set) normalized.set = descriptor.set
+      return normalized
     },
     set(_, prop) {
       throw new Error(

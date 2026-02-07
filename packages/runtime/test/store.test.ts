@@ -326,6 +326,23 @@ describe('createDiffingSignal reactivity', () => {
     expect(seen[seen.length - 1]).toEqual(['b', 'a'])
   })
 
+  it('normalizes non-configurable descriptors to satisfy proxy invariants', () => {
+    const source = {} as Record<string, number>
+    Object.defineProperty(source, 'locked', {
+      value: 1,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    })
+    const [read] = createDiffingSignal(source)
+
+    expect(() => Object.getOwnPropertyDescriptor(read(), 'locked')).not.toThrow()
+    const descriptor = Object.getOwnPropertyDescriptor(read(), 'locked')
+    expect(descriptor?.configurable).toBe(true)
+    expect(descriptor?.enumerable).toBe(true)
+    expect(descriptor?.value).toBe(1)
+  })
+
   it('throws on direct proxy writes in dev mode', () => {
     const [read] = createDiffingSignal<{ foo?: number }>({ foo: 1 })
     expect(() => {
