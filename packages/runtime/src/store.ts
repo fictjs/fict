@@ -56,6 +56,12 @@ function bumpIterateVersion(target: object): number {
   return next
 }
 
+function isArrayIndexKey(prop: string | symbol): prop is string {
+  if (typeof prop !== 'string') return false
+  const index = Number(prop)
+  return Number.isInteger(index) && index >= 0 && String(index) === prop
+}
+
 function wrap<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value
   if (Reflect.get(value, PROXY)) return value
@@ -92,7 +98,9 @@ function wrap<T>(value: T): T {
       if (prop === PROXY || prop === TARGET) return false
 
       const isArrayLength = Array.isArray(target) && prop === 'length'
-      const oldLength = isArrayLength ? target.length : undefined
+      const isArrayIndex = Array.isArray(target) && isArrayIndexKey(prop)
+      const oldLength =
+        (isArrayLength || isArrayIndex) && Array.isArray(target) ? target.length : undefined
       const hadKey = Object.prototype.hasOwnProperty.call(target, prop)
       const oldValue = Reflect.get(target, prop, receiver)
       if (oldValue === value) return true
@@ -102,6 +110,12 @@ function wrap<T>(value: T): T {
         trigger(target, prop)
         if (!hadKey) {
           trigger(target, ITERATE_KEY)
+        }
+        if (isArrayIndex) {
+          const nextLength = target.length
+          if (typeof oldLength === 'number' && nextLength !== oldLength) {
+            trigger(target, 'length')
+          }
         }
         if (isArrayLength) {
           const nextLength = target.length
@@ -190,10 +204,28 @@ function getLastValue(target: object, prop: string | symbol) {
   return Reflect.get(target, prop)
 }
 
+function isPlainObject(value: object): boolean {
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
+function isReconcilableObject(value: unknown): value is object {
+  if (value === null || typeof value !== 'object') return false
+  const raw = unwrap(value as object)
+  return Array.isArray(raw) || isPlainObject(raw)
+}
+
+function canReconcileNestedValues(current: unknown, next: unknown): current is object {
+  if (!isReconcilableObject(current) || !isReconcilableObject(next)) return false
+  const currentRaw = unwrap(current as object)
+  const nextRaw = unwrap(next as object)
+  return Array.isArray(currentRaw) === Array.isArray(nextRaw)
+}
+
 /**
- * Reconcile a store path with a new value (shallow merge/diff)
+ * Reconcile a store path with a new value (recursive structural diff)
  */
-function reconcile(target: object, value: unknown) {
+function reconcile(target: object, value: unknown, seenPairs?: WeakMap<object, WeakSet<object>>) {
   if (target === value) return
   if (value === null || typeof value !== 'object') {
     throw new Error(
@@ -205,23 +237,41 @@ function reconcile(target: object, value: unknown) {
 
   const realTarget = unwrap(target)
   const realValue = unwrap(value)
+  const seen = seenPairs ?? new WeakMap<object, WeakSet<object>>()
+  let visitedValues = seen.get(realTarget)
+  if (!visitedValues) {
+    visitedValues = new WeakSet<object>()
+    seen.set(realTarget, visitedValues)
+  }
+  if (visitedValues.has(realValue)) return
+  visitedValues.add(realValue)
 
   const keys = new Set([...Object.keys(realTarget), ...Object.keys(realValue)])
   for (const key of keys) {
     const rTarget = realTarget as Record<string, unknown>
     const rValue = realValue as Record<string, unknown>
+    const current = rTarget[key]
+    const next = rValue[key]
 
-    if (rValue[key] === undefined && rTarget[key] !== undefined) {
+    if (next === undefined && current !== undefined) {
       // deleted
       delete (target as Record<string, unknown>)[key] // Triggers proxy trap
-    } else if (rTarget[key] !== rValue[key]) {
-      ;(target as Record<string, unknown>)[key] = rValue[key] // Triggers proxy trap
+    } else if (current !== next) {
+      if (canReconcileNestedValues(current, next)) {
+        reconcile((target as Record<string, unknown>)[key] as object, next, seen)
+      } else {
+        ;(target as Record<string, unknown>)[key] = next // Triggers proxy trap
+      }
     }
   }
 
   // Fix array length if needed
-  if (Array.isArray(target) && Array.isArray(realValue) && target.length !== realValue.length) {
-    target.length = realValue.length
+  if (
+    Array.isArray(realTarget) &&
+    Array.isArray(realValue) &&
+    realTarget.length !== realValue.length
+  ) {
+    ;(target as unknown as unknown[]).length = realValue.length
   }
 }
 

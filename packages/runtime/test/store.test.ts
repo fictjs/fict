@@ -152,6 +152,51 @@ describe('createStore reconciliation', () => {
       '[Fict] Cannot replace store with primitive value',
     )
   })
+
+  it('does not retrigger nested subscribers for structurally equal object updates', async () => {
+    const [state, setState] = createStore<{ user: { name: string; profile: { age: number } } }>({
+      user: { name: 'Ada', profile: { age: 30 } },
+    })
+    let runs = 0
+
+    createEffect(() => {
+      state.user.profile.age
+      runs += 1
+    })
+
+    await tick()
+    expect(runs).toBe(1)
+
+    setState(() => ({ user: { name: 'Ada', profile: { age: 30 } } }))
+    await tick()
+    expect(runs).toBe(1)
+  })
+
+  it('keeps nested subscriptions precise during object reconciliation', async () => {
+    const [state, setState] = createStore<{ user: { name: string; profile: { age: number } } }>({
+      user: { name: 'Ada', profile: { age: 30 } },
+    })
+    let nameRuns = 0
+    let ageRuns = 0
+
+    createEffect(() => {
+      state.user.name
+      nameRuns += 1
+    })
+    createEffect(() => {
+      state.user.profile.age
+      ageRuns += 1
+    })
+
+    await tick()
+    expect(nameRuns).toBe(1)
+    expect(ageRuns).toBe(1)
+
+    setState(() => ({ user: { name: 'Grace', profile: { age: 30 } } }))
+    await tick()
+    expect(nameRuns).toBe(2)
+    expect(ageRuns).toBe(1)
+  })
 })
 
 describe('createDiffingSignal reactivity', () => {
