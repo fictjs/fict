@@ -289,6 +289,43 @@ describe('createDiffingSignal reactivity', () => {
     expect(seen[seen.length - 1]).toEqual(['bar'])
   })
 
+  it('tracks ownKeys order changes for same-reference writes', async () => {
+    const value: { a?: number; b?: number } = { a: 1, b: 2 }
+    const [read, write] = createDiffingSignal(value)
+    const seen: string[][] = []
+
+    createEffect(() => {
+      seen.push(Object.keys(read()))
+    })
+
+    await tick()
+    expect(seen[seen.length - 1]).toEqual(['a', 'b'])
+
+    delete value.a
+    value.a = 1
+    write(value)
+    await tick()
+
+    expect(seen[seen.length - 1]).toEqual(['b', 'a'])
+  })
+
+  it('tracks ownKeys order changes for new references with same key set', async () => {
+    const [read, write] = createDiffingSignal<{ a: number; b: number }>({ a: 1, b: 2 })
+    const seen: string[][] = []
+
+    createEffect(() => {
+      seen.push(Object.keys(read()))
+    })
+
+    await tick()
+    expect(seen[seen.length - 1]).toEqual(['a', 'b'])
+
+    write({ b: 2, a: 1 })
+    await tick()
+
+    expect(seen[seen.length - 1]).toEqual(['b', 'a'])
+  })
+
   it('throws on direct proxy writes in dev mode', () => {
     const [read] = createDiffingSignal<{ foo?: number }>({ foo: 1 })
     expect(() => {

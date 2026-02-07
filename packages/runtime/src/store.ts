@@ -291,13 +291,15 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
   const signals = new Map<string | symbol, SignalAccessor<unknown>>()
   let iterateSignal: SignalAccessor<number> | undefined
   let iterateVersion = 0
+  let ownKeysSnapshot = Reflect.ownKeys(currentValue as object)
 
-  const hasSameKeySet = (a: object, b: object): boolean => {
-    const aKeys = Reflect.ownKeys(a)
-    const bKeys = Reflect.ownKeys(b)
+  const hasSameOwnKeys = (
+    aKeys: Array<string | symbol>,
+    bKeys: Array<string | symbol>,
+  ): boolean => {
     if (aKeys.length !== bKeys.length) return false
-    for (const key of aKeys) {
-      if (!Object.prototype.hasOwnProperty.call(b, key)) return false
+    for (let i = 0; i < aKeys.length; i++) {
+      if (aKeys[i] !== bKeys[i]) return false
     }
     return true
   }
@@ -318,17 +320,19 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
     iterateSignal()
   }
 
-  const updateIterateIfNeeded = (prev: object, next: object) => {
-    if (!iterateSignal) return
-    if (prev === next || hasSameKeySet(prev, next)) return
-    iterateVersion += 1
-    iterateSignal(iterateVersion)
-  }
-
   const bumpIterate = () => {
     if (!iterateSignal) return
     iterateVersion += 1
     iterateSignal(iterateVersion)
+  }
+
+  const updateIterateFromOwnKeys = (next: object): void => {
+    const nextKeys = Reflect.ownKeys(next)
+    const changed = !hasSameOwnKeys(ownKeysSnapshot, nextKeys)
+    ownKeysSnapshot = nextKeys
+    if (changed) {
+      bumpIterate()
+    }
   }
 
   // The stable proxy we return
@@ -376,8 +380,7 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
         const newVal = Reflect.get(next as object, prop)
         s(newVal)
       }
-      // Same-reference writes may have mutated key sets in place.
-      bumpIterate()
+      updateIterateFromOwnKeys(next as object)
       return
     }
 
@@ -391,7 +394,7 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
         s(newVal)
       }
     }
-    updateIterateIfNeeded(prev as object, next as object)
+    updateIterateFromOwnKeys(next as object)
 
     // Note: If new properties appeared that weren't tracked, we don't care
     // because no one is listening.
