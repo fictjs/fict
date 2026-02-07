@@ -25,6 +25,7 @@ import {
   extractDelegatedEventDataFromHIR,
 } from './codegen-delegated-data'
 import { emitReactiveControlFlowReexecutionWarning } from './codegen-diagnostics'
+import { isDOMProperty, isStaticDelegatedDataAst } from './codegen-dom-utils'
 import { collectExpressionDependencies } from './codegen-expression-deps'
 import {
   analyzeHookReturnInfo as analyzeHookReturnInfoWithOps,
@@ -40,7 +41,6 @@ import { extractKeyFromMapCallback } from './codegen-jsx-keys'
 import {
   isListKeyConstExpression,
   isListKeyDependency,
-  isListKeyParamIdentifier,
   isStaticDelegatedDataExpression,
   matchesListKeyPattern,
 } from './codegen-list-keys'
@@ -508,20 +508,6 @@ function withNonReactiveScope<T>(ctx: CodegenContext, fn: () => T): T {
   } finally {
     ctx.nonReactiveScopeDepth = prevDepth
   }
-}
-
-function isStaticDelegatedDataAst(expr: BabelCore.types.Expression, ctx: CodegenContext): boolean {
-  const { t } = ctx
-  if (
-    t.isStringLiteral(expr) ||
-    t.isNumericLiteral(expr) ||
-    t.isBooleanLiteral(expr) ||
-    t.isNullLiteral(expr) ||
-    t.isBigIntLiteral(expr)
-  ) {
-    return true
-  }
-  return t.isIdentifier(expr) && isListKeyParamIdentifier(expr.name, ctx)
 }
 
 /**
@@ -4119,24 +4105,6 @@ function lowerJSXChild(child: JSXChild, ctx: CodegenContext): BabelCore.types.Ex
   } else {
     return applyRegionMetadataToExpression(lowerExpression(child.value, ctx), ctx)
   }
-}
-
-/**
- * Normalize attribute name from JSX to DOM
- */
-function _normalizeAttrName(name: string): string {
-  if (name === 'className') return 'class'
-  if (name === 'htmlFor') return 'for'
-  return name
-}
-
-/**
- * Check if an attribute should be set as a DOM property
- */
-function isDOMProperty(name: string): boolean {
-  return ['value', 'checked', 'selected', 'disabled', 'readOnly', 'multiple', 'muted'].includes(
-    name,
-  )
 }
 
 /**
