@@ -139,6 +139,12 @@ export interface FictCompilerOptions {
    */
   strictReactivity?: boolean
   /**
+   * Fail-closed reactivity guarantee mode.
+   * When enabled, diagnostics that indicate non-guaranteed reactive behavior are
+   * treated as hard errors and cannot be suppressed/downgraded.
+   */
+  strictGuarantee?: boolean
+  /**
    * Optional shared module metadata map for cross-module reactive imports.
    * If omitted, the compiler uses a process-wide cache.
    */

@@ -107,9 +107,44 @@ type WarningLevel = 'off' | 'warn' | 'error'
 
 const DEFAULT_ERROR_WARNING_CODES = new Set(['FICT-R004'])
 const STRICT_REACTIVITY_WARNING_CODES = new Set(['FICT-R003', 'FICT-R006'])
+const STRICT_GUARANTEE_WARNING_CODES = new Set([
+  'FICT-P001',
+  'FICT-P002',
+  'FICT-P003',
+  'FICT-P004',
+  'FICT-P005',
+  'FICT-J003',
+  'FICT-S002',
+  'FICT-R001',
+  'FICT-R002',
+  'FICT-R003',
+  'FICT-R005',
+  'FICT-R006',
+])
+
+function validateStrictGuaranteeConfig(
+  options: FictCompilerOptions,
+  suppressions: SuppressionDirective[],
+): void {
+  if (!options.strictGuarantee) return
+  if (suppressions.length > 0) {
+    throw new Error(
+      'strictGuarantee does not allow fict-ignore suppression comments. Remove suppressions to keep fail-closed guarantees.',
+    )
+  }
+  if (!options.warningLevels) return
+  for (const [code, level] of Object.entries(options.warningLevels)) {
+    if (!STRICT_GUARANTEE_WARNING_CODES.has(code)) continue
+    if (level === 'error') continue
+    throw new Error(
+      `strictGuarantee does not allow downgrading ${code} to "${level}". Remove this warningLevels override.`,
+    )
+  }
+}
 
 function hasErrorEscalation(options: FictCompilerOptions): boolean {
   if (DEFAULT_ERROR_WARNING_CODES.size > 0) return true
+  if (options.strictGuarantee) return true
   if (options.strictReactivity) return true
   if (options.warningsAsErrors === true) return true
   if (Array.isArray(options.warningsAsErrors) && options.warningsAsErrors.length > 0) return true
@@ -120,6 +155,7 @@ function hasErrorEscalation(options: FictCompilerOptions): boolean {
 }
 
 function resolveWarningLevel(code: string, options: FictCompilerOptions): WarningLevel {
+  if (options.strictGuarantee && STRICT_GUARANTEE_WARNING_CODES.has(code)) return 'error'
   const override = options.warningLevels?.[code]
   if (override) return override
   if (options.strictReactivity && STRICT_REACTIVITY_WARNING_CODES.has(code)) return 'error'
@@ -143,6 +179,7 @@ function createWarningDispatcher(
   options: FictCompilerOptions,
   dev: boolean,
 ): WarningSink {
+  validateStrictGuaranteeConfig(options, suppressions)
   const hasEscalation = hasErrorEscalation(options)
   if (!dev && !hasEscalation) return () => {}
   return warning => {

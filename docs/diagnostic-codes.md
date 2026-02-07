@@ -454,6 +454,8 @@ when you need tighter update granularity.
 
 **Strict mode (optional):** Set compiler `strictReactivity: true` to treat `FICT-R003` and
 `FICT-R006` as build errors by default. You can still override per code with `warningLevels`.
+Set `strictGuarantee: true` for fail-closed behavior where non-guaranteed reactivity
+diagnostics cannot be suppressed or downgraded.
 
 ---
 

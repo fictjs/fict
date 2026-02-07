@@ -565,6 +565,8 @@ Warning escalation: `warningsAsErrors` (boolean or list of diagnostic codes) and
 `warningLevels` let you turn warnings into errors or suppress specific codes.
 Set `strictReactivity: true` to escalate control-flow fallback diagnostics
 (`FICT-R003`, `FICT-R006`) into hard build errors by default.
+Set `strictGuarantee: true` for fail-closed compilation: non-guaranteed reactivity
+diagnostics are treated as hard errors and cannot be suppressed/downgraded.
 
 Purity annotations:
 

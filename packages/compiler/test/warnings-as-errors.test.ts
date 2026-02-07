@@ -122,4 +122,50 @@ describe('warnings as errors', () => {
       }),
     ).not.toThrow()
   })
+
+  it('strictGuarantee escalates props fallback diagnostics', () => {
+    const source = `
+      function App({ list: [first, ...rest] }) {
+        return <div>{first}</div>
+      }
+    `
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-P00[1-5]/)
+  })
+
+  it('strictGuarantee disallows fict-ignore suppression comments', () => {
+    const source = `
+      // fict-ignore-next-line FICT-R006
+      import { $state } from 'fict'
+      function App() {
+        const count = $state(0)
+        if (count > 0) {
+          return <div>High</div>
+        }
+        return <div>Low</div>
+      }
+    `
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(
+      /strictGuarantee does not allow fict-ignore/,
+    )
+  })
+
+  it('strictGuarantee disallows warningLevels downgrades for guarantee codes', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const count = $state(0)
+        if (count > 0) {
+          return <div>High</div>
+        }
+        return <div>Low</div>
+      }
+    `
+    expect(() =>
+      transform(source, {
+        strictGuarantee: true,
+        dev: false,
+        warningLevels: { 'FICT-R006': 'warn' },
+      }),
+    ).toThrow(/strictGuarantee does not allow downgrading FICT-R006/)
+  })
 })
