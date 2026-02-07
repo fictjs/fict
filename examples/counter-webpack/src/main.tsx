@@ -139,7 +139,8 @@ function UserCard(props: { user: User; selected: boolean; onSelect: () => void }
 
 // Posts list component
 function PostsList(props: { userId: number }) {
-  const posts = postsResource.read(() => props.userId)
+  const userId = props.userId
+  const posts = postsResource.read(userId)
 
   return (
     <div style={styles.postsContainer}>

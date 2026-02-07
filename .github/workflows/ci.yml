@@ -65,9 +65,9 @@ jobs:
           cache: pnpm
 
       - run: pnpm install
-      - run: pnpm build
+      - run: FICT_STRICT_GUARANTEE=1 pnpm build
       - run: pnpm test:coverage
-      - run: pnpm test:bundlers
+      - run: FICT_STRICT_GUARANTEE=1 pnpm test:bundlers
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
@@ -92,7 +92,7 @@ jobs:
           cache: pnpm
 
       - run: pnpm install
-      - run: pnpm build
+      - run: FICT_STRICT_GUARANTEE=1 pnpm build
       - run: FICT_OPT_CROSS_BLOCK_CONST=0 pnpm test
 
   test-ssr-edge:
@@ -131,7 +131,7 @@ jobs:
           cache: pnpm
 
       - run: pnpm install
-      - run: pnpm build
+      - run: FICT_STRICT_GUARANTEE=1 pnpm build
 
       - name: Check bundle size
         run: pnpm size

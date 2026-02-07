@@ -168,4 +168,25 @@ describe('warnings as errors', () => {
       }),
     ).toThrow(/strictGuarantee does not allow downgrading FICT-R006/)
   })
+
+  it('FICT_STRICT_GUARANTEE env enforces strictGuarantee even when options set false', () => {
+    const source = `
+      function App({ list: [first, ...rest] }) {
+        return <div>{first}</div>
+      }
+    `
+    const previous = process.env.FICT_STRICT_GUARANTEE
+    process.env.FICT_STRICT_GUARANTEE = '1'
+    try {
+      expect(() => transform(source, { strictGuarantee: false, dev: false })).toThrow(
+        /FICT-P00[1-5]/,
+      )
+    } finally {
+      if (previous === undefined) {
+        delete process.env.FICT_STRICT_GUARANTEE
+      } else {
+        process.env.FICT_STRICT_GUARANTEE = previous
+      }
+    }
+  })
 })

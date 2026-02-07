@@ -5,7 +5,7 @@
     "build": {
       "dependsOn": ["^build", "typecheck"],
       "outputs": ["dist/**", "lib/**", "types/**", "build/**", "docs/.vitepress/dist/**"],
-      "env": ["NODE_ENV"]
+      "env": ["NODE_ENV", "FICT_STRICT_GUARANTEE"]
     },
     "dev": {
       "cache": false,

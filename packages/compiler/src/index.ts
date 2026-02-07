@@ -118,9 +118,21 @@ const STRICT_GUARANTEE_WARNING_CODES = new Set([
   'FICT-R001',
   'FICT-R002',
   'FICT-R003',
-  'FICT-R005',
   'FICT-R006',
 ])
+
+function readBooleanEnv(name: string): boolean | undefined {
+  const raw = process.env[name]
+  if (!raw) return undefined
+  const normalized = raw.trim().toLowerCase()
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return true
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+    return false
+  }
+  return undefined
+}
 
 function validateStrictGuaranteeConfig(
   options: FictCompilerOptions,
@@ -1697,6 +1709,7 @@ export const createFictPlugin = declare(
   (api, options: FictCompilerOptions = {}): BabelCore.PluginObj => {
     api.assertVersion(7)
     const t = api.types as typeof BabelCore.types
+    const strictGuaranteeFromEnv = readBooleanEnv('FICT_STRICT_GUARANTEE') === true
     const normalizedOptions: FictCompilerOptions = {
       ...options,
       fineGrainedDom: options.fineGrainedDom ?? true,
@@ -1704,6 +1717,7 @@ export const createFictPlugin = declare(
       optimizeLevel: options.optimizeLevel ?? 'safe',
       inlineDerivedMemos: options.inlineDerivedMemos ?? true,
       emitModuleMetadata: options.emitModuleMetadata ?? 'auto',
+      strictGuarantee: strictGuaranteeFromEnv || options.strictGuarantee === true,
       dev:
         options.dev ?? (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'),
     }

@@ -34,7 +34,7 @@ jobs:
           registry-url: https://registry.npmjs.org/
 
       - run: pnpm install
-      - run: pnpm build
+      - run: FICT_STRICT_GUARANTEE=1 pnpm build
       - name: Verify compiler release gate
         run: pnpm release:compiler:verify
 

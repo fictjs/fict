@@ -515,6 +515,7 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
   control-flow fallback diagnostics (`FICT-R003`, `FICT-R006`) to build errors.
 - For fail-closed guarantees, enable `strictGuarantee: true` to disallow
   suppression/downgrades of non-guaranteed reactivity diagnostics.
+- CI can force this gate with `FICT_STRICT_GUARANTEE=1` during build steps.
 
 ---
 

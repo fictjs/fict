@@ -567,6 +567,7 @@ Set `strictReactivity: true` to escalate control-flow fallback diagnostics
 (`FICT-R003`, `FICT-R006`) into hard build errors by default.
 Set `strictGuarantee: true` for fail-closed compilation: non-guaranteed reactivity
 diagnostics are treated as hard errors and cannot be suppressed/downgraded.
+CI/build pipelines can force this via `FICT_STRICT_GUARANTEE=1`.
 
 Purity annotations:
 
