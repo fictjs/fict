@@ -154,3 +154,6 @@ playwright-report
 e2e-dist
 
 *.fict.meta.json
+
+js-framework-benchmark/
+hooks/
