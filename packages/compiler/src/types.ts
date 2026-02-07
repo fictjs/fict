@@ -133,6 +133,12 @@ export interface FictCompilerOptions {
    */
   warningLevels?: Record<string, 'off' | 'warn' | 'error'>
   /**
+   * Strict control-flow reactivity mode.
+   * When enabled, control-flow fallback diagnostics (`FICT-R003`, `FICT-R006`)
+   * are treated as errors unless explicitly overridden via `warningLevels`.
+   */
+  strictReactivity?: boolean
+  /**
    * Optional shared module metadata map for cross-module reactive imports.
    * If omitted, the compiler uses a process-wide cache.
    */

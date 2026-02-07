@@ -40,6 +40,7 @@ createFictPlugin({
 - `dev` (default: `NODE_ENV !== 'production' && NODE_ENV !== 'test'`): enables compiler warnings/diagnostics. Set to `false` to silence warnings.
 - `onWarn`: custom warning handler (only called when `dev` is enabled).
 - `inlineDerivedMemos` (default: `true`): allow the compiler to inline single-use derived values. Set to `false` for a “strict memo” mode where user-named derived values keep explicit memo accessors (unless `"use no memo"` disables memoization).
+- `strictReactivity` (default: `false`): treat control-flow fallback diagnostics (`FICT-R003`, `FICT-R006`) as build errors. Useful for CI gates that require deterministic fine-grained reactivity without fallback paths.
 - `emitModuleMetadata`:
   - `true`: always write adjacent `.fict.meta.json` sidecar files next to source files.
   - `false`: never write metadata files.

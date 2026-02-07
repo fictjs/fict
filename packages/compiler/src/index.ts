@@ -106,9 +106,11 @@ function shouldSuppressWarning(
 type WarningLevel = 'off' | 'warn' | 'error'
 
 const DEFAULT_ERROR_WARNING_CODES = new Set(['FICT-R004'])
+const STRICT_REACTIVITY_WARNING_CODES = new Set(['FICT-R003', 'FICT-R006'])
 
 function hasErrorEscalation(options: FictCompilerOptions): boolean {
   if (DEFAULT_ERROR_WARNING_CODES.size > 0) return true
+  if (options.strictReactivity) return true
   if (options.warningsAsErrors === true) return true
   if (Array.isArray(options.warningsAsErrors) && options.warningsAsErrors.length > 0) return true
   if (options.warningLevels) {
@@ -120,6 +122,7 @@ function hasErrorEscalation(options: FictCompilerOptions): boolean {
 function resolveWarningLevel(code: string, options: FictCompilerOptions): WarningLevel {
   const override = options.warningLevels?.[code]
   if (override) return override
+  if (options.strictReactivity && STRICT_REACTIVITY_WARNING_CODES.has(code)) return 'error'
   if (options.warningsAsErrors === true) return 'error'
   if (Array.isArray(options.warningsAsErrors) && options.warningsAsErrors.includes(code)) {
     return 'error'

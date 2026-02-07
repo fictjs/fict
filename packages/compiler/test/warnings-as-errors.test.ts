@@ -68,4 +68,58 @@ describe('warnings as errors', () => {
       }),
     ).not.toThrow()
   })
+
+  it('strictReactivity escalates FICT-R006 to error', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const count = $state(0)
+        if (count > 0) {
+          return <div>High</div>
+        }
+        return <div>Low</div>
+      }
+    `
+    expect(() => transform(source, { strictReactivity: true, dev: false })).toThrow(/FICT-R006/)
+  })
+
+  it('strictReactivity escalates FICT-R003 to error', () => {
+    const source = `
+      function App({ mode }) {
+        if (mode) {
+          while (true) {
+            break
+          }
+        }
+        return <div>{mode}</div>
+      }
+    `
+    expect(() =>
+      transform(source, {
+        strictReactivity: true,
+        dev: false,
+        warningLevels: { 'FICT-R006': 'warn' },
+      }),
+    ).toThrow(/FICT-R003/)
+  })
+
+  it('warningLevels can override strictReactivity escalation', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const count = $state(0)
+        if (count > 0) {
+          return <div>High</div>
+        }
+        return <div>Low</div>
+      }
+    `
+    expect(() =>
+      transform(source, {
+        strictReactivity: true,
+        dev: false,
+        warningLevels: { 'FICT-R006': 'warn' },
+      }),
+    ).not.toThrow()
+  })
 })
