@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { parseSync } from '@babel/core'
 import * as t from '@babel/types'
 import { buildHIR } from '../src/ir/build-hir'
+import { createCodegenContext } from '../src/ir/codegen'
 import { analyzeReactiveScopes } from '../src/ir/scopes'
 import {
   generateRegions,
@@ -124,16 +125,8 @@ describe('generateRegionCode', () => {
     `)
     const hir = buildHIR(ast)
     const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    // Create a minimal codegen context for the test
-    const ctx = {
-      t,
-      helpersUsed: new Set<string>(),
-      tempCounter: 0,
-      trackedVars: new Set<string>(),
-      needsForOfHelper: false,
-      needsForInHelper: false,
-    }
-    const statements = generateRegionCode(hir.functions[0], scopeResult, t, ctx as any)
+    const ctx = createCodegenContext(t)
+    const statements = generateRegionCode(hir.functions[0], scopeResult, t, ctx)
 
     // Should produce some statements
     expect(Array.isArray(statements)).toBe(true)
@@ -507,15 +500,8 @@ describe('generateRegionCode - edge cases', () => {
     `)
     const hir = buildHIR(ast)
     const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const ctx = {
-      t,
-      helpersUsed: new Set<string>(),
-      tempCounter: 0,
-      trackedVars: new Set<string>(),
-      needsForOfHelper: false,
-      needsForInHelper: false,
-    }
-    const statements = generateRegionCode(hir.functions[0], scopeResult, t, ctx as any)
+    const ctx = createCodegenContext(t)
+    const statements = generateRegionCode(hir.functions[0], scopeResult, t, ctx)
 
     expect(Array.isArray(statements)).toBe(true)
   })
@@ -539,15 +525,8 @@ describe('generateRegionCode - edge cases', () => {
     `)
     const hir = buildHIR(ast)
     const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const ctx = {
-      t,
-      helpersUsed: new Set<string>(),
-      tempCounter: 0,
-      trackedVars: new Set<string>(),
-      needsForOfHelper: false,
-      needsForInHelper: false,
-    }
-    const statements = generateRegionCode(hir.functions[0], scopeResult, t, ctx as any)
+    const ctx = createCodegenContext(t)
+    const statements = generateRegionCode(hir.functions[0], scopeResult, t, ctx)
 
     expect(Array.isArray(statements)).toBe(true)
   })
@@ -566,15 +545,8 @@ describe('generateRegionCode - edge cases', () => {
     `)
     const hir = buildHIR(ast)
     const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const ctx = {
-      t,
-      helpersUsed: new Set<string>(),
-      tempCounter: 0,
-      trackedVars: new Set<string>(),
-      needsForOfHelper: false,
-      needsForInHelper: false,
-    }
-    const statements = generateRegionCode(hir.functions[0], scopeResult, t, ctx as any)
+    const ctx = createCodegenContext(t)
+    const statements = generateRegionCode(hir.functions[0], scopeResult, t, ctx)
 
     expect(Array.isArray(statements)).toBe(true)
   })

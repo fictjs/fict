@@ -75,6 +75,16 @@ export interface RegionInfo {
   hasReactiveWrites?: boolean
 }
 
+export interface RegionLoweringOps {
+  applyRegionToContext: typeof applyRegionToContext
+  applyRegionMetadataToExpression: typeof applyRegionMetadataToExpression
+  buildDependencyGetter: typeof buildDependencyGetter
+  getReactiveCallKind: typeof getReactiveCallKind
+  lowerExpression: typeof lowerExpression
+  propagateHookResultAlias: typeof propagateHookResultAlias
+  resolveHookMemberValue: typeof resolveHookMemberValue
+}
+
 type HookAccessorKind = 'signal' | 'memo'
 
 interface HookReturnInfo {
@@ -176,6 +186,18 @@ export function applyRegionToContext(
   ctx.currentRegion = region ?? undefined
 
   return prevRegion
+}
+
+function createRegionLoweringOps(): RegionLoweringOps {
+  return {
+    applyRegionToContext,
+    applyRegionMetadataToExpression,
+    buildDependencyGetter,
+    getReactiveCallKind,
+    lowerExpression,
+    propagateHookResultAlias,
+    resolveHookMemberValue,
+  }
 }
 
 function reserveHookSlot(ctx: CodegenContext): number {
@@ -764,6 +786,8 @@ export interface CodegenContext {
   listItemParamName?: string
   /** Current namespace context for SVG/MathML element creation */
   namespaceContext?: NamespaceContext
+  /** Injected lowering operations used by regions.ts to avoid runtime import cycles */
+  regionLoweringOps?: RegionLoweringOps
   /** Dedupe set for control-flow re-execution diagnostics */
   controlFlowReexecWarnings?: Set<string>
 }
@@ -823,6 +847,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     componentFunctionDefs: new Map(),
     hoistedFunctionDepCounter: 0,
     hoistedFunctionDepNames: new Map(),
+    regionLoweringOps: createRegionLoweringOps(),
     controlFlowReexecWarnings: new Set(),
   }
 }

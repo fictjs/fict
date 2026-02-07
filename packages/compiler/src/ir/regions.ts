@@ -11,16 +11,7 @@ import { RUNTIME_ALIASES } from '../constants'
 import { debugLog, debugWarn } from '../debug'
 import type { RegionMetadata } from '../fine-grained-dom'
 
-import type { CodegenContext, RegionInfo } from './codegen'
-import {
-  applyRegionToContext,
-  applyRegionMetadataToExpression,
-  buildDependencyGetter,
-  getReactiveCallKind,
-  lowerExpression,
-  propagateHookResultAlias,
-  resolveHookMemberValue,
-} from './codegen'
+import type { CodegenContext, RegionInfo, RegionLoweringOps } from './codegen'
 import type {
   BlockId,
   HIRFunction,
@@ -78,6 +69,41 @@ export interface RegionResult {
 }
 
 const REACTIVE_CREATORS = new Set(['createEffect', 'createMemo', 'createSelector', '$memo'])
+
+function getRegionLoweringOps(ctx: CodegenContext): RegionLoweringOps {
+  const ops = ctx.regionLoweringOps
+  if (ops) return ops
+  throw new HIRError('Missing region lowering operations in codegen context', 'CODEGEN_ERROR', {
+    file: ctx.options?.filename,
+  })
+}
+
+const applyRegionToContext: RegionLoweringOps['applyRegionToContext'] = (ctx, region) =>
+  getRegionLoweringOps(ctx).applyRegionToContext(ctx, region)
+
+const applyRegionMetadataToExpression: RegionLoweringOps['applyRegionMetadataToExpression'] = (
+  expr,
+  ctx,
+  regionOverride,
+) => getRegionLoweringOps(ctx).applyRegionMetadataToExpression(expr, ctx, regionOverride)
+
+const buildDependencyGetter: RegionLoweringOps['buildDependencyGetter'] = (deps, ctx) =>
+  getRegionLoweringOps(ctx).buildDependencyGetter(deps, ctx)
+
+const getReactiveCallKind: RegionLoweringOps['getReactiveCallKind'] = (expr, ctx) =>
+  getRegionLoweringOps(ctx).getReactiveCallKind(expr, ctx)
+
+const lowerExpression: RegionLoweringOps['lowerExpression'] = (expr, ctx, isAssigned = false) =>
+  getRegionLoweringOps(ctx).lowerExpression(expr, ctx, isAssigned)
+
+const propagateHookResultAlias: RegionLoweringOps['propagateHookResultAlias'] = (
+  targetBase,
+  value,
+  ctx,
+) => getRegionLoweringOps(ctx).propagateHookResultAlias(targetBase, value, ctx)
+
+const resolveHookMemberValue: RegionLoweringOps['resolveHookMemberValue'] = (expr, ctx) =>
+  getRegionLoweringOps(ctx).resolveHookMemberValue(expr, ctx)
 
 function buildEffectCall(
   ctx: CodegenContext,
