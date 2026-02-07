@@ -1056,6 +1056,55 @@ describe('Binding Edge Cases', () => {
 
       dispose()
     })
+
+    it('does not double-run side effects when patch fallback is needed', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+      const renders: number[] = []
+
+      const { marker, dispose, flush } = createConditional(
+        () => condition(),
+        () => {
+          const value = counter()
+          renders.push(value)
+          return {
+            type: Fragment,
+            props: {
+              children:
+                value % 2 === 0
+                  ? [{ type: 'span', props: { children: 'A' }, key: undefined }]
+                  : [
+                      { type: 'span', props: { children: 'A' }, key: undefined },
+                      { type: 'span', props: { children: 'B' }, key: undefined },
+                    ],
+            },
+            key: undefined,
+          }
+        },
+        createElement,
+        () => 'OFF',
+        undefined,
+        undefined,
+        { trackBranchReads: true },
+      )
+      container.appendChild(marker)
+      flush?.()
+
+      expect(container.textContent).toBe('A')
+      expect(renders).toEqual([0])
+
+      counter(1)
+      await tick()
+      expect(container.textContent).toBe('AB')
+      expect(renders).toEqual([0, 1])
+
+      counter(2)
+      await tick()
+      expect(container.textContent).toBe('A')
+      expect(renders).toEqual([0, 1, 2])
+
+      dispose()
+    })
   })
 
   describe('insert edge cases', () => {

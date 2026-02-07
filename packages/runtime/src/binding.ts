@@ -1865,11 +1865,17 @@ export function createConditional(
       let patched = false
       const scratchRoot = createRootContext(hostRoot)
       const prevScratch = pushRoot(scratchRoot)
+      let handledPatchError = false
+      let scratchOutput: FictNode = null
       try {
         const output = render()
+        scratchOutput = output
         if (output != null && output !== false) {
           if (currentNodes.length === 1) {
             patched = patchNode(currentNodes[0] ?? null, output)
+          }
+          if (!patched && Array.isArray(output)) {
+            patched = _patchFragmentChildren(currentNodes, output)
           }
           if (!patched && _isFragmentVNode(output)) {
             patched = _patchFragmentChildren(currentNodes, output.props?.children)
@@ -1877,20 +1883,69 @@ export function createConditional(
         }
       } catch (err) {
         if (handleSuspend(err as any, scratchRoot)) {
+          handledPatchError = true
           return
         }
         if (handleError(err, { source: 'renderChild' }, scratchRoot)) {
+          handledPatchError = true
           return
         }
         throw err
       } finally {
         popRoot(prevScratch)
+      }
+
+      if (handledPatchError) {
         destroyRoot(scratchRoot)
+        return
       }
 
       if (patched) {
+        destroyRoot(scratchRoot)
         return
       }
+
+      lastCondition = cond
+
+      if (currentRoot) {
+        destroyRoot(currentRoot)
+        currentRoot = null
+      }
+      removeNodes(currentNodes)
+      currentNodes = []
+
+      const prev = pushRoot(scratchRoot)
+      let handledError = false
+      try {
+        if (scratchOutput == null || scratchOutput === false) {
+          return
+        }
+        const el = createElementFn(scratchOutput)
+        const nodes = toNodeArray(el)
+        insertNodesBefore(parent, nodes, endMarker)
+        currentNodes = nodes
+      } catch (err) {
+        if (handleSuspend(err as any, scratchRoot)) {
+          handledError = true
+          destroyRoot(scratchRoot)
+          return
+        }
+        if (handleError(err, { source: 'renderChild' }, scratchRoot)) {
+          handledError = true
+          destroyRoot(scratchRoot)
+          return
+        }
+        throw err
+      } finally {
+        popRoot(prev)
+        if (!handledError) {
+          flushOnMount(scratchRoot)
+          currentRoot = scratchRoot
+        } else {
+          currentRoot = null
+        }
+      }
+      return
     }
     lastCondition = cond
 
