@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url'
 import type * as BabelCore from '@babel/core'
 
 import { DelegatedEvents, RUNTIME_ALIASES } from '../constants'
-import { debugEnabled, debugLog } from '../debug'
+import { debugLog } from '../debug'
 import { applyRegionMetadata, shouldMemoizeRegion, type RegionMetadata } from '../fine-grained-dom'
 import { setModuleMetadata } from '../module-metadata'
 import type { FictCompilerOptions, ModuleReactiveMetadata } from '../types'
@@ -21,6 +21,8 @@ import {
   getOrCreateHoistedTemplate,
   withGetterCache,
 } from './codegen-cache'
+import { detectDerivedCycles } from './codegen-cycles'
+import { emitReactiveControlFlowReexecutionWarning } from './codegen-diagnostics'
 import { collectExpressionDependencies } from './codegen-expression-deps'
 import {
   analyzeHookReturnInfo as analyzeHookReturnInfoWithOps,
@@ -83,7 +85,7 @@ import {
   type Region,
 } from './regions'
 import { generateRegions, generateRegionCode, regionToMetadata } from './regions'
-import type { ReactiveScopeResult, SSAEnhancedScopeResult } from './scopes'
+import type { ReactiveScopeResult } from './scopes'
 import { analyzeReactiveScopesWithSSA } from './scopes'
 import { analyzeCFG } from './ssa'
 import { structurizeCFG, structurizeCFGWithDiagnostics } from './structurize'
@@ -236,54 +238,6 @@ function withNoMemoAndDynamicHooks<T>(ctx: CodegenContext, fn: () => T): T {
     ctx.noMemo = prevNoMemo
     ctx.dynamicHookSlotDepth = prevDynamic
   }
-}
-
-function emitReactiveControlFlowReexecutionWarning(
-  fn: HIRFunction,
-  scopeResult: SSAEnhancedScopeResult,
-  ctx: CodegenContext,
-  options: { hasJSX: boolean; isComponent: boolean },
-): void {
-  if (!options.hasJSX || !options.isComponent) return
-  const onWarn = ctx.options?.onWarn
-  if (!onWarn) return
-
-  const warningKey = `${fn.name ?? '<anonymous>'}:${fn.loc?.start.line ?? 0}:${fn.loc?.start.column ?? 0}`
-  const warned = ctx.controlFlowReexecWarnings ?? (ctx.controlFlowReexecWarnings = new Set())
-  if (warned.has(warningKey)) return
-
-  const reactiveVars = new Set<string>(ctx.trackedVars)
-  ;(ctx.signalVars ?? []).forEach(name => reactiveVars.add(name))
-  ;(ctx.storeVars ?? []).forEach(name => reactiveVars.add(name))
-  ;(ctx.memoVars ?? []).forEach(name => reactiveVars.add(name))
-  ;(ctx.aliasVars ?? []).forEach(name => reactiveVars.add(name))
-  if (reactiveVars.size === 0) return
-
-  const controlFlowReactiveReads = new Set<string>()
-  for (const name of scopeResult.controlFlowAnalysis.controlFlowReads) {
-    const base = deSSAVarName(name)
-    if (reactiveVars.has(base)) controlFlowReactiveReads.add(base)
-  }
-  for (const name of scopeResult.controlFlowAnalysis.mixedReads) {
-    const base = deSSAVarName(name)
-    if (reactiveVars.has(base)) controlFlowReactiveReads.add(base)
-  }
-  if (controlFlowReactiveReads.size === 0) return
-
-  warned.add(warningKey)
-  const vars = Array.from(controlFlowReactiveReads).sort()
-  const displayed = vars.slice(0, 5).join(', ')
-  const remainder = vars.length > 5 ? ` (+${vars.length - 5} more)` : ''
-  const loc = fn.loc?.start
-  onWarn({
-    code: 'FICT-R006',
-    message:
-      `Reactive control-flow reads (${displayed}${remainder}) force region re-execution. ` +
-      `Prefer expression-only branching in JSX (e.g. ternary/logical) when you want finer-grained updates.`,
-    fileName: ctx.options?.filename ?? '<unknown>',
-    line: loc?.line ?? 0,
-    column: loc ? loc.column + 1 : 0,
-  })
 }
 
 /**
@@ -563,103 +517,6 @@ function isStaticDelegatedDataAst(expr: BabelCore.types.Expression, ctx: Codegen
     return true
   }
   return t.isIdentifier(expr) && isListKeyParamIdentifier(expr.name, ctx)
-}
-
-function detectDerivedCycles(
-  fn: HIRFunction,
-  _scopeResult: ReactiveScopeResult,
-  ctx: CodegenContext,
-): void {
-  if (debugEnabled('cycles_throw')) {
-    throw new Error('cycle check invoked')
-  }
-  const declared = new Map<
-    string,
-    { isSignal: boolean; isStore: boolean; declaredHere: boolean; count: number }
-  >()
-  for (const block of fn.blocks) {
-    for (const instr of block.instructions) {
-      if (instr.kind !== 'Assign') continue
-      const target = deSSAVarName(instr.target.name)
-      const callKind = getReactiveCallKind(instr.value, ctx)
-      const isSignalCall = callKind === 'signal'
-      const isStoreCall = callKind === 'store'
-      const prev = declared.get(target)
-      declared.set(target, {
-        isSignal: (prev?.isSignal ?? false) || isSignalCall,
-        isStore: (prev?.isStore ?? false) || isStoreCall,
-        declaredHere: prev?.declaredHere || !!instr.declarationKind,
-        count: (prev?.count ?? 0) + 1,
-      })
-    }
-  }
-
-  const graph = new Map<string, Set<string>>()
-  for (const block of fn.blocks) {
-    for (const instr of block.instructions) {
-      if (instr.kind !== 'Assign') continue
-      const target = deSSAVarName(instr.target.name)
-      const declInfo = declared.get(target)
-      if (declInfo?.isSignal || declInfo?.isStore || !declInfo?.declaredHere) continue
-      if ((declInfo.count ?? 0) !== 1) continue
-      const deps = graph.get(target) ?? new Set<string>()
-      const rawDeps = new Set<string>()
-      collectExpressionDependencies(instr.value, rawDeps)
-      for (const dep of rawDeps) {
-        const base = deSSAVarName(dep.split('.')[0] ?? dep)
-        const depInfo = declared.get(base)
-        if (
-          depInfo &&
-          depInfo.declaredHere &&
-          !depInfo.isSignal &&
-          !depInfo.isStore &&
-          (depInfo.count ?? 0) === 1
-        ) {
-          deps.add(base)
-        }
-      }
-      graph.set(target, deps)
-    }
-  }
-  if (graph.size === 0) return
-
-  const visiting = new Set<string>()
-  const visited = new Set<string>()
-  const stack: string[] = []
-
-  const visit = (node: string) => {
-    if (visiting.has(node)) {
-      const idx = stack.indexOf(node)
-      const cycle = idx >= 0 ? [...stack.slice(idx), node] : [...stack, node]
-      throw new Error(
-        `Detected cyclic derived dependency: ${cycle.join(' -> ')}\n\n` +
-          `Tip: This usually happens when derived values depend on each other in a loop.\n` +
-          `Consider:\n` +
-          `  - Using untrack() to break the dependency cycle\n` +
-          `  - Restructuring your derived values to avoid circular dependencies\n` +
-          `  - Moving one of the values to $state if it should be independently mutable`,
-      )
-    }
-    if (visited.has(node)) return
-    visiting.add(node)
-    stack.push(node)
-    for (const dep of graph.get(node) ?? []) {
-      visit(dep)
-    }
-    stack.pop()
-    visiting.delete(node)
-    visited.add(node)
-  }
-
-  for (const node of graph.keys()) {
-    visit(node)
-  }
-
-  debugLog(
-    'cycles',
-    'cycle graph',
-    Array.from(graph.entries()).map(([k, v]) => [k, Array.from(v)]),
-  )
 }
 
 /**
