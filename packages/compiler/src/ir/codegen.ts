@@ -40,7 +40,6 @@ import { attachHelperImports, collectDeclaredNames } from './codegen-imports'
 import { extractKeyFromMapCallback } from './codegen-jsx-keys'
 import {
   isListKeyConstExpression,
-  isListKeyDependency,
   isStaticDelegatedDataExpression,
   matchesListKeyPattern,
 } from './codegen-list-keys'
@@ -62,6 +61,11 @@ import {
   getReactiveCallKindFromBabel,
   getStaticPropName,
 } from './codegen-reactive-kind'
+import {
+  getReactiveDependencies,
+  isExpressionReactive,
+  isLikelyTextExpression,
+} from './codegen-reactivity'
 import { findContainingRegion, regionInfoToMetadata } from './codegen-region-utils'
 import { genModuleUrlExpr, renameIdentifiersInExpr } from './codegen-resumable-utils'
 import { collectRuntimeImports } from './codegen-runtime-imports'
@@ -2214,225 +2218,6 @@ function unwrapAccessorCalls(
 }
 
 /**
- * Check if an HIR expression references a tracked/reactive variable.
- * Uses de-versioned names for matching.
- * Also considers region membership for more precise reactivity detection.
- *
- * Reactive sources include:
- * - trackedVars: $state variables and other tracked signals
- * - memoVars: derived/memo values that may change reactively
- * - signalVars: explicit signal accessors
- * - region declarations/dependencies: variables in reactive scopes
- */
-function isExpressionReactive(expr: Expression, ctx: CodegenContext): boolean {
-  // First collect all dependencies
-  const deps = new Set<string>()
-  collectExpressionDependencies(expr, deps)
-
-  const regionsToCheck = ctx.currentRegion ? [ctx.currentRegion] : (ctx.regions ?? [])
-
-  // Check if any dependency is tracked (includes $state, signals, etc.)
-  for (const dep of deps) {
-    if (isListKeyDependency(dep, ctx)) continue
-    if (ctx.trackedVars.has(dep)) return true
-  }
-
-  // Check if any dependency is a memo variable (derived values)
-  // Memo vars are reactive because they wrap getters that depend on signals
-  if (ctx.memoVars) {
-    for (const dep of deps) {
-      if (isListKeyDependency(dep, ctx)) continue
-      if (ctx.memoVars.has(dep)) return true
-    }
-  }
-
-  // Check if any dependency is an explicit signal variable
-  if (ctx.signalVars) {
-    for (const dep of deps) {
-      if (isListKeyDependency(dep, ctx)) continue
-      if (ctx.signalVars.has(dep)) return true
-    }
-  }
-
-  // Check if any dependency is in a reactive region's declarations
-  for (const region of regionsToCheck) {
-    for (const dep of deps) {
-      if (isListKeyDependency(dep, ctx)) continue
-      if (region.declarations.has(dep) || region.dependencies.has(dep)) {
-        return true
-      }
-    }
-  }
-
-  return false
-}
-
-/**
- * Get the reactive dependencies of an expression that require binding.
- * Returns the set of tracked variables that the expression depends on.
- *
- * This includes:
- * - trackedVars: $state variables and other tracked signals
- * - memoVars: derived/memo values that may change reactively
- * - signalVars: explicit signal accessors
- * - region declarations/dependencies: variables in reactive scopes
- */
-function _getReactiveDependencies(expr: Expression, ctx: CodegenContext): Set<string> {
-  const deps = new Set<string>()
-  collectExpressionDependencies(expr, deps)
-
-  const regionsToCheck = ctx.currentRegion ? [ctx.currentRegion] : (ctx.regions ?? [])
-
-  const reactiveDeps = new Set<string>()
-
-  // Check tracked vars ($state, signals, etc.)
-  for (const dep of deps) {
-    if (isListKeyDependency(dep, ctx)) continue
-    if (ctx.trackedVars.has(dep)) {
-      reactiveDeps.add(dep)
-    }
-  }
-
-  // Check memo vars (derived values)
-  if (ctx.memoVars) {
-    for (const dep of deps) {
-      if (isListKeyDependency(dep, ctx)) continue
-      if (ctx.memoVars.has(dep)) {
-        reactiveDeps.add(dep)
-      }
-    }
-  }
-
-  // Check signal vars
-  if (ctx.signalVars) {
-    for (const dep of deps) {
-      if (isListKeyDependency(dep, ctx)) continue
-      if (ctx.signalVars.has(dep)) {
-        reactiveDeps.add(dep)
-      }
-    }
-  }
-
-  // Also check region declarations
-  for (const region of regionsToCheck) {
-    for (const dep of deps) {
-      if (isListKeyDependency(dep, ctx)) continue
-      if (region.declarations.has(dep) || region.dependencies.has(dep)) {
-        reactiveDeps.add(dep)
-      }
-    }
-  }
-
-  return reactiveDeps
-}
-
-// ============================================================================
-// HIR Template Extraction (aligned with fine-grained-dom.ts)
-// ============================================================================
-
-function _isComponentLikeCallee(expr: Expression): boolean {
-  if (expr.kind === 'Identifier') {
-    return expr.name[0] === expr.name[0]?.toUpperCase()
-  }
-  if (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') {
-    return _isComponentLikeCallee(expr.object)
-  }
-  return false
-}
-
-function isLikelyTextExpression(expr: Expression, ctx: CodegenContext): boolean {
-  let ok = true
-  const isReactiveIdentifier = (name: string) => {
-    if (ctx.storeVars?.has(name)) return false
-    const isAlias = ctx.aliasVars?.has(name) ?? false
-    if (!isAlias && ctx.memoVars?.has(name)) return false
-    if (ctx.trackedVars.has(name)) return true
-    if (ctx.signalVars?.has(name) || isAlias) return true
-    const hookName = ctx.hookResultVarMap?.get(name)
-    if (hookName) {
-      const info = getHookReturnInfo(hookName, ctx)
-      if (info?.directAccessor) return true
-    }
-    return false
-  }
-  const visit = (node: Expression, allowNonSignalReference = false): void => {
-    if (!ok) return
-    switch (node.kind) {
-      case 'JSXElement':
-      case 'ArrayExpression':
-      case 'ObjectExpression':
-      case 'ArrowFunction':
-      case 'FunctionExpression':
-      case 'ClassExpression':
-      case 'NewExpression':
-        ok = false
-        return
-      case 'CallExpression':
-      case 'OptionalCallExpression':
-        // Calls can produce non-text values (arrays, JSX, DOM nodes). Treat them
-        // conservatively as dynamic children so they get inserted rather than
-        // bound to a text node.
-        ok = false
-        return
-      case 'MemberExpression':
-      case 'OptionalMemberExpression':
-        visit(node.object, true)
-        if (node.computed) {
-          visit(node.property)
-        }
-        return
-      case 'BinaryExpression':
-      case 'LogicalExpression':
-        visit(node.left)
-        visit(node.right)
-        return
-      case 'ConditionalExpression':
-        visit(node.test)
-        visit(node.consequent)
-        visit(node.alternate)
-        return
-      case 'UnaryExpression':
-      case 'UpdateExpression':
-      case 'AwaitExpression':
-        visit(node.argument)
-        return
-      case 'AssignmentExpression':
-        visit(node.left)
-        visit(node.right)
-        return
-      case 'SequenceExpression':
-        node.expressions.forEach(item => visit(item))
-        return
-      case 'TemplateLiteral':
-        node.expressions.forEach(item => visit(item))
-        return
-      case 'TaggedTemplateExpression':
-        visit(node.tag)
-        node.quasi.expressions.forEach(item => visit(item))
-        return
-      case 'YieldExpression':
-        if (node.argument) visit(node.argument)
-        return
-      case 'SpreadElement':
-        visit(node.argument)
-        return
-      case 'Identifier':
-        if (!isReactiveIdentifier(node.name) && !allowNonSignalReference) {
-          ok = false
-        }
-        return
-      case 'Literal':
-      case 'ThisExpression':
-      case 'SuperExpression':
-        return
-    }
-  }
-
-  visit(expr)
-  return ok
-}
-
-/**
  * Lower an intrinsic HTML element to fine-grained DOM operations.
  * Uses template extraction and RegionMetadata for optimized updates.
  * Aligned with fine-grained-dom.ts approach.
@@ -2450,7 +2235,8 @@ function lowerIntrinsicElement(
     jsx,
     ctx,
     {
-      isLikelyTextExpression,
+      isLikelyTextExpression: (expr, context) =>
+        isLikelyTextExpression(expr, context, { getHookReturnInfo }),
     },
     [],
     ctx.namespaceContext ?? null,
@@ -2614,7 +2400,7 @@ function lowerIntrinsicElement(
 
   const getFusedPatchGroupKey = (expr: Expression): string => {
     if (optimizeLevel === 'full') return '__full__'
-    const deps = _getReactiveDependencies(expr, ctx)
+    const deps = getReactiveDependencies(expr, ctx)
     if (deps.size === 0) {
       fusedUniqueId += 1
       return `__dep_empty_${fusedUniqueId}`
