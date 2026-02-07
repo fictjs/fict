@@ -19,6 +19,7 @@ import {
   getOrCreateHoistedTemplate,
   withGetterCache,
 } from './codegen-cache'
+import { emitConditionalChild } from './codegen-conditional-child'
 import { detectDerivedCycles } from './codegen-cycles'
 import {
   extractDelegatedEventData,
@@ -235,7 +236,12 @@ function createRegionLoweringOps(): RegionLoweringOps {
 
 function createHIRChildBindingOps(): HIRChildBindingOps {
   return {
-    emitConditionalChild,
+    emitConditionalChild: (startMarkerId, endMarkerId, expr, statements, ctx) =>
+      emitConditionalChild(startMarkerId, endMarkerId, expr, statements, ctx, {
+        buildListCallExpression,
+        genTemp,
+        lowerDomExpression,
+      }),
     emitListChild,
     genTemp,
     lowerDomExpression,
@@ -3022,91 +3028,6 @@ function lowerIntrinsicElement(
 
   // Wrap in IIFE
   return t.callExpression(t.arrowFunctionExpression([], body), [])
-}
-
-/**
- * Emit a conditional child expression
- */
-function emitConditionalChild(
-  startMarkerId: BabelCore.types.Expression,
-  endMarkerId: BabelCore.types.Expression,
-  expr: Expression,
-  statements: BabelCore.types.Statement[],
-  ctx: CodegenContext,
-): void {
-  const { t } = ctx
-  ctx.helpersUsed.add('conditional')
-  ctx.helpersUsed.add('createElement')
-  ctx.helpersUsed.add('onDestroy')
-
-  let condition: BabelCore.types.Expression
-  let consequent: BabelCore.types.Expression
-  let alternate: BabelCore.types.Expression | null = null
-  const lowerBranch = (branch: Expression): BabelCore.types.Expression => {
-    const listExpr = buildListCallExpression(branch, statements, ctx)
-    if (listExpr) return listExpr
-    return lowerDomExpression(branch, ctx)
-  }
-
-  const enterConditional = () => {
-    ctx.inConditional = (ctx.inConditional ?? 0) + 1
-  }
-  const exitConditional = () => {
-    ctx.inConditional = Math.max(0, (ctx.inConditional ?? 1) - 1)
-  }
-
-  if (expr.kind === 'ConditionalExpression') {
-    condition = lowerDomExpression(expr.test, ctx)
-    enterConditional()
-    consequent = lowerBranch(expr.consequent)
-    alternate = lowerBranch(expr.alternate)
-    exitConditional()
-  } else if (expr.kind === 'LogicalExpression' && expr.operator === '&&') {
-    condition = lowerDomExpression(expr.left, ctx)
-    enterConditional()
-    consequent = lowerBranch(expr.right)
-    exitConditional()
-  } else {
-    return
-  }
-
-  const bindingId = genTemp(ctx, 'cond')
-  const args: BabelCore.types.Expression[] = [
-    t.arrowFunctionExpression([], condition),
-    t.arrowFunctionExpression([], consequent),
-    t.identifier(RUNTIME_ALIASES.createElement),
-  ]
-  if (alternate) {
-    args.push(t.arrowFunctionExpression([], alternate))
-  } else {
-    args.push(t.identifier('undefined'))
-  }
-  args.push(startMarkerId, endMarkerId)
-
-  statements.push(
-    t.variableDeclaration('const', [
-      t.variableDeclarator(
-        bindingId,
-        t.callExpression(t.identifier(RUNTIME_ALIASES.conditional), args),
-      ),
-    ]),
-  )
-
-  // Flush and cleanup
-  statements.push(
-    t.expressionStatement(
-      t.optionalCallExpression(
-        t.optionalMemberExpression(bindingId, t.identifier('flush'), false, true),
-        [],
-        true,
-      ),
-    ),
-    t.expressionStatement(
-      t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [
-        t.memberExpression(bindingId, t.identifier('dispose')),
-      ]),
-    ),
-  )
 }
 
 /**
