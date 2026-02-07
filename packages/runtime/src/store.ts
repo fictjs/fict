@@ -346,14 +346,11 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
       return Reflect.getOwnPropertyDescriptor(currentValue, prop)
     },
     set(_, prop) {
-      if (isDev) {
-        throw new Error(
-          `[Fict] Cannot set "${String(
-            prop,
-          )}" on a diffing signal proxy directly. Update the source value and call its writer instead.`,
-        )
-      }
-      return true
+      throw new Error(
+        `[Fict] Cannot set "${String(
+          prop,
+        )}" on a diffing signal proxy directly. Update the source value and call its writer instead.`,
+      )
     },
   })
 
