@@ -3824,6 +3824,31 @@ function transformControlFlowReturns(
     return containsReactiveControlFlowRead(stmts)
   }
 
+  const isJSXLikeNode = (node: BabelCore.types.Node | null | undefined): boolean =>
+    !!node && (t.isJSXElement(node) || t.isJSXFragment(node))
+
+  const hasRiskyBranchPreludeReads = (stmts: BabelCore.types.Statement[]): boolean => {
+    for (const stmt of stmts) {
+      if (t.isReturnStatement(stmt)) {
+        const arg = stmt.argument
+        if (!arg || isJSXLikeNode(arg)) continue
+        if (containsReactiveAccessorRead([arg], { skipNestedFunctions: true })) {
+          return true
+        }
+        continue
+      }
+      if (containsReactiveAccessorRead([stmt], { skipNestedFunctions: true })) {
+        return true
+      }
+    }
+    return false
+  }
+
+  const needsTrackedBranchReads = (stmts: BabelCore.types.Statement[]): boolean => {
+    if (stmts.length === 0) return false
+    return hasRiskyBranchControlFlow(stmts) || hasRiskyBranchPreludeReads(stmts)
+  }
+
   const emitControlFlowFallbackWarning = (
     node: BabelCore.types.Node,
     kind: 'if' | 'switch',
@@ -3978,15 +4003,15 @@ function transformControlFlowReturns(
     const trueFn = buildBranchFunction(consequentStmts)
     const falseFn = alternateStmts ? buildBranchFunction(alternateStmts) : null
     if (!trueFn || !falseFn) return null
-    const needsTrackedBranchReads =
-      hasRiskyBranchControlFlow(consequentStmts) ||
-      (alternateStmts ? hasRiskyBranchControlFlow(alternateStmts) : false)
+    const shouldTrackBranchReads =
+      needsTrackedBranchReads(consequentStmts) ||
+      (alternateStmts ? needsTrackedBranchReads(alternateStmts) : false)
 
     return buildConditionalBindingExpr(
       ifStmt.test as BabelCore.types.Expression,
       trueFn,
       falseFn,
-      needsTrackedBranchReads ? { trackBranchReads: true } : undefined,
+      shouldTrackBranchReads ? { trackBranchReads: true } : undefined,
     )
   }
 
@@ -4106,13 +4131,13 @@ function transformControlFlowReturns(
       ),
       [],
     )
-    let currentExprNeedsTrackedBranchReads = hasRiskyBranchControlFlow(fallbackStatements)
+    let currentExprNeedsTrackedBranchReads = needsTrackedBranchReads(fallbackStatements)
 
     for (let i = branches.length - 1; i >= 0; i--) {
       const branch = branches[i]!
       const trueFn = buildBranchFunction(branch.statements, { disallowRenderHooks: true })
       if (!trueFn) return null
-      const trueBranchNeedsTrackedBranchReads = hasRiskyBranchControlFlow(branch.statements)
+      const trueBranchNeedsTrackedBranchReads = needsTrackedBranchReads(branch.statements)
       const trackBranchReads =
         trueBranchNeedsTrackedBranchReads || currentExprNeedsTrackedBranchReads
 

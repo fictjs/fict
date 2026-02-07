@@ -541,9 +541,10 @@ The compiler has some limitations when handling conditional rendering patterns. 
 
 - Multiple sequential `if-return` branches are compiled into reactive conditionals.
 - `if` blocks without `return` are auto-wrapped so reactive side effects still update.
-- Nested branch control flow (`if`/`switch` inside lowered conditional branches) is now
-  automatically kept reactive. When fine-grained lowering is not possible, the compiler
-  enables a safe runtime fallback that tracks branch reads and re-runs the active branch.
+- Nested branch logic (e.g. inner `if`/`switch`) and reactive prelude reads before
+  `return` are automatically kept reactive. When fine-grained lowering is not possible,
+  the compiler enables a safe runtime fallback that tracks branch reads and re-runs
+  the active branch.
 
 ---
 

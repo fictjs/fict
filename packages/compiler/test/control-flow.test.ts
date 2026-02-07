@@ -508,6 +508,41 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toContain('createConditional')
       expect(output).toContain('trackBranchReads: true')
     })
+
+    it('enables tracked branch fallback for reactive side-effect reads before return', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let show = $state(true)
+          let count = $state(0)
+          if (show) {
+            console.log(count)
+            return <div>{count}</div>
+          }
+          return <div>OFF</div>
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createConditional')
+      expect(output).toContain('trackBranchReads: true')
+    })
+
+    it('keeps pure jsx return branches on fine-grained path', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let show = $state(true)
+          let count = $state(0)
+          if (show) {
+            return <div>{count}</div>
+          }
+          return <div>OFF</div>
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createConditional')
+      expect(output).not.toContain('trackBranchReads: true')
+    })
   })
 
   describe('Unsupported statement handling', () => {
