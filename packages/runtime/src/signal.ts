@@ -1172,14 +1172,23 @@ function computedOper<T>(this: ComputedNode<T>): T {
       this.flags = flags & ~Pending
     }
   } else if (!flags) {
+    this.depsTail = undefined
     this.flags = MutableRunning
     const prevSub = setActiveSub(this)
     try {
       this.value = this.getter(undefined)
       if (isDev) updateComputedDevtools(this, this.value)
+    } catch (err) {
+      // Initial evaluation failed: remove partially tracked dependencies
+      // and allow a future read to retry from a clean slate.
+      this.flags = 0
+      purgeDeps(this)
+      throw err
     } finally {
       setActiveSub(prevSub)
-      this.flags &= ~Running
+      if (this.flags & Running) {
+        this.flags &= ~Running
+      }
     }
   }
 

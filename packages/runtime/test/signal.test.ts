@@ -6,6 +6,7 @@ import { registerErrorHandler } from '../src/lifecycle'
 import {
   __resetReactiveState,
   batch as rawBatch,
+  computed as rawComputed,
   effect as rawEffect,
   effectWithCleanup as rawEffectWithCleanup,
   signal as rawSignal,
@@ -358,6 +359,44 @@ describe('signal runtime robustness', () => {
     ).not.toThrow()
     expect(runs).toBe(1)
     expect(cleanupRuns).toBe(0)
+  })
+
+  it('retries computed after initial throw and drops stale dependencies', () => {
+    const mode = rawSignal(true)
+    const active = rawSignal(0)
+    const stale = rawSignal(0)
+    let runs = 0
+
+    const derived = rawComputed(() => {
+      runs++
+      if (mode()) {
+        active()
+        throw new Error('boom')
+      }
+      return stale()
+    })
+
+    expect(() => derived()).toThrow('boom')
+    expect(runs).toBe(1)
+
+    rawBatch(() => {
+      mode(false)
+    })
+    expect(derived()).toBe(0)
+    expect(runs).toBe(2)
+
+    rawBatch(() => {
+      active(1)
+    })
+    // active should no longer be subscribed after the successful retry.
+    expect(derived()).toBe(0)
+    expect(runs).toBe(2)
+
+    rawBatch(() => {
+      stale(1)
+    })
+    expect(derived()).toBe(1)
+    expect(runs).toBe(3)
   })
 
   it('removes stale dependencies when computed throws during update', async () => {
