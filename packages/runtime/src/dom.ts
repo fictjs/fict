@@ -201,6 +201,12 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
     return createElementWithContext(resolved, namespace)
   }
 
+  // Non-reactive function values are not valid DOM nodes.
+  // Keep callback values inert instead of stringifying function source.
+  if (typeof node === 'function') {
+    return document.createTextNode('')
+  }
+
   if (typeof node === 'object' && node !== null && !(node instanceof Node)) {
     // Handle BindingHandle (list/conditional bindings, etc)
     if ('marker' in node) {
@@ -510,7 +516,14 @@ function appendChildNode(
   // Handle getter function (recursive)
   if (typeof child === 'function' && (child as () => FictNode).length === 0) {
     const childGetter = child as () => FictNode
-    createChildBinding(parent, childGetter, node => createElementWithContext(node, namespace))
+    if (isReactive(childGetter)) {
+      createChildBinding(parent, childGetter, node => createElementWithContext(node, namespace))
+      return
+    }
+  }
+
+  // Non-reactive function values are callbacks, not DOM children.
+  if (typeof child === 'function') {
     return
   }
 

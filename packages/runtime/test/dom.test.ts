@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import { render, createElement, Fragment, createRoot, onDestroy, onMount } from '../src/index'
-import { createSignal } from '../src/advanced'
+import { createSignal, nonReactive } from '../src/advanced'
 import { template } from '../src/internal'
 
 const tick = () =>
@@ -453,6 +453,25 @@ describe('DOM Module', () => {
         expect(container.textContent).toBe('Count: 5')
 
         teardown()
+      })
+
+      it('does not execute non-reactive function children', () => {
+        let invoked = 0
+        const callbackChild = nonReactive(() => {
+          invoked++
+          return 'should-not-render'
+        })
+
+        const result = createElement({
+          type: 'div',
+          props: {
+            children: callbackChild,
+          },
+          key: undefined,
+        })
+
+        expect(invoked).toBe(0)
+        expect((result as HTMLDivElement).textContent).toBe('')
       })
     })
 

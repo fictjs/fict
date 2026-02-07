@@ -52,6 +52,7 @@ const PROP_CACHE = Symbol('fict:prop')
 const STYLE_CACHE = Symbol('fict:style')
 const CLASS_STATE_CACHE = Symbol('fict:class-state')
 const CLASS_VALUE_CACHE = Symbol('fict:class-value')
+const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
 
 const PROPERTY_BINDING_KEYS = new Set([
   'value',
@@ -125,6 +126,7 @@ export function isReactive(value: unknown): value is () => unknown {
   // Exclude effect disposers and effect scopes - they are zero-arg
   // functions but not reactive getters
   if (isEffect(value) || isEffectScope(value)) return false
+  if (isNonReactiveFn(value)) return false
 
   // Fall back to length check for compiler-generated getters
   // Zero-argument functions are treated as reactive getters
@@ -153,6 +155,30 @@ const PROP_GETTER_MARKER = Symbol.for('fict:prop-getter')
 function isPropGetterFn(value: unknown): boolean {
   if (typeof value !== 'function') return false
   return (value as any)[PROP_GETTER_MARKER] === true
+}
+
+function isNonReactiveFn(value: unknown): boolean {
+  if (typeof value !== 'function') return false
+  return (
+    (value as ((...args: unknown[]) => unknown) & { [NON_REACTIVE_FN_MARKER]?: boolean })[
+      NON_REACTIVE_FN_MARKER
+    ] === true
+  )
+}
+
+/**
+ * Mark a function as non-reactive so runtime bindings won't treat it as a getter.
+ * Useful for callback props / function-as-child patterns that must remain callbacks.
+ */
+export function nonReactive<T extends (...args: unknown[]) => unknown>(fn: T): T {
+  if (Object.isExtensible(fn)) {
+    try {
+      ;(fn as T & { [NON_REACTIVE_FN_MARKER]?: boolean })[NON_REACTIVE_FN_MARKER] = true
+    } catch {
+      // Ignore marker failures on non-standard function objects.
+    }
+  }
+  return fn
 }
 
 /**

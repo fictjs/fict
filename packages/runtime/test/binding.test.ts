@@ -10,6 +10,7 @@ import {
   createClassBinding,
   createShow,
   isReactive,
+  nonReactive,
   unwrap,
 } from '../src/advanced'
 import {
@@ -85,6 +86,11 @@ describe('Reactive DOM Binding', () => {
           return x
         }),
       ).toBe(false)
+    })
+
+    it('supports explicitly marking zero-arg callbacks as non-reactive', () => {
+      const callback = nonReactive(() => 1)
+      expect(isReactive(callback)).toBe(false)
     })
   })
 
