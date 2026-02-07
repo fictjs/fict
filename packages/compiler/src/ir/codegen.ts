@@ -3843,8 +3843,45 @@ function transformControlFlowReturns(
   const isJSXLikeNode = (node: BabelCore.types.Node | null | undefined): boolean =>
     !!node && (t.isJSXElement(node) || t.isJSXFragment(node))
 
+  const isStoreSourceExpression = (expr: BabelCore.types.Expression): boolean => {
+    if (t.isIdentifier(expr)) {
+      return !!ctx.storeVars?.has(expr.name)
+    }
+    if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr)) {
+      const root = getMemberRootIdentifier(expr)
+      return !!(root && ctx.storeVars?.has(root.name))
+    }
+    return false
+  }
+
+  const hasRiskyStoreDestructureRead = (stmt: BabelCore.types.Statement): boolean => {
+    if (t.isVariableDeclaration(stmt)) {
+      for (const decl of stmt.declarations) {
+        if (!decl.init) continue
+        const hasPattern = t.isObjectPattern(decl.id) || t.isArrayPattern(decl.id)
+        if (!hasPattern) continue
+        if (isStoreSourceExpression(decl.init as BabelCore.types.Expression)) {
+          return true
+        }
+      }
+      return false
+    }
+
+    if (t.isExpressionStatement(stmt) && t.isAssignmentExpression(stmt.expression)) {
+      const assignment = stmt.expression
+      const isPatternLhs = t.isObjectPattern(assignment.left) || t.isArrayPattern(assignment.left)
+      if (!isPatternLhs) return false
+      return isStoreSourceExpression(assignment.right as BabelCore.types.Expression)
+    }
+
+    return false
+  }
+
   const hasRiskyBranchPreludeReads = (stmts: BabelCore.types.Statement[]): boolean => {
     for (const stmt of stmts) {
+      if (hasRiskyStoreDestructureRead(stmt)) {
+        return true
+      }
       if (t.isReturnStatement(stmt)) {
         const arg = stmt.argument
         if (!arg || isJSXLikeNode(arg)) continue
