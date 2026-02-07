@@ -63,6 +63,7 @@
     "dev": "tsup --watch",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
+    "pretest": "pnpm -C ../runtime build",
     "test": "vitest run",
     "test:e2e": "playwright test --reporter=list",
     "clean": "rm -rf dist"
