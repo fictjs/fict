@@ -4,7 +4,7 @@ export function Counter({ label, initial = 0 }: { label: string; initial?: numbe
   let count = $state(initial)
 
   $effect(() => {
-    console.log(`[${label}] count changed:`, count)
+    console.log(`[${label}] count changed: ${count}`)
   })
 
   return (

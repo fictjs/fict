@@ -8,12 +8,22 @@ function collectWarningCodes(
   source: string,
   options: Parameters<typeof transform>[1] = {},
 ): string[] {
+  const previousStrictGuaranteeEnv = process.env.FICT_STRICT_GUARANTEE
+  delete process.env.FICT_STRICT_GUARANTEE
   const warnings: Array<{ code: string }> = []
-  transform(source, {
-    ...options,
-    onWarn: warning => warnings.push(warning as { code: string }),
-  })
-  return warnings.map(warning => warning.code)
+  try {
+    transform(source, {
+      ...options,
+      onWarn: warning => warnings.push(warning as { code: string }),
+    })
+    return warnings.map(warning => warning.code)
+  } finally {
+    if (previousStrictGuaranteeEnv === undefined) {
+      delete process.env.FICT_STRICT_GUARANTEE
+    } else {
+      process.env.FICT_STRICT_GUARANTEE = previousStrictGuaranteeEnv
+    }
+  }
 }
 
 describe('reactivity guarantee contract', () => {
@@ -59,6 +69,16 @@ describe('reactivity guarantee contract', () => {
         source: `
           function App({ user: { name } }) {
             return <div>{name}</div>
+          }
+        `,
+      },
+      {
+        name: 'state initializer can read props without escape fallback',
+        source: `
+          import { $state } from 'fict'
+          function App({ initial = 0 }) {
+            let count = $state(initial)
+            return <div>{count}</div>
           }
         `,
       },

@@ -333,6 +333,8 @@ function runWarningPass(
   stateBindingIds: Set<BabelCore.types.Identifier>,
   stateRootBindingIds: Set<BabelCore.types.Identifier>,
   reactiveBindingIds: Set<BabelCore.types.Identifier>,
+  stateMacroNames: Set<string>,
+  memoMacroNames: Set<string>,
   effectMacroNames: Set<string>,
   warn: WarningSink,
   fileName: string,
@@ -589,7 +591,12 @@ function runWarningPass(
       registerClosureCaptureBinding(path, captured)
     },
     CallExpression(path) {
-      const isEffect = isEffectCall(path.node, t, effectMacroNames)
+      const callNode = path.node as BabelCore.types.CallExpression
+
+      if (isStateCall(callNode, t, stateMacroNames)) return
+      if (isMemoCall(callNode, t, memoMacroNames)) return
+
+      const isEffect = isEffectCall(callNode, t, effectMacroNames)
       if (isEffect) {
         const argPath = path.get('arguments.0')
         if (argPath?.isFunctionExpression() || argPath?.isArrowFunctionExpression()) {
@@ -624,7 +631,7 @@ function runWarningPass(
 
           if (!hasReactiveDependency) {
             emitWarning(
-              path.node,
+              callNode,
               'FICT-E001',
               'Effect has no reactive reads; it will run once. Consider removing $effect or adding dependencies.',
               warn,
@@ -636,7 +643,8 @@ function runWarningPass(
       }
 
       // Re-extract callee to reset TypeScript type narrowing from the $effect check above
-      const callee = path.node.callee as BabelCore.types.Expression
+      const callee = (path.node as unknown as BabelCore.types.CallExpression)
+        .callee as BabelCore.types.Expression
       let calleeName = ''
       if (t.isIdentifier(callee)) {
         calleeName = callee.name
@@ -1745,6 +1753,8 @@ function createHIREntrypointVisitor(
             stateBindingIds,
             stateRootBindingIds,
             reactiveBindingIds,
+            stateMacroNames,
+            memoMacroNames,
             effectMacroNames,
             warn,
             fileName,
