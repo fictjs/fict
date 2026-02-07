@@ -6,11 +6,7 @@ import { DelegatedEvents, RUNTIME_ALIASES } from '../constants'
 import { debugEnabled, debugLog } from '../debug'
 import { applyRegionMetadata, shouldMemoizeRegion, type RegionMetadata } from '../fine-grained-dom'
 import { setModuleMetadata } from '../module-metadata'
-import type {
-  FictCompilerOptions,
-  HookReturnInfoSerializable,
-  ModuleReactiveMetadata,
-} from '../types'
+import type { FictCompilerOptions, ModuleReactiveMetadata } from '../types'
 import { DiagnosticCode, reportDiagnostic } from '../validation'
 
 import { convertStatementsToHIRFunction } from './build-hir'
@@ -20,6 +16,15 @@ import {
   functionHasAsyncAwait,
   structuredNodeHasComplexControlFlow,
 } from './codegen-analysis'
+import {
+  analyzeHookReturnInfo as analyzeHookReturnInfoWithOps,
+  deserializeHookReturnInfo,
+  getHookReturnInfo as getHookReturnInfoWithOps,
+  serializeHookReturnInfo,
+  type HookAccessorKind,
+  type HookReturnInfo,
+  type HookReturnInfoAnalysisOps,
+} from './codegen-hook-returns'
 import { attachHelperImports, collectDeclaredNames } from './codegen-imports'
 import {
   applyImportedReactiveMetadata,
@@ -105,40 +110,6 @@ export interface RegionLoweringOps {
   lowerExpression: typeof lowerExpression
   propagateHookResultAlias: typeof propagateHookResultAlias
   resolveHookMemberValue: typeof resolveHookMemberValue
-}
-
-type HookAccessorKind = 'signal' | 'memo'
-
-interface HookReturnInfo {
-  objectProps?: Map<string, HookAccessorKind>
-  arrayProps?: Map<number, HookAccessorKind>
-  directAccessor?: HookAccessorKind
-}
-
-function serializeHookReturnInfo(info: HookReturnInfo): HookReturnInfoSerializable {
-  const objectProps: Record<string, HookAccessorKind> | undefined = info.objectProps
-    ? Object.fromEntries(info.objectProps.entries())
-    : undefined
-  const arrayProps: Record<string, HookAccessorKind> | undefined = info.arrayProps
-    ? Object.fromEntries(Array.from(info.arrayProps.entries()).map(([k, v]) => [String(k), v]))
-    : undefined
-  return {
-    objectProps,
-    arrayProps,
-    directAccessor: info.directAccessor,
-  }
-}
-
-function deserializeHookReturnInfo(info: HookReturnInfoSerializable): HookReturnInfo {
-  const objectProps = info.objectProps ? new Map(Object.entries(info.objectProps)) : undefined
-  const arrayProps = info.arrayProps
-    ? new Map(Object.entries(info.arrayProps).map(([k, v]) => [Number.parseInt(k, 10), v]))
-    : undefined
-  return {
-    objectProps,
-    arrayProps,
-    directAccessor: info.directAccessor,
-  }
 }
 
 export function propagateHookResultAlias(
@@ -546,170 +517,18 @@ function withGetterCache<T>(
   return { result, cacheDeclarations }
 }
 
-function collectHookReactiveVars(
-  fn: HIRFunction,
-  ctx: CodegenContext,
-): {
-  signalVars: Set<string>
-  storeVars: Set<string>
-  memoVars: Set<string>
-  functionVars: Set<string>
-  mutatedVars: Set<string>
-} {
-  const signalVars = new Set<string>()
-  const storeVars = new Set<string>()
-  const memoVars = new Set<string>()
-  const functionVars = new Set<string>()
-  const mutatedVars = new Set<string>()
-
-  for (const block of fn.blocks) {
-    for (const instr of block.instructions) {
-      if (instr.kind === 'Assign') {
-        const target = deSSAVarName(instr.target.name)
-        if (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression') {
-          functionVars.add(target)
-        }
-        if (
-          instr.value.kind === 'CallExpression' ||
-          instr.value.kind === 'OptionalCallExpression'
-        ) {
-          const callKind = getReactiveCallKind(instr.value, ctx)
-          if (callKind === 'signal') {
-            signalVars.add(target)
-          } else if (callKind === 'store') {
-            storeVars.add(target)
-          } else if (callKind === 'memo') {
-            memoVars.add(target)
-          }
-        }
-        if (!instr.declarationKind) {
-          mutatedVars.add(target)
-        }
-      } else if (instr.kind === 'Phi') {
-        mutatedVars.add(deSSAVarName(instr.target.name))
-      }
-    }
-  }
-
-  return { signalVars, storeVars, memoVars, functionVars, mutatedVars }
+const hookReturnInfoAnalysisOps: HookReturnInfoAnalysisOps = {
+  createCodegenContext,
+  detectDerivedCycles,
+  flattenRegions,
 }
 
 function analyzeHookReturnInfo(fn: HIRFunction, ctx: CodegenContext): HookReturnInfo | null {
-  if (!isHookName(fn.name)) return null
-
-  const { signalVars, storeVars, memoVars, functionVars, mutatedVars } = collectHookReactiveVars(
-    fn,
-    ctx,
-  )
-  const tmpCtx = createCodegenContext(ctx.t)
-  tmpCtx.signalVars = new Set(signalVars)
-  tmpCtx.storeVars = new Set(storeVars)
-  tmpCtx.functionVars = new Set(functionVars)
-  tmpCtx.mutatedVars = new Set(mutatedVars)
-  tmpCtx.aliasVars = new Set()
-  tmpCtx.trackedVars = new Set()
-  tmpCtx.memoVars = new Set(memoVars)
-
-  const scopeResult = analyzeReactiveScopesWithSSA(fn)
-  detectDerivedCycles(fn, scopeResult, ctx)
-  tmpCtx.scopes = scopeResult
-  const regionResult = generateRegions(fn, scopeResult)
-  tmpCtx.regions = flattenRegions(regionResult.topLevelRegions)
-  const reactive = computeReactiveAccessors(fn, tmpCtx)
-  tmpCtx.trackedVars = reactive.tracked
-  tmpCtx.memoVars = reactive.memo
-
-  const info: HookReturnInfo = {}
-  let hasInfo = false
-
-  const recordAccessor = (kind: HookAccessorKind | undefined, handler: () => void) => {
-    if (kind) {
-      hasInfo = true
-      handler()
-    }
-  }
-
-  const exprAccessorKind = (name: string | undefined): HookAccessorKind | undefined => {
-    if (!name) return undefined
-    const base = deSSAVarName(name)
-    if (tmpCtx.signalVars?.has(base)) return 'signal'
-    if (tmpCtx.memoVars?.has(base)) return 'memo'
-    return undefined
-  }
-
-  const visitReturnExpr = (expr: Expression) => {
-    if (expr.kind === 'ObjectExpression') {
-      expr.properties.forEach(prop => {
-        if (prop.kind !== 'Property') return
-        if (prop.computed) return
-        const keyName =
-          prop.key.kind === 'Identifier'
-            ? prop.key.name
-            : prop.key.kind === 'Literal'
-              ? String(prop.key.value)
-              : undefined
-        if (!keyName) return
-        if (prop.value.kind === 'Identifier') {
-          const kind = exprAccessorKind(prop.value.name)
-          recordAccessor(kind, () => {
-            if (!info.objectProps) info.objectProps = new Map()
-            info.objectProps.set(keyName, kind!)
-          })
-        }
-      })
-    } else if (expr.kind === 'ArrayExpression') {
-      expr.elements.forEach((el, idx) => {
-        if (!el || el.kind !== 'Identifier') return
-        const kind = exprAccessorKind(el.name)
-        recordAccessor(kind, () => {
-          if (!info.arrayProps) info.arrayProps = new Map()
-          info.arrayProps.set(idx, kind!)
-        })
-      })
-    } else if (expr.kind === 'Identifier') {
-      const kind = exprAccessorKind(expr.name)
-      recordAccessor(kind, () => {
-        info.directAccessor = kind
-      })
-    }
-  }
-
-  for (const block of fn.blocks) {
-    if (block.terminator.kind === 'Return' && block.terminator.argument) {
-      visitReturnExpr(block.terminator.argument)
-    }
-  }
-
-  return hasInfo ? info : null
+  return analyzeHookReturnInfoWithOps(fn, ctx, hookReturnInfoAnalysisOps)
 }
 
 function getHookReturnInfo(name: string, ctx: CodegenContext): HookReturnInfo | null {
-  if (!isHookName(name)) return null
-  if (!ctx.hookReturnInfo) ctx.hookReturnInfo = new Map()
-  const cached = ctx.hookReturnInfo.get(name)
-  if (cached) return cached
-
-  const fn = ctx.programFunctions?.get(name)
-  if (!fn) return null
-
-  // Priority: meta annotation > same-file analysis
-  // Check for @fictReturn annotation in function meta first
-  if (fn.meta?.hookReturnInfo) {
-    const annotationInfo: HookReturnInfo = {
-      objectProps: fn.meta.hookReturnInfo.objectProps,
-      arrayProps: fn.meta.hookReturnInfo.arrayProps,
-      directAccessor: fn.meta.hookReturnInfo.directAccessor,
-    }
-    ctx.hookReturnInfo.set(name, annotationInfo)
-    return annotationInfo
-  }
-
-  // Fallback to same-file analysis
-  const info = analyzeHookReturnInfo(fn, ctx)
-  if (info) {
-    ctx.hookReturnInfo.set(name, info)
-  }
-  return info ?? null
+  return getHookReturnInfoWithOps(name, ctx, hookReturnInfoAnalysisOps)
 }
 
 export function resolveHookMemberValue(
