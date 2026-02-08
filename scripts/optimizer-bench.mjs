@@ -70,7 +70,10 @@ const samples = [
 function compile(source, optimize) {
   return transformSync(source, {
     filename: 'bench.tsx',
-    plugins: [[createFictPlugin, { dev: false, optimize, fineGrainedDom: false }]],
+    // Perf benchmark should compare optimizer output/latency, not fail on policy escalation.
+    plugins: [
+      [createFictPlugin, { dev: false, optimize, fineGrainedDom: false, strictGuarantee: false }],
+    ],
     presets: [['@babel/preset-typescript', { isTSX: true, allExtensions: true }]],
     configFile: false,
     babelrc: false,
