@@ -2586,44 +2586,24 @@ function lowerIntrinsicElement(
         const isFn = t.isArrowFunctionExpression(valueExpr) || t.isFunctionExpression(valueExpr)
         const ensureHandlerParam = (fn: BabelCore.types.Expression): BabelCore.types.Expression => {
           if (t.isArrowFunctionExpression(fn)) {
-            if (fn.params.length > 0) return fn
-            return t.arrowFunctionExpression([eventParam], fn.body, fn.async)
+            return fn
           }
           if (t.isFunctionExpression(fn)) {
-            if (fn.params.length > 0) return fn
-            return t.functionExpression(fn.id, [eventParam], fn.body, fn.generator, fn.async)
+            return fn
           }
-          // fix: Don't wrap identifiers and member expressions in arrow functions.
+          // Don't wrap identifiers and member expressions in arrow functions.
           // Arrow functions don't respect .call() for `this` binding.
           // The runtime's callEventHandler uses .call(element, event) to set `this` to the element.
           // By passing the function directly, the `this` binding works correctly.
           if (t.isIdentifier(fn) || t.isMemberExpression(fn)) {
             return fn
           }
-          // fix: If fn is a simple accessor call like `handler()`, unwrap it to get
-          // the actual handler function. The compiler may have incorrectly converted a
-          // function-valued variable to an accessor call.
-          if (
-            t.isCallExpression(fn) &&
-            fn.arguments.length === 0 &&
-            (t.isIdentifier(fn.callee) || t.isMemberExpression(fn.callee))
-          ) {
-            // For simple accessor calls, return the callee directly
-            return fn.callee as BabelCore.types.Expression
-          }
-          // For other expressions (e.g., conditional, complex call), wrap in a function.
-          // Use regular function (not arrow) with .call(this, ...) to preserve `this` binding from runtime's .call()
+          // For other expressions (e.g., conditional, call expression), wrap in a function
+          // and defer invocation semantics to runtime callEventHandler.
           return t.functionExpression(
             null,
-            [eventParam],
-            t.blockStatement([
-              t.returnStatement(
-                t.callExpression(
-                  t.memberExpression(fn as BabelCore.types.Expression, t.identifier('call')),
-                  [t.thisExpression(), eventParam],
-                ),
-              ),
-            ]),
+            [],
+            t.blockStatement([t.returnStatement(fn as BabelCore.types.Expression)]),
           )
         }
         const handlerExpr =
@@ -2659,22 +2639,11 @@ function lowerIntrinsicElement(
           // The runtime's delegated event handler calls handlers with .call(element, event),
           // so we need to propagate `this` through to the actual handler.
           //
-          // fix: If valueExpr is a simple accessor call like `handler()`, we need to
-          // unwrap it because the compiler may have incorrectly converted a function-valued
-          // variable to an accessor call. For event handlers, we want the actual function.
-          //
           // Critical: The AST nodes can be mutated by later processing steps. To preserve the
           // original identifier, we extract the name and create a fresh identifier node.
           let handlerName: string | null = null
           if (t.isIdentifier(valueExpr)) {
             handlerName = valueExpr.name
-          } else if (
-            t.isCallExpression(valueExpr) &&
-            valueExpr.arguments.length === 0 &&
-            t.isIdentifier(valueExpr.callee)
-          ) {
-            // This is an accessor call like `handler()` - extract the base name
-            handlerName = valueExpr.callee.name
           }
 
           // Create a fresh identifier to avoid mutation issues
@@ -2700,12 +2669,6 @@ function lowerIntrinsicElement(
           const normalizeHandler = (
             expr: BabelCore.types.Expression,
           ): BabelCore.types.Expression => {
-            if (
-              t.isCallExpression(expr) &&
-              (t.isIdentifier(expr.callee) || t.isMemberExpression(expr.callee))
-            ) {
-              return expr.callee as BabelCore.types.Expression
-            }
             return expr
           }
 

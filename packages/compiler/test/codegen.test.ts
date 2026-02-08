@@ -427,6 +427,36 @@ describe('event handler transformation', () => {
     expect(code).toMatch(/props/)
   })
 
+  it('preserves captured identifiers in zero-arg handlers', () => {
+    const ast = parseFile(`
+      function Button() {
+        const _e = 42
+        return <button onClick={() => _e}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/\$\$click\s*=\s*\(\)\s*=>\s*_e/)
+    expect(code).not.toMatch(/\$\$click\s*=\s*_e\s*=>\s*_e/)
+  })
+
+  it('preserves call-expression handler semantics', () => {
+    const ast = parseFile(`
+      function Button() {
+        const makeHandler = () => (e) => console.log(e.type)
+        return <button onClick={makeHandler()}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('makeHandler().call(')
+    expect(code).not.toContain('makeHandler.call(')
+  })
+
   it('optimizes keyed list event payload/data and key text as static', () => {
     const ast = parseFile(`
       function Table() {
@@ -457,6 +487,55 @@ describe('event handler transformation', () => {
     // Delegated event payload for __key should be assigned directly (no closure)
     expect(code).toMatch(/\$\$clickData\s*=\s*__key/)
     expect(code).not.toMatch(/\$\$clickData\s*=\s*\(\)\s*=>\s*__key/)
+  })
+})
+
+describe('resumable event handler transformation', () => {
+  it('keeps shorthand object keys stable when renaming hoisted deps', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const helper = () => 1
+        return <button onClick$={() => ({ helper })}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/helper:\s*__fict_fn_helper_\d+/)
+    expect(code).not.toMatch(/\{\s*__fict_fn_helper_\d+\s*\}/)
+  })
+
+  it('does not inject event parameter into zero-arg resumable handlers', () => {
+    const ast = parseFile(`
+      const event = 42
+      function Comp() {
+        return <button onClick$={() => event}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('const __handler = () => event')
+    expect(code).not.toContain('const __handler = event => event')
+  })
+
+  it('preserves factory-call handler semantics in resumable mode', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const makeHandler = () => (e) => console.log(e.type)
+        return <button onClick$={makeHandler()}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(
+      /const __handler = function\s*\(\)\s*\{\s*return __fict_fn_makeHandler_\d+\(\);/,
+    )
+    expect(code).toContain('__result !== __handler')
   })
 })
 

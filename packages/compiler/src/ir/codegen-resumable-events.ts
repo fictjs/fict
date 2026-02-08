@@ -44,34 +44,19 @@ export function emitResumableEventBinding(
 
   const ensureHandlerParam = (fn: BabelCore.types.Expression): BabelCore.types.Expression => {
     if (t.isArrowFunctionExpression(fn)) {
-      if (fn.params.length > 0) return fn
-      return t.arrowFunctionExpression([eventParam], fn.body, fn.async)
+      return fn
     }
     if (t.isFunctionExpression(fn)) {
-      if (fn.params.length > 0) return fn
-      return t.functionExpression(fn.id, [eventParam], fn.body, fn.generator, fn.async)
+      return fn
     }
     if (t.isIdentifier(fn) || t.isMemberExpression(fn)) {
       return fn
     }
-    if (
-      t.isCallExpression(fn) &&
-      fn.arguments.length === 0 &&
-      (t.isIdentifier(fn.callee) || t.isMemberExpression(fn.callee))
-    ) {
-      return fn.callee as BabelCore.types.Expression
-    }
+    // Preserve original expression semantics; runtime-style invocation happens below.
     return t.functionExpression(
       null,
-      [eventParam],
-      t.blockStatement([
-        t.returnStatement(
-          t.callExpression(
-            t.memberExpression(fn as BabelCore.types.Expression, t.identifier('call')),
-            [t.thisExpression(), eventParam],
-          ),
-        ),
-      ]),
+      [],
+      t.blockStatement([t.returnStatement(fn as BabelCore.types.Expression)]),
     )
   }
 
@@ -124,7 +109,7 @@ export function emitResumableEventBinding(
   // If we have function deps, we need to rename references in the handler.
   let finalHandlerExpr = handlerExpr
   if (functionDepRenames.size > 0) {
-    finalHandlerExpr = renameIdentifiersInExpr(handlerExpr, functionDepRenames)
+    finalHandlerExpr = renameIdentifiersInExpr(handlerExpr, functionDepRenames, t)
   }
 
   const bodyStatements: BabelCore.types.Statement[] = []
@@ -160,12 +145,97 @@ export function emitResumableEventBinding(
   }
 
   const handlerVar = t.identifier('__handler')
+  const resultVar = t.identifier('__result')
   bodyStatements.push(
     t.variableDeclaration('const', [t.variableDeclarator(handlerVar, finalHandlerExpr)]),
   )
   bodyStatements.push(
-    t.returnStatement(
-      t.callExpression(t.memberExpression(handlerVar, t.identifier('call')), [elParam, eventParam]),
+    t.ifStatement(
+      t.binaryExpression(
+        '===',
+        t.unaryExpression('typeof', handlerVar),
+        t.stringLiteral('function'),
+      ),
+      t.blockStatement([
+        t.variableDeclaration('const', [
+          t.variableDeclarator(
+            resultVar,
+            t.callExpression(t.memberExpression(handlerVar, t.identifier('call')), [
+              elParam,
+              eventParam,
+            ]),
+          ),
+        ]),
+        t.ifStatement(
+          t.logicalExpression(
+            '&&',
+            t.binaryExpression(
+              '===',
+              t.unaryExpression('typeof', resultVar),
+              t.stringLiteral('function'),
+            ),
+            t.binaryExpression('!==', resultVar, handlerVar),
+          ),
+          t.blockStatement([
+            t.returnStatement(
+              t.callExpression(t.memberExpression(resultVar, t.identifier('call')), [
+                elParam,
+                eventParam,
+              ]),
+            ),
+          ]),
+        ),
+        t.ifStatement(
+          t.logicalExpression(
+            '&&',
+            resultVar,
+            t.binaryExpression(
+              '===',
+              t.unaryExpression(
+                'typeof',
+                t.memberExpression(resultVar, t.identifier('handleEvent')),
+              ),
+              t.stringLiteral('function'),
+            ),
+          ),
+          t.blockStatement([
+            t.returnStatement(
+              t.callExpression(
+                t.memberExpression(
+                  t.memberExpression(resultVar, t.identifier('handleEvent')),
+                  t.identifier('call'),
+                ),
+                [resultVar, eventParam],
+              ),
+            ),
+          ]),
+        ),
+        t.returnStatement(resultVar),
+      ]),
+    ),
+  )
+  bodyStatements.push(
+    t.ifStatement(
+      t.logicalExpression(
+        '&&',
+        handlerVar,
+        t.binaryExpression(
+          '===',
+          t.unaryExpression('typeof', t.memberExpression(handlerVar, t.identifier('handleEvent'))),
+          t.stringLiteral('function'),
+        ),
+      ),
+      t.blockStatement([
+        t.returnStatement(
+          t.callExpression(
+            t.memberExpression(
+              t.memberExpression(handlerVar, t.identifier('handleEvent')),
+              t.identifier('call'),
+            ),
+            [handlerVar, eventParam],
+          ),
+        ),
+      ]),
     ),
   )
 

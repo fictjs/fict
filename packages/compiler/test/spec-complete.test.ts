@@ -537,7 +537,7 @@ describe('R010: Lazy conditional evaluation', () => {
     )
     expect(output).toContain('bindClass')
     expect(output).toContain('() => cls()')
-    expect(output).toContain('_e => console.log(label())')
+    expect(output).toContain('() => console.log(label())')
     expect(output).toContain('() => label()')
   })
 

@@ -1,6 +1,7 @@
 import { pathToFileURL } from 'node:url'
 
 import type * as BabelCore from '@babel/core'
+import traverseModule from '@babel/traverse'
 
 import type { CodegenContext } from './codegen'
 
@@ -11,45 +12,43 @@ import type { CodegenContext } from './codegen'
 export function renameIdentifiersInExpr(
   expr: BabelCore.types.Expression,
   renames: Map<string, string>,
+  t: typeof BabelCore.types,
 ): BabelCore.types.Expression {
-  const cloned = JSON.parse(JSON.stringify(expr)) as BabelCore.types.Expression
+  const traverse = ((traverseModule as unknown as { default?: typeof traverseModule }).default ??
+    traverseModule) as typeof traverseModule
+  const cloned = t.cloneNode(expr, true)
+  const file = t.file(t.program([t.expressionStatement(cloned)]))
 
-  function visit(node: unknown): void {
-    if (!node || typeof node !== 'object') return
-    const n = node as Record<string, unknown>
+  traverse(file, {
+    Identifier(path) {
+      const oldName = path.node.name
+      const nextName = renames.get(oldName)
+      if (!nextName) return
 
-    if (n.type === 'Identifier' && typeof n.name === 'string') {
-      const newName = renames.get(n.name)
-      if (newName) {
-        n.name = newName
-      }
-    }
-
-    for (const key of Object.keys(n)) {
+      // Preserve shorthand key names: { helper } -> { helper: __fict_fn_helper_0 }
       if (
-        key === 'loc' ||
-        key === 'start' ||
-        key === 'end' ||
-        key === 'extra' ||
-        key === 'comments' ||
-        key === 'leadingComments' ||
-        key === 'trailingComments'
+        path.parentPath.isObjectProperty() &&
+        path.parentPath.node.shorthand &&
+        path.parentPath.node.value === path.node &&
+        t.isIdentifier(path.parentPath.node.key)
       ) {
-        continue
+        path.parentPath.node.shorthand = false
+        path.parentPath.node.value = t.identifier(nextName)
+        return
       }
-      const value = n[key]
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          visit(item)
-        }
-      } else if (value && typeof value === 'object') {
-        visit(value)
-      }
-    }
-  }
 
-  visit(cloned)
-  return cloned
+      if (!path.isReferencedIdentifier()) return
+
+      // Avoid renaming locally-bound identifiers inside nested scopes.
+      const binding = path.scope.getBinding(oldName)
+      if (binding && binding.scope !== path.scope.getProgramParent()) return
+
+      path.node.name = nextName
+    },
+  })
+
+  const first = file.program.body[0]
+  return t.isExpressionStatement(first) ? first.expression : cloned
 }
 
 /**
