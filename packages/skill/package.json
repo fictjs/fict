@@ -1,8 +1,7 @@
 {
   "name": "@fictjs/skill",
-  "version": "0.8.0",
-  "description": "Skill primitives and adapters for Fict workflows",
-  "private": true,
+  "version": "0.9.0",
+  "description": "Agent Skill for Fict",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -18,6 +17,15 @@
     "dist",
     "src"
   ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fictjs/fict.git",
+    "directory": "packages/mcp"
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",

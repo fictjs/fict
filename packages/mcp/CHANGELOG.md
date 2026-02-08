@@ -1,0 +1,7 @@
+# @fictjs/mcp
+
+## 0.9.0
+
+### Minor Changes
+
+- fix complier
