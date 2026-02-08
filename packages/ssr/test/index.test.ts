@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest'
 
 import type { FictNode } from '@fictjs/runtime'
-import { __fictQrl, __fictUseContext, __fictUseSignal } from '@fictjs/runtime/internal'
+import {
+  FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+  __fictQrl,
+  __fictUseContext,
+  __fictUseSignal,
+} from '@fictjs/runtime/internal'
 
 import { renderToDocument, renderToString } from '../src/index'
 
@@ -34,9 +39,36 @@ describe('@fictjs/ssr', () => {
     }
     const scopeIds = Object.keys(state.scopes ?? {})
     expect(scopeIds.length).toBe(1)
+    expect(state.v).toBe(FICT_SSR_SNAPSHOT_SCHEMA_VERSION)
     const scope = state.scopes[scopeIds[0]!]!
     expect(scope.props?.initial).toBe(5)
     expect(scope.slots).toEqual([[0, 'sig', 5]])
+  })
+
+  it('escapes snapshot payload to avoid script breakout', () => {
+    const attack = '</script><script>globalThis.__fictXss=1</script>'
+
+    function Counter(): FictNode {
+      const ctx = __fictUseContext()
+      const message = __fictUseSignal(ctx, attack, { name: 'message' })
+      return { type: 'span', props: { children: String(message()) } }
+    }
+
+    ;(Counter as any).__fictMeta = { id: 'Counter@xss', resume: 'counter#resume' }
+
+    const html = renderToString(() => ({ type: Counter, props: {} }))
+    expect(html).not.toContain('</script><script>globalThis.__fictXss=1</script>')
+    expect(html).toContain('\\u003c/script\\u003e\\u003cscript\\u003eglobalThis.__fictXss=1')
+
+    const match = html.match(
+      /<script id="__FICT_SNAPSHOT__" type="application\/json">([^<]*)<\/script>/,
+    )
+    expect(match).not.toBeNull()
+    const state = JSON.parse(match?.[1] ?? '{}') as {
+      scopes: Record<string, { slots: Array<[number, string, unknown]> }>
+    }
+    const scope = state.scopes[Object.keys(state.scopes)[0]!]!
+    expect(scope.slots[0]?.[2]).toBe(attack)
   })
 
   it('installs manifest mapping for QRL resolution', () => {

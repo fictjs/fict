@@ -1,5 +1,7 @@
 import { DelegatedEvents } from './constants'
 import {
+  FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+  type SSRState,
   __fictEnableResumable,
   __fictEnsureScope,
   __fictGetResume,
@@ -68,11 +70,31 @@ export interface ResumableLoaderOptions {
   snapshotScriptId?: string
   events?: string[]
   /**
+   * Receives structured snapshot/resume issues detected by the loader.
+   * Useful for telemetry and fail-safe fallback orchestration.
+   */
+  onSnapshotIssue?: (issue: SnapshotIssue) => void
+  /**
    * Prefetch strategy configuration.
    * Set to false to disable all prefetching.
    * @default { visibility: true, hover: true }
    */
   prefetch?: PrefetchStrategy | false
+}
+
+export type SnapshotIssueCode =
+  | 'snapshot_parse_error'
+  | 'snapshot_invalid_shape'
+  | 'snapshot_unsupported_version'
+  | 'scope_snapshot_missing'
+
+export interface SnapshotIssue {
+  code: SnapshotIssueCode
+  message: string
+  source: string
+  expectedVersion: number
+  actualVersion?: number
+  scopeId?: string
 }
 
 // ============================================================================
@@ -85,6 +107,8 @@ let prefetchCleanup: (() => void) | null = null
 let eventListenerCleanup: (() => void) | null = null
 let snapshotObserver: MutationObserver | null = null
 const processedSnapshots = new Set<HTMLScriptElement>()
+let snapshotIssueHandler: ((issue: SnapshotIssue) => void) | null = null
+const emittedIssueKeys = new Set<string>()
 
 /**
  * Reset the hydrated scopes set. Useful for testing.
@@ -130,11 +154,14 @@ export function cleanupEventListeners(): void {
 export function installResumableLoader(options: ResumableLoaderOptions = {}): void {
   const doc = options.document ?? window.document
   const scriptId = options.snapshotScriptId ?? '__FICT_SNAPSHOT__'
+  snapshotIssueHandler = options.onSnapshotIssue ?? null
 
   // Reset hydrated scopes for fresh loader installation
   hydratedScopes.clear()
   prefetchedUrls.clear()
   processedSnapshots.clear()
+  emittedIssueKeys.clear()
+  __fictSetSSRState(null)
 
   // Clean up previous event listeners
   if (eventListenerCleanup) {
@@ -155,11 +182,9 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
 
   const snapshotEl = doc.getElementById(scriptId)
   if (snapshotEl?.textContent) {
-    try {
-      const state = JSON.parse(snapshotEl.textContent)
+    const state = parseSnapshotText(snapshotEl.textContent, `#${scriptId}`)
+    if (state) {
       __fictSetSSRState(state)
-    } catch {
-      // Ignore parse errors
     }
   }
 
@@ -224,11 +249,88 @@ function parseSnapshotScript(script: HTMLScriptElement): void {
   processedSnapshots.add(script)
   const text = script.textContent
   if (!text) return
-  try {
-    const state = JSON.parse(text)
+  const source = script.id ? `#${script.id}` : '<script[data-fict-snapshot]>'
+  const state = parseSnapshotText(text, source)
+  if (state) {
     __fictMergeSSRState(state)
+  }
+}
+
+function parseSnapshotText(text: string, source: string): SSRState | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
   } catch {
-    // Ignore parse errors
+    emitSnapshotIssue({
+      code: 'snapshot_parse_error',
+      message: '[fict/loader] Failed to parse SSR snapshot JSON.',
+      source,
+      expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+    })
+    return null
+  }
+
+  return normalizeSnapshotState(parsed, source)
+}
+
+function normalizeSnapshotState(value: unknown, source: string): SSRState | null {
+  if (!isRecord(value)) {
+    emitSnapshotIssue({
+      code: 'snapshot_invalid_shape',
+      message: '[fict/loader] Snapshot payload must be an object.',
+      source,
+      expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+    })
+    return null
+  }
+
+  const rawVersion = value.v
+  const version = rawVersion === undefined ? FICT_SSR_SNAPSHOT_SCHEMA_VERSION : rawVersion
+  if (!Number.isInteger(version) || version !== FICT_SSR_SNAPSHOT_SCHEMA_VERSION) {
+    const versionIssue: SnapshotIssue = {
+      code: 'snapshot_unsupported_version',
+      message: `[fict/loader] Snapshot schema version ${String(version)} is not supported by this runtime.`,
+      source,
+      expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+    }
+    if (typeof version === 'number') {
+      versionIssue.actualVersion = version
+    }
+    emitSnapshotIssue({
+      ...versionIssue,
+    })
+    return null
+  }
+
+  const scopes = value.scopes
+  if (!isRecord(scopes)) {
+    emitSnapshotIssue({
+      code: 'snapshot_invalid_shape',
+      message: '[fict/loader] Snapshot payload is missing a valid `scopes` object.',
+      source,
+      expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+    })
+    return null
+  }
+
+  return { v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes: scopes as SSRState['scopes'] }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function emitSnapshotIssue(issue: SnapshotIssue): void {
+  const key =
+    `${issue.code}|${issue.source}|${issue.scopeId ?? ''}|` +
+    `${issue.actualVersion ?? ''}|${issue.expectedVersion}`
+  if (emittedIssueKeys.has(key)) return
+  emittedIssueKeys.add(key)
+
+  snapshotIssueHandler?.(issue)
+
+  if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+    console.warn(issue.message)
   }
 }
 
@@ -425,9 +527,17 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
     if (!scopeId) continue
 
     const snapshot = __fictGetSSRScope(scopeId)
-    if (snapshot) {
-      __fictEnsureScope(scopeId, host, snapshot)
+    if (!snapshot) {
+      emitSnapshotIssue({
+        code: 'scope_snapshot_missing',
+        message: `[fict/loader] Missing scope snapshot for ${scopeId}; skipping resumable handler execution.`,
+        source: 'event',
+        expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopeId,
+      })
+      return
     }
+    __fictEnsureScope(scopeId, host, snapshot)
 
     const { url, exportName } = parseQrl(qrl)
 

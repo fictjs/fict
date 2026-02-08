@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 
 import type { FictNode } from '@fictjs/runtime'
 import { Suspense, createSuspenseToken } from '@fictjs/runtime'
+import { __fictUseContext, __fictUseSignal } from '@fictjs/runtime/internal'
 
 import { renderToPartial, renderToPipeableStream, renderToStream } from '../src/index'
 
@@ -20,6 +21,30 @@ async function readReadableStream(stream: ReadableStream<Uint8Array>): Promise<s
 }
 
 describe('@fictjs/ssr streaming', () => {
+  it('escapes incremental snapshot payloads in shell mode', async () => {
+    const attack = '</script><script>globalThis.__fict_stream_xss=1</script>'
+
+    function Counter(): FictNode {
+      const ctx = __fictUseContext()
+      const message = __fictUseSignal(ctx, attack, { name: 'message' })
+      return { type: 'span', props: { children: String(message()) } }
+    }
+
+    ;(Counter as any).__fictMeta = { id: 'Counter@stream-xss', resume: 'counter#resume' }
+
+    const stream = renderToStream(() => ({ type: Counter, props: {} }), {
+      mode: 'shell',
+      fullDocument: true,
+    })
+    const html = await readReadableStream(stream)
+
+    expect(html).toContain('data-fict-snapshot')
+    expect(html).not.toContain('</script><script>globalThis.__fict_stream_xss=1</script>')
+    expect(html).toContain(
+      '\\u003c/script\\u003e\\u003cscript\\u003eglobalThis.__fict_stream_xss=1\\u003c/script\\u003e',
+    )
+  })
+
   it('streams shell and patches Suspense boundaries', async () => {
     const token = createSuspenseToken()
     let ready = false

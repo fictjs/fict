@@ -144,6 +144,7 @@ During server-side rendering, component state is serialized into JSON and inject
 ```html
 <script id="__FICT_SNAPSHOT__" type="application/json">
   {
+    "v": 1,
     "scopes": {
       "s1": {
         "id": "s1",
@@ -341,7 +342,21 @@ interface ResumableLoaderOptions {
   document?: Document
   snapshotScriptId?: string
   events?: string[] // Default: DelegatedEvents
+  onSnapshotIssue?: (issue: SnapshotIssue) => void
   prefetch?: PrefetchStrategy | false
+}
+
+interface SnapshotIssue {
+  code:
+    | 'snapshot_parse_error'
+    | 'snapshot_invalid_shape'
+    | 'snapshot_unsupported_version'
+    | 'scope_snapshot_missing'
+  message: string
+  source: string
+  expectedVersion: number
+  actualVersion?: number
+  scopeId?: string
 }
 
 interface PrefetchStrategy {
@@ -619,6 +634,7 @@ let dataId = $state(id) // Store ID only, fetch on client
 - [SSR SEO Guide](../../docs/ssr-seo.md)
 - [SSR Performance Tuning](../../docs/ssr-performance.md)
 - [SSR Deployment Guide](../../docs/ssr-deployment.md)
+- [SSR / Resume Stability Contract](../../docs/ssr-resume-stability-contract.md)
 
 ## Troubleshooting
 

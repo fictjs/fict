@@ -1853,4 +1853,5 @@ For Edge runtimes, prefer `renderToStream()` / `renderToPartial()`.
 - [Architecture](./architecture.md) - Deep dive into Fict's execution model
 - [Reactivity Semantics](./reactivity-semantics.md) - Detailed rules of the reactive system
 - [Compiler Spec](./compiler-spec.md) - Compiler transformation rules
+- [SSR / Resume Stability Contract](./ssr-resume-stability-contract.md) - Behavior, compatibility, security, and budget guarantees
 - [Framework Comparison](./framework-comparison.md) - Comparison with React, Solid, Vue, Svelte

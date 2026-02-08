@@ -36,7 +36,10 @@ export interface ScopeSnapshot {
   vars?: Record<string, number>
 }
 
+export const FICT_SSR_SNAPSHOT_SCHEMA_VERSION = 1
+
 export interface SSRState {
+  v: number
   scopes: Record<string, ScopeSnapshot>
 }
 
@@ -173,7 +176,7 @@ export function __fictSerializeSSRState(): SSRState {
     scopes[id] = snapshot
   }
 
-  return { scopes }
+  return { v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes }
 }
 
 export function __fictSerializeSSRStateForScopes(scopeIds: Iterable<string>): SSRState {
@@ -198,7 +201,7 @@ export function __fictSerializeSSRStateForScopes(scopeIds: Iterable<string>): SS
     scopes[id] = snapshot
   }
 
-  return { scopes }
+  return { v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes }
 }
 
 export function __fictSetSSRState(state: SSRState | null): void {
@@ -211,7 +214,7 @@ export function __fictSetSSRState(state: SSRState | null): void {
 export function __fictMergeSSRState(state: SSRState | null): void {
   if (!state) return
   if (!snapshotState) {
-    snapshotState = { scopes: { ...state.scopes } }
+    snapshotState = { v: state.v, scopes: { ...state.scopes } }
     return
   }
   Object.assign(snapshotState.scopes, state.scopes)

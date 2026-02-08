@@ -62,6 +62,7 @@ export {
   __fictQrl,
   __fictRegisterResume,
   __fictGetResume,
+  FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
   serializeValue,
   deserializeValue,
 } from './resume'

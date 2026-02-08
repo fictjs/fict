@@ -874,7 +874,7 @@ function buildIncrementalSnapshotChunk(
   state: ReturnType<typeof __fictSerializeSSRState>,
   options: RenderToStringOptions,
 ): string {
-  const json = JSON.stringify(state)
+  const json = serializeSnapshotForScript(state)
   if (options.snapshotTarget === 'head') {
     const jsonLiteral = JSON.stringify(json)
     return `<script>(function(){var s=document.createElement('script');s.type='application/json';s.setAttribute('data-fict-snapshot','');s.textContent=${jsonLiteral};(document.head||document.documentElement).appendChild(s);}())</script>`
@@ -909,7 +909,7 @@ function injectSnapshot(
   const script = document.createElement('script')
   script.type = 'application/json'
   script.id = options.snapshotScriptId ?? '__FICT_SNAPSHOT__'
-  script.textContent = JSON.stringify(state)
+  script.textContent = serializeSnapshotForScript(state)
 
   if (options.fullDocument) {
     if (options.snapshotTarget === 'head' && document.head) {
@@ -933,6 +933,14 @@ function injectSnapshot(
   }
 
   container.appendChild(script)
+}
+
+function serializeSnapshotForScript(state: ReturnType<typeof __fictSerializeSSRState>): string {
+  return JSON.stringify(state)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
 }
 
 function serializeDoctype(document: Document, override?: string | null): string {
