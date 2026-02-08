@@ -3,6 +3,7 @@ import type * as BabelCore from '@babel/core'
 import { RUNTIME_ALIASES } from '../constants'
 
 import type { CodegenContext } from './codegen'
+import { collectExpressionDependencies } from './codegen-expression-deps'
 import { extractKeyFromMapCallback } from './codegen-jsx-keys'
 import { replaceIdentifiersWithOverrides, type RegionOverrideMap } from './codegen-overrides'
 import { applySelectorHoist } from './codegen-selector-hoist'
@@ -118,6 +119,61 @@ function resolveMapCallbackKeyExpression(keyExpr: Expression, callback: Expressi
     resolved = next
   }
   return resolved
+}
+
+function collectMapCallbackLocalNames(callback: Expression): Set<string> {
+  const blocks = getCallbackBlocks(callback)
+  if (blocks.length === 0) {
+    return new Set()
+  }
+
+  const paramNames =
+    callback.kind === 'ArrowFunction' || callback.kind === 'FunctionExpression'
+      ? new Set(callback.params.map(param => deSSAVarName(param.name)))
+      : new Set<string>()
+
+  const locals = new Set<string>()
+  for (const block of blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' && instr.target.kind === 'Identifier') {
+        const name = deSSAVarName(instr.target.name)
+        if (!paramNames.has(name)) locals.add(name)
+      }
+      if (instr.kind === 'Phi' && instr.target.kind === 'Identifier') {
+        const name = deSSAVarName(instr.target.name)
+        if (!paramNames.has(name)) locals.add(name)
+      }
+    }
+  }
+
+  return locals
+}
+
+function hasUnresolvedCallbackLocalKeyDependencies(
+  keyExpr: Expression,
+  callback: Expression,
+  keyAliasDeclarations: Map<string, Expression>,
+): boolean {
+  const callbackLocals = collectMapCallbackLocalNames(callback)
+  if (callbackLocals.size === 0) {
+    return false
+  }
+
+  const resolvableAliases = new Set(
+    Array.from(keyAliasDeclarations.keys()).map(name => deSSAVarName(name)),
+  )
+  const deps = new Set<string>()
+  collectExpressionDependencies(keyExpr, deps)
+
+  for (const dep of deps) {
+    const base = dep.split('.')[0] ?? dep
+    if (!base) continue
+    if (callbackLocals.has(base) && !resolvableAliases.has(base)) {
+      return true
+    }
+  }
+
+  return false
 }
 
 /**
@@ -267,8 +323,13 @@ export function buildListCallExpression(
 
   let listCall: BabelCore.types.Expression
   if (isKeyed && keyExpr) {
-    let keyExprAst = ops.lowerExpression(keyExpr, ctx)
     const keyAliasDeclarations = collectMapCallbackAliasDeclarations(mapCallback)
+    const hasUnresolvedLocalKeyDeps = hasUnresolvedCallbackLocalKeyDependencies(
+      keyExpr,
+      mapCallback,
+      keyAliasDeclarations,
+    )
+    let keyExprAst = ops.lowerExpression(keyExpr, ctx)
     if (keyAliasDeclarations.size > 0) {
       const keyOverrides: RegionOverrideMap = {}
       for (const [name, value] of keyAliasDeclarations) {
@@ -308,6 +369,9 @@ export function buildListCallExpression(
       t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)
         ? callbackExpr.params[1]
         : null
+    if (hasUnresolvedLocalKeyDeps) {
+      keyExprAst = t.identifier(t.isIdentifier(indexParamName) ? indexParamName.name : '__index')
+    }
     const keyFn = t.arrowFunctionExpression(
       [
         t.isIdentifier(itemParamName) ? itemParamName : t.identifier('__item'),

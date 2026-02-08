@@ -184,6 +184,32 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*makeKey\s*\(/)
     })
 
+    it('does not emit unresolved key identifiers for control-flow-derived aliases in map callbacks', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let users = $state([{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }])
+          const el = (
+            <ul>
+              {users.map(user => {
+                let id
+                if (user.id > 1) {
+                  id = 42
+                } else {
+                  id = user.id
+                }
+                return <li key={id}>{user.name}</li>
+              })}
+            </ul>
+          )
+          return el
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createKeyedList')
+      expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*id\b/)
+    })
+
     it('handles list without key via keyed list with index keys', () => {
       const input = `
         import { $state } from 'fict'
