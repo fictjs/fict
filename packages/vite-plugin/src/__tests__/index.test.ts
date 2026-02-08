@@ -341,5 +341,54 @@ function Button() {
         }
       }
     })
+
+    it('skips recompiling precompiled modules when splitting is disabled', async () => {
+      const plugin = fict({ functionSplitting: false })
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      // This is already compiler output. Re-running the compiler on it used to fail
+      // under strict guarantee diagnostics (for example FICT-R002).
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+/* precompiled-sentinel */
+export const __fict_e0 = (scopeId, event, el) => {
+  const [count] = __fictUseLexicalScope(scopeId, ['count']);
+  const __handler = () => count(count() + 1);
+  return __handler.call(el, event);
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = {
+        error: vi.fn(),
+        warn: vi.fn(),
+      }
+      const transform = plugin.transform as any
+
+      const result =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, compiledCode, '/project/src/Precompiled.tsx')
+          : await transform?.handler?.call(
+              mockContext,
+              compiledCode,
+              '/project/src/Precompiled.tsx',
+            )
+
+      expect(mockContext.error).not.toHaveBeenCalled()
+      expect(result && typeof result === 'object').toBe(true)
+
+      if (result && typeof result === 'object' && 'code' in result) {
+        expect(result.code).toContain('precompiled-sentinel')
+        expect(result.code).toContain('export const __fict_e0')
+        expect(result.code).toContain("__fictQrl(import.meta.url, '__fict_e0')")
+        expect(result.map).toBeNull()
+      }
+    })
   })
 })
