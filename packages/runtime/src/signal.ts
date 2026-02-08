@@ -1595,7 +1595,14 @@ let effectRunDevtools: (node: EffectNode) => void = () => {}
 let trackDependencyDevtools: (dep: ReactiveNode, sub: ReactiveNode) => void = () => {}
 let untrackDependencyDevtools: (dep: ReactiveNode, sub: ReactiveNode) => void = () => {}
 
-if (isDev) {
+// Keep this as a direct conditional expression (instead of `if (isDev)`) so
+// bundlers can eliminate the entire devtools setup block when `__DEV__` is
+// defined as `false` in production builds.
+if (
+  typeof __DEV__ !== 'undefined'
+    ? __DEV__
+    : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
+) {
   // Unified ID counter for all reactive nodes (signal/computed/effect)
   // to prevent ID collisions when storing in single devtools maps
   let nextDevtoolsId = 0

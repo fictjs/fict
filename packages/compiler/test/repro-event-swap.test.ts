@@ -4,6 +4,7 @@ import { createRequire } from 'module'
 
 import * as runtime from '@fictjs/runtime'
 import * as runtimeInternal from '@fictjs/runtime/internal'
+import * as runtimeInternalList from '@fictjs/runtime/internal/list'
 import { clearDelegatedEvents, __fictResetContext } from '@fictjs/runtime/internal'
 import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 
@@ -26,7 +27,13 @@ function compileAndLoad<TModule extends Record<string, any>>(
   const wrapped = new Function('require', 'module', 'exports', output)
   wrapped(
     (id: string) => {
-      if (id === '@fictjs/runtime/internal') return runtimeInternal
+      if (id === '@fictjs/runtime/internal') {
+        return runtimeInternal
+      }
+      if (id === '@fictjs/runtime/internal/list') return runtimeInternalList
+      if (id.startsWith('@fictjs/runtime/internal/')) {
+        throw new Error(`Unexpected @fictjs/runtime internal subpath in test sandbox: ${id}`)
+      }
       if (id === 'fict') return runtime
       if (id === '@fictjs/runtime') return runtime
       return dynamicRequire(id)

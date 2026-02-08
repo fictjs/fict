@@ -1,6 +1,11 @@
 import type * as BabelCore from '@babel/core'
 
-import { RUNTIME_ALIASES, RUNTIME_HELPERS, RUNTIME_MODULE } from '../constants'
+import {
+  RUNTIME_ALIASES,
+  RUNTIME_HELPERS,
+  RUNTIME_HELPER_MODULES,
+  RUNTIME_MODULE,
+} from '../constants'
 
 import type { CodegenContext } from './codegen'
 
@@ -94,20 +99,22 @@ export function attachHelperImports(
   if (ctx.helpersUsed.size === 0) return body
   const declared = collectDeclaredNames(body, t)
 
-  const specifiers: BabelCore.types.ImportSpecifier[] = []
+  const specifiersByModule = new Map<string, BabelCore.types.ImportSpecifier[]>()
 
   for (const name of ctx.helpersUsed) {
     const alias = (RUNTIME_ALIASES as Record<string, string>)[name]
     const helper = (RUNTIME_HELPERS as Record<string, string>)[name]
     if (alias && helper) {
       if (declared.has(alias)) continue
-      specifiers.push(t.importSpecifier(t.identifier(alias), t.identifier(helper)))
+      const modulePath =
+        (RUNTIME_HELPER_MODULES as Record<string, string | undefined>)[name] ?? RUNTIME_MODULE
+      const moduleSpecifiers = specifiersByModule.get(modulePath) ?? []
+      moduleSpecifiers.push(t.importSpecifier(t.identifier(alias), t.identifier(helper)))
+      specifiersByModule.set(modulePath, moduleSpecifiers)
     }
   }
 
-  if (specifiers.length === 0) return body
-
-  const importDecl = t.importDeclaration(specifiers, t.stringLiteral(RUNTIME_MODULE))
+  if (specifiersByModule.size === 0) return body
 
   const helpers: BabelCore.types.Statement[] = []
   if (ctx.needsForOfHelper) {
@@ -147,5 +154,14 @@ export function attachHelperImports(
     )
   }
 
-  return [importDecl, ...helpers, ...body]
+  const modulePaths = Array.from(specifiersByModule.keys()).sort((a, b) => {
+    if (a === RUNTIME_MODULE) return -1
+    if (b === RUNTIME_MODULE) return 1
+    return a.localeCompare(b)
+  })
+  const importDecls = modulePaths.map(modulePath =>
+    t.importDeclaration(specifiersByModule.get(modulePath) ?? [], t.stringLiteral(modulePath)),
+  )
+
+  return [...importDecls, ...helpers, ...body]
 }

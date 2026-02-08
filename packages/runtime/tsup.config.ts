@@ -3,7 +3,13 @@ import { defineConfig } from 'tsup'
 export default defineConfig([
   // Main entries built together to share internal state
   {
-    entry: ['src/index.ts', 'src/internal.ts', 'src/advanced.ts', 'src/loader.ts'],
+    entry: {
+      index: 'src/index.ts',
+      internal: 'src/internal.ts',
+      'internal-list': 'src/internal/list.ts',
+      advanced: 'src/advanced.ts',
+      loader: 'src/loader.ts',
+    },
     format: ['cjs', 'esm'],
     dts: true,
     clean: true,

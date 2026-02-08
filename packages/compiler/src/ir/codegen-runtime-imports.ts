@@ -1,6 +1,6 @@
 import type * as BabelCore from '@babel/core'
 
-import { RUNTIME_MODULE } from '../constants'
+import { RUNTIME_HELPER_MODULES, RUNTIME_MODULE } from '../constants'
 
 export interface RuntimeImportCollection {
   names: Set<string>
@@ -10,6 +10,7 @@ export interface RuntimeImportCollection {
 
 const RUNTIME_IMPORT_MODULES = new Set([
   RUNTIME_MODULE,
+  ...Object.values(RUNTIME_HELPER_MODULES),
   '@fictjs/runtime',
   '@fictjs/runtime/advanced',
   'fict',

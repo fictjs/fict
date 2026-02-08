@@ -16,6 +16,19 @@ yarn add @fictjs/runtime
 
 You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
 
+## Dev/Prod Mode Contract (`__DEV__`)
+
+Runtime dev-only branches use this precedence:
+
+1. `__DEV__` (recommended, compile-time constant)
+2. Fallback: `process.env.NODE_ENV !== 'production'` when `process` exists
+
+For browser builds, define `__DEV__` explicitly in your bundler for predictable
+DX and dead-code elimination:
+
+- development: `__DEV__ = true`
+- production: `__DEV__ = false`
+
 ## Runtime Stability Stress
 
 Run stress scenarios for runtime correctness and reliability:

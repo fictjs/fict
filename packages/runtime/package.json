@@ -33,6 +33,11 @@
       "import": "./dist/internal.js",
       "require": "./dist/internal.cjs"
     },
+    "./internal/list": {
+      "types": "./dist/internal-list.d.ts",
+      "import": "./dist/internal-list.js",
+      "require": "./dist/internal-list.cjs"
+    },
     "./advanced": {
       "types": "./dist/advanced.d.ts",
       "import": "./dist/advanced.js",

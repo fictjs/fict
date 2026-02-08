@@ -167,6 +167,19 @@ export const RUNTIME_ALIASES = {
   registerResume: '__fictRegisterResume',
 } as const
 
+export type RuntimeHelperName = keyof typeof RUNTIME_HELPERS
+
+/**
+ * Optional per-helper module overrides.
+ *
+ * By default, helpers are imported from {@link RUNTIME_MODULE}. Use this map
+ * to route heavyweight helpers to narrower subpath entry points so bundlers
+ * don't pull the full internal barrel.
+ */
+export const RUNTIME_HELPER_MODULES: Partial<Record<RuntimeHelperName, string>> = {
+  keyedList: '@fictjs/runtime/internal/list',
+}
+
 // Attributes that should NOT be wrapped in reactive functions
 export const NON_REACTIVE_ATTRS = new Set(['key', 'ref'])
 

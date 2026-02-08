@@ -64,7 +64,13 @@ const runCompiled = (code: string) => {
   const runtime = createRuntimeStub()
   const module = { exports: {} as Record<string, unknown> }
   const sandboxRequire = (id: string) => {
-    if (id === '@fictjs/runtime/internal') return runtime
+    if (id === '@fictjs/runtime/internal') {
+      return runtime
+    }
+    if (id === '@fictjs/runtime/internal/list') return runtime
+    if (id.startsWith('@fictjs/runtime/internal/')) {
+      throw new Error(`Unexpected @fictjs/runtime internal subpath in test sandbox: ${id}`)
+    }
     return require(id)
   }
   const sandbox = {

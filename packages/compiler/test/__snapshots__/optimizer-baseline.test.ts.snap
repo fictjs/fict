@@ -53,7 +53,8 @@ export function View() {
 `;
 
 exports[`optimizer output baselines > keyed list rendering 1`] = `
-"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, createKeyedList, bindText, onDestroy, __fictUseContext } from "@fictjs/runtime/internal";
+"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, bindText, onDestroy, __fictUseContext } from "@fictjs/runtime/internal";
+import { createKeyedList } from "@fictjs/runtime/internal/list";
 function List() {
   const __fictCtx = __fictUseContext();
   const items = __fictUseSignal(__fictCtx, [{
