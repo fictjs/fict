@@ -38,6 +38,43 @@ export default defineConfig({
 })
 ```
 
+Core defaults:
+
+- `include`: `['**/*.tsx', '**/*.jsx']`
+- `exclude`: `['**/node_modules/**']`
+- `useTypeScriptProject`: `true`
+- `cache`:
+  - enabled by default
+  - memory cache always on
+  - persistent cache defaults to `true` during `vite build`, otherwise in-memory only
+
+Compiler option passthrough:
+
+- This plugin forwards compiler options directly (for example: `strictGuarantee`, `strictReactivity`, `lazyConditional`, `emitModuleMetadata`, `warningLevels`, `reactiveScopes`).
+- Current compiler default is `strictGuarantee: true` (fail-closed).
+
+Runtime dev/prod define:
+
+- The plugin defines `__DEV__` automatically:
+  - `true` in dev server
+  - `false` in production build
+
+Recommended profiles:
+
+```ts
+// Strict app/CI baseline
+fict({
+  strictGuarantee: true,
+})
+
+// Migration / benchmark compatibility
+fict({
+  strictGuarantee: false,
+  emitModuleMetadata: false,
+  dev: false,
+})
+```
+
 Notes:
 
 - `reactiveScopes` only applies to **direct calls** and only treats the **first argument** as the reactive callback.

@@ -15,3 +15,58 @@ yarn add -D @fictjs/babel-preset
 ```
 
 You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
+
+## Configuration
+
+`@fictjs/babel-preset` includes:
+
+- `@babel/preset-typescript` (enabled by default)
+- `@babel/plugin-syntax-jsx`
+- `@fictjs/compiler`
+
+All compiler options are forwarded through this preset.
+
+```js
+// babel.config.js
+module.exports = {
+  presets: [
+    [
+      '@fictjs/babel-preset',
+      {
+        // Preset-level options
+        typescript: true,
+        typescriptOptions: {
+          isTSX: true,
+          allExtensions: true,
+          allowNamespaces: true,
+        },
+        // Compiler options (forwarded)
+        strictGuarantee: true,
+        emitModuleMetadata: 'auto',
+      },
+    ],
+  ],
+}
+```
+
+Recommended profiles:
+
+```js
+// Strict default app/CI profile
+module.exports = {
+  presets: [['@fictjs/babel-preset', { strictGuarantee: true }]],
+}
+
+// Migration / benchmark profile
+module.exports = {
+  presets: [
+    ['@fictjs/babel-preset', { strictGuarantee: false, emitModuleMetadata: false, dev: false }],
+  ],
+}
+```
+
+Key defaults:
+
+- compiler `strictGuarantee`: `true`
+- compiler `emitModuleMetadata`: `'auto'`
+- preset `typescript`: `true`

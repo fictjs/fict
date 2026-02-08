@@ -60,4 +60,11 @@ createFictPlugin({
   - Only **direct calls** are recognized (e.g., `renderHook(() => ...)` or `utils.renderHook(() => ...)`).
   - **Aliases/indirect calls** are not recognized (e.g., `const rh = renderHook; rh(() => ...)`).
 
-Recommended environment presets: `docs/config-profiles.md`.
+## Recommended Profiles
+
+Use `docs/config-profiles.md` for copy-paste presets:
+
+- strict default app profile (`strictGuarantee: true`)
+- CI hard-gate profile
+- migration/benchmark profile (`strictGuarantee: false`)
+- one-shot build profile (`emitModuleMetadata: false`)
