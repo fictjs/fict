@@ -98,6 +98,71 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toContain('user()')
     })
 
+    it('does not emit unresolved key identifiers for block-bodied map callbacks', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let users = $state([{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }])
+          const el = (
+            <ul>
+              {users.map(user => {
+                const id = user.id
+                return <li key={id}>{user.name}</li>
+              })}
+            </ul>
+          )
+          return el
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createKeyedList')
+      expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*id\b/)
+    })
+
+    it('does not emit unresolved key member aliases for block-bodied map callbacks', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let users = $state([{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }])
+          const el = (
+            <ul>
+              {users.map(user => {
+                const meta = { id: user.id }
+                return <li key={meta.id}>{user.name}</li>
+              })}
+            </ul>
+          )
+          return el
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createKeyedList')
+      expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*meta\.id\b/)
+    })
+
+    it('preserves reassigned key alias semantics in block-bodied map callbacks', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let users = $state([{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }])
+          const el = (
+            <ul>
+              {users.map(user => {
+                let id = user.id
+                id = 42
+                return <li key={id}>{user.name}</li>
+              })}
+            </ul>
+          )
+          return el
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createKeyedList')
+      expect(output).toMatch(/createKeyedList\([\s\S]*?=>\s*42\b/)
+      expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*user\(\)\.id\b/)
+    })
+
     it('handles list without key via keyed list with index keys', () => {
       const input = `
         import { $state } from 'fict'

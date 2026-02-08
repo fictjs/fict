@@ -6,7 +6,7 @@ import type { CodegenContext } from './codegen'
 import { extractKeyFromMapCallback } from './codegen-jsx-keys'
 import { replaceIdentifiersWithOverrides, type RegionOverrideMap } from './codegen-overrides'
 import { applySelectorHoist } from './codegen-selector-hoist'
-import type { Expression } from './hir'
+import type { BasicBlock, Expression } from './hir'
 import { deSSAVarName } from './regions'
 
 export interface ListChildOps {
@@ -17,6 +17,107 @@ export interface ListChildOps {
   genTemp: (ctx: CodegenContext, prefix?: string) => BabelCore.types.Identifier
   lowerDomExpression: (expr: Expression, ctx: CodegenContext) => BabelCore.types.Expression
   lowerExpression: (expr: Expression, ctx: CodegenContext) => BabelCore.types.Expression
+}
+
+function getCallbackBlocks(callback: Expression): BasicBlock[] {
+  if (callback.kind === 'FunctionExpression') {
+    return callback.body
+  }
+  if (callback.kind === 'ArrowFunction' && Array.isArray(callback.body)) {
+    return callback.body
+  }
+  return []
+}
+
+function collectMapCallbackAliasDeclarations(callback: Expression): Map<string, Expression> {
+  const blocks = getCallbackBlocks(callback)
+  if (blocks.length === 0) {
+    return new Map()
+  }
+
+  const paramNames =
+    callback.kind === 'ArrowFunction' || callback.kind === 'FunctionExpression'
+      ? new Set(callback.params.map(param => param.name))
+      : new Set<string>()
+
+  const declarationState = new Map<
+    string,
+    {
+      declarationCount: number
+      hasNonDeclarationWrite: boolean
+      declarationValue: Expression | null
+      lastAssignedValue: Expression
+    }
+  >()
+
+  for (const block of blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind !== 'Assign' || instr.target.kind !== 'Identifier') {
+        continue
+      }
+      const name = instr.target.name
+      if (paramNames.has(name)) continue
+      const isDeclaration = !!instr.declarationKind
+      const previous = declarationState.get(name)
+      if (previous) {
+        declarationState.set(name, {
+          declarationCount: previous.declarationCount + (isDeclaration ? 1 : 0),
+          hasNonDeclarationWrite: previous.hasNonDeclarationWrite || !isDeclaration,
+          declarationValue: previous.declarationValue,
+          lastAssignedValue: instr.value,
+        })
+      } else {
+        declarationState.set(name, {
+          declarationCount: isDeclaration ? 1 : 0,
+          hasNonDeclarationWrite: !isDeclaration,
+          declarationValue: isDeclaration ? instr.value : null,
+          lastAssignedValue: instr.value,
+        })
+      }
+    }
+  }
+
+  const aliasMap = new Map<string, Expression>()
+  const effectiveBlocks = blocks.filter(
+    block => block.instructions.length > 0 || block.terminator.kind !== 'Unreachable',
+  )
+  const isSingleLinearBlock =
+    effectiveBlocks.length === 1 && effectiveBlocks[0].terminator.kind === 'Return'
+  for (const [name, state] of declarationState) {
+    if (isSingleLinearBlock) {
+      if (state.declarationCount <= 1) {
+        aliasMap.set(name, state.lastAssignedValue)
+      }
+      continue
+    }
+    if (state.declarationCount === 1 && !state.hasNonDeclarationWrite && state.declarationValue) {
+      aliasMap.set(name, state.declarationValue)
+    }
+  }
+
+  return aliasMap
+}
+
+function resolveMapCallbackKeyExpression(keyExpr: Expression, callback: Expression): Expression {
+  if (keyExpr.kind !== 'Identifier') {
+    return keyExpr
+  }
+
+  const aliasMap = collectMapCallbackAliasDeclarations(callback)
+
+  if (aliasMap.size === 0) {
+    return keyExpr
+  }
+
+  let resolved: Expression = keyExpr
+  const seen = new Set<string>()
+  while (resolved.kind === 'Identifier') {
+    const next = aliasMap.get(resolved.name)
+    if (!next || seen.has(resolved.name)) break
+    seen.add(resolved.name)
+    resolved = next
+  }
+  return resolved
 }
 
 /**
@@ -51,7 +152,10 @@ export function buildListCallExpression(
   if (!mapCallback) {
     throw new Error('map callback is required')
   }
-  const keyExpr = extractKeyFromMapCallback(mapCallback)
+  const extractedKeyExpr = extractKeyFromMapCallback(mapCallback)
+  const keyExpr = extractedKeyExpr
+    ? resolveMapCallbackKeyExpression(extractedKeyExpr, mapCallback)
+    : undefined
   const isKeyed = !!keyExpr
   const hasRestParam =
     (mapCallback.kind === 'ArrowFunction' || mapCallback.kind === 'FunctionExpression') &&
@@ -123,7 +227,7 @@ export function buildListCallExpression(
     if (Object.keys(overrides).length > 0) {
       if (t.isBlockStatement(callbackExpr.body)) {
         for (const stmt of callbackExpr.body.body) {
-          if (!t.isVariableDeclaration(stmt)) continue
+          if (!t.isVariableDeclaration(stmt) || stmt.kind !== 'const') continue
           for (const decl of stmt.declarations) {
             if (!t.isIdentifier(decl.id) || !decl.init) continue
             const replacement = t.cloneNode(decl.init, true) as BabelCore.types.Expression
@@ -164,6 +268,18 @@ export function buildListCallExpression(
   let listCall: BabelCore.types.Expression
   if (isKeyed && keyExpr) {
     let keyExprAst = ops.lowerExpression(keyExpr, ctx)
+    const keyAliasDeclarations = collectMapCallbackAliasDeclarations(mapCallback)
+    if (keyAliasDeclarations.size > 0) {
+      const keyOverrides: RegionOverrideMap = {}
+      for (const [name, value] of keyAliasDeclarations) {
+        const replacement = ops.lowerExpression(value, ctx)
+        replaceIdentifiersWithOverrides(replacement, keyOverrides, t)
+        keyOverrides[name] = () => t.cloneNode(replacement, true) as BabelCore.types.Expression
+      }
+      if (Object.keys(keyOverrides).length > 0) {
+        replaceIdentifiersWithOverrides(keyExprAst, keyOverrides, t)
+      }
+    }
     if (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) {
       const itemParam = callbackExpr.params[0]
       const indexParam = callbackExpr.params[1]
