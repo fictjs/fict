@@ -277,7 +277,15 @@ export function buildListCallExpression(
         keyOverrides[name] = () => t.cloneNode(replacement, true) as BabelCore.types.Expression
       }
       if (Object.keys(keyOverrides).length > 0) {
-        replaceIdentifiersWithOverrides(keyExprAst, keyOverrides, t)
+        replaceIdentifiersWithOverrides(
+          keyExprAst,
+          keyOverrides,
+          t,
+          undefined,
+          undefined,
+          false,
+          true,
+        )
       }
     }
     if (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) {

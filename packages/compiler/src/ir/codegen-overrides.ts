@@ -55,8 +55,10 @@ export function replaceIdentifiersWithOverrides(
   parentKind?: string,
   parentKey?: string,
   skipCurrentNode = false,
+  allowCallCalleeReplacement = false,
 ): void {
   const isCallTarget =
+    !allowCallCalleeReplacement &&
     parentKey === 'callee' &&
     (parentKind === 'CallExpression' || parentKind === 'OptionalCallExpression')
 
@@ -139,9 +141,25 @@ export function replaceIdentifiersWithOverrides(
     }
     // Avoid replacing parameter identifiers; only walk the body
     if (t.isBlockStatement(node.body)) {
-      replaceIdentifiersWithOverrides(node.body, scopedOverrides, t, node.type, 'body')
+      replaceIdentifiersWithOverrides(
+        node.body,
+        scopedOverrides,
+        t,
+        node.type,
+        'body',
+        false,
+        allowCallCalleeReplacement,
+      )
     } else {
-      replaceIdentifiersWithOverrides(node.body, scopedOverrides, t, node.type, 'body')
+      replaceIdentifiersWithOverrides(
+        node.body,
+        scopedOverrides,
+        t,
+        node.type,
+        'body',
+        false,
+        allowCallCalleeReplacement,
+      )
     }
     return
   }
@@ -184,11 +202,20 @@ export function replaceIdentifiersWithOverrides(
             node.type,
             key,
             false,
+            allowCallCalleeReplacement,
           )
         }
       }
     } else if (value && typeof value === 'object' && 'type' in value) {
-      replaceIdentifiersWithOverrides(value as BabelCore.types.Node, overrides, t, node.type, key)
+      replaceIdentifiersWithOverrides(
+        value as BabelCore.types.Node,
+        overrides,
+        t,
+        node.type,
+        key,
+        false,
+        allowCallCalleeReplacement,
+      )
     }
   }
 }

@@ -163,6 +163,27 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*user\(\)\.id\b/)
     })
 
+    it('does not emit unresolved local key helper callees in block-bodied map callbacks', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let users = $state([{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }])
+          const el = (
+            <ul>
+              {users.map(user => {
+                const makeKey = value => value.id
+                return <li key={makeKey(user)}>{user.name}</li>
+              })}
+            </ul>
+          )
+          return el
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('createKeyedList')
+      expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*makeKey\s*\(/)
+    })
+
     it('handles list without key via keyed list with index keys', () => {
       const input = `
         import { $state } from 'fict'
