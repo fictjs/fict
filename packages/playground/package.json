@@ -1,21 +1,28 @@
 {
   "name": "@fictjs/playground",
   "version": "0.9.0",
-  "description": "Playground package for Fict experiments",
+  "description": "Full-featured local playground for Fict compiler/runtime workflows",
   "type": "module",
-  "main": "dist/index.cjs",
+  "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "fict-playground": "dist/bin.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli.d.ts",
+      "import": "./dist/cli.js"
     }
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "README.md"
   ],
   "publishConfig": {
     "access": "public",
@@ -24,21 +31,38 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/fictjs/fict.git",
-    "directory": "packages/mcp"
+    "directory": "packages/playground"
   },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
+    "start": "node dist/bin.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist .fict-playground"
+  },
+  "dependencies": {
+    "@babel/core": "^7.28.6",
+    "@babel/plugin-syntax-jsx": "^7.28.6",
+    "@babel/preset-typescript": "^7.26.0",
+    "@fictjs/compiler": "workspace:*",
+    "@fictjs/devtools": "workspace:*",
+    "@fictjs/vite-plugin": "workspace:*",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
   },
   "devDependencies": {
-    "tsup": "^8.5.1"
+    "tsup": "^8.5.1",
+    "vitest": "^4.0.18"
   },
   "keywords": [
     "fict",
-    "playground"
+    "playground",
+    "compiler",
+    "runtime",
+    "diagnostics"
   ],
   "author": "unadlib",
   "license": "MIT"

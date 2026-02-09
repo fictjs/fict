@@ -1,7 +1,14 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist"
+    "outDir": "dist",
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@fictjs/compiler": ["../compiler/dist/index.d.ts"],
+      "@fictjs/vite-plugin": ["../vite-plugin/dist/index.d.ts"],
+      "@fictjs/devtools/vite": ["../devtools/dist/vite/index.d.ts"]
+    }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }

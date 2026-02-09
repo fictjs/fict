@@ -1,11 +1,22 @@
-export interface FictPlaygroundPackageInfo {
-  name: string
-  version: string
-}
+export { runCli } from './cli'
+export { createPlaygroundServer } from './server/http-server'
+export { PlaygroundSessionManager } from './server/session-manager'
+export { decodeSessionSnapshot, encodeSessionSnapshot } from './server/share'
+export { listPlaygroundTemplates } from './server/templates'
 
-export function getPlaygroundPackageInfo(): FictPlaygroundPackageInfo {
-  return {
-    name: '@fictjs/playground',
-    version: '0.8.0',
-  }
-}
+export type {
+  CreateSessionInput,
+  PlaygroundArtifact,
+  PlaygroundConfig,
+  PlaygroundDiagnostic,
+  PlaygroundDiagnosticSeverity,
+  PlaygroundDiagnosticSource,
+  PlaygroundDiagnosticsResult,
+  PlaygroundProfile,
+  PlaygroundServerOptions,
+  PlaygroundSessionSnapshot,
+  PlaygroundSessionState,
+  PlaygroundSessionSummary,
+  PlaygroundTemplate,
+  StartedPlaygroundServer,
+} from './server/types'

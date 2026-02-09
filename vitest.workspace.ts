@@ -6,6 +6,7 @@ export default defineWorkspace([
   'packages/vite-plugin',
   'packages/eslint-plugin',
   'packages/devtools',
+  'packages/playground',
   'packages/testing-library',
   'packages/ssr',
   'packages/fict',
