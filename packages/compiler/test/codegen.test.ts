@@ -488,6 +488,22 @@ describe('event handler transformation', () => {
     expect(code).toMatch(/\$\$clickData\s*=\s*__key/)
     expect(code).not.toMatch(/\$\$clickData\s*=\s*\(\)\s*=>\s*__key/)
   })
+
+  it('does not extract delegated data when handler comes from event param', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const id = 1
+        return <button onClick={(e) => e(id)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('$$click')
+    expect(code).not.toContain('$$clickData')
+    expect(code).not.toMatch(/\$\$click\s*=\s*e\s*;/)
+  })
 })
 
 describe('resumable event handler transformation', () => {

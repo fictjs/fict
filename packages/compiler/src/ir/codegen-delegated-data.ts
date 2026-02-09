@@ -239,7 +239,10 @@ export function extractDelegatedEventDataFromHIR(
     return null
   }
 
-  const paramNames = new Set(expr.params.map(p => p.name))
+  const paramNames = new Set(expr.params.map(p => deSSAVarName(p.name)))
+  if (paramNames.has(deSSAVarName(callee.name))) {
+    return null
+  }
   const dataExpr = bodyExpr.arguments[0]
   if (!dataExpr) {
     return null
