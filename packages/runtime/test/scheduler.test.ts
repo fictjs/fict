@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
 import { createEffect, batch } from '../src/index'
 import { createSignal } from '../src/advanced'
@@ -202,6 +202,22 @@ describe('Multi-Priority Scheduler', () => {
       await tick()
       await tick()
       expect(isPending()).toBe(false)
+    })
+
+    it('clears pending and reports async transition rejections', async () => {
+      const [isPending, start] = useTransition()
+      const error = new Error('transition failed')
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+      start(() => Promise.reject(error))
+      expect(isPending()).toBe(true)
+
+      await tick()
+      await tick()
+
+      expect(isPending()).toBe(false)
+      expect(errorSpy).toHaveBeenCalledWith('[fict/transition] Async transition failed.', error)
+      errorSpy.mockRestore()
     })
 
     it('rethrows undefined errors from transition callbacks and clears pending', () => {

@@ -107,9 +107,15 @@ export function useTransition(): [() => boolean, (fn: () => void | PromiseLike<u
     }
 
     if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
-      Promise.resolve(result).finally(() => {
-        endPending()
-      })
+      void Promise.resolve(result)
+        .catch(error => {
+          if (typeof console !== 'undefined' && typeof console.error === 'function') {
+            console.error('[fict/transition] Async transition failed.', error)
+          }
+        })
+        .finally(() => {
+          endPending()
+        })
       return
     }
 
