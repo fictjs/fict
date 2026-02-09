@@ -86,4 +86,28 @@ describe('state write expression semantics', () => {
     )
     expect(values).toEqual([1, 3, 5, 7, 7])
   })
+
+  it('preserves full compound/logical assignment semantics on $state', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useCompoundAssignmentSemantics() {
+        let count = $state(10)
+        const mod = (count %= 4)
+        const pow = (count **= 3)
+        const andKeep = (count &&= 0)
+        const orSet = (count ||= 5)
+        const nullishKeep = (count ??= 9)
+        const bit = (count |= 2)
+        return [mod, pow, andKeep, orSet, nullishKeep, bit, count]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const raw = mod.useCompoundAssignmentSemantics() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual([2, 8, 0, 5, 5, 7, 7])
+  })
 })

@@ -1113,6 +1113,48 @@ function lowerExpressionImpl(
       [nextValue],
     )
   }
+  const buildTrackedAssignmentNext = (
+    operator: string,
+    current: BabelCore.types.Expression,
+    right: BabelCore.types.Expression,
+  ): BabelCore.types.Expression => {
+    switch (operator) {
+      case '=':
+        return right
+      case '+=':
+        return t.binaryExpression('+', current, right)
+      case '-=':
+        return t.binaryExpression('-', current, right)
+      case '*=':
+        return t.binaryExpression('*', current, right)
+      case '/=':
+        return t.binaryExpression('/', current, right)
+      case '%=':
+        return t.binaryExpression('%', current, right)
+      case '**=':
+        return t.binaryExpression('**', current, right)
+      case '<<=':
+        return t.binaryExpression('<<', current, right)
+      case '>>=':
+        return t.binaryExpression('>>', current, right)
+      case '>>>=':
+        return t.binaryExpression('>>>', current, right)
+      case '|=':
+        return t.binaryExpression('|', current, right)
+      case '^=':
+        return t.binaryExpression('^', current, right)
+      case '&=':
+        return t.binaryExpression('&', current, right)
+      case '&&=':
+        return t.logicalExpression('&&', current, right)
+      case '||=':
+        return t.logicalExpression('||', current, right)
+      case '??=':
+        return t.logicalExpression('??', current, right)
+      default:
+        return right
+    }
+  }
   const lowerTrackedUpdateCall = (
     callee: BabelCore.types.Expression,
     operator: '++' | '--',
@@ -1738,26 +1780,7 @@ function lowerExpressionImpl(
             )
             const current = t.callExpression(t.cloneNode(member, true), [])
             const right = lowerExpression(expr.right, ctx)
-            let next: BabelCore.types.Expression
-            switch (expr.operator) {
-              case '=':
-                next = right
-                break
-              case '+=':
-                next = t.binaryExpression('+', current, right)
-                break
-              case '-=':
-                next = t.binaryExpression('-', current, right)
-                break
-              case '*=':
-                next = t.binaryExpression('*', current, right)
-                break
-              case '/=':
-                next = t.binaryExpression('/', current, right)
-                break
-              default:
-                next = right
-            }
+            const next = buildTrackedAssignmentNext(expr.operator, current, right)
             return lowerTrackedWriteCall(member, next)
           }
         }
@@ -1768,26 +1791,7 @@ function lowerExpressionImpl(
           const callee = t.identifier(baseName)
           const current = t.callExpression(t.identifier(baseName), [])
           const right = lowerExpression(expr.right, ctx)
-          let next: BabelCore.types.Expression
-          switch (expr.operator) {
-            case '=':
-              next = right
-              break
-            case '+=':
-              next = t.binaryExpression('+', current, right)
-              break
-            case '-=':
-              next = t.binaryExpression('-', current, right)
-              break
-            case '*=':
-              next = t.binaryExpression('*', current, right)
-              break
-            case '/=':
-              next = t.binaryExpression('/', current, right)
-              break
-            default:
-              next = right
-          }
+          const next = buildTrackedAssignmentNext(expr.operator, current, right)
           return lowerTrackedWriteCall(callee, next)
         }
       }
