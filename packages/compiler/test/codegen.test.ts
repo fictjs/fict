@@ -537,6 +537,22 @@ describe('resumable event handler transformation', () => {
     )
     expect(code).toContain('__result !== __handler')
   })
+
+  it('captures function deps used in nested returned closures (resumable)', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const helper = () => 1
+        return <button onClick$={() => () => helper()}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('export const __fict_fn_helper_')
+    expect(code).toContain('() => () => __fict_fn_helper_')
+    expect(code).not.toContain('() => () => helper()')
+  })
 })
 
 // ============================================================================

@@ -3,8 +3,11 @@ import type * as BabelCore from '@babel/core'
 import { RUNTIME_ALIASES } from '../constants'
 
 import type { CodegenContext, RegionInfo } from './codegen'
-import { collectExpressionIdentifiersDeep } from './codegen-reactive-accessors'
-import { genModuleUrlExpr, renameIdentifiersInExpr } from './codegen-resumable-utils'
+import {
+  collectFreeIdentifiersInExpr,
+  genModuleUrlExpr,
+  renameIdentifiersInExpr,
+} from './codegen-resumable-utils'
 import type { Expression } from './hir'
 
 export interface ResumableEventBindingOps {
@@ -64,8 +67,7 @@ export function emitResumableEventBinding(
   const handlerId = t.identifier(`__fict_e${ctx.resumableHandlerCounter ?? 0}`)
   ctx.resumableHandlerCounter = (ctx.resumableHandlerCounter ?? 0) + 1
 
-  const captured = new Set<string>()
-  collectExpressionIdentifiersDeep(expr, captured)
+  const captured = collectFreeIdentifiersInExpr(handlerExpr, t)
 
   const lexicalNames = Array.from(captured).filter(name => ctx.signalVars?.has(name))
   const propsName =

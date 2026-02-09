@@ -52,6 +52,31 @@ export function renameIdentifiersInExpr(
 }
 
 /**
+ * Collect free (unbound) identifiers from a Babel expression.
+ * This is used by resumable event lowering to capture lexical dependencies,
+ * including identifiers referenced inside nested returned closures.
+ */
+export function collectFreeIdentifiersInExpr(
+  expr: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): Set<string> {
+  const traverse = ((traverseModule as unknown as { default?: typeof traverseModule }).default ??
+    traverseModule) as typeof traverseModule
+  const file = t.file(t.program([t.expressionStatement(t.cloneNode(expr, true))]))
+  const names = new Set<string>()
+
+  traverse(file, {
+    ReferencedIdentifier(path) {
+      const name = path.node.name
+      if (path.scope.getBinding(name)) return
+      names.add(name)
+    },
+  })
+
+  return names
+}
+
+/**
  * Generate module URL expression for QRL generation.
  * Uses filename from compiler options when available; falls back to import.meta.url.
  */
