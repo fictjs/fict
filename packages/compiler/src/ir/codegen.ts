@@ -662,7 +662,11 @@ function lowerFunction(
   return result
 }
 
-function lowerTrackedExpression(expr: Expression, ctx: CodegenContext): BabelCore.types.Expression {
+function lowerTrackedExpression(
+  expr: Expression,
+  ctx: CodegenContext,
+  valueUsed = true,
+): BabelCore.types.Expression {
   const regionOverride =
     ctx.inReturn && ctx.currentFnIsHook
       ? null
@@ -676,7 +680,7 @@ function lowerTrackedExpression(expr: Expression, ctx: CodegenContext): BabelCor
               hasReactiveWrites: false,
             }
           : null))
-  const lowered = lowerExpression(expr, ctx)
+  const lowered = lowerExpression(expr, ctx, valueUsed)
   if (ctx.t.isAssignmentExpression(lowered)) {
     const right = applyRegionMetadataToExpression(lowered.right, ctx, regionOverride ?? undefined)
     return ctx.t.assignmentExpression(lowered.operator, lowered.left, right)
@@ -813,7 +817,7 @@ function lowerInstruction(
     )
   }
   if (instr.kind === 'Expression') {
-    return applyLoc(t.expressionStatement(lowerTrackedExpression(instr.value, ctx)))
+    return applyLoc(t.expressionStatement(lowerTrackedExpression(instr.value, ctx, false)))
   }
   if (instr.kind === 'Phi') {
     // Phi nodes are typically eliminated in SSA-out pass; emit comment for debugging
@@ -1010,7 +1014,7 @@ function collectLocalDeclaredNames(
 export function lowerExpression(
   expr: Expression,
   ctx: CodegenContext,
-  isAssigned = false,
+  valueUsed = true,
 ): BabelCore.types.Expression {
   // Check recursion depth to prevent stack overflow
   const depth = (ctx.expressionDepth ?? 0) + 1
@@ -1025,7 +1029,7 @@ export function lowerExpression(
   ctx.expressionDepth = depth
 
   try {
-    return setNodeLoc(lowerExpressionImpl(expr, ctx, isAssigned), expr.loc)
+    return setNodeLoc(lowerExpressionImpl(expr, ctx, valueUsed), expr.loc)
   } finally {
     ctx.expressionDepth = depth - 1
   }
@@ -1034,7 +1038,7 @@ export function lowerExpression(
 function lowerExpressionImpl(
   expr: Expression,
   ctx: CodegenContext,
-  _isAssigned = false,
+  valueUsed = true,
 ): BabelCore.types.Expression {
   const { t } = ctx
   const mapParams = (params: { name: string }[]) =>
@@ -1087,6 +1091,53 @@ function lowerExpressionImpl(
     ctx.shadowedNames = prevShadowed
     ctx.localDeclaredNames = prevLocalDeclared
     return result
+  }
+  const lowerTrackedWriteCall = (
+    callee: BabelCore.types.Expression,
+    nextValue: BabelCore.types.Expression,
+  ): BabelCore.types.Expression => {
+    if (!valueUsed) {
+      return t.callExpression(t.cloneNode(callee, true), [nextValue])
+    }
+
+    const nextId = genTemp(ctx, 'next')
+    const nextRef = t.identifier(nextId.name)
+    return t.callExpression(
+      t.arrowFunctionExpression(
+        [t.cloneNode(nextId, true)],
+        t.sequenceExpression([
+          t.callExpression(t.cloneNode(callee, true), [nextRef]),
+          t.identifier(nextId.name),
+        ]),
+      ),
+      [nextValue],
+    )
+  }
+  const lowerTrackedUpdateCall = (
+    callee: BabelCore.types.Expression,
+    operator: '++' | '--',
+    prefix: boolean,
+  ): BabelCore.types.Expression => {
+    const op = operator === '++' ? '+' : '-'
+    const delta = t.numericLiteral(1)
+    const current = t.callExpression(t.cloneNode(callee, true), [])
+    if (!valueUsed) {
+      return t.callExpression(t.cloneNode(callee, true), [t.binaryExpression(op, current, delta)])
+    }
+
+    const prevId = genTemp(ctx, 'prev')
+    const prevForSet = t.identifier(prevId.name)
+    const prevForResult = t.identifier(prevId.name)
+    return t.callExpression(
+      t.arrowFunctionExpression(
+        [t.cloneNode(prevId, true)],
+        t.sequenceExpression([
+          t.callExpression(t.cloneNode(callee, true), [t.binaryExpression(op, prevForSet, delta)]),
+          prefix ? t.binaryExpression(op, prevForResult, t.numericLiteral(1)) : prevForResult,
+        ]),
+      ),
+      [current],
+    )
   }
   const lowerBlocksToStatements = (blocks: BasicBlock[]): BabelCore.types.Statement[] => {
     const stmts: BabelCore.types.Statement[] = []
@@ -1685,7 +1736,7 @@ function lowerExpressionImpl(
               expr.left.computed,
               expr.left.optional,
             )
-            const current = t.callExpression(member, [])
+            const current = t.callExpression(t.cloneNode(member, true), [])
             const right = lowerExpression(expr.right, ctx)
             let next: BabelCore.types.Expression
             switch (expr.operator) {
@@ -1707,14 +1758,14 @@ function lowerExpressionImpl(
               default:
                 next = right
             }
-            return t.callExpression(member, [next])
+            return lowerTrackedWriteCall(member, next)
           }
         }
       }
       if (expr.left.kind === 'Identifier') {
         const baseName = deSSAVarName(expr.left.name)
         if (ctx.trackedVars.has(baseName)) {
-          const id = t.identifier(baseName)
+          const callee = t.identifier(baseName)
           const current = t.callExpression(t.identifier(baseName), [])
           const right = lowerExpression(expr.right, ctx)
           let next: BabelCore.types.Expression
@@ -1737,7 +1788,7 @@ function lowerExpressionImpl(
             default:
               next = right
           }
-          return t.callExpression(id, [next])
+          return lowerTrackedWriteCall(callee, next)
         }
       }
 
@@ -1785,27 +1836,14 @@ function lowerExpressionImpl(
               expr.argument.computed,
               expr.argument.optional,
             )
-            const current = t.callExpression(member, [])
-            const delta = t.numericLiteral(1)
-            const next =
-              expr.operator === '++'
-                ? t.binaryExpression('+', current, delta)
-                : t.binaryExpression('-', current, delta)
-            return t.callExpression(member, [next])
+            return lowerTrackedUpdateCall(member, expr.operator, expr.prefix)
           }
         }
       }
       if (expr.argument.kind === 'Identifier') {
         const baseName = deSSAVarName(expr.argument.name)
         if (ctx.trackedVars.has(baseName)) {
-          const id = t.identifier(baseName)
-          const current = t.callExpression(t.identifier(baseName), [])
-          const delta = t.numericLiteral(1)
-          const next =
-            expr.operator === '++'
-              ? t.binaryExpression('+', current, delta)
-              : t.binaryExpression('-', current, delta)
-          return t.callExpression(id, [next])
+          return lowerTrackedUpdateCall(t.identifier(baseName), expr.operator, expr.prefix)
         }
       }
 
@@ -1835,7 +1873,11 @@ function lowerExpressionImpl(
       return t.newExpression(lowerExpression(expr.callee, ctx), lowerCallArguments(expr.arguments))
 
     case 'SequenceExpression':
-      return t.sequenceExpression(expr.expressions.map(e => lowerExpression(e, ctx)))
+      return t.sequenceExpression(
+        expr.expressions.map((e, index) =>
+          lowerExpression(e, ctx, index === expr.expressions.length - 1 ? valueUsed : false),
+        ),
+      )
 
     case 'YieldExpression':
       return t.yieldExpression(

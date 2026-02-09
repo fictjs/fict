@@ -945,8 +945,12 @@ describe('Integration scenarios', () => {
     `)
 
     expect(output).toContain('__fictUseSignal')
-    expect(output).toContain('count(count() + 1)')
-    expect(output).toContain('count(count() - 1)')
+    expect(output).toMatch(
+      /\(__prev_\d+\s*=>\s*\(count\(__prev_\d+\s*\+\s*1\),\s*__prev_\d+\)\)\(count\(\)\)/,
+    )
+    expect(output).toMatch(
+      /\(__prev_\d+\s*=>\s*\(count\(__prev_\d+\s*-\s*1\),\s*__prev_\d+\)\)\(count\(\)\)/,
+    )
   })
 
   it('todo list transforms correctly', () => {

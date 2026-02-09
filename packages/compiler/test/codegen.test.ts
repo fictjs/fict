@@ -336,7 +336,9 @@ describe('event handler transformation', () => {
 
     // Delegated events like click use direct property assignment for performance
     expect(code).toContain('$$click')
-    expect(code).toContain('count(count() + 1)')
+    expect(code).toMatch(
+      /__next_\d+\s*=>\s*\(count\(__next_\d+\),\s*__next_\d+\)\)\(count\(\)\s*\+\s*1\)/,
+    )
   })
 
   it('should transform onInput handler', () => {
