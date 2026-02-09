@@ -504,6 +504,41 @@ describe('event handler transformation', () => {
     expect(code).not.toContain('$$clickData')
     expect(code).not.toMatch(/\$\$click\s*=\s*e\s*;/)
   })
+
+  it('does not extract delegated data for unknown global callees', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const id = '10'
+        return <button onClick={() => parseInt(id)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('$$click')
+    expect(code).toContain('parseInt(id)')
+    expect(code).not.toContain('$$clickData')
+    expect(code).not.toMatch(/\$\$click\s*=\s*parseInt\s*;/)
+  })
+
+  it('does not extract delegated data when callee is not a function binding', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const id = 1
+        const pick = 1
+        return <button onClick={() => pick(id)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('$$click')
+    expect(code).toContain('pick(id)')
+    expect(code).not.toContain('$$clickData')
+    expect(code).not.toMatch(/\$\$click\s*=\s*pick\s*;/)
+  })
 })
 
 describe('resumable event handler transformation', () => {

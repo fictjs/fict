@@ -2613,7 +2613,12 @@ function lowerIntrinsicElement(
             : ensureHandlerParam(valueExpr)
 
         let dataBinding =
-          isDelegated && !shouldWrapHandler ? extractDelegatedEventData(valueExpr, t) : null
+          isDelegated && !shouldWrapHandler
+            ? extractDelegatedEventData(valueExpr, t, {
+                isKnownHandlerIdentifier: name =>
+                  ctx.functionVars?.has(deSSAVarName(name)) ?? false,
+              })
+            : null
         if (dataBinding && t.isIdentifier(dataBinding.handler)) {
           const handlerName = dataBinding.handler.name
           if (

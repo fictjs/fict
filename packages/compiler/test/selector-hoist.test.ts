@@ -131,6 +131,7 @@ describe('P1: Selector Hoist Optimization', () => {
       function BenchmarkTable() {
         let data = $state([]);
         let selected = $state(0);
+        const remove = (id) => id;
 
         return (
           <table class="table table-hover table-striped test-data">

@@ -98,6 +98,7 @@ export function expressionUsesIdentifier(
 export function extractDelegatedEventData(
   expr: BabelCore.types.Expression,
   t: typeof BabelCore.types,
+  options?: { isKnownHandlerIdentifier?: (name: string) => boolean },
 ): { handler: BabelCore.types.Expression; data?: BabelCore.types.Expression } | null {
   const isSimpleHandler = t.isIdentifier(expr) || t.isMemberExpression(expr)
   if (isSimpleHandler) {
@@ -123,6 +124,12 @@ export function extractDelegatedEventData(
   if (!bodyExpr || !t.isCallExpression(bodyExpr)) return null
   if (paramNames.some(name => expressionUsesIdentifier(bodyExpr, name, t))) return null
   if (!t.isIdentifier(bodyExpr.callee)) return null
+  if (
+    options?.isKnownHandlerIdentifier &&
+    !options.isKnownHandlerIdentifier(bodyExpr.callee.name)
+  ) {
+    return null
+  }
   if (bodyExpr.arguments.length === 0) return null
   if (bodyExpr.arguments.length > 1) return null
 
@@ -217,6 +224,10 @@ export function extractDelegatedEventDataFromHIR(
   }
 
   const handlerName = callee.name
+  const normalizedHandlerName = deSSAVarName(handlerName)
+  if (!ctx.functionVars?.has(normalizedHandlerName)) {
+    return null
+  }
   if (
     ctx.signalVars?.has(handlerName) ||
     ctx.memoVars?.has(handlerName) ||
