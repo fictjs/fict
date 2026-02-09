@@ -74,6 +74,7 @@ export function emitResumableEventBinding(
   const propsName =
     ctx.propsParamName && captured.has(ctx.propsParamName) ? ctx.propsParamName : null
   const unsupportedLocals = Array.from(captured).filter(name => {
+    if (ctx.inListRender && ctx.listKeyParamName && name === ctx.listKeyParamName) return true
     if (!ctx.localDeclaredNames?.has(name)) return false
     if (ctx.signalVars?.has(name)) return false
     if (ctx.functionVars?.has(name)) return false

@@ -634,6 +634,29 @@ describe('resumable event handler transformation', () => {
     )
   })
 
+  it('throws for explicit resumable handlers that capture keyed-list aliases', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const remove = (id) => id
+        let rows = $state([])
+        return (
+          <ul>
+            {rows.map((row) => (
+              <li key={row.id}>
+                <button onClick$={() => remove(row.id)}>X</button>
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+      /cannot capture non-serializable local variables/i,
+    )
+  })
+
   it('falls back to non-resumable handler for auto-extracted unsupported captures', () => {
     const ast = parseFile(`
       function Comp() {
@@ -646,6 +669,31 @@ describe('resumable event handler transformation', () => {
     const { code } = generate(file)
 
     expect(code).toContain('$$click')
+    expect(code).not.toContain('setAttribute(\"on:click\"')
+  })
+
+  it('falls back for auto resumable handlers that would capture keyed-list aliases', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const remove = (id) => id
+        let rows = $state([])
+        return (
+          <ul>
+            {rows.map((row) => (
+              <li key={row.id}>
+                <button onClick={() => remove(row.id)}>X</button>
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('$$click')
+    expect(code).toContain('$$clickData')
     expect(code).not.toContain('setAttribute(\"on:click\"')
   })
 })
