@@ -80,9 +80,47 @@ export function emitResumableEventBinding(
     if (propsName && name === propsName) return false
     return true
   })
-  if (unsupportedLocals.length > 0) {
-    const joined = unsupportedLocals.sort().join(', ')
-    const detail = `Resumable handlers cannot capture non-serializable local variables: ${joined}.`
+
+  // Pre-lower function dependencies and reject any that still capture component-local names.
+  // Hoisted resumable helpers execute at module scope, so local closures are unsafe here.
+  const loweredFunctionDeps = new Map<string, BabelCore.types.Expression>()
+  const unsafeFunctionCaptures: string[] = []
+  for (const name of captured) {
+    if (!ctx.functionVars?.has(name) || ctx.signalVars?.has(name)) continue
+    if (ctx.hoistedFunctionDepNames?.has(name)) continue
+
+    const hirDef = ctx.componentFunctionDefs?.get(name)
+    if (!hirDef) {
+      if (ctx.localDeclaredNames?.has(name)) {
+        unsafeFunctionCaptures.push(`${name} -> <unhoistable>`)
+      }
+      continue
+    }
+
+    const loweredFn = ops.lowerDomExpression(hirDef, ctx, null, {
+      skipHookAccessors: true,
+      skipRegionRootOverride: true,
+    })
+    const fnCaptured = collectFreeIdentifiersInExpr(loweredFn, t)
+    const localFnCaptures = Array.from(fnCaptured)
+      .filter(dep => ctx.localDeclaredNames?.has(dep))
+      .sort()
+    if (localFnCaptures.length > 0) {
+      unsafeFunctionCaptures.push(`${name} -> ${localFnCaptures.join(', ')}`)
+      continue
+    }
+    loweredFunctionDeps.set(name, loweredFn)
+  }
+
+  if (unsupportedLocals.length > 0 || unsafeFunctionCaptures.length > 0) {
+    const detailParts: string[] = []
+    if (unsupportedLocals.length > 0) {
+      detailParts.push(`direct: ${unsupportedLocals.sort().join(', ')}`)
+    }
+    if (unsafeFunctionCaptures.length > 0) {
+      detailParts.push(`function deps: ${unsafeFunctionCaptures.sort().join('; ')}`)
+    }
+    const detail = `Resumable handlers cannot capture non-serializable local variables (${detailParts.join(' | ')}).`
     if (options?.explicit) {
       const loc = expr.loc?.start
       const fileName = ctx.options?.filename ?? '<unknown>'
@@ -98,22 +136,16 @@ export function emitResumableEventBinding(
   const functionDepRenames = new Map<string, string>()
   for (const name of captured) {
     if (ctx.functionVars?.has(name) && !ctx.signalVars?.has(name)) {
-      const hirDef = ctx.componentFunctionDefs?.get(name)
-      if (!hirDef) continue
-
       // Check if this function has already been hoisted.
       let hoistedName = ctx.hoistedFunctionDepNames?.get(name)
       if (!hoistedName) {
+        const loweredFn = loweredFunctionDeps.get(name)
+        if (!loweredFn) continue
+
         // Generate a unique hoisted name.
         hoistedName = `__fict_fn_${name}_${ctx.hoistedFunctionDepCounter ?? 0}`
         ctx.hoistedFunctionDepCounter = (ctx.hoistedFunctionDepCounter ?? 0) + 1
         ctx.hoistedFunctionDepNames?.set(name, hoistedName)
-
-        // Lower the HIR function definition to Babel AST and hoist it.
-        const loweredFn = ops.lowerDomExpression(hirDef, ctx, null, {
-          skipHookAccessors: true,
-          skipRegionRootOverride: true,
-        })
 
         // Create a module-level const declaration for the hoisted function.
         const hoistedDecl = t.variableDeclaration('const', [

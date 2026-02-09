@@ -568,6 +568,21 @@ describe('resumable event handler transformation', () => {
     )
   })
 
+  it('throws for explicit resumable function refs that close over locals', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const label = 'x'
+        const handler = () => console.log(label)
+        return <button onClick$={handler}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+      /cannot capture non-serializable local variables/i,
+    )
+  })
+
   it('falls back to non-resumable handler for auto-extracted unsupported captures', () => {
     const ast = parseFile(`
       function Comp() {
