@@ -926,11 +926,28 @@ function optimizeReactiveBlock(
   const cseMap = new Map<string, { name: string; deps: Set<string> }>()
   const instructions: Instruction[] = []
 
+  const deleteByBase = <T>(map: Map<string, T>, name: string): void => {
+    const base = getSSABaseName(name)
+    for (const key of Array.from(map.keys())) {
+      if (getSSABaseName(key) === base) {
+        map.delete(key)
+      }
+    }
+  }
+
   const invalidateCSE = (name: string) => {
+    const base = getSSABaseName(name)
     const toDelete: string[] = []
     for (const [hash, entry] of cseMap.entries()) {
-      if (entry.name === name || entry.deps.has(name)) {
+      if (getSSABaseName(entry.name) === base) {
         toDelete.push(hash)
+        continue
+      }
+      for (const dep of entry.deps) {
+        if (getSSABaseName(dep) === base) {
+          toDelete.push(hash)
+          break
+        }
       }
     }
     toDelete.forEach(hash => cseMap.delete(hash))
@@ -941,22 +958,22 @@ function optimizeReactiveBlock(
       const target = instr.target.name
       const declKind = instr.declarationKind
       invalidateCSE(target)
-      constants.delete(target)
-      constObjects.delete(target)
-      constArrays.delete(target)
+      deleteByBase(constants, target)
+      deleteByBase(constObjects, target)
+      deleteByBase(constArrays, target)
       const sideWrites = collectWriteTargets(instr.value)
       for (const name of sideWrites) {
         if (name !== target) {
-          constants.delete(name)
+          deleteByBase(constants, name)
           invalidateCSE(name)
         }
-        constObjects.delete(name)
-        constArrays.delete(name)
+        deleteByBase(constObjects, name)
+        deleteByBase(constArrays, name)
       }
       const memberCalls = collectMemberCallTargets(instr.value)
       for (const name of memberCalls) {
-        constObjects.delete(name)
-        constArrays.delete(name)
+        deleteByBase(constObjects, name)
+        deleteByBase(constArrays, name)
       }
       const dependsOnReactiveValue = expressionDependsOnReactive(instr.value, reactive)
       let value = dependsOnReactiveValue
@@ -1012,15 +1029,15 @@ function optimizeReactiveBlock(
     if (instr.kind === 'Expression') {
       const writes = collectWriteTargets(instr.value)
       for (const name of writes) {
-        constants.delete(name)
+        deleteByBase(constants, name)
         invalidateCSE(name)
-        constObjects.delete(name)
-        constArrays.delete(name)
+        deleteByBase(constObjects, name)
+        deleteByBase(constArrays, name)
       }
       const memberCalls = collectMemberCallTargets(instr.value)
       for (const name of memberCalls) {
-        constObjects.delete(name)
-        constArrays.delete(name)
+        deleteByBase(constObjects, name)
+        deleteByBase(constArrays, name)
       }
       const dependsOnReactiveValue = expressionDependsOnReactive(instr.value, reactive)
       const value = dependsOnReactiveValue
@@ -1832,6 +1849,8 @@ function collectWriteTargets(expr: Expression): Set<string> {
         } else if (left.kind === 'MemberExpression' || left.kind === 'OptionalMemberExpression') {
           const base = getMemberBaseIdentifier(left)
           if (base) writes.add(base.name)
+          visit(left.object as Expression)
+          if (left.computed) visit(left.property as Expression)
         } else {
           visit(left)
         }
@@ -1848,8 +1867,10 @@ function collectWriteTargets(expr: Expression): Set<string> {
           const base = getMemberBaseIdentifier(arg)
           if (base) {
             writes.add(base.name)
-            return
           }
+          visit(arg.object as Expression)
+          if (arg.computed) visit(arg.property as Expression)
+          return
         }
         visit(arg)
         return
@@ -2178,6 +2199,16 @@ function propagateConstants(fn: HIRFunction, options: OptimizeOptions): HIRFunct
 
 function computeConstantMap(fn: HIRFunction): Map<string, ConstantValue> {
   const constants = new Map<string, ConstantValue>()
+  const invalidateWrittenName = (writtenName: string): boolean => {
+    const writtenBase = getSSABaseName(writtenName)
+    let removed = false
+    for (const constantName of Array.from(constants.keys())) {
+      if (constantName === writtenName || getSSABaseName(constantName) === writtenBase) {
+        removed = constants.delete(constantName) || removed
+      }
+    }
+    return removed
+  }
   let changed = true
   let iterations = 0
   const maxIterations = 10
@@ -2186,6 +2217,14 @@ function computeConstantMap(fn: HIRFunction): Map<string, ConstantValue> {
     changed = false
     for (const block of fn.blocks) {
       for (const instr of block.instructions) {
+        if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+          const writes = collectWriteTargets(instr.value)
+          for (const writtenName of writes) {
+            if (invalidateWrittenName(writtenName)) {
+              changed = true
+            }
+          }
+        }
         if (instr.kind === 'Assign') {
           const value = evaluateConstant(instr.value, constants)
           if (value !== UNKNOWN_CONST) {

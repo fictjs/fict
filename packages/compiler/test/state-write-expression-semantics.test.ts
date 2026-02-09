@@ -110,4 +110,34 @@ describe('state write expression semantics', () => {
     )
     expect(values).toEqual([2, 8, 0, 5, 5, 7, 7])
   })
+
+  it('evaluates computed hook member assignment targets exactly once', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useBucket() {
+        let left = $state(1)
+        let right = $state(10)
+        return { left, right }
+      }
+
+      export function useComputedHookMemberWrites() {
+        const bucket = useBucket()
+        const keys = ['left', 'right', 'left', 'right']
+        let probe = 0
+
+        const assign = (bucket[keys[probe++]] += 2)
+        const post = bucket[keys[probe++]]++
+
+        return [probe, assign, post, bucket.left, bucket.right]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const raw = mod.useComputedHookMemberWrites() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual([2, 3, 10, 3, 11])
+  })
 })

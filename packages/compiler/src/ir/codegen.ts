@@ -1155,6 +1155,93 @@ function lowerExpressionImpl(
         return right
     }
   }
+  const buildStaticSignalKeyTest = (
+    keyRef: BabelCore.types.Identifier,
+    keys: (string | number)[],
+  ): BabelCore.types.Expression | null => {
+    if (keys.length === 0) return null
+    let test: BabelCore.types.Expression | null = null
+    for (const key of keys) {
+      const literal = typeof key === 'number' ? t.numericLiteral(key) : t.stringLiteral(String(key))
+      const eq = t.binaryExpression('===', t.cloneNode(keyRef, true), literal)
+      test = test ? t.logicalExpression('||', test, eq) : eq
+    }
+    return test
+  }
+  const lowerComputedHookSignalAssignment = (
+    objectName: string,
+    keyExpr: Expression,
+    signalKeys: (string | number)[],
+    operator: BabelCore.types.AssignmentExpression['operator'],
+    rightExpr: Expression,
+  ): BabelCore.types.Expression | null => {
+    const keyTestKeys = signalKeys.filter(
+      key => (typeof key === 'number' && Number.isFinite(key)) || typeof key === 'string',
+    )
+    if (keyTestKeys.length === 0) return null
+
+    const keyId = genTemp(ctx, 'key')
+    const keyRef = t.identifier(keyId.name)
+    const memberForAccessor = t.memberExpression(
+      t.identifier(objectName),
+      t.identifier(keyId.name),
+      true,
+    )
+    const current = t.callExpression(t.cloneNode(memberForAccessor, true), [])
+    const right = lowerExpression(rightExpr, ctx)
+    const signalWrite = lowerTrackedWriteCall(
+      memberForAccessor,
+      buildTrackedAssignmentNext(operator, current, t.cloneNode(right, true)),
+    )
+    const fallback = t.assignmentExpression(
+      operator,
+      t.memberExpression(t.identifier(objectName), t.identifier(keyId.name), true),
+      right,
+    )
+    const keyTest = buildStaticSignalKeyTest(keyRef, keyTestKeys)
+    if (!keyTest) return null
+    return t.callExpression(
+      t.arrowFunctionExpression(
+        [t.cloneNode(keyId, true)],
+        t.conditionalExpression(keyTest, signalWrite, fallback),
+      ),
+      [lowerExpression(keyExpr, ctx)],
+    )
+  }
+  const lowerComputedHookSignalUpdate = (
+    objectName: string,
+    keyExpr: Expression,
+    signalKeys: (string | number)[],
+    operator: '++' | '--',
+    prefix: boolean,
+  ): BabelCore.types.Expression | null => {
+    const keyTestKeys = signalKeys.filter(
+      key => (typeof key === 'number' && Number.isFinite(key)) || typeof key === 'string',
+    )
+    if (keyTestKeys.length === 0) return null
+
+    const keyId = genTemp(ctx, 'key')
+    const keyRef = t.identifier(keyId.name)
+    const signalUpdate = lowerTrackedUpdateCall(
+      t.memberExpression(t.identifier(objectName), t.identifier(keyId.name), true),
+      operator,
+      prefix,
+    )
+    const fallback = t.updateExpression(
+      operator,
+      t.memberExpression(t.identifier(objectName), t.identifier(keyId.name), true),
+      prefix,
+    )
+    const keyTest = buildStaticSignalKeyTest(keyRef, keyTestKeys)
+    if (!keyTest) return null
+    return t.callExpression(
+      t.arrowFunctionExpression(
+        [t.cloneNode(keyId, true)],
+        t.conditionalExpression(keyTest, signalUpdate, fallback),
+      ),
+      [lowerExpression(keyExpr, ctx)],
+    )
+  }
   const lowerTrackedUpdateCall = (
     callee: BabelCore.types.Expression,
     operator: '++' | '--',
@@ -1783,6 +1870,27 @@ function lowerExpressionImpl(
             const next = buildTrackedAssignmentNext(expr.operator, current, right)
             return lowerTrackedWriteCall(member, next)
           }
+          if (expr.left.computed) {
+            const signalKeys: (string | number)[] = []
+            if (info?.objectProps) {
+              for (const [key, accessorKind] of info.objectProps.entries()) {
+                if (accessorKind === 'signal') signalKeys.push(key)
+              }
+            }
+            if (info?.arrayProps) {
+              for (const [key, accessorKind] of info.arrayProps.entries()) {
+                if (accessorKind === 'signal') signalKeys.push(key)
+              }
+            }
+            const lowered = lowerComputedHookSignalAssignment(
+              deSSAVarName(expr.left.object.name),
+              expr.left.property as Expression,
+              signalKeys,
+              expr.operator as BabelCore.types.AssignmentExpression['operator'],
+              expr.right,
+            )
+            if (lowered) return lowered
+          }
         }
       }
       if (expr.left.kind === 'Identifier') {
@@ -1841,6 +1949,27 @@ function lowerExpressionImpl(
               expr.argument.optional,
             )
             return lowerTrackedUpdateCall(member, expr.operator, expr.prefix)
+          }
+          if (expr.argument.computed) {
+            const signalKeys: (string | number)[] = []
+            if (info?.objectProps) {
+              for (const [key, accessorKind] of info.objectProps.entries()) {
+                if (accessorKind === 'signal') signalKeys.push(key)
+              }
+            }
+            if (info?.arrayProps) {
+              for (const [key, accessorKind] of info.arrayProps.entries()) {
+                if (accessorKind === 'signal') signalKeys.push(key)
+              }
+            }
+            const lowered = lowerComputedHookSignalUpdate(
+              deSSAVarName(expr.argument.object.name),
+              expr.argument.property as Expression,
+              signalKeys,
+              expr.operator,
+              expr.prefix,
+            )
+            if (lowered) return lowered
           }
         }
       }
