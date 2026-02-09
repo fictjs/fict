@@ -3,8 +3,8 @@
     "counter-basic": {
       "helpers": 4,
       "regions": 0,
-      "sizeBytes": 969,
-      "gzipBytes": 423
+      "sizeBytes": 1005,
+      "gzipBytes": 441
     },
     "optional-chain": {
       "helpers": 3,
