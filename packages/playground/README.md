@@ -53,6 +53,7 @@ await server.stop()
 - `DELETE /api/sessions/:id/files`
 - `POST /api/sessions/:id/config`
 - `POST /api/sessions/:id/diagnostics`
+- `POST /api/sessions/:id/verify`
 - `POST /api/sessions/:id/share`
 - `POST /api/import`
 
@@ -60,4 +61,7 @@ await server.stop()
 
 - `resumable` and `functionSplitting` are available as live config toggles.
 - Session files are stored under `.fict-playground/sessions` and auto-cleaned after idle timeout.
+- `verify` runs diagnostics plus a real `vite build` check and returns consolidated pass/fail status.
+- Share/import payloads are size-limited and schema-validated to avoid unsafe snapshots.
+- API returns `400` for invalid request payloads and `404` for unknown session ids.
 - The package keeps runtime correctness paths isolated; no runtime package code is modified.

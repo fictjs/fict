@@ -49,6 +49,29 @@ export interface PlaygroundDiagnosticsResult {
   }
 }
 
+export interface PlaygroundBuildVerification {
+  success: boolean
+  durationMs: number
+  outputFiles: string[]
+  warnings: string[]
+  errors: string[]
+}
+
+export interface PlaygroundVerificationResult {
+  diagnostics: PlaygroundDiagnosticsResult
+  build: PlaygroundBuildVerification
+  summary: {
+    passed: boolean
+    durationMs: number
+    diagnosticsErrorCount: number
+    diagnosticsWarningCount: number
+    buildErrorCount: number
+    buildWarningCount: number
+    totalErrorCount: number
+    totalWarningCount: number
+  }
+}
+
 export interface PlaygroundSessionSummary {
   id: string
   templateId: string

@@ -85,6 +85,16 @@ interface RequestContext {
   runtime: ServerRuntime
 }
 
+class RequestError extends Error {
+  readonly status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.name = 'RequestError'
+    this.status = status
+  }
+}
+
 async function handleRequest(context: RequestContext): Promise<void> {
   const method = context.request.method ?? 'GET'
   const requestUrl = new URL(
@@ -188,6 +198,18 @@ async function handleRequest(context: RequestContext): Promise<void> {
       return
     }
 
+    const verifyMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/verify$/)
+    if (verifyMatch && method === 'POST') {
+      const sessionId = verifyMatch[1]
+      if (!sessionId) {
+        sendJson(context.response, 400, { error: 'session id is required' })
+        return
+      }
+      const verification = await context.manager.runVerification(sessionId)
+      sendJson(context.response, 200, verification)
+      return
+    }
+
     const configMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/config$/)
     if (configMatch && method === 'POST') {
       const sessionId = configMatch[1]
@@ -247,8 +269,8 @@ async function handleRequest(context: RequestContext): Promise<void> {
 
     sendJson(context.response, 404, { error: 'Not found' })
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown playground server error'
-    sendJson(context.response, 500, { error: message })
+    const mapped = mapRequestError(error)
+    sendJson(context.response, mapped.status, { error: mapped.message })
   }
 }
 
@@ -306,7 +328,11 @@ async function readJsonBody(request: IncomingMessage): Promise<Record<string, un
     return {}
   }
 
-  return JSON.parse(body) as Record<string, unknown>
+  try {
+    return JSON.parse(body) as Record<string, unknown>
+  } catch {
+    throw new RequestError(400, 'Invalid JSON payload')
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -355,4 +381,37 @@ function toConfigPatch(record: Record<string, unknown>): Partial<PlaygroundConfi
 function createOrigin(host: string, port: number): string {
   const publicHost = host === '0.0.0.0' ? '127.0.0.1' : host
   return `http://${publicHost}:${port}`
+}
+
+function mapRequestError(error: unknown): { status: number; message: string } {
+  if (error instanceof RequestError) {
+    return { status: error.status, message: error.message }
+  }
+
+  if (!(error instanceof Error)) {
+    return { status: 500, message: 'Unknown playground server error' }
+  }
+
+  if (error.message.startsWith('Unknown playground session:')) {
+    return { status: 404, message: error.message }
+  }
+
+  if (isClientErrorMessage(error.message)) {
+    return { status: 400, message: error.message }
+  }
+
+  return { status: 500, message: error.message }
+}
+
+function isClientErrorMessage(message: string): boolean {
+  return (
+    message.startsWith('Unknown playground template:') ||
+    message === 'File path cannot be empty' ||
+    message === 'Path traversal is not allowed' ||
+    message === 'File path escapes session root' ||
+    message === 'Invalid snapshot payload' ||
+    message === 'Unsupported share payload version' ||
+    message === 'Unsupported snapshot schema version' ||
+    message === 'Share payload exceeds safe size limits'
+  )
 }

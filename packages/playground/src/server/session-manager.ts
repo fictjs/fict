@@ -6,12 +6,14 @@ import { collectSessionDiagnostics } from './diagnostics'
 import { createTemplateFiles, getPlaygroundTemplate, listPlaygroundTemplates } from './templates'
 import type {
   CreateSessionInput,
+  PlaygroundBuildVerification,
   PlaygroundConfig,
   PlaygroundDiagnosticsResult,
   PlaygroundSessionSnapshot,
   PlaygroundSessionState,
   PlaygroundSessionSummary,
   PlaygroundTemplate,
+  PlaygroundVerificationResult,
 } from './types'
 import {
   createSessionId,
@@ -228,6 +230,46 @@ export class PlaygroundSessionManager {
     return diagnostics
   }
 
+  async runVerification(sessionId: string): Promise<PlaygroundVerificationResult> {
+    const session = this.requireSession(sessionId)
+    const startedAt = Date.now()
+
+    const diagnostics = await collectSessionDiagnostics({
+      rootDir: session.summary.rootDir,
+      config: session.summary.config,
+    })
+    const build = await this.runBuildVerification(
+      session.summary.id,
+      session.summary.rootDir,
+      session.summary.config,
+    )
+    const durationMs = Date.now() - startedAt
+
+    const diagnosticsErrorCount = diagnostics.summary.errorCount
+    const diagnosticsWarningCount = diagnostics.summary.warningCount
+    const buildErrorCount = build.errors.length
+    const buildWarningCount = build.warnings.length
+    const totalErrorCount = diagnosticsErrorCount + buildErrorCount
+    const totalWarningCount = diagnosticsWarningCount + buildWarningCount
+
+    session.summary.updatedAt = Date.now()
+
+    return {
+      diagnostics,
+      build,
+      summary: {
+        passed: totalErrorCount === 0,
+        durationMs,
+        diagnosticsErrorCount,
+        diagnosticsWarningCount,
+        buildErrorCount,
+        buildWarningCount,
+        totalErrorCount,
+        totalWarningCount,
+      },
+    }
+  }
+
   async snapshot(sessionId: string): Promise<PlaygroundSessionSnapshot> {
     const state = await this.getSessionState(sessionId)
     return {
@@ -287,29 +329,11 @@ export class PlaygroundSessionManager {
     rootDir: string,
     config: PlaygroundConfig,
   ): Promise<{ server: ViteDevServerLike; previewUrl: string }> {
-    const { default: fict } = (await import('@fictjs/vite-plugin')) as {
-      default: (options?: Record<string, unknown>) => unknown
-    }
-    const { default: fictDevTools } = (await import('@fictjs/devtools/vite')) as {
-      default: (options?: Record<string, unknown>) => unknown[]
-    }
     const { createServer: createViteServer } = (await import('vite')) as {
       createServer: (options: unknown) => Promise<ViteDevServerLike>
     }
 
-    const plugins = [
-      fict({
-        strictGuarantee: config.strictGuarantee,
-        strictReactivity: config.strictReactivity,
-        lazyConditional: config.lazyConditional,
-        resumable: config.resumable,
-        functionSplitting: config.functionSplitting,
-      }),
-    ]
-
-    if (config.devtools) {
-      plugins.push(...fictDevTools({ enabled: true }))
-    }
+    const plugins = await this.createVitePlugins(config)
 
     const server = await createViteServer({
       configFile: false,
@@ -347,6 +371,99 @@ export class PlaygroundSessionManager {
       server,
       previewUrl,
     }
+  }
+
+  private async runBuildVerification(
+    sessionId: string,
+    rootDir: string,
+    config: PlaygroundConfig,
+  ): Promise<PlaygroundBuildVerification> {
+    const startedAt = Date.now()
+    const outDir = path.join(this.workspaceRoot, '.fict-playground', 'build-check', sessionId)
+    const warnings: string[] = []
+    const errors: string[] = []
+    const outputFiles: string[] = []
+
+    const { build, createLogger } = (await import('vite')) as unknown as {
+      build: (options: unknown) => Promise<unknown>
+      createLogger: (level?: string, options?: { allowClearScreen?: boolean }) => ViteLoggerLike
+    }
+    const plugins = await this.createVitePlugins(config)
+
+    const baseLogger = createLogger('warn', { allowClearScreen: false })
+    const logger: ViteLoggerLike = {
+      ...baseLogger,
+      warn(message, options) {
+        warnings.push(normalizeLogMessage(message))
+        baseLogger.warn(message, options)
+      },
+      error(message, options) {
+        errors.push(normalizeLogMessage(message))
+        baseLogger.error(message, options)
+      },
+    }
+
+    await fs.rm(outDir, { recursive: true, force: true })
+
+    try {
+      await build({
+        configFile: false,
+        root: rootDir,
+        clearScreen: false,
+        logLevel: 'silent',
+        resolve: {
+          alias: this.createWorkspaceAliases(),
+        },
+        plugins,
+        build: {
+          outDir,
+          emptyOutDir: true,
+          minify: false,
+          sourcemap: true,
+        },
+        logger,
+      })
+
+      outputFiles.push(...(await listRelativeFiles(outDir)))
+    } catch (error) {
+      errors.push(formatUnknownError(error))
+    } finally {
+      await fs.rm(outDir, { recursive: true, force: true })
+    }
+
+    return {
+      success: errors.length === 0,
+      durationMs: Date.now() - startedAt,
+      outputFiles,
+      warnings: uniqueMessages(warnings),
+      errors: uniqueMessages(errors),
+    }
+  }
+
+  private createFictPluginOptions(config: PlaygroundConfig): Record<string, unknown> {
+    return {
+      strictGuarantee: config.strictGuarantee,
+      strictReactivity: config.strictReactivity,
+      lazyConditional: config.lazyConditional,
+      resumable: config.resumable,
+      functionSplitting: config.functionSplitting,
+    }
+  }
+
+  private async createVitePlugins(config: PlaygroundConfig): Promise<unknown[]> {
+    const { default: fict } = (await import('@fictjs/vite-plugin')) as {
+      default: (options?: Record<string, unknown>) => unknown
+    }
+    const plugins: unknown[] = [fict(this.createFictPluginOptions(config))]
+
+    if (config.devtools) {
+      const { default: fictDevTools } = (await import('@fictjs/devtools/vite')) as {
+        default: (options?: Record<string, unknown>) => unknown[]
+      }
+      plugins.push(...fictDevTools({ enabled: true }))
+    }
+
+    return plugins
   }
 
   private createWorkspaceAliases(): AliasOptions {
@@ -390,6 +507,12 @@ interface ViteDevServerLike {
   }
 }
 
+interface ViteLoggerLike {
+  warn: (message: string, options?: unknown) => void
+  error: (message: string, options?: unknown) => void
+  [key: string]: unknown
+}
+
 function resolveConfig(
   template: PlaygroundTemplate | undefined,
   patch: Partial<PlaygroundConfig> | undefined,
@@ -415,4 +538,79 @@ function areConfigsEqual(left: PlaygroundConfig, right: PlaygroundConfig): boole
     left.functionSplitting === right.functionSplitting &&
     left.devtools === right.devtools
   )
+}
+
+async function listRelativeFiles(rootDir: string): Promise<string[]> {
+  const files: string[] = []
+
+  async function walk(currentDir: string): Promise<void> {
+    const entries = await fs.readdir(currentDir, { withFileTypes: true })
+    for (const entry of entries) {
+      const absolutePath = path.join(currentDir, entry.name)
+      if (entry.isDirectory()) {
+        await walk(absolutePath)
+        continue
+      }
+      if (!entry.isFile()) continue
+      files.push(toPosixPath(path.relative(rootDir, absolutePath)))
+    }
+  }
+
+  try {
+    await walk(rootDir)
+  } catch {
+    return []
+  }
+
+  files.sort((a, b) => a.localeCompare(b))
+  return files
+}
+
+function uniqueMessages(messages: string[]): string[] {
+  const deduped = messages
+    .map(message => message.trim())
+    .filter(Boolean)
+    .filter(message => !message.startsWith('(!)'))
+  return Array.from(new Set(deduped))
+}
+
+function formatUnknownError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
+}
+
+function normalizeLogMessage(message: unknown): string {
+  if (typeof message === 'string') {
+    return stripAnsi(message)
+  }
+  if (message instanceof Error) {
+    return message.message
+  }
+  return String(message)
+}
+
+function stripAnsi(value: string): string {
+  let result = ''
+  let index = 0
+
+  while (index < value.length) {
+    const char = value[index]
+    if (char === '\u001b' && value[index + 1] === '[') {
+      index += 2
+      while (index < value.length) {
+        const code = value.charCodeAt(index)
+        index += 1
+        if (code >= 0x40 && code <= 0x7e) {
+          break
+        }
+      }
+      continue
+    }
+    result += char
+    index += 1
+  }
+
+  return result
 }

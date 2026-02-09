@@ -5,6 +5,7 @@ const state = {
   session: null,
   currentFilePath: '',
   diagnostics: null,
+  verification: null,
   artifacts: [],
   selectedArtifactPath: '',
   saveTimer: null,
@@ -49,6 +50,7 @@ function renderLayout() {
         </div>
         <div class="topbar-actions">
           <button id="btn-run-diagnostics">Run Diagnostics</button>
+          <button id="btn-run-verify">Verify (Full)</button>
           <button id="btn-share" class="ghost">Share</button>
           <button id="btn-import" class="ghost">Import</button>
           <button id="btn-reset" class="ghost">New Session</button>
@@ -132,6 +134,7 @@ function renderLayout() {
           <div class="tabs">
             <button id="tab-diagnostics" class="active">Diagnostics</button>
             <button id="tab-artifacts">Artifacts</button>
+            <button id="tab-verify">Verify</button>
           </div>
 
           <div id="panel-diagnostics">
@@ -144,6 +147,11 @@ function renderLayout() {
           <div id="panel-artifacts" hidden>
             <div id="artifact-list" class="artifact-list"></div>
             <pre id="artifact-viewer" class="code-viewer"></pre>
+          </div>
+
+          <div id="panel-verify" hidden>
+            <div id="verify-summary" class="status">No verification run yet</div>
+            <pre id="verify-viewer" class="code-viewer"></pre>
           </div>
         </section>
       </main>
@@ -168,11 +176,18 @@ function renderLayout() {
   elements.panelArtifacts = byId('panel-artifacts')
   elements.tabDiagnostics = byId('tab-diagnostics')
   elements.tabArtifacts = byId('tab-artifacts')
+  elements.tabVerify = byId('tab-verify')
+  elements.panelVerify = byId('panel-verify')
+  elements.verifySummary = byId('verify-summary')
+  elements.verifyViewer = byId('verify-viewer')
 }
 
 function bindStaticListeners() {
   byId('btn-run-diagnostics').addEventListener('click', () => {
     void runDiagnostics()
+  })
+  byId('btn-run-verify').addEventListener('click', () => {
+    void runVerification()
   })
 
   byId('btn-share').addEventListener('click', () => {
@@ -202,6 +217,7 @@ function bindStaticListeners() {
     if (!session || !filePath) return
 
     session.files[filePath] = elements.codeEditor.value
+    invalidateVerification()
     updateEditorStatus('dirty')
     scheduleSave()
   })
@@ -258,6 +274,7 @@ function bindStaticListeners() {
 
   elements.tabDiagnostics.addEventListener('click', () => setActiveTab('diagnostics'))
   elements.tabArtifacts.addEventListener('click', () => setActiveTab('artifacts'))
+  elements.tabVerify.addEventListener('click', () => setActiveTab('verify'))
 }
 
 async function createSession(templateId) {
@@ -269,12 +286,14 @@ async function createSession(templateId) {
       body: { templateId },
     })
     state.diagnostics = null
+    state.verification = null
     state.artifacts = []
     state.selectedArtifactPath = ''
     hydrateSession(response.session)
     setActiveTab('diagnostics')
     renderDiagnostics()
     renderArtifacts()
+    renderVerification()
     updateEditorStatus('idle')
   } catch (error) {
     alert(`Failed to create session: ${String(error)}`)
@@ -290,6 +309,7 @@ async function importSharedSession(token) {
       method: 'POST',
       body: { token },
     })
+    state.verification = null
     hydrateSession(response.session)
     await runDiagnostics()
   } catch (error) {
@@ -316,6 +336,7 @@ function hydrateSession(session) {
   renderFileList()
   renderEditor()
   renderPreview()
+  renderVerification()
 }
 
 function renderSessionMeta() {
@@ -442,6 +463,33 @@ async function runDiagnostics() {
   }
 }
 
+async function runVerification() {
+  if (!state.session) return
+
+  setBusy(true)
+  try {
+    const result = await fetchJson(`/api/sessions/${state.session.id}/verify`, {
+      method: 'POST',
+    })
+
+    state.verification = result
+    state.diagnostics = result.diagnostics
+    state.artifacts = result.diagnostics.artifacts || []
+    if (!state.selectedArtifactPath && state.artifacts.length > 0) {
+      state.selectedArtifactPath = state.artifacts[0].filePath
+    }
+
+    renderDiagnostics()
+    renderArtifacts()
+    renderVerification()
+    setActiveTab('verify')
+  } catch (error) {
+    alert(`Verification failed: ${String(error)}`)
+  } finally {
+    setBusy(false)
+  }
+}
+
 function renderDiagnostics() {
   const diagnostics = state.diagnostics
   if (!diagnostics) {
@@ -512,10 +560,61 @@ function selectArtifact(filePath) {
 
 function setActiveTab(tab) {
   const isDiagnostics = tab === 'diagnostics'
+  const isArtifacts = tab === 'artifacts'
+  const isVerify = tab === 'verify'
   elements.panelDiagnostics.hidden = !isDiagnostics
-  elements.panelArtifacts.hidden = isDiagnostics
+  elements.panelArtifacts.hidden = !isArtifacts
+  elements.panelVerify.hidden = !isVerify
   elements.tabDiagnostics.classList.toggle('active', isDiagnostics)
-  elements.tabArtifacts.classList.toggle('active', !isDiagnostics)
+  elements.tabArtifacts.classList.toggle('active', isArtifacts)
+  elements.tabVerify.classList.toggle('active', isVerify)
+}
+
+function invalidateVerification() {
+  if (!state.verification) return
+  state.verification = null
+  renderVerification()
+}
+
+function renderVerification() {
+  const verification = state.verification
+  if (!verification) {
+    elements.verifySummary.className = 'status'
+    elements.verifySummary.textContent = 'No verification run yet'
+    elements.verifyViewer.textContent = ''
+    return
+  }
+
+  const summary = verification.summary
+  const statusClass = summary.passed
+    ? 'status ok'
+    : summary.totalErrorCount > 0
+      ? 'status error'
+      : 'status warning'
+  elements.verifySummary.className = statusClass
+  elements.verifySummary.textContent = `passed=${summary.passed} · errors=${summary.totalErrorCount} · warnings=${summary.totalWarningCount} · ${summary.durationMs}ms`
+
+  const lines = [
+    `Diagnostics: errors=${summary.diagnosticsErrorCount}, warnings=${summary.diagnosticsWarningCount}`,
+    `Build: success=${verification.build.success}, errors=${summary.buildErrorCount}, warnings=${summary.buildWarningCount}, duration=${verification.build.durationMs}ms`,
+    '',
+    'Build output files:',
+    ...verification.build.outputFiles.map(filePath => `- ${filePath}`),
+    '',
+  ]
+
+  if (verification.build.warnings.length > 0) {
+    lines.push('Build warnings:')
+    lines.push(...verification.build.warnings.map(message => `- ${message}`))
+    lines.push('')
+  }
+
+  if (verification.build.errors.length > 0) {
+    lines.push('Build errors:')
+    lines.push(...verification.build.errors.map(message => `- ${message}`))
+  }
+
+  elements.verifyViewer.textContent = lines.join('\n').trim()
 }
 
 function selectFile(filePath) {
@@ -545,6 +644,7 @@ async function addFile() {
 
   state.session.files[normalized] = content
   state.currentFilePath = normalized
+  invalidateVerification()
   renderFileList()
   renderEditor()
   updateEditorStatus('dirty')
@@ -565,6 +665,7 @@ async function deleteFile(filePath) {
   })
 
   hydrateSession(response.session)
+  invalidateVerification()
   await runDiagnostics()
 }
 
@@ -629,6 +730,7 @@ async function updateConfig(patch) {
       files: state.session.files,
     }
 
+    invalidateVerification()
     renderSessionMeta()
     renderConfig()
     renderPreview()

@@ -8,6 +8,7 @@ export type {
   CreateSessionInput,
   PlaygroundArtifact,
   PlaygroundConfig,
+  PlaygroundBuildVerification,
   PlaygroundDiagnostic,
   PlaygroundDiagnosticSeverity,
   PlaygroundDiagnosticSource,
@@ -18,5 +19,6 @@ export type {
   PlaygroundSessionState,
   PlaygroundSessionSummary,
   PlaygroundTemplate,
+  PlaygroundVerificationResult,
   StartedPlaygroundServer,
 } from './server/types'
