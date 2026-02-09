@@ -507,9 +507,15 @@ function prefetchQrl(qrl: string): void {
 function handleResumableEvent(event: Event): void {
   const promise = handleResumableEventAsync(event)
   pendingHandlers.add(promise)
-  promise.finally(() => {
-    pendingHandlers.delete(promise)
-  })
+  void promise
+    .catch(error => {
+      if (typeof console !== 'undefined' && typeof console.error === 'function') {
+        console.error('[fict/loader] Failed to handle resumable event.', error)
+      }
+    })
+    .finally(() => {
+      pendingHandlers.delete(promise)
+    })
 }
 
 async function handleResumableEventAsync(event: Event): Promise<void> {

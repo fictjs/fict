@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { cleanupEventListeners, installResumableLoader, type SnapshotIssue } from '../src/loader'
+import {
+  cleanupEventListeners,
+  installResumableLoader,
+  waitForPendingHandlers,
+  type SnapshotIssue,
+} from '../src/loader'
 import {
   FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
   __fictDisableResumable,
@@ -148,5 +153,36 @@ describe('resumable loader snapshot validation', () => {
     expect(onIssue).toHaveBeenCalledWith(
       expect.objectContaining({ code: 'snapshot_unsupported_version' }),
     )
+  })
+
+  it('handles resumable handler failures without unhandled promise rejections', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const button = doc.createElement('button')
+    button.setAttribute('on:click', '/__fict_missing_module__.js#default')
+    host.appendChild(button)
+    doc.body.appendChild(host)
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    const ev = new Event('click', { bubbles: true, cancelable: true })
+    button.dispatchEvent(ev)
+    await waitForPendingHandlers()
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      '[fict/loader] Failed to handle resumable event.',
+      expect.anything(),
+    )
+    errorSpy.mockRestore()
   })
 })
