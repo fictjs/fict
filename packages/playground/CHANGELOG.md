@@ -8,3 +8,4 @@
 - implement full local playground workbench with session engine, diagnostics aggregation, share/import, and UI
 - add full verification endpoint and verify panel (diagnostics + vite build)
 - harden share payload limits and improve HTTP 400/404 error mapping
+- add multi-tenant control plane: bearer auth, RBAC, tenant quotas, request metrics, and audit endpoints

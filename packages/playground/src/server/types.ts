@@ -1,4 +1,41 @@
 export type PlaygroundProfile = 'app-default' | 'ci-hard-gate' | 'migration'
+export type PlaygroundRole = 'viewer' | 'developer' | 'admin'
+
+export interface PlaygroundAuthContext {
+  tenantId: string
+  userId: string
+  role: PlaygroundRole
+}
+
+export interface PlaygroundAuthTokenConfig {
+  tenantId: string
+  userId: string
+  role: PlaygroundRole
+}
+
+export interface PlaygroundAuthOptions {
+  allowAnonymous?: boolean
+  anonymousTenantId?: string
+  anonymousUserId?: string
+  tokens?: Record<string, PlaygroundAuthTokenConfig>
+}
+
+export interface PlaygroundTenantQuota {
+  maxSessions: number
+  maxRequestsPerMinute: number
+  maxVerificationsPerHour: number
+}
+
+export interface PlaygroundTenantQuotaOptions {
+  defaultTenant?: Partial<PlaygroundTenantQuota>
+  tenants?: Record<string, Partial<PlaygroundTenantQuota>>
+}
+
+export interface PlaygroundRuntimeLimits {
+  maxConcurrentVerifications?: number
+  verifyTimeoutMs?: number
+  auditLogEntries?: number
+}
 
 export interface PlaygroundConfig {
   profile: PlaygroundProfile
@@ -77,6 +114,8 @@ export interface PlaygroundSessionSummary {
   templateId: string
   rootDir: string
   previewUrl: string
+  tenantId: string
+  ownerUserId: string
   config: PlaygroundConfig
   entryFile: string
   createdAt: number
@@ -108,6 +147,9 @@ export interface PlaygroundServerOptions {
   open?: boolean
   idleTimeoutMs?: number
   maxSessions?: number
+  auth?: PlaygroundAuthOptions
+  quotas?: PlaygroundTenantQuotaOptions
+  limits?: PlaygroundRuntimeLimits
 }
 
 export interface StartedPlaygroundServer {

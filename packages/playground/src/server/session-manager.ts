@@ -2,10 +2,12 @@ import { promises as fs } from 'node:fs'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 
+import { AsyncLimiter, withTimeout } from './async-primitives'
 import { collectSessionDiagnostics } from './diagnostics'
 import { createTemplateFiles, getPlaygroundTemplate, listPlaygroundTemplates } from './templates'
 import type {
   CreateSessionInput,
+  PlaygroundAuthContext,
   PlaygroundBuildVerification,
   PlaygroundConfig,
   PlaygroundDiagnosticsResult,
@@ -37,10 +39,19 @@ interface SessionManagerOptions {
   previewHost?: string
   idleTimeoutMs?: number
   maxSessions?: number
+  maxConcurrentVerifications?: number
+  verifyTimeoutMs?: number
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 1000 * 60 * 30
 const DEFAULT_MAX_SESSIONS = 8
+const DEFAULT_MAX_CONCURRENT_VERIFICATIONS = 2
+const DEFAULT_VERIFY_TIMEOUT_MS = 30_000
+const SYSTEM_ACCESS_CONTEXT: PlaygroundAuthContext = {
+  tenantId: 'system',
+  userId: 'system',
+  role: 'admin',
+}
 
 const profileDefaults: Record<PlaygroundConfig['profile'], PlaygroundConfig> = {
   'app-default': {
@@ -79,6 +90,9 @@ export class PlaygroundSessionManager {
   private readonly idleTimeoutMs: number
   private readonly maxSessions: number
   private readonly sessions = new Map<string, SessionRecord>()
+  private readonly sessionQueueTails = new Map<string, Promise<void>>()
+  private readonly verifyLimiter: AsyncLimiter
+  private readonly verifyTimeoutMs: number
   private readonly cleanupTimer: NodeJS.Timeout
 
   constructor(options: SessionManagerOptions = {}) {
@@ -91,6 +105,10 @@ export class PlaygroundSessionManager {
     this.previewHost = options.previewHost ?? '127.0.0.1'
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS
     this.maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS
+    this.verifyLimiter = new AsyncLimiter(
+      options.maxConcurrentVerifications ?? DEFAULT_MAX_CONCURRENT_VERIFICATIONS,
+    )
+    this.verifyTimeoutMs = options.verifyTimeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS
 
     this.cleanupTimer = setInterval(() => {
       void this.collectStaleSessions()
@@ -102,7 +120,10 @@ export class PlaygroundSessionManager {
     return listPlaygroundTemplates()
   }
 
-  async createSession(input: Partial<CreateSessionInput> = {}): Promise<PlaygroundSessionState> {
+  async createSession(
+    input: Partial<CreateSessionInput> = {},
+    access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
+  ): Promise<PlaygroundSessionState> {
     const templateId = input.templateId ?? this.templates[0]?.id
     if (!templateId) {
       throw new Error('No playground templates are available')
@@ -134,6 +155,8 @@ export class PlaygroundSessionManager {
       templateId: template.id,
       rootDir: sessionRoot,
       previewUrl: preview.previewUrl,
+      tenantId: access.tenantId,
+      ownerUserId: access.userId,
       config,
       entryFile: template.entryFile,
       createdAt: now,
@@ -145,19 +168,28 @@ export class PlaygroundSessionManager {
       viteServer: preview.server,
     })
 
-    return this.getSessionState(sessionId)
+    return this.getSessionState(sessionId, access)
   }
 
-  async importSnapshot(snapshot: PlaygroundSessionSnapshot): Promise<PlaygroundSessionState> {
-    return this.createSession({
-      templateId: snapshot.templateId,
-      config: snapshot.config,
-      files: snapshot.files,
-    })
+  async importSnapshot(
+    snapshot: PlaygroundSessionSnapshot,
+    access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
+  ): Promise<PlaygroundSessionState> {
+    return this.createSession(
+      {
+        templateId: snapshot.templateId,
+        config: snapshot.config,
+        files: snapshot.files,
+      },
+      access,
+    )
   }
 
-  async getSessionState(sessionId: string): Promise<PlaygroundSessionState> {
-    const session = this.requireSession(sessionId)
+  async getSessionState(
+    sessionId: string,
+    access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
+  ): Promise<PlaygroundSessionState> {
+    const session = this.requireSession(sessionId, access)
     const files = await readProjectFiles(session.summary.rootDir)
     return {
       ...session.summary,
@@ -168,110 +200,143 @@ export class PlaygroundSessionManager {
   async updateSessionConfig(
     sessionId: string,
     patch: Partial<PlaygroundConfig>,
+    access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
   ): Promise<PlaygroundSessionSummary> {
-    const session = this.requireSession(sessionId)
-    const mergedConfig = resolveConfig(undefined, {
-      ...session.summary.config,
-      ...patch,
-    })
+    return this.enqueueSessionTask(sessionId, async () => {
+      const session = this.requireSession(sessionId, access)
+      const mergedConfig = resolveConfig(undefined, {
+        ...session.summary.config,
+        ...patch,
+      })
 
-    if (areConfigsEqual(session.summary.config, mergedConfig)) {
+      if (areConfigsEqual(session.summary.config, mergedConfig)) {
+        return session.summary
+      }
+
+      const nextPreview = await this.startPreviewServer(session.summary.rootDir, mergedConfig)
+
+      await session.viteServer.close()
+      session.viteServer = nextPreview.server
+      session.summary = {
+        ...session.summary,
+        config: mergedConfig,
+        previewUrl: nextPreview.previewUrl,
+        updatedAt: Date.now(),
+      }
+
       return session.summary
-    }
-
-    const nextPreview = await this.startPreviewServer(session.summary.rootDir, mergedConfig)
-
-    await session.viteServer.close()
-    session.viteServer = nextPreview.server
-    session.summary = {
-      ...session.summary,
-      config: mergedConfig,
-      previewUrl: nextPreview.previewUrl,
-      updatedAt: Date.now(),
-    }
-
-    return session.summary
+    })
   }
 
   async updateFile(
     sessionId: string,
     filePath: string,
     content: string,
+    access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
   ): Promise<PlaygroundSessionState> {
-    const session = this.requireSession(sessionId)
-    const normalizedPath = normalizeRelativeFilePath(filePath)
-    const absolutePath = resolveSessionFilePath(session.summary.rootDir, normalizedPath)
+    return this.enqueueSessionTask(sessionId, async () => {
+      const session = this.requireSession(sessionId, access)
+      const normalizedPath = normalizeRelativeFilePath(filePath)
+      const absolutePath = resolveSessionFilePath(session.summary.rootDir, normalizedPath)
 
-    await ensureDir(path.dirname(absolutePath))
-    await fs.writeFile(absolutePath, content, 'utf8')
+      await ensureDir(path.dirname(absolutePath))
+      await fs.writeFile(absolutePath, content, 'utf8')
 
-    session.summary.updatedAt = Date.now()
-    return this.getSessionState(sessionId)
-  }
-
-  async deleteFile(sessionId: string, filePath: string): Promise<PlaygroundSessionState> {
-    const session = this.requireSession(sessionId)
-    const normalizedPath = normalizeRelativeFilePath(filePath)
-    const absolutePath = resolveSessionFilePath(session.summary.rootDir, normalizedPath)
-
-    await fs.rm(absolutePath, { force: true })
-
-    session.summary.updatedAt = Date.now()
-    return this.getSessionState(sessionId)
-  }
-
-  async runDiagnostics(sessionId: string): Promise<PlaygroundDiagnosticsResult> {
-    const session = this.requireSession(sessionId)
-    const diagnostics = await collectSessionDiagnostics({
-      rootDir: session.summary.rootDir,
-      config: session.summary.config,
+      session.summary.updatedAt = Date.now()
+      return this.getSessionState(sessionId, access)
     })
-    session.summary.updatedAt = Date.now()
-    return diagnostics
   }
 
-  async runVerification(sessionId: string): Promise<PlaygroundVerificationResult> {
-    const session = this.requireSession(sessionId)
-    const startedAt = Date.now()
+  async deleteFile(
+    sessionId: string,
+    filePath: string,
+    access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
+  ): Promise<PlaygroundSessionState> {
+    return this.enqueueSessionTask(sessionId, async () => {
+      const session = this.requireSession(sessionId, access)
+      const normalizedPath = normalizeRelativeFilePath(filePath)
+      const absolutePath = resolveSessionFilePath(session.summary.rootDir, normalizedPath)
 
-    const diagnostics = await collectSessionDiagnostics({
-      rootDir: session.summary.rootDir,
-      config: session.summary.config,
+      await fs.rm(absolutePath, { force: true })
+
+      session.summary.updatedAt = Date.now()
+      return this.getSessionState(sessionId, access)
     })
-    const build = await this.runBuildVerification(
-      session.summary.id,
-      session.summary.rootDir,
-      session.summary.config,
-    )
-    const durationMs = Date.now() - startedAt
-
-    const diagnosticsErrorCount = diagnostics.summary.errorCount
-    const diagnosticsWarningCount = diagnostics.summary.warningCount
-    const buildErrorCount = build.errors.length
-    const buildWarningCount = build.warnings.length
-    const totalErrorCount = diagnosticsErrorCount + buildErrorCount
-    const totalWarningCount = diagnosticsWarningCount + buildWarningCount
-
-    session.summary.updatedAt = Date.now()
-
-    return {
-      diagnostics,
-      build,
-      summary: {
-        passed: totalErrorCount === 0,
-        durationMs,
-        diagnosticsErrorCount,
-        diagnosticsWarningCount,
-        buildErrorCount,
-        buildWarningCount,
-        totalErrorCount,
-        totalWarningCount,
-      },
-    }
   }
 
-  async snapshot(sessionId: string): Promise<PlaygroundSessionSnapshot> {
-    const state = await this.getSessionState(sessionId)
+  async runDiagnostics(
+    sessionId: string,
+    access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
+  ): Promise<PlaygroundDiagnosticsResult> {
+    return this.enqueueSessionTask(sessionId, async () => {
+      const session = this.requireSession(sessionId, access)
+      const diagnostics = await collectSessionDiagnostics({
+        rootDir: session.summary.rootDir,
+        config: session.summary.config,
+      })
+      session.summary.updatedAt = Date.now()
+      return diagnostics
+    })
+  }
+
+  async runVerification(
+    sessionId: string,
+    access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
+  ): Promise<PlaygroundVerificationResult> {
+    return this.enqueueSessionTask(sessionId, async () => {
+      return this.verifyLimiter.run(async () => {
+        return withTimeout(
+          this.verifyTimeoutMs,
+          `Verification timed out after ${this.verifyTimeoutMs}ms`,
+          async () => {
+            const session = this.requireSession(sessionId, access)
+            const startedAt = Date.now()
+
+            const diagnostics = await collectSessionDiagnostics({
+              rootDir: session.summary.rootDir,
+              config: session.summary.config,
+            })
+            const build = await this.runBuildVerification(
+              session.summary.id,
+              session.summary.rootDir,
+              session.summary.config,
+            )
+            const durationMs = Date.now() - startedAt
+
+            const diagnosticsErrorCount = diagnostics.summary.errorCount
+            const diagnosticsWarningCount = diagnostics.summary.warningCount
+            const buildErrorCount = build.errors.length
+            const buildWarningCount = build.warnings.length
+            const totalErrorCount = diagnosticsErrorCount + buildErrorCount
+            const totalWarningCount = diagnosticsWarningCount + buildWarningCount
+
+            session.summary.updatedAt = Date.now()
+
+            return {
+              diagnostics,
+              build,
+              summary: {
+                passed: totalErrorCount === 0,
+                durationMs,
+                diagnosticsErrorCount,
+                diagnosticsWarningCount,
+                buildErrorCount,
+                buildWarningCount,
+                totalErrorCount,
+                totalWarningCount,
+              },
+            }
+          },
+        )
+      })
+    })
+  }
+
+  async snapshot(
+    sessionId: string,
+    access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
+  ): Promise<PlaygroundSessionSnapshot> {
+    const state = await this.getSessionState(sessionId, access)
     return {
       version: 1,
       templateId: state.templateId,
@@ -281,13 +346,17 @@ export class PlaygroundSessionManager {
     }
   }
 
-  async disposeSession(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId)
+  async disposeSession(
+    sessionId: string,
+    access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
+  ): Promise<void> {
+    const session = this.requireSessionOrNull(sessionId, access)
     if (!session) return
 
     this.sessions.delete(sessionId)
     await session.viteServer.close()
     await fs.rm(session.summary.rootDir, { recursive: true, force: true })
+    this.sessionQueueTails.delete(sessionId)
   }
 
   async disposeAll(): Promise<void> {
@@ -298,12 +367,50 @@ export class PlaygroundSessionManager {
     }
   }
 
-  private requireSession(sessionId: string): SessionRecord {
+  countSessionsForTenant(tenantId: string): number {
+    let count = 0
+    for (const session of this.sessions.values()) {
+      if (session.summary.tenantId === tenantId) {
+        count += 1
+      }
+    }
+    return count
+  }
+
+  private requireSession(sessionId: string, access: PlaygroundAuthContext): SessionRecord {
     const session = this.sessions.get(sessionId)
     if (!session) {
       throw new Error(`Unknown playground session: ${sessionId}`)
     }
+    if (session.summary.tenantId !== access.tenantId && access.role !== 'admin') {
+      throw new Error(`Session access denied for tenant: ${access.tenantId}`)
+    }
     return session
+  }
+
+  private requireSessionOrNull(
+    sessionId: string,
+    access: PlaygroundAuthContext,
+  ): SessionRecord | null {
+    const session = this.sessions.get(sessionId)
+    if (!session) return null
+    if (session.summary.tenantId !== access.tenantId && access.role !== 'admin') {
+      throw new Error(`Session access denied for tenant: ${access.tenantId}`)
+    }
+    return session
+  }
+
+  private enqueueSessionTask<T>(sessionId: string, task: () => Promise<T>): Promise<T> {
+    const previous = this.sessionQueueTails.get(sessionId) ?? Promise.resolve()
+    const result = previous.catch(noop).then(task)
+    const nextTail = result.then(noop, noop)
+    this.sessionQueueTails.set(sessionId, nextTail)
+
+    return result.finally(() => {
+      if (this.sessionQueueTails.get(sessionId) === nextTail) {
+        this.sessionQueueTails.delete(sessionId)
+      }
+    })
   }
 
   private async enforceSessionCapacity(): Promise<void> {
@@ -613,4 +720,8 @@ function stripAnsi(value: string): string {
   }
 
   return result
+}
+
+function noop(): void {
+  // no-op
 }

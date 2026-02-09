@@ -21,8 +21,10 @@ interface DiagnosticsInput {
 export async function collectSessionDiagnostics(
   input: DiagnosticsInput,
 ): Promise<PlaygroundDiagnosticsResult> {
-  const compiler = await collectCompilerDiagnostics(input)
-  const typescript = await collectTypeScriptDiagnostics(input)
+  const [compiler, typescript] = await Promise.all([
+    collectCompilerDiagnostics(input),
+    collectTypeScriptDiagnostics(input),
+  ])
 
   const diagnostics = [...compiler.diagnostics, ...typescript]
   diagnostics.sort(compareDiagnostics)

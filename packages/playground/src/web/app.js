@@ -6,6 +6,7 @@ const state = {
   currentFilePath: '',
   diagnostics: null,
   verification: null,
+  authToken: '',
   artifacts: [],
   selectedArtifactPath: '',
   saveTimer: null,
@@ -25,6 +26,8 @@ main().catch(error => {
 async function main() {
   renderLayout()
   bindStaticListeners()
+
+  state.authToken = new URL(window.location.href).searchParams.get('token') || ''
 
   const templates = await fetchJson('/api/templates')
   state.templates = Array.isArray(templates.templates) ? templates.templates : []
@@ -868,10 +871,12 @@ function byId(id) {
 }
 
 async function fetchJson(url, options = {}) {
+  const authHeader = state.authToken ? { Authorization: `Bearer ${state.authToken}` } : {}
   const response = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...authHeader,
       ...(options.headers || {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,

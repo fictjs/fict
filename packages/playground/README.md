@@ -35,7 +35,27 @@ CLI flags:
 ```ts
 import { createPlaygroundServer } from '@fictjs/playground'
 
-const server = await createPlaygroundServer({ port: 4173 })
+const server = await createPlaygroundServer({
+  port: 4173,
+  auth: {
+    allowAnonymous: false,
+    tokens: {
+      dev_a: { tenantId: 'tenant-a', userId: 'alice', role: 'developer' },
+      admin_ops: { tenantId: 'ops', userId: 'root', role: 'admin' },
+    },
+  },
+  quotas: {
+    defaultTenant: {
+      maxSessions: 6,
+      maxRequestsPerMinute: 240,
+      maxVerificationsPerHour: 90,
+    },
+  },
+  limits: {
+    maxConcurrentVerifications: 2,
+    verifyTimeoutMs: 30_000,
+  },
+})
 console.log(server.url)
 
 // ...
@@ -46,6 +66,10 @@ await server.stop()
 
 - `GET /api/health`
 - `GET /api/templates`
+- `GET /api/system/me`
+- `GET /api/system/metrics`
+- `GET /api/system/audit`
+- `GET /api/system/tenants/:id/usage`
 - `POST /api/sessions`
 - `GET /api/sessions/:id`
 - `DELETE /api/sessions/:id`
@@ -59,6 +83,11 @@ await server.stop()
 
 ## Notes
 
+- Use `Authorization: Bearer <token>` for authenticated multi-tenant deployments.
+- Roles: `viewer` (read), `developer` (session mutations + verify), `admin` (system metrics/audit).
+- Sessions are tenant-scoped; cross-tenant access is denied.
+- Per-tenant quota controls include active sessions, request rate, and verify frequency.
+- Verify execution is serialized per session, globally concurrency-limited, and timeout-guarded.
 - `resumable` and `functionSplitting` are available as live config toggles.
 - Session files are stored under `.fict-playground/sessions` and auto-cleaned after idle timeout.
 - `verify` runs diagnostics plus a real `vite build` check and returns consolidated pass/fail status.

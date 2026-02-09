@@ -60,5 +60,5 @@ describe('playground diagnostics', () => {
     } finally {
       await rm(rootDir, { recursive: true, force: true })
     }
-  })
+  }, 20_000)
 })

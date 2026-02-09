@@ -2,19 +2,41 @@ import { existsSync, promises as fs } from 'node:fs'
 import {
   createServer as createHttpServer,
   type IncomingMessage,
+  type IncomingHttpHeaders,
   type ServerResponse,
 } from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import {
+  assertRole,
+  assertTenantAccess,
+  AuditLogController,
+  AuthController,
+  ControlPlaneError,
+  MetricsController,
+  TenantQuotaController,
+} from './control-plane'
 import { PlaygroundSessionManager } from './session-manager'
 import { decodeSessionSnapshot, encodeSessionSnapshot } from './share'
-import type { PlaygroundConfig, PlaygroundServerOptions, StartedPlaygroundServer } from './types'
+import type {
+  PlaygroundAuthContext,
+  PlaygroundConfig,
+  PlaygroundServerOptions,
+  StartedPlaygroundServer,
+} from './types'
 
 interface ServerRuntime {
   host: string
   port: number
   origin: string
+}
+
+interface ServerControllers {
+  auth: AuthController
+  quota: TenantQuotaController
+  audit: AuditLogController
+  metrics: MetricsController
 }
 
 export async function createPlaygroundServer(
@@ -26,8 +48,20 @@ export async function createPlaygroundServer(
     ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
     ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
     ...(options.maxSessions !== undefined ? { maxSessions: options.maxSessions } : {}),
+    ...(options.limits?.maxConcurrentVerifications !== undefined
+      ? { maxConcurrentVerifications: options.limits.maxConcurrentVerifications }
+      : {}),
+    ...(options.limits?.verifyTimeoutMs !== undefined
+      ? { verifyTimeoutMs: options.limits.verifyTimeoutMs }
+      : {}),
   }
   const manager = new PlaygroundSessionManager(managerOptions)
+  const controllers: ServerControllers = {
+    auth: new AuthController(options.auth),
+    quota: new TenantQuotaController(options.quotas),
+    audit: new AuditLogController(options.limits?.auditLogEntries),
+    metrics: new MetricsController(),
+  }
 
   const assetsRoot = resolveAssetsRoot()
   const runtime: ServerRuntime = {
@@ -37,7 +71,7 @@ export async function createPlaygroundServer(
   }
 
   const server = createHttpServer(async (request, response) => {
-    await handleRequest({ request, response, manager, assetsRoot, runtime })
+    await handleRequest({ request, response, manager, assetsRoot, runtime, controllers })
   })
 
   await new Promise<void>((resolve, reject) => {
@@ -83,6 +117,7 @@ interface RequestContext {
   manager: PlaygroundSessionManager
   assetsRoot: string
   runtime: ServerRuntime
+  controllers: ServerControllers
 }
 
 class RequestError extends Error {
@@ -102,56 +137,146 @@ async function handleRequest(context: RequestContext): Promise<void> {
     context.runtime.origin || 'http://127.0.0.1',
   )
   const pathname = requestUrl.pathname
+  const routeTemplate = toRouteTemplate(pathname)
+  const finishRequest = context.controllers.metrics.beginRequest()
+  const startedAt = Date.now()
+  let status = 500
+  let actor: PlaygroundAuthContext | null = null
+  let errorMessage: string | undefined
 
   try {
+    if (isApiPath(pathname) && pathname !== '/api/health') {
+      actor = context.controllers.auth.authenticate(context.request.headers)
+      context.controllers.quota.registerRequest(actor.tenantId)
+    }
+
     if (method === 'GET' && pathname === '/api/health') {
+      status = 200
       sendJson(context.response, 200, { ok: true })
       return
     }
 
+    if (method === 'GET' && pathname === '/api/system/me') {
+      const principal = requireActor(actor)
+      status = 200
+      sendJson(context.response, 200, { actor: principal })
+      return
+    }
+
+    if (method === 'GET' && pathname === '/api/system/metrics') {
+      const principal = requireActor(actor)
+      assertRole(principal, 'admin')
+      status = 200
+      sendJson(context.response, 200, {
+        metrics: context.controllers.metrics.snapshot(),
+      })
+      return
+    }
+
+    if (method === 'GET' && pathname === '/api/system/audit') {
+      const principal = requireActor(actor)
+      assertRole(principal, 'admin')
+      const limit = toPositiveInteger(requestUrl.searchParams.get('limit'), 100)
+      const tenantId = requestUrl.searchParams.get('tenantId') ?? undefined
+      const auditQuery = tenantId ? { limit, tenantId } : { limit }
+      status = 200
+      sendJson(context.response, 200, {
+        events: context.controllers.audit.list(auditQuery),
+      })
+      return
+    }
+
+    const tenantUsageMatch = pathname.match(/^\/api\/system\/tenants\/([^/]+)\/usage$/)
+    if (tenantUsageMatch && method === 'GET') {
+      const principal = requireActor(actor)
+      const tenantId = tenantUsageMatch[1]
+      if (!tenantId) {
+        throw new RequestError(400, 'tenant id is required')
+      }
+      assertTenantAccess(principal, tenantId)
+      if (principal.tenantId === tenantId) {
+        assertRole(principal, 'developer')
+      } else {
+        assertRole(principal, 'admin')
+      }
+      status = 200
+      sendJson(context.response, 200, {
+        usage: context.controllers.quota.getTenantUsage(
+          tenantId,
+          context.manager.countSessionsForTenant(tenantId),
+        ),
+      })
+      return
+    }
+
     if (method === 'GET' && pathname === '/api/templates') {
+      assertRole(requireActor(actor), 'viewer')
+      status = 200
       sendJson(context.response, 200, { templates: context.manager.templates })
       return
     }
 
     if (method === 'POST' && pathname === '/api/sessions') {
+      const principal = requireActor(actor)
+      assertRole(principal, 'developer')
+      context.controllers.quota.assertSessionCapacity(
+        principal.tenantId,
+        context.manager.countSessionsForTenant(principal.tenantId),
+      )
+
       const body = await readJsonBody(context.request)
       const sessionInput = {
         ...(typeof body.templateId === 'string' ? { templateId: body.templateId } : {}),
         ...(isRecord(body.config) ? { config: toConfigPatch(body.config) } : {}),
         ...(isRecord(body.files) ? { files: toStringMap(body.files) } : {}),
       }
-      const session = await context.manager.createSession(sessionInput)
+      const session = await context.manager.createSession(sessionInput, principal)
+      status = 201
       sendJson(context.response, 201, { session })
       return
     }
 
     if (method === 'POST' && pathname === '/api/import') {
+      const principal = requireActor(actor)
+      assertRole(principal, 'developer')
+      context.controllers.quota.assertSessionCapacity(
+        principal.tenantId,
+        context.manager.countSessionsForTenant(principal.tenantId),
+      )
+
       const body = await readJsonBody(context.request)
       if (typeof body.token !== 'string') {
+        status = 400
         sendJson(context.response, 400, { error: 'token is required' })
         return
       }
       const snapshot = decodeSessionSnapshot(body.token)
-      const session = await context.manager.importSnapshot(snapshot)
+      const session = await context.manager.importSnapshot(snapshot, principal)
+      status = 201
       sendJson(context.response, 201, { session })
       return
     }
 
     const sessionMatch = pathname.match(/^\/api\/sessions\/([^/]+)$/)
     if (sessionMatch) {
+      const principal = requireActor(actor)
       const sessionId = sessionMatch[1]
       if (!sessionId) {
+        status = 400
         sendJson(context.response, 400, { error: 'session id is required' })
         return
       }
       if (method === 'GET') {
-        const session = await context.manager.getSessionState(sessionId)
+        assertRole(principal, 'viewer')
+        const session = await context.manager.getSessionState(sessionId, principal)
+        status = 200
         sendJson(context.response, 200, { session })
         return
       }
       if (method === 'DELETE') {
-        await context.manager.disposeSession(sessionId)
+        assertRole(principal, 'developer')
+        await context.manager.disposeSession(sessionId, principal)
+        status = 200
         sendJson(context.response, 200, { ok: true })
         return
       }
@@ -159,28 +284,40 @@ async function handleRequest(context: RequestContext): Promise<void> {
 
     const filesMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/files$/)
     if (filesMatch) {
+      const principal = requireActor(actor)
+      assertRole(principal, 'developer')
       const sessionId = filesMatch[1]
       if (!sessionId) {
+        status = 400
         sendJson(context.response, 400, { error: 'session id is required' })
         return
       }
       if (method === 'PUT' || method === 'POST') {
         const body = await readJsonBody(context.request)
         if (typeof body.path !== 'string' || typeof body.content !== 'string') {
+          status = 400
           sendJson(context.response, 400, { error: 'path and content are required' })
           return
         }
-        const session = await context.manager.updateFile(sessionId, body.path, body.content)
+        const session = await context.manager.updateFile(
+          sessionId,
+          body.path,
+          body.content,
+          principal,
+        )
+        status = 200
         sendJson(context.response, 200, { session })
         return
       }
       if (method === 'DELETE') {
         const body = await readJsonBody(context.request)
         if (typeof body.path !== 'string') {
+          status = 400
           sendJson(context.response, 400, { error: 'path is required' })
           return
         }
-        const session = await context.manager.deleteFile(sessionId, body.path)
+        const session = await context.manager.deleteFile(sessionId, body.path, principal)
+        status = 200
         sendJson(context.response, 200, { session })
         return
       }
@@ -188,32 +325,44 @@ async function handleRequest(context: RequestContext): Promise<void> {
 
     const diagnosticsMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/diagnostics$/)
     if (diagnosticsMatch && method === 'POST') {
+      const principal = requireActor(actor)
+      assertRole(principal, 'viewer')
       const sessionId = diagnosticsMatch[1]
       if (!sessionId) {
+        status = 400
         sendJson(context.response, 400, { error: 'session id is required' })
         return
       }
-      const diagnostics = await context.manager.runDiagnostics(sessionId)
+      const diagnostics = await context.manager.runDiagnostics(sessionId, principal)
+      status = 200
       sendJson(context.response, 200, diagnostics)
       return
     }
 
     const verifyMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/verify$/)
     if (verifyMatch && method === 'POST') {
+      const principal = requireActor(actor)
+      assertRole(principal, 'developer')
       const sessionId = verifyMatch[1]
       if (!sessionId) {
+        status = 400
         sendJson(context.response, 400, { error: 'session id is required' })
         return
       }
-      const verification = await context.manager.runVerification(sessionId)
+      context.controllers.quota.registerVerification(principal.tenantId)
+      const verification = await context.manager.runVerification(sessionId, principal)
+      status = 200
       sendJson(context.response, 200, verification)
       return
     }
 
     const configMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/config$/)
     if (configMatch && method === 'POST') {
+      const principal = requireActor(actor)
+      assertRole(principal, 'developer')
       const sessionId = configMatch[1]
       if (!sessionId) {
+        status = 400
         sendJson(context.response, 400, { error: 'session id is required' })
         return
       }
@@ -221,21 +370,27 @@ async function handleRequest(context: RequestContext): Promise<void> {
       const session = await context.manager.updateSessionConfig(
         sessionId,
         isRecord(body.config) ? toConfigPatch(body.config) : {},
+        principal,
       )
+      status = 200
       sendJson(context.response, 200, { session })
       return
     }
 
     const shareMatch = pathname.match(/^\/api\/sessions\/([^/]+)\/share$/)
     if (shareMatch && method === 'POST') {
+      const principal = requireActor(actor)
+      assertRole(principal, 'developer')
       const sessionId = shareMatch[1]
       if (!sessionId) {
+        status = 400
         sendJson(context.response, 400, { error: 'session id is required' })
         return
       }
-      const snapshot = await context.manager.snapshot(sessionId)
+      const snapshot = await context.manager.snapshot(sessionId, principal)
       const token = encodeSessionSnapshot(snapshot)
       const url = `${context.runtime.origin}/?share=${encodeURIComponent(token)}`
+      status = 200
       sendJson(context.response, 200, { token, url })
       return
     }
@@ -246,6 +401,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
         path.join(context.assetsRoot, 'index.html'),
         'text/html',
       )
+      status = 200
       return
     }
 
@@ -255,6 +411,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
         path.join(context.assetsRoot, 'styles.css'),
         'text/css',
       )
+      status = 200
       return
     }
 
@@ -264,14 +421,111 @@ async function handleRequest(context: RequestContext): Promise<void> {
         path.join(context.assetsRoot, 'app.js'),
         'text/javascript',
       )
+      status = 200
       return
     }
 
+    status = 404
     sendJson(context.response, 404, { error: 'Not found' })
   } catch (error) {
     const mapped = mapRequestError(error)
+    status = mapped.status
+    errorMessage = mapped.message
     sendJson(context.response, mapped.status, { error: mapped.message })
+  } finally {
+    const durationMs = Date.now() - startedAt
+    finishRequest()
+
+    if (isApiPath(pathname)) {
+      context.controllers.metrics.recordRequest({
+        method,
+        route: routeTemplate,
+        status,
+        durationMs,
+      })
+
+      const auditActor = actor ?? inferFallbackActor(context.request.headers)
+      context.controllers.audit.append({
+        id: createAuditEventId(),
+        timestamp: Date.now(),
+        tenantId: auditActor.tenantId,
+        userId: auditActor.userId,
+        method: method.toUpperCase(),
+        route: routeTemplate,
+        status,
+        durationMs,
+        ...(errorMessage ? { message: errorMessage } : {}),
+      })
+    }
   }
+}
+
+function isApiPath(pathname: string): boolean {
+  return pathname.startsWith('/api/')
+}
+
+function toRouteTemplate(pathname: string): string {
+  if (/^\/api\/sessions\/[^/]+\/files$/.test(pathname)) {
+    return '/api/sessions/:id/files'
+  }
+  if (/^\/api\/sessions\/[^/]+\/diagnostics$/.test(pathname)) {
+    return '/api/sessions/:id/diagnostics'
+  }
+  if (/^\/api\/sessions\/[^/]+\/verify$/.test(pathname)) {
+    return '/api/sessions/:id/verify'
+  }
+  if (/^\/api\/sessions\/[^/]+\/config$/.test(pathname)) {
+    return '/api/sessions/:id/config'
+  }
+  if (/^\/api\/sessions\/[^/]+\/share$/.test(pathname)) {
+    return '/api/sessions/:id/share'
+  }
+  if (/^\/api\/sessions\/[^/]+$/.test(pathname)) {
+    return '/api/sessions/:id'
+  }
+  if (/^\/api\/system\/tenants\/[^/]+\/usage$/.test(pathname)) {
+    return '/api/system/tenants/:id/usage'
+  }
+  return pathname
+}
+
+function requireActor(actor: PlaygroundAuthContext | null): PlaygroundAuthContext {
+  if (!actor) {
+    throw new RequestError(401, 'Authorization token is required')
+  }
+  return actor
+}
+
+function inferFallbackActor(headers: IncomingHttpHeaders): PlaygroundAuthContext {
+  const authorization = headers.authorization
+  const value = Array.isArray(authorization) ? authorization[0] : authorization
+  const hasAuthHeader = typeof value === 'string' && value.trim().length > 0
+  if (hasAuthHeader) {
+    return {
+      tenantId: 'unknown',
+      userId: 'unknown',
+      role: 'viewer',
+    }
+  }
+
+  return {
+    tenantId: 'public',
+    userId: 'anonymous',
+    role: 'viewer',
+  }
+}
+
+function createAuditEventId(): string {
+  return `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function toPositiveInteger(value: string | null, fallback: number): number {
+  if (!value) return fallback
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new RequestError(400, 'Expected a positive integer')
+  }
+  return parsed
 }
 
 function resolveAssetsRoot(): string {
@@ -384,6 +638,10 @@ function createOrigin(host: string, port: number): string {
 }
 
 function mapRequestError(error: unknown): { status: number; message: string } {
+  if (error instanceof ControlPlaneError) {
+    return { status: error.status, message: error.message }
+  }
+
   if (error instanceof RequestError) {
     return { status: error.status, message: error.message }
   }
@@ -394,6 +652,14 @@ function mapRequestError(error: unknown): { status: number; message: string } {
 
   if (error.message.startsWith('Unknown playground session:')) {
     return { status: 404, message: error.message }
+  }
+
+  if (error.message.startsWith('Session access denied for tenant:')) {
+    return { status: 403, message: error.message }
+  }
+
+  if (error.message.startsWith('Verification timed out after')) {
+    return { status: 504, message: error.message }
   }
 
   if (isClientErrorMessage(error.message)) {
