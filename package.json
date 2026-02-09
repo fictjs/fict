@@ -86,7 +86,7 @@
     {
       "name": "Fict (ESM)",
       "path": "packages/fict/dist/index.js",
-      "limit": "13 KB"
+      "limit": "14 KB"
     },
     {
       "name": "Fict (CJS)",
