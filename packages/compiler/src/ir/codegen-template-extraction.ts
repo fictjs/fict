@@ -9,6 +9,7 @@ export interface HIRBinding {
   expr?: Expression // the dynamic expression
   eventOptions?: { capture?: boolean; passive?: boolean; once?: boolean }
   resumable?: boolean
+  resumableExplicit?: boolean
   /** Namespace context at this binding's location (for dynamic children) */
   namespace?: NamespaceContext
 }
@@ -164,6 +165,7 @@ export function extractHIRStaticHtml(
         expr: attr.value ?? undefined,
         eventOptions: { capture, passive, once },
         resumable: shouldBeResumable,
+        resumableExplicit: isResumableEvent,
       })
       continue
     }

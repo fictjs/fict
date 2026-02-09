@@ -2510,7 +2510,7 @@ function lowerIntrinsicElement(
       const isDelegated = DelegatedEvents.has(eventName) && !hasEventOptions
 
       if (binding.resumable && !hasEventOptions) {
-        emitResumableEventBinding(
+        const emitted = emitResumableEventBinding(
           targetId,
           eventName,
           binding.expr,
@@ -2518,8 +2518,9 @@ function lowerIntrinsicElement(
           ctx,
           containingRegion,
           createResumableEventBindingOps(),
+          { explicit: binding.resumableExplicit === true },
         )
-        continue
+        if (emitted) continue
       }
 
       // Try to extract handler and data from HIR before lowering

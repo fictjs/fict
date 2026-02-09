@@ -27,10 +27,11 @@ export function emitResumableEventBinding(
   ctx: CodegenContext,
   containingRegion: RegionInfo | null,
   ops: ResumableEventBindingOps,
-): void {
+  options?: { explicit?: boolean },
+): boolean {
   const { t } = ctx
   if (!ctx.resumableEnabled) {
-    return
+    return false
   }
 
   const prevWrapTracked = ctx.wrapTrackedExpressions
@@ -72,6 +73,26 @@ export function emitResumableEventBinding(
   const lexicalNames = Array.from(captured).filter(name => ctx.signalVars?.has(name))
   const propsName =
     ctx.propsParamName && captured.has(ctx.propsParamName) ? ctx.propsParamName : null
+  const unsupportedLocals = Array.from(captured).filter(name => {
+    if (!ctx.localDeclaredNames?.has(name)) return false
+    if (ctx.signalVars?.has(name)) return false
+    if (ctx.functionVars?.has(name)) return false
+    if (propsName && name === propsName) return false
+    return true
+  })
+  if (unsupportedLocals.length > 0) {
+    const joined = unsupportedLocals.sort().join(', ')
+    const detail = `Resumable handlers cannot capture non-serializable local variables: ${joined}.`
+    if (options?.explicit) {
+      const loc = expr.loc?.start
+      const fileName = ctx.options?.filename ?? '<unknown>'
+      const location = loc ? `${fileName}:${loc.line}:${loc.column + 1}` : fileName
+      throw new Error(
+        `${detail} Use signals/props/function references or remove '$' suffix.\n  at ${location}`,
+      )
+    }
+    return false
+  }
 
   // Identify function dependencies that need to be hoisted.
   const functionDepRenames = new Map<string, string>()
@@ -270,4 +291,5 @@ export function emitResumableEventBinding(
       ]),
     ),
   )
+  return true
 }

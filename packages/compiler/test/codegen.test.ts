@@ -553,6 +553,35 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('() => () => __fict_fn_helper_')
     expect(code).not.toContain('() => () => helper()')
   })
+
+  it('throws for explicit resumable handlers that capture non-serializable locals', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const label = 'x'
+        return <button onClick$={() => console.log(label)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+      /cannot capture non-serializable local variables/i,
+    )
+  })
+
+  it('falls back to non-resumable handler for auto-extracted unsupported captures', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const label = 'x'
+        return <button onClick={() => console.log(label)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('$$click')
+    expect(code).not.toContain('setAttribute(\"on:click\"')
+  })
 })
 
 // ============================================================================
