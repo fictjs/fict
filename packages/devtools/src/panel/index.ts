@@ -12,13 +12,13 @@ import {
   getPluginTimelineLayers,
   type PluginState,
 } from '../core/plugin'
+import { MessageSource } from '../core/types'
 import type {
   DependencyGraph,
   type ComponentState,
   type ComputedState,
   type DevToolsSettings,
   type EffectState,
-  MessageSource,
   type NodeType,
   type PanelTab,
   type RootState,
