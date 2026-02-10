@@ -58,6 +58,7 @@ const settings: DevToolsSettings = {
 let isConnected = false
 const panelPort: MessagePort | null = null
 let broadcastChannel: BroadcastChannel | null = null
+const MAX_TRANSPORT_SANITIZE_DEPTH = 6
 
 // ============================================================================
 // Console Exposure
@@ -309,22 +310,148 @@ function sendToPanel(type: string, payload: unknown): void {
   if (!isConnected) return
 
   const message = { source: MessageSource.Hook, type, payload, timestamp: Date.now() }
+  let transportSafeMessage: typeof message | null = null
 
-  try {
-    if (panelPort) {
-      panelPort.postMessage(message)
-    } else if (typeof window !== 'undefined') {
-      // Send via window.postMessage for same-window communication
-      window.postMessage(message, '*')
+  const getTransportSafeMessage = (): typeof message => {
+    if (transportSafeMessage) return transportSafeMessage
+    transportSafeMessage = {
+      ...message,
+      payload: sanitizeForTransport(message.payload, 0, new WeakMap<object, unknown>()),
     }
-
-    // Also send via BroadcastChannel for cross-tab communication (standalone mode)
-    if (broadcastChannel) {
-      broadcastChannel.postMessage(message)
-    }
-  } catch {
-    // Ignore postMessage errors
+    return transportSafeMessage
   }
+
+  const postWithFallback = (post: (msg: typeof message) => void): void => {
+    try {
+      post(message)
+      return
+    } catch {
+      // Fall back to a transport-safe payload when structured clone fails
+    }
+
+    try {
+      post(getTransportSafeMessage())
+    } catch {
+      // Ignore postMessage errors
+    }
+  }
+
+  if (panelPort) {
+    postWithFallback(msg => panelPort.postMessage(msg))
+  } else if (typeof window !== 'undefined') {
+    // Send via window.postMessage for same-window communication
+    postWithFallback(msg => window.postMessage(msg, '*'))
+  }
+
+  // Also send via BroadcastChannel for cross-tab communication (standalone mode)
+  if (broadcastChannel) {
+    postWithFallback(msg => broadcastChannel!.postMessage(msg))
+  }
+}
+
+function sanitizeForTransport(
+  value: unknown,
+  depth: number,
+  seen: WeakMap<object, unknown>,
+): unknown {
+  if (value === null || value === undefined) return value
+
+  const kind = typeof value
+  if (kind === 'string' || kind === 'number' || kind === 'boolean' || kind === 'bigint') {
+    return value
+  }
+  if (kind === 'symbol') return String(value)
+  if (kind === 'function') {
+    const fn = value as (...args: unknown[]) => unknown
+    return `[Function ${fn.name || 'anonymous'}]`
+  }
+
+  if (depth >= MAX_TRANSPORT_SANITIZE_DEPTH) {
+    return formatValueShort(value)
+  }
+
+  if (value instanceof Date) return value.toISOString()
+  if (value instanceof RegExp) return value.toString()
+  if (value instanceof Error) {
+    return { name: value.name, message: value.message, stack: value.stack }
+  }
+  if (typeof Element !== 'undefined' && value instanceof Element) {
+    return {
+      __fictType: 'Element',
+      tagName: value.tagName,
+      id: value.id || undefined,
+      className: value.className || undefined,
+    }
+  }
+  if (typeof Node !== 'undefined' && value instanceof Node) {
+    return {
+      __fictType: 'Node',
+      nodeName: value.nodeName,
+    }
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(item => sanitizeForTransport(item, depth + 1, seen))
+  }
+
+  if (value instanceof Map) {
+    const output = new Map<unknown, unknown>()
+    seen.set(value, output)
+    for (const [key, item] of value.entries()) {
+      output.set(
+        sanitizeForTransport(key, depth + 1, seen),
+        sanitizeForTransport(item, depth + 1, seen),
+      )
+    }
+    return output
+  }
+
+  if (value instanceof Set) {
+    const output = new Set<unknown>()
+    seen.set(value, output)
+    for (const item of value.values()) {
+      output.add(sanitizeForTransport(item, depth + 1, seen))
+    }
+    return output
+  }
+
+  if (ArrayBuffer.isView(value)) {
+    if (value instanceof DataView) {
+      return {
+        __fictType: 'DataView',
+        byteLength: value.byteLength,
+      }
+    }
+    const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+    return {
+      __fictType: value.constructor.name,
+      values: Array.from(bytes),
+    }
+  }
+
+  if (value instanceof ArrayBuffer) {
+    return {
+      __fictType: 'ArrayBuffer',
+      byteLength: value.byteLength,
+    }
+  }
+
+  if (kind === 'object') {
+    const objectValue = value as Record<string, unknown>
+    const existing = seen.get(objectValue)
+    if (existing !== undefined) {
+      return existing
+    }
+
+    const output: Record<string, unknown> = {}
+    seen.set(objectValue, output)
+    for (const [key, nestedValue] of Object.entries(objectValue)) {
+      output[key] = sanitizeForTransport(nestedValue, depth + 1, seen)
+    }
+    return output
+  }
+
+  return formatValueShort(value)
 }
 
 function handlePanelMessage(event: MessageEvent): void {
