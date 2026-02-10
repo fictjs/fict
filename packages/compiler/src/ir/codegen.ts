@@ -1469,6 +1469,28 @@ function lowerExpressionImpl(
             ? withNonReactiveScope(ctx, () => lowerExpression(arg, ctx))
             : lowerExpression(arg, ctx),
         )
+        const includeDevtools = ctx.options?.dev !== false
+        if (includeDevtools && expr.loc) {
+          const source = `${ctx.options?.filename ?? ''}:${expr.loc.start.line}:${expr.loc.start.column}`
+          const sourceProp = t.objectProperty(
+            t.identifier('devToolsSource'),
+            t.stringLiteral(source),
+          )
+
+          if (args.length === 1) {
+            args.push(t.objectExpression([sourceProp]))
+          } else if (args.length > 1 && t.isObjectExpression(args[1])) {
+            const hasSourceProp = args[1].properties.some(
+              prop =>
+                t.isObjectProperty(prop) &&
+                t.isIdentifier(prop.key) &&
+                prop.key.name === 'devToolsSource',
+            )
+            if (!hasSourceProp) {
+              args[1].properties.push(sourceProp)
+            }
+          }
+        }
         if (ctx.inModule) {
           ctx.helpersUsed.add('effect')
           return t.callExpression(t.identifier(RUNTIME_ALIASES.effect), args)

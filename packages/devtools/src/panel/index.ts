@@ -69,6 +69,29 @@ interface PanelState {
   lastUpdate: number
 }
 
+type ComponentTraceMarkerKind = 'once' | 'reactive' | 'effect'
+
+interface ComponentTraceMarker {
+  kind: ComponentTraceMarkerKind
+  label: string
+}
+
+interface ComponentTraceLine {
+  line: number
+  text: string
+  markers: ComponentTraceMarker[]
+}
+
+interface ComponentTracePayload {
+  componentId: number
+  componentName: string
+  file: string
+  startLine: number
+  endLine: number
+  lines: ComponentTraceLine[]
+  warnings?: string[]
+}
+
 const state: PanelState = {
   isConnected: false,
   fictDetected: false,
@@ -117,6 +140,11 @@ let editingSignalId: number | null = null
 
 // Graph search state
 let graphSearchQuery = ''
+
+// Component trace state
+const componentTraceCache = new Map<number, ComponentTracePayload | null>()
+const componentTraceErrors = new Map<number, string>()
+const componentTracePending = new Set<number>()
 
 const VIRTUAL_LIST_THRESHOLD = 50
 const SIGNAL_ROW_HEIGHT = 56
@@ -198,6 +226,9 @@ function resetPanelState(
   selectedTimelineEvent = null
   currentGraph = null
   graphAutoRefreshNodeId = null
+  componentTraceCache.clear()
+  componentTraceErrors.clear()
+  componentTracePending.clear()
   if (graphRenderer) {
     graphRenderer.setGraph(null)
   }
@@ -347,6 +378,53 @@ function requestDependencyGraph(nodeId: number, nodeType?: unknown): void {
   state.selectedNodeId = nodeId
   graphAutoRefreshNodeId = nodeId
   sendToPage('request:dependencyGraph', { nodeId })
+}
+
+function isComponentTraceMarker(value: unknown): value is ComponentTraceMarker {
+  if (!value || typeof value !== 'object') return false
+  const marker = value as ComponentTraceMarker
+  const validKind = marker.kind === 'once' || marker.kind === 'reactive' || marker.kind === 'effect'
+  return validKind && typeof marker.label === 'string'
+}
+
+function isComponentTraceLine(value: unknown): value is ComponentTraceLine {
+  if (!value || typeof value !== 'object') return false
+  const line = value as ComponentTraceLine
+  return (
+    isValidId(line.line) &&
+    typeof line.text === 'string' &&
+    Array.isArray(line.markers) &&
+    line.markers.every(marker => isComponentTraceMarker(marker))
+  )
+}
+
+function isComponentTracePayload(value: unknown): value is ComponentTracePayload {
+  if (!value || typeof value !== 'object') return false
+  const trace = value as ComponentTracePayload
+  return (
+    isValidId(trace.componentId) &&
+    typeof trace.componentName === 'string' &&
+    typeof trace.file === 'string' &&
+    isValidId(trace.startLine) &&
+    isValidId(trace.endLine) &&
+    Array.isArray(trace.lines) &&
+    trace.lines.every(line => isComponentTraceLine(line))
+  )
+}
+
+function requestComponentTrace(componentId: number): void {
+  if (!Number.isFinite(componentId) || componentId <= 0) return
+  if (componentTracePending.has(componentId)) return
+  componentTracePending.add(componentId)
+  sendToPage('request:componentTrace', { componentId })
+}
+
+function ensureSelectedComponentTrace(): void {
+  if (state.selectedNodeType !== 'component' || state.selectedNodeId === null) return
+  const componentId = state.selectedNodeId
+  if (!state.components.has(componentId)) return
+  if (componentTraceCache.has(componentId) || componentTraceErrors.has(componentId)) return
+  requestComponentTrace(componentId)
 }
 
 // ============================================================================
@@ -777,6 +855,16 @@ function handleMessage(message: Record<string, unknown>): void {
           state.components.set(component.id, component)
         }
       }
+      const validComponentIds = new Set(state.components.keys())
+      for (const id of Array.from(componentTraceCache.keys())) {
+        if (!validComponentIds.has(id)) componentTraceCache.delete(id)
+      }
+      for (const id of Array.from(componentTraceErrors.keys())) {
+        if (!validComponentIds.has(id)) componentTraceErrors.delete(id)
+      }
+      for (const id of Array.from(componentTracePending.values())) {
+        if (!validComponentIds.has(id)) componentTracePending.delete(id)
+      }
       syncSelectedComponentVisibility()
       state.lastUpdate = Date.now()
       if (state.activeTab === 'components') renderComponentsTab()
@@ -814,6 +902,38 @@ function handleMessage(message: Record<string, unknown>): void {
         updateGraphDetails()
       }
       break
+
+    case 'response:componentTrace': {
+      if (!payload || typeof payload !== 'object') return
+      const response = payload as {
+        componentId?: number
+        trace?: ComponentTracePayload | null
+        error?: string
+      }
+      const componentId = response.componentId
+      if (!isValidId(componentId)) return
+
+      componentTracePending.delete(componentId)
+      if (typeof response.error === 'string' && response.error) {
+        componentTraceErrors.set(componentId, response.error)
+        componentTraceCache.delete(componentId)
+      } else if (response.trace === null) {
+        componentTraceErrors.delete(componentId)
+        componentTraceCache.set(componentId, null)
+      } else if (isComponentTracePayload(response.trace)) {
+        componentTraceErrors.delete(componentId)
+        componentTraceCache.set(componentId, response.trace)
+      }
+
+      if (
+        state.activeTab === 'components' &&
+        state.selectedNodeType === 'component' &&
+        state.selectedNodeId === componentId
+      ) {
+        renderComponentsTab()
+      }
+      break
+    }
 
     case 'response:settings':
       if (payload && typeof payload === 'object') {
@@ -1407,6 +1527,77 @@ function renderComponentNode(
   `
 }
 
+function renderTraceMarker(marker: ComponentTraceMarker): string {
+  let icon = '•'
+  if (marker.kind === 'once') icon = '🔵'
+  else if (marker.kind === 'reactive') icon = '🟢'
+  else if (marker.kind === 'effect') icon = '🟠'
+
+  return `<span class="trace-marker ${marker.kind}" title="${escapeHtml(marker.label)}">${icon}</span>`
+}
+
+function renderComponentTraceLegend(): string {
+  return `
+    <div class="trace-legend">
+      <span class="trace-legend-item"><span class="trace-marker once">🔵</span> Setup / runs once</span>
+      <span class="trace-legend-item"><span class="trace-marker reactive">🟢</span> Reactive reruns</span>
+      <span class="trace-legend-item"><span class="trace-marker effect">🟠</span> Effect callback</span>
+    </div>
+  `
+}
+
+function renderComponentTraceSection(
+  componentId: number,
+  trace: ComponentTracePayload | null | undefined,
+  error: string | undefined,
+  loading: boolean,
+): string {
+  if (loading) {
+    return `<div class="component-trace-hint">Analyzing source and reactive markers...</div>`
+  }
+
+  if (error) {
+    return `<div class="component-trace-error">${escapeHtml(error)}</div>`
+  }
+
+  if (trace === null) {
+    return `<div class="component-trace-hint">No source telemetry for this component yet.</div>`
+  }
+
+  if (!trace || trace.lines.length === 0) {
+    return `<div class="component-trace-hint">Source is not available in current runtime context.</div>`
+  }
+
+  const fileName = trace.file.split('/').pop() || trace.file
+  const warningHtml =
+    trace.warnings && trace.warnings.length > 0
+      ? `<div class="component-trace-warnings">${trace.warnings.map(item => `<div>${escapeHtml(item)}</div>`).join('')}</div>`
+      : ''
+
+  return `
+    <div class="component-trace">
+      <a href="#" class="source-link trace-source-link" data-component-trace-id="${componentId}" data-file="${escapeHtml(trace.file)}" data-line="${trace.startLine}" data-column="1">
+        ${escapeHtml(fileName)}:${trace.startLine}-${trace.endLine}
+      </a>
+      ${renderComponentTraceLegend()}
+      ${warningHtml}
+      <div class="trace-code-view" data-component-trace-id="${componentId}">
+        ${trace.lines
+          .map(
+            line => `
+          <div class="trace-code-line ${line.markers.length > 0 ? 'has-marker' : ''}">
+            <span class="trace-line-number">${line.line}</span>
+            <span class="trace-line-markers">${line.markers.map(marker => renderTraceMarker(marker)).join('')}</span>
+            <span class="trace-line-text">${escapeHtml(line.text || ' ')}</span>
+          </div>
+        `,
+          )
+          .join('')}
+      </div>
+    </div>
+  `
+}
+
 function renderComponentDetails(component: ComponentState): string {
   // Get related signals, computeds, effects
   const componentSignals = component.signals
@@ -1418,6 +1609,9 @@ function renderComponentDetails(component: ComponentState): string {
   const componentEffects = component.effects
     .map(id => state.effects.get(id))
     .filter(Boolean) as EffectState[]
+  const componentTrace = componentTraceCache.get(component.id)
+  const componentTraceError = componentTraceErrors.get(component.id)
+  const isTraceLoading = componentTracePending.has(component.id)
 
   const sourceFileName = component.source?.file?.split('/').pop() ?? ''
 
@@ -1446,6 +1640,11 @@ function renderComponentDetails(component: ComponentState): string {
       `
           : ''
       }
+
+      <div class="detail-section component-trace-section">
+        <h4>🧠 Source & Execution</h4>
+        ${renderComponentTraceSection(component.id, componentTrace, componentTraceError, isTraceLoading)}
+      </div>
 
       <div class="detail-section">
         <h4>📊 Statistics</h4>
@@ -2151,6 +2350,7 @@ function renderComponentsTab(): void {
   if (content) {
     content.innerHTML = renderComponentsContent()
     setupTabEventListeners()
+    ensureSelectedComponentTrace()
   }
 }
 
@@ -2353,6 +2553,9 @@ function setupEventListeners(): void {
   const refreshBtn = document.getElementById('refresh-btn')
   if (refreshBtn) {
     refreshBtn.addEventListener('click', () => {
+      componentTraceCache.clear()
+      componentTraceErrors.clear()
+      componentTracePending.clear()
       sendToPage('request:signals')
       sendToPage('request:computeds')
       sendToPage('request:effects')

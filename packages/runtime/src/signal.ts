@@ -96,6 +96,16 @@ export interface MemoOptions<T> {
 }
 
 /**
+ * Options for creating an effect
+ */
+export interface EffectOptions {
+  /** Debug name */
+  name?: string
+  /** Source location */
+  devToolsSource?: string
+}
+
+/**
  * Signal node - mutable reactive value
  */
 export interface SignalNode<T = unknown> extends BaseNode {
@@ -161,6 +171,10 @@ export interface EffectNode extends BaseNode {
   runCleanup?: () => void
   /** Root context for error/suspense handling */
   root?: RootContext
+  /** Debug name */
+  name?: string
+  /** Source location */
+  devToolsSource?: string
   /** Devtools ID */
   __id?: number | undefined
 }
@@ -1223,9 +1237,10 @@ function computedOper<T>(this: ComputedNode<T>): T {
 /**
  * Create a reactive effect
  * @param fn - The effect function
+ * @param options - Effect options
  * @returns An effect disposer function
  */
-export function effect(fn: () => void): EffectDisposer {
+export function effect(fn: () => void, options?: EffectOptions): EffectDisposer {
   const e: EffectNode = {
     fn,
     subs: undefined,
@@ -1233,6 +1248,8 @@ export function effect(fn: () => void): EffectDisposer {
     deps: undefined,
     depsTail: undefined,
     flags: WatchingRunning,
+    ...(options?.name !== undefined ? { name: options.name } : {}),
+    ...(options?.devToolsSource !== undefined ? { devToolsSource: options.devToolsSource } : {}),
     __id: undefined as number | undefined,
   }
   const root = getCurrentRoot()
@@ -1283,6 +1300,7 @@ export function effectWithCleanup(
   fn: () => void,
   cleanupRunner: () => void,
   root?: RootContext,
+  options?: EffectOptions,
 ): EffectDisposer {
   const e: EffectNode = {
     fn,
@@ -1292,6 +1310,8 @@ export function effectWithCleanup(
     depsTail: undefined,
     flags: WatchingRunning,
     runCleanup: cleanupRunner,
+    ...(options?.name !== undefined ? { name: options.name } : {}),
+    ...(options?.devToolsSource !== undefined ? { devToolsSource: options.devToolsSource } : {}),
     __id: undefined as number | undefined,
   }
   const resolvedRoot = root ?? getCurrentRoot()
@@ -1707,7 +1727,7 @@ if (
     const hook = getDevtoolsHook()
     hook?.disposeSignal?.(id)
     getExistingSignalSetterMap()?.delete(id)
-    identifiable.__id = undefined
+    delete identifiable.__id
   }
 
   registerComputedDevtools = node => {
@@ -1738,15 +1758,18 @@ if (
     if (!id) return
     const hook = getDevtoolsHook()
     hook?.disposeComputed?.(id)
-    identifiable.__id = undefined
+    delete identifiable.__id
   }
 
   registerEffectDevtools = node => {
     const hook = getDevtoolsHook()
     if (!hook) return undefined
     const id = ++nextDevtoolsId
+    const options: { ownerId?: number; source?: string } = {}
     const ownerId = __fictGetCurrentComponentId()
-    hook.registerEffect(id, ownerId !== undefined ? { ownerId } : undefined)
+    if (ownerId !== undefined) options.ownerId = ownerId
+    if (node.devToolsSource !== undefined) options.source = node.devToolsSource
+    hook.registerEffect(id, Object.keys(options).length > 0 ? options : undefined)
     ;(node as EffectNode & DevtoolsIdentifiable).__id = id
     return id
   }
@@ -1771,7 +1794,7 @@ if (
     if (!id) return
     const hook = getDevtoolsHook()
     hook?.disposeEffect?.(id)
-    identifiable.__id = undefined
+    delete identifiable.__id
   }
 
   trackDependencyDevtools = (dep, sub) => {

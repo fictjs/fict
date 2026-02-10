@@ -4,6 +4,7 @@ import {
   createSignal,
   type SignalAccessor,
   type ComputedAccessor,
+  type EffectOptions,
   type MemoOptions,
   type SignalOptions,
 } from './signal'
@@ -118,17 +119,24 @@ export function __fictUseMemo<T>(
   return ctx.slots[index] as ComputedAccessor<T>
 }
 
-export function __fictUseEffect(ctx: HookContext, fn: () => void, slot?: number): void {
+export function __fictUseEffect(
+  ctx: HookContext,
+  fn: () => void,
+  optionsOrSlot?: number | EffectOptions,
+  slot?: number,
+): void {
+  const options = typeof optionsOrSlot === 'number' ? undefined : optionsOrSlot
+  const resolvedSlot = typeof optionsOrSlot === 'number' ? optionsOrSlot : slot
   // fix: When a slot number is provided, we trust the compiler has allocated this slot.
   // This allows effects inside conditional callbacks to work even outside render context.
   // The slot number proves this is a known, statically-allocated effect location.
-  if (slot !== undefined) {
-    if (ctx.slots[slot]) {
+  if (resolvedSlot !== undefined) {
+    if (ctx.slots[resolvedSlot]) {
       // Effect already exists, nothing to do
       return
     }
     // Create the effect even outside render context - the slot number proves validity
-    ctx.slots[slot] = createEffect(fn)
+    ctx.slots[resolvedSlot] = createEffect(fn, options)
     return
   }
 
@@ -136,7 +144,7 @@ export function __fictUseEffect(ctx: HookContext, fn: () => void, slot?: number)
   assertRenderContext(ctx, '__fictUseEffect')
   const index = ctx.cursor++
   if (!ctx.slots[index]) {
-    ctx.slots[index] = createEffect(fn)
+    ctx.slots[index] = createEffect(fn, options)
   }
 }
 

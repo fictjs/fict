@@ -73,6 +73,646 @@ const consoleHistory = {
   components: [] as unknown[],
 }
 
+type TraceMarkerKind = 'once' | 'reactive' | 'effect'
+
+interface ComponentTraceMarker {
+  kind: TraceMarkerKind
+  label: string
+}
+
+interface ComponentTraceLine {
+  line: number
+  text: string
+  markers: ComponentTraceMarker[]
+}
+
+interface ComponentTracePayload {
+  componentId: number
+  componentName: string
+  file: string
+  startLine: number
+  endLine: number
+  lines: ComponentTraceLine[]
+  warnings?: string[]
+}
+
+const sourceFileCache = new Map<string, Promise<string | null>>()
+const traceRegexEscapes = /[.*+?^${}()|[\]\\]/g
+
+function parseSourceLocation(input?: string | SourceLocation): SourceLocation | undefined {
+  if (!input) return undefined
+  if (typeof input !== 'string') {
+    const line = Number.isFinite(input.line) ? Math.max(1, Math.floor(input.line)) : 1
+    const column = Number.isFinite(input.column) ? Math.max(1, Math.floor(input.column)) : 1
+    const parsed: SourceLocation = {
+      file: input.file,
+      line,
+      column,
+    }
+    if (input.endLine !== undefined && Number.isFinite(input.endLine)) {
+      parsed.endLine = Math.max(parsed.line, Math.floor(input.endLine))
+    }
+    if (input.endColumn !== undefined && Number.isFinite(input.endColumn)) {
+      parsed.endColumn = Math.max(1, Math.floor(input.endColumn))
+    }
+    return parsed
+  }
+
+  const trimmed = input.trim()
+  if (!trimmed) return undefined
+
+  const isDigits = (value: string): boolean => /^\d+$/.test(value)
+  const lastColon = trimmed.lastIndexOf(':')
+  if (lastColon > 0 && lastColon < trimmed.length - 1) {
+    const maybeColumn = trimmed.slice(lastColon + 1)
+    if (isDigits(maybeColumn)) {
+      const beforeLast = trimmed.slice(0, lastColon)
+      const secondColon = beforeLast.lastIndexOf(':')
+      if (secondColon > 0 && secondColon < beforeLast.length - 1) {
+        const maybeLine = beforeLast.slice(secondColon + 1)
+        if (isDigits(maybeLine)) {
+          const file = beforeLast.slice(0, secondColon)
+          return {
+            file: file || trimmed,
+            line: Math.max(1, Number.parseInt(maybeLine, 10)),
+            column: Math.max(1, Number.parseInt(maybeColumn, 10)),
+          }
+        }
+      }
+      return {
+        file: beforeLast || trimmed,
+        line: Math.max(1, Number.parseInt(maybeColumn, 10)),
+        column: 1,
+      }
+    }
+  }
+
+  return { file: trimmed, line: 1, column: 1 }
+}
+
+function chooseDominantFile(locations: SourceLocation[]): string | null {
+  const counts = new Map<string, number>()
+  for (const location of locations) {
+    counts.set(location.file, (counts.get(location.file) ?? 0) + 1)
+  }
+
+  let bestFile: string | null = null
+  let bestCount = -1
+  for (const [file, count] of counts.entries()) {
+    if (count > bestCount) {
+      bestCount = count
+      bestFile = file
+    }
+  }
+
+  return bestFile
+}
+
+function collectComponentNodeLocations(component: ComponentState): SourceLocation[] {
+  const locations: SourceLocation[] = []
+  const pushSource = (source?: SourceLocation): void => {
+    const parsed = parseSourceLocation(source)
+    if (parsed?.file) locations.push(parsed)
+  }
+
+  for (const signalId of component.signals) {
+    pushSource(signals.get(signalId)?.source)
+  }
+  for (const computedId of component.computeds) {
+    pushSource(computeds.get(computedId)?.source)
+  }
+  for (const effectId of component.effects) {
+    pushSource(effects.get(effectId)?.source)
+  }
+
+  return locations
+}
+
+function updateOwnerComponentSource(ownerId: number | undefined, source?: SourceLocation): void {
+  if (ownerId === undefined || !source) return
+  if (!source.file || source.line <= 0) return
+
+  const component = components.get(ownerId)
+  if (!component) return
+
+  const existing = parseSourceLocation(component.source)
+  if (!existing) {
+    component.source = { ...source }
+    return
+  }
+
+  if (existing.file !== source.file) return
+  if (
+    source.line < existing.line ||
+    (source.line === existing.line && source.column < existing.column)
+  ) {
+    component.source = { ...source, endLine: existing.endLine, endColumn: existing.endColumn }
+  }
+}
+
+function toFetchCandidates(file: string): string[] {
+  const normalized = file.trim().replace(/\\/g, '/')
+  if (!normalized) return []
+
+  const candidates = new Set<string>()
+  if (/^https?:\/\//.test(normalized)) {
+    candidates.add(normalized)
+    return Array.from(candidates)
+  }
+
+  if (normalized.startsWith('/')) {
+    candidates.add(`/@fs${normalized}`)
+    candidates.add(normalized)
+    return Array.from(candidates)
+  }
+
+  candidates.add(`/@fs/${normalized}`)
+  candidates.add(normalized.startsWith('./') ? normalized.slice(1) : `/${normalized}`)
+  return Array.from(candidates)
+}
+
+function decodeBase64Payload(value: string): string | null {
+  try {
+    if (typeof atob === 'function') {
+      return atob(value)
+    }
+  } catch {
+    // Fall through to Buffer decoding.
+  }
+
+  try {
+    const bufferCtor = (
+      globalThis as typeof globalThis & {
+        Buffer?: {
+          from: (input: string, encoding: string) => { toString: (enc: string) => string }
+        }
+      }
+    ).Buffer
+    if (bufferCtor?.from) {
+      return bufferCtor.from(value, 'base64').toString('utf-8')
+    }
+  } catch {
+    // Ignore decode failures.
+  }
+
+  return null
+}
+
+function extractOriginalSourceFromInlineMap(transformedSource: string): string | null {
+  const marker = 'sourceMappingURL=data:application/json;base64,'
+  const markerIndex = transformedSource.lastIndexOf(marker)
+  if (markerIndex < 0) return null
+
+  const rawPayload = transformedSource.slice(markerIndex + marker.length).trim()
+  if (!rawPayload) return null
+
+  const base64Payload = rawPayload.split(/\s+/)[0]
+  if (!base64Payload) return null
+
+  const decoded = decodeBase64Payload(base64Payload)
+  if (!decoded) return null
+
+  try {
+    const sourceMap = JSON.parse(decoded) as { sourcesContent?: (string | null)[] }
+    const original = sourceMap.sourcesContent?.find(
+      content => typeof content === 'string' && content.length > 0,
+    )
+    return typeof original === 'string' ? original : null
+  } catch {
+    return null
+  }
+}
+
+async function fetchSourceFile(file: string): Promise<string | null> {
+  if (typeof fetch !== 'function') return null
+  const cacheKey = file.trim()
+  if (!cacheKey) return null
+
+  let promise = sourceFileCache.get(cacheKey)
+  if (!promise) {
+    promise = (async () => {
+      for (const url of toFetchCandidates(cacheKey)) {
+        try {
+          const response = await fetch(url, { credentials: 'same-origin' })
+          if (!response.ok) continue
+          const text = await response.text()
+          if (!text || text.startsWith('<!DOCTYPE html>') || text.startsWith('<html')) continue
+          const originalSource = extractOriginalSourceFromInlineMap(text)
+          return originalSource ?? text
+        } catch {
+          // Try next candidate URL
+        }
+      }
+      return null
+    })()
+    sourceFileCache.set(cacheKey, promise)
+  }
+
+  return promise
+}
+
+function getLineOffsets(source: string): number[] {
+  const offsets = [0]
+  for (let index = 0; index < source.length; index++) {
+    if (source.charCodeAt(index) === 10) {
+      offsets.push(index + 1)
+    }
+  }
+  return offsets
+}
+
+function getLineFromOffset(offsets: number[], offset: number): number {
+  let low = 0
+  let high = offsets.length - 1
+  while (low <= high) {
+    const mid = (low + high) >> 1
+    const value = offsets[mid] ?? Number.POSITIVE_INFINITY
+    if (value <= offset) low = mid + 1
+    else high = mid - 1
+  }
+  return Math.max(1, high + 1)
+}
+
+function findMatchingFunctionStartLine(
+  sourceLines: string[],
+  componentName: string,
+  anchorLine: number,
+): number {
+  if (!componentName || componentName === 'Anonymous') {
+    return Math.max(1, Math.min(sourceLines.length, anchorLine))
+  }
+
+  const escapedName = componentName.replace(traceRegexEscapes, '\\$&')
+  const patterns = [
+    new RegExp(`\\bexport\\s+default\\s+function\\s+${escapedName}\\b`),
+    new RegExp(`\\bexport\\s+function\\s+${escapedName}\\b`),
+    new RegExp(`\\bfunction\\s+${escapedName}\\b`),
+    new RegExp(`\\b(?:const|let|var)\\s+${escapedName}\\s*=\\s*(?:async\\s*)?\\([^)]*\\)\\s*=>`),
+    new RegExp(
+      `\\b(?:const|let|var)\\s+${escapedName}\\s*=\\s*(?:async\\s*)?[A-Za-z_$][\\w$]*\\s*=>`,
+    ),
+    new RegExp(`\\b(?:const|let|var)\\s+${escapedName}\\s*=\\s*function\\b`),
+  ]
+
+  const candidateLines: number[] = []
+  sourceLines.forEach((lineText, index) => {
+    if (patterns.some(pattern => pattern.test(lineText))) {
+      candidateLines.push(index + 1)
+    }
+  })
+
+  if (candidateLines.length === 0) {
+    return Math.max(1, Math.min(sourceLines.length, anchorLine))
+  }
+
+  candidateLines.sort((a, b) => Math.abs(a - anchorLine) - Math.abs(b - anchorLine))
+  return candidateLines[0] ?? anchorLine
+}
+
+function findFunctionEndLine(source: string, startLine: number, lineOffsets: number[]): number {
+  const lineStart = lineOffsets[Math.max(0, startLine - 1)] ?? 0
+  let index = lineStart
+  let line = startLine
+  let depth = 0
+  let started = false
+  let paramDepth = 0
+  let signatureClosed = false
+
+  let inSingle = false
+  let inDouble = false
+  let inTemplate = false
+  let inLineComment = false
+  let inBlockComment = false
+  let escaped = false
+
+  while (index < source.length) {
+    const char = source[index]
+    const nextChar = source[index + 1]
+
+    if (char === '\n') {
+      line++
+      inLineComment = false
+      escaped = false
+      index++
+      continue
+    }
+
+    if (inLineComment) {
+      index++
+      continue
+    }
+
+    if (inBlockComment) {
+      if (char === '*' && nextChar === '/') {
+        inBlockComment = false
+        index += 2
+        continue
+      }
+      index++
+      continue
+    }
+
+    if (inSingle) {
+      if (char === "'" && !escaped) inSingle = false
+      escaped = char === '\\' && !escaped
+      index++
+      continue
+    }
+
+    if (inDouble) {
+      if (char === '"' && !escaped) inDouble = false
+      escaped = char === '\\' && !escaped
+      index++
+      continue
+    }
+
+    if (inTemplate) {
+      if (char === '`' && !escaped) {
+        inTemplate = false
+        escaped = false
+        index++
+        continue
+      }
+      escaped = char === '\\' && !escaped
+      index++
+      continue
+    }
+
+    if (char === '/' && nextChar === '/') {
+      inLineComment = true
+      index += 2
+      continue
+    }
+    if (char === '/' && nextChar === '*') {
+      inBlockComment = true
+      index += 2
+      continue
+    }
+    if (char === "'") {
+      inSingle = true
+      escaped = false
+      index++
+      continue
+    }
+    if (char === '"') {
+      inDouble = true
+      escaped = false
+      index++
+      continue
+    }
+    if (char === '`') {
+      inTemplate = true
+      escaped = false
+      index++
+      continue
+    }
+
+    if (char === '{') {
+      if (!started) {
+        if (signatureClosed || paramDepth === 0) {
+          started = true
+          depth = 1
+        }
+        index++
+        continue
+      }
+      depth++
+      index++
+      continue
+    }
+
+    if (char === '}') {
+      if (started) {
+        depth--
+        if (depth <= 0) {
+          return getLineFromOffset(lineOffsets, index)
+        }
+      }
+      index++
+      continue
+    }
+
+    if (char === '(') {
+      paramDepth++
+      index++
+      continue
+    }
+
+    if (char === ')') {
+      if (paramDepth > 0) {
+        paramDepth--
+        if (paramDepth === 0) {
+          signatureClosed = true
+        }
+      }
+      index++
+      continue
+    }
+
+    if (char === '=' && nextChar === '>') {
+      signatureClosed = true
+      index += 2
+      continue
+    }
+
+    index++
+  }
+
+  return Math.max(startLine, line)
+}
+
+function pushTraceMarker(
+  markersByLine: Map<number, ComponentTraceMarker[]>,
+  line: number,
+  marker: ComponentTraceMarker,
+): void {
+  const lineMarkers = markersByLine.get(line)
+  if (!lineMarkers) {
+    markersByLine.set(line, [marker])
+    return
+  }
+
+  if (
+    lineMarkers.some(existing => existing.kind === marker.kind && existing.label === marker.label)
+  ) {
+    return
+  }
+  lineMarkers.push(marker)
+}
+
+function isIdentifierName(name: string): boolean {
+  return /^[A-Za-z_$][\w$]*$/.test(name)
+}
+
+function lineContainsIdentifier(lineText: string, identifier: string): boolean {
+  const pattern = new RegExp(`\\b${identifier.replace(traceRegexEscapes, '\\$&')}\\b`)
+  return pattern.test(lineText)
+}
+
+function inferComponentTraceMarkers(
+  component: ComponentState,
+  file: string,
+  startLine: number,
+  endLine: number,
+  sourceLines: string[],
+): Map<number, ComponentTraceMarker[]> {
+  const markersByLine = new Map<number, ComponentTraceMarker[]>()
+  pushTraceMarker(markersByLine, startLine, {
+    kind: 'once',
+    label: 'Component setup runs on mount',
+  })
+
+  const signalNames = component.signals
+    .map(id => signals.get(id)?.name)
+    .filter((name): name is string => typeof name === 'string' && isIdentifierName(name))
+  const computedNames = component.computeds
+    .map(id => computeds.get(id)?.name)
+    .filter((name): name is string => typeof name === 'string' && isIdentifierName(name))
+  const reactiveNames = new Set<string>([...signalNames, ...computedNames])
+
+  for (const signalId of component.signals) {
+    const source = parseSourceLocation(signals.get(signalId)?.source)
+    if (!source || source.file !== file) continue
+    if (source.line < startLine || source.line > endLine) continue
+    pushTraceMarker(markersByLine, source.line, {
+      kind: 'once',
+      label: 'Signal initialization runs once',
+    })
+  }
+
+  for (const computedId of component.computeds) {
+    const source = parseSourceLocation(computeds.get(computedId)?.source)
+    if (!source || source.file !== file) continue
+    if (source.line < startLine || source.line > endLine) continue
+    pushTraceMarker(markersByLine, source.line, {
+      kind: 'reactive',
+      label: 'Computed updates on dependency changes',
+    })
+  }
+
+  for (const effectId of component.effects) {
+    const source = parseSourceLocation(effects.get(effectId)?.source)
+    if (source && source.file === file && source.line >= startLine && source.line <= endLine) {
+      pushTraceMarker(markersByLine, source.line, {
+        kind: 'effect',
+        label: 'Effect reruns when dependencies change',
+      })
+    }
+  }
+
+  for (let line = startLine; line <= endLine; line++) {
+    const lineText = sourceLines[line - 1] ?? ''
+    if (!lineText) continue
+
+    const hasReactiveName = Array.from(reactiveNames).some(name =>
+      lineContainsIdentifier(lineText, name),
+    )
+
+    if (hasReactiveName && /\{[^}]*\b[A-Za-z_$][\w$]*\b[^}]*\}/.test(lineText)) {
+      pushTraceMarker(markersByLine, line, {
+        kind: 'reactive',
+        label: 'JSX expression updates with reactive values',
+      })
+    }
+
+    if (hasReactiveName && /\bconsole\.(?:log|debug|info|warn|error)\s*\(/.test(lineText)) {
+      pushTraceMarker(markersByLine, line, {
+        kind: 'reactive',
+        label: 'Statement reruns when reactive values change',
+      })
+    }
+
+    if (/\b(?:\$effect|effect)\s*\(/.test(lineText)) {
+      pushTraceMarker(markersByLine, line, {
+        kind: 'effect',
+        label: 'Effect callback executes reactively',
+      })
+    }
+
+    if (
+      /\bconsole\.(?:log|debug|info|warn|error)\s*\(/.test(lineText) &&
+      !hasReactiveName &&
+      line !== startLine
+    ) {
+      pushTraceMarker(markersByLine, line, {
+        kind: 'once',
+        label: 'Statement runs only during setup',
+      })
+    }
+  }
+
+  return markersByLine
+}
+
+async function buildComponentTrace(componentId: number): Promise<ComponentTracePayload | null> {
+  const component = components.get(componentId)
+  if (!component) return null
+
+  const nodeLocations = collectComponentNodeLocations(component)
+  const componentSource = parseSourceLocation(component.source)
+  const candidates = [...nodeLocations]
+  if (componentSource) candidates.push(componentSource)
+  if (candidates.length === 0) return null
+
+  const dominantFile = chooseDominantFile(candidates)
+  if (!dominantFile) return null
+  const dominantLocations = candidates
+    .filter(location => location.file === dominantFile)
+    .sort((a, b) => a.line - b.line || a.column - b.column)
+  if (dominantLocations.length === 0) return null
+
+  const anchor = dominantLocations[0]?.line ?? 1
+  const sourceText = await fetchSourceFile(dominantFile)
+  if (!sourceText) {
+    return {
+      componentId,
+      componentName: component.name,
+      file: dominantFile,
+      startLine: Math.max(1, anchor),
+      endLine: Math.max(1, anchor),
+      lines: [],
+      warnings: ['Unable to load source file from current dev server context.'],
+    }
+  }
+
+  const sourceLines = sourceText.split(/\r?\n/)
+  const lineOffsets = getLineOffsets(sourceText)
+  const startLine = findMatchingFunctionStartLine(sourceLines, component.name, anchor)
+  const inferredEndLine = findFunctionEndLine(sourceText, startLine, lineOffsets)
+  const boundedEndLine = Math.min(sourceLines.length, Math.max(startLine, inferredEndLine))
+  const endLine = Math.min(boundedEndLine, startLine + 220)
+  const markersByLine = inferComponentTraceMarkers(
+    component,
+    dominantFile,
+    startLine,
+    endLine,
+    sourceLines,
+  )
+
+  const lines: ComponentTraceLine[] = []
+  for (let line = startLine; line <= endLine; line++) {
+    lines.push({
+      line,
+      text: sourceLines[line - 1] ?? '',
+      markers: markersByLine.get(line) ?? [],
+    })
+  }
+
+  const result: ComponentTracePayload = {
+    componentId,
+    componentName: component.name,
+    file: dominantFile,
+    startLine,
+    endLine,
+    lines,
+  }
+
+  if (endLine === startLine + 220) {
+    result.warnings = ['Trace is truncated to keep the panel responsive.']
+  }
+  return result
+}
+
 /**
  * Expose a node to the browser console for interactive debugging.
  * Creates $signal0-$signal9, $effect0-$effect9, $component0-$component9 variables.
@@ -501,6 +1141,34 @@ function handlePanelMessage(event: MessageEvent): void {
       sendToPanel('response:dependencyGraph', buildDependencyGraph(payload?.nodeId))
       break
 
+    case 'request:componentTrace': {
+      const componentId =
+        payload && typeof payload === 'object'
+          ? (payload as { componentId?: number }).componentId
+          : undefined
+      if (typeof componentId !== 'number' || !Number.isFinite(componentId)) {
+        sendToPanel('response:componentTrace', {
+          componentId: componentId ?? null,
+          trace: null,
+          error: 'Invalid component id',
+        })
+        break
+      }
+
+      void buildComponentTrace(componentId)
+        .then(trace => {
+          sendToPanel('response:componentTrace', { componentId, trace })
+        })
+        .catch(error => {
+          sendToPanel('response:componentTrace', {
+            componentId,
+            trace: null,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        })
+      break
+    }
+
     case 'set:signalValue':
       if (payload?.id !== undefined) {
         hook.setSignalValue(payload.id as number, payload.value)
@@ -698,6 +1366,7 @@ const hook: FictDevtoolsHookEnhanced = {
     value: unknown,
     options?: { name?: string; source?: string; ownerId?: number },
   ): void {
+    const parsedSource = parseSourceLocation(options?.source)
     const state: SignalState = {
       id,
       type: NodeType.Signal,
@@ -706,7 +1375,7 @@ const hook: FictDevtoolsHookEnhanced = {
       updateCount: 0,
       createdAt: Date.now(),
       observers: [],
-      source: options?.source ? { file: options.source, line: 0, column: 0 } : undefined,
+      source: parsedSource,
       ownerId: options?.ownerId,
     }
     signals.set(id, state)
@@ -718,6 +1387,7 @@ const hook: FictDevtoolsHookEnhanced = {
       if (ownerComponent && !ownerComponent.signals.includes(id)) {
         ownerComponent.signals.push(id)
       }
+      updateOwnerComponentSource(options.ownerId, parsedSource)
     }
 
     recordEvent(
@@ -774,6 +1444,7 @@ const hook: FictDevtoolsHookEnhanced = {
     value: unknown,
     options?: { name?: string; source?: string; ownerId?: number },
   ): void {
+    const parsedSource = parseSourceLocation(options?.source)
     const state: ComputedState = {
       id,
       type: NodeType.Computed,
@@ -784,7 +1455,7 @@ const hook: FictDevtoolsHookEnhanced = {
       dependencies: [],
       observers: [],
       isDirty: true,
-      source: options?.source ? { file: options.source, line: 0, column: 0 } : undefined,
+      source: parsedSource,
       ownerId: options?.ownerId,
     }
     computeds.set(id, state)
@@ -797,6 +1468,7 @@ const hook: FictDevtoolsHookEnhanced = {
       if (ownerComponent && !ownerComponent.computeds.includes(id)) {
         ownerComponent.computeds.push(id)
       }
+      updateOwnerComponentSource(options.ownerId, parsedSource)
     }
 
     recordEvent(
@@ -847,6 +1519,7 @@ const hook: FictDevtoolsHookEnhanced = {
 
   // Effect lifecycle
   registerEffect(id: number, options?: { ownerId?: number; source?: string }): void {
+    const parsedSource = parseSourceLocation(options?.source)
     const state: EffectState = {
       id,
       type: NodeType.Effect,
@@ -855,7 +1528,7 @@ const hook: FictDevtoolsHookEnhanced = {
       dependencies: [],
       isActive: true,
       hasCleanup: false,
-      source: options?.source ? { file: options.source, line: 0, column: 0 } : undefined,
+      source: parsedSource,
       ownerId: options?.ownerId,
     }
     effects.set(id, state)
@@ -867,6 +1540,7 @@ const hook: FictDevtoolsHookEnhanced = {
       if (ownerComponent && !ownerComponent.effects.includes(id)) {
         ownerComponent.effects.push(id)
       }
+      updateOwnerComponentSource(options.ownerId, parsedSource)
     }
 
     recordEvent(TimelineEventType.EffectCreate, id, NodeType.Effect, `Effect #${id}`)
@@ -931,6 +1605,7 @@ const hook: FictDevtoolsHookEnhanced = {
 
   // Component lifecycle
   registerComponent(id: number, name: string, parentId?: number, source?: SourceLocation): void {
+    const parsedSource = parseSourceLocation(source)
     const state: ComponentState = {
       id,
       type: NodeType.Component,
@@ -940,7 +1615,7 @@ const hook: FictDevtoolsHookEnhanced = {
       signals: [],
       computeds: [],
       effects: [],
-      source,
+      source: parsedSource,
       isMounted: false,
       renderCount: 0,
       createdAt: Date.now(),
@@ -1274,6 +1949,7 @@ export function detachDebugger(): void {
 
   // Reset connection state
   isConnected = false
+  sourceFileCache.clear()
 
   const global = globalThis as typeof globalThis & {
     __FICT_DEVTOOLS_HOOK__?: FictDevtoolsHookEnhanced

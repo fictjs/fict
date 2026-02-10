@@ -6,7 +6,7 @@ import {
   runCleanupList,
   withEffectCleanups,
 } from './lifecycle'
-import { effectWithCleanup } from './signal'
+import { effectWithCleanup, type EffectOptions } from './signal'
 import type { Cleanup } from './types'
 
 /**
@@ -15,7 +15,7 @@ import type { Cleanup } from './types'
  */
 export type Effect = () => void | Cleanup
 
-export function createEffect(fn: Effect): () => void {
+export function createEffect(fn: Effect, options?: EffectOptions): () => void {
   let cleanups: Cleanup[] = []
   const rootForError = getCurrentRoot()
 
@@ -47,7 +47,7 @@ export function createEffect(fn: Effect): () => void {
     cleanups = bucket
   }
 
-  const disposeEffect = effectWithCleanup(run, doCleanup, rootForError)
+  const disposeEffect = effectWithCleanup(run, doCleanup, rootForError, options)
   const teardown = () => {
     runCleanupList(cleanups)
     disposeEffect()
@@ -60,7 +60,7 @@ export function createEffect(fn: Effect): () => void {
 
 export const $effect = createEffect
 
-export function createRenderEffect(fn: Effect): () => void {
+export function createRenderEffect(fn: Effect, options?: EffectOptions): () => void {
   let cleanup: Cleanup | undefined
   const rootForError = getCurrentRoot()
 
@@ -91,7 +91,7 @@ export function createRenderEffect(fn: Effect): () => void {
     }
   }
 
-  const disposeEffect = effectWithCleanup(run, doCleanup, rootForError)
+  const disposeEffect = effectWithCleanup(run, doCleanup, rootForError, options)
   const teardown = () => {
     if (cleanup) {
       cleanup()
