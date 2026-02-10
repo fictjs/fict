@@ -53,6 +53,45 @@ async function waitForMessage(
   return messages.find(message => message.type === type)
 }
 
+async function requestComponentTrace(
+  panelChannel: MockBroadcastChannel,
+  messages: Array<{ source?: string; type?: string; payload?: unknown }>,
+  componentId: number,
+): Promise<
+  | {
+      componentId: number
+      trace: {
+        file: string
+        lines: Array<{ text: string; markers: Array<{ kind: string }> }>
+      }
+    }
+  | undefined
+> {
+  panelChannel.postMessage({
+    source: 'fict-devtools-panel',
+    type: 'connect',
+    timestamp: Date.now(),
+  })
+  await waitForTick()
+
+  panelChannel.postMessage({
+    source: 'fict-devtools-panel',
+    type: 'request:componentTrace',
+    payload: { componentId },
+    timestamp: Date.now(),
+  })
+
+  const traceMessage = await waitForMessage(messages, 'response:componentTrace')
+  if (!traceMessage) return undefined
+  return traceMessage.payload as {
+    componentId: number
+    trace: {
+      file: string
+      lines: Array<{ text: string; markers: Array<{ kind: string }> }>
+    }
+  }
+}
+
 describe('debugger component trace', () => {
   let originalBroadcastChannel: typeof BroadcastChannel | undefined
   let originalFetch: typeof fetch | undefined
@@ -80,7 +119,12 @@ describe('debugger component trace', () => {
               '  let count = $state(0)',
               '  const doubled = count * 2',
               "  console.log('B', doubled)",
-              "  return <button>{(console.log('C'), doubled)}{(console.log('D'), 'static')}</button>",
+              '  return (',
+              '    <button onClick={() => count++}>',
+              "      {(console.log('C'), doubled)}",
+              "      {(console.log('D'), 'static')}",
+              '    </button>',
+              '  )',
               '}',
             ].join('\n'),
             { status: 200 },
@@ -120,7 +164,7 @@ describe('debugger component trace', () => {
     vi.resetModules()
   })
 
-  it('returns component trace with once/reactive markers', async () => {
+  it('marks derived local values as reactive in JSX and statements', async () => {
     const { attachDebugger, hook } = await import('../src/core/debugger')
 
     attachDebugger()
@@ -130,10 +174,71 @@ describe('debugger component trace', () => {
       source: '/Users/test/src/Counter.tsx:3:7',
       ownerId: 1,
     })
-    hook.registerComputed(11, 0, {
-      name: 'doubled',
-      source: '/Users/test/src/Counter.tsx:4:9',
-      ownerId: 1,
+
+    const panelChannel = new MockBroadcastChannel('fict-devtools')
+    const messages: Array<{ source?: string; type?: string; payload?: unknown }> = []
+    panelChannel.onmessage = event => {
+      messages.push(event.data as { source?: string; type?: string; payload?: unknown })
+    }
+
+    const tracePayload = await requestComponentTrace(panelChannel, messages, 1)
+    expect(tracePayload).toBeTruthy()
+    expect(tracePayload.componentId).toBe(1)
+    expect(tracePayload.trace.file).toBe('/Users/test/src/Counter.tsx')
+    expect(tracePayload.trace.lines.length).toBeGreaterThan(0)
+
+    const logBLine = tracePayload.trace.lines.find(line => line.text.includes("console.log('B'"))
+    const logCLine = tracePayload.trace.lines.find(line => line.text.includes("console.log('C'"))
+    const logDLine = tracePayload.trace.lines.find(line => line.text.includes("console.log('D'"))
+
+    expect(logBLine?.markers.some(marker => marker.kind === 'reactive')).toBe(true)
+    expect(logCLine?.markers.some(marker => marker.kind === 'reactive')).toBe(true)
+    expect(logCLine?.markers.some(marker => marker.kind === 'once')).toBe(false)
+    expect(logDLine?.markers.some(marker => marker.kind === 'once')).toBe(true)
+    expect(logDLine?.markers.some(marker => marker.kind === 'reactive')).toBe(false)
+  })
+
+  it('decodes inline sourcemaps as utf-8 to preserve unicode source text', async () => {
+    const originalSource = [
+      'function EmojiCounter() {',
+      '  let count = $state(0)',
+      '  return <div>{count}</div> // 🔵 Runs ONCE',
+      '}',
+    ].join('\n')
+    const sourceMapPayload = Buffer.from(
+      JSON.stringify({
+        version: 3,
+        file: 'EmojiCounter.js',
+        sources: ['EmojiCounter.tsx'],
+        names: [],
+        mappings: '',
+        sourcesContent: [originalSource],
+      }),
+      'utf-8',
+    ).toString('base64')
+    const transformedSource = [
+      'function _generated(){ return null }',
+      `//# sourceMappingURL=data:application/json;base64,${sourceMapPayload}`,
+    ].join('\n')
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input.toString()
+        if (url.includes('/@fs/Users/test/src/EmojiCounter.tsx')) {
+          return new Response(transformedSource, { status: 200 })
+        }
+        return new Response('', { status: 404 })
+      }),
+    )
+
+    const { attachDebugger, hook } = await import('../src/core/debugger')
+    attachDebugger()
+    hook.registerComponent(2, 'EmojiCounter')
+    hook.registerSignal(20, 0, {
+      name: 'count',
+      source: '/Users/test/src/EmojiCounter.tsx:2:7',
+      ownerId: 2,
     })
 
     const panelChannel = new MockBroadcastChannel('fict-devtools')
@@ -142,39 +247,9 @@ describe('debugger component trace', () => {
       messages.push(event.data as { source?: string; type?: string; payload?: unknown })
     }
 
-    panelChannel.postMessage({
-      source: 'fict-devtools-panel',
-      type: 'connect',
-      timestamp: Date.now(),
-    })
-    await waitForTick()
-
-    panelChannel.postMessage({
-      source: 'fict-devtools-panel',
-      type: 'request:componentTrace',
-      payload: { componentId: 1 },
-      timestamp: Date.now(),
-    })
-
-    const traceMessage = await waitForMessage(messages, 'response:componentTrace')
-    expect(traceMessage).toBeTruthy()
-    const tracePayload = traceMessage?.payload as {
-      componentId: number
-      trace: {
-        file: string
-        lines: Array<{ markers: Array<{ kind: string }> }>
-      }
-    }
-    expect(tracePayload.componentId).toBe(1)
-    expect(tracePayload.trace.file).toBe('/Users/test/src/Counter.tsx')
-    expect(tracePayload.trace.lines.length).toBeGreaterThan(0)
-    expect(
-      tracePayload.trace.lines.some(line => line.markers.some(marker => marker.kind === 'once')),
-    ).toBe(true)
-    expect(
-      tracePayload.trace.lines.some(line =>
-        line.markers.some(marker => marker.kind === 'reactive'),
-      ),
-    ).toBe(true)
+    const tracePayload = await requestComponentTrace(panelChannel, messages, 2)
+    expect(tracePayload).toBeTruthy()
+    expect(tracePayload.trace.file).toBe('/Users/test/src/EmojiCounter.tsx')
+    expect(tracePayload.trace.lines.some(line => line.text.includes('🔵 Runs ONCE'))).toBe(true)
   })
 })

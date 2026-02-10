@@ -232,9 +232,19 @@ function toFetchCandidates(file: string): string[] {
 }
 
 function decodeBase64Payload(value: string): string | null {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/')
+
   try {
     if (typeof atob === 'function') {
-      return atob(value)
+      const binary = atob(normalized)
+      if (typeof TextDecoder === 'function') {
+        const bytes = new Uint8Array(binary.length)
+        for (let index = 0; index < binary.length; index++) {
+          bytes[index] = binary.charCodeAt(index)
+        }
+        return new TextDecoder('utf-8').decode(bytes)
+      }
+      return binary
     }
   } catch {
     // Fall through to Buffer decoding.
@@ -249,7 +259,7 @@ function decodeBase64Payload(value: string): string | null {
       }
     ).Buffer
     if (bufferCtor?.from) {
-      return bufferCtor.from(value, 'base64').toString('utf-8')
+      return bufferCtor.from(normalized, 'base64').toString('utf-8')
     }
   } catch {
     // Ignore decode failures.
@@ -549,6 +559,50 @@ function lineContainsIdentifier(lineText: string, identifier: string): boolean {
   return pattern.test(lineText)
 }
 
+function lineContainsAnyIdentifier(lineText: string, identifiers: Iterable<string>): boolean {
+  for (const identifier of identifiers) {
+    if (lineContainsIdentifier(lineText, identifier)) return true
+  }
+  return false
+}
+
+function inferReactiveLocalNames(
+  startLine: number,
+  endLine: number,
+  sourceLines: string[],
+  baseReactiveNames: Iterable<string>,
+): Set<string> {
+  const reactiveNames = new Set<string>(baseReactiveNames)
+  const declarationLines: Array<{ name: string; expression: string }> = []
+  const declarationPattern = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?)(?:;)?$/
+
+  for (let line = startLine; line <= endLine; line++) {
+    const lineText = (sourceLines[line - 1] ?? '').trim()
+    if (!lineText) continue
+    const withoutComment = lineText.replace(/\/\/.*$/, '').trim()
+    if (!withoutComment) continue
+    const declarationMatch = withoutComment.match(declarationPattern)
+    if (!declarationMatch) continue
+    const name = declarationMatch[1]
+    const expression = declarationMatch[2]
+    if (!name || !expression) continue
+    declarationLines.push({ name, expression })
+  }
+
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const declaration of declarationLines) {
+      if (reactiveNames.has(declaration.name)) continue
+      if (!lineContainsAnyIdentifier(declaration.expression, reactiveNames)) continue
+      reactiveNames.add(declaration.name)
+      changed = true
+    }
+  }
+
+  return reactiveNames
+}
+
 function inferComponentTraceMarkers(
   component: ComponentState,
   file: string,
@@ -568,7 +622,10 @@ function inferComponentTraceMarkers(
   const computedNames = component.computeds
     .map(id => computeds.get(id)?.name)
     .filter((name): name is string => typeof name === 'string' && isIdentifierName(name))
-  const reactiveNames = new Set<string>([...signalNames, ...computedNames])
+  const reactiveNames = inferReactiveLocalNames(startLine, endLine, sourceLines, [
+    ...signalNames,
+    ...computedNames,
+  ])
 
   for (const signalId of component.signals) {
     const source = parseSourceLocation(signals.get(signalId)?.source)
@@ -604,9 +661,7 @@ function inferComponentTraceMarkers(
     const lineText = sourceLines[line - 1] ?? ''
     if (!lineText) continue
 
-    const hasReactiveName = Array.from(reactiveNames).some(name =>
-      lineContainsIdentifier(lineText, name),
-    )
+    const hasReactiveName = lineContainsAnyIdentifier(lineText, reactiveNames)
 
     if (hasReactiveName && /\{[^}]*\b[A-Za-z_$][\w$]*\b[^}]*\}/.test(lineText)) {
       pushTraceMarker(markersByLine, line, {
