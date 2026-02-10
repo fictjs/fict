@@ -27,6 +27,13 @@ import type {
 } from '../core/types'
 
 import { GraphRenderer } from './graph-renderer'
+import {
+  collectComponentAncestorIds,
+  inferGraphSelectableNodeType,
+  normalizeDependencyGraphPayload,
+  toGraphSelectableNodeType,
+  type GraphSelectableNodeType,
+} from './panel-utils'
 import { filterItems as fuzzyFilterItems, highlightMatches } from './search'
 import {
   renderTimeline,
@@ -96,12 +103,14 @@ let signalsVirtualList: VirtualList<SignalState | ComputedState> | null = null
 let effectsVirtualList: VirtualList<EffectState> | null = null
 let timelineLayers: TimelineLayer[] = createDefaultLayers()
 let selectedTimelineEvent: TimelineEvent | null = null
+let pendingComponentExpansionId: number | null = null
 
 // Graph auto-refresh state
 let graphAutoRefresh = true
 let graphAutoRefreshNodeId: number | null = null
 let graphRefreshDebounceTimer: ReturnType<typeof setTimeout> | null = null
 const GRAPH_REFRESH_DEBOUNCE_MS = 300
+let graphSelectedType: GraphSelectableNodeType = 'signal'
 
 // Inline editing state
 let editingSignalId: number | null = null
@@ -184,6 +193,8 @@ function resetPanelState(
   state.isConnected = options.keepConnection ? state.isConnected : false
   state.fictDetected = options.keepDetection ? state.fictDetected : false
   state.lastUpdate = Date.now()
+  pendingComponentExpansionId = null
+  graphSelectedType = 'signal'
   selectedTimelineEvent = null
   currentGraph = null
   graphAutoRefreshNodeId = null
@@ -260,6 +271,41 @@ function getOwnerName(ownerId?: number): string {
   return toDisplayName(owner?.name, `Component #${ownerId}`)
 }
 
+function expandComponentAncestors(componentId: number): void {
+  const ancestorIds = collectComponentAncestorIds(state.components, componentId)
+  for (const ancestorId of ancestorIds) {
+    state.expandedIds.add(ancestorId)
+  }
+}
+
+function ensureSelectedComponentVisible(componentId: number): void {
+  if (!state.components.has(componentId)) {
+    pendingComponentExpansionId = componentId
+    sendToPage('request:components')
+    return
+  }
+  pendingComponentExpansionId = null
+  expandComponentAncestors(componentId)
+}
+
+function syncSelectedComponentVisibility(): void {
+  if (state.selectedNodeType === 'component' && typeof state.selectedNodeId === 'number') {
+    if (state.components.has(state.selectedNodeId)) {
+      expandComponentAncestors(state.selectedNodeId)
+      if (pendingComponentExpansionId === state.selectedNodeId) {
+        pendingComponentExpansionId = null
+      }
+    } else {
+      pendingComponentExpansionId = state.selectedNodeId
+    }
+  }
+
+  if (pendingComponentExpansionId !== null && state.components.has(pendingComponentExpansionId)) {
+    expandComponentAncestors(pendingComponentExpansionId)
+    pendingComponentExpansionId = null
+  }
+}
+
 function renderOwnerLabel(ownerId?: number): string {
   const ownerName = getOwnerName(ownerId)
   const ownerDisplay = `@${ownerName}`
@@ -278,14 +324,29 @@ function parseOwnerId(target: EventTarget | null): number | null {
 }
 
 function navigateToOwnerComponent(ownerId: number): void {
-  if (!state.components.has(ownerId)) {
-    sendToPage('request:components')
-  }
+  ensureSelectedComponentVisible(ownerId)
   state.selectedNodeId = ownerId
   state.selectedNodeType = 'component' as NodeType
   state.activeTab = 'components'
   sendToPage('inspect:highlight', { id: ownerId })
   render()
+}
+
+function resolveGraphNodeType(nodeId: number, nodeType?: unknown): GraphSelectableNodeType | null {
+  const provided = toGraphSelectableNodeType(nodeType)
+  if (provided) return provided
+  return inferGraphSelectableNodeType(nodeId, state.signals, state.computeds, state.effects)
+}
+
+function requestDependencyGraph(nodeId: number, nodeType?: unknown): void {
+  const graphType = resolveGraphNodeType(nodeId, nodeType)
+  if (graphType) {
+    graphSelectedType = graphType
+    state.selectedNodeType = graphType as NodeType
+  }
+  state.selectedNodeId = nodeId
+  graphAutoRefreshNodeId = nodeId
+  sendToPage('request:dependencyGraph', { nodeId })
 }
 
 // ============================================================================
@@ -319,65 +380,6 @@ function isComponentState(value: unknown): value is ComponentState {
 
 function hasId(value: unknown): value is { id: number } {
   return typeof value === 'object' && value !== null && isValidId((value as { id: number }).id)
-}
-
-function normalizeDependencyGraph(payload: unknown): DependencyGraph | null {
-  if (!payload || typeof payload !== 'object') return null
-
-  const candidate = payload as {
-    rootId?: unknown
-    nodes?: unknown
-    edges?: unknown
-  }
-  if (!isValidId(candidate.rootId)) return null
-
-  const nodes = new Map<number, DependencyGraph['nodes'] extends Map<number, infer T> ? T : never>()
-  const rawNodes = candidate.nodes
-
-  if (rawNodes instanceof Map) {
-    for (const [key, value] of rawNodes.entries()) {
-      if (isValidId(key) && typeof value === 'object' && value !== null) {
-        nodes.set(key, value as DependencyGraph['nodes'] extends Map<number, infer T> ? T : never)
-      }
-    }
-  } else if (Array.isArray(rawNodes)) {
-    for (const entry of rawNodes) {
-      if (
-        Array.isArray(entry) &&
-        entry.length >= 2 &&
-        isValidId(entry[0]) &&
-        typeof entry[1] === 'object' &&
-        entry[1] !== null
-      ) {
-        nodes.set(
-          entry[0],
-          entry[1] as DependencyGraph['nodes'] extends Map<number, infer T> ? T : never,
-        )
-      }
-    }
-  } else if (rawNodes && typeof rawNodes === 'object') {
-    for (const [key, value] of Object.entries(rawNodes)) {
-      const id = Number.parseInt(key, 10)
-      if (Number.isFinite(id) && typeof value === 'object' && value !== null) {
-        nodes.set(id, value as DependencyGraph['nodes'] extends Map<number, infer T> ? T : never)
-      }
-    }
-  }
-
-  const edges: [number, number][] = []
-  if (Array.isArray(candidate.edges)) {
-    for (const edge of candidate.edges) {
-      if (Array.isArray(edge) && edge.length >= 2 && isValidId(edge[0]) && isValidId(edge[1])) {
-        edges.push([edge[0], edge[1]])
-      }
-    }
-  }
-
-  return {
-    rootId: candidate.rootId,
-    nodes,
-    edges,
-  }
 }
 
 // ============================================================================
@@ -499,6 +501,8 @@ function handleMessage(message: Record<string, unknown>): void {
       graphAutoRefreshNodeId = null
       editingSignalId = null
       graphSearchQuery = ''
+      pendingComponentExpansionId = null
+      graphSelectedType = 'signal'
       render()
       break
 
@@ -533,6 +537,7 @@ function handleMessage(message: Record<string, unknown>): void {
         state.selectedNodeId = componentId
         state.selectedNodeType = 'component' as NodeType
         state.activeTab = 'components'
+        ensureSelectedComponentVisible(componentId)
       }
       render()
       break
@@ -772,6 +777,7 @@ function handleMessage(message: Record<string, unknown>): void {
           state.components.set(component.id, component)
         }
       }
+      syncSelectedComponentVisibility()
       state.lastUpdate = Date.now()
       if (state.activeTab === 'components') renderComponentsTab()
       break
@@ -796,8 +802,14 @@ function handleMessage(message: Record<string, unknown>): void {
       break
 
     case 'response:dependencyGraph':
-      currentGraph = normalizeDependencyGraph(payload)
+      currentGraph = normalizeDependencyGraphPayload(payload)
+      if (currentGraph) {
+        const rootNode = currentGraph.nodes.get(currentGraph.rootId)
+        const rootType = rootNode ? toGraphSelectableNodeType(rootNode.type) : null
+        if (rootType) graphSelectedType = rootType
+      }
       if (state.activeTab === 'graph') {
+        syncGraphNodeSelectorUI()
         updateGraphRenderer()
         updateGraphDetails()
       }
@@ -894,6 +906,7 @@ function handleInitialState(data: InitialState): void {
     state.roots.set(root.id, root)
   }
 
+  syncSelectedComponentVisibility()
   state.timeline = data.timeline || []
   state.settings = { ...state.settings, ...data.settings }
   state.isConnected = true
@@ -1212,7 +1225,7 @@ function renderSignalRow(signal: SignalState): string {
       </div>
       <div class="row-actions">
         <button class="btn-icon expose-btn" data-expose-type="signal" data-expose-id="${signal.id}" title="Expose to console as $signal0">$</button>
-        <button class="btn-icon graph-btn" data-graph-id="${signal.id}" title="View dependency graph">⊛</button>
+        <button class="btn-icon graph-btn" data-graph-id="${signal.id}" data-graph-type="signal" title="View dependency graph">⊛</button>
       </div>
     </div>
   `
@@ -1246,7 +1259,7 @@ function renderComputedRow(computed: ComputedState): string {
       </div>
       <div class="row-actions">
         <button class="btn-icon expose-btn" data-expose-type="computed" data-expose-id="${computed.id}" title="Expose to console as $signal0">$</button>
-        <button class="btn-icon graph-btn" data-graph-id="${computed.id}" title="View dependency graph">⊛</button>
+        <button class="btn-icon graph-btn" data-graph-id="${computed.id}" data-graph-type="computed" title="View dependency graph">⊛</button>
       </div>
     </div>
   `
@@ -1309,7 +1322,7 @@ function renderEffectRow(effect: EffectState): string {
       </div>
       <div class="row-actions">
         <button class="btn-icon expose-btn" data-expose-type="effect" data-expose-id="${effect.id}" title="Expose to console as $effect0">$</button>
-        <button class="btn-icon graph-btn" data-graph-id="${effect.id}" title="View dependency graph">⊛</button>
+        <button class="btn-icon graph-btn" data-graph-id="${effect.id}" data-graph-type="effect" title="View dependency graph">⊛</button>
       </div>
     </div>
   `
@@ -1576,10 +1589,23 @@ function renderTimelineContent(): string {
   `
 }
 
+function getGraphItemsForType(type: GraphSelectableNodeType): { id: number; name?: string }[] {
+  switch (type) {
+    case 'computed':
+      return Array.from(state.computeds.values())
+    case 'effect':
+      return Array.from(state.effects.values())
+    case 'signal':
+    default:
+      return Array.from(state.signals.values())
+  }
+}
+
 function updateTimelineEventDetails(): void {
   const detailsEl = document.getElementById('timeline-event-details')
   if (detailsEl) {
     detailsEl.innerHTML = renderEventDetails(selectedTimelineEvent, timelineLayers)
+    setupTimelineNodeLinkListeners(detailsEl)
   }
 }
 
@@ -1587,6 +1613,7 @@ function renderGraphContent(): string {
   const signals = Array.from(state.signals.values())
   const computeds = Array.from(state.computeds.values())
   const effects = Array.from(state.effects.values())
+  const graphItems = getGraphItemsForType(graphSelectedType)
 
   return `
     <div class="graph-container">
@@ -1601,12 +1628,12 @@ function renderGraphContent(): string {
         <div class="node-selector">
           <input type="text" class="graph-search-input" id="graph-search-input" placeholder="Search nodes..." value="${escapeHtml(graphSearchQuery)}" />
           <select id="graph-node-type">
-            <option value="signal">Signals (${signals.length})</option>
-            <option value="computed">Computed (${computeds.length})</option>
-            <option value="effect">Effects (${effects.length})</option>
+            <option value="signal" ${graphSelectedType === 'signal' ? 'selected' : ''}>Signals (${signals.length})</option>
+            <option value="computed" ${graphSelectedType === 'computed' ? 'selected' : ''}>Computed (${computeds.length})</option>
+            <option value="effect" ${graphSelectedType === 'effect' ? 'selected' : ''}>Effects (${effects.length})</option>
           </select>
-          <div class="node-list" id="graph-node-list">
-            ${renderGraphNodeList('signal', signals)}
+          <div class="node-list" id="graph-node-list" data-current-type="${graphSelectedType}">
+            ${renderGraphNodeList(graphSelectedType, graphItems)}
           </div>
         </div>
       </div>
@@ -1627,11 +1654,14 @@ function scheduleGraphRefresh(): void {
 
   graphRefreshDebounceTimer = setTimeout(() => {
     graphRefreshDebounceTimer = null
-    sendToPage('request:dependencyGraph', { nodeId: graphAutoRefreshNodeId })
+    requestDependencyGraph(graphAutoRefreshNodeId, state.selectedNodeType)
   }, GRAPH_REFRESH_DEBOUNCE_MS)
 }
 
-function renderGraphNodeList(type: string, items: { id: number; name?: string }[]): string {
+function renderGraphNodeList(
+  type: GraphSelectableNodeType,
+  items: { id: number; name?: string }[],
+): string {
   if (items.length === 0) {
     return '<div class="empty-message" style="height: 60px">No items</div>'
   }
@@ -1651,17 +1681,38 @@ function renderGraphNodeList(type: string, items: { id: number; name?: string }[
     .join('')
 }
 
-function getOwnerNameForGraphNode(nodeId: number, nodeType: NodeType): string | null {
+type DependencyGraphNodeState = DependencyGraph extends { nodes: Map<number, infer T> } ? T : never
+
+function getOwnerIdForGraphNode(nodeId: number, nodeType: NodeType): number | undefined {
   switch (nodeType) {
     case 'signal':
-      return getOwnerName(state.signals.get(nodeId)?.ownerId)
+      return state.signals.get(nodeId)?.ownerId
     case 'computed':
-      return getOwnerName(state.computeds.get(nodeId)?.ownerId)
+      return state.computeds.get(nodeId)?.ownerId
     case 'effect':
-      return getOwnerName(state.effects.get(nodeId)?.ownerId)
+      return state.effects.get(nodeId)?.ownerId
     default:
-      return null
+      return undefined
   }
+}
+
+function renderGraphNodeReference(node: DependencyGraphNodeState): string {
+  const graphType = toGraphSelectableNodeType(node.type)
+  const display = `${getNodeIcon(node.type)} ${toDisplayName(node.name, `${node.type} #${node.id}`)}`
+  if (graphType) {
+    return `<button type="button" class="detail-link graph-node-link" data-graph-node-id="${node.id}" data-graph-node-type="${graphType}" title="View dependency graph">${escapeHtml(display)}</button>`
+  }
+  return `<span class="detail-text">${escapeHtml(display)}</span>`
+}
+
+function collectGraphNodes(ids: number[]): DependencyGraphNodeState[] {
+  if (!currentGraph) return []
+  const nodes: DependencyGraphNodeState[] = []
+  for (const id of ids) {
+    const node = currentGraph.nodes.get(id)
+    if (node) nodes.push(node)
+  }
+  return nodes
 }
 
 function renderGraphDetails(): string {
@@ -1669,10 +1720,10 @@ function renderGraphDetails(): string {
 
   const rootNode = currentGraph.nodes.get(currentGraph.rootId)
   if (!rootNode) return ''
-  const ownerName = getOwnerNameForGraphNode(rootNode.id, rootNode.type)
-
-  const sources = rootNode.sources.map(id => currentGraph!.nodes.get(id)).filter(Boolean)
-  const observers = rootNode.observers.map(id => currentGraph!.nodes.get(id)).filter(Boolean)
+  const ownerId = getOwnerIdForGraphNode(rootNode.id, rootNode.type)
+  const ownerName = ownerId !== undefined ? getOwnerName(ownerId) : null
+  const sources = collectGraphNodes(rootNode.sources)
+  const observers = collectGraphNodes(rootNode.observers)
 
   return `
     <div class="details-header">
@@ -1689,11 +1740,13 @@ function renderGraphDetails(): string {
         <span class="value">#${rootNode.id}</span>
       </div>
       ${
-        ownerName
+        ownerName && ownerId !== undefined
           ? `
         <div class="detail-row">
           <span class="label">Owner</span>
-          <span class="value">${escapeHtml(ownerName)}</span>
+          <span class="value">
+            <button type="button" class="detail-link owner-link" data-owner-id="${ownerId}" title="Jump to owner component: ${escapeHtml(ownerName)}">${escapeHtml(ownerName)}</button>
+          </span>
         </div>
       `
           : ''
@@ -1720,21 +1773,21 @@ function renderGraphDetails(): string {
       }
         <div class="detail-section">
           <span class="label">Dependencies (${sources.length})</span>
-          <div class="data-preview" style="max-height: 100px">
+          <div class="detail-link-list">
           ${
             sources.length > 0
-              ? sources.map(n => `• ${toDisplayName(n!.name, `${n!.type} #${n!.id}`)}`).join('\n')
-              : 'None'
+              ? sources.map(source => renderGraphNodeReference(source)).join('')
+              : '<span class="detail-text">None</span>'
           }
           </div>
         </div>
         <div class="detail-section">
           <span class="label">Observers (${observers.length})</span>
-          <div class="data-preview" style="max-height: 100px">
+          <div class="detail-link-list">
           ${
             observers.length > 0
-              ? observers.map(n => `• ${toDisplayName(n!.name, `${n!.type} #${n!.id}`)}`).join('\n')
-              : 'None'
+              ? observers.map(observer => renderGraphNodeReference(observer)).join('')
+              : '<span class="detail-text">None</span>'
           }
           </div>
         </div>
@@ -1880,10 +1933,9 @@ function initSignalsVirtualList(): void {
           } else if (btn.classList.contains('graph-btn')) {
             const id = parseInt(btn.dataset.graphId || '0', 10)
             if (id) {
-              state.selectedNodeId = id
               state.activeTab = 'graph'
+              requestDependencyGraph(id, btn.dataset.graphType)
               render()
-              sendToPage('request:dependencyGraph', { nodeId: id })
             }
           }
         }
@@ -1930,7 +1982,7 @@ function renderSignalRowContent(signal: SignalState): string {
         <button class="btn-icon edit-signal-btn" data-signal-id="${signal.id}" title="Edit value">${isEditing ? '✓' : '✏️'}</button>
         ${isEditing ? `<button class="btn-icon cancel-edit-btn" data-signal-id="${signal.id}" title="Cancel">✕</button>` : ''}
         <button class="btn-icon expose-btn" data-expose-type="signal" data-expose-id="${signal.id}" title="Expose to console">$</button>
-        <button class="btn-icon graph-btn" data-graph-id="${signal.id}" title="View graph">⊛</button>
+        <button class="btn-icon graph-btn" data-graph-id="${signal.id}" data-graph-type="signal" title="View graph">⊛</button>
       </div>
     </div>
   `
@@ -1990,7 +2042,7 @@ function renderComputedRowContent(computed: ComputedState): string {
       </div>
       <div class="row-actions" style="opacity: 1;">
         <button class="btn-icon expose-btn" data-expose-type="computed" data-expose-id="${computed.id}" title="Expose to console">$</button>
-        <button class="btn-icon graph-btn" data-graph-id="${computed.id}" title="View graph">⊛</button>
+        <button class="btn-icon graph-btn" data-graph-id="${computed.id}" data-graph-type="computed" title="View graph">⊛</button>
       </div>
     </div>
   `
@@ -2045,10 +2097,9 @@ function initEffectsVirtualList(): void {
           } else if (btn.classList.contains('graph-btn')) {
             const id = parseInt(btn.dataset.graphId || '0', 10)
             if (id) {
-              state.selectedNodeId = id
               state.activeTab = 'graph'
+              requestDependencyGraph(id, btn.dataset.graphType)
               render()
-              sendToPage('request:dependencyGraph', { nodeId: id })
             }
           }
         }
@@ -2089,7 +2140,7 @@ function renderEffectRowContent(effect: EffectState): string {
       </div>
       <div class="row-actions" style="opacity: 1;">
         <button class="btn-icon expose-btn" data-expose-type="effect" data-expose-id="${effect.id}" title="Expose to console">$</button>
-        <button class="btn-icon graph-btn" data-graph-id="${effect.id}" title="View graph">⊛</button>
+        <button class="btn-icon graph-btn" data-graph-id="${effect.id}" data-graph-type="effect" title="View graph">⊛</button>
       </div>
     </div>
   `
@@ -2118,9 +2169,7 @@ function initGraphRenderer(): void {
   graphRenderer = new GraphRenderer({
     container,
     onNodeSelect(nodeId) {
-      state.selectedNodeId = nodeId
-      graphAutoRefreshNodeId = nodeId
-      sendToPage('request:dependencyGraph', { nodeId })
+      requestDependencyGraph(nodeId)
     },
     onNodeHover() {
       // Could show tooltip or highlight related nodes
@@ -2139,13 +2188,115 @@ function updateGraphRenderer(): void {
   }
 }
 
+function syncGraphNodeSelectorUI(): void {
+  const graphNodeType = document.getElementById('graph-node-type') as HTMLSelectElement | null
+  if (!graphNodeType) return
+  if (graphNodeType.value !== graphSelectedType) {
+    graphNodeType.value = graphSelectedType
+  }
+
+  const nodeList = document.getElementById('graph-node-list')
+  if (nodeList) {
+    if (nodeList.dataset.currentType !== graphSelectedType) {
+      nodeList.dataset.currentType = graphSelectedType
+      nodeList.innerHTML = renderGraphNodeList(
+        graphSelectedType,
+        getGraphItemsForType(graphSelectedType),
+      )
+      setupGraphNodeListeners()
+      return
+    }
+
+    nodeList.querySelectorAll('.node-list-item.selected').forEach(item => {
+      item.classList.remove('selected')
+    })
+    if (state.selectedNodeId !== null) {
+      const selected = nodeList.querySelector(
+        `.node-list-item[data-graph-node-id="${state.selectedNodeId}"]`,
+      )
+      if (selected) {
+        selected.classList.add('selected')
+      }
+    }
+  }
+}
+
 function updateGraphDetails(): void {
   const detailsEl = document.getElementById('graph-details')
   if (detailsEl) {
     detailsEl.innerHTML = currentGraph
       ? renderGraphDetails()
       : '<p class="hint">Select a node to view its dependency graph</p>'
+    setupOwnerLinkListeners(detailsEl)
+    setupGraphDetailNodeLinkListeners(detailsEl)
   }
+}
+
+function setupOwnerLinkListeners(root: ParentNode = document): void {
+  root.querySelectorAll('.owner-link').forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      const ownerId = parseOwnerId(e.currentTarget)
+      if (ownerId !== null) {
+        navigateToOwnerComponent(ownerId)
+      }
+    })
+  })
+}
+
+function navigateToTimelineNode(nodeId: number, nodeType: NodeType): void {
+  const graphType = toGraphSelectableNodeType(nodeType)
+  if (graphType) {
+    state.selectedNodeId = nodeId
+    state.selectedNodeType = graphType as NodeType
+    state.activeTab = graphType === 'effect' ? 'effects' : 'signals'
+    render()
+    return
+  }
+
+  if (nodeType === 'component') {
+    ensureSelectedComponentVisible(nodeId)
+    state.selectedNodeId = nodeId
+    state.selectedNodeType = 'component' as NodeType
+    state.activeTab = 'components'
+    sendToPage('inspect:highlight', { id: nodeId })
+    render()
+    return
+  }
+
+  state.activeTab = 'graph'
+  requestDependencyGraph(nodeId, nodeType)
+  render()
+}
+
+function setupTimelineNodeLinkListeners(root: ParentNode = document): void {
+  root.querySelectorAll('.timeline-node-link').forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      const target = e.currentTarget as HTMLElement
+      const nodeId = Number.parseInt(target.dataset.nodeId || '', 10)
+      const nodeType = target.dataset.nodeType as NodeType | undefined
+      if (Number.isFinite(nodeId) && nodeId > 0 && nodeType) {
+        navigateToTimelineNode(nodeId, nodeType)
+      }
+    })
+  })
+}
+
+function setupGraphDetailNodeLinkListeners(root: ParentNode = document): void {
+  root.querySelectorAll('.graph-node-link').forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      const target = e.currentTarget as HTMLElement
+      const nodeId = Number.parseInt(target.dataset.graphNodeId || '', 10)
+      if (Number.isFinite(nodeId) && nodeId > 0) {
+        requestDependencyGraph(nodeId, target.dataset.graphNodeType)
+      }
+    })
+  })
 }
 
 // ============================================================================
@@ -2324,26 +2475,17 @@ function setupTabEventListeners(): void {
       const target = e.currentTarget as HTMLElement
       const id = parseInt(target.dataset.graphId || '0', 10)
       if (id) {
-        state.selectedNodeId = id
         state.activeTab = 'graph'
+        requestDependencyGraph(id, target.dataset.graphType)
         render()
-        // Request dependency graph
-        sendToPage('request:dependencyGraph', { nodeId: id })
       }
     })
   })
 
-  // Owner links (jump to component details)
-  document.querySelectorAll('.owner-link').forEach(link => {
-    link.addEventListener('click', e => {
-      e.preventDefault()
-      e.stopPropagation()
-      const ownerId = parseOwnerId(e.currentTarget)
-      if (ownerId !== null) {
-        navigateToOwnerComponent(ownerId)
-      }
-    })
-  })
+  // Inline detail links
+  setupOwnerLinkListeners()
+  setupTimelineNodeLinkListeners()
+  setupGraphDetailNodeLinkListeners()
 
   // Signal/Computed rows
   document.querySelectorAll('.signal-row, .effect-row, .component-row').forEach(row => {
@@ -2379,6 +2521,7 @@ function setupTabEventListeners(): void {
 
         // Re-render component details panel if component is selected
         if (nodeType === 'component') {
+          ensureSelectedComponentVisible(id)
           sendToPage('inspect:highlight', { id })
           renderComponentsTab()
         }
@@ -2536,21 +2679,13 @@ function setupTabEventListeners(): void {
   const graphNodeType = document.getElementById('graph-node-type') as HTMLSelectElement
   if (graphNodeType) {
     graphNodeType.addEventListener('change', e => {
-      const type = (e.target as HTMLSelectElement).value
+      const type = toGraphSelectableNodeType((e.target as HTMLSelectElement).value)
+      if (!type) return
+      graphSelectedType = type
       const nodeList = document.getElementById('graph-node-list')
       if (nodeList) {
-        let items: { id: number; name?: string }[] = []
-        switch (type) {
-          case 'signal':
-            items = Array.from(state.signals.values())
-            break
-          case 'computed':
-            items = Array.from(state.computeds.values())
-            break
-          case 'effect':
-            items = Array.from(state.effects.values())
-            break
-        }
+        const items = getGraphItemsForType(type)
+        nodeList.dataset.currentType = type
         nodeList.innerHTML = renderGraphNodeList(type, items)
         setupGraphNodeListeners()
       }
@@ -2599,15 +2734,18 @@ function setupGraphNodeListeners(): void {
       const target = e.currentTarget as HTMLElement
       const id = parseInt(target.dataset.graphNodeId || '0', 10)
       if (id) {
+        const nodeType = target.dataset.graphNodeType
+        const resolvedType = toGraphSelectableNodeType(nodeType)
+        if (resolvedType) {
+          graphSelectedType = resolvedType
+        }
         // Update selection UI
         document
           .querySelectorAll('.node-list-item.selected')
           .forEach(el => el.classList.remove('selected'))
         target.classList.add('selected')
 
-        state.selectedNodeId = id
-        graphAutoRefreshNodeId = id
-        sendToPage('request:dependencyGraph', { nodeId: id })
+        requestDependencyGraph(id, nodeType)
       }
     })
   })

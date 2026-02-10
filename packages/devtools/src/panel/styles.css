@@ -1409,6 +1409,50 @@ body {
   font-family: var(--font-mono);
 }
 
+.detail-link {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--accent-color);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.detail-link:hover {
+  text-decoration: underline;
+}
+
+.detail-link:focus-visible {
+  outline: 2px solid var(--accent-color);
+  outline-offset: 1px;
+  border-radius: 2px;
+}
+
+.detail-link-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 110px;
+  overflow: auto;
+  background: var(--bg-primary);
+  padding: 8px;
+  border-radius: var(--radius);
+}
+
+.detail-link-list .detail-link {
+  text-align: left;
+  color: var(--text-primary);
+}
+
+.detail-text {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 .detail-section {
   margin-top: 12px;
 }

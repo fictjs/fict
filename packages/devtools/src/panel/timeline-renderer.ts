@@ -8,6 +8,7 @@
 import {
   type TimelineEvent,
   type TimelineLayer,
+  type NodeType,
   TimelineEventType,
   BuiltinTimelineLayer,
   DEFAULT_TIMELINE_LAYERS,
@@ -116,6 +117,15 @@ function escapeHtml(value: unknown): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+}
+
+function renderTimelineNodeLink(event: TimelineEvent, content: string, title: string): string {
+  if (event.nodeId === undefined || !event.nodeType) {
+    return `<span class="value">${content}</span>`
+  }
+
+  const nodeType = event.nodeType as NodeType
+  return `<button type="button" class="detail-link timeline-node-link" data-node-id="${event.nodeId}" data-node-type="${nodeType}" title="${escapeHtml(title)}">${content}</button>`
 }
 
 /**
@@ -248,7 +258,7 @@ export function renderEventDetails(event: TimelineEvent | null, layers: Timeline
           ? `
         <div class="detail-row">
           <span class="label">Node ID</span>
-          <span class="value">#${event.nodeId}</span>
+          ${renderTimelineNodeLink(event, `#${event.nodeId}`, `Jump to ${event.nodeType || 'node'} #${event.nodeId}`)}
         </div>
       `
           : ''
@@ -258,7 +268,7 @@ export function renderEventDetails(event: TimelineEvent | null, layers: Timeline
           ? `
         <div class="detail-row">
           <span class="label">Node</span>
-          <span class="value">${escapeHtml(event.nodeName)}</span>
+          ${renderTimelineNodeLink(event, escapeHtml(event.nodeName), `Jump to ${event.nodeName}`)}
         </div>
       `
           : ''

@@ -208,24 +208,24 @@ export class GraphRenderer {
       if (visited.has(id)) continue
       visited.add(id)
 
+      const node = graph.nodes.get(id)
+      if (!node) continue
+
       // Keep the minimum level (closest to root)
       if (!levels.has(id) || level < levels.get(id)!) {
         levels.set(id, level)
       }
 
-      const node = graph.nodes.get(id)
-      if (node) {
-        // Traverse sources (dependencies) - they go to lower levels
-        for (const sourceId of node.sources) {
-          if (!visited.has(sourceId)) {
-            queue.push({ id: sourceId, level: level - 1 })
-          }
+      // Traverse sources (dependencies) - they go to lower levels
+      for (const sourceId of node.sources) {
+        if (!visited.has(sourceId) && graph.nodes.has(sourceId)) {
+          queue.push({ id: sourceId, level: level - 1 })
         }
-        // Traverse observers - they go to higher levels
-        for (const obsId of node.observers) {
-          if (!visited.has(obsId)) {
-            queue.push({ id: obsId, level: level + 1 })
-          }
+      }
+      // Traverse observers - they go to higher levels
+      for (const obsId of node.observers) {
+        if (!visited.has(obsId) && graph.nodes.has(obsId)) {
+          queue.push({ id: obsId, level: level + 1 })
         }
       }
     }
@@ -253,7 +253,8 @@ export class GraphRenderer {
       const startX = -totalWidth / 2
 
       ids.forEach((id, i) => {
-        const graphNode = graph.nodes.get(id)!
+        const graphNode = graph.nodes.get(id)
+        if (!graphNode) return
         nodes.push({
           id,
           x: startX + i * nodeSpacing,
