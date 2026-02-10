@@ -131,16 +131,42 @@ function buildMemoCall(
   ctx: CodegenContext,
   t: typeof BabelCore.types,
   memoFn: BabelCore.types.Expression,
-  slot?: number,
+  options?: {
+    slot?: number
+    name?: string
+    source?: string
+  },
 ): BabelCore.types.CallExpression {
+  const slot = options?.slot
+  const memoOptionsProperties: BabelCore.types.ObjectProperty[] = []
+  if (options?.name) {
+    memoOptionsProperties.push(
+      t.objectProperty(t.identifier('name'), t.stringLiteral(options.name)),
+    )
+  }
+  if (options?.source) {
+    memoOptionsProperties.push(
+      t.objectProperty(t.identifier('devToolsSource'), t.stringLiteral(options.source)),
+    )
+  }
+  const memoOptions =
+    memoOptionsProperties.length > 0 ? t.objectExpression(memoOptionsProperties) : null
+
   if (ctx.inModule) {
     ctx.helpersUsed.add('memo')
-    return t.callExpression(t.identifier(RUNTIME_ALIASES.memo), [memoFn])
+    const args: BabelCore.types.Expression[] = [memoFn]
+    if (memoOptions) args.push(memoOptions)
+    return t.callExpression(t.identifier(RUNTIME_ALIASES.memo), args)
   }
   ctx.helpersUsed.add('useMemo')
   ctx.needsCtx = true
   const args: BabelCore.types.Expression[] = [t.identifier('__fictCtx'), memoFn]
-  if (slot !== undefined && slot >= 0) {
+  if (memoOptions) {
+    args.push(memoOptions)
+    if (slot !== undefined && slot >= 0) {
+      args.push(t.numericLiteral(slot))
+    }
+  } else if (slot !== undefined && slot >= 0) {
     args.push(t.numericLiteral(slot))
   }
   return t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), args)
@@ -2014,7 +2040,7 @@ function wrapInMemo(
     const memoBody = t.blockStatement([...bodyStatements, t.returnStatement(returnObj)])
 
     const slot = ctx.inModule ? undefined : reserveHookSlot(ctx)
-    const memoCall = buildMemoCall(ctx, t, t.arrowFunctionExpression([], memoBody), slot)
+    const memoCall = buildMemoCall(ctx, t, t.arrowFunctionExpression([], memoBody), { slot })
 
     const regionVarName = `__region_${region.id}`
 
@@ -2377,7 +2403,9 @@ function generateLazyConditionalMemo(
     ctx,
     t,
     t.arrowFunctionExpression([], t.blockStatement(memoBody)),
-    ctx.inModule ? undefined : reserveHookSlot(ctx),
+    {
+      slot: ctx.inModule ? undefined : reserveHookSlot(ctx),
+    },
   )
 
   statements.push(
@@ -2541,7 +2569,15 @@ function instructionToStatement(
     }
     const buildDerivedMemoCall = (expr: BabelCore.types.Expression) => {
       const slot = !ctx.inModule && inRegionMemo ? reserveHookSlot(ctx) : undefined
-      return buildMemoCall(ctx, t, t.arrowFunctionExpression([], expr), slot)
+      const source =
+        ctx.options?.dev !== false && instr.loc
+          ? `${ctx.options?.filename ?? ''}:${instr.loc.start.line}:${instr.loc.start.column}`
+          : undefined
+      return buildMemoCall(ctx, t, t.arrowFunctionExpression([], expr), {
+        slot,
+        name: baseName,
+        source,
+      })
     }
 
     if (isShadowDeclaration && declKind) {

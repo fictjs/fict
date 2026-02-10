@@ -223,6 +223,17 @@ describe('Hook Context System', () => {
       expect(ctx.slots[7]).toBe(memo)
     })
 
+    it('supports memo options together with explicit slot index', () => {
+      const ctx = __fictPushContext()
+      ctx.rendering = true
+      const memo1 = __fictUseMemo(ctx, () => 42, { name: 'doubled' }, 3)
+      const memo2 = __fictUseMemo(ctx, () => 99, { name: 'ignored-on-rerender' }, 3)
+
+      expect(ctx.slots[3]).toBe(memo1)
+      expect(memo2).toBe(memo1)
+      expect(memo2()).toBe(42)
+    })
+
     it('throws when called outside render context', () => {
       const ctx = __fictPushContext()
       ctx.rendering = false

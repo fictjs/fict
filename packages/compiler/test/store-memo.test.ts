@@ -84,6 +84,26 @@ describe('$store memoization and dynamic access', () => {
     expect(output).toContain(`store.user.profile.age`)
   })
 
+  it('emits memo debug name for derived tracked variables', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+      function Counter() {
+        const count = $state(0)
+        const doubled = count * 2
+        console.log('B', doubled)
+        return (
+          <button onClick={() => count++}>
+            {doubled}
+          </button>
+        )
+      }
+    `)
+
+    expect(output).toContain(`const doubled = __fictUseMemo(__fictCtx, () => count() * 2, {`)
+    expect(output).toContain(`name: "doubled"`)
+    expect(output).toContain(`devToolsSource: "`)
+  })
+
   it('memoizes store method chaining with multiple callbacks', () => {
     const output = transform(`
       import { $store } from 'fict/plus'
