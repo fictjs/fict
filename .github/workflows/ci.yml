@@ -15,7 +15,23 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Fallback checkout from codeload archive
+        if: steps.checkout.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          echo "::warning::actions/checkout failed; falling back to archive download."
+          archive_url="https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 "${archive_url}" \
+            | tar -xz -C "${tmp_dir}" --strip-components=1
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          cp -a "${tmp_dir}"/. .
 
       - uses: pnpm/action-setup@v3
         with:
@@ -35,7 +51,23 @@ jobs:
     name: Type Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Fallback checkout from codeload archive
+        if: steps.checkout.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          echo "::warning::actions/checkout failed; falling back to archive download."
+          archive_url="https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 "${archive_url}" \
+            | tar -xz -C "${tmp_dir}" --strip-components=1
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          cp -a "${tmp_dir}"/. .
 
       - uses: pnpm/action-setup@v3
         with:
@@ -53,7 +85,23 @@ jobs:
     name: Strict Guarantee Gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Fallback checkout from codeload archive
+        if: steps.checkout.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          echo "::warning::actions/checkout failed; falling back to archive download."
+          archive_url="https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 "${archive_url}" \
+            | tar -xz -C "${tmp_dir}" --strip-components=1
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          cp -a "${tmp_dir}"/. .
 
       - uses: pnpm/action-setup@v3
         with:
@@ -73,7 +121,23 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Fallback checkout from codeload archive
+        if: steps.checkout.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          echo "::warning::actions/checkout failed; falling back to archive download."
+          archive_url="https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 "${archive_url}" \
+            | tar -xz -C "${tmp_dir}" --strip-components=1
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          cp -a "${tmp_dir}"/. .
 
       - uses: pnpm/action-setup@v3
         with:
@@ -100,7 +164,23 @@ jobs:
     name: Test (Opt-out)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Fallback checkout from codeload archive
+        if: steps.checkout.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          echo "::warning::actions/checkout failed; falling back to archive download."
+          archive_url="https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 "${archive_url}" \
+            | tar -xz -C "${tmp_dir}" --strip-components=1
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          cp -a "${tmp_dir}"/. .
 
       - uses: pnpm/action-setup@v3
         with:
@@ -119,7 +199,23 @@ jobs:
     name: Test SSR Edge Runtime
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Fallback checkout from codeload archive
+        if: steps.checkout.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          echo "::warning::actions/checkout failed; falling back to archive download."
+          archive_url="https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 "${archive_url}" \
+            | tar -xz -C "${tmp_dir}" --strip-components=1
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          cp -a "${tmp_dir}"/. .
 
       - uses: pnpm/action-setup@v3
         with:
@@ -139,7 +235,23 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Fallback checkout from codeload archive
+        if: steps.checkout.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          echo "::warning::actions/checkout failed; falling back to archive download."
+          archive_url="https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 "${archive_url}" \
+            | tar -xz -C "${tmp_dir}" --strip-components=1
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          cp -a "${tmp_dir}"/. .
 
       - uses: pnpm/action-setup@v3
         with:
