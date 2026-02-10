@@ -55,6 +55,17 @@ export function inferGraphSelectableNodeType(
   return null
 }
 
+export function formatComputedDisplayName(name: unknown, id: number): string {
+  const fallback = `Computed #${id}`
+  const suffix = `:${fallback}`
+
+  if (typeof name !== 'string') return fallback
+  const normalized = name.trim()
+  if (!normalized || normalized === fallback) return fallback
+  if (normalized.endsWith(suffix)) return normalized
+  return `${normalized}${suffix}`
+}
+
 export function normalizeDependencyGraphPayload(payload: unknown): DependencyGraph | null {
   if (!payload || typeof payload !== 'object') return null
 

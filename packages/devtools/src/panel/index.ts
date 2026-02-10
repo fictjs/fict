@@ -29,6 +29,7 @@ import type {
 import { GraphRenderer } from './graph-renderer'
 import {
   collectComponentAncestorIds,
+  formatComputedDisplayName,
   inferGraphSelectableNodeType,
   normalizeDependencyGraphPayload,
   toGraphSelectableNodeType,
@@ -1355,7 +1356,7 @@ function renderSignalRow(signal: SignalState): string {
 }
 
 function renderComputedRow(computed: ComputedState): string {
-  const name = toDisplayName(computed.name, `Computed #${computed.id}`)
+  const name = formatComputedDisplayName(computed.name, computed.id)
   const displayName = state.searchQuery ? highlightMatch(name, state.searchQuery) : escapeHtml(name)
   const ownerLabel = renderOwnerLabel(computed.ownerId)
 
@@ -1721,7 +1722,7 @@ function renderComponentDetails(component: ComponentState): string {
               .map(
                 comp => `
               <div class="reactive-item computed" data-computed-id="${comp.id}" data-node-type="computed">
-                <span class="reactive-name">${escapeHtml(toDisplayName(comp.name, `Computed #${comp.id}`))}</span>
+                <span class="reactive-name">${escapeHtml(formatComputedDisplayName(comp.name, comp.id))}</span>
                 <span class="reactive-value">${escapeHtml(formatValue(comp.value, 30))}</span>
               </div>
             `,
@@ -1876,7 +1877,11 @@ function renderGraphNodeList(
       data-graph-node-id="${item.id}"
       data-graph-node-type="${type}"
     >
-      ${escapeHtml(toDisplayName(item.name, `${type} #${item.id}`))}
+      ${escapeHtml(
+        type === 'computed'
+          ? formatComputedDisplayName(item.name, item.id)
+          : toDisplayName(item.name, `${type} #${item.id}`),
+      )}
     </div>
   `,
     )
@@ -1900,7 +1905,11 @@ function getOwnerIdForGraphNode(nodeId: number, nodeType: NodeType): number | un
 
 function renderGraphNodeReference(node: DependencyGraphNodeState): string {
   const graphType = toGraphSelectableNodeType(node.type)
-  const display = `${getNodeIcon(node.type)} ${toDisplayName(node.name, `${node.type} #${node.id}`)}`
+  const nodeLabel =
+    node.type === 'computed'
+      ? formatComputedDisplayName(node.name, node.id)
+      : toDisplayName(node.name, `${node.type} #${node.id}`)
+  const display = `${getNodeIcon(node.type)} ${nodeLabel}`
   if (graphType) {
     return `<button type="button" class="detail-link graph-node-link" data-graph-node-id="${node.id}" data-graph-node-type="${graphType}" title="View dependency graph">${escapeHtml(display)}</button>`
   }
@@ -1930,7 +1939,11 @@ function renderGraphDetails(): string {
   return `
     <div class="details-header">
       <span class="event-icon">${getNodeIcon(rootNode.type)}</span>
-      <span class="event-type">${escapeHtml(toDisplayName(rootNode.name, `${rootNode.type} #${rootNode.id}`))}</span>
+      <span class="event-type">${escapeHtml(
+        rootNode.type === 'computed'
+          ? formatComputedDisplayName(rootNode.name, rootNode.id)
+          : toDisplayName(rootNode.name, `${rootNode.type} #${rootNode.id}`),
+      )}</span>
     </div>
     <div class="details-content">
       <div class="detail-row">
@@ -2220,7 +2233,7 @@ function parseEditedValue(input: string): unknown {
 }
 
 function renderComputedRowContent(computed: ComputedState): string {
-  const name = toDisplayName(computed.name, `Computed #${computed.id}`)
+  const name = formatComputedDisplayName(computed.name, computed.id)
   const displayName = state.searchQuery ? highlightMatch(name, state.searchQuery) : escapeHtml(name)
   const isSelected = state.selectedNodeId === computed.id
   const ownerLabel = renderOwnerLabel(computed.ownerId)

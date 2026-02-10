@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   collectComponentAncestorIds,
+  formatComputedDisplayName,
   inferGraphSelectableNodeType,
   normalizeDependencyGraphPayload,
   toGraphSelectableNodeType,
@@ -66,5 +67,12 @@ describe('panel utils', () => {
     expect(inferGraphSelectableNodeType(2, signals, computeds, effects)).toBe('computed')
     expect(inferGraphSelectableNodeType(3, signals, computeds, effects)).toBe('effect')
     expect(inferGraphSelectableNodeType(999, signals, computeds, effects)).toBeNull()
+  })
+
+  it('formats computed display names with variable name and id', () => {
+    expect(formatComputedDisplayName('total', 3)).toBe('total:Computed #3')
+    expect(formatComputedDisplayName('total:Computed #3', 3)).toBe('total:Computed #3')
+    expect(formatComputedDisplayName('Computed #3', 3)).toBe('Computed #3')
+    expect(formatComputedDisplayName(undefined, 3)).toBe('Computed #3')
   })
 })

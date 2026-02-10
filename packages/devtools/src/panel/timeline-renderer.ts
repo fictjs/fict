@@ -13,6 +13,7 @@ import {
   BuiltinTimelineLayer,
   DEFAULT_TIMELINE_LAYERS,
 } from '../core/types'
+import { formatComputedDisplayName } from './panel-utils'
 
 export interface TimelineRendererOptions {
   container: HTMLElement
@@ -216,6 +217,7 @@ function renderEventItem(
   const layerId = getEventLayerId(event.type)
   const layer = layers.find(l => l.id === layerId)
   const color = layer?.color || '#9ca3af'
+  const formattedNodeName = getFormattedTimelineNodeName(event)
 
   return `
     <div
@@ -225,10 +227,23 @@ function renderEventItem(
     >
       <span class="event-icon">${getEventIcon(event.type)}</span>
       <span class="event-type">${formatEventType(event.type)}</span>
-      ${event.nodeName ? `<span class="event-name">${escapeHtml(event.nodeName)}</span>` : ''}
+      ${formattedNodeName ? `<span class="event-name">${escapeHtml(formattedNodeName)}</span>` : ''}
       ${event.duration !== undefined ? `<span class="event-duration">${event.duration.toFixed(1)}ms</span>` : ''}
     </div>
   `
+}
+
+function getFormattedTimelineNodeName(event: TimelineEvent): string | null {
+  if (typeof event.nodeName !== 'string' || !event.nodeName.trim()) return null
+  if (
+    event.nodeType === 'computed' &&
+    typeof event.nodeId === 'number' &&
+    Number.isFinite(event.nodeId) &&
+    event.nodeId > 0
+  ) {
+    return formatComputedDisplayName(event.nodeName, event.nodeId)
+  }
+  return event.nodeName
 }
 
 export function renderEventDetails(event: TimelineEvent | null, layers: TimelineLayer[]): string {
@@ -238,6 +253,7 @@ export function renderEventDetails(event: TimelineEvent | null, layers: Timeline
 
   const layerId = getEventLayerId(event.type)
   const layer = layers.find(l => l.id === layerId)
+  const formattedNodeName = getFormattedTimelineNodeName(event)
 
   return `
     <div class="details-header" style="border-left: 3px solid ${layer?.color || '#9ca3af'}">
@@ -264,11 +280,11 @@ export function renderEventDetails(event: TimelineEvent | null, layers: Timeline
           : ''
       }
       ${
-        event.nodeName
+        formattedNodeName
           ? `
         <div class="detail-row">
           <span class="label">Node</span>
-          ${renderTimelineNodeLink(event, escapeHtml(event.nodeName), `Jump to ${event.nodeName}`)}
+          ${renderTimelineNodeLink(event, escapeHtml(formattedNodeName), `Jump to ${formattedNodeName}`)}
         </div>
       `
           : ''
