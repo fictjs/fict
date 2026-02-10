@@ -29,6 +29,14 @@
     "typecheck": {
       "outputs": []
     },
+    "@fictjs/playground#typecheck": {
+      "dependsOn": [
+        "@fictjs/compiler#build",
+        "@fictjs/vite-plugin#build",
+        "@fictjs/devtools#build"
+      ],
+      "outputs": []
+    },
     "clean": {
       "cache": false
     }
