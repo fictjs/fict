@@ -263,7 +263,29 @@ function getOwnerName(ownerId?: number): string {
 function renderOwnerLabel(ownerId?: number): string {
   const ownerName = getOwnerName(ownerId)
   const ownerDisplay = `@${ownerName}`
-  return `<span class="owner-label ${ownerId === undefined ? 'owner-global' : ''}" title="Owner: ${escapeHtml(ownerName)}">${escapeHtml(ownerDisplay)}</span>`
+  if (ownerId === undefined) {
+    return `<span class="owner-label owner-global" title="Owner: ${escapeHtml(ownerName)}">${escapeHtml(ownerDisplay)}</span>`
+  }
+  return `<button type="button" class="owner-label owner-link" data-owner-id="${ownerId}" title="Jump to owner component: ${escapeHtml(ownerName)}">${escapeHtml(ownerDisplay)}</button>`
+}
+
+function parseOwnerId(target: EventTarget | null): number | null {
+  if (!(target instanceof HTMLElement)) return null
+  const ownerEl = target.closest('.owner-link[data-owner-id]') as HTMLElement | null
+  if (!ownerEl) return null
+  const ownerId = Number.parseInt(ownerEl.dataset.ownerId || '', 10)
+  return Number.isFinite(ownerId) && ownerId > 0 ? ownerId : null
+}
+
+function navigateToOwnerComponent(ownerId: number): void {
+  if (!state.components.has(ownerId)) {
+    sendToPage('request:components')
+  }
+  state.selectedNodeId = ownerId
+  state.selectedNodeType = 'component' as NodeType
+  state.activeTab = 'components'
+  sendToPage('inspect:highlight', { id: ownerId })
+  render()
 }
 
 // ============================================================================
@@ -297,6 +319,65 @@ function isComponentState(value: unknown): value is ComponentState {
 
 function hasId(value: unknown): value is { id: number } {
   return typeof value === 'object' && value !== null && isValidId((value as { id: number }).id)
+}
+
+function normalizeDependencyGraph(payload: unknown): DependencyGraph | null {
+  if (!payload || typeof payload !== 'object') return null
+
+  const candidate = payload as {
+    rootId?: unknown
+    nodes?: unknown
+    edges?: unknown
+  }
+  if (!isValidId(candidate.rootId)) return null
+
+  const nodes = new Map<number, DependencyGraph['nodes'] extends Map<number, infer T> ? T : never>()
+  const rawNodes = candidate.nodes
+
+  if (rawNodes instanceof Map) {
+    for (const [key, value] of rawNodes.entries()) {
+      if (isValidId(key) && typeof value === 'object' && value !== null) {
+        nodes.set(key, value as DependencyGraph['nodes'] extends Map<number, infer T> ? T : never)
+      }
+    }
+  } else if (Array.isArray(rawNodes)) {
+    for (const entry of rawNodes) {
+      if (
+        Array.isArray(entry) &&
+        entry.length >= 2 &&
+        isValidId(entry[0]) &&
+        typeof entry[1] === 'object' &&
+        entry[1] !== null
+      ) {
+        nodes.set(
+          entry[0],
+          entry[1] as DependencyGraph['nodes'] extends Map<number, infer T> ? T : never,
+        )
+      }
+    }
+  } else if (rawNodes && typeof rawNodes === 'object') {
+    for (const [key, value] of Object.entries(rawNodes)) {
+      const id = Number.parseInt(key, 10)
+      if (Number.isFinite(id) && typeof value === 'object' && value !== null) {
+        nodes.set(id, value as DependencyGraph['nodes'] extends Map<number, infer T> ? T : never)
+      }
+    }
+  }
+
+  const edges: [number, number][] = []
+  if (Array.isArray(candidate.edges)) {
+    for (const edge of candidate.edges) {
+      if (Array.isArray(edge) && edge.length >= 2 && isValidId(edge[0]) && isValidId(edge[1])) {
+        edges.push([edge[0], edge[1]])
+      }
+    }
+  }
+
+  return {
+    rootId: candidate.rootId,
+    nodes,
+    edges,
+  }
 }
 
 // ============================================================================
@@ -715,7 +796,7 @@ function handleMessage(message: Record<string, unknown>): void {
       break
 
     case 'response:dependencyGraph':
-      currentGraph = payload as DependencyGraph | null
+      currentGraph = normalizeDependencyGraph(payload)
       if (state.activeTab === 'graph') {
         updateGraphRenderer()
         updateGraphDetails()
@@ -1779,6 +1860,12 @@ function initSignalsVirtualList(): void {
       return renderSignalRowContent(item as SignalState)
     },
     onItemClick: (item, index, event) => {
+      const ownerId = parseOwnerId(event.target)
+      if (ownerId !== null) {
+        navigateToOwnerComponent(ownerId)
+        return
+      }
+
       // Check if clicking on action buttons
       if ((event.target as HTMLElement).closest('.row-actions')) {
         const target = event.target as HTMLElement
@@ -1939,6 +2026,12 @@ function initEffectsVirtualList(): void {
     itemHeight: EFFECT_ROW_HEIGHT,
     renderItem: effect => renderEffectRowContent(effect),
     onItemClick: (item, index, event) => {
+      const ownerId = parseOwnerId(event.target)
+      if (ownerId !== null) {
+        navigateToOwnerComponent(ownerId)
+        return
+      }
+
       // Check if clicking on action buttons
       if ((event.target as HTMLElement).closest('.row-actions')) {
         const target = event.target as HTMLElement
@@ -2240,9 +2333,29 @@ function setupTabEventListeners(): void {
     })
   })
 
+  // Owner links (jump to component details)
+  document.querySelectorAll('.owner-link').forEach(link => {
+    link.addEventListener('click', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      const ownerId = parseOwnerId(e.currentTarget)
+      if (ownerId !== null) {
+        navigateToOwnerComponent(ownerId)
+      }
+    })
+  })
+
   // Signal/Computed rows
   document.querySelectorAll('.signal-row, .effect-row, .component-row').forEach(row => {
     row.addEventListener('click', e => {
+      const ownerId = parseOwnerId(e.target)
+      if (ownerId !== null) {
+        e.preventDefault()
+        e.stopPropagation()
+        navigateToOwnerComponent(ownerId)
+        return
+      }
+
       // Don't handle if clicking on action buttons
       if ((e.target as HTMLElement).closest('.row-actions')) return
 
