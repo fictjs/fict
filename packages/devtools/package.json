@@ -39,6 +39,9 @@
     "build:extension": "vite build",
     "build:chrome": "vite build --mode chrome",
     "build:firefox": "vite build --mode firefox",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist build"
@@ -48,9 +51,11 @@
   },
   "devDependencies": {
     "@types/chrome": "^0.0.268",
+    "jsdom": "^27.4.0",
     "tsup": "^8.5.1",
     "typescript": "^5.7.3",
-    "vite": "^7.3.1"
+    "vite": "^7.3.1",
+    "vitest": "^4.0.18"
   },
   "peerDependencies": {
     "vite": "^5.0.0 || ^6.0.0 || ^7.0.0"
