@@ -20,7 +20,7 @@ export interface FictDevtoolsHook {
   updateComputed: (id: number, value: unknown) => void
   disposeComputed?: (id: number) => void
   registerEffect: (id: number, options?: { ownerId?: number; source?: string }) => void
-  effectRun: (id: number) => void
+  effectRun: (id: number, duration?: number) => void
   effectCleanup?: (id: number) => void
   disposeEffect?: (id: number) => void
   /** Track a dependency relationship between subscriber and dependency */

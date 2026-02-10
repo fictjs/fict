@@ -44,6 +44,11 @@ import {
   createDefaultLayers,
   type TimelineLayer,
 } from './timeline-renderer'
+import {
+  buildPerformanceTrackModel,
+  exportPerformanceTrace,
+  renderPerformanceTracks,
+} from './performance-tracks'
 import { VirtualList, shouldUseVirtualList } from './virtual-list'
 
 // ============================================================================
@@ -179,6 +184,7 @@ function initPluginIntegration(): void {
       }
       state.lastUpdate = Date.now()
       if (state.activeTab === 'timeline') renderTimelineTab()
+      if (state.activeTab === 'performance') renderPerformanceTab()
     },
   })
 }
@@ -810,6 +816,7 @@ function handleMessage(message: Record<string, unknown>): void {
       }
       state.lastUpdate = Date.now()
       if (state.activeTab === 'timeline') renderTimelineTab()
+      if (state.activeTab === 'performance') renderPerformanceTab()
       break
 
     case 'response:signals':
@@ -888,6 +895,7 @@ function handleMessage(message: Record<string, unknown>): void {
       state.timeline = payload as TimelineEvent[]
       state.lastUpdate = Date.now()
       if (state.activeTab === 'timeline') renderTimelineTab()
+      if (state.activeTab === 'performance') renderPerformanceTab()
       break
 
     case 'response:dependencyGraph':
@@ -1170,6 +1178,7 @@ function renderTabs(): string {
     { id: 'effects', label: 'Effects', count: state.effects.size },
     { id: 'components', label: 'Components', count: state.components.size },
     { id: 'timeline', label: 'Timeline', count: state.timeline.length },
+    { id: 'performance', label: 'Performance' },
     { id: 'graph', label: 'Graph' },
     { id: 'settings', label: 'Settings' },
   ]
@@ -1217,7 +1226,11 @@ function renderContent(): string {
 }
 
 function renderSearch(): string {
-  if (state.activeTab === 'settings' || state.activeTab === 'timeline') {
+  if (
+    state.activeTab === 'settings' ||
+    state.activeTab === 'timeline' ||
+    state.activeTab === 'performance'
+  ) {
     return ''
   }
 
@@ -1255,6 +1268,8 @@ function renderActiveTab(): string {
       return renderComponentsContent()
     case 'timeline':
       return renderTimelineContent()
+    case 'performance':
+      return renderPerformanceContent()
     case 'graph':
       return renderGraphContent()
     case 'settings':
@@ -1759,10 +1774,13 @@ function renderComponentDetails(component: ComponentState): string {
   `
 }
 
-function renderTimelineContent(): string {
-  // Combine built-in layers with plugin layers
+function getAllTimelineLayers(): TimelineLayer[] {
   const pluginLayers = getPluginTimelineLayers()
-  const allLayers = [...timelineLayers, ...pluginLayers]
+  return [...timelineLayers, ...pluginLayers]
+}
+
+function renderTimelineContent(): string {
+  const allLayers = getAllTimelineLayers()
 
   if (state.timeline.length === 0) {
     return `
@@ -1792,6 +1810,43 @@ function renderTimelineContent(): string {
   `
 }
 
+function renderPerformanceContent(): string {
+  if (state.timeline.length === 0) {
+    return `
+      <div class="timeline-controls" style="margin-bottom: 8px;">
+        <button class="btn" id="clear-timeline">Clear</button>
+        <label class="checkbox">
+          <input type="checkbox" id="record-timeline" ${state.settings.recordTimeline ? 'checked' : ''}>
+          Record events
+        </label>
+        <button class="btn" id="export-performance-trace" disabled>Export Trace</button>
+      </div>
+      <div class="empty-message">No performance data yet. Interact with the app to capture a track.</div>
+    `
+  }
+
+  const model = buildPerformanceTrackModel(state.timeline)
+  const allLayers = getAllTimelineLayers()
+
+  return `
+    <div class="timeline-controls" style="margin-bottom: 8px;">
+      <button class="btn" id="clear-timeline">Clear</button>
+      <label class="checkbox">
+        <input type="checkbox" id="record-timeline" ${state.settings.recordTimeline ? 'checked' : ''}>
+        Record events
+      </label>
+      <button class="btn" id="export-performance-trace">Export Trace</button>
+      <span style="margin-left: auto; font-size: 11px; color: var(--text-muted)">
+        ${model.summary.totalEvents} events
+      </span>
+    </div>
+    ${renderPerformanceTracks(model, selectedTimelineEvent?.id ?? null)}
+    <div class="event-details" id="performance-event-details">
+      ${renderEventDetails(selectedTimelineEvent, allLayers)}
+    </div>
+  `
+}
+
 function getGraphItemsForType(type: GraphSelectableNodeType): { id: number; name?: string }[] {
   switch (type) {
     case 'computed':
@@ -1807,7 +1862,15 @@ function getGraphItemsForType(type: GraphSelectableNodeType): { id: number; name
 function updateTimelineEventDetails(): void {
   const detailsEl = document.getElementById('timeline-event-details')
   if (detailsEl) {
-    detailsEl.innerHTML = renderEventDetails(selectedTimelineEvent, timelineLayers)
+    detailsEl.innerHTML = renderEventDetails(selectedTimelineEvent, getAllTimelineLayers())
+    setupTimelineNodeLinkListeners(detailsEl)
+  }
+}
+
+function updatePerformanceEventDetails(): void {
+  const detailsEl = document.getElementById('performance-event-details')
+  if (detailsEl) {
+    detailsEl.innerHTML = renderEventDetails(selectedTimelineEvent, getAllTimelineLayers())
     setupTimelineNodeLinkListeners(detailsEl)
   }
 }
@@ -2378,6 +2441,14 @@ function renderTimelineTab(): void {
   }
 }
 
+function renderPerformanceTab(): void {
+  const content = document.querySelector('.tab-content')
+  if (content) {
+    content.innerHTML = renderPerformanceContent()
+    setupTabEventListeners()
+  }
+}
+
 function initGraphRenderer(): void {
   const container = document.getElementById('graph-canvas')
   if (!container || graphRenderer) return
@@ -2809,7 +2880,11 @@ function setupTabEventListeners(): void {
       state.timeline = []
       selectedTimelineEvent = null
       sendToPage('clear:timeline')
-      renderTimelineTab()
+      if (state.activeTab === 'performance') {
+        renderPerformanceTab()
+      } else {
+        renderTimelineTab()
+      }
     })
   }
 
@@ -2818,6 +2893,13 @@ function setupTabEventListeners(): void {
     recordTimeline.addEventListener('change', e => {
       state.settings.recordTimeline = (e.target as HTMLInputElement).checked
       sendToPage('set:settings', { recordTimeline: state.settings.recordTimeline })
+    })
+  }
+
+  const exportPerformanceTraceButton = document.getElementById('export-performance-trace')
+  if (exportPerformanceTraceButton) {
+    exportPerformanceTraceButton.addEventListener('click', () => {
+      exportPerformanceTrace(state.timeline)
     })
   }
 
@@ -2860,6 +2942,32 @@ function setupTabEventListeners(): void {
       }
     })
   })
+
+  // Performance track selection
+  document.querySelectorAll('.perf-segment').forEach(segment => {
+    segment.addEventListener('click', e => {
+      const target = e.currentTarget as HTMLElement
+      const eventId = parseInt(target.dataset.eventId || '0', 10)
+      if (!eventId) return
+      selectedTimelineEvent = state.timeline.find(ev => ev.id === eventId) || null
+
+      document.querySelectorAll('.perf-segment.selected').forEach(el => {
+        el.classList.remove('selected')
+      })
+      target.classList.add('selected')
+      updatePerformanceEventDetails()
+    })
+  })
+
+  const timelineDetailsEl = document.getElementById('timeline-event-details')
+  if (timelineDetailsEl) {
+    setupTimelineNodeLinkListeners(timelineDetailsEl)
+  }
+
+  const performanceDetailsEl = document.getElementById('performance-event-details')
+  if (performanceDetailsEl) {
+    setupTimelineNodeLinkListeners(performanceDetailsEl)
+  }
 
   // Settings
   const themeSelect = document.getElementById('setting-theme') as HTMLSelectElement

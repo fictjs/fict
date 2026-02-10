@@ -13,6 +13,7 @@ describe('devtools hook integration', () => {
     elements?: HTMLElement[]
   }>
   let lifecycleEvents: string[]
+  let effectRunDurations: number[]
   let rootEvents: Array<{
     type: 'root:register' | 'root:dispose' | 'root:suspend'
     id: number
@@ -25,6 +26,7 @@ describe('devtools hook integration', () => {
     events = []
     componentEvents = []
     lifecycleEvents = []
+    effectRunDurations = []
     rootEvents = []
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -44,8 +46,11 @@ describe('devtools hook integration', () => {
       registerEffect: (id: number) => {
         events.push(`effect:${id}:register`)
       },
-      effectRun: (id: number) => {
+      effectRun: (id: number, duration?: number) => {
         events.push(`effect:${id}:run`)
+        if (typeof duration === 'number') {
+          effectRunDurations.push(duration)
+        }
       },
       disposeComputed: (id: number) => {
         lifecycleEvents.push(`computed:${id}:dispose`)
@@ -195,6 +200,21 @@ describe('devtools hook integration', () => {
     expect(
       lifecycleEvents.some(event => event.includes('effect:') && event.endsWith(':dispose')),
     ).toBe(true)
+  })
+
+  it('reports non-negative effect run duration in devtools hook', () => {
+    const count = createSignal(0)
+    createEffect(() => {
+      // Keep a tiny synchronous workload so duration is measurable.
+      let total = 0
+      for (let i = 0; i < 2000; i++) total += i
+      if (total < 0) count()
+      count()
+    })
+
+    count(1)
+    expect(effectRunDurations.length).toBeGreaterThan(0)
+    expect(effectRunDurations.every(duration => duration >= 0)).toBe(true)
   })
 
   it('tracks root register/dispose lifecycle', () => {

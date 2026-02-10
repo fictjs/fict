@@ -900,7 +900,7 @@ function runEffect(e: EffectNode): void {
     // Run cleanup before re-run; values are still the previous commit.
     runCleanup()
     ++cycle
-    if (isDev) effectRunDevtools(e)
+    const effectRunStart = isDev ? performance.now() : 0
     e.depsTail = undefined
     e.flags = WatchingRunning
     const prevSub = activeSub
@@ -917,6 +917,8 @@ function runEffect(e: EffectNode): void {
       // Without this, stale old deps can remain subscribed.
       purgeDeps(e)
       throw err
+    } finally {
+      if (isDev) effectRunDevtools(e, performance.now() - effectRunStart)
     }
   } else if (flags & Pending && e.deps) {
     let isDirty = false
@@ -942,7 +944,7 @@ function runEffect(e: EffectNode): void {
       // Cleanup reads should observe previous values for this flush.
       runCleanup()
       ++cycle
-      if (isDev) effectRunDevtools(e)
+      const effectRunStart = isDev ? performance.now() : 0
       e.depsTail = undefined
       e.flags = WatchingRunning
       const prevSub = activeSub
@@ -959,6 +961,8 @@ function runEffect(e: EffectNode): void {
         // Without this, stale old deps can remain subscribed.
         purgeDeps(e)
         throw err
+      } finally {
+        if (isDev) effectRunDevtools(e, performance.now() - effectRunStart)
       }
     } else {
       e.flags = Watching
@@ -1270,13 +1274,14 @@ export function effect(fn: () => void, options?: EffectOptions): EffectDisposer 
 
   let didThrow = false
   let thrown: unknown
+  const effectRunStart = isDev ? performance.now() : 0
   try {
-    if (isDev) effectRunDevtools(e)
     fn()
   } catch (err) {
     didThrow = true
     thrown = err
   } finally {
+    if (isDev) effectRunDevtools(e, performance.now() - effectRunStart)
     activeSub = prevSub
     if (didThrow) {
       // Initial execution failed: fully detach partially collected graph links.
@@ -1332,13 +1337,14 @@ export function effectWithCleanup(
 
   let didThrow = false
   let thrown: unknown
+  const effectRunStart = isDev ? performance.now() : 0
   try {
-    if (isDev) effectRunDevtools(e)
     fn()
   } catch (err) {
     didThrow = true
     thrown = err
   } finally {
+    if (isDev) effectRunDevtools(e, performance.now() - effectRunStart)
     activeSub = prevSub
     if (didThrow) {
       // Initial execution failed: fully detach partially collected graph links.
@@ -1659,7 +1665,7 @@ let registerComputedDevtools: <T>(node: ComputedNode<T>) => number | undefined =
 let updateComputedDevtools: <T>(node: ComputedNode<T>, value: unknown) => void = () => {}
 let disposeComputedDevtools: <T>(node: ComputedNode<T>) => void = () => {}
 let registerEffectDevtools: (node: EffectNode) => number | undefined = () => undefined
-let effectRunDevtools: (node: EffectNode) => void = () => {}
+let effectRunDevtools: (node: EffectNode, duration?: number) => void = () => {}
 let effectCleanupDevtools: (node: EffectNode) => void = () => {}
 let disposeEffectDevtools: (node: EffectNode) => void = () => {}
 let trackDependencyDevtools: (dep: ReactiveNode, sub: ReactiveNode) => void = () => {}
@@ -1780,11 +1786,11 @@ if (
     return id
   }
 
-  effectRunDevtools = node => {
+  effectRunDevtools = (node, duration) => {
     const hook = getDevtoolsHook()
     if (!hook) return
     const id = (node as EffectNode & DevtoolsIdentifiable).__id
-    if (id) hook.effectRun(id)
+    if (id) hook.effectRun(id, duration)
   }
 
   effectCleanupDevtools = node => {

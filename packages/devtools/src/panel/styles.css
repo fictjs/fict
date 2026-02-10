@@ -1557,6 +1557,123 @@ body {
   margin-top: 12px;
 }
 
+/* Performance Tracks */
+.performance-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.perf-summary-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+}
+
+.perf-summary-chip span {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.perf-summary-chip strong {
+  font-size: 12px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.performance-track-panel {
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.perf-ruler {
+  position: relative;
+  height: 24px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+}
+
+.perf-ruler-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid var(--border-color);
+}
+
+.perf-ruler-label {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.perf-lane {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  min-height: 34px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.perf-lane:last-child {
+  border-bottom: none;
+}
+
+.perf-lane-label {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border-right: 1px solid var(--border-color);
+}
+
+.perf-lane-track {
+  position: relative;
+  min-height: 34px;
+}
+
+.perf-lane-track.empty {
+  background: var(--bg-primary);
+}
+
+.perf-segment {
+  position: absolute;
+  top: 7px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  min-width: 2px;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: transform 0.12s ease, opacity 0.12s ease, box-shadow 0.12s ease;
+}
+
+.perf-segment:hover {
+  opacity: 1;
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+
+.perf-segment.selected {
+  opacity: 1;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.5);
+}
+
 .detail-section .label {
   font-size: 11px;
   color: var(--text-muted);

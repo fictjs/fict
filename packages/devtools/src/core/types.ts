@@ -354,7 +354,14 @@ export interface DevToolsMessage<T = unknown> {
 // Panel State
 // ============================================================================
 
-export type PanelTab = 'signals' | 'effects' | 'components' | 'timeline' | 'graph' | 'settings'
+export type PanelTab =
+  | 'signals'
+  | 'effects'
+  | 'components'
+  | 'timeline'
+  | 'performance'
+  | 'graph'
+  | 'settings'
 
 export interface PanelState {
   isConnected: boolean
