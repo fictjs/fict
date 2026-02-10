@@ -1138,6 +1138,9 @@ function render(): void {
   `
 
   setupEventListeners()
+  if (state.activeTab === 'components') {
+    ensureSelectedComponentTrace()
+  }
 }
 
 function renderHeader(): string {
@@ -2959,6 +2962,9 @@ function renderActiveTabContent(): void {
   if (content) {
     content.innerHTML = renderActiveTab()
     setupTabEventListeners()
+    if (state.activeTab === 'components') {
+      ensureSelectedComponentTrace()
+    }
   }
 }
 
