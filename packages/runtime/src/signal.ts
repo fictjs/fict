@@ -93,6 +93,8 @@ export interface MemoOptions<T> {
   name?: string
   /** Source location */
   devToolsSource?: string
+  /** Internal memo created by compiler runtime plumbing (hidden from DevTools) */
+  internal?: boolean
 }
 
 /**
@@ -155,6 +157,8 @@ export interface ComputedNode<T = unknown> extends BaseNode {
   name?: string
   /** Source location */
   devToolsSource?: string
+  /** Hide this computed from DevTools (used by compiler-internal memos) */
+  devToolsInternal?: boolean
 }
 
 /**
@@ -1174,6 +1178,7 @@ export function computed<T>(
   if (options?.equals !== undefined) c.equals = options.equals
   if (options?.name !== undefined) c.name = options.name
   if (options?.devToolsSource !== undefined) c.devToolsSource = options.devToolsSource
+  if (options?.internal === true) c.devToolsInternal = true
   if (isDev) registerComputedDevtools(c)
   const bound = (computedOper as (this: ComputedNode<T>) => T).bind(
     c as any,
@@ -1733,6 +1738,7 @@ if (
   registerComputedDevtools = node => {
     const hook = getDevtoolsHook()
     if (!hook) return undefined
+    if (node.devToolsInternal) return undefined
     const id = ++nextDevtoolsId
     const options: { name?: string; source?: string } = {}
     if (node.name !== undefined) options.name = node.name

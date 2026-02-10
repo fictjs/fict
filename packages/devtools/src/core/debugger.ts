@@ -1497,8 +1497,9 @@ const hook: FictDevtoolsHookEnhanced = {
   registerComputed(
     id: number,
     value: unknown,
-    options?: { name?: string; source?: string; ownerId?: number },
+    options?: { name?: string; source?: string; ownerId?: number; internal?: boolean },
   ): void {
+    if (options?.internal === true) return
     const parsedSource = parseSourceLocation(options?.source)
     const state: ComputedState = {
       id,

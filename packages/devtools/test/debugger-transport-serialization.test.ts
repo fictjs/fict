@@ -131,4 +131,27 @@ describe('debugger transport serialization', () => {
 
     expect(window.postMessage).toHaveBeenCalled()
   })
+
+  it('ignores compiler-internal computed registrations', async () => {
+    const { attachDebugger, hook } = await import('../src/core/debugger')
+
+    attachDebugger()
+    hook.registerComputed(1, undefined, { internal: true })
+    hook.registerComputed(2, undefined, { name: 'doubled' })
+
+    const state = (
+      globalThis as typeof globalThis & {
+        __FICT_DEVTOOLS_STATE__?: {
+          computeds: Map<number, unknown>
+          timeline: Array<{ type?: string; nodeId?: number }>
+        }
+      }
+    ).__FICT_DEVTOOLS_STATE__
+
+    expect(state).toBeTruthy()
+    expect(Array.from(state!.computeds.keys())).toEqual([2])
+    expect(
+      state!.timeline.some(event => event.type === 'computed:create' && event.nodeId === 1),
+    ).toBe(false)
+  })
 })

@@ -135,6 +135,7 @@ function buildMemoCall(
     slot?: number
     name?: string
     source?: string
+    internal?: boolean
   },
 ): BabelCore.types.CallExpression {
   const slot = options?.slot
@@ -148,6 +149,9 @@ function buildMemoCall(
     memoOptionsProperties.push(
       t.objectProperty(t.identifier('devToolsSource'), t.stringLiteral(options.source)),
     )
+  }
+  if (options?.internal) {
+    memoOptionsProperties.push(t.objectProperty(t.identifier('internal'), t.booleanLiteral(true)))
   }
   const memoOptions =
     memoOptionsProperties.length > 0 ? t.objectExpression(memoOptionsProperties) : null
@@ -2040,7 +2044,10 @@ function wrapInMemo(
     const memoBody = t.blockStatement([...bodyStatements, t.returnStatement(returnObj)])
 
     const slot = ctx.inModule ? undefined : reserveHookSlot(ctx)
-    const memoCall = buildMemoCall(ctx, t, t.arrowFunctionExpression([], memoBody), { slot })
+    const memoCall = buildMemoCall(ctx, t, t.arrowFunctionExpression([], memoBody), {
+      slot,
+      internal: true,
+    })
 
     const regionVarName = `__region_${region.id}`
 
@@ -2405,6 +2412,7 @@ function generateLazyConditionalMemo(
     t.arrowFunctionExpression([], t.blockStatement(memoBody)),
     {
       slot: ctx.inModule ? undefined : reserveHookSlot(ctx),
+      internal: true,
     },
   )
 

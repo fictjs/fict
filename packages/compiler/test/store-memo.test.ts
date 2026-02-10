@@ -102,6 +102,7 @@ describe('$store memoization and dynamic access', () => {
     expect(output).toContain(`const doubled = __fictUseMemo(__fictCtx, () => count() * 2, {`)
     expect(output).toContain(`name: "doubled"`)
     expect(output).toContain(`devToolsSource: "`)
+    expect(output).toContain(`internal: true`)
   })
 
   it('memoizes store method chaining with multiple callbacks', () => {

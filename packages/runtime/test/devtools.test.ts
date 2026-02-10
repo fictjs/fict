@@ -114,6 +114,16 @@ describe('devtools hook integration', () => {
     expect(events.some(e => e === `signal:${signalId}:update:1`)).toBe(true)
   })
 
+  it('does not emit devtools computed registration for internal memos', () => {
+    createMemo(() => 1)
+    createMemo(() => 2, { internal: true })
+
+    const computedRegisters = events.filter(
+      event => event.startsWith('computed:') && event.includes(':register:'),
+    )
+    expect(computedRegisters).toHaveLength(1)
+  })
+
   it('tracks component render/mount and annotates root elements for inspection', () => {
     function Demo() {
       const div = document.createElement('div')

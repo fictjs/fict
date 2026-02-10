@@ -277,7 +277,7 @@ export interface FictDevtoolsHookEnhanced {
   registerComputed(
     id: number,
     value: unknown,
-    options?: { name?: string; source?: string; ownerId?: number },
+    options?: { name?: string; source?: string; ownerId?: number; internal?: boolean },
   ): void
   updateComputed(id: number, value: unknown, previousValue?: unknown): void
   disposeComputed(id: number): void

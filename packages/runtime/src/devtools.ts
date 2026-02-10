@@ -9,7 +9,13 @@ export interface FictDevtoolsHook {
   registerComputed: (
     id: number,
     value: unknown,
-    options?: { name?: string; source?: string; ownerId?: number; hasValue?: boolean },
+    options?: {
+      name?: string
+      source?: string
+      ownerId?: number
+      hasValue?: boolean
+      internal?: boolean
+    },
   ) => void
   updateComputed: (id: number, value: unknown) => void
   disposeComputed?: (id: number) => void
