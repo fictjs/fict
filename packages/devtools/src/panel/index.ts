@@ -254,6 +254,18 @@ function toDisplayName(name: unknown, fallback: string): string {
   }
 }
 
+function getOwnerName(ownerId?: number): string {
+  if (ownerId === undefined) return 'Global'
+  const owner = state.components.get(ownerId)
+  return toDisplayName(owner?.name, `Component #${ownerId}`)
+}
+
+function renderOwnerLabel(ownerId?: number): string {
+  const ownerName = getOwnerName(ownerId)
+  const ownerDisplay = `@${ownerName}`
+  return `<span class="owner-label ${ownerId === undefined ? 'owner-global' : ''}" title="Owner: ${escapeHtml(ownerName)}">${escapeHtml(ownerDisplay)}</span>`
+}
+
 // ============================================================================
 // Runtime Type Validation
 // ============================================================================
@@ -1094,6 +1106,7 @@ function renderSignalsContent(): string {
 function renderSignalRow(signal: SignalState): string {
   const name = toDisplayName(signal.name, `Signal #${signal.id}`)
   const displayName = state.searchQuery ? highlightMatch(name, state.searchQuery) : escapeHtml(name)
+  const ownerLabel = renderOwnerLabel(signal.ownerId)
 
   return `
     <div
@@ -1111,6 +1124,7 @@ function renderSignalRow(signal: SignalState): string {
       <div class="signal-meta">
         <span class="update-count" title="Update count">${signal.updateCount} updates</span>
         <span class="observers-count" title="Observers">${signal.observers.length} observers</span>
+        ${ownerLabel}
       </div>
       <div class="signal-time">
         ${signal.lastUpdatedAt ? formatRelativeTime(signal.lastUpdatedAt) : '-'}
@@ -1126,6 +1140,7 @@ function renderSignalRow(signal: SignalState): string {
 function renderComputedRow(computed: ComputedState): string {
   const name = toDisplayName(computed.name, `Computed #${computed.id}`)
   const displayName = state.searchQuery ? highlightMatch(name, state.searchQuery) : escapeHtml(name)
+  const ownerLabel = renderOwnerLabel(computed.ownerId)
 
   return `
     <div
@@ -1143,6 +1158,7 @@ function renderComputedRow(computed: ComputedState): string {
       <div class="signal-meta">
         <span class="update-count">${computed.updateCount} updates</span>
         <span class="deps-count">${computed.dependencies.length} deps</span>
+        ${ownerLabel}
       </div>
       <div class="signal-time">
         ${computed.lastUpdatedAt ? formatRelativeTime(computed.lastUpdatedAt) : '-'}
@@ -1186,6 +1202,7 @@ function renderEffectsContent(): string {
 function renderEffectRow(effect: EffectState): string {
   const name = toDisplayName(effect.name, `Effect #${effect.id}`)
   const displayName = state.searchQuery ? highlightMatch(name, state.searchQuery) : escapeHtml(name)
+  const ownerLabel = renderOwnerLabel(effect.ownerId)
 
   return `
     <div
@@ -1197,8 +1214,9 @@ function renderEffectRow(effect: EffectState): string {
       <div class="effect-info">
         <div class="effect-name">${displayName}</div>
         <div class="effect-deps">
-          ${effect.dependencies.length} dependencies
-          ${effect.hasCleanup ? ' • has cleanup' : ''}
+          <span>${effect.dependencies.length} dependencies</span>
+          ${effect.hasCleanup ? '<span>has cleanup</span>' : ''}
+          ${ownerLabel}
         </div>
       </div>
       <div class="effect-meta">
@@ -1552,11 +1570,25 @@ function renderGraphNodeList(type: string, items: { id: number; name?: string }[
     .join('')
 }
 
+function getOwnerNameForGraphNode(nodeId: number, nodeType: NodeType): string | null {
+  switch (nodeType) {
+    case 'signal':
+      return getOwnerName(state.signals.get(nodeId)?.ownerId)
+    case 'computed':
+      return getOwnerName(state.computeds.get(nodeId)?.ownerId)
+    case 'effect':
+      return getOwnerName(state.effects.get(nodeId)?.ownerId)
+    default:
+      return null
+  }
+}
+
 function renderGraphDetails(): string {
   if (!currentGraph) return ''
 
   const rootNode = currentGraph.nodes.get(currentGraph.rootId)
   if (!rootNode) return ''
+  const ownerName = getOwnerNameForGraphNode(rootNode.id, rootNode.type)
 
   const sources = rootNode.sources.map(id => currentGraph!.nodes.get(id)).filter(Boolean)
   const observers = rootNode.observers.map(id => currentGraph!.nodes.get(id)).filter(Boolean)
@@ -1575,6 +1607,16 @@ function renderGraphDetails(): string {
         <span class="label">ID</span>
         <span class="value">#${rootNode.id}</span>
       </div>
+      ${
+        ownerName
+          ? `
+        <div class="detail-row">
+          <span class="label">Owner</span>
+          <span class="value">${escapeHtml(ownerName)}</span>
+        </div>
+      `
+          : ''
+      }
       ${
         rootNode.value !== undefined
           ? `
@@ -1774,6 +1816,7 @@ function renderSignalRowContent(signal: SignalState): string {
   const displayName = state.searchQuery ? highlightMatch(name, state.searchQuery) : escapeHtml(name)
   const isSelected = state.selectedNodeId === signal.id
   const isEditing = editingSignalId === signal.id
+  const ownerLabel = renderOwnerLabel(signal.ownerId)
 
   const valueDisplay = isEditing
     ? `<input type="text" class="signal-edit-input" id="signal-edit-input" data-signal-id="${signal.id}" value="${escapeHtml(formatValueForEdit(signal.value))}" autofocus />`
@@ -1791,6 +1834,7 @@ function renderSignalRowContent(signal: SignalState): string {
       <div class="signal-meta">
         <span class="update-count">${signal.updateCount} updates</span>
         <span class="observers-count">${signal.observers.length} obs</span>
+        ${ownerLabel}
       </div>
       <div class="signal-time">
         ${signal.lastUpdatedAt ? formatRelativeTime(signal.lastUpdatedAt) : '-'}
@@ -1838,6 +1882,7 @@ function renderComputedRowContent(computed: ComputedState): string {
   const name = toDisplayName(computed.name, `Computed #${computed.id}`)
   const displayName = state.searchQuery ? highlightMatch(name, state.searchQuery) : escapeHtml(name)
   const isSelected = state.selectedNodeId === computed.id
+  const ownerLabel = renderOwnerLabel(computed.ownerId)
 
   return `
     <div class="signal-row computed ${computed.isDirty ? 'dirty' : ''} ${isSelected ? 'selected' : ''}" style="height: 100%; margin: 0;">
@@ -1851,6 +1896,7 @@ function renderComputedRowContent(computed: ComputedState): string {
       <div class="signal-meta">
         <span class="update-count">${computed.updateCount} updates</span>
         <span class="deps-count">${computed.dependencies.length} deps</span>
+        ${ownerLabel}
       </div>
       <div class="signal-time">
         ${computed.lastUpdatedAt ? formatRelativeTime(computed.lastUpdatedAt) : '-'}
@@ -1925,9 +1971,10 @@ function initEffectsVirtualList(): void {
 }
 
 function renderEffectRowContent(effect: EffectState): string {
-  const name = effect.name || `Effect #${effect.id}`
+  const name = toDisplayName(effect.name, `Effect #${effect.id}`)
   const displayName = state.searchQuery ? highlightMatch(name, state.searchQuery) : escapeHtml(name)
   const isSelected = state.selectedNodeId === effect.id
+  const ownerLabel = renderOwnerLabel(effect.ownerId)
 
   return `
     <div class="effect-row ${effect.isActive ? 'active' : 'inactive'} ${isSelected ? 'selected' : ''}" style="height: 100%; margin: 0;">
@@ -1935,8 +1982,9 @@ function renderEffectRowContent(effect: EffectState): string {
       <div class="effect-info">
         <div class="effect-name">${displayName}</div>
         <div class="effect-deps">
-          ${effect.dependencies.length} deps
-          ${effect.hasCleanup ? ' • cleanup' : ''}
+          <span>${effect.dependencies.length} deps</span>
+          ${effect.hasCleanup ? '<span>cleanup</span>' : ''}
+          ${ownerLabel}
         </div>
       </div>
       <div class="effect-meta">
@@ -2474,7 +2522,12 @@ function filterItems<T extends { name?: string; id: number; type?: string }>(
   const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
   const searchableItems = items.map(item => ({
     ...item,
-    _searchName: toDisplayName(item.name, `${capitalize(item.type || 'Item')} #${item.id}`),
+    _searchName: [
+      toDisplayName(item.name, `${capitalize(item.type || 'Item')} #${item.id}`),
+      'ownerId' in item ? getOwnerName((item as { ownerId?: number }).ownerId) : '',
+    ]
+      .filter(Boolean)
+      .join(' '),
   }))
 
   const results = fuzzyFilterItems(searchableItems, query, {

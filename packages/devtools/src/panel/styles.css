@@ -349,8 +349,34 @@ body {
 
 .signal-meta {
   display: flex;
-  gap: 8px;
+  gap: 6px;
+  flex-wrap: nowrap;
+  min-width: 0;
+  justify-content: flex-end;
   font-size: 11px;
+  color: var(--text-muted);
+}
+
+.owner-label {
+  display: inline-flex;
+  align-items: center;
+  max-width: 180px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--component-color);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.owner-label.owner-global {
+  border-color: var(--border-color);
+  background: var(--bg-tertiary);
   color: var(--text-muted);
 }
 
@@ -412,8 +438,17 @@ body {
 }
 
 .effect-deps {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  min-width: 0;
   font-size: 11px;
   color: var(--text-secondary);
+}
+
+.effect-deps > span {
+  white-space: nowrap;
 }
 
 .effect-meta {
