@@ -284,51 +284,72 @@ export class PlaygroundSessionManager {
     access: PlaygroundAuthContext = SYSTEM_ACCESS_CONTEXT,
   ): Promise<PlaygroundVerificationResult> {
     return this.enqueueSessionTask(sessionId, async () => {
-      return this.verifyLimiter.run(async () => {
-        return withTimeout(
-          this.verifyTimeoutMs,
-          `Verification timed out after ${this.verifyTimeoutMs}ms`,
-          async () => {
-            const session = this.requireSession(sessionId, access)
-            const startedAt = Date.now()
+      const releaseLimiterSlot = await this.verifyLimiter.acquire()
+      let released = false
+      const releaseOnce = (): void => {
+        if (released) return
+        released = true
+        releaseLimiterSlot()
+      }
 
-            const diagnostics = await collectSessionDiagnostics({
-              rootDir: session.summary.rootDir,
-              config: session.summary.config,
-            })
-            const build = await this.runBuildVerification(
-              session.summary.id,
-              session.summary.rootDir,
-              session.summary.config,
-            )
-            const durationMs = Date.now() - startedAt
+      const timeoutMessage = `Verification timed out after ${this.verifyTimeoutMs}ms`
+      const verificationPromise = (async () => {
+        const session = this.requireSession(sessionId, access)
+        const startedAt = Date.now()
 
-            const diagnosticsErrorCount = diagnostics.summary.errorCount
-            const diagnosticsWarningCount = diagnostics.summary.warningCount
-            const buildErrorCount = build.errors.length
-            const buildWarningCount = build.warnings.length
-            const totalErrorCount = diagnosticsErrorCount + buildErrorCount
-            const totalWarningCount = diagnosticsWarningCount + buildWarningCount
-
-            session.summary.updatedAt = Date.now()
-
-            return {
-              diagnostics,
-              build,
-              summary: {
-                passed: totalErrorCount === 0,
-                durationMs,
-                diagnosticsErrorCount,
-                diagnosticsWarningCount,
-                buildErrorCount,
-                buildWarningCount,
-                totalErrorCount,
-                totalWarningCount,
-              },
-            }
-          },
+        const diagnostics = await collectSessionDiagnostics({
+          rootDir: session.summary.rootDir,
+          config: session.summary.config,
+        })
+        const build = await this.runBuildVerification(
+          session.summary.id,
+          session.summary.rootDir,
+          session.summary.config,
         )
-      })
+        const durationMs = Date.now() - startedAt
+
+        const diagnosticsErrorCount = diagnostics.summary.errorCount
+        const diagnosticsWarningCount = diagnostics.summary.warningCount
+        const buildErrorCount = build.errors.length
+        const buildWarningCount = build.warnings.length
+        const totalErrorCount = diagnosticsErrorCount + buildErrorCount
+        const totalWarningCount = diagnosticsWarningCount + buildWarningCount
+
+        session.summary.updatedAt = Date.now()
+
+        return {
+          diagnostics,
+          build,
+          summary: {
+            passed: totalErrorCount === 0,
+            durationMs,
+            diagnosticsErrorCount,
+            diagnosticsWarningCount,
+            buildErrorCount,
+            buildWarningCount,
+            totalErrorCount,
+            totalWarningCount,
+          },
+        }
+      })()
+
+      void verificationPromise.finally(releaseOnce).catch(noop)
+
+      let timedOut = false
+      try {
+        return await withTimeout(
+          this.verifyTimeoutMs,
+          timeoutMessage,
+          async () => verificationPromise,
+        )
+      } catch (error) {
+        timedOut = error instanceof Error && error.message === timeoutMessage
+        throw error
+      } finally {
+        if (!timedOut) {
+          releaseOnce()
+        }
+      }
     })
   }
 

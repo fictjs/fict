@@ -541,7 +541,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
         expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
         scopeId,
       })
-      return
+      continue
     }
     __fictEnsureScope(scopeId, host, snapshot)
 

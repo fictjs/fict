@@ -13,6 +13,18 @@ afterEach(async () => {
 })
 
 describe('playground HTTP server', () => {
+  it('requires authorization when anonymous access is disabled without token mappings', async () => {
+    activeServer = await createPlaygroundServer({
+      port: 0,
+      auth: {
+        allowAnonymous: false,
+      },
+    })
+
+    const response = await fetch(`${activeServer.url}/api/templates`)
+    expect(response.status).toBe(401)
+  })
+
   it('enforces bearer auth when anonymous access is disabled', async () => {
     activeServer = await createPlaygroundServer({
       port: 0,
@@ -238,6 +250,33 @@ describe('playground HTTP server', () => {
     expect(response.status).toBe(400)
     const payload = (await response.json()) as Record<string, unknown>
     expect(payload.error).toBe('Invalid JSON payload')
+  })
+
+  it('returns 413 for oversized JSON payloads', async () => {
+    activeServer = await createPlaygroundServer({
+      port: 0,
+      limits: {
+        maxRequestBodyBytes: 256,
+      },
+    })
+
+    const hugePayload = 'x'.repeat(1024)
+    const response = await fetch(`${activeServer.url}/api/sessions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        templateId: 'counter',
+        files: {
+          'src/huge.ts': hugePayload,
+        },
+      }),
+    })
+
+    expect(response.status).toBe(413)
+    const payload = (await response.json()) as Record<string, unknown>
+    expect(payload.error).toBe('Request payload too large')
   })
 
   it('returns 404 for unknown session id', async () => {

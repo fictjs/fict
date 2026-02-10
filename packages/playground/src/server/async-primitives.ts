@@ -7,34 +7,38 @@ export class AsyncLimiter {
     this.maxConcurrency = Math.max(1, maxConcurrency)
   }
 
-  async run<T>(task: () => Promise<T>): Promise<T> {
-    await this.acquire()
-    try {
-      return await task()
-    } finally {
-      this.release()
-    }
-  }
-
-  private async acquire(): Promise<void> {
+  async acquire(): Promise<() => void> {
     if (this.active < this.maxConcurrency) {
       this.active += 1
-      return
+      return this.createRelease()
     }
 
     await new Promise<void>(resolve => {
-      this.waiters.push(() => {
-        this.active += 1
-        resolve()
-      })
+      this.waiters.push(resolve)
     })
+    this.active += 1
+    return this.createRelease()
   }
 
-  private release(): void {
-    this.active = Math.max(0, this.active - 1)
-    const next = this.waiters.shift()
-    if (next) {
-      next()
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    const release = await this.acquire()
+    try {
+      return await task()
+    } finally {
+      release()
+    }
+  }
+
+  private createRelease(): () => void {
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.active = Math.max(0, this.active - 1)
+      const next = this.waiters.shift()
+      if (next) {
+        next()
+      }
     }
   }
 }

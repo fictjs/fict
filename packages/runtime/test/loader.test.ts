@@ -155,6 +155,54 @@ describe('resumable loader snapshot validation', () => {
     )
   })
 
+  it('continues event path scanning when a nested scope snapshot is missing', async () => {
+    const onIssue = vi.fn()
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sParent: { id: 'sParent', slots: [] },
+        },
+      }),
+    )
+
+    ;(globalThis as { __fictParentCalls?: number }).__fictParentCalls = 0
+
+    const parentHost = doc.createElement('div')
+    parentHost.setAttribute('data-fict-s', 'sParent')
+    parentHost.setAttribute(
+      'on:click',
+      'data:text/javascript,export function parent(){globalThis.__fictParentCalls=(globalThis.__fictParentCalls||0)+1}#parent',
+    )
+
+    const childHost = doc.createElement('div')
+    childHost.setAttribute('data-fict-s', 'sMissing')
+    const childButton = doc.createElement('button')
+    childButton.setAttribute('on:click', 'data:text/javascript,export function child(){}#child')
+
+    childHost.appendChild(childButton)
+    parentHost.appendChild(childHost)
+    doc.body.appendChild(parentHost)
+
+    installResumableLoader({
+      document: doc,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotIssue: onIssue,
+    })
+
+    const clickEvent = new Event('click', { bubbles: true, cancelable: true })
+    childButton.dispatchEvent(clickEvent)
+    await waitForPendingHandlers()
+
+    expect((globalThis as { __fictParentCalls?: number }).__fictParentCalls).toBe(1)
+    expect(onIssue).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'scope_snapshot_missing', scopeId: 'sMissing' }),
+    )
+
+    delete (globalThis as { __fictParentCalls?: number }).__fictParentCalls
+  })
+
   it('handles resumable handler failures without unhandled promise rejections', async () => {
     const doc = createDocumentWithSnapshots(
       JSON.stringify({

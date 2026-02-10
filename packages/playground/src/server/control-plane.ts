@@ -55,7 +55,7 @@ export class AuthController {
       return principal
     }
 
-    if (this.tokenMap.size > 0 && !this.allowAnonymous) {
+    if (!this.allowAnonymous) {
       throw new ControlPlaneError(401, 'Authorization token is required')
     }
 

@@ -54,6 +54,7 @@ const server = await createPlaygroundServer({
   limits: {
     maxConcurrentVerifications: 2,
     verifyTimeoutMs: 30_000,
+    maxRequestBodyBytes: 1_048_576,
   },
 })
 console.log(server.url)

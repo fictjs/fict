@@ -35,6 +35,7 @@ export interface PlaygroundRuntimeLimits {
   maxConcurrentVerifications?: number
   verifyTimeoutMs?: number
   auditLogEntries?: number
+  maxRequestBodyBytes?: number
 }
 
 export interface PlaygroundConfig {

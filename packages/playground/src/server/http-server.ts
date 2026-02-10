@@ -30,6 +30,7 @@ interface ServerRuntime {
   host: string
   port: number
   origin: string
+  maxRequestBodyBytes: number
 }
 
 interface ServerControllers {
@@ -38,6 +39,8 @@ interface ServerControllers {
   audit: AuditLogController
   metrics: MetricsController
 }
+
+const DEFAULT_MAX_REQUEST_BODY_BYTES = 1024 * 1024
 
 export async function createPlaygroundServer(
   options: PlaygroundServerOptions = {},
@@ -64,10 +67,18 @@ export async function createPlaygroundServer(
   }
 
   const assetsRoot = resolveAssetsRoot()
+  const rawMaxRequestBodyBytes = options.limits?.maxRequestBodyBytes
+  const maxRequestBodyBytes =
+    typeof rawMaxRequestBodyBytes === 'number' &&
+    Number.isFinite(rawMaxRequestBodyBytes) &&
+    rawMaxRequestBodyBytes > 0
+      ? Math.floor(rawMaxRequestBodyBytes)
+      : DEFAULT_MAX_REQUEST_BODY_BYTES
   const runtime: ServerRuntime = {
     host,
     port: options.port ?? 4173,
     origin: '',
+    maxRequestBodyBytes,
   }
 
   const server = createHttpServer(async (request, response) => {
@@ -224,7 +235,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
         context.manager.countSessionsForTenant(principal.tenantId),
       )
 
-      const body = await readJsonBody(context.request)
+      const body = await readJsonBody(context.request, context.runtime.maxRequestBodyBytes)
       const sessionInput = {
         ...(typeof body.templateId === 'string' ? { templateId: body.templateId } : {}),
         ...(isRecord(body.config) ? { config: toConfigPatch(body.config) } : {}),
@@ -244,7 +255,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
         context.manager.countSessionsForTenant(principal.tenantId),
       )
 
-      const body = await readJsonBody(context.request)
+      const body = await readJsonBody(context.request, context.runtime.maxRequestBodyBytes)
       if (typeof body.token !== 'string') {
         status = 400
         sendJson(context.response, 400, { error: 'token is required' })
@@ -293,7 +304,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
         return
       }
       if (method === 'PUT' || method === 'POST') {
-        const body = await readJsonBody(context.request)
+        const body = await readJsonBody(context.request, context.runtime.maxRequestBodyBytes)
         if (typeof body.path !== 'string' || typeof body.content !== 'string') {
           status = 400
           sendJson(context.response, 400, { error: 'path and content are required' })
@@ -310,7 +321,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
         return
       }
       if (method === 'DELETE') {
-        const body = await readJsonBody(context.request)
+        const body = await readJsonBody(context.request, context.runtime.maxRequestBodyBytes)
         if (typeof body.path !== 'string') {
           status = 400
           sendJson(context.response, 400, { error: 'path is required' })
@@ -366,7 +377,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
         sendJson(context.response, 400, { error: 'session id is required' })
         return
       }
-      const body = await readJsonBody(context.request)
+      const body = await readJsonBody(context.request, context.runtime.maxRequestBodyBytes)
       const session = await context.manager.updateSessionConfig(
         sessionId,
         isRecord(body.config) ? toConfigPatch(body.config) : {},
@@ -566,11 +577,29 @@ function sendJson(response: ServerResponse, status: number, payload: unknown): v
   response.end(JSON.stringify(payload))
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJsonBody(
+  request: IncomingMessage,
+  maxBytes: number,
+): Promise<Record<string, unknown>> {
+  const contentLengthHeader = request.headers['content-length']
+  const contentLengthValue = Array.isArray(contentLengthHeader)
+    ? contentLengthHeader[0]
+    : contentLengthHeader
+  const declaredBytes = contentLengthValue ? Number.parseInt(contentLengthValue, 10) : NaN
+  if (Number.isFinite(declaredBytes) && declaredBytes > maxBytes) {
+    throw new RequestError(413, 'Request payload too large')
+  }
+
   const chunks: Buffer[] = []
+  let totalBytes = 0
 
   for await (const chunk of request) {
-    chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
+    const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+    totalBytes += buffer.length
+    if (totalBytes > maxBytes) {
+      throw new RequestError(413, 'Request payload too large')
+    }
+    chunks.push(buffer)
   }
 
   if (chunks.length === 0) {
