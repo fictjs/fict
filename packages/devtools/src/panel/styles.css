@@ -876,6 +876,12 @@ body {
   font-size: 14px;
 }
 
+.btn.icon.active {
+  background: var(--accent-color);
+  border-color: var(--accent-color);
+  color: #fff;
+}
+
 /* Checkbox */
 .checkbox {
   display: flex;

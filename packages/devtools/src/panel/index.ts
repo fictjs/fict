@@ -46,6 +46,7 @@ interface PanelState {
   isConnected: boolean
   fictDetected: boolean
   fictVersion?: string
+  isInspecting: boolean
   activeTab: PanelTab
   signals: Map<number, SignalState>
   computeds: Map<number, ComputedState>
@@ -64,6 +65,7 @@ interface PanelState {
 const state: PanelState = {
   isConnected: false,
   fictDetected: false,
+  isInspecting: false,
   activeTab: 'signals',
   signals: new Map(),
   computeds: new Map(),
@@ -178,6 +180,7 @@ function resetPanelState(
   state.selectedNodeType = null
   state.expandedIds.clear()
   state.searchQuery = ''
+  state.isInspecting = false
   state.isConnected = options.keepConnection ? state.isConnected : false
   state.fictDetected = options.keepDetection ? state.fictDetected : false
   state.lastUpdate = Date.now()
@@ -390,6 +393,7 @@ function handleMessage(message: Record<string, unknown>): void {
       console.debug('[Fict DevTools Panel] Page navigating, clearing state')
       state.isConnected = false
       state.fictDetected = false
+      state.isInspecting = false
       state.fictVersion = undefined
       state.signals.clear()
       state.computeds.clear()
@@ -423,6 +427,26 @@ function handleMessage(message: Record<string, unknown>): void {
       state.isConnected = true
       state.fictDetected = true
       sendToPage('connect')
+      render()
+      break
+
+    case 'inspect:selected': {
+      const componentId =
+        payload && typeof payload === 'object'
+          ? (payload as { componentId?: number | null }).componentId
+          : null
+      state.isInspecting = false
+      if (typeof componentId === 'number' && componentId > 0) {
+        state.selectedNodeId = componentId
+        state.selectedNodeType = 'component' as NodeType
+        state.activeTab = 'components'
+      }
+      render()
+      break
+    }
+
+    case 'inspect:stopped':
+      state.isInspecting = false
       render()
       break
 
@@ -485,6 +509,13 @@ function handleMessage(message: Record<string, unknown>): void {
       scheduleGraphRefresh()
       break
 
+    case 'computed:dispose':
+      if (!hasId(payload)) return
+      state.computeds.delete(payload.id)
+      state.lastUpdate = Date.now()
+      if (state.activeTab === 'signals') renderSignalsTab()
+      break
+
     case 'effect:register':
       if (!isEffectState(payload)) return
       state.effects.set(payload.id, payload)
@@ -510,6 +541,11 @@ function handleMessage(message: Record<string, unknown>): void {
       state.effects.delete(payload.id)
       state.lastUpdate = Date.now()
       if (state.activeTab === 'effects') renderEffectsTab()
+      break
+
+    case 'effect:cleanup':
+      if (!hasId(payload)) return
+      updateEffectCleanup(payload.id)
       break
 
     case 'signal:observers': {
@@ -570,6 +606,25 @@ function handleMessage(message: Record<string, unknown>): void {
       updateComponent(payload as ComponentUpdate)
       break
 
+    case 'root:register':
+      if (!hasId(payload)) return
+      state.roots.set(payload.id, payload as RootState)
+      state.lastUpdate = Date.now()
+      if (state.activeTab === 'components') renderComponentsTab()
+      break
+
+    case 'root:dispose':
+      if (!hasId(payload)) return
+      state.roots.delete(payload.id)
+      state.lastUpdate = Date.now()
+      if (state.activeTab === 'components') renderComponentsTab()
+      break
+
+    case 'root:suspend':
+      if (!hasId(payload)) return
+      updateRootSuspend(payload as RootSuspendUpdate)
+      break
+
     case 'timeline:event':
       if (!payload || typeof payload !== 'object') return
       state.timeline.push(payload as TimelineEvent)
@@ -604,6 +659,42 @@ function handleMessage(message: Record<string, unknown>): void {
       if (state.activeTab === 'effects') renderEffectsTab()
       break
 
+    case 'response:computeds':
+      if (!Array.isArray(payload)) return
+      state.computeds.clear()
+      for (const computed of payload) {
+        if (isComputedState(computed)) {
+          state.computeds.set(computed.id, computed)
+        }
+      }
+      state.lastUpdate = Date.now()
+      if (state.activeTab === 'signals') renderSignalsTab()
+      break
+
+    case 'response:components':
+      if (!Array.isArray(payload)) return
+      state.components.clear()
+      for (const component of payload) {
+        if (isComponentState(component)) {
+          state.components.set(component.id, component)
+        }
+      }
+      state.lastUpdate = Date.now()
+      if (state.activeTab === 'components') renderComponentsTab()
+      break
+
+    case 'response:roots':
+      if (!Array.isArray(payload)) return
+      state.roots.clear()
+      for (const root of payload) {
+        if (hasId(root)) {
+          state.roots.set(root.id, root as RootState)
+        }
+      }
+      state.lastUpdate = Date.now()
+      if (state.activeTab === 'components') renderComponentsTab()
+      break
+
     case 'response:timeline':
       if (!Array.isArray(payload)) return
       state.timeline = payload as TimelineEvent[]
@@ -616,6 +707,17 @@ function handleMessage(message: Record<string, unknown>): void {
       if (state.activeTab === 'graph') {
         updateGraphRenderer()
         updateGraphDetails()
+      }
+      break
+
+    case 'response:settings':
+      if (payload && typeof payload === 'object') {
+        state.settings = {
+          ...state.settings,
+          ...(payload as Partial<DevToolsSettings>),
+        }
+        state.lastUpdate = Date.now()
+        if (state.activeTab === 'settings') renderActiveTabContent()
       }
       break
 
@@ -669,6 +771,11 @@ interface ComponentUpdate {
   id: number
   renderCount?: number
   isMounted?: boolean
+}
+
+interface RootSuspendUpdate {
+  id: number
+  suspended: boolean
 }
 
 function handleInitialState(data: InitialState): void {
@@ -758,6 +865,14 @@ function updateEffect(update: EffectUpdate): void {
   }
 }
 
+function updateEffectCleanup(effectId: number): void {
+  const effect = state.effects.get(effectId)
+  if (!effect) return
+  effect.hasCleanup = true
+  state.lastUpdate = Date.now()
+  if (state.activeTab === 'effects') renderEffectsTab()
+}
+
 function updateComponent(update: ComponentUpdate): void {
   const component = state.components.get(update.id)
   if (component) {
@@ -768,6 +883,14 @@ function updateComponent(update: ComponentUpdate): void {
       component.isMounted = update.isMounted
     }
   }
+  state.lastUpdate = Date.now()
+  if (state.activeTab === 'components') renderComponentsTab()
+}
+
+function updateRootSuspend(update: RootSuspendUpdate): void {
+  const root = state.roots.get(update.id)
+  if (!root) return
+  root.isSuspended = update.suspended
   state.lastUpdate = Date.now()
   if (state.activeTab === 'components') renderComponentsTab()
 }
@@ -1560,7 +1683,11 @@ function renderFooter(): string {
     <footer class="panel-footer">
       <div class="footer-left">
         <button class="btn icon" id="refresh-btn" title="Refresh">🔄</button>
-        ${state.activeTab === 'signals' ? '<button class="btn icon" id="inspect-btn" title="Inspect element">🎯</button>' : ''}
+        ${
+          state.activeTab === 'signals'
+            ? `<button class="btn icon ${state.isInspecting ? 'active' : ''}" id="inspect-btn" title="${state.isInspecting ? 'Stop inspecting' : 'Inspect element'}">🎯</button>`
+            : ''
+        }
       </div>
       <div class="footer-right">
         <span class="last-update">
@@ -1891,6 +2018,11 @@ function setupEventListeners(): void {
       const target = e.currentTarget as HTMLElement
       const tabId = target.dataset.tab as PanelTab
       if (tabId && tabId !== state.activeTab) {
+        if (state.isInspecting && tabId !== 'signals') {
+          state.isInspecting = false
+          sendToPage('inspect:stop')
+        }
+
         // Cleanup previous tab resources
         if (state.activeTab === 'graph' && graphRenderer) {
           graphRenderer.destroy()
@@ -1930,9 +2062,21 @@ function setupEventListeners(): void {
   if (refreshBtn) {
     refreshBtn.addEventListener('click', () => {
       sendToPage('request:signals')
+      sendToPage('request:computeds')
       sendToPage('request:effects')
       sendToPage('request:components')
+      sendToPage('request:roots')
+      sendToPage('request:settings')
       sendToPage('request:timeline', { limit: 200 })
+    })
+  }
+
+  const inspectBtn = document.getElementById('inspect-btn')
+  if (inspectBtn) {
+    inspectBtn.addEventListener('click', () => {
+      state.isInspecting = !state.isInspecting
+      sendToPage(state.isInspecting ? 'inspect:start' : 'inspect:stop')
+      render()
     })
   }
 
@@ -2074,6 +2218,7 @@ function setupTabEventListeners(): void {
 
         // Re-render component details panel if component is selected
         if (nodeType === 'component') {
+          sendToPage('inspect:highlight', { id })
           renderComponentsTab()
         }
       }
@@ -2206,6 +2351,7 @@ function setupTabEventListeners(): void {
   if (highlightCheck) {
     highlightCheck.addEventListener('change', e => {
       state.settings.highlightUpdates = (e.target as HTMLInputElement).checked
+      sendToPage('set:settings', { highlightUpdates: state.settings.highlightUpdates })
     })
   }
 
@@ -2221,6 +2367,7 @@ function setupTabEventListeners(): void {
   if (maxEventsInput) {
     maxEventsInput.addEventListener('change', e => {
       state.settings.maxTimelineEvents = parseInt((e.target as HTMLInputElement).value, 10)
+      sendToPage('set:settings', { maxTimelineEvents: state.settings.maxTimelineEvents })
     })
   }
 

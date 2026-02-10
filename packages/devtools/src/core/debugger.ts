@@ -6,6 +6,7 @@
  */
 
 import { formatValueShort } from './serializer'
+import { highlightAndScroll, startInspecting, stopInspecting } from './highlighter'
 import {
   type ComponentState,
   type ComputedState,
@@ -365,22 +366,75 @@ function handlePanelMessage(event: MessageEvent): void {
       sendToPanel('response:timeline', timeline.slice(-(payload?.limit || 100)))
       break
 
+    case 'request:settings':
+      sendToPanel('response:settings', settings)
+      break
+
     case 'request:dependencyGraph':
       sendToPanel('response:dependencyGraph', buildDependencyGraph(payload?.nodeId))
       break
 
     case 'set:signalValue':
-      hook.setSignalValue(payload.id, payload.value)
+      if (payload?.id !== undefined) {
+        hook.setSignalValue(payload.id as number, payload.value)
+      }
       break
 
     case 'set:settings':
-      Object.assign(settings, payload)
+      if (payload && typeof payload === 'object') {
+        Object.assign(settings, payload)
+      }
       break
 
     case 'clear:timeline':
       timeline.length = 0
       nextTimelineId = 1
       break
+
+    case 'inspect:start':
+      startInspecting(
+        element => {
+          const componentId = findComponentIdForElement(element)
+          if (componentId === null) {
+            sendToPanel('inspect:selected', { componentId: null })
+            return
+          }
+
+          const component = components.get(componentId)
+          const inspectTarget = component?.elements?.[0]
+          if (inspectTarget) {
+            highlightAndScroll(inspectTarget, {
+              label: component?.name || 'Component',
+              duration: 1200,
+            })
+          }
+          sendToPanel('inspect:selected', { componentId })
+        },
+        () => {
+          sendToPanel('inspect:stopped', {})
+        },
+      )
+      break
+
+    case 'inspect:stop':
+      stopInspecting()
+      break
+
+    case 'inspect:highlight': {
+      const componentId =
+        payload && typeof payload === 'object' ? (payload as { id?: number }).id : undefined
+      if (typeof componentId === 'number') {
+        const component = components.get(componentId)
+        const element = component?.elements?.[0]
+        if (element) {
+          highlightAndScroll(element, {
+            label: component?.name || `Component #${componentId}`,
+            duration: 1200,
+          })
+        }
+      }
+      break
+    }
 
     case 'expose:console':
       if (payload?.type && payload?.id !== undefined) {
@@ -391,6 +445,25 @@ function handlePanelMessage(event: MessageEvent): void {
       }
       break
   }
+}
+
+function findComponentIdForElement(element: HTMLElement): number | null {
+  let current: HTMLElement | null = element
+  while (current) {
+    const propertyId = (current as HTMLElement & { __fict_component_id__?: unknown })
+      .__fict_component_id__
+    if (typeof propertyId === 'number' && Number.isFinite(propertyId)) {
+      return propertyId
+    }
+
+    const attrId = current.getAttribute('data-fict-component-id')
+    if (attrId !== null) {
+      const parsed = Number.parseInt(attrId, 10)
+      if (Number.isFinite(parsed)) return parsed
+    }
+    current = current.parentElement
+  }
+  return null
 }
 
 function sendInitialState(): void {
@@ -1056,6 +1129,8 @@ export function attachDebugger(): void {
 }
 
 export function detachDebugger(): void {
+  stopInspecting()
+
   if (typeof window !== 'undefined') {
     window.removeEventListener('message', handlePanelMessage)
   }

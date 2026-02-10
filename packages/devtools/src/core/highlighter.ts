@@ -56,6 +56,7 @@ let labelElement: HTMLDivElement | null = null
 let hideTimeout: ReturnType<typeof setTimeout> | null = null
 let isInspecting = false
 let inspectCallback: ((element: HTMLElement) => void) | null = null
+let inspectStopCallback: (() => void) | null = null
 
 /**
  * Create the overlay element
@@ -226,11 +227,15 @@ export function highlightAndScroll(element: HTMLElement, options: HighlightOptio
 /**
  * Start inspect mode - allows user to click on elements
  */
-export function startInspecting(callback: (element: HTMLElement) => void): void {
+export function startInspecting(
+  callback: (element: HTMLElement) => void,
+  onStop?: () => void,
+): void {
   if (isInspecting) return
 
   isInspecting = true
   inspectCallback = callback
+  inspectStopCallback = onStop ?? null
 
   initHighlighter()
 
@@ -251,6 +256,8 @@ export function stopInspecting(): void {
 
   isInspecting = false
   inspectCallback = null
+  const onStop = inspectStopCallback
+  inspectStopCallback = null
 
   // Remove event listeners
   document.removeEventListener('mousemove', handleInspectMouseMove, true)
@@ -261,6 +268,7 @@ export function stopInspecting(): void {
   document.body.style.cursor = ''
 
   unhighlight()
+  onStop?.()
 }
 
 /**

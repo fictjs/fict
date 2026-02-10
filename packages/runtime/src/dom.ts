@@ -64,6 +64,46 @@ const isDev =
 
 let nextComponentId = 1
 
+type DevtoolsAnnotatedElement = HTMLElement & {
+  __fict_component_id__?: number
+  __fict_component_name__?: string
+}
+
+function collectComponentMountElements(node: Node): HTMLElement[] {
+  if (node instanceof DocumentFragment) {
+    return Array.from(node.childNodes).filter(
+      (child): child is HTMLElement => child instanceof HTMLElement,
+    )
+  }
+
+  if (node instanceof HTMLElement) {
+    // Resumable hosts use display: contents; surface concrete child elements for inspection.
+    if (node.hasAttribute('data-fict-host')) {
+      const children = Array.from(node.children).filter(
+        (child): child is HTMLElement => child instanceof HTMLElement,
+      )
+      if (children.length > 0) return children
+    }
+    return [node]
+  }
+
+  return []
+}
+
+function annotateComponentElements(
+  elements: HTMLElement[],
+  componentId: number,
+  componentName: string,
+): void {
+  for (const element of elements) {
+    element.setAttribute('data-fict-component', componentName)
+    element.setAttribute('data-fict-component-id', String(componentId))
+    const annotated = element as DevtoolsAnnotatedElement
+    annotated.__fict_component_id__ = componentId
+    annotated.__fict_component_name__ = componentName
+  }
+}
+
 // ============================================================================
 // Main Render Function
 // ============================================================================
@@ -282,12 +322,13 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
     // Create a fresh hook context for this component instance.
     // This preserves slot state across re-renders driven by __fictRender.
     const hook = isDev ? getDevtoolsHook() : undefined
+    const componentName = vnode.type.name || 'Anonymous'
     const parentId = hook ? __fictGetCurrentComponentId() : undefined
     const componentId = hook ? nextComponentId++ : undefined
 
     // Register component
     if (hook?.registerComponent && componentId !== undefined) {
-      hook.registerComponent(componentId, vnode.type.name || 'Anonymous', parentId)
+      hook.registerComponent(componentId, componentName, parentId)
     }
 
     const ctx = __fictPushContext()
@@ -300,11 +341,16 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
 
     try {
       const rendered = vnode.type(props)
+      let mountElements: HTMLElement[] | undefined
+
+      if (hook && componentId !== undefined) {
+        hook.componentRender?.(componentId)
+      }
 
       // Register lifecycle hooks
       if (hook && componentId !== undefined) {
         onMount(() => {
-          hook.componentMount?.(componentId)
+          hook.componentMount?.(componentId, mountElements)
         })
         onCleanup(() => hook.componentUnmount?.(componentId))
       }
@@ -332,10 +378,18 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
         } else {
           host.appendChild(content)
         }
+        if (hook && componentId !== undefined) {
+          mountElements = collectComponentMountElements(host)
+          annotateComponentElements(mountElements, componentId, componentName)
+        }
         return host as DOMElement
       }
-
-      return createElementWithContext(rendered as FictNode, namespace)
+      const componentRoot = createElementWithContext(rendered as FictNode, namespace)
+      if (hook && componentId !== undefined) {
+        mountElements = collectComponentMountElements(componentRoot)
+        annotateComponentElements(mountElements, componentId, componentName)
+      }
+      return componentRoot
     } catch (err) {
       if (handleSuspend(err as any)) {
         return document.createComment('fict:suspend')

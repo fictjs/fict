@@ -1,4 +1,5 @@
 import { enterRootGuard, exitRootGuard } from './cycle-guard'
+import { getDevtoolsHook } from './devtools'
 import type { Cleanup, ErrorInfo, SuspenseToken } from './types'
 
 const isDev =
@@ -29,9 +30,39 @@ let currentRoot: RootContext | undefined
 let currentEffectCleanups: Cleanup[] | undefined
 const globalErrorHandlers = new WeakMap<RootContext, ErrorHandler[]>()
 const globalSuspenseHandlers = new WeakMap<RootContext, SuspenseHandler[]>()
+const rootDevtoolsIds = new WeakMap<RootContext, number>()
+let nextRootDevtoolsId = 0
+
+function registerRootDevtools(root: RootContext): void {
+  if (!isDev) return
+  const hook = getDevtoolsHook()
+  if (!hook?.registerRoot) return
+  const id = ++nextRootDevtoolsId
+  rootDevtoolsIds.set(root, id)
+  hook.registerRoot(id)
+}
+
+function disposeRootDevtools(root: RootContext): void {
+  if (!isDev) return
+  const id = rootDevtoolsIds.get(root)
+  if (id === undefined) return
+  const hook = getDevtoolsHook()
+  hook?.disposeRoot?.(id)
+  rootDevtoolsIds.delete(root)
+}
+
+function setRootSuspendDevtools(root: RootContext, suspended: boolean): void {
+  if (!isDev) return
+  const id = rootDevtoolsIds.get(root)
+  if (id === undefined) return
+  const hook = getDevtoolsHook()
+  hook?.rootSuspend?.(id, suspended)
+}
 
 export function createRootContext(parent?: RootContext): RootContext {
-  return { parent, cleanups: [], destroyCallbacks: [], suspended: false }
+  const root = { parent, cleanups: [], destroyCallbacks: [], suspended: false }
+  registerRootDevtools(root)
+  return root
 }
 
 export function pushRoot(root: RootContext): RootContext | undefined {
@@ -122,6 +153,7 @@ export function destroyRoot(root: RootContext): void {
   if (globalSuspenseHandlers.has(root)) {
     globalSuspenseHandlers.delete(root)
   }
+  disposeRootDevtools(root)
 }
 
 export function createRoot<T>(
@@ -285,7 +317,10 @@ export function handleSuspend(
         const handled = handler(token)
         if (handled !== false) {
           // Only set suspended = true when a handler actually handles the token
-          if (originRoot) originRoot.suspended = true
+          if (originRoot) {
+            originRoot.suspended = true
+            setRootSuspendDevtools(originRoot, true)
+          }
           return true
         }
       }
@@ -304,7 +339,10 @@ export function handleSuspend(
       const handled = handler(token)
       if (handled !== false) {
         // Only set suspended = true when a handler actually handles the token
-        if (originRoot) originRoot.suspended = true
+        if (originRoot) {
+          originRoot.suspended = true
+          setRootSuspendDevtools(originRoot, true)
+        }
         return true
       }
     }

@@ -788,6 +788,16 @@ function purgeDeps(sub: ReactiveNode): void {
  * @param node - The node to dispose
  */
 function disposeNode(node: ReactiveNode): void {
+  if (isDev) {
+    if ('fn' in node && typeof node.fn === 'function') {
+      disposeEffectDevtools(node as EffectNode)
+    } else if ('getter' in node && typeof node.getter === 'function') {
+      disposeComputedDevtools(node as ComputedNode)
+    } else if ('currentValue' in node) {
+      disposeSignalDevtools(node as SignalNode)
+    }
+  }
+
   node.depsTail = undefined
   node.flags = 0
   purgeDeps(node)
@@ -858,6 +868,7 @@ function runEffect(e: EffectNode): void {
   const flags = e.flags
   const runCleanup = () => {
     if (!e.runCleanup) return
+    if (isDev) effectCleanupDevtools(e)
     inCleanup = true
     activeCleanupFlushId = currentFlushId
     try {
@@ -956,20 +967,31 @@ export function scheduleFlush(): void {
  */
 function flush(): void {
   beginFlushGuard()
+  let flushReported = false
+  const finishFlush = () => {
+    if (flushReported && isDev) {
+      flushEndDevtools()
+    }
+    endFlushGuard()
+  }
   if (batchDepth > 0) {
     // If batching is active, defer until the batch completes
     scheduleFlush()
-    endFlushGuard()
+    finishFlush()
     return
   }
   const hasWork = highPriorityQueue.length > 0 || lowPriorityQueue.length > 0
   if (!hasWork) {
     flushScheduled = false
-    endFlushGuard()
+    finishFlush()
     return
   }
   currentFlushId++
   flushScheduled = false
+  if (isDev) {
+    flushStartDevtools()
+    flushReported = true
+  }
 
   // 1. Process all high-priority effects first
   let highIndex = 0
@@ -993,7 +1015,7 @@ function flush(): void {
       highPriorityQueue.length = 0
       lowPriorityQueue.length = 0
       flushScheduled = false
-      endFlushGuard()
+      finishFlush()
       return
     }
     highIndex++
@@ -1011,7 +1033,7 @@ function flush(): void {
         lowPriorityQueue.length -= lowIndex
       }
       scheduleFlush()
-      endFlushGuard()
+      finishFlush()
       return
     }
     const e = lowPriorityQueue[lowIndex]!
@@ -1033,7 +1055,7 @@ function flush(): void {
       highPriorityQueue.length = 0
       lowPriorityQueue.length = 0
       flushScheduled = false
-      endFlushGuard()
+      finishFlush()
       return
     }
     lowIndex++
@@ -1041,7 +1063,7 @@ function flush(): void {
   }
   lowPriorityQueue.length = 0
 
-  endFlushGuard()
+  finishFlush()
 }
 // ============================================================================
 // Signal - Inline optimized version
@@ -1385,13 +1407,24 @@ export function trigger(fn: () => void): void {
  * Start a batch of updates
  */
 export function startBatch(): void {
+  const enteringOuterBatch = batchDepth === 0
   ++batchDepth
+  if (enteringOuterBatch && isDev) {
+    batchStartDevtools()
+  }
 }
 /**
  * End a batch of updates and flush effects
  */
 export function endBatch(): void {
-  if (--batchDepth === 0) flush()
+  if (batchDepth === 0) return
+  --batchDepth
+  if (batchDepth === 0) {
+    if (isDev) {
+      batchEndDevtools()
+    }
+    flush()
+  }
 }
 /**
  * Execute a function in a batch
@@ -1399,7 +1432,11 @@ export function endBatch(): void {
  * @returns The return value of the function
  */
 export function batch<T>(fn: () => T): T {
+  const enteringOuterBatch = batchDepth === 0
   ++batchDepth
+  if (enteringOuterBatch && isDev) {
+    batchStartDevtools()
+  }
   let result!: T
   let error: unknown
   try {
@@ -1409,6 +1446,9 @@ export function batch<T>(fn: () => T): T {
   } finally {
     --batchDepth
     if (batchDepth === 0) {
+      if (isDev) {
+        batchEndDevtools()
+      }
       try {
         flush()
       } catch (flushErr) {
@@ -1463,6 +1503,7 @@ export function __resetReactiveState(): void {
   cycle = 0
   currentFlushId = 0
   activeCleanupFlushId = 0
+  clearDevtoolsSignalSetters()
 }
 /**
  * Execute a function without tracking dependencies
@@ -1588,12 +1629,21 @@ interface DevtoolsIdentifiable {
 
 let registerSignalDevtools: <T>(node: SignalNode<T>) => number | undefined = () => undefined
 let updateSignalDevtools: <T>(node: SignalNode<T>, value: unknown) => void = () => {}
+let disposeSignalDevtools: <T>(node: SignalNode<T>) => void = () => {}
 let registerComputedDevtools: <T>(node: ComputedNode<T>) => number | undefined = () => undefined
 let updateComputedDevtools: <T>(node: ComputedNode<T>, value: unknown) => void = () => {}
+let disposeComputedDevtools: <T>(node: ComputedNode<T>) => void = () => {}
 let registerEffectDevtools: (node: EffectNode) => number | undefined = () => undefined
 let effectRunDevtools: (node: EffectNode) => void = () => {}
+let effectCleanupDevtools: (node: EffectNode) => void = () => {}
+let disposeEffectDevtools: (node: EffectNode) => void = () => {}
 let trackDependencyDevtools: (dep: ReactiveNode, sub: ReactiveNode) => void = () => {}
 let untrackDependencyDevtools: (dep: ReactiveNode, sub: ReactiveNode) => void = () => {}
+let batchStartDevtools: () => void = () => {}
+let batchEndDevtools: () => void = () => {}
+let flushStartDevtools: () => void = () => {}
+let flushEndDevtools: () => void = () => {}
+let clearDevtoolsSignalSetters: () => void = () => {}
 
 // Keep this as a direct conditional expression (instead of `if (isDev)`) so
 // bundlers can eliminate the entire devtools setup block when `__DEV__` is
@@ -1606,6 +1656,25 @@ if (
   // Unified ID counter for all reactive nodes (signal/computed/effect)
   // to prevent ID collisions when storing in single devtools maps
   let nextDevtoolsId = 0
+  const getSignalSetterMap = () => {
+    if (typeof globalThis === 'undefined') return undefined
+    const global = globalThis as typeof globalThis & {
+      __FICT_DEVTOOLS_SIGNALS__?: Map<number, (value: unknown) => void>
+    }
+    if (!global.__FICT_DEVTOOLS_SIGNALS__) {
+      global.__FICT_DEVTOOLS_SIGNALS__ = new Map<number, (value: unknown) => void>()
+    }
+    return global.__FICT_DEVTOOLS_SIGNALS__
+  }
+
+  const getExistingSignalSetterMap = () => {
+    if (typeof globalThis === 'undefined') return undefined
+    return (
+      globalThis as typeof globalThis & {
+        __FICT_DEVTOOLS_SIGNALS__?: Map<number, (value: unknown) => void>
+      }
+    ).__FICT_DEVTOOLS_SIGNALS__
+  }
 
   registerSignalDevtools = node => {
     const hook = getDevtoolsHook()
@@ -1618,6 +1687,9 @@ if (
     if (ownerId !== undefined) (options as any).ownerId = ownerId
     hook.registerSignal(id, node.currentValue, options)
     ;(node as SignalNode & DevtoolsIdentifiable).__id = id
+    getSignalSetterMap()?.set(id, value => {
+      signalOper.call(node as SignalNode<unknown>, value)
+    })
     return id
   }
 
@@ -1626,6 +1698,16 @@ if (
     if (!hook) return
     const id = (node as SignalNode & DevtoolsIdentifiable).__id
     if (id) hook.updateSignal(id, value)
+  }
+
+  disposeSignalDevtools = node => {
+    const identifiable = node as SignalNode & DevtoolsIdentifiable
+    const id = identifiable.__id
+    if (!id) return
+    const hook = getDevtoolsHook()
+    hook?.disposeSignal?.(id)
+    getExistingSignalSetterMap()?.delete(id)
+    identifiable.__id = undefined
   }
 
   registerComputedDevtools = node => {
@@ -1650,6 +1732,15 @@ if (
     if (id) hook.updateComputed(id, value)
   }
 
+  disposeComputedDevtools = node => {
+    const identifiable = node as ComputedNode & DevtoolsIdentifiable
+    const id = identifiable.__id
+    if (!id) return
+    const hook = getDevtoolsHook()
+    hook?.disposeComputed?.(id)
+    identifiable.__id = undefined
+  }
+
   registerEffectDevtools = node => {
     const hook = getDevtoolsHook()
     if (!hook) return undefined
@@ -1667,6 +1758,22 @@ if (
     if (id) hook.effectRun(id)
   }
 
+  effectCleanupDevtools = node => {
+    const hook = getDevtoolsHook()
+    if (!hook) return
+    const id = (node as EffectNode & DevtoolsIdentifiable).__id
+    if (id) hook.effectCleanup?.(id)
+  }
+
+  disposeEffectDevtools = node => {
+    const identifiable = node as EffectNode & DevtoolsIdentifiable
+    const id = identifiable.__id
+    if (!id) return
+    const hook = getDevtoolsHook()
+    hook?.disposeEffect?.(id)
+    identifiable.__id = undefined
+  }
+
   trackDependencyDevtools = (dep, sub) => {
     const hook = getDevtoolsHook()
     if (!hook?.trackDependency) return
@@ -1681,6 +1788,30 @@ if (
     const depId = (dep as ReactiveNode & DevtoolsIdentifiable).__id
     const subId = (sub as ReactiveNode & DevtoolsIdentifiable).__id
     if (depId && subId) hook.untrackDependency(subId, depId)
+  }
+
+  batchStartDevtools = () => {
+    const hook = getDevtoolsHook()
+    hook?.batchStart?.()
+  }
+
+  batchEndDevtools = () => {
+    const hook = getDevtoolsHook()
+    hook?.batchEnd?.()
+  }
+
+  flushStartDevtools = () => {
+    const hook = getDevtoolsHook()
+    hook?.flushStart?.()
+  }
+
+  flushEndDevtools = () => {
+    const hook = getDevtoolsHook()
+    hook?.flushEnd?.()
+  }
+
+  clearDevtoolsSignalSetters = () => {
+    getExistingSignalSetterMap()?.clear()
   }
 }
 
