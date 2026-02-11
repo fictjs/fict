@@ -9,14 +9,14 @@
     "optional-chain": {
       "helpers": 3,
       "regions": 0,
-      "sizeBytes": 662,
-      "gzipBytes": 350
+      "sizeBytes": 687,
+      "gzipBytes": 363
     },
     "no-jsx": {
       "helpers": 4,
       "regions": 1,
-      "sizeBytes": 489,
-      "gzipBytes": 244
+      "sizeBytes": 546,
+      "gzipBytes": 261
     }
   }
 }
