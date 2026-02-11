@@ -3,6 +3,15 @@ import { TimelineEventType, type TimelineEvent, type NodeType } from '../core/ty
 const MIN_RANGE_DURATION_MS = 0.05
 const MIN_POINT_DURATION_MS = 0.02
 const TRACE_PROCESS_ID = 1
+const TRACE_THREAD_COMMITS = 10
+const TRACE_THREAD_BATCHES = 11
+const TRACE_THREAD_EFFECTS = 12
+const TRACE_THREAD_RENDERS = 13
+const TRACE_THREAD_UPDATES = 14
+const TRACE_THREAD_WARNINGS = 15
+const TRACE_THREAD_TIMELINE = 16
+const TRACE_FLOW_MULTIPLIER = 1_000_000
+const TRACE_FLOW_FLUSH_OFFSET = 1_000_000_000
 
 interface RangeStart {
   id: number
@@ -58,12 +67,13 @@ export interface PerformanceTrackModel {
 interface TraceEvent {
   name: string
   cat: string
-  ph: 'M' | 'X' | 'i'
+  ph: 'M' | 'X' | 'i' | 's' | 'f'
   ts: number
   pid: number
   tid: number
   dur?: number
   s?: 't'
+  id?: number
   args?: Record<string, unknown>
 }
 
@@ -74,6 +84,14 @@ export interface ChromeTraceFile {
     source: string
     generatedAt: string
     eventCount: number
+    laneCount?: number
+    timelineEventCount?: number
+    flowEventCount?: number
+    timeRangeMs?: {
+      start: number
+      end: number
+      duration: number
+    }
   }
 }
 
@@ -505,19 +523,49 @@ export function renderPerformanceTracks(
 function laneThreadId(laneId: string): number {
   switch (laneId) {
     case 'commits':
-      return 10
+      return TRACE_THREAD_COMMITS
     case 'batches':
-      return 11
+      return TRACE_THREAD_BATCHES
     case 'effects':
-      return 12
+      return TRACE_THREAD_EFFECTS
     case 'renders':
-      return 13
+      return TRACE_THREAD_RENDERS
     case 'updates':
-      return 14
+      return TRACE_THREAD_UPDATES
     case 'warnings':
-      return 15
+      return TRACE_THREAD_WARNINGS
     default:
       return 19
+  }
+}
+
+function eventThreadId(type: TimelineEventType): number {
+  switch (type) {
+    case TimelineEventType.SignalCreate:
+    case TimelineEventType.SignalUpdate:
+    case TimelineEventType.ComputedCreate:
+    case TimelineEventType.ComputedUpdate:
+      return TRACE_THREAD_UPDATES
+    case TimelineEventType.EffectCreate:
+    case TimelineEventType.EffectRun:
+    case TimelineEventType.EffectCleanup:
+    case TimelineEventType.EffectDispose:
+      return TRACE_THREAD_EFFECTS
+    case TimelineEventType.ComponentMount:
+    case TimelineEventType.ComponentUnmount:
+    case TimelineEventType.ComponentRender:
+      return TRACE_THREAD_RENDERS
+    case TimelineEventType.BatchStart:
+    case TimelineEventType.BatchEnd:
+      return TRACE_THREAD_BATCHES
+    case TimelineEventType.FlushStart:
+    case TimelineEventType.FlushEnd:
+      return TRACE_THREAD_COMMITS
+    case TimelineEventType.Warning:
+    case TimelineEventType.Error:
+      return TRACE_THREAD_WARNINGS
+    default:
+      return TRACE_THREAD_TIMELINE
   }
 }
 
@@ -525,8 +573,137 @@ function toTraceTimestampMs(value: number): number {
   return Math.max(0, value)
 }
 
+function asFiniteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+interface TimelineGroupContext {
+  batchGroupId?: number
+  flushGroupId?: number
+}
+
+function resolveTimelineGroupContext(
+  event: TimelineEvent,
+  batchStartIds: Set<number>,
+  flushStartIds: Set<number>,
+): TimelineGroupContext {
+  const data = event.data
+  let batchGroupId = asFiniteNumber(data?.batchGroupId)
+  let flushGroupId = asFiniteNumber(data?.flushGroupId)
+  const fallbackGroupId = asFiniteNumber(event.groupId)
+
+  if (batchGroupId === undefined && event.type === TimelineEventType.BatchStart) {
+    batchGroupId = event.id
+  }
+  if (flushGroupId === undefined && event.type === TimelineEventType.FlushStart) {
+    flushGroupId = event.id
+  }
+  if (
+    batchGroupId === undefined &&
+    fallbackGroupId !== undefined &&
+    batchStartIds.has(fallbackGroupId)
+  ) {
+    batchGroupId = fallbackGroupId
+  }
+  if (
+    flushGroupId === undefined &&
+    fallbackGroupId !== undefined &&
+    flushStartIds.has(fallbackGroupId)
+  ) {
+    flushGroupId = fallbackGroupId
+  }
+
+  return { batchGroupId, flushGroupId }
+}
+
+function buildTimelineTraceArgs(
+  event: TimelineEvent,
+  groups: TimelineGroupContext,
+): Record<string, unknown> {
+  const args: Record<string, unknown> = {
+    eventId: event.id,
+    eventType: event.type,
+  }
+  if (event.nodeId !== undefined) args.nodeId = event.nodeId
+  if (event.nodeType !== undefined) args.nodeType = event.nodeType
+  if (event.nodeName !== undefined) args.nodeName = event.nodeName
+  if (event.groupId !== undefined) args.groupId = event.groupId
+  if (event.duration !== undefined) args.duration = event.duration
+  if (groups.batchGroupId !== undefined) args.batchGroupId = groups.batchGroupId
+  if (groups.flushGroupId !== undefined) args.flushGroupId = groups.flushGroupId
+  if (event.data) {
+    for (const [key, value] of Object.entries(event.data)) {
+      args[key] = value
+    }
+  }
+  return args
+}
+
+function pushFlowTraceEvents(
+  traceEvents: TraceEvent[],
+  kind: 'batch' | 'flush',
+  source: TimelineEvent,
+  target: TimelineEvent,
+  targetThreadId: number,
+): void {
+  const startTs = Math.round(toTraceTimestampMs(source.timestamp) * 1000)
+  const endTs = Math.round(toTraceTimestampMs(target.timestamp) * 1000)
+  if (endTs < startTs) return
+
+  const flowId =
+    kind === 'batch'
+      ? source.id * TRACE_FLOW_MULTIPLIER + target.id
+      : TRACE_FLOW_FLUSH_OFFSET + source.id * TRACE_FLOW_MULTIPLIER + target.id
+  const category = kind === 'batch' ? 'fict.flow.batch' : 'fict.flow.flush'
+  const name = kind === 'batch' ? 'batch-flow' : 'flush-flow'
+
+  traceEvents.push(
+    {
+      name,
+      cat: category,
+      ph: 's',
+      id: flowId,
+      ts: startTs,
+      pid: TRACE_PROCESS_ID,
+      tid: eventThreadId(source.type),
+      args: {
+        groupId: source.id,
+        eventId: source.id,
+        eventType: source.type,
+      },
+    },
+    {
+      name,
+      cat: category,
+      ph: 'f',
+      id: flowId,
+      ts: endTs,
+      pid: TRACE_PROCESS_ID,
+      tid: targetThreadId,
+      args: {
+        groupId: source.id,
+        eventId: target.id,
+        eventType: target.type,
+      },
+    },
+  )
+}
+
 export function buildChromeTraceFromTimeline(timeline: TimelineEvent[]): ChromeTraceFile {
   const model = buildPerformanceTrackModel(timeline)
+  const events = timeline
+    .filter(
+      event => event && typeof event.timestamp === 'number' && Number.isFinite(event.timestamp),
+    )
+    .slice()
+    .sort((a, b) => a.timestamp - b.timestamp || a.id - b.id)
+  const batchStartById = new Map<number, TimelineEvent>()
+  const flushStartById = new Map<number, TimelineEvent>()
+  for (const event of events) {
+    if (event.type === TimelineEventType.BatchStart) batchStartById.set(event.id, event)
+    if (event.type === TimelineEventType.FlushStart) flushStartById.set(event.id, event)
+  }
+
   const traceEvents: TraceEvent[] = []
 
   traceEvents.push(
@@ -544,7 +721,7 @@ export function buildChromeTraceFromTimeline(timeline: TimelineEvent[]): ChromeT
       cat: '__metadata',
       ph: 'M',
       pid: TRACE_PROCESS_ID,
-      tid: 10,
+      tid: TRACE_THREAD_COMMITS,
       ts: 0,
       args: { name: 'Commits' },
     },
@@ -553,7 +730,7 @@ export function buildChromeTraceFromTimeline(timeline: TimelineEvent[]): ChromeT
       cat: '__metadata',
       ph: 'M',
       pid: TRACE_PROCESS_ID,
-      tid: 11,
+      tid: TRACE_THREAD_BATCHES,
       ts: 0,
       args: { name: 'Batches' },
     },
@@ -562,7 +739,7 @@ export function buildChromeTraceFromTimeline(timeline: TimelineEvent[]): ChromeT
       cat: '__metadata',
       ph: 'M',
       pid: TRACE_PROCESS_ID,
-      tid: 12,
+      tid: TRACE_THREAD_EFFECTS,
       ts: 0,
       args: { name: 'Effects' },
     },
@@ -571,7 +748,7 @@ export function buildChromeTraceFromTimeline(timeline: TimelineEvent[]): ChromeT
       cat: '__metadata',
       ph: 'M',
       pid: TRACE_PROCESS_ID,
-      tid: 13,
+      tid: TRACE_THREAD_RENDERS,
       ts: 0,
       args: { name: 'Renders' },
     },
@@ -580,9 +757,27 @@ export function buildChromeTraceFromTimeline(timeline: TimelineEvent[]): ChromeT
       cat: '__metadata',
       ph: 'M',
       pid: TRACE_PROCESS_ID,
-      tid: 14,
+      tid: TRACE_THREAD_UPDATES,
       ts: 0,
       args: { name: 'Updates' },
+    },
+    {
+      name: 'thread_name',
+      cat: '__metadata',
+      ph: 'M',
+      pid: TRACE_PROCESS_ID,
+      tid: TRACE_THREAD_WARNINGS,
+      ts: 0,
+      args: { name: 'Warnings' },
+    },
+    {
+      name: 'thread_name',
+      cat: '__metadata',
+      ph: 'M',
+      pid: TRACE_PROCESS_ID,
+      tid: TRACE_THREAD_TIMELINE,
+      ts: 0,
+      args: { name: 'Timeline Events' },
     },
   )
 
@@ -629,6 +824,38 @@ export function buildChromeTraceFromTimeline(timeline: TimelineEvent[]): ChromeT
     }
   }
 
+  const batchStartIds = new Set(batchStartById.keys())
+  const flushStartIds = new Set(flushStartById.keys())
+  for (const event of events) {
+    const groups = resolveTimelineGroupContext(event, batchStartIds, flushStartIds)
+    const tid = eventThreadId(event.type)
+    const ts = Math.round(toTraceTimestampMs(event.timestamp) * 1000)
+
+    traceEvents.push({
+      name: event.type,
+      cat: 'fict.timeline',
+      ph: 'i',
+      s: 't',
+      ts,
+      pid: TRACE_PROCESS_ID,
+      tid,
+      args: buildTimelineTraceArgs(event, groups),
+    })
+
+    if (groups.batchGroupId !== undefined) {
+      const start = batchStartById.get(groups.batchGroupId)
+      if (start && start.id !== event.id) {
+        pushFlowTraceEvents(traceEvents, 'batch', start, event, tid)
+      }
+    }
+    if (groups.flushGroupId !== undefined) {
+      const start = flushStartById.get(groups.flushGroupId)
+      if (start && start.id !== event.id) {
+        pushFlowTraceEvents(traceEvents, 'flush', start, event, tid)
+      }
+    }
+  }
+
   return {
     traceEvents,
     displayTimeUnit: 'ms',
@@ -636,6 +863,14 @@ export function buildChromeTraceFromTimeline(timeline: TimelineEvent[]): ChromeT
       source: 'fict-devtools-performance-tracks',
       generatedAt: new Date().toISOString(),
       eventCount: traceEvents.length,
+      laneCount: model.lanes.length,
+      timelineEventCount: events.length,
+      flowEventCount: traceEvents.filter(event => event.cat.startsWith('fict.flow.')).length,
+      timeRangeMs: {
+        start: model.startTime,
+        end: model.endTime,
+        duration: model.duration,
+      },
     },
   }
 }

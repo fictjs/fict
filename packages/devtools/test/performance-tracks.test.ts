@@ -96,5 +96,57 @@ describe('performance tracks', () => {
     )
     expect(trace.traceEvents.some(event => event.cat === 'fict.commits')).toBe(true)
     expect(trace.traceEvents.some(event => event.cat === 'fict.effects')).toBe(true)
+    expect(trace.traceEvents.some(event => event.cat === 'fict.timeline')).toBe(true)
+    expect(trace.metadata.timelineEventCount).toBe(3)
+    expect(trace.metadata.timeRangeMs?.duration).toBeGreaterThan(0)
+  })
+
+  it('exports flow links for batch/flush group contexts', () => {
+    const timeline: TimelineEvent[] = [
+      { id: 1, type: TimelineEventType.BatchStart, timestamp: 10 },
+      {
+        id: 2,
+        type: TimelineEventType.FlushStart,
+        timestamp: 10.3,
+        data: { batchGroupId: 1, flushGroupId: 2 },
+      },
+      {
+        id: 3,
+        type: TimelineEventType.EffectRun,
+        timestamp: 10.6,
+        duration: 0.2,
+        nodeId: 33,
+        nodeType: NodeType.Effect,
+        data: { batchGroupId: 1, flushGroupId: 2 },
+      },
+      {
+        id: 4,
+        type: TimelineEventType.FlushEnd,
+        timestamp: 10.9,
+        data: { batchGroupId: 1, flushGroupId: 2 },
+      },
+      {
+        id: 5,
+        type: TimelineEventType.BatchEnd,
+        timestamp: 11.1,
+        data: { batchGroupId: 1 },
+      },
+    ]
+
+    const trace = buildChromeTraceFromTimeline(timeline)
+
+    expect(
+      trace.traceEvents.some(event => event.cat === 'fict.flow.batch' && event.ph === 's'),
+    ).toBe(true)
+    expect(
+      trace.traceEvents.some(event => event.cat === 'fict.flow.batch' && event.ph === 'f'),
+    ).toBe(true)
+    expect(
+      trace.traceEvents.some(event => event.cat === 'fict.flow.flush' && event.ph === 's'),
+    ).toBe(true)
+    expect(
+      trace.traceEvents.some(event => event.cat === 'fict.flow.flush' && event.ph === 'f'),
+    ).toBe(true)
+    expect((trace.metadata.flowEventCount ?? 0) > 0).toBe(true)
   })
 })

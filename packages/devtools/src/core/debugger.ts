@@ -59,6 +59,14 @@ let isConnected = false
 const panelPort: MessagePort | null = null
 let broadcastChannel: BroadcastChannel | null = null
 const MAX_TRANSPORT_SANITIZE_DEPTH = 6
+const PERF_MARK_PREFIX = 'fict.devtools'
+const MAX_PERF_ENTRY_BUFFER = 4000
+const perfRangeStacks = {
+  batch: [] as number[],
+  flush: [] as number[],
+}
+const perfMarkNames: string[] = []
+const perfMeasureNames: string[] = []
 
 // ============================================================================
 // Console Exposure
@@ -964,6 +972,229 @@ export function exposeToConsole(
 // Timeline Recording
 // ============================================================================
 
+function asFiniteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function getPerformanceApi(): Performance | undefined {
+  if (typeof performance === 'undefined') return undefined
+  if (typeof performance.mark !== 'function' || typeof performance.measure !== 'function') {
+    return undefined
+  }
+  return performance
+}
+
+function trimPerformanceEntries(perf: Performance): void {
+  while (perfMarkNames.length + perfMeasureNames.length > MAX_PERF_ENTRY_BUFFER) {
+    if (perfMarkNames.length >= perfMeasureNames.length && perfMarkNames.length > 0) {
+      const removed = perfMarkNames.shift()
+      if (removed && typeof perf.clearMarks === 'function') {
+        try {
+          perf.clearMarks(removed)
+        } catch {
+          // Ignore cleanup failures
+        }
+      }
+      continue
+    }
+
+    const removed = perfMeasureNames.shift()
+    if (removed && typeof perf.clearMeasures === 'function') {
+      try {
+        perf.clearMeasures(removed)
+      } catch {
+        // Ignore cleanup failures
+      }
+    }
+  }
+}
+
+function markPerformance(name: string, options?: PerformanceMarkOptions): boolean {
+  const perf = getPerformanceApi()
+  if (!perf) return false
+
+  try {
+    if (options !== undefined) {
+      perf.mark(name, options)
+    } else {
+      perf.mark(name)
+    }
+    perfMarkNames.push(name)
+    trimPerformanceEntries(perf)
+    return true
+  } catch {
+    if (options !== undefined) {
+      try {
+        perf.mark(name)
+        perfMarkNames.push(name)
+        trimPerformanceEntries(perf)
+        return true
+      } catch {
+        // Ignore mark failures
+      }
+    }
+    return false
+  }
+}
+
+function measurePerformance(
+  name: string,
+  startOrOptions?: string | PerformanceMeasureOptions,
+  endMark?: string,
+): boolean {
+  const perf = getPerformanceApi()
+  if (!perf) return false
+
+  try {
+    if (typeof startOrOptions === 'undefined') {
+      perf.measure(name)
+    } else if (typeof startOrOptions === 'string') {
+      if (endMark !== undefined) {
+        perf.measure(name, startOrOptions, endMark)
+      } else {
+        perf.measure(name, startOrOptions)
+      }
+    } else {
+      perf.measure(name, startOrOptions)
+    }
+    perfMeasureNames.push(name)
+    trimPerformanceEntries(perf)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function clearPerformanceTimelineInstrumentation(): void {
+  perfRangeStacks.batch.length = 0
+  perfRangeStacks.flush.length = 0
+
+  const perf = getPerformanceApi()
+  if (!perf) {
+    perfMarkNames.length = 0
+    perfMeasureNames.length = 0
+    return
+  }
+
+  for (const name of perfMarkNames) {
+    if (typeof perf.clearMarks !== 'function') break
+    try {
+      perf.clearMarks(name)
+    } catch {
+      // Ignore cleanup failures
+    }
+  }
+  for (const name of perfMeasureNames) {
+    if (typeof perf.clearMeasures !== 'function') break
+    try {
+      perf.clearMeasures(name)
+    } catch {
+      // Ignore cleanup failures
+    }
+  }
+
+  perfMarkNames.length = 0
+  perfMeasureNames.length = 0
+}
+
+function buildTimelineEventData(
+  data?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  const nextData = data ? { ...data } : {}
+  const batchId = batchGroupId ?? undefined
+  const flushId = flushGroupId ?? undefined
+  if (batchId !== undefined) nextData.batchGroupId = batchId
+  if (flushId !== undefined) nextData.flushGroupId = flushId
+  return Object.keys(nextData).length > 0 ? nextData : undefined
+}
+
+function emitPerformanceTimelineEntries(event: TimelineEvent): void {
+  if (!getPerformanceApi()) return
+
+  const details: Record<string, unknown> = {
+    id: event.id,
+    type: event.type,
+    timestamp: event.timestamp,
+  }
+  if (event.nodeId !== undefined) details.nodeId = event.nodeId
+  if (event.nodeType !== undefined) details.nodeType = event.nodeType
+  if (event.nodeName !== undefined) details.nodeName = event.nodeName
+  if (event.groupId !== undefined) details.groupId = event.groupId
+  if (event.duration !== undefined) details.duration = event.duration
+  if (event.data) {
+    for (const [key, value] of Object.entries(event.data)) {
+      details[key] = value
+    }
+  }
+
+  markPerformance(`${PERF_MARK_PREFIX}.event.${event.type}.${event.id}`, { detail: details })
+
+  switch (event.type) {
+    case TimelineEventType.BatchStart: {
+      perfRangeStacks.batch.push(event.id)
+      markPerformance(`${PERF_MARK_PREFIX}.batch.${event.id}.start`)
+      break
+    }
+
+    case TimelineEventType.BatchEnd: {
+      const batchId =
+        perfRangeStacks.batch.pop() ??
+        asFiniteNumber(event.data?.batchGroupId) ??
+        asFiniteNumber(event.groupId)
+      if (batchId !== undefined) {
+        const startMark = `${PERF_MARK_PREFIX}.batch.${batchId}.start`
+        const endMark = `${PERF_MARK_PREFIX}.batch.${batchId}.end.${event.id}`
+        markPerformance(endMark)
+        measurePerformance(`${PERF_MARK_PREFIX}.batch.${batchId}`, startMark, endMark)
+      }
+      break
+    }
+
+    case TimelineEventType.FlushStart: {
+      perfRangeStacks.flush.push(event.id)
+      markPerformance(`${PERF_MARK_PREFIX}.flush.${event.id}.start`)
+      break
+    }
+
+    case TimelineEventType.FlushEnd: {
+      const flushId =
+        perfRangeStacks.flush.pop() ??
+        asFiniteNumber(event.data?.flushGroupId) ??
+        asFiniteNumber(event.groupId)
+      if (flushId !== undefined) {
+        const startMark = `${PERF_MARK_PREFIX}.flush.${flushId}.start`
+        const endMark = `${PERF_MARK_PREFIX}.flush.${flushId}.end.${event.id}`
+        markPerformance(endMark)
+        measurePerformance(`${PERF_MARK_PREFIX}.flush.${flushId}`, startMark, endMark)
+      }
+      break
+    }
+
+    case TimelineEventType.EffectRun: {
+      const duration = asFiniteNumber(event.duration)
+      if (duration === undefined || duration <= 0) break
+      const startTime = Math.max(0, event.timestamp - duration)
+      const measureName = `${PERF_MARK_PREFIX}.effect.${event.id}`
+      const measured = measurePerformance(measureName, {
+        start: startTime,
+        end: event.timestamp,
+        detail: details,
+      })
+      if (!measured) {
+        const startMark = `${PERF_MARK_PREFIX}.effect.${event.id}.start`
+        const endMark = `${PERF_MARK_PREFIX}.effect.${event.id}.end`
+        markPerformance(startMark, { startTime })
+        markPerformance(endMark)
+        measurePerformance(measureName, startMark, endMark)
+      }
+      break
+    }
+
+    default:
+      break
+  }
+}
+
 function recordEvent(
   type: TimelineEventType,
   nodeId?: number,
@@ -974,6 +1205,7 @@ function recordEvent(
 ): void {
   if (!settings.recordTimeline || settings.highPerfMode) return
 
+  const eventData = buildTimelineEventData(data)
   const event: TimelineEvent = {
     id: nextTimelineId++,
     type,
@@ -981,7 +1213,7 @@ function recordEvent(
     nodeId,
     nodeType,
     nodeName,
-    data,
+    data: eventData,
     duration,
     groupId: batchGroupId ?? flushGroupId ?? undefined,
   }
@@ -992,6 +1224,8 @@ function recordEvent(
   if (timeline.length > settings.maxTimelineEvents) {
     timeline.splice(0, timeline.length - settings.maxTimelineEvents)
   }
+
+  emitPerformanceTimelineEntries(event)
 
   // Send to panel
   sendToPanel('timeline:event', event)
@@ -1232,13 +1466,23 @@ function handlePanelMessage(event: MessageEvent): void {
 
     case 'set:settings':
       if (payload && typeof payload === 'object') {
+        const prevRecordTimeline = settings.recordTimeline
+        const prevHighPerfMode = settings.highPerfMode
         Object.assign(settings, payload)
+        if (
+          (prevRecordTimeline !== settings.recordTimeline ||
+            prevHighPerfMode !== settings.highPerfMode) &&
+          (!settings.recordTimeline || settings.highPerfMode)
+        ) {
+          clearPerformanceTimelineInstrumentation()
+        }
       }
       break
 
     case 'clear:timeline':
       timeline.length = 0
       nextTimelineId = 1
+      clearPerformanceTimelineInstrumentation()
       break
 
     case 'inspect:start':
@@ -2006,6 +2250,7 @@ export function detachDebugger(): void {
   // Reset connection state
   isConnected = false
   sourceFileCache.clear()
+  clearPerformanceTimelineInstrumentation()
 
   const global = globalThis as typeof globalThis & {
     __FICT_DEVTOOLS_HOOK__?: FictDevtoolsHookEnhanced
