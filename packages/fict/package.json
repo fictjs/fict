@@ -1,6 +1,6 @@
 {
   "name": "fict",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Main package for the Fict framework",
   "publishConfig": {
     "access": "public",

@@ -19,7 +19,13 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["fict-docs-site", "@fictjs/devtools", "fict-example-*", "fict-example-counter-basic"],
+  "ignore": [
+    "fict-docs-site",
+    "@fictjs/devtools",
+    "@fictjs/playground",
+    "fict-example-*",
+    "fict-example-counter-basic"
+  ],
   "___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH": {
     "onlyUpdatePeerDependentsWhenOutOfRange": true
   }

@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/skill",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Agent Skill for Fict",
   "type": "module",
   "main": "dist/index.cjs",
