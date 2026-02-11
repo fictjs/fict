@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { normalizeDependencyGraphPayload } from '../src/panel/panel-utils'
+
 class MockBroadcastChannel {
   private static channels = new Map<string, Set<MockBroadcastChannel>>()
   private readonly name: string
@@ -127,7 +129,11 @@ describe('debugger transport serialization', () => {
     const graphMessage = messages.find(message => message.type === 'response:dependencyGraph')
     expect(graphMessage).toBeTruthy()
     const graphPayload = graphMessage?.payload as { nodes: unknown }
-    expect(graphPayload.nodes instanceof Map).toBe(true)
+    expect(Array.isArray(graphPayload.nodes)).toBe(true)
+    const normalized = normalizeDependencyGraphPayload(graphPayload)
+    expect(normalized?.rootId).toBe(1)
+    expect(normalized?.nodes.size).toBe(1)
+    expect(normalized?.nodes.get(1)?.type).toBe('signal')
 
     expect(window.postMessage).toHaveBeenCalled()
   })

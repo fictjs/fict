@@ -1428,7 +1428,10 @@ function handlePanelMessage(event: MessageEvent): void {
       break
 
     case 'request:dependencyGraph':
-      sendToPanel('response:dependencyGraph', buildDependencyGraph(payload?.nodeId))
+      sendToPanel(
+        'response:dependencyGraph',
+        serializeDependencyGraphForTransport(buildDependencyGraph(payload?.nodeId)),
+      )
       break
 
     case 'request:componentTrace': {
@@ -1653,6 +1656,15 @@ function buildDependencyGraph(nodeId: number): DependencyGraph | null {
   traverse(nodeId, 'observers', 0)
 
   return { rootId: nodeId, nodes, edges }
+}
+
+function serializeDependencyGraphForTransport(graph: DependencyGraph | null): unknown {
+  if (!graph) return null
+  return {
+    ...graph,
+    // Chrome extension runtime messaging is JSON-based and drops Map payloads.
+    nodes: Array.from(graph.nodes.entries()),
+  }
 }
 
 // ============================================================================

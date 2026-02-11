@@ -183,6 +183,7 @@ function initPluginIntegration(): void {
         state.timeline.shift()
       }
       state.lastUpdate = Date.now()
+      syncTimelineBadge()
       if (state.activeTab === 'timeline') renderTimelineTab()
       if (state.activeTab === 'performance') renderPerformanceTab()
     },
@@ -559,6 +560,31 @@ function openInEditor(file: string, line: number, column: number): void {
   })
 }
 
+function updateTabBadge(tabId: string, count: number | undefined): void {
+  const tab = document.querySelector(`.panel-tabs .tab[data-tab="${tabId}"]`) as HTMLElement | null
+  if (!tab) return
+
+  const badge = tab.querySelector('.badge') as HTMLElement | null
+  if (count === undefined) {
+    badge?.remove()
+    return
+  }
+
+  if (badge) {
+    badge.textContent = String(count)
+    return
+  }
+
+  const created = document.createElement('span')
+  created.className = 'badge'
+  created.textContent = String(count)
+  tab.appendChild(created)
+}
+
+function syncTimelineBadge(): void {
+  updateTabBadge('timeline', state.timeline.length)
+}
+
 function handleMessage(message: Record<string, unknown>): void {
   const { type, payload } = message
 
@@ -815,6 +841,7 @@ function handleMessage(message: Record<string, unknown>): void {
         state.timeline.shift()
       }
       state.lastUpdate = Date.now()
+      syncTimelineBadge()
       if (state.activeTab === 'timeline') renderTimelineTab()
       if (state.activeTab === 'performance') renderPerformanceTab()
       break
@@ -894,6 +921,7 @@ function handleMessage(message: Record<string, unknown>): void {
       if (!Array.isArray(payload)) return
       state.timeline = payload as TimelineEvent[]
       state.lastUpdate = Date.now()
+      syncTimelineBadge()
       if (state.activeTab === 'timeline') renderTimelineTab()
       if (state.activeTab === 'performance') renderPerformanceTab()
       break
@@ -2879,6 +2907,7 @@ function setupTabEventListeners(): void {
     clearTimeline.addEventListener('click', () => {
       state.timeline = []
       selectedTimelineEvent = null
+      syncTimelineBadge()
       sendToPage('clear:timeline')
       if (state.activeTab === 'performance') {
         renderPerformanceTab()
