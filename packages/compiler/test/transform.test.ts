@@ -174,8 +174,8 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transform(input)
-      // Memo is created with an ID parameter for tracking
-      expect(output).toMatch(/__fictUseMemo\(__fictCtx, \(\) => count\(\) \* 2, \d+\)/)
+      // Memo is created for event-only derived usage and now includes memo metadata.
+      expect(output).toMatch(/__fictUseMemo\(__fictCtx, \(\) => count\(\) \* 2,/)
       expect(output).toContain('onClick = () => console.log(doubled())')
     })
 

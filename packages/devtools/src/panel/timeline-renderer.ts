@@ -13,6 +13,7 @@ import {
   BuiltinTimelineLayer,
   DEFAULT_TIMELINE_LAYERS,
 } from '../core/types'
+
 import { formatComputedDisplayName } from './panel-utils'
 
 export interface TimelineRendererOptions {

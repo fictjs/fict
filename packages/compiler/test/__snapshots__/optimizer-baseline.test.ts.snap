@@ -8,10 +8,14 @@ export function useCounter() {
     name: "count"
   });
   const __region_0 = __fictUseMemo(__fictCtx, () => {
-    const double = __fictUseMemo(__fictCtx, () => count() * 2, 1000);
+    const double = __fictUseMemo(__fictCtx, () => count() * 2, {
+      name: "double"
+    }, 1000);
     return {
       double
     };
+  }, {
+    internal: true
   }, 1001);
   const {
     double
@@ -32,6 +36,8 @@ export function View() {
       count,
       double
     };
+  }, {
+    internal: true
   }, 1002);
   const {
     _useCounter,
@@ -126,6 +132,8 @@ function Summary() {
       heading: heading != undefined ? heading : undefined,
       extra: extra != undefined ? extra : undefined
     };
+  }, {
+    internal: true
   }, 1000);
   const heading = () => __region_0().heading;
   const extra = () => __region_0().extra;

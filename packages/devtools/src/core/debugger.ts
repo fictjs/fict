@@ -5,8 +5,8 @@
  * and provides inspection capabilities.
  */
 
-import { formatValueShort } from './serializer'
 import { highlightAndScroll, startInspecting, stopInspecting } from './highlighter'
+import { formatValueShort } from './serializer'
 import {
   type ComponentState,
   type ComputedState,
@@ -581,7 +581,7 @@ function inferReactiveLocalNames(
   baseReactiveNames: Iterable<string>,
 ): Set<string> {
   const reactiveNames = new Set<string>(baseReactiveNames)
-  const declarationLines: Array<{ name: string; expression: string }> = []
+  const declarationLines: { name: string; expression: string }[] = []
   const declarationPattern = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?)(?:;)?$/
 
   for (let line = startLine; line <= endLine; line++) {

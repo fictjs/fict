@@ -35,7 +35,6 @@ import {
   toGraphSelectableNodeType,
   type GraphSelectableNodeType,
 } from './panel-utils'
-import { filterItems as fuzzyFilterItems, highlightMatches } from './search'
 import {
   renderTimeline,
   renderEventDetails,
@@ -49,6 +48,7 @@ import {
   exportPerformanceTrace,
   renderPerformanceTracks,
 } from './performance-tracks'
+import { filterItems as fuzzyFilterItems, highlightMatches } from './search'
 import { VirtualList, shouldUseVirtualList } from './virtual-list'
 
 // ============================================================================
@@ -882,7 +882,7 @@ function handleMessage(message: Record<string, unknown>): void {
       if (state.activeTab === 'signals') renderSignalsTab()
       break
 
-    case 'response:components':
+    case 'response:components': {
       if (!Array.isArray(payload)) return
       state.components.clear()
       for (const component of payload) {
@@ -904,6 +904,7 @@ function handleMessage(message: Record<string, unknown>): void {
       state.lastUpdate = Date.now()
       if (state.activeTab === 'components') renderComponentsTab()
       break
+    }
 
     case 'response:roots':
       if (!Array.isArray(payload)) return

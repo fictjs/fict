@@ -18,7 +18,7 @@ import type {
   TimelineEvent,
 } from '../core/types'
 
-type LegacyUpdateLogEntry = {
+interface LegacyUpdateLogEntry {
   timestamp: number
   type: 'signal' | 'effect'
   id: number

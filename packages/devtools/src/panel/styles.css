@@ -1660,7 +1660,10 @@ body {
   min-width: 2px;
   cursor: pointer;
   opacity: 0.85;
-  transition: transform 0.12s ease, opacity 0.12s ease, box-shadow 0.12s ease;
+  transition:
+    transform 0.12s ease,
+    opacity 0.12s ease,
+    box-shadow 0.12s ease;
 }
 
 .perf-segment:hover {
