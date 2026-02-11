@@ -539,13 +539,48 @@ function toPositiveInteger(value: string | null, fallback: number): number {
   return parsed
 }
 
-function resolveAssetsRoot(): string {
-  const candidates = [
-    fileURLToPath(new URL('../web', import.meta.url)),
-    fileURLToPath(new URL('./web', import.meta.url)),
-    fileURLToPath(new URL('../../src/web', import.meta.url)),
-    path.resolve(process.cwd(), 'packages/playground/src/web'),
-  ]
+interface ResolveAssetsRootOptions {
+  importMetaUrl?: string
+  cwd?: string
+  env?: NodeJS.ProcessEnv
+}
+
+export function resolveAssetsRoot(options: ResolveAssetsRootOptions = {}): string {
+  const importMetaUrl = options.importMetaUrl ?? import.meta.url
+  const cwd = options.cwd ?? process.cwd()
+  const env = options.env ?? process.env
+
+  const candidates = new Set<string>()
+
+  const pushRelative = (relativePath: string): void => {
+    try {
+      candidates.add(fileURLToPath(new URL(relativePath, importMetaUrl)))
+    } catch {
+      // Ignore invalid path resolution and continue trying fallbacks.
+    }
+  }
+
+  const fromEnv = env.FICT_PLAYGROUND_ASSETS_ROOT
+  if (typeof fromEnv === 'string' && fromEnv.trim()) {
+    candidates.add(path.resolve(cwd, fromEnv))
+  }
+
+  // Bundle/runtime-relative candidates:
+  // - ./web or ../web when static assets are copied alongside dist output.
+  // - ../src/web for bundled dist files at packageRoot/dist/*.js.
+  // - ../../src/web for nested dist layouts at packageRoot/dist/server/*.js.
+  pushRelative('./web')
+  pushRelative('../web')
+  pushRelative('../src/web')
+  pushRelative('../../src/web')
+
+  // CWD-relative candidates:
+  // - package root execution (pnpm --filter @fictjs/playground start)
+  // - monorepo root execution.
+  candidates.add(path.resolve(cwd, 'src/web'))
+  candidates.add(path.resolve(cwd, 'web'))
+  candidates.add(path.resolve(cwd, 'packages/playground/src/web'))
+  candidates.add(path.resolve(cwd, 'packages/playground/web'))
 
   for (const candidate of candidates) {
     if (existsSync(path.join(candidate, 'index.html'))) {

@@ -117,8 +117,8 @@ textarea {
 .board {
   padding: 16px;
   display: grid;
-  grid-template-columns: 280px 1fr 440px;
-  gap: 14px;
+  grid-template-columns: 280px 6px 1fr 6px 440px;
+  gap: 0;
 }
 
 .panel {
@@ -273,10 +273,12 @@ textarea {
 
 .diagnostic-item[data-severity='error'] {
   border-color: rgba(185, 45, 45, 0.4);
+  background: rgba(185, 45, 45, 0.03);
 }
 
 .diagnostic-item[data-severity='warning'] {
   border-color: rgba(157, 99, 21, 0.4);
+  background: rgba(157, 99, 21, 0.03);
 }
 
 .diagnostic-item .title {
@@ -326,8 +328,13 @@ textarea {
 }
 
 @media (max-width: 1280px) {
+  .resize-handle {
+    display: none;
+  }
+
   .board {
     grid-template-columns: 260px 1fr;
+    gap: 14px;
     grid-template-areas:
       'left center'
       'right right';
@@ -337,18 +344,23 @@ textarea {
     grid-area: left;
   }
 
-  .board > .panel:nth-child(2) {
+  .board > .panel:nth-child(3) {
     grid-area: center;
   }
 
-  .board > .panel:nth-child(3) {
+  .board > .panel:nth-child(5) {
     grid-area: right;
   }
 }
 
 @media (max-width: 860px) {
+  .resize-handle {
+    display: none;
+  }
+
   .board {
     grid-template-columns: 1fr;
+    gap: 14px;
     grid-template-areas:
       'left'
       'center'
@@ -363,4 +375,392 @@ textarea {
     flex-wrap: wrap;
     justify-content: flex-start;
   }
+}
+
+/* ---- Toast system ---- */
+.toast-container {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 9000;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: 0 8px 24px rgba(22, 23, 26, 0.18);
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 380px;
+  font-size: 13px;
+  line-height: 1.4;
+  animation: toast-in 220ms ease forwards;
+}
+
+.toast.toast-exit {
+  animation: toast-out 180ms ease forwards;
+}
+
+.toast-icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+}
+
+.toast-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.toast-message {
+  color: var(--ink-muted);
+  word-break: break-word;
+}
+
+.toast-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  padding: 2px;
+  cursor: pointer;
+  color: var(--ink-muted);
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.toast-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.toast.toast-error {
+  border-left: 3px solid var(--danger);
+}
+
+.toast.toast-warning {
+  border-left: 3px solid var(--warn);
+}
+
+.toast.toast-success {
+  border-left: 3px solid var(--ok);
+}
+
+.toast.toast-info {
+  border-left: 3px solid var(--brand-2);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.92);
+  }
+}
+
+/* ---- Modal system ---- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 8000;
+  background: rgba(22, 23, 26, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: modal-fade-in 180ms ease;
+}
+
+.modal-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 20px 60px rgba(22, 23, 26, 0.25);
+  min-width: 340px;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: modal-scale-in 200ms ease;
+}
+
+.modal-card h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.modal-card p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.modal-card input {
+  width: 100%;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.modal-actions .ghost {
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--ink);
+}
+
+@keyframes modal-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes modal-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ---- Spinner ---- */
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 600ms linear infinite;
+  vertical-align: middle;
+}
+
+.spinner-dark {
+  border-color: rgba(0, 0, 0, 0.12);
+  border-top-color: var(--brand);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+button .spinner {
+  margin-right: 6px;
+}
+
+/* ---- CodeMirror mount ---- */
+.cm-editor-mount {
+  flex: 1;
+  min-height: 360px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.cm-editor-mount .cm-editor {
+  height: 100%;
+}
+
+.cm-editor-mount .cm-scroller {
+  border-radius: 10px;
+}
+
+.cm-editor-mount:empty {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--panel-2) 0,
+    var(--panel-2) 40px,
+    transparent 40px,
+    transparent 42px
+  );
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ---- Empty states ---- */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 16px;
+  color: var(--ink-muted);
+  text-align: center;
+  font-size: 13px;
+}
+
+.empty-state p {
+  margin: 0;
+  max-width: 240px;
+  line-height: 1.5;
+}
+
+/* ---- File type badges ---- */
+.file-type-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  min-width: 28px;
+  height: 18px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--badge-color) 12%, transparent);
+  color: var(--badge-color);
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+}
+
+.file-name-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.file-name-group > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- File delete button ---- */
+.file-delete-btn {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 4px;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition:
+    color 120ms,
+    background 120ms;
+}
+
+.file-delete-btn:hover {
+  color: var(--danger);
+  background: rgba(185, 45, 45, 0.08);
+}
+
+/* ---- Diagnostic severity icons ---- */
+.diag-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.diag-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* ---- Tab transitions ---- */
+.tab-panel {
+  display: none;
+  opacity: 0;
+}
+
+.tab-panel.tab-visible {
+  display: block;
+  animation: tab-fade-in 160ms ease forwards;
+}
+
+@keyframes tab-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ---- Config descriptions ---- */
+.control-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.control-label .muted {
+  font-size: 11px;
+}
+
+/* ---- Resize handles ---- */
+.resize-handle {
+  width: 6px;
+  cursor: col-resize;
+  position: relative;
+  z-index: 10;
+  background: transparent;
+  transition: background 120ms;
+  margin: 0 4px;
+}
+
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 40px;
+  border-radius: 1px;
+  background: var(--line);
+  transition:
+    height 120ms,
+    background 120ms;
+}
+
+.resize-handle:hover::after,
+.resize-handle.dragging::after {
+  height: 80px;
+  background: var(--brand);
 }
