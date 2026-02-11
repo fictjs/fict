@@ -12,7 +12,9 @@ export default defineConfig([
     },
     format: ['cjs', 'esm'],
     dts: true,
-    clean: true,
+    // Keep clean disabled inside tsup: with multiple parallel configs, clean can
+    // race with d.ts emission and drop jsx-runtime declaration entrypoints.
+    clean: false,
     sourcemap: true,
     splitting: true, // Enable code splitting to share modules
     // Don't define __DEV__ here - let Vite handle it at runtime via define config

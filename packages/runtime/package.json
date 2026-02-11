@@ -64,7 +64,7 @@
     "src"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "pnpm run clean && tsup",
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:stress": "FICT_RUNTIME_STRESS=1 vitest run test/runtime-stability.stress.test.ts",
