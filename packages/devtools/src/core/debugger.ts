@@ -1171,8 +1171,9 @@ function emitPerformanceTimelineEntries(event: TimelineEvent): void {
     }
 
     case TimelineEventType.EffectRun: {
-      const duration = asFiniteNumber(event.duration)
-      if (duration === undefined || duration <= 0) break
+      const rawDuration = asFiniteNumber(event.duration)
+      if (rawDuration === undefined) break
+      const duration = Math.max(0, rawDuration)
       const startTime = Math.max(0, event.timestamp - duration)
       const measureName = `${PERF_MARK_PREFIX}.effect.${event.id}`
       const measured = measurePerformance(measureName, {

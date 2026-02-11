@@ -54,6 +54,18 @@ describe('debugger performance marks', () => {
     expect(measureNames.some(name => name.startsWith('fict.devtools.effect.'))).toBe(true)
   })
 
+  it('still writes effect measure entries when effect duration is 0ms', () => {
+    const measureSpy = vi.spyOn(performance, 'measure')
+
+    hook.registerEffect(EFFECT_ID)
+    hook.effectRun(EFFECT_ID, 0)
+
+    const effectMeasures = measureSpy.mock.calls
+      .map(call => String(call[0]))
+      .filter(name => name.startsWith('fict.devtools.effect.'))
+    expect(effectMeasures.length).toBeGreaterThan(0)
+  })
+
   it('skips mark/measure instrumentation when highPerfMode is enabled', () => {
     const markSpy = vi.spyOn(performance, 'mark')
     const measureSpy = vi.spyOn(performance, 'measure')
