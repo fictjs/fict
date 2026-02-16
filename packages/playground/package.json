@@ -44,7 +44,7 @@
     "clean": "rm -rf dist .fict-playground"
   },
   "dependencies": {
-    "@babel/core": "^7.28.6",
+    "@babel/core": "^7.29.0",
     "@babel/plugin-syntax-jsx": "^7.28.6",
     "@babel/preset-typescript": "^7.26.0",
     "@fictjs/compiler": "workspace:*",
