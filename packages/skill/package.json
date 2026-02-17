@@ -1,7 +1,7 @@
 {
   "name": "@fictjs/skill",
   "version": "0.10.0",
-  "description": "Agent Skill for Fict",
+  "description": "Skill library for Fict-focused coding agents",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -15,7 +15,9 @@
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "skills",
+    "scripts"
   ],
   "publishConfig": {
     "access": "public",
@@ -24,10 +26,13 @@
   "repository": {
     "type": "git",
     "url": "https://github.com/fictjs/fict.git",
-    "directory": "packages/mcp"
+    "directory": "packages/skill"
   },
   "scripts": {
-    "build": "tsup",
+    "build": "pnpm run build:skills && tsup",
+    "build:skills": "node scripts/build-skills.mjs",
+    "build:skills:check": "node scripts/build-skills.mjs --check",
+    "validate:skills": "node scripts/validate-skills.mjs",
     "dev": "tsup --watch",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
@@ -38,7 +43,10 @@
   },
   "keywords": [
     "fict",
-    "skill"
+    "skill",
+    "agents",
+    "compiler",
+    "runtime"
   ],
   "author": "unadlib",
   "license": "MIT"
