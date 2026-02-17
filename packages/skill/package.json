@@ -39,7 +39,8 @@
     "clean": "rm -rf dist"
   },
   "devDependencies": {
-    "tsup": "^8.5.1"
+    "tsup": "^8.5.1",
+    "yaml": "^2.8.1"
   },
   "keywords": [
     "fict",

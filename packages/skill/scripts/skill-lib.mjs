@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { readdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parse as parseYaml } from 'yaml'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -10,25 +11,33 @@ export const PACKAGE_ROOT = path.resolve(__dirname, '..')
 export const SKILLS_ROOT = path.join(PACKAGE_ROOT, 'skills')
 export const MANIFEST_PATH = path.join(SKILLS_ROOT, 'manifest.json')
 
-function parseFrontmatter(content) {
+function parseFrontmatter(content, sourceLabel = 'document') {
   const match = content.match(/^---\n([\s\S]*?)\n---\n?/)
   if (!match) {
     return { attributes: {}, body: content }
   }
 
-  const attributes = {}
-  const raw = match[1].split('\n')
-  for (const line of raw) {
-    const idx = line.indexOf(':')
-    if (idx === -1) continue
-    const key = line.slice(0, idx).trim()
-    const value = line.slice(idx + 1).trim()
-    if (!key) continue
-    attributes[key] = value.replace(/^['"]|['"]$/g, '')
+  let parsed
+  try {
+    parsed = parseYaml(match[1])
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid YAML frontmatter in ${sourceLabel}: ${message}`)
+  }
+
+  if (parsed == null) {
+    return {
+      attributes: {},
+      body: content.slice(match[0].length),
+    }
+  }
+
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Frontmatter in ${sourceLabel} must be a YAML object`)
   }
 
   return {
-    attributes,
+    attributes: parsed,
     body: content.slice(match[0].length),
   }
 }
@@ -81,8 +90,30 @@ function normalizeMultilineText(lines) {
     .join('\n\n')
 }
 
-function parseRule(content) {
-  const { attributes, body } = parseFrontmatter(content)
+function toStringField(value) {
+  return typeof value === 'string' ? value : ''
+}
+
+function toStringArrayField(value) {
+  if (Array.isArray(value)) {
+    return value
+      .filter(item => typeof item === 'string')
+      .map(item => item.trim())
+      .filter(Boolean)
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean)
+  }
+
+  return []
+}
+
+function parseRule(content, sourceLabel) {
+  const { attributes, body } = parseFrontmatter(content, sourceLabel)
   const lines = body.replace(/\r\n/g, '\n').split('\n')
 
   let headingIndex = -1
@@ -176,19 +207,16 @@ function parseRule(content) {
     index += 1
   }
 
+  const attributeReferences = toStringArrayField(attributes.references)
+
   return {
-    title: attributes.title || headingTitle,
-    impact: (attributes.impact || parsedImpact || 'MEDIUM').toUpperCase(),
-    impactDescription: attributes.impactDescription || parsedImpactDescription,
-    tags: attributes.tags
-      ? attributes.tags
-          .split(',')
-          .map(tag => tag.trim())
-          .filter(Boolean)
-      : [],
+    title: toStringField(attributes.title) || headingTitle,
+    impact: (toStringField(attributes.impact) || parsedImpact || 'MEDIUM').toUpperCase(),
+    impactDescription: toStringField(attributes.impactDescription) || parsedImpactDescription,
+    tags: toStringArrayField(attributes.tags),
     explanation: normalizeMultilineText(explanationLines),
     examples,
-    references,
+    references: attributeReferences.length > 0 ? attributeReferences : references,
   }
 }
 
@@ -337,21 +365,27 @@ export async function loadSkillModel(skill) {
 
   if (existsSync(skillPath)) {
     const skillDoc = await readFile(skillPath, 'utf8')
-    const { attributes } = parseFrontmatter(skillDoc)
-    if (!attributes.name) {
-      errors.push(
-        `SKILL frontmatter is missing \"name\": ${path.relative(PACKAGE_ROOT, skillPath)}`,
-      )
-    }
-    if (!attributes.description) {
-      errors.push(
-        `SKILL frontmatter is missing \"description\": ${path.relative(PACKAGE_ROOT, skillPath)}`,
-      )
-    }
-    if (attributes.name && attributes.name !== skill.name) {
-      errors.push(
-        `SKILL frontmatter name (${attributes.name}) does not match manifest (${skill.name})`,
-      )
+
+    try {
+      const { attributes } = parseFrontmatter(skillDoc, path.relative(PACKAGE_ROOT, skillPath))
+      if (!toStringField(attributes.name)) {
+        errors.push(
+          `SKILL frontmatter is missing "name": ${path.relative(PACKAGE_ROOT, skillPath)}`,
+        )
+      }
+      if (!toStringField(attributes.description)) {
+        errors.push(
+          `SKILL frontmatter is missing "description": ${path.relative(PACKAGE_ROOT, skillPath)}`,
+        )
+      }
+      if (toStringField(attributes.name) && toStringField(attributes.name) !== skill.name) {
+        errors.push(
+          `SKILL frontmatter name (${attributes.name}) does not match manifest (${skill.name})`,
+        )
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      errors.push(message)
     }
   }
 
@@ -360,9 +394,7 @@ export async function loadSkillModel(skill) {
     metadata = JSON.parse(rawMetadata)
     for (const key of ['version', 'organization', 'date', 'abstract']) {
       if (!metadata[key]) {
-        errors.push(
-          `Metadata missing field \"${key}\": ${path.relative(PACKAGE_ROOT, metadataPath)}`,
-        )
+        errors.push(`Metadata missing field "${key}": ${path.relative(PACKAGE_ROOT, metadataPath)}`)
       }
     }
   }
@@ -385,7 +417,16 @@ export async function loadSkillModel(skill) {
 
     for (const file of files) {
       const filePath = path.join(rulesDir, file)
-      const parsed = parseRule(await readFile(filePath, 'utf8'))
+      let parsed
+
+      try {
+        parsed = parseRule(await readFile(filePath, 'utf8'), path.relative(PACKAGE_ROOT, filePath))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        errors.push(message)
+        continue
+      }
+
       const section = inferSectionFromFilename(file, sections)
 
       if (!section) {

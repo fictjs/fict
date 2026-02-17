@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import manifest from '../skills/manifest.json'
 
@@ -42,7 +42,10 @@ interface SkillManifestFile {
   skills: FictSkillManifestEntry[]
 }
 
-const runtimeRequire = createRequire(path.join(process.cwd(), '__fict_skill_resolver__.cjs'))
+interface StackFrameLike {
+  getFileName?: () => string | null
+}
+
 const skillManifest = manifest as SkillManifestFile
 const skillMap = new Map(skillManifest.skills.map(skill => [skill.name, skill]))
 
@@ -55,35 +58,71 @@ function isValidPackageRoot(candidate: string): boolean {
   )
 }
 
+function detectModuleDirFromStack(): string | null {
+  const originalPrepare = Error.prepareStackTrace
+
+  try {
+    Error.prepareStackTrace = (_, stack) => stack
+    const stack = new Error().stack as unknown
+
+    if (!Array.isArray(stack)) {
+      return null
+    }
+
+    for (const frame of stack as StackFrameLike[]) {
+      if (!frame || typeof frame.getFileName !== 'function') {
+        continue
+      }
+
+      const rawFile = frame.getFileName()
+      if (!rawFile || rawFile === '[eval]' || rawFile.startsWith('node:')) {
+        continue
+      }
+
+      const filePath = rawFile.startsWith('file://') ? fileURLToPath(rawFile) : rawFile
+      if (!path.isAbsolute(filePath)) {
+        continue
+      }
+
+      return path.dirname(filePath)
+    }
+  } catch {
+    return null
+  } finally {
+    Error.prepareStackTrace = originalPrepare
+  }
+
+  return null
+}
+
 function resolvePackageRoot(): string {
   if (cachedPackageRoot) {
     return cachedPackageRoot
   }
 
-  const cwd = process.cwd()
-  const workspaceCandidates = [path.join(cwd, 'packages/skill'), cwd]
+  const candidates = new Set<string>()
 
-  for (const candidate of workspaceCandidates) {
+  if (typeof __dirname === 'string') {
+    candidates.add(path.resolve(__dirname, '..'))
+  }
+
+  const stackModuleDir = detectModuleDirFromStack()
+  if (stackModuleDir) {
+    candidates.add(path.resolve(stackModuleDir, '..'))
+  }
+
+  candidates.add(path.join(process.cwd(), 'node_modules', '@fictjs', 'skill'))
+
+  const checked = Array.from(candidates)
+
+  for (const candidate of checked) {
     if (isValidPackageRoot(candidate)) {
       cachedPackageRoot = candidate
       return candidate
     }
   }
 
-  try {
-    const pkgPath = runtimeRequire.resolve('@fictjs/skill/package.json')
-    const packageRoot = path.dirname(pkgPath)
-    if (isValidPackageRoot(packageRoot)) {
-      cachedPackageRoot = packageRoot
-      return packageRoot
-    }
-  } catch {
-    // Fall through to last-resort path.
-  }
-
-  const fallback = path.join(cwd, 'node_modules', '@fictjs', 'skill')
-  cachedPackageRoot = fallback
-  return fallback
+  throw new Error(`Unable to locate @fictjs/skill package root. Checked: ${checked.join(', ')}`)
 }
 
 function resolveSkillsRoot(): string {
