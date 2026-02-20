@@ -227,6 +227,40 @@ describe('List Helpers', () => {
       expect(container.children[1].textContent).toBe('Bob-1')
     })
 
+    it('keeps index getter stable when needsIndex is false', async () => {
+      const items = createSignal([{ id: 1, name: 'Alice' }])
+      const reads: number[] = []
+
+      const listBinding = createKeyedList(
+        () => items(),
+        item => item.id,
+        (itemSig, indexSig) => {
+          const div = document.createElement('div')
+          createEffect(() => {
+            const first = indexSig()
+            const second = indexSig()
+            reads.push(first, second)
+            div.textContent = `${itemSig().name}-${first}-${second}`
+          })
+          return [div]
+        },
+        false,
+      )
+
+      container.appendChild(listBinding.marker)
+      listBinding.flush?.()
+      await tick()
+
+      expect(container.children[0].textContent).toBe('Alice-0-0')
+      expect(reads).toEqual([0, 0])
+
+      items([{ id: 1, name: 'Alice Updated' }])
+      await tick()
+
+      expect(container.children[0].textContent).toBe('Alice Updated-0-0')
+      expect(reads).toEqual([0, 0, 0, 0])
+    })
+
     it('updates items reactively', async () => {
       const items = createSignal([
         { id: 1, name: 'Alice' },

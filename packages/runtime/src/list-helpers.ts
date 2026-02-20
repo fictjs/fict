@@ -284,11 +284,11 @@ function createKeyedBlock<T>(
 
   const indexSig = needsIndex
     ? createSignal<number>(index)
-    : (((next?: number) => {
+    : (function indexSignal(next?: number) {
         if (arguments.length === 0) return index
         index = next as number
         return index
-      }) as Signal<number>)
+      } as Signal<number>)
   const root = createRootContext(hostRoot)
   const prevRoot = pushRoot(root)
   // maintaining proper cleanup chain. The scope will be disposed when
