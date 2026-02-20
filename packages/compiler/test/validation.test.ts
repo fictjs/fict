@@ -112,6 +112,24 @@ describe('rule validations', () => {
     expect(diagnostic?.code).toBe(DiagnosticCode.FICT_C002)
   })
 
+  it('reports hook calls in logical right branches (FICT_C001)', () => {
+    const call = t.callExpression(t.identifier('useEffect'), [
+      t.arrowFunctionExpression([], t.nullLiteral()),
+    ])
+    const logical = t.logicalExpression('&&', t.identifier('flag'), call)
+    const diagnostic = validateNoConditionalHooks(call, ctx, t, [logical])
+    expect(diagnostic?.code).toBe(DiagnosticCode.FICT_C001)
+  })
+
+  it('does not report hook calls in logical left branches', () => {
+    const call = t.callExpression(t.identifier('useEffect'), [
+      t.arrowFunctionExpression([], t.nullLiteral()),
+    ])
+    const logical = t.logicalExpression('&&', call, t.identifier('flag'))
+    const diagnostic = validateNoConditionalHooks(call, ctx, t, [logical])
+    expect(diagnostic).toBeNull()
+  })
+
   it('reports missing list keys inside map callbacks (FICT_J002)', () => {
     const jsx = t.jsxElement(
       t.jsxOpeningElement(t.jsxIdentifier('li'), [], false),

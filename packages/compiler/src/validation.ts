@@ -293,6 +293,24 @@ function isConditionalNode(node: BabelCore.types.Node, t: typeof BabelCore.types
   )
 }
 
+function isConditionalAncestorChain(
+  node: BabelCore.types.Node,
+  ancestors: readonly BabelCore.types.Node[],
+  t: typeof BabelCore.types,
+): boolean {
+  if (ancestors.length === 0) return false
+  const chain = [...ancestors, node]
+  for (let i = 0; i < chain.length - 1; i++) {
+    const parent = chain[i]!
+    const child = chain[i + 1]!
+    if (isConditionalNode(parent, t)) return true
+    if (t.isLogicalExpression(parent) && parent.right === child) {
+      return true
+    }
+  }
+  return false
+}
+
 function getAncestorsInsideCurrentFunction(
   ancestors: readonly BabelCore.types.Node[],
   t: typeof BabelCore.types,
@@ -385,7 +403,7 @@ export function validateNoConditionalHooks(
   if (localAncestors.some(ancestor => isLoopNode(ancestor, t))) {
     return createDiagnostic(DiagnosticCode.FICT_C002, node, fileName, { callee: calleeName })
   }
-  if (localAncestors.some(ancestor => isConditionalNode(ancestor, t))) {
+  if (isConditionalAncestorChain(node, localAncestors, t)) {
     return createDiagnostic(DiagnosticCode.FICT_C001, node, fileName, { callee: calleeName })
   }
   return null

@@ -157,6 +157,16 @@ describe('createFictPlugin (HIR)', () => {
           }
         `),
       ).toThrow('$effect() cannot be called inside loops or conditionals')
+
+      expect(() =>
+        transform(`
+          import { $effect } from 'fict'
+          function Component() {
+            const cond = true
+            cond && $effect(() => {})
+          }
+        `),
+      ).toThrow('$effect() cannot be called inside loops or conditionals')
     })
 
     it('preserves async function declarations with await in terminators', () => {

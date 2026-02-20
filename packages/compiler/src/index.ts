@@ -47,9 +47,18 @@ function isInsideLoop(path: BabelCore.NodePath): boolean {
 }
 
 function isInsideConditional(path: BabelCore.NodePath): boolean {
-  return !!path.findParent(
-    p => p.isIfStatement?.() || p.isConditionalExpression?.() || p.isSwitchCase?.(),
-  )
+  let current: BabelCore.NodePath | null = path
+  while (current?.parentPath) {
+    const parent = current.parentPath
+    if (parent.isIfStatement?.() || parent.isConditionalExpression?.() || parent.isSwitchCase?.()) {
+      return true
+    }
+    if (parent.isLogicalExpression?.() && current.key === 'right') {
+      return true
+    }
+    current = parent
+  }
+  return false
 }
 
 function isInsideJSX(path: BabelCore.NodePath): boolean {
