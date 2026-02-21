@@ -447,19 +447,20 @@ function setupHoverPrefetch(doc: Document, delay: number): () => void {
 }
 
 function prefetchElementQrls(el: Element): void {
+  const ownerDocument = el.ownerDocument ?? (typeof document !== 'undefined' ? document : undefined)
   // Prefetch event handler QRLs
   const eventAttrs = ['on:click', 'on:input', 'on:change', 'on:submit', 'on:keydown', 'on:keyup']
   for (const attr of eventAttrs) {
     const qrl = el.getAttribute(attr)
     if (qrl) {
-      prefetchQrl(qrl)
+      prefetchQrl(qrl, ownerDocument)
     }
   }
 
   // Prefetch resume handler QRL
   const resumeQrl = el.getAttribute('data-fict-h')
   if (resumeQrl) {
-    prefetchQrl(resumeQrl)
+    prefetchQrl(resumeQrl, ownerDocument)
   }
 
   // Also check children for nested QRLs
@@ -470,17 +471,17 @@ function prefetchElementQrls(el: Element): void {
     for (const attr of eventAttrs) {
       const qrl = child.getAttribute(attr)
       if (qrl) {
-        prefetchQrl(qrl)
+        prefetchQrl(qrl, ownerDocument)
       }
     }
     const childResumeQrl = child.getAttribute('data-fict-h')
     if (childResumeQrl) {
-      prefetchQrl(childResumeQrl)
+      prefetchQrl(childResumeQrl, ownerDocument)
     }
   })
 }
 
-function prefetchQrl(qrl: string): void {
+function prefetchQrl(qrl: string, ownerDocument?: Document): void {
   const { url } = parseQrl(qrl)
   if (!url || prefetchedUrls.has(url)) return
 
@@ -490,12 +491,13 @@ function prefetchQrl(qrl: string): void {
   const resolvedUrl = resolveModuleUrl(url)
 
   // Use modulepreload link for best browser support
-  if (typeof document !== 'undefined') {
-    const link = document.createElement('link')
+  const doc = ownerDocument ?? (typeof document !== 'undefined' ? document : undefined)
+  if (doc) {
+    const link = doc.createElement('link')
     link.rel = 'modulepreload'
     link.href = resolvedUrl
     link.crossOrigin = 'anonymous'
-    document.head.appendChild(link)
+    doc.head?.appendChild(link)
   }
 }
 

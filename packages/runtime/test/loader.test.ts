@@ -85,6 +85,37 @@ describe('resumable loader snapshot validation', () => {
     expect(scope?.slots[0]?.[2]).toBe('legacy')
   })
 
+  it('appends prefetch links to the source document head', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {},
+      }),
+    )
+    const btn = doc.createElement('button')
+    const qrlUrl = '/prefetch-owner-doc.js'
+    btn.setAttribute('data-fict-h', `${qrlUrl}#default`)
+    doc.body.appendChild(btn)
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: { visibility: false, hover: true, hoverDelay: 0 },
+    })
+
+    btn.dispatchEvent(new Event('pointerover', { bubbles: true }))
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+
+    const prefetchLink = doc.head.querySelector(`link[rel="modulepreload"][href*="${qrlUrl}"]`)
+    expect(prefetchLink).toBeTruthy()
+    expect(prefetchLink?.ownerDocument).toBe(doc)
+
+    const globalPrefetchLink = document.head.querySelector(
+      `link[rel="modulepreload"][href*="${qrlUrl}"]`,
+    )
+    expect(globalPrefetchLink).toBeNull()
+  })
+
   it('rejects unsupported snapshot schema versions', () => {
     const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots(
