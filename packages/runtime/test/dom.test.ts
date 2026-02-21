@@ -49,6 +49,24 @@ describe('DOM Module', () => {
       teardown()
     })
 
+    it('creates nodes in the container ownerDocument during render', () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-render-owner')
+      const foreignContainer = foreignDoc.createElement('div')
+      let createdNode: Node | null = null
+
+      const teardown = render(
+        () => {
+          createdNode = createElement('Foreign')
+          return createdNode
+        },
+        foreignContainer as unknown as HTMLElement,
+      )
+
+      expect(createdNode?.ownerDocument).toBe(foreignDoc)
+      expect(foreignContainer.firstChild?.ownerDocument).toBe(foreignDoc)
+      teardown()
+    })
+
     it('sets data-fict-fine-grained attribute', () => {
       const teardown = render(() => document.createElement('div'), container)
 
@@ -786,6 +804,25 @@ describe('DOM Module', () => {
       expect(node1).not.toBe(node2)
       expect(node2).not.toBe(node3)
       expect((node1 as HTMLSpanElement).textContent).toBe('Cached')
+    })
+
+    it('creates template nodes in current root ownerDocument', () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-template-owner')
+      const foreignContainer = foreignDoc.createElement('div')
+      const factory = template('<span>Owner</span>')
+      let createdNode: Node | null = null
+
+      const teardown = render(
+        () => {
+          createdNode = factory()
+          return createdNode
+        },
+        foreignContainer as unknown as HTMLElement,
+      )
+
+      expect(createdNode?.ownerDocument).toBe(foreignDoc)
+      expect(foreignContainer.firstChild?.ownerDocument).toBe(foreignDoc)
+      teardown()
     })
 
     it('uses importNode when isImportNode is true', () => {

@@ -211,7 +211,7 @@ export function hydrateComponent(view: () => FictNode, container: HTMLElement): 
  * - Reactive values (functions returning any of the above)
  */
 export function createElement(node: FictNode): DOMElement {
-  return createElementWithContext(node, null)
+  return createElementWithContext(node, null, resolveOwnerDocument())
 }
 
 function resolveNamespace(tagName: string, namespace: NamespaceContext): NamespaceContext {
@@ -223,7 +223,15 @@ function resolveNamespace(tagName: string, namespace: NamespaceContext): Namespa
   return null
 }
 
-function createElementWithContext(node: FictNode, namespace: NamespaceContext): DOMElement {
+function resolveOwnerDocument(ownerDocument?: Document): Document {
+  return ownerDocument ?? getCurrentRoot()?.ownerDocument ?? document
+}
+
+function createElementWithContext(
+  node: FictNode,
+  namespace: NamespaceContext,
+  ownerDocument: Document,
+): DOMElement {
   // Already a DOM node - pass through
   if (node instanceof Node) {
     return node
@@ -231,22 +239,22 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
 
   // Null/undefined/false - empty placeholder
   if (node === null || node === undefined || node === false) {
-    return document.createTextNode('')
+    return ownerDocument.createTextNode('')
   }
 
   // Reactive getter function - resolve to actual node
   if (isReactive(node)) {
     const resolved = (node as () => FictNode)()
     if (resolved === node) {
-      return document.createTextNode('')
+      return ownerDocument.createTextNode('')
     }
-    return createElementWithContext(resolved, namespace)
+    return createElementWithContext(resolved, namespace, ownerDocument)
   }
 
   // Non-reactive function values are not valid DOM nodes.
   // Keep callback values inert instead of stringifying function source.
   if (typeof node === 'function') {
-    return document.createTextNode('')
+    return ownerDocument.createTextNode('')
   }
 
   if (typeof node === 'object' && node !== null && !(node instanceof Node)) {
@@ -267,26 +275,26 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
             .catch(() => undefined)
         }
       }
-      return createElement(handle.marker as FictNode)
+      return createElementWithContext(handle.marker as FictNode, namespace, ownerDocument)
     }
   }
 
   // Array - create fragment
   if (Array.isArray(node)) {
-    const frag = document.createDocumentFragment()
+    const frag = ownerDocument.createDocumentFragment()
     for (const child of node) {
-      appendChildNode(frag, child, namespace)
+      appendChildNode(frag, child, namespace, ownerDocument)
     }
     return frag
   }
 
   // Primitive values - text node
   if (typeof node === 'string' || typeof node === 'number') {
-    return document.createTextNode(String(node))
+    return ownerDocument.createTextNode(String(node))
   }
 
   if (typeof node === 'boolean') {
-    return document.createTextNode('')
+    return ownerDocument.createTextNode('')
   }
 
   // VNode
@@ -357,13 +365,13 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
         onCleanup(() => hook.componentUnmount?.(componentId))
       }
       if (__fictIsResumable() && !__fictIsHydrating()) {
-        const content = createElementWithContext(rendered as FictNode, namespace)
+        const content = createElementWithContext(rendered as FictNode, namespace, ownerDocument)
         const host =
           namespace === 'svg'
-            ? document.createElementNS(SVG_NS, 'fict-host')
+            ? ownerDocument.createElementNS(SVG_NS, 'fict-host')
             : namespace === 'mathml'
-              ? document.createElementNS(MATHML_NS, 'fict-host')
-              : document.createElement('fict-host')
+              ? ownerDocument.createElementNS(MATHML_NS, 'fict-host')
+              : ownerDocument.createElement('fict-host')
         host.setAttribute('data-fict-host', '')
         if (namespace === null && (host as HTMLElement).style) {
           ;(host as HTMLElement).style.display = 'contents'
@@ -386,7 +394,7 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
         }
         return host as DOMElement
       }
-      const componentRoot = createElementWithContext(rendered as FictNode, namespace)
+      const componentRoot = createElementWithContext(rendered as FictNode, namespace, ownerDocument)
       if (hook && componentId !== undefined) {
         mountElements = collectComponentMountElements(componentRoot)
         annotateComponentElements(mountElements, componentId, componentName)
@@ -394,7 +402,7 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
       return componentRoot
     } catch (err) {
       if (handleSuspend(err as any)) {
-        return document.createComment('fict:suspend')
+        return ownerDocument.createComment('fict:suspend')
       }
       handleError(err, { source: 'render', componentName: vnode.type.name })
       throw err
@@ -405,9 +413,9 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
 
   // Fragment
   if (vnode.type === Fragment) {
-    const frag = document.createDocumentFragment()
+    const frag = ownerDocument.createDocumentFragment()
     const children = vnode.props?.children as FictNode | FictNode[] | undefined
-    appendChildren(frag, children, namespace)
+    appendChildren(frag, children, namespace, ownerDocument)
     return frag
   }
 
@@ -416,15 +424,16 @@ function createElementWithContext(node: FictNode, namespace: NamespaceContext): 
   const resolvedNamespace = resolveNamespace(tagName, namespace)
   const el =
     resolvedNamespace === 'svg'
-      ? document.createElementNS(SVG_NS, tagName)
+      ? ownerDocument.createElementNS(SVG_NS, tagName)
       : resolvedNamespace === 'mathml'
-        ? document.createElementNS(MATHML_NS, tagName)
-        : document.createElement(tagName)
+        ? ownerDocument.createElementNS(MATHML_NS, tagName)
+        : ownerDocument.createElement(tagName)
   applyProps(el, vnode.props ?? {}, resolvedNamespace === 'svg')
   appendChildren(
     el as unknown as ParentNode & Node,
     vnode.props?.children as FictNode | FictNode[] | undefined,
     tagName === 'foreignObject' ? null : resolvedNamespace,
+    ownerDocument,
   )
   return el as DOMElement
 }
@@ -444,10 +453,10 @@ export function template(
   isSVG?: boolean,
   isMathML?: boolean,
 ): () => Node {
-  let node: Node | null = null
+  const nodeByDocument = new WeakMap<Document, Node>()
 
-  const create = (): Node => {
-    const t = document.createElement('template')
+  const create = (ownerDocument: Document): Node => {
+    const t = ownerDocument.createElement('template')
 
     if (isSVG) {
       // fix: Wrap HTML in <svg> to parse content in SVG namespace
@@ -465,7 +474,7 @@ export function template(
         return wrapper.firstChild!
       }
       // Preserve all root nodes by returning a fragment
-      const fragment = document.createDocumentFragment()
+      const fragment = ownerDocument.createDocumentFragment()
       fragment.append(...Array.from(wrapper.childNodes))
       return fragment
     }
@@ -485,7 +494,7 @@ export function template(
         return wrapper.firstChild!
       }
       // Preserve all root nodes by returning a fragment
-      const fragment = document.createDocumentFragment()
+      const fragment = ownerDocument.createDocumentFragment()
       fragment.append(...Array.from(wrapper.childNodes))
       return fragment
     }
@@ -506,17 +515,26 @@ export function template(
     return content
   }
 
+  const getBase = (ownerDocument: Document): Node => {
+    const cached = nodeByDocument.get(ownerDocument)
+    if (cached) return cached
+    const created = create(ownerDocument)
+    nodeByDocument.set(ownerDocument, created)
+    return created
+  }
+
   // Create the cloning function
   const fn = isImportNode
     ? () =>
         untrack(() => {
-          const base = node || (node = create())
+          const ownerDocument = resolveOwnerDocument()
+          const base = getBase(ownerDocument)
           return isHydratingActive()
-            ? claimNodes(base, () => document.importNode(base, true))
-            : document.importNode(base, true)
+            ? claimNodes(base, () => ownerDocument.importNode(base, true))
+            : ownerDocument.importNode(base, true)
         })
     : () => {
-        const base = node || (node = create())
+        const base = getBase(resolveOwnerDocument())
         return isHydratingActive()
           ? claimNodes(base, () => base.cloneNode(true))
           : base.cloneNode(true)
@@ -555,7 +573,10 @@ function appendChildNode(
   parent: ParentNode & Node,
   child: FictNode,
   namespace: NamespaceContext,
+  ownerDocument: Document,
 ): void {
+  const parentOwnerDocument = parent.ownerDocument ?? ownerDocument
+
   // Skip nullish values
   if (child === null || child === undefined || child === false) {
     return
@@ -563,7 +584,7 @@ function appendChildNode(
 
   // Handle BindingHandle (recursive)
   if (isBindingHandle(child)) {
-    appendChildNode(parent, child.marker, namespace)
+    appendChildNode(parent, child.marker, namespace, parentOwnerDocument)
     // Flush pending nodes now that markers are in the DOM
     child.flush?.()
     return
@@ -575,7 +596,9 @@ function appendChildNode(
   if (typeof child === 'function') {
     const childGetter = child as () => FictNode
     if (isReactive(childGetter)) {
-      createChildBinding(parent, childGetter, node => createElementWithContext(node, namespace))
+      createChildBinding(parent, childGetter, node =>
+        createElementWithContext(node, namespace, parentOwnerDocument),
+      )
       return
     }
     return
@@ -584,7 +607,7 @@ function appendChildNode(
   // Static child - create element and append
   if (Array.isArray(child)) {
     for (const item of child) {
-      appendChildNode(parent, item, namespace)
+      appendChildNode(parent, item, namespace, parentOwnerDocument)
     }
     return
   }
@@ -592,16 +615,16 @@ function appendChildNode(
   // Cast to Node for remaining logic
   let domNode: Node
   if (typeof child !== 'object' || child === null) {
-    domNode = document.createTextNode(String(child ?? ''))
+    domNode = parentOwnerDocument.createTextNode(String(child ?? ''))
   } else {
-    domNode = createElementWithContext(child as any, namespace) as Node
+    domNode = createElementWithContext(child as any, namespace, parentOwnerDocument) as Node
   }
 
   // Handle DocumentFragment manually to avoid JSDOM issues
   if (domNode.nodeType === 11) {
     const children = Array.from(domNode.childNodes)
     for (const node of children) {
-      appendChildNode(parent, node as FictNode, namespace)
+      appendChildNode(parent, node as FictNode, namespace, parentOwnerDocument)
     }
     return
   }
@@ -629,17 +652,18 @@ function appendChildren(
   parent: ParentNode & Node,
   children: FictNode | FictNode[] | undefined,
   namespace: NamespaceContext,
+  ownerDocument: Document,
 ): void {
   if (children === undefined) return
 
   if (Array.isArray(children)) {
     for (const child of children) {
-      appendChildren(parent, child, namespace)
+      appendChildren(parent, child, namespace, ownerDocument)
     }
     return
   }
 
-  appendChildNode(parent, children, namespace)
+  appendChildNode(parent, children, namespace, ownerDocument)
 }
 
 // ============================================================================
