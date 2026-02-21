@@ -448,6 +448,38 @@ describe('Reactive DOM Binding', () => {
 
       dispose()
     })
+
+    it('supports provided markers in a non-global document', async () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-conditional')
+      const show = createSignal(true)
+      const start = foreignDoc.createComment('fict:cond:start')
+      const end = foreignDoc.createComment('fict:cond:end')
+      const createForeignElement = (value: unknown) =>
+        foreignDoc.createTextNode(String(value ?? ''))
+
+      const { marker, flush, dispose } = createConditional(
+        () => show(),
+        () => 'TRUE',
+        createForeignElement as unknown as typeof createElement,
+        () => 'FALSE',
+        start,
+        end,
+      )
+
+      expect(marker).toBe(start)
+
+      foreignDoc.body.append(start, end)
+      flush?.()
+
+      expect(foreignDoc.body.textContent).toBe('TRUE')
+
+      show(false)
+      await tick()
+      expect(foreignDoc.body.textContent).toBe('FALSE')
+
+      dispose()
+      expect(foreignDoc.body.textContent).toBe('')
+    })
   })
 
   describe('createKeyedList', () => {
@@ -866,6 +898,29 @@ describe('Reactive DOM Binding', () => {
       )
 
       expect(portalContainer.textContent).toBe('PQ')
+
+      visible(false)
+      await tick()
+      expect(portalContainer.textContent).toBe('')
+
+      dispose()
+      expect(portalContainer.contains(marker)).toBe(false)
+    })
+
+    it('creates portal marker in the target ownerDocument', async () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-portal')
+      const portalContainer = foreignDoc.createElement('div')
+      foreignDoc.body.appendChild(portalContainer)
+      const visible = createSignal(true)
+
+      const { marker, dispose } = createPortal(
+        portalContainer,
+        () => (visible() ? 'PORTAL' : null),
+        (value: unknown) => foreignDoc.createTextNode(String(value ?? '')),
+      )
+
+      expect(marker.ownerDocument).toBe(foreignDoc)
+      expect(portalContainer.textContent).toBe('PORTAL')
 
       visible(false)
       await tick()

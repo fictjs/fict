@@ -1757,9 +1757,12 @@ export function createConditional(
 ): BindingHandle {
   const trackBranchReads = options?.trackBranchReads === true
   const useProvided = !!(startOverride && endOverride)
-  const startMarker = useProvided ? startOverride! : document.createComment('fict:cond:start')
-  const endMarker = useProvided ? endOverride! : document.createComment('fict:cond:end')
-  const fragment = useProvided ? startMarker : document.createDocumentFragment()
+  const markerOwnerDocument = startOverride?.ownerDocument ?? endOverride?.ownerDocument ?? document
+  const startMarker = useProvided
+    ? startOverride!
+    : markerOwnerDocument.createComment('fict:cond:start')
+  const endMarker = useProvided ? endOverride! : markerOwnerDocument.createComment('fict:cond:end')
+  const fragment = useProvided ? startMarker : markerOwnerDocument.createDocumentFragment()
   if (!useProvided) {
     ;(fragment as DocumentFragment).append(startMarker, endMarker)
   }
@@ -1815,7 +1818,7 @@ export function createConditional(
         withHydrationRange(
           startMarker.nextSibling,
           endMarker,
-          parent.ownerDocument ?? document,
+          parent.ownerDocument ?? markerOwnerDocument,
           () => {
             const output = trackBranchReads ? render() : untrack(render)
             if (output == null || output === false) {
@@ -2071,7 +2074,8 @@ export function createPortal(
   // This is needed because createRenderEffect will push/pop its own root context
   const parentRoot = getCurrentRoot()
 
-  const marker = document.createComment('fict:portal')
+  const markerOwnerDocument = container.ownerDocument ?? document
+  const marker = markerOwnerDocument.createComment('fict:portal')
   container.appendChild(marker)
 
   let currentNodes: Node[] = []
