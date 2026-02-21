@@ -1085,6 +1085,36 @@ describe('Reactive DOM Binding', () => {
       dispose()
       expect(portalContainer.contains(marker)).toBe(false)
     })
+
+    it('uses container ownerDocument for default createElement portal output', async () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-portal-default')
+      const portalContainer = foreignDoc.createElement('div')
+      foreignDoc.body.appendChild(portalContainer)
+      const label = createSignal('A')
+
+      const { marker, dispose } = createPortal(
+        portalContainer,
+        () => ({
+          type: 'span',
+          props: { children: label() },
+          key: undefined,
+        }),
+        createElement,
+      )
+
+      const span = portalContainer.querySelector('span')
+      expect(marker.ownerDocument).toBe(foreignDoc)
+      expect(span).toBeTruthy()
+      expect(span?.ownerDocument).toBe(foreignDoc)
+      expect(portalContainer.textContent).toBe('A')
+
+      label('B')
+      await tick()
+      expect(portalContainer.textContent).toBe('B')
+
+      dispose()
+      expect(portalContainer.contains(marker)).toBe(false)
+    })
   })
 
   describe('Full Integration: render with reactive children', () => {

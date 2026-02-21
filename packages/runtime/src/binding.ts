@@ -2119,6 +2119,7 @@ export function createPortal(
 
     // Create new content
     const root = createRootContext(parentRoot)
+    root.ownerDocument = container.ownerDocument ?? parentRoot?.ownerDocument ?? document
     const prev = pushRoot(root)
     let handledError = false
     try {
