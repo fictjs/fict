@@ -569,6 +569,39 @@ describe('Reactive DOM Binding', () => {
       dispose()
       expect(foreignDoc.body.textContent).toBe('')
     })
+
+    it('uses root ownerDocument for default conditional markers', async () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-conditional-default')
+      const foreignContainer = foreignDoc.createElement('div')
+      const show = createSignal(true)
+
+      const disposeRender = render(
+        () =>
+          createConditional(
+            () => show(),
+            () => 'TRUE',
+            createElement,
+            () => 'FALSE',
+          ),
+        foreignContainer as unknown as HTMLElement,
+      )
+
+      await tick()
+      const commentNodes = Array.from(foreignContainer.childNodes).filter(
+        node => node.nodeType === Node.COMMENT_NODE,
+      ) as Comment[]
+      const startMarker = commentNodes.find(node => node.data === 'fict:cond:start')
+      const endMarker = commentNodes.find(node => node.data === 'fict:cond:end')
+      expect(startMarker?.ownerDocument).toBe(foreignDoc)
+      expect(endMarker?.ownerDocument).toBe(foreignDoc)
+      expect(foreignContainer.textContent).toBe('TRUE')
+
+      show(false)
+      await tick()
+      expect(foreignContainer.textContent).toBe('FALSE')
+
+      disposeRender()
+    })
   })
 
   describe('createKeyedList', () => {

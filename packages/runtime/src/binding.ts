@@ -1777,8 +1777,13 @@ export function createConditional(
   options?: ConditionalBindingOptions,
 ): BindingHandle {
   const trackBranchReads = options?.trackBranchReads === true
+  const hostRoot = getCurrentRoot()
   const useProvided = !!(startOverride && endOverride)
-  const markerOwnerDocument = startOverride?.ownerDocument ?? endOverride?.ownerDocument ?? document
+  const markerOwnerDocument =
+    startOverride?.ownerDocument ??
+    endOverride?.ownerDocument ??
+    hostRoot?.ownerDocument ??
+    document
   const startMarker = useProvided
     ? startOverride!
     : markerOwnerDocument.createComment('fict:cond:start')
@@ -1787,7 +1792,6 @@ export function createConditional(
   if (!useProvided) {
     ;(fragment as DocumentFragment).append(startMarker, endMarker)
   }
-  const hostRoot = getCurrentRoot()
 
   let currentNodes: Node[] = []
   let currentRoot: RootContext | null = null
