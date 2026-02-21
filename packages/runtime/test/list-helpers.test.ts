@@ -585,6 +585,46 @@ describe('List Helpers', () => {
       detached.remove()
     })
 
+    it('starts deferred keyed list when markers connect in a non-global document', async () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign')
+      const startMarker = foreignDoc.createComment('fict:list:start')
+      const endMarker = foreignDoc.createComment('fict:list:end')
+      const items = createSignal([1, 2])
+
+      const list = createKeyedList(
+        () => items(),
+        item => item,
+        itemSig => {
+          const span = foreignDoc.createElement('span')
+          createEffect(() => {
+            span.textContent = String(itemSig())
+          })
+          return [span]
+        },
+        false,
+        startMarker,
+        endMarker,
+      )
+
+      list.flush?.()
+      await tick()
+      expect(foreignDoc.body.querySelectorAll('span').length).toBe(0)
+
+      foreignDoc.body.append(startMarker, endMarker)
+      await tick()
+      expect(
+        Array.from(foreignDoc.body.querySelectorAll('span')).map(node => node.textContent),
+      ).toEqual(['1', '2'])
+
+      items([2, 3])
+      await tick()
+      expect(
+        Array.from(foreignDoc.body.querySelectorAll('span')).map(node => node.textContent),
+      ).toEqual(['2', '3'])
+
+      list.dispose()
+    })
+
     it('runs keyed block onMount after DOM insertion', async () => {
       const mounts: boolean[] = []
       const items = createSignal([{ id: 1 }])

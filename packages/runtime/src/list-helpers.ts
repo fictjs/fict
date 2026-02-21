@@ -204,8 +204,9 @@ function createKeyedListContainer<T = unknown>(
   startOverride?: Comment,
   endOverride?: Comment,
 ): KeyedListContainer<T> {
-  const startMarker = startOverride ?? document.createComment('fict:list:start')
-  const endMarker = endOverride ?? document.createComment('fict:list:end')
+  const markerOwnerDocument = startOverride?.ownerDocument ?? endOverride?.ownerDocument ?? document
+  const startMarker = startOverride ?? markerOwnerDocument.createComment('fict:list:start')
+  const endMarker = endOverride ?? markerOwnerDocument.createComment('fict:list:end')
 
   const dispose = () => {
     // Clean up all blocks
@@ -228,7 +229,9 @@ function createKeyedListContainer<T = unknown>(
       container.orderedIndexByKey.clear()
       return
     }
-    const range = document.createRange()
+    const rangeOwnerDocument =
+      startMarker.ownerDocument ?? endMarker.ownerDocument ?? markerOwnerDocument
+    const range = rangeOwnerDocument.createRange()
     range.setStartBefore(startMarker)
     range.setEndAfter(endMarker)
     range.deleteContents()
@@ -501,9 +504,12 @@ function createFineGrainedKeyedList<T>(
   endOverride?: Comment,
 ): KeyedListBinding {
   const container = createKeyedListContainer<T>(startOverride, endOverride)
+  const markerOwnerDocument = container.startMarker.ownerDocument ?? document
   const hostRoot = getCurrentRoot()
   const useProvided = !!(startOverride && endOverride)
-  const fragment = useProvided ? container.startMarker : document.createDocumentFragment()
+  const fragment = useProvided
+    ? container.startMarker
+    : markerOwnerDocument.createDocumentFragment()
   if (!useProvided) {
     ;(fragment as DocumentFragment).append(container.startMarker, container.endMarker)
   }
@@ -580,7 +586,7 @@ function createFineGrainedKeyedList<T>(
         withHydrationRange(
           container.startMarker.nextSibling,
           container.endMarker,
-          parent.ownerDocument ?? document,
+          parent.ownerDocument ?? markerOwnerDocument,
           () => {
             for (let index = 0; index < newItems.length; index++) {
               const item = newItems[index]!
@@ -632,7 +638,7 @@ function createFineGrainedKeyedList<T>(
             destroyRoot(block.root)
           }
           // Use Range.deleteContents for efficient bulk DOM removal
-          const range = document.createRange()
+          const range = (parent.ownerDocument ?? markerOwnerDocument).createRange()
           range.setStartAfter(container.startMarker)
           range.setEndBefore(container.endMarker)
           range.deleteContents()
@@ -934,7 +940,7 @@ function createFineGrainedKeyedList<T>(
 
   const waitForConnection = () => {
     if (connectObserver || typeof MutationObserver === 'undefined') return
-    const root = container.startMarker.getRootNode?.() ?? document
+    const root = container.startMarker.getRootNode?.() ?? markerOwnerDocument
     const shadowRoot =
       root && root.nodeType === 11 && isShadowRoot(root as Node) ? (root as ShadowRoot) : null
     connectObserver = new MutationObserver(() => {
@@ -946,7 +952,10 @@ function createFineGrainedKeyedList<T>(
         }
       }
     })
-    connectObserver.observe(document, { childList: true, subtree: true })
+    connectObserver.observe(markerOwnerDocument, { childList: true, subtree: true })
+    if (root && root.nodeType === 11) {
+      connectObserver.observe(root as Node, { childList: true, subtree: true })
+    }
     if (shadowRoot) {
       connectObserver.observe(shadowRoot, { childList: true, subtree: true })
     }
