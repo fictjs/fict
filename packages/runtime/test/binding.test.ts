@@ -20,6 +20,7 @@ import {
   createConditional,
   createPortal,
   insert,
+  insertBetween,
   bindEvent,
   callEventHandler,
   createKeyedList,
@@ -334,6 +335,33 @@ describe('Reactive DOM Binding', () => {
 
       dispose()
     })
+
+    it('creates marker and children in parent ownerDocument', async () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-child-binding')
+      const foreignContainer = foreignDoc.createElement('div')
+      foreignDoc.body.appendChild(foreignContainer)
+      const count = createSignal(0)
+
+      const root = createRoot(() =>
+        createChildBinding(
+          foreignContainer,
+          () => String(count()),
+          value => foreignDoc.createTextNode(String(value ?? '')),
+        ),
+      )
+      const binding = root.value
+
+      expect(binding.marker.ownerDocument).toBe(foreignDoc)
+      expect(foreignContainer.textContent).toBe('0')
+
+      count(2)
+      await tick()
+      expect(foreignContainer.textContent).toBe('2')
+
+      binding.dispose()
+      expect(foreignContainer.textContent).toBe('')
+      root.dispose()
+    })
   })
 
   describe('insert', () => {
@@ -372,6 +400,55 @@ describe('Reactive DOM Binding', () => {
 
       disposeInsert()
       root.dispose()
+    })
+
+    it('uses parent ownerDocument for auto-created marker and text', async () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-insert')
+      const foreignContainer = foreignDoc.createElement('div')
+      foreignDoc.body.appendChild(foreignContainer)
+      const value = createSignal('A')
+
+      const root = createRoot(() => insert(foreignContainer, () => value()))
+      const disposeInsert = root.value
+
+      const marker = foreignContainer.lastChild as Comment
+      const text = foreignContainer.firstChild as Text
+      expect(marker.nodeType).toBe(8)
+      expect(marker.ownerDocument).toBe(foreignDoc)
+      expect(text.ownerDocument).toBe(foreignDoc)
+      expect(foreignContainer.textContent).toBe('A')
+
+      value('B')
+      await tick()
+      expect(foreignContainer.textContent).toBe('B')
+
+      disposeInsert()
+      expect(foreignContainer.childNodes.length).toBe(0)
+      root.dispose()
+    })
+  })
+
+  describe('insertBetween', () => {
+    it('uses marker ownerDocument for fallback text nodes', async () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-insert-between')
+      const start = foreignDoc.createComment('start')
+      const end = foreignDoc.createComment('end')
+      foreignDoc.body.append(start, end)
+
+      const value = createSignal('hello')
+      const dispose = insertBetween(start, end, () => value())
+
+      const text = start.nextSibling as Text
+      expect(text.nodeType).toBe(3)
+      expect(text.ownerDocument).toBe(foreignDoc)
+      expect(foreignDoc.body.textContent).toBe('hello')
+
+      value('world')
+      await tick()
+      expect(foreignDoc.body.textContent).toBe('world')
+
+      dispose()
+      expect(foreignDoc.body.textContent).toBe('')
     })
   })
 

@@ -706,6 +706,7 @@ export function insert(
   createElementFn?: CreateElementFn,
 ): Cleanup {
   const hostRoot = getCurrentRoot()
+  const parentOwnerDocument = parent.ownerDocument ?? document
   let marker: Node
   let ownsMarker = false
   let createFn: CreateElementFn | undefined = createElementFn
@@ -714,11 +715,12 @@ export function insert(
     marker = markerOrCreateElement
     createFn = createElementFn
   } else {
-    marker = document.createComment('fict:insert')
+    marker = parentOwnerDocument.createComment('fict:insert')
     parent.appendChild(marker)
     createFn = markerOrCreateElement as CreateElementFn | undefined
     ownsMarker = true
   }
+  const markerOwnerDocument = marker.ownerDocument ?? parentOwnerDocument
 
   let currentNodes: Node[] = []
   let currentText: Text | null = null
@@ -733,7 +735,7 @@ export function insert(
 
   const setTextNode = (textValue: string, shouldInsert: boolean, parentNode: ParentNode & Node) => {
     if (!currentText) {
-      currentText = document.createTextNode(textValue)
+      currentText = (parentNode.ownerDocument ?? markerOwnerDocument).createTextNode(textValue)
     } else if (currentText.data !== textValue) {
       currentText.data = textValue
     }
@@ -789,6 +791,7 @@ export function insert(
     let handledError = false
     try {
       let newNode: Node | Node[]
+      const ownerDocument = parentNode?.ownerDocument ?? markerOwnerDocument
 
       if (value instanceof Node) {
         newNode = value
@@ -803,11 +806,11 @@ export function insert(
             }
             newNode = mapped
           } else {
-            newNode = document.createTextNode(String(value))
+            newNode = ownerDocument.createTextNode(String(value))
           }
         }
       } else {
-        newNode = createFn ? createFn(value) : document.createTextNode(String(value))
+        newNode = createFn ? createFn(value) : ownerDocument.createTextNode(String(value))
       }
 
       nodes = toNodeArray(newNode)
@@ -867,6 +870,7 @@ export function insertBetween(
   createElementFn?: CreateElementFn,
 ): Cleanup {
   const hostRoot = getCurrentRoot()
+  const markerOwnerDocument = start.ownerDocument ?? end.ownerDocument ?? document
   let currentNodes: Node[] = []
   let currentText: Text | null = null
   let currentRoot: RootContext | null = null
@@ -890,8 +894,9 @@ export function insertBetween(
   }
 
   const setTextNode = (textValue: string, shouldInsert: boolean) => {
+    const parentNode = start.parentNode as (ParentNode & Node) | null
     if (!currentText) {
-      currentText = document.createTextNode(textValue)
+      currentText = (parentNode?.ownerDocument ?? markerOwnerDocument).createTextNode(textValue)
     } else if (currentText.data !== textValue) {
       currentText.data = textValue
     }
@@ -906,7 +911,6 @@ export function insertBetween(
     }
 
     clearCurrentNodes()
-    const parentNode = start.parentNode as (ParentNode & Node) | null
     if (parentNode) {
       insertNodesBefore(parentNode, [currentText], end)
       currentNodes = [currentText]
@@ -959,6 +963,7 @@ export function insertBetween(
     let handledError = false
     try {
       let newNode: Node | Node[] = undefined as unknown as Node | Node[]
+      const ownerDocument = parentNode?.ownerDocument ?? markerOwnerDocument
       const createValue = () => {
         if (value instanceof Node) {
           return value
@@ -974,15 +979,22 @@ export function insertBetween(
             }
             return mapped
           }
-          return document.createTextNode(String(value))
+          return ownerDocument.createTextNode(String(value))
         }
-        return createElementFn ? createElementFn(value) : document.createTextNode(String(value))
+        return createElementFn
+          ? createElementFn(value)
+          : ownerDocument.createTextNode(String(value))
       }
 
       if (initialHydrating && isHydratingActive() && parentNode) {
-        withHydrationRange(start.nextSibling, end, parentNode.ownerDocument ?? document, () => {
-          newNode = createValue()
-        })
+        withHydrationRange(
+          start.nextSibling,
+          end,
+          parentNode.ownerDocument ?? markerOwnerDocument,
+          () => {
+            newNode = createValue()
+          },
+        )
       } else {
         newNode = createValue()
       }
@@ -1048,7 +1060,7 @@ export function createChildBinding(
   getValue: () => FictNode,
   createElementFn: CreateElementFn,
 ): BindingHandle {
-  const marker = document.createComment('fict:child')
+  const marker = (parent.ownerDocument ?? document).createComment('fict:child')
   parent.appendChild(marker)
   const hostRoot = getCurrentRoot()
 
