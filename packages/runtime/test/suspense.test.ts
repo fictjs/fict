@@ -296,4 +296,45 @@ describe('Suspense', () => {
 
     expect(container.textContent).toBe('LCR')
   })
+
+  it('creates suspense markers in container ownerDocument', async () => {
+    const foreignDoc = document.implementation.createHTMLDocument('foreign-suspense')
+    const container = foreignDoc.createElement('div')
+    const { token, resolve } = createSuspenseToken()
+
+    let first = true
+    const Child = () => {
+      if (first) {
+        first = false
+        throw token
+      }
+      return { type: 'span', props: { children: 'ready' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'loading',
+          children: { type: Child, props: {} },
+        },
+      }),
+      container as unknown as HTMLElement,
+    )
+
+    await tick()
+    const commentNodes = Array.from(container.childNodes).filter(
+      node => node.nodeType === Node.COMMENT_NODE,
+    ) as Comment[]
+    const startMarker = commentNodes.find(node => node.data.startsWith('fict:suspense-start'))
+    const endMarker = commentNodes.find(node => node.data.startsWith('fict:suspense-end'))
+    expect(startMarker?.ownerDocument).toBe(foreignDoc)
+    expect(endMarker?.ownerDocument).toBe(foreignDoc)
+
+    resolve()
+    await tick()
+    await tick()
+
+    dispose()
+  })
 })

@@ -36,6 +36,32 @@ describe('ErrorBoundary', () => {
     dispose()
   })
 
+  it('creates boundary marker in container ownerDocument', async () => {
+    const foreignDoc = document.implementation.createHTMLDocument('foreign-error-boundary')
+    const container = foreignDoc.createElement('div')
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'fallback',
+          children: { type: 'span', props: { children: 'ok' } },
+        },
+      }),
+      container as unknown as HTMLElement,
+    )
+
+    await nextTick()
+    const marker = Array.from(container.childNodes).find(
+      node =>
+        node.nodeType === Node.COMMENT_NODE && (node as Comment).data === 'fict:error-boundary',
+    ) as Comment | undefined
+    expect(marker).toBeTruthy()
+    expect(marker?.ownerDocument).toBe(foreignDoc)
+
+    dispose()
+  })
+
   it('does not run onMount when render fails', async () => {
     const container = document.createElement('div')
     let mounted = 0

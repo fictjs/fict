@@ -55,6 +55,7 @@ export function Suspense(props: SuspenseProps): FictNode {
   let resolvedOnce = false
   let epoch = 0
   const hostRoot = getCurrentRoot()
+  const markerOwnerDocument = hostRoot?.ownerDocument ?? document
 
   const toFallback = (err?: unknown) =>
     typeof props.fallback === 'function'
@@ -123,9 +124,9 @@ export function Suspense(props: SuspenseProps): FictNode {
     activeNodes = nodes
   }
 
-  const fragment = document.createDocumentFragment()
-  const startMarker = document.createComment('fict:suspense-start')
-  const endMarker = document.createComment('fict:suspense-end')
+  const fragment = markerOwnerDocument.createDocumentFragment()
+  const startMarker = markerOwnerDocument.createComment('fict:suspense-start')
+  const endMarker = markerOwnerDocument.createComment('fict:suspense-end')
   fragment.appendChild(startMarker)
   fragment.appendChild(endMarker)
   let cleanup: (() => void) | undefined

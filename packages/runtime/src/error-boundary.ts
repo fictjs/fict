@@ -19,11 +19,11 @@ interface ErrorBoundaryProps extends BaseProps {
 }
 
 export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
-  const fragment = document.createDocumentFragment()
-  const marker = document.createComment('fict:error-boundary')
-  fragment.appendChild(marker)
-
   const hostRoot = getCurrentRoot()
+  const markerOwnerDocument = hostRoot?.ownerDocument ?? document
+  const fragment = markerOwnerDocument.createDocumentFragment()
+  const marker = markerOwnerDocument.createComment('fict:error-boundary')
+  fragment.appendChild(marker)
 
   let cleanup: (() => void) | undefined
   let activeNodes: Node[] = []

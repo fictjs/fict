@@ -233,6 +233,31 @@ describe('Context', () => {
       dispose()
     })
 
+    it('creates provider marker in container ownerDocument', () => {
+      const ThemeContext = createContext('light')
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-context')
+      const container = foreignDoc.createElement('div')
+
+      const dispose = render(
+        () => ({
+          type: ThemeContext.Provider,
+          props: {
+            value: 'dark',
+            children: { type: 'span', props: { children: 'content' } },
+          },
+        }),
+        container as unknown as HTMLElement,
+      )
+
+      const marker = Array.from(container.childNodes).find(
+        node => node.nodeType === Node.COMMENT_NODE && (node as Comment).data === 'fict:ctx',
+      ) as Comment | undefined
+      expect(marker).toBeTruthy()
+      expect(marker?.ownerDocument).toBe(foreignDoc)
+
+      dispose()
+    })
+
     it('handles array children', () => {
       const ThemeContext = createContext('light')
       const container = document.createElement('div')

@@ -174,8 +174,9 @@ export function createContext<T>(defaultValue: T): Context<T> {
     contextMap.set(id, props.value)
 
     // Create DOM structure
-    const fragment = document.createDocumentFragment()
-    const marker = document.createComment('fict:ctx')
+    const markerOwnerDocument = providerRoot.ownerDocument ?? hostRoot?.ownerDocument ?? document
+    const fragment = markerOwnerDocument.createDocumentFragment()
+    const marker = markerOwnerDocument.createComment('fict:ctx')
     fragment.appendChild(marker)
 
     let cleanup: (() => void) | undefined

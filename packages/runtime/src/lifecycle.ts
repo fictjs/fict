@@ -11,6 +11,7 @@ type LifecycleFn = () => void | Cleanup
 
 export interface RootContext {
   parent?: RootContext | undefined
+  ownerDocument?: Document
   onMountCallbacks?: LifecycleFn[]
   cleanups: Cleanup[]
   destroyCallbacks: Cleanup[]
@@ -60,7 +61,13 @@ function setRootSuspendDevtools(root: RootContext, suspended: boolean): void {
 }
 
 export function createRootContext(parent?: RootContext): RootContext {
-  const root = { parent, cleanups: [], destroyCallbacks: [], suspended: false }
+  const root = {
+    parent,
+    ownerDocument: parent?.ownerDocument,
+    cleanups: [],
+    destroyCallbacks: [],
+    suspended: false,
+  }
   registerRootDevtools(root)
   return root
 }

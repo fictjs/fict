@@ -123,6 +123,7 @@ function annotateComponentElements(
  */
 export function render(view: () => FictNode, container: HTMLElement): () => void {
   const root = createRootContext()
+  root.ownerDocument = container.ownerDocument ?? document
   const prev = pushRoot(root)
   let dom: DOMElement = undefined as unknown as DOMElement
   try {
@@ -166,6 +167,7 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
  */
 export function hydrateComponent(view: () => FictNode, container: HTMLElement): () => void {
   const root = createRootContext()
+  root.ownerDocument = container.ownerDocument ?? document
   const prev = pushRoot(root)
 
   // Enable hydration flags for bindings that check __fictIsHydrating()
