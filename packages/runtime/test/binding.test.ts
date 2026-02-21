@@ -153,6 +153,18 @@ describe('Reactive DOM Binding', () => {
       expect(createTextBinding(undefined).data).toBe('')
       expect(createTextBinding(false).data).toBe('')
     })
+
+    it('creates text in provided ownerDocument', () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-text')
+      const textFromDoc = createTextBinding('A', foreignDoc)
+      const host = foreignDoc.createElement('div')
+      const textFromNode = createTextBinding('B', host)
+
+      expect(textFromDoc.ownerDocument).toBe(foreignDoc)
+      expect(textFromDoc.data).toBe('A')
+      expect(textFromNode.ownerDocument).toBe(foreignDoc)
+      expect(textFromNode.data).toBe('B')
+    })
   })
 
   describe('createAttributeBinding', () => {

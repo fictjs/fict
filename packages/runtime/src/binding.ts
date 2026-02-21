@@ -302,8 +302,17 @@ export function callEventHandler(
  * createTextBinding(() => $count())
  * ```
  */
-export function createTextBinding(value: MaybeReactive<unknown>): Text {
-  const text = document.createTextNode('')
+export function createTextBinding(
+  value: MaybeReactive<unknown>,
+  owner?: Document | Node | null,
+): Text {
+  const textOwnerDocument =
+    owner && 'nodeType' in owner
+      ? owner.nodeType === 9
+        ? (owner as Document)
+        : ((owner as Node).ownerDocument ?? document)
+      : document
+  const text = textOwnerDocument.createTextNode('')
 
   if (isReactive(value)) {
     // Reactive: create effect to update text when value changes
@@ -1256,7 +1265,7 @@ function globalEventHandler(e: Event): void {
   Object.defineProperty(e, 'currentTarget', {
     configurable: true,
     get() {
-      return node || document
+      return node || oriCurrentTarget || asNode(oriTarget)?.ownerDocument || document
     },
   })
 
