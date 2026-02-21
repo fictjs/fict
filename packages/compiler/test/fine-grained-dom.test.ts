@@ -46,4 +46,25 @@ describe('applyRegionMetadata', () => {
     expect(state.identifierOverrides?.user_1).toBeTypeOf('function')
     expect(state.identifierOverrides?.user).toBeUndefined()
   })
+
+  it('keeps user-defined $$ssa-like names when not compiler generated', () => {
+    const state: { identifierOverrides?: Record<string, () => t.Expression> } = {}
+    const region: RegionMetadata = {
+      id: 3,
+      dependencies: new Set(['foo$$ssa1.bar']),
+      declarations: new Set(),
+      hasControlFlow: false,
+      hasReactiveWrites: false,
+    }
+
+    applyRegionMetadata(state, {
+      region,
+      dependencyGetter: name => t.identifier(name.replace(/[^\w$]/g, '_')),
+    })
+
+    expect(state.identifierOverrides).toBeDefined()
+    expect(state.identifierOverrides?.['foo$$ssa1.bar']).toBeTypeOf('function')
+    expect(state.identifierOverrides?.['foo$$ssa1']).toBeTypeOf('function')
+    expect(state.identifierOverrides?.foo).toBeUndefined()
+  })
 })
