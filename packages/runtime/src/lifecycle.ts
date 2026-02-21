@@ -11,7 +11,7 @@ type LifecycleFn = () => void | Cleanup
 
 export interface RootContext {
   parent?: RootContext | undefined
-  ownerDocument?: Document
+  ownerDocument?: Document | undefined
   onMountCallbacks?: LifecycleFn[]
   cleanups: Cleanup[]
   destroyCallbacks: Cleanup[]

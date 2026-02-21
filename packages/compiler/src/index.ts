@@ -49,7 +49,7 @@ function isInsideLoop(path: BabelCore.NodePath): boolean {
 function isInsideConditional(path: BabelCore.NodePath): boolean {
   let current: BabelCore.NodePath | null = path
   while (current?.parentPath) {
-    const parent = current.parentPath
+    const parent: BabelCore.NodePath = current.parentPath as BabelCore.NodePath
     if (parent.isIfStatement?.() || parent.isConditionalExpression?.() || parent.isSwitchCase?.()) {
       return true
     }
