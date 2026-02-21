@@ -621,6 +621,40 @@ describe('Reactive DOM Binding', () => {
       dispose()
     })
 
+    it('uses root ownerDocument for default list markers', async () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-list-default')
+      const foreignContainer = foreignDoc.createElement('div')
+      foreignDoc.body.appendChild(foreignContainer)
+      const items = createSignal(['A', 'B'])
+
+      const disposeRender = render(
+        () =>
+          createKeyedList(
+            () => items(),
+            item => item,
+            itemSig => [foreignDoc.createTextNode(String(itemSig()))],
+          ),
+        foreignContainer as unknown as HTMLElement,
+      )
+
+      await tick()
+      await tick()
+      const commentNodes = Array.from(foreignContainer.childNodes).filter(
+        node => node.nodeType === Node.COMMENT_NODE,
+      ) as Comment[]
+      const startMarker = commentNodes.find(node => node.data === 'fict:list:start')
+      const endMarker = commentNodes.find(node => node.data === 'fict:list:end')
+      expect(startMarker?.ownerDocument).toBe(foreignDoc)
+      expect(endMarker?.ownerDocument).toBe(foreignDoc)
+      expect(foreignContainer.textContent).toBe('AB')
+
+      items(['C'])
+      await tick()
+      expect(foreignContainer.textContent).toBe('C')
+
+      disposeRender()
+    })
+
     it('updates when items change', async () => {
       const items = createSignal(['a', 'b'])
 

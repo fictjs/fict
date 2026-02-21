@@ -203,8 +203,10 @@ export function createVersionedSignalAccessor<T>(initialValue: T): Signal<T> {
 function createKeyedListContainer<T = unknown>(
   startOverride?: Comment,
   endOverride?: Comment,
+  defaultOwnerDocument?: Document,
 ): KeyedListContainer<T> {
-  const markerOwnerDocument = startOverride?.ownerDocument ?? endOverride?.ownerDocument ?? document
+  const markerOwnerDocument =
+    startOverride?.ownerDocument ?? endOverride?.ownerDocument ?? defaultOwnerDocument ?? document
   const startMarker = startOverride ?? markerOwnerDocument.createComment('fict:list:start')
   const endMarker = endOverride ?? markerOwnerDocument.createComment('fict:list:end')
 
@@ -504,9 +506,14 @@ function createFineGrainedKeyedList<T>(
   startOverride?: Comment,
   endOverride?: Comment,
 ): KeyedListBinding {
-  const container = createKeyedListContainer<T>(startOverride, endOverride)
-  const markerOwnerDocument = container.startMarker.ownerDocument ?? document
   const hostRoot = getCurrentRoot()
+  const container = createKeyedListContainer<T>(
+    startOverride,
+    endOverride,
+    hostRoot?.ownerDocument ?? document,
+  )
+  const markerOwnerDocument =
+    container.startMarker.ownerDocument ?? hostRoot?.ownerDocument ?? document
   const useProvided = !!(startOverride && endOverride)
   const fragment = useProvided
     ? container.startMarker
