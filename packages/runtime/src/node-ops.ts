@@ -7,7 +7,10 @@
  * Convert a value to a flat array of DOM nodes.
  * Defensively handles proxies and non-DOM values.
  */
-export function toNodeArray(node: Node | Node[] | unknown): Node[] {
+export function toNodeArray(
+  node: Node | Node[] | unknown,
+  ownerDocument: Document = document,
+): Node[] {
   try {
     if (Array.isArray(node)) {
       // Preserve original array reference when it's already a flat Node array
@@ -29,7 +32,7 @@ export function toNodeArray(node: Node | Node[] | unknown): Node[] {
       }
       const result: Node[] = []
       for (const item of node) {
-        result.push(...toNodeArray(item))
+        result.push(...toNodeArray(item, ownerDocument))
       }
       return result
     }
@@ -62,7 +65,7 @@ export function toNodeArray(node: Node | Node[] | unknown): Node[] {
   try {
     // Duck-type BindingHandle-like values
     if (typeof node === 'object' && node !== null && 'marker' in node) {
-      return toNodeArray((node as { marker: unknown }).marker)
+      return toNodeArray((node as { marker: unknown }).marker, ownerDocument)
     }
   } catch {
     // Ignore property check error
@@ -70,9 +73,9 @@ export function toNodeArray(node: Node | Node[] | unknown): Node[] {
 
   // Primitive fallback
   try {
-    return [document.createTextNode(String(node))]
+    return [ownerDocument.createTextNode(String(node))]
   } catch {
-    return [document.createTextNode('')]
+    return [ownerDocument.createTextNode('')]
   }
 }
 

@@ -180,6 +180,16 @@ describe('List Helpers', () => {
       expect(result).toEqual([div1, div2])
     })
 
+    it('toNodeArray creates primitive fallback text in provided ownerDocument', () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-toNodeArray')
+      const result = toNodeArray('hello', foreignDoc)
+
+      expect(result.length).toBe(1)
+      expect(result[0]).toBeInstanceOf(Text)
+      expect((result[0] as Text).data).toBe('hello')
+      expect(result[0]!.ownerDocument).toBe(foreignDoc)
+    })
+
     it('isNodeBetweenMarkers detects node between markers', () => {
       const startMarker = document.createComment('start')
       const div1 = document.createElement('div')

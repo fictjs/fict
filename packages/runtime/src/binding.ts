@@ -811,7 +811,7 @@ export function insert(
           if (createFn) {
             const mapped: Node[] = []
             for (const item of value) {
-              mapped.push(...toNodeArray(createFn(item as any)))
+              mapped.push(...toNodeArray(createFn(item as any), ownerDocument))
             }
             newNode = mapped
           } else {
@@ -822,7 +822,7 @@ export function insert(
         newNode = createFn ? createFn(value) : ownerDocument.createTextNode(String(value))
       }
 
-      nodes = toNodeArray(newNode)
+      nodes = toNodeArray(newNode, ownerDocument)
       if (root.suspended) {
         handledError = true
         destroyRoot(root)
@@ -984,7 +984,7 @@ export function insertBetween(
           if (createElementFn) {
             const mapped: Node[] = []
             for (const item of value) {
-              mapped.push(...toNodeArray(createElementFn(item as any)))
+              mapped.push(...toNodeArray(createElementFn(item as any), ownerDocument))
             }
             return mapped
           }
@@ -1008,7 +1008,7 @@ export function insertBetween(
         newNode = createValue()
       }
 
-      nodes = toNodeArray(newNode)
+      nodes = toNodeArray(newNode, ownerDocument)
       if (root.suspended) {
         handledError = true
         destroyRoot(root)
@@ -1087,7 +1087,7 @@ export function createChildBinding(
       }
 
       const output = createElementFn(value)
-      nodes = toNodeArray(output)
+      nodes = toNodeArray(output, marker.ownerDocument ?? parent.ownerDocument ?? document)
       const parentNode = marker.parentNode as (ParentNode & Node) | null
       if (parentNode) {
         insertNodesBefore(parentNode, nodes, marker)
@@ -1945,7 +1945,7 @@ export function createConditional(
           return
         }
         const el = createElementFn(scratchOutput)
-        const nodes = toNodeArray(el)
+        const nodes = toNodeArray(el, parent.ownerDocument ?? markerOwnerDocument)
         insertNodesBefore(parent, nodes, endMarker)
         currentNodes = nodes
       } catch (err) {
@@ -1998,7 +1998,7 @@ export function createConditional(
         return
       }
       const el = createElementFn(output)
-      const nodes = toNodeArray(el)
+      const nodes = toNodeArray(el, parent.ownerDocument ?? markerOwnerDocument)
       insertNodesBefore(parent, nodes, endMarker)
       currentNodes = nodes
     } catch (err) {
@@ -2121,7 +2121,7 @@ export function createPortal(
       const output = render()
       if (output != null && output !== false) {
         const el = createElementFn(output)
-        const nodes = toNodeArray(el)
+        const nodes = toNodeArray(el, markerOwnerDocument)
         if (marker.parentNode) {
           insertNodesBefore(marker.parentNode as ParentNode & Node, nodes, marker)
         }

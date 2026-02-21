@@ -58,7 +58,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
     let nodes: Node[] = []
     try {
       const output = createElement(value)
-      nodes = toNodeArray(output)
+      nodes = toNodeArray(output, markerOwnerDocument)
       const parentNode = marker.parentNode as (ParentNode & Node) | null
       if (parentNode) {
         insertNodesBefore(parentNode, nodes, marker)

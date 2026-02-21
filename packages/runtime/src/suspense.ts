@@ -86,7 +86,7 @@ export function Suspense(props: SuspenseProps): FictNode {
         boundaryPushed = true
       }
       const output = createElement(view)
-      nodes = toNodeArray(output)
+      nodes = toNodeArray(output, markerOwnerDocument)
       // Suspended view: child threw a suspense token and was handled upstream.
       // Avoid replacing existing fallback content; tear down this attempt.
       const suspendedAttempt =

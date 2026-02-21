@@ -293,6 +293,7 @@ function createKeyedBlock<T>(
         return index
       } as Signal<number>)
   const root = createRootContext(hostRoot)
+  const nodeOwnerDocument = root.ownerDocument ?? hostRoot?.ownerDocument ?? document
   const prevRoot = pushRoot(root)
   // maintaining proper cleanup chain. The scope will be disposed when
   // the root is destroyed, ensuring nested effects are properly cleaned up.
@@ -313,10 +314,10 @@ function createKeyedBlock<T>(
         rendered instanceof Node ||
         (Array.isArray(rendered) && rendered.every(n => n instanceof Node))
       ) {
-        nodes = toNodeArray(rendered)
+        nodes = toNodeArray(rendered, nodeOwnerDocument)
       } else {
         const element = createElement(rendered as unknown as FictNode)
-        nodes = toNodeArray(element)
+        nodes = toNodeArray(element, nodeOwnerDocument)
       }
     })
 
