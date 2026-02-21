@@ -159,3 +159,6 @@ js-framework-benchmark/
 hooks/
 ui-primitives/
 .fict-playground/
+shadcn/
+react/
+kit/
