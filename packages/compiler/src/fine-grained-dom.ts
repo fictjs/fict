@@ -6,6 +6,7 @@
  */
 
 import type * as BabelCore from '@babel/core'
+import { normalizeDependencyKey } from './ir/dependency-key'
 
 // ============================================================================
 // Region Metadata (used by HIR reactive scope analysis)
@@ -51,16 +52,6 @@ export interface RegionCodegenOptions {
 interface RegionApplyState {
   identifierOverrides?: Record<string, () => BabelCore.types.Expression>
   regionMetadata?: RegionMetadata
-}
-
-/**
- * Normalize dependency keys by stripping SSA suffixes and keeping dotted paths intact.
- */
-function normalizeDependencyKey(name: string): string {
-  return name
-    .split('.')
-    .map(part => part.replace(/_\d+$/, ''))
-    .join('.')
 }
 
 /**

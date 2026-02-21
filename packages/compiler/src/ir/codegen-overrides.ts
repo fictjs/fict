@@ -1,14 +1,11 @@
 import type * as BabelCore from '@babel/core'
 
-import { deSSAVarName } from './regions'
+import { normalizeDependencyKey as normalizeDependencyKeyImpl } from './dependency-key'
 
 export type RegionOverrideMap = Record<string, () => BabelCore.types.Expression>
 
 export function normalizeDependencyKey(name: string): string {
-  return name
-    .split('.')
-    .map(part => deSSAVarName(part))
-    .join('.')
+  return normalizeDependencyKeyImpl(name)
 }
 
 function getDependencyPathFromNode(
