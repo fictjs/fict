@@ -1,5 +1,16 @@
 # @fictjs/ssr
 
+## 0.11.0
+
+### Minor Changes
+
+- fix fict
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/runtime@0.11.0
+
 ## 0.10.0
 
 ### Minor Changes

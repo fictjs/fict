@@ -1,5 +1,11 @@
 # @fictjs/runtime
 
+## 0.11.0
+
+### Minor Changes
+
+- fix fict
+
 ## 0.10.0
 
 ### Minor Changes
