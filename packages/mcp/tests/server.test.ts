@@ -277,6 +277,19 @@ export function List({ items }) {
     expect(payload.available?.some(template => template.id === 'counter')).toBe(true)
   })
 
+  it('rejects conflicting streamable http paths', async () => {
+    await expect(
+      startStreamableHttpServer({
+        docsRoot: DOCS_ROOT,
+        host: '127.0.0.1',
+        port: 0,
+        path: '/mcp',
+        healthPath: '/mcp',
+        statsPath: '/stats',
+      }),
+    ).rejects.toThrow('HTTP paths must be distinct')
+  })
+
   it('supports streamable http transport', async () => {
     const started = await startStreamableHttpServer({
       docsRoot: DOCS_ROOT,

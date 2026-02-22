@@ -149,6 +149,13 @@ export async function startStreamableHttpServer(
   const sessionTtlMs = normalizePositiveInt(options.sessionTtlMs, DEFAULT_SESSION_TTL_MS)
   const baseServerOptions = buildServerOptions(options)
 
+  const uniquePaths = new Set([endpointPath, healthPath, statsPath])
+  if (uniquePaths.size < 3) {
+    throw new Error(
+      `HTTP paths must be distinct: path=${endpointPath}, healthPath=${healthPath}, statsPath=${statsPath}`,
+    )
+  }
+
   const sessions = new Map<string, SessionEntry>()
   const responsesByStatus = new Map<number, number>()
   const counters = {
