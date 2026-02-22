@@ -31,6 +31,7 @@ use_cases:
 ```
 
 If frontmatter metadata is missing, built-in defaults are still applied for core Fict docs.
+When available, MCP can load sections from a generated manifest (`assets/docs-manifest.json`) to avoid full docs scanning at startup.
 
 ## Build
 
@@ -55,7 +56,7 @@ pnpm --filter @fictjs/mcp start
 
 ```bash
 pnpm --filter @fictjs/mcp build
-pnpm --filter @fictjs/mcp start -- --http --host 127.0.0.1 --port 8788 --path /mcp --health-path /healthz --stats-path /stats --max-sessions 100 --session-ttl-ms 1800000 --docs-root ../../docs --playground-origin http://localhost:4173
+pnpm --filter @fictjs/mcp start -- --http --host 127.0.0.1 --port 8788 --path /mcp --health-path /healthz --stats-path /stats --max-sessions 100 --session-ttl-ms 1800000 --docs-root ../../docs --docs-manifest ./assets/docs-manifest.json --playground-origin http://localhost:4173
 ```
 
 ## Run (Legacy HTTP+SSE transport, deprecated)
@@ -74,6 +75,7 @@ FICT_MCP_TRANSPORT=http pnpm --filter @fictjs/mcp start
 Environment variables:
 
 - `FICT_MCP_DOCS_ROOT`: absolute or relative path to docs root (default: auto-discover `<workspace>/docs`).
+- `FICT_MCP_DOCS_MANIFEST`: optional docs manifest path override.
 - `FICT_PLAYGROUND_ORIGIN`: playground base URL (default: `http://localhost:4173`).
 - `FICT_MCP_TRANSPORT`: `stdio`, `http`, or `sse` (default: `stdio`).
 - `FICT_MCP_HTTP_HOST`: HTTP bind host (default: `127.0.0.1`).
@@ -87,6 +89,7 @@ Environment variables:
 - `FICT_MCP_HTTP_SESSION_TTL_MS`: idle session TTL in milliseconds (default: `1800000`).
 
 In HTTP mode, invalid `docsRoot` config fails fast at startup instead of deferring the error to the first MCP request.
+If `docsRoot` is auto-discovered and no override is provided, server startup uses bundled `assets/docs-manifest.json` when present.
 
 ## HTTP observability endpoints
 
