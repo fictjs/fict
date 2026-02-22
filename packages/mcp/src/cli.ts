@@ -101,7 +101,9 @@ function readPositiveIntEnv(name: string, fallback: number): number {
 
 function readArgValue(argv: string[], index: number, flagName: string): string {
   const next = argv[index + 1]
-  if (!next) throw new Error(`${flagName} requires a value`)
+  if (!next || next === '--' || next.startsWith('--')) {
+    throw new Error(`${flagName} requires a value`)
+  }
   return next
 }
 

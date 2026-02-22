@@ -58,6 +58,10 @@ describe('cli option parsing', () => {
     await expect(runCli(['--http', '--host'])).rejects.toThrow('--host requires a value')
   })
 
+  it('rejects when a string option value is accidentally another flag', async () => {
+    await expect(runCli(['--http', '--host', '--path'])).rejects.toThrow('--host requires a value')
+  })
+
   it('rejects unknown arguments', async () => {
     await expect(runCli(['--http', '--not-a-real-flag'])).rejects.toThrow(
       'Unknown argument: --not-a-real-flag',
