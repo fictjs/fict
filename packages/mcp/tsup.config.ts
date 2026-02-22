@@ -14,6 +14,7 @@ export default defineConfig([
       '@babel/plugin-syntax-jsx',
       '@babel/preset-typescript',
       '@fictjs/compiler',
+      '@fictjs/playground',
     ],
   },
   {
@@ -33,6 +34,7 @@ export default defineConfig([
       '@babel/plugin-syntax-jsx',
       '@babel/preset-typescript',
       '@fictjs/compiler',
+      '@fictjs/playground',
     ],
   },
 ])

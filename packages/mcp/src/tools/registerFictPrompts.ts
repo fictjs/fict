@@ -9,6 +9,7 @@ Rules:
 3) Before returning any Fict code, call fict-autofixer with the full file map.
 4) If fict-autofixer returns issues, fix the code and call fict-autofixer again until ok=true.
 5) Ground framework-specific answers in fetched documentation instead of memory.
+6) If the user asks for a runnable demo without writing files, call playground-link.
 
 Available docs:
 ${AVAILABLE_DOCS_BLOCK}

@@ -8,10 +8,12 @@ import { registerDocsResources } from '../tools/registerDocsResources'
 import { buildFictTaskPrompt } from '../tools/registerFictPrompts'
 import { registerFictAutofixerTool } from '../tools/registerFictAutofixerTool'
 import { registerDocsTools } from '../tools/registerDocsTools'
+import { registerPlaygroundLinkTool } from '../tools/registerPlaygroundLinkTool'
 import { createDocsStore } from '../store/docsStore'
 
 export interface CreateFictMcpServerOptions {
   docsRoot?: string
+  playgroundOrigin?: string
   serverName?: string
   serverVersion?: string
 }
@@ -48,6 +50,14 @@ export function createFictMcpServer(options: CreateFictMcpServerOptions = {}): {
   registerDocsTools(server, docsStore)
   registerDocsResources(server, docsStore)
   registerFictAutofixerTool(server)
+  registerPlaygroundLinkTool(
+    server,
+    options.playgroundOrigin
+      ? {
+          origin: options.playgroundOrigin,
+        }
+      : {},
+  )
 
   server.registerPrompt(
     'fict-task',

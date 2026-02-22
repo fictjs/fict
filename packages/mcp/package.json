@@ -41,6 +41,7 @@
     "@babel/plugin-syntax-jsx": "^7.28.6",
     "@babel/preset-typescript": "^7.26.0",
     "@fictjs/compiler": "workspace:^",
+    "@fictjs/playground": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.27.0",
     "zod": "^4.0.0"
   },

@@ -403,6 +403,9 @@ importers:
       '@fictjs/compiler':
         specifier: workspace:^
         version: link:../compiler
+      '@fictjs/playground':
+        specifier: workspace:^
+        version: link:../playground
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.0
         version: 1.27.0(zod@4.3.6)
