@@ -1242,6 +1242,11 @@ function resource<T, Args = void>(
   read(args: (() => Args) | Args): ResourceResult<T>
   invalidate(key?: unknown): void
   prefetch(args: Args, keyOverride?: unknown): void
+  mutate(
+    args: (() => Args) | Args,
+    value: T | ((prev: T | undefined) => T),
+    options?: { key?: unknown; revalidate?: boolean },
+  ): void
 }
 ```
 
@@ -1342,7 +1347,20 @@ Lazy-load components for code splitting.
 ```typescript
 import { lazy } from 'fict/plus'
 
-function lazy<TProps>(loader: () => Promise<{ default: Component<TProps> }>): Component<TProps>
+interface LazyOptions {
+  maxRetries?: number
+  retryDelay?: number
+}
+
+interface LazyComponent<TProps extends Record<string, unknown>> extends Component<TProps> {
+  reset: () => void
+  preload: () => Promise<void>
+}
+
+function lazy<TProps extends Record<string, unknown> = Record<string, unknown>>(
+  loader: () => Promise<{ default: Component<TProps> }>,
+  options?: LazyOptions,
+): LazyComponent<TProps>
 ```
 
 **Example:**

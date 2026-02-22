@@ -853,6 +853,12 @@ export interface Resource<T, Args> {
   invalidate(key?: unknown): void
   /** Prefetch data */
   prefetch(args: Args, keyOverride?: unknown): void
+  /** Optimistically update cached data */
+  mutate(
+    args: (() => Args) | Args,
+    value: T | ((prev: T | undefined) => T),
+    options?: { key?: unknown; revalidate?: boolean },
+  ): void
 }
 
 /**
@@ -872,12 +878,23 @@ export interface LazyModule<TProps extends Record<string, unknown>> {
   default: Component<TProps>
 }
 
+export interface LazyOptions {
+  maxRetries?: number
+  retryDelay?: number
+}
+
+export interface LazyComponent<TProps extends Record<string, unknown>> extends Component<TProps> {
+  reset: () => void
+  preload: () => Promise<void>
+}
+
 /**
  * Create a lazy-loaded component (used with Suspense)
  */
 export function lazy<TProps extends Record<string, unknown> = Record<string, unknown>>(
   loader: () => Promise<LazyModule<TProps> | { default: Component<TProps> }>,
-): Component<TProps>
+  options?: LazyOptions,
+): LazyComponent<TProps>
 ```
 
 ---
