@@ -227,7 +227,11 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
   const options = parseArgs(argv)
 
   if (options.transport === 'stdio') {
-    await startStdioServer()
+    await startStdioServer({
+      docsRoot: options.docsRoot,
+      docsManifestPath: options.docsManifestPath,
+      playgroundOrigin: options.playgroundOrigin,
+    })
     return
   }
 

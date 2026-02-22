@@ -2,22 +2,34 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 import { createFictMcpServer } from '../createServer'
 
-export async function startStdioServer(): Promise<void> {
+export interface StartStdioServerOptions {
+  docsRoot?: string
+  docsManifestPath?: string
+  playgroundOrigin?: string
+}
+
+export async function startStdioServer(overrides: StartStdioServerOptions = {}): Promise<void> {
   const options: {
     docsRoot?: string
     docsManifestPath?: string
     playgroundOrigin?: string
   } = {}
 
-  if (process.env.FICT_MCP_DOCS_ROOT) {
+  if (overrides.docsRoot) {
+    options.docsRoot = overrides.docsRoot
+  } else if (process.env.FICT_MCP_DOCS_ROOT) {
     options.docsRoot = process.env.FICT_MCP_DOCS_ROOT
   }
 
-  if (process.env.FICT_PLAYGROUND_ORIGIN) {
+  if (overrides.playgroundOrigin) {
+    options.playgroundOrigin = overrides.playgroundOrigin
+  } else if (process.env.FICT_PLAYGROUND_ORIGIN) {
     options.playgroundOrigin = process.env.FICT_PLAYGROUND_ORIGIN
   }
 
-  if (process.env.FICT_MCP_DOCS_MANIFEST) {
+  if (overrides.docsManifestPath) {
+    options.docsManifestPath = overrides.docsManifestPath
+  } else if (process.env.FICT_MCP_DOCS_MANIFEST) {
     options.docsManifestPath = process.env.FICT_MCP_DOCS_MANIFEST
   }
 
