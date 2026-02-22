@@ -56,6 +56,12 @@ interface CycleProtectionOptions {
 
   /** If true, throw errors instead of warnings (useful for testing) */
   devMode?: boolean
+
+  /** Enable threshold warnings before hard limit (default: dev-only true) */
+  enableBackoffWarning?: boolean
+
+  /** First warning threshold ratio (default: 0.5 = 50%) */
+  backoffWarningRatio?: number
 }
 
 setCycleProtectionOptions(options: CycleProtectionOptions): void
@@ -374,7 +380,7 @@ For unit tests, enable strict mode to fail fast on cycle detection:
 ```tsx
 import { describe, it, expect, afterEach } from 'vitest'
 import { setCycleProtectionOptions } from 'fict/advanced'
-import { resetCycleProtectionStateForTests } from 'fict/internal'
+import { resetCycleProtectionStateForTests } from '@fictjs/runtime/internal'
 
 describe('Reactive Tests', () => {
   afterEach(() => {
