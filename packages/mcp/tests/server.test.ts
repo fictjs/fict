@@ -62,6 +62,31 @@ afterEach(async () => {
 })
 
 describe('fict mcp server', () => {
+  it('discovers docs root from deeply nested cwd', async () => {
+    const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'fict-mcp-deep-cwd-'))
+    const docsRoot = path.join(tempRoot, 'docs')
+    const deepCwd = path.join(tempRoot, 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l')
+    const previousCwd = process.cwd()
+
+    await fsp.mkdir(docsRoot, { recursive: true })
+    await fsp.writeFile(path.join(docsRoot, 'guide.md'), '# Guide\n', 'utf8')
+    await fsp.mkdir(deepCwd, { recursive: true })
+
+    try {
+      process.chdir(deepCwd)
+      const { server, docsRoot: resolvedDocsRoot } = createFictMcpServer()
+      const [expectedRealpath, resolvedRealpath] = await Promise.all([
+        fsp.realpath(docsRoot),
+        fsp.realpath(resolvedDocsRoot),
+      ])
+      expect(resolvedRealpath).toBe(expectedRealpath)
+      await server.close()
+    } finally {
+      process.chdir(previousCwd)
+      await fsp.rm(tempRoot, { recursive: true, force: true })
+    }
+  })
+
   it('reads section metadata from markdown frontmatter', async () => {
     const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'fict-mcp-docs-'))
     const docsRoot = path.join(tempRoot, 'docs')

@@ -23,7 +23,7 @@ export interface CreateFictMcpServerOptions {
 function findDocsRoot(startDir: string): string {
   let current = path.resolve(startDir)
 
-  for (let depth = 0; depth < 10; depth += 1) {
+  while (true) {
     const candidate = path.join(current, 'docs')
     if (fs.existsSync(candidate)) {
       return candidate
