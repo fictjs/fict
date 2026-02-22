@@ -25,12 +25,14 @@ const activeConnections: ConnectedContext[] = []
 
 interface ConnectServerOptions {
   docsRoot?: string
+  docsManifestPath?: string
   playgroundOrigin?: string
 }
 
 async function connectServer(options: ConnectServerOptions = {}): Promise<ConnectedContext> {
   const { server } = createFictMcpServer({
     docsRoot: options.docsRoot ?? DOCS_ROOT,
+    docsManifestPath: options.docsManifestPath,
     playgroundOrigin: options.playgroundOrigin ?? 'http://localhost:4173',
   })
 
@@ -112,6 +114,74 @@ describe('fict mcp server', () => {
       expect(custom?.title).toBe('Custom Metadata Guide')
       expect(custom?.tags).toEqual(['mcp', 'docs'])
       expect(custom?.use_cases).toEqual(['Validate metadata extraction'])
+    } finally {
+      await fsp.rm(tempRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('loads docs sections from manifest when provided', async () => {
+    const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'fict-mcp-manifest-'))
+    const docsRoot = path.join(tempRoot, 'docs')
+    const manifestPath = path.join(tempRoot, 'docs-manifest.json')
+
+    await fsp.mkdir(docsRoot, { recursive: true })
+    await fsp.writeFile(
+      path.join(docsRoot, 'manifested.md'),
+      ['# Original Title', '', 'Body'].join('\n'),
+      'utf8',
+    )
+    await fsp.writeFile(
+      manifestPath,
+      JSON.stringify(
+        {
+          version: 1,
+          sections: [
+            {
+              id: 'manifested',
+              title: 'Manifest Title',
+              path: 'manifested.md',
+              tags: ['manifest', 'docs'],
+              use_cases: ['test manifest source'],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+
+    const { client } = await connectServer({
+      docsRoot,
+      docsManifestPath: manifestPath,
+    })
+
+    try {
+      const sectionsResult = await client.callTool({
+        name: 'list-sections',
+        arguments: {},
+      })
+
+      const sections = Array.isArray(
+        (sectionsResult.structuredContent as { sections?: unknown })?.sections,
+      )
+        ? ((
+            sectionsResult.structuredContent as {
+              sections: Array<{
+                id: string
+                title: string
+                tags?: string[]
+                use_cases?: string[]
+              }>
+            }
+          ).sections ?? [])
+        : []
+
+      const manifested = sections.find(section => section.id === 'manifested')
+      expect(manifested).toBeTruthy()
+      expect(manifested?.title).toBe('Manifest Title')
+      expect(manifested?.tags).toEqual(['manifest', 'docs'])
+      expect(manifested?.use_cases).toEqual(['test manifest source'])
     } finally {
       await fsp.rm(tempRoot, { recursive: true, force: true })
     }

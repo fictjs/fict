@@ -22,6 +22,7 @@ export interface DocsStore {
 
 interface CreateDocsStoreOptions {
   docsRoot: string
+  manifestPath?: string
 }
 
 interface DocFrontmatterMetadata {
@@ -33,6 +34,11 @@ interface DocFrontmatterMetadata {
 interface DocDefaultMetadata {
   tags?: string[]
   use_cases?: string[]
+}
+
+interface DocsManifest {
+  version: number
+  sections: unknown
 }
 
 function toPosix(filePath: string): string {
@@ -230,46 +236,105 @@ function splitFrontmatter(markdown: string): { body: string; metadata: DocFrontm
   }
 }
 
+function buildSectionFromMarkdown(root: string, filePath: string): DocSection {
+  const relativePath = toPosix(path.relative(root, filePath))
+  const relativeNoExt = relativePath.replace(/\.md$/i, '')
+  const markdown = fs.readFileSync(filePath, 'utf8')
+  const { body, metadata: frontmatterMetadata } = splitFrontmatter(markdown)
+  const title = frontmatterMetadata.title ?? extractTitle(body, path.basename(relativeNoExt))
+  const slug = path.basename(relativeNoExt)
+  const defaultMetadata = DEFAULT_METADATA_BY_SLUG[slug]
+
+  const entry: DocSection = {
+    id: deriveSectionId(relativeNoExt),
+    title,
+    path: relativePath,
+  }
+
+  const useCases = frontmatterMetadata.use_cases?.length
+    ? frontmatterMetadata.use_cases
+    : defaultMetadata?.use_cases
+  if (useCases) {
+    entry.use_cases = useCases
+  }
+
+  const tags = frontmatterMetadata.tags?.length ? frontmatterMetadata.tags : defaultMetadata?.tags
+  if (tags) {
+    entry.tags = tags
+  }
+
+  return entry
+}
+
+function scanSections(root: string): DocSection[] {
+  return walk(root)
+    .filter(filePath => filePath.toLowerCase().endsWith('.md'))
+    .sort((left, right) => left.localeCompare(right))
+    .map(filePath => buildSectionFromMarkdown(root, filePath))
+}
+
+function toDocSection(entry: unknown): DocSection | null {
+  if (!entry || typeof entry !== 'object') return null
+  const raw = entry as Record<string, unknown>
+  if (typeof raw.id !== 'string' || typeof raw.title !== 'string' || typeof raw.path !== 'string') {
+    return null
+  }
+
+  const section: DocSection = {
+    id: raw.id,
+    title: raw.title,
+    path: raw.path,
+  }
+
+  if (Array.isArray(raw.use_cases)) {
+    const useCases = raw.use_cases.filter(item => typeof item === 'string')
+    if (useCases.length > 0) section.use_cases = useCases
+  }
+
+  if (Array.isArray(raw.tags)) {
+    const tags = raw.tags.filter(item => typeof item === 'string')
+    if (tags.length > 0) section.tags = tags
+  }
+
+  return section
+}
+
+function loadSectionsFromManifest(root: string, manifestPath: string): DocSection[] | null {
+  if (!fs.existsSync(manifestPath)) return null
+
+  let manifestJson: unknown
+  try {
+    manifestJson = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  } catch {
+    return null
+  }
+
+  if (!manifestJson || typeof manifestJson !== 'object') return null
+  const manifest = manifestJson as DocsManifest
+  if (!Array.isArray(manifest.sections)) return null
+
+  const sections = manifest.sections
+    .map(section => toDocSection(section))
+    .filter((section): section is DocSection => section !== null)
+    .sort((left, right) => left.path.localeCompare(right.path))
+
+  if (sections.length === 0) return null
+
+  const allFilesExist = sections.every(section => fs.existsSync(path.join(root, section.path)))
+  if (!allFilesExist) return null
+
+  return sections
+}
+
 export function createDocsStore(options: CreateDocsStoreOptions): DocsStore {
   const root = path.resolve(options.docsRoot)
   if (!fs.existsSync(root)) {
     throw new Error(`Docs root not found: ${root}`)
   }
 
-  const sections = walk(root)
-    .filter(filePath => filePath.toLowerCase().endsWith('.md'))
-    .sort((left, right) => left.localeCompare(right))
-    .map(filePath => {
-      const relativePath = toPosix(path.relative(root, filePath))
-      const relativeNoExt = relativePath.replace(/\.md$/i, '')
-      const markdown = fs.readFileSync(filePath, 'utf8')
-      const { body, metadata: frontmatterMetadata } = splitFrontmatter(markdown)
-      const title = frontmatterMetadata.title ?? extractTitle(body, path.basename(relativeNoExt))
-      const slug = path.basename(relativeNoExt)
-      const defaultMetadata = DEFAULT_METADATA_BY_SLUG[slug]
-
-      const entry: DocSection = {
-        id: deriveSectionId(relativeNoExt),
-        title,
-        path: relativePath,
-      }
-
-      const useCases = frontmatterMetadata.use_cases?.length
-        ? frontmatterMetadata.use_cases
-        : defaultMetadata?.use_cases
-      if (useCases) {
-        entry.use_cases = useCases
-      }
-
-      const tags = frontmatterMetadata.tags?.length
-        ? frontmatterMetadata.tags
-        : defaultMetadata?.tags
-      if (tags) {
-        entry.tags = tags
-      }
-
-      return entry
-    })
+  const manifestPath = options.manifestPath ? path.resolve(options.manifestPath) : undefined
+  const manifestSections = manifestPath ? loadSectionsFromManifest(root, manifestPath) : null
+  const sections = manifestSections ?? scanSections(root)
 
   const sectionMap = new Map(sections.map(section => [section.id, section] as const))
 

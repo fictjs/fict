@@ -5,6 +5,7 @@ import { createFictMcpServer } from '../createServer'
 export async function startStdioServer(): Promise<void> {
   const options: {
     docsRoot?: string
+    docsManifestPath?: string
     playgroundOrigin?: string
   } = {}
 
@@ -14,6 +15,10 @@ export async function startStdioServer(): Promise<void> {
 
   if (process.env.FICT_PLAYGROUND_ORIGIN) {
     options.playgroundOrigin = process.env.FICT_PLAYGROUND_ORIGIN
+  }
+
+  if (process.env.FICT_MCP_DOCS_MANIFEST) {
+    options.docsManifestPath = process.env.FICT_MCP_DOCS_MANIFEST
   }
 
   const { server } = createFictMcpServer(options)

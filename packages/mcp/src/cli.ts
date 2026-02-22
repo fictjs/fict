@@ -16,6 +16,7 @@ interface CliOptions {
   maxSessions: number
   sessionTtlMs: number
   docsRoot?: string
+  docsManifestPath?: string
   playgroundOrigin?: string
 }
 
@@ -43,6 +44,7 @@ function parseArgs(argv: string[]): CliOptions {
     maxSessions: readNumberEnv('FICT_MCP_HTTP_MAX_SESSIONS', 100),
     sessionTtlMs: readNumberEnv('FICT_MCP_HTTP_SESSION_TTL_MS', 30 * 60 * 1000),
     docsRoot: process.env.FICT_MCP_DOCS_ROOT,
+    docsManifestPath: process.env.FICT_MCP_DOCS_MANIFEST,
     playgroundOrigin: process.env.FICT_PLAYGROUND_ORIGIN,
   }
 
@@ -158,6 +160,14 @@ function parseArgs(argv: string[]): CliOptions {
       continue
     }
 
+    if (arg === '--docs-manifest') {
+      const next = argv[index + 1]
+      if (!next) throw new Error('--docs-manifest requires a value')
+      options.docsManifestPath = next
+      index += 1
+      continue
+    }
+
     if (arg === '--playground-origin') {
       const next = argv[index + 1]
       if (!next) throw new Error('--playground-origin requires a value')
@@ -197,6 +207,7 @@ function printHelp(): void {
     '  --max-sessions <n>     Max concurrent sessions (default: 100)',
     '  --session-ttl-ms <ms>  Session idle TTL in milliseconds (default: 1800000)',
     '  --docs-root <path>     Docs root path (default: auto-discover / env)',
+    '  --docs-manifest <path> Docs manifest path override',
     '  --playground-origin <url>  Playground base URL (default: env / localhost)',
     '',
     'Environment:',
@@ -205,6 +216,7 @@ function printHelp(): void {
     '  FICT_MCP_SSE_PATH, FICT_MCP_SSE_MESSAGES_PATH',
     '  FICT_MCP_HTTP_HEALTH_PATH, FICT_MCP_HTTP_STATS_PATH',
     '  FICT_MCP_HTTP_MAX_SESSIONS, FICT_MCP_HTTP_SESSION_TTL_MS',
+    '  FICT_MCP_DOCS_MANIFEST',
     '  FICT_MCP_DOCS_ROOT, FICT_PLAYGROUND_ORIGIN',
   ].join('\n')
 
@@ -230,6 +242,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
       maxSessions: options.maxSessions,
       sessionTtlMs: options.sessionTtlMs,
       docsRoot: options.docsRoot,
+      docsManifestPath: options.docsManifestPath,
       playgroundOrigin: options.playgroundOrigin,
     })
 
@@ -261,6 +274,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
     maxSessions: options.maxSessions,
     sessionTtlMs: options.sessionTtlMs,
     docsRoot: options.docsRoot,
+    docsManifestPath: options.docsManifestPath,
     playgroundOrigin: options.playgroundOrigin,
   })
 

@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
@@ -13,6 +14,7 @@ import { registerPlaygroundLinkTool } from '../tools/registerPlaygroundLinkTool'
 
 export interface CreateFictMcpServerOptions {
   docsRoot?: string
+  docsManifestPath?: string
   playgroundOrigin?: string
   serverName?: string
   serverVersion?: string
@@ -35,12 +37,41 @@ function findDocsRoot(startDir: string): string {
   return path.resolve(startDir, 'docs')
 }
 
+function findDefaultDocsManifestPath(): string | undefined {
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url))
+  const candidates = [
+    path.resolve(moduleDir, '../assets/docs-manifest.json'),
+    path.resolve(moduleDir, '../../assets/docs-manifest.json'),
+  ]
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate
+    }
+  }
+
+  return undefined
+}
+
 export function createFictMcpServer(options: CreateFictMcpServerOptions = {}): {
   server: McpServer
   docsRoot: string
 } {
-  const docsRoot = options.docsRoot ? path.resolve(options.docsRoot) : findDocsRoot(process.cwd())
-  const docsStore = createDocsStore({ docsRoot })
+  const docsRootProvided = Boolean(options.docsRoot)
+  const docsRoot = docsRootProvided ? path.resolve(options.docsRoot!) : findDocsRoot(process.cwd())
+  const docsManifestPath = options.docsManifestPath
+    ? path.resolve(options.docsManifestPath)
+    : docsRootProvided
+      ? undefined
+      : findDefaultDocsManifestPath()
+  const docsStore = docsManifestPath
+    ? createDocsStore({
+        docsRoot,
+        manifestPath: docsManifestPath,
+      })
+    : createDocsStore({
+        docsRoot,
+      })
 
   const server = new McpServer({
     name: options.serverName ?? 'fict-mcp',

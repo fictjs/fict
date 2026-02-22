@@ -16,6 +16,7 @@
   },
   "files": [
     "dist",
+    "assets",
     "src",
     "README.md"
   ],
