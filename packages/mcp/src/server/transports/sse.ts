@@ -4,6 +4,13 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 
 import { createFictMcpServer, type CreateFictMcpServerOptions } from '../createServer'
+import {
+  createResponseHelpers,
+  normalizeHttpPath,
+  normalizePositiveInt,
+  resolveOldestSessionId,
+  writeCorsHeaders,
+} from './httpShared'
 
 interface SessionContext {
   server: McpServer
@@ -79,25 +86,6 @@ const DEFAULT_STATS_PATH = '/stats'
 const DEFAULT_MAX_SESSIONS = 100
 const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000
 
-function normalizePath(rawPath: string): string {
-  const withLeadingSlash = rawPath.startsWith('/') ? rawPath : `/${rawPath}`
-  if (withLeadingSlash === '/') return withLeadingSlash
-  return withLeadingSlash.replace(/\/+$/, '')
-}
-
-function writeCorsHeaders(res: { setHeader: (name: string, value: string) => void }): void {
-  res.setHeader('access-control-allow-origin', '*')
-  res.setHeader('access-control-allow-methods', 'GET,POST,OPTIONS')
-  res.setHeader('access-control-allow-headers', 'content-type,last-event-id,authorization')
-}
-
-function normalizePositiveInt(value: number | undefined, fallback: number): number {
-  if (!Number.isFinite(value) || typeof value !== 'number') return fallback
-  const rounded = Math.floor(value)
-  if (rounded <= 0) return fallback
-  return rounded
-}
-
 function buildServerOptions(
   options: StartSseHttpServerOptions,
 ): CreateFictMcpServerOptions | undefined {
@@ -112,20 +100,6 @@ function buildServerOptions(
   return Object.keys(base).length > 0 ? base : undefined
 }
 
-function resolveOldestSessionId(sessions: Map<string, SessionEntry>): string | undefined {
-  let oldestId: string | undefined
-  let oldestSeen = Number.POSITIVE_INFINITY
-
-  for (const [id, entry] of sessions) {
-    if (entry.lastSeenAt < oldestSeen) {
-      oldestSeen = entry.lastSeenAt
-      oldestId = id
-    }
-  }
-
-  return oldestId
-}
-
 async function closeSession(context: SessionContext): Promise<void> {
   await Promise.allSettled([context.server.close(), context.transport.close()])
 }
@@ -136,10 +110,10 @@ export async function startSseHttpServer(
   const startedAt = Date.now()
   const host = options.host ?? DEFAULT_HOST
   const configuredPort = options.port ?? DEFAULT_PORT
-  const ssePath = normalizePath(options.ssePath ?? DEFAULT_SSE_PATH)
-  const messagesPath = normalizePath(options.messagesPath ?? DEFAULT_MESSAGES_PATH)
-  const healthPath = normalizePath(options.healthPath ?? DEFAULT_HEALTH_PATH)
-  const statsPath = normalizePath(options.statsPath ?? DEFAULT_STATS_PATH)
+  const ssePath = normalizeHttpPath(options.ssePath ?? DEFAULT_SSE_PATH)
+  const messagesPath = normalizeHttpPath(options.messagesPath ?? DEFAULT_MESSAGES_PATH)
+  const healthPath = normalizeHttpPath(options.healthPath ?? DEFAULT_HEALTH_PATH)
+  const statsPath = normalizeHttpPath(options.statsPath ?? DEFAULT_STATS_PATH)
   const enableCors = options.enableCors ?? true
   const maxSessions = normalizePositiveInt(options.maxSessions, DEFAULT_MAX_SESSIONS)
   const sessionTtlMs = normalizePositiveInt(options.sessionTtlMs, DEFAULT_SESSION_TTL_MS)
@@ -195,6 +169,8 @@ export async function startSseHttpServer(
     responsesByStatus.set(statusCode, prev + 1)
   }
 
+  const { respondJson, respondText } = createResponseHelpers(trackStatus)
+
   function getStats(): SseHttpServerStats {
     const responseMap: Record<string, number> = {}
     for (const [status, count] of responsesByStatus.entries()) {
@@ -224,39 +200,6 @@ export async function startSseHttpServer(
         sessionTtlMs,
       },
     }
-  }
-
-  function respondJson(
-    res: {
-      statusCode: number
-      setHeader: (name: string, value: string) => void
-      end: (chunk?: string) => void
-    },
-    statusCode: number,
-    payload: unknown,
-  ): void {
-    const body = JSON.stringify(payload, null, 2)
-    res.statusCode = statusCode
-    res.setHeader('content-type', 'application/json; charset=utf-8')
-    res.end(body)
-    trackStatus(statusCode)
-  }
-
-  function respondText(
-    res: {
-      statusCode: number
-      setHeader: (name: string, value: string) => void
-      end: (chunk?: string) => void
-    },
-    statusCode: number,
-    message: string,
-  ): void {
-    res.statusCode = statusCode
-    if (statusCode !== 204) {
-      res.setHeader('content-type', 'text/plain; charset=utf-8')
-    }
-    res.end(message)
-    trackStatus(statusCode)
   }
 
   async function removeSessionById(
@@ -302,7 +245,10 @@ export async function startSseHttpServer(
     trackMethod(method)
 
     if (enableCors) {
-      writeCorsHeaders(res)
+      writeCorsHeaders(res, {
+        methods: ['GET', 'POST', 'OPTIONS'],
+        headers: ['content-type', 'last-event-id', 'authorization'],
+      })
     }
 
     if (method === 'OPTIONS') {

@@ -5,6 +5,13 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 
 import { createFictMcpServer, type CreateFictMcpServerOptions } from '../createServer'
+import {
+  createResponseHelpers,
+  normalizeHttpPath,
+  normalizePositiveInt,
+  resolveOldestSessionId,
+  writeCorsHeaders,
+} from './httpShared'
 
 interface SessionContext {
   server: McpServer
@@ -76,25 +83,9 @@ const DEFAULT_STATS_PATH = '/stats'
 const DEFAULT_MAX_SESSIONS = 100
 const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000
 
-function normalizePath(rawPath: string): string {
-  const withLeadingSlash = rawPath.startsWith('/') ? rawPath : `/${rawPath}`
-  if (withLeadingSlash === '/') return withLeadingSlash
-  return withLeadingSlash.replace(/\/+$/, '')
-}
-
 function readSessionIdHeader(header: string | string[] | undefined): string | undefined {
   if (Array.isArray(header)) return header[0]
   return header
-}
-
-function writeCorsHeaders(res: { setHeader: (name: string, value: string) => void }): void {
-  res.setHeader('access-control-allow-origin', '*')
-  res.setHeader('access-control-allow-methods', 'GET,POST,DELETE,OPTIONS')
-  res.setHeader(
-    'access-control-allow-headers',
-    'content-type,mcp-session-id,mcp-protocol-version,last-event-id,authorization',
-  )
-  res.setHeader('access-control-expose-headers', 'mcp-session-id')
 }
 
 function buildServerOptions(
@@ -115,36 +106,15 @@ async function closeSession(context: SessionContext): Promise<void> {
   await Promise.allSettled([context.server.close(), context.transport.close()])
 }
 
-function normalizePositiveInt(value: number | undefined, fallback: number): number {
-  if (!Number.isFinite(value) || typeof value !== 'number') return fallback
-  const rounded = Math.floor(value)
-  if (rounded <= 0) return fallback
-  return rounded
-}
-
-function resolveOldestSessionId(sessions: Map<string, SessionEntry>): string | undefined {
-  let oldestId: string | undefined
-  let oldestSeen = Number.POSITIVE_INFINITY
-
-  for (const [id, entry] of sessions) {
-    if (entry.lastSeenAt < oldestSeen) {
-      oldestSeen = entry.lastSeenAt
-      oldestId = id
-    }
-  }
-
-  return oldestId
-}
-
 export async function startStreamableHttpServer(
   options: StartStreamableHttpServerOptions = {},
 ): Promise<StartedStreamableHttpServer> {
   const startedAt = Date.now()
   const host = options.host ?? DEFAULT_HOST
   const configuredPort = options.port ?? DEFAULT_PORT
-  const endpointPath = normalizePath(options.path ?? DEFAULT_PATH)
-  const healthPath = normalizePath(options.healthPath ?? DEFAULT_HEALTH_PATH)
-  const statsPath = normalizePath(options.statsPath ?? DEFAULT_STATS_PATH)
+  const endpointPath = normalizeHttpPath(options.path ?? DEFAULT_PATH)
+  const healthPath = normalizeHttpPath(options.healthPath ?? DEFAULT_HEALTH_PATH)
+  const statsPath = normalizeHttpPath(options.statsPath ?? DEFAULT_STATS_PATH)
   const enableCors = options.enableCors ?? true
   const maxSessions = normalizePositiveInt(options.maxSessions, DEFAULT_MAX_SESSIONS)
   const sessionTtlMs = normalizePositiveInt(options.sessionTtlMs, DEFAULT_SESSION_TTL_MS)
@@ -206,6 +176,8 @@ export async function startStreamableHttpServer(
     responsesByStatus.set(statusCode, prev + 1)
   }
 
+  const { respondJson, respondText } = createResponseHelpers(trackStatus)
+
   function getStats(): StreamableHttpServerStats {
     const responseMap: Record<string, number> = {}
     for (const [status, count] of responsesByStatus.entries()) {
@@ -235,37 +207,6 @@ export async function startStreamableHttpServer(
         sessionTtlMs,
       },
     }
-  }
-
-  function respondJson(
-    res: {
-      statusCode: number
-      setHeader: (name: string, value: string) => void
-      end: (chunk?: string) => void
-    },
-    statusCode: number,
-    payload: unknown,
-  ): void {
-    const body = JSON.stringify(payload, null, 2)
-    res.statusCode = statusCode
-    res.setHeader('content-type', 'application/json; charset=utf-8')
-    res.end(body)
-    trackStatus(statusCode)
-  }
-
-  function respondText(
-    res: {
-      statusCode: number
-      setHeader: (name: string, value: string) => void
-      end: (chunk?: string) => void
-    },
-    statusCode: number,
-    message: string,
-  ): void {
-    res.statusCode = statusCode
-    res.setHeader('content-type', 'text/plain; charset=utf-8')
-    res.end(message)
-    trackStatus(statusCode)
   }
 
   async function removeSessionById(
@@ -321,7 +262,17 @@ export async function startStreamableHttpServer(
     trackMethod(requestMethod)
 
     if (enableCors) {
-      writeCorsHeaders(res)
+      writeCorsHeaders(res, {
+        methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+        headers: [
+          'content-type',
+          'mcp-session-id',
+          'mcp-protocol-version',
+          'last-event-id',
+          'authorization',
+        ],
+        exposeHeaders: ['mcp-session-id'],
+      })
     }
 
     if (requestMethod === 'OPTIONS') {
