@@ -32,6 +32,8 @@
     "build:assets": "node scripts/generate-available-docs.mjs",
     "build": "node scripts/generate-available-docs.mjs && tsup",
     "dev": "node scripts/generate-available-docs.mjs && tsup --watch",
+    "test": "vitest run --config vitest.config.ts",
+    "test:watch": "vitest --config vitest.config.ts",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
@@ -48,7 +50,8 @@
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "tsup": "^8.5.1"
+    "tsup": "^8.5.1",
+    "vitest": "^4.0.18"
   },
   "keywords": [
     "fict",
