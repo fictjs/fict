@@ -11,6 +11,7 @@ Fict MCP server for docs retrieval, compiler diagnostics, and Playground link ge
   - Compiler diagnostics (`source: "compiler"`)
   - ESLint diagnostics via `@fictjs/eslint-plugin` (`source: "eslint"`)
   - TypeScript diagnostics (syntax-focused) (`source: "typescript"`)
+- `list-playground-templates`: discover available template ids before generating links.
 - `playground-link`: generate shareable Fict Playground URLs from template + file overrides.
 - `fict-task` prompt: docs-first + autofixer-before-output workflow template.
 - `fict://doc/<section-id>` resources for each local docs section.
