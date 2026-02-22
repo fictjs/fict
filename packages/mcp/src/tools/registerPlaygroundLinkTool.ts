@@ -147,12 +147,23 @@ export function registerPlaygroundLinkTool(
           .describe('Optional config overrides.'),
       },
       outputSchema: {
-        url: z.string(),
-        token: z.string(),
-        size: z.object({
-          rawBytes: z.number(),
-          tokenChars: z.number(),
-        }),
+        url: z.string().optional(),
+        token: z.string().optional(),
+        size: z
+          .object({
+            rawBytes: z.number(),
+            tokenChars: z.number(),
+          })
+          .optional(),
+        error: z.string().optional(),
+        available: z
+          .array(
+            z.object({
+              id: z.string(),
+              name: z.string(),
+            }),
+          )
+          .optional(),
       },
     },
     async ({ templateId, entryFile, profile, files, config }) => {
@@ -160,7 +171,19 @@ export function registerPlaygroundLinkTool(
       const selectedTemplate = templates.find(template => template.id === (templateId ?? 'counter'))
 
       if (!selectedTemplate) {
-        throw new Error(`Unknown templateId: ${templateId ?? 'counter'}`)
+        const output = {
+          error: `Unknown templateId: ${templateId ?? 'counter'}`,
+          available: templates.map(template => ({
+            id: template.id,
+            name: template.name,
+          })),
+        }
+
+        return {
+          content: [{ type: 'text', text: JSON.stringify(output, null, 2) }],
+          structuredContent: output,
+          isError: true,
+        }
       }
 
       const selectedProfile: PlaygroundProfile = profile ?? 'app-default'

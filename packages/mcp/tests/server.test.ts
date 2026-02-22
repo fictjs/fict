@@ -177,6 +177,28 @@ export function List({ items }) {
     expect(snapshot.files['src/App.tsx']).toContain('$state')
   })
 
+  it('returns structured error for unknown playground template', async () => {
+    const { client } = await connectServer()
+
+    const result = await client.callTool({
+      name: 'playground-link',
+      arguments: {
+        templateId: '__missing_template__',
+      },
+    })
+
+    expect(result.isError).toBe(true)
+
+    const payload = result.structuredContent as {
+      error?: string
+      available?: Array<{ id: string; name: string }>
+    }
+
+    expect(payload.error).toContain('Unknown templateId')
+    expect(payload.available?.length ?? 0).toBeGreaterThan(0)
+    expect(payload.available?.some(template => template.id === 'counter')).toBe(true)
+  })
+
   it('supports streamable http transport', async () => {
     const started = await startStreamableHttpServer({
       docsRoot: DOCS_ROOT,
