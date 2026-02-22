@@ -85,6 +85,7 @@ When running with `--http`, MCP also serves:
 - `GET /stats` (configurable via `--stats-path` / `FICT_MCP_HTTP_STATS_PATH`)
 
 `/stats` includes request counters, status counters, error count, active session count, and session lifecycle totals (created/reused/expired/evicted/deleted).
+`--path`, `--health-path`, and `--stats-path` must be distinct values.
 
 ## `fict-autofixer` options
 
