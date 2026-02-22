@@ -290,6 +290,19 @@ export function List({ items }) {
     ).rejects.toThrow('HTTP paths must be distinct')
   })
 
+  it('fails fast for invalid docs root in streamable http startup', async () => {
+    await expect(
+      startStreamableHttpServer({
+        docsRoot: path.join(os.tmpdir(), 'fict-mcp-missing-docs-root'),
+        host: '127.0.0.1',
+        port: 0,
+        path: '/mcp',
+        healthPath: '/healthz',
+        statsPath: '/stats',
+      }),
+    ).rejects.toThrow('Docs root not found')
+  })
+
   it('supports streamable http transport', async () => {
     const started = await startStreamableHttpServer({
       docsRoot: DOCS_ROOT,

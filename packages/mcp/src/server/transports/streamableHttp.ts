@@ -156,6 +156,10 @@ export async function startStreamableHttpServer(
     )
   }
 
+  // Validate docs/options eagerly so invalid config fails at startup instead of first MCP request.
+  const preflight = createFictMcpServer(baseServerOptions)
+  void preflight.server.close()
+
   const sessions = new Map<string, SessionEntry>()
   const responsesByStatus = new Map<number, number>()
   const counters = {
