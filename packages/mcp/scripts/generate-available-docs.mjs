@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import * as prettier from 'prettier'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -262,7 +263,13 @@ export const AVAILABLE_DOCS = ${JSON.stringify(promptDocs, null, 2)} as const
 export const AVAILABLE_DOCS_BLOCK = ${JSON.stringify(availableDocsBlock)}
 `
 
-fs.writeFileSync(outFile, body)
+const prettierConfig =
+  (await prettier.resolveConfig(path.join(workspaceRoot, 'package.json'))) ?? {}
+const formattedTs = await prettier.format(body, {
+  ...prettierConfig,
+  parser: 'typescript',
+})
+fs.writeFileSync(outFile, formattedTs)
 
 const manifestFile = path.join(packageRoot, 'assets', 'docs-manifest.json')
 fs.mkdirSync(path.dirname(manifestFile), { recursive: true })
@@ -276,7 +283,11 @@ const manifest = {
     ...(section.tags ? { tags: section.tags } : {}),
   })),
 }
-fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`)
+const formattedManifest = await prettier.format(`${JSON.stringify(manifest, null, 2)}\n`, {
+  ...prettierConfig,
+  parser: 'json',
+})
+fs.writeFileSync(manifestFile, formattedManifest)
 
 process.stdout.write(
   `Generated: ${path.relative(workspaceRoot, outFile)} (docs: ${sections.length})\n`,
