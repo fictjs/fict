@@ -42,11 +42,11 @@
     "release:compiler:verify": "pnpm --dir packages/compiler lint && pnpm --dir packages/compiler typecheck && pnpm --dir packages/compiler test && pnpm guardrails:hir && pnpm bench:optimizer:guard"
   },
   "devDependencies": {
-    "@babel/core": "^7.28.6",
+    "@babel/core": "^7.29.0",
     "@babel/plugin-syntax-jsx": "^7.28.6",
     "@babel/plugin-transform-react-jsx": "^7.28.6",
     "@babel/preset-typescript": "^7.26.0",
-    "@babel/types": "^7.28.6",
+    "@babel/types": "^7.29.0",
     "@changesets/cli": "^2.29.8",
     "@commitlint/cli": "^20.3.1",
     "@commitlint/config-conventional": "^20.3.1",
@@ -61,7 +61,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "commitizen": "^4.3.1",
     "cz-customizable": "^7.5.1",
-    "eslint": "^9.39.2",
+    "eslint": "^10.0.1",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-import-x": "^4.16.1",
     "husky": "^9.1.7",
