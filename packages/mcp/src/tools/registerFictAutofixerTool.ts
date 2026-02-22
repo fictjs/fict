@@ -373,8 +373,6 @@ async function collectEslintIssues(files: Record<string, string>): Promise<Issue
     if (!firstResult) continue
 
     for (const message of firstResult.messages) {
-      if (message.severity === 0) continue
-
       const issue: Issue = {
         source: 'eslint',
         code: message.ruleId ?? 'ESLINT',
@@ -535,8 +533,8 @@ function compareIssues(left: Issue, right: Issue): number {
   const leftTuple = issueSortTuple(left)
   const rightTuple = issueSortTuple(right)
   for (let i = 0; i < leftTuple.length; i += 1) {
-    const leftValue = leftTuple[i]
-    const rightValue = rightTuple[i]
+    const leftValue = leftTuple[i]!
+    const rightValue = rightTuple[i]!
     if (leftValue < rightValue) return -1
     if (leftValue > rightValue) return 1
   }

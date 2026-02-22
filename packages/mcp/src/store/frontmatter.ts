@@ -45,7 +45,9 @@ function parseFrontmatterMetadata(frontmatter: string): DocFrontmatterMetadata {
   for (const line of lines) {
     const listItemMatch = line.match(/^\s*-\s+(.+)$/)
     if (listItemMatch && activeListKey) {
-      const value = stripWrappedQuotes(listItemMatch[1])
+      const listItemValue = listItemMatch[1]
+      if (!listItemValue) continue
+      const value = stripWrappedQuotes(listItemValue)
       if (!value) continue
       const nextList = metadata[activeListKey] ?? []
       nextList.push(value)
@@ -60,7 +62,9 @@ function parseFrontmatterMetadata(frontmatter: string): DocFrontmatterMetadata {
     }
 
     const key = keyValueMatch[1]
-    const rawValue = keyValueMatch[2].trim()
+    const keyValueRaw = keyValueMatch[2]
+    if (keyValueRaw === undefined) continue
+    const rawValue = keyValueRaw.trim()
 
     if (key === 'title') {
       if (rawValue) {
