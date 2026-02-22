@@ -387,6 +387,15 @@ function runWarningPass(
     'catch',
     'finally',
   ])
+  const NON_ESCAPING_CALLBACK_FUNCTION_IMPORTS = new Set([
+    'untrack',
+    'batch',
+    'startTransition',
+    'createEffect',
+    'createMemo',
+    'createRenderEffect',
+    'runInScope',
+  ])
   const capturedClosureByBinding = new Map<BabelCore.types.Identifier, Set<string>>()
   const shouldIgnoreIdentifierReference = (
     idPath: BabelCore.NodePath<BabelCore.types.Identifier>,
@@ -473,7 +482,29 @@ function runWarningPass(
     const captured = capturedClosureByBinding.get(binding.identifier as BabelCore.types.Identifier)
     return captured && captured.size > 0 ? captured : null
   }
-  const isNonEscapingCallbackHost = (callee: BabelCore.types.Expression): boolean => {
+  const isNonEscapingCallbackHost = (
+    callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
+    callee: BabelCore.types.Expression,
+  ): boolean => {
+    if (t.isIdentifier(callee)) {
+      const binding = callPath.scope.getBinding(callee.name)
+      const bindingPath = binding?.path
+      if (bindingPath?.isImportSpecifier()) {
+        const imported = bindingPath.node.imported
+        const importedName = t.isIdentifier(imported) ? imported.name : imported.value
+        const source = bindingPath.parentPath.node
+        if (
+          source.type === 'ImportDeclaration' &&
+          (source.source.value === 'fict' ||
+            source.source.value === 'fict/advanced' ||
+            source.source.value === '@fictjs/runtime' ||
+            source.source.value === '@fictjs/runtime/advanced') &&
+          NON_ESCAPING_CALLBACK_FUNCTION_IMPORTS.has(importedName)
+        ) {
+          return true
+        }
+      }
+    }
     const member =
       t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee) ? callee : null
     if (!member || member.computed || !t.isIdentifier(member.property)) return false
@@ -668,7 +699,8 @@ function runWarningPass(
       if (isSafe) return
 
       const argPaths = path.get('arguments') as BabelCore.NodePath[]
-      const nonEscapingCallbackHost = isNonEscapingCallbackHost(callee)
+      const nonEscapingCallbackHost = isNonEscapingCallbackHost(path, callee)
+      if (nonEscapingCallbackHost) return
       for (const argPath of argPaths) {
         if (
           argPath.isIdentifier() &&
@@ -688,8 +720,6 @@ function runWarningPass(
           break
         }
       }
-      if (nonEscapingCallbackHost) return
-
       for (const argPath of argPaths) {
         const captured = collectCapturedForArgument(argPath)
         if (!captured) continue

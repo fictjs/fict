@@ -153,6 +153,27 @@ describe('warnings as errors', () => {
     expect(() => transform(source, { strictGuarantee: false, dev: false })).not.toThrow()
   })
 
+  it('strictGuarantee allows known callback-host APIs from fict imports', () => {
+    const source = `
+      import { $state, createEffect, batch, untrack, startTransition } from 'fict'
+      function App() {
+        let count = $state(0)
+        createEffect(() => {
+          if (untrack(() => count >= 0)) {
+            batch(() => {
+              count = count + 1
+            })
+            startTransition(() => {
+              count = count - 1
+            })
+          }
+        })
+        return <div>{count}</div>
+      }
+    `
+    expect(() => transformWithCompilerDefaults(source, { dev: false })).not.toThrow()
+  })
+
   it('strictGuarantee disallows fict-ignore suppression comments', () => {
     const source = `
       // fict-ignore-next-line FICT-R006
