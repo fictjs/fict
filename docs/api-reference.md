@@ -1839,6 +1839,7 @@ function renderToPipeableStream(
   options?: RenderToStreamOptions,
 ): {
   pipe: (writable: NodeJS.WritableStream) => void
+  abort: (reason?: unknown) => void
   shellReady: Promise<void>
   allReady: Promise<void>
 }
