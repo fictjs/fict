@@ -403,12 +403,18 @@ importers:
       '@fictjs/compiler':
         specifier: workspace:^
         version: link:../compiler
+      '@fictjs/eslint-plugin':
+        specifier: workspace:^
+        version: link:../eslint-plugin
       '@fictjs/playground':
         specifier: workspace:^
         version: link:../playground
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.0
         version: 1.27.0(zod@4.3.6)
+      eslint:
+        specifier: ^9.39.2
+        version: 9.39.2(jiti@2.6.1)
       zod:
         specifier: ^4.0.0
         version: 4.3.6

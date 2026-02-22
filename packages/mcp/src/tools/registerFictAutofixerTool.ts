@@ -2,14 +2,16 @@ import { Buffer } from 'node:buffer'
 
 import { transformAsync } from '@babel/core'
 import { createFictPlugin, type CompilerWarning, type FictCompilerOptions } from '@fictjs/compiler'
+import fictEslintPlugin from '@fictjs/eslint-plugin'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { ESLint, type Linter } from 'eslint'
 import { z } from 'zod'
 
 type AutofixerProfile = 'app-default' | 'ci-hard-gate' | 'migration'
 type IssueSeverity = 'error' | 'warning' | 'info' | 'hint'
 
 interface Issue {
-  source: 'compiler'
+  source: 'compiler' | 'eslint'
   code: string
   severity: IssueSeverity
   message: string
@@ -28,6 +30,7 @@ interface Issue {
 }
 
 const DEFAULT_PROFILE: AutofixerProfile = 'app-default'
+const MAX_INPUT_BYTES = 512 * 1024
 
 const DEFAULT_ERROR_WARNING_CODES = new Set(['FICT-R004'])
 const STRICT_REACTIVITY_WARNING_CODES = new Set(['FICT-R003', 'FICT-R006'])
@@ -82,6 +85,247 @@ function warningSeverity(code: string, profile: AutofixerProfile): IssueSeverity
   return 'warning'
 }
 
+const ESLINT_RULE_LEVELS: Linter.RulesRecord = {
+  'fict/no-state-in-loop': 'error',
+  'fict/no-direct-mutation': 'warn',
+  'fict/no-empty-effect': 'warn',
+  'fict/no-computed-props-key': 'warn',
+  'fict/no-inline-functions': 'warn',
+  'fict/no-state-destructure-write': 'error',
+  'fict/no-state-outside-component': 'error',
+  'fict/no-nested-components': 'error',
+  'fict/no-third-party-props-spread': 'warn',
+  'fict/no-unsafe-props-spread': 'warn',
+  'fict/no-unsupported-props-destructure': 'warn',
+  'fict/require-list-key': 'error',
+  'fict/no-memo-side-effects': 'warn',
+  'fict/require-component-return': 'warn',
+}
+
+function createFictEslint(): ESLint {
+  return new ESLint({
+    overrideConfigFile: true,
+    overrideConfig: [
+      {
+        files: ['**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}'],
+        languageOptions: {
+          ecmaVersion: 'latest',
+          sourceType: 'module',
+          parserOptions: {
+            ecmaFeatures: {
+              jsx: true,
+            },
+          },
+        },
+        plugins: {
+          fict: fictEslintPlugin,
+        },
+        rules: ESLINT_RULE_LEVELS,
+      },
+    ],
+  })
+}
+
+function mapEslintSeverity(severity: number): IssueSeverity {
+  if (severity >= 2) return 'error'
+  if (severity === 1) return 'warning'
+  return 'info'
+}
+
+function isTypeScriptFile(filePath: string): boolean {
+  return /\.(tsx?|mts|cts)$/i.test(filePath)
+}
+
+async function toLintableCode(filePath: string, sourceCode: string): Promise<string> {
+  if (!isTypeScriptFile(filePath)) {
+    return sourceCode
+  }
+
+  const result = await transformAsync(sourceCode, {
+    filename: filePath,
+    babelrc: false,
+    configFile: false,
+    sourceMaps: false,
+    ast: false,
+    code: true,
+    parserOpts: {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx'],
+    },
+    presets: [
+      [
+        '@babel/preset-typescript',
+        {
+          isTSX: /\.tsx$/i.test(filePath),
+          allExtensions: true,
+        },
+      ],
+    ],
+    plugins: [['@babel/plugin-syntax-jsx', {}]],
+  })
+
+  return result?.code ?? sourceCode
+}
+
+async function collectCompilerIssues(
+  files: Record<string, string>,
+  profile: AutofixerProfile,
+): Promise<Issue[]> {
+  const issues: Issue[] = []
+
+  for (const [filePath, sourceCode] of Object.entries(files)) {
+    const warnings: CompilerWarning[] = []
+
+    const pluginOptions: FictCompilerOptions = {
+      filename: filePath,
+      dev: true,
+      strictGuarantee: false,
+      strictReactivity: false,
+      warningsAsErrors: false,
+      warningLevels: {
+        'FICT-R004': 'warn',
+      },
+      onWarn(warning) {
+        warnings.push(warning)
+      },
+    }
+
+    try {
+      await transformAsync(sourceCode, {
+        filename: filePath,
+        babelrc: false,
+        configFile: false,
+        sourceMaps: false,
+        ast: false,
+        code: false,
+        parserOpts: {
+          sourceType: 'module',
+          plugins: ['typescript', 'jsx'],
+        },
+        presets: [
+          [
+            '@babel/preset-typescript',
+            {
+              isTSX: /\.(tsx|jsx)$/i.test(filePath),
+              allExtensions: true,
+            },
+          ],
+        ],
+        plugins: [
+          ['@babel/plugin-syntax-jsx', {}],
+          [createFictPlugin, pluginOptions],
+        ],
+      })
+    } catch (error) {
+      issues.push({
+        source: 'compiler',
+        code: 'FICT-COMPILER-CRASH',
+        severity: 'error',
+        message: error instanceof Error ? error.message : String(error),
+        file: filePath,
+      })
+      continue
+    }
+
+    for (const warning of warnings) {
+      const issue: Issue = {
+        source: 'compiler',
+        code: warning.code,
+        severity: warningSeverity(warning.code, profile),
+        message: warning.message,
+        file: warning.fileName || filePath,
+        doc_refs: ['diagnostic-codes'],
+      }
+
+      if (warning.line > 0) {
+        issue.range = {
+          start: {
+            line: warning.line,
+            col: warning.column,
+          },
+        }
+      }
+
+      issues.push(issue)
+    }
+  }
+
+  return issues
+}
+
+async function collectEslintIssues(files: Record<string, string>): Promise<Issue[]> {
+  const issues: Issue[] = []
+  const eslint = createFictEslint()
+
+  for (const [filePath, sourceCode] of Object.entries(files)) {
+    let lintableCode = sourceCode
+    try {
+      lintableCode = await toLintableCode(filePath, sourceCode)
+    } catch (error) {
+      issues.push({
+        source: 'eslint',
+        code: 'FICT-ESLINT-TRANSPILE',
+        severity: 'error',
+        message: error instanceof Error ? error.message : String(error),
+        file: filePath,
+      })
+      continue
+    }
+
+    let results
+    try {
+      results = await eslint.lintText(lintableCode, {
+        filePath,
+      })
+    } catch (error) {
+      issues.push({
+        source: 'eslint',
+        code: 'FICT-ESLINT-RUN',
+        severity: 'error',
+        message: error instanceof Error ? error.message : String(error),
+        file: filePath,
+      })
+      continue
+    }
+
+    const firstResult = results[0]
+    if (!firstResult) continue
+
+    for (const message of firstResult.messages) {
+      if (message.severity === 0) continue
+
+      const issue: Issue = {
+        source: 'eslint',
+        code: message.ruleId ?? 'ESLINT',
+        severity: mapEslintSeverity(message.severity),
+        message: message.message,
+        file: filePath,
+        doc_refs: ['eslint-rules'],
+      }
+
+      if (message.line > 0 && message.column > 0) {
+        issue.range = {
+          start: {
+            line: message.line,
+            col: message.column,
+          },
+        }
+
+        if (typeof message.endLine === 'number' && typeof message.endColumn === 'number') {
+          issue.range.end = {
+            line: message.endLine,
+            col: message.endColumn,
+          }
+        }
+      }
+
+      issues.push(issue)
+    }
+  }
+
+  return issues
+}
+
 function totalBytes(files: Record<string, string>): number {
   let total = 0
   for (const content of Object.values(files)) {
@@ -120,12 +364,16 @@ export function registerFictAutofixerTool(server: McpServer): void {
           .enum(['app-default', 'ci-hard-gate', 'migration'])
           .optional()
           .describe('Strictness profile. Default: app-default.'),
+        includeEslint: z
+          .boolean()
+          .optional()
+          .describe('Whether to include ESLint diagnostics (default: true).'),
       },
       outputSchema: {
         ok: z.boolean(),
         issues: z.array(
           z.object({
-            source: z.enum(['compiler']),
+            source: z.enum(['compiler', 'eslint']),
             code: z.string(),
             severity: z.enum(['error', 'warning', 'info', 'hint']),
             message: z.string(),
@@ -155,17 +403,18 @@ export function registerFictAutofixerTool(server: McpServer): void {
         }),
       },
     },
-    async ({ files, profile }) => {
+    async ({ files, profile, includeEslint }) => {
       const selectedProfile: AutofixerProfile = profile ?? DEFAULT_PROFILE
+      const shouldRunEslint = includeEslint ?? true
       const issues: Issue[] = []
       const totalInputBytes = totalBytes(files)
 
-      if (totalInputBytes > 512 * 1024) {
+      if (totalInputBytes > MAX_INPUT_BYTES) {
         issues.push({
           source: 'compiler',
           code: 'FICT-MCP-SIZE',
           severity: 'error',
-          message: `Input too large (${totalInputBytes} bytes). Max allowed: 524288 bytes.`,
+          message: `Input too large (${totalInputBytes} bytes). Max allowed: ${MAX_INPUT_BYTES} bytes.`,
           file: '(input)',
         })
       } else if (Object.keys(files).length === 0) {
@@ -177,80 +426,21 @@ export function registerFictAutofixerTool(server: McpServer): void {
           file: '(input)',
         })
       } else {
-        for (const [filePath, sourceCode] of Object.entries(files)) {
-          const warnings: CompilerWarning[] = []
+        const compilerIssues = await collectCompilerIssues(files, selectedProfile)
+        issues.push(...compilerIssues)
 
-          const pluginOptions: FictCompilerOptions = {
-            filename: filePath,
-            dev: true,
-            strictGuarantee: false,
-            strictReactivity: false,
-            warningsAsErrors: false,
-            warningLevels: {
-              'FICT-R004': 'warn',
-            },
-            onWarn(warning) {
-              warnings.push(warning)
-            },
-          }
-
+        if (shouldRunEslint) {
           try {
-            await transformAsync(sourceCode, {
-              filename: filePath,
-              babelrc: false,
-              configFile: false,
-              sourceMaps: false,
-              ast: false,
-              code: false,
-              parserOpts: {
-                sourceType: 'module',
-                plugins: ['typescript', 'jsx'],
-              },
-              presets: [
-                [
-                  '@babel/preset-typescript',
-                  {
-                    isTSX: /\.(tsx|jsx)$/i.test(filePath),
-                    allExtensions: true,
-                  },
-                ],
-              ],
-              plugins: [
-                ['@babel/plugin-syntax-jsx', {}],
-                [createFictPlugin, pluginOptions],
-              ],
-            })
+            const eslintIssues = await collectEslintIssues(files)
+            issues.push(...eslintIssues)
           } catch (error) {
             issues.push({
-              source: 'compiler',
-              code: 'FICT-COMPILER-CRASH',
+              source: 'eslint',
+              code: 'FICT-ESLINT-SETUP',
               severity: 'error',
               message: error instanceof Error ? error.message : String(error),
-              file: filePath,
+              file: '(input)',
             })
-            continue
-          }
-
-          for (const warning of warnings) {
-            const issue: Issue = {
-              source: 'compiler',
-              code: warning.code,
-              severity: warningSeverity(warning.code, selectedProfile),
-              message: warning.message,
-              file: warning.fileName || filePath,
-              doc_refs: ['diagnostic-codes'],
-            }
-
-            if (warning.line > 0) {
-              issue.range = {
-                start: {
-                  line: warning.line,
-                  col: warning.column,
-                },
-              }
-            }
-
-            issues.push(issue)
           }
         }
       }

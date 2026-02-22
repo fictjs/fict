@@ -14,7 +14,9 @@ export default defineConfig([
       '@babel/plugin-syntax-jsx',
       '@babel/preset-typescript',
       '@fictjs/compiler',
+      '@fictjs/eslint-plugin',
       '@fictjs/playground',
+      'eslint',
     ],
   },
   {
@@ -34,7 +36,9 @@ export default defineConfig([
       '@babel/plugin-syntax-jsx',
       '@babel/preset-typescript',
       '@fictjs/compiler',
+      '@fictjs/eslint-plugin',
       '@fictjs/playground',
+      'eslint',
     ],
   },
 ])

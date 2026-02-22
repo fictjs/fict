@@ -41,8 +41,10 @@
     "@babel/plugin-syntax-jsx": "^7.28.6",
     "@babel/preset-typescript": "^7.26.0",
     "@fictjs/compiler": "workspace:^",
+    "@fictjs/eslint-plugin": "workspace:^",
     "@fictjs/playground": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.27.0",
+    "eslint": "^9.39.2",
     "zod": "^4.0.0"
   },
   "devDependencies": {
