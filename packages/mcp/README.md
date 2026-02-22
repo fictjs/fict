@@ -16,6 +16,22 @@ Fict MCP server for docs retrieval, compiler diagnostics, and Playground link ge
 - `fict-task` prompt: docs-first + autofixer-before-output workflow template.
 - `fict://doc/<section-id>` resources for each local docs section.
 
+## Docs section metadata
+
+`list-sections` / `search-sections` can expose per-section metadata from markdown frontmatter:
+
+```md
+---
+title: Custom Guide Title
+tags: [mcp, docs]
+use_cases:
+  - Explain migration constraints
+  - Provide implementation checklist
+---
+```
+
+If frontmatter metadata is missing, built-in defaults are still applied for core Fict docs.
+
 ## Build
 
 ```bash
