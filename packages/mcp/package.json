@@ -3,19 +3,21 @@
   "version": "0.12.0",
   "description": "MCP server for Fict",
   "type": "module",
-  "main": "dist/index.cjs",
-  "module": "dist/index.js",
+  "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "fict-mcp": "dist/bin.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": "./dist/index.js"
     }
   },
   "files": [
     "dist",
-    "src"
+    "src",
+    "README.md"
   ],
   "publishConfig": {
     "access": "public",
@@ -27,11 +29,16 @@
     "directory": "packages/mcp"
   },
   "scripts": {
-    "build": "tsup",
-    "dev": "tsup --watch",
+    "build:assets": "node scripts/generate-available-docs.mjs",
+    "build": "node scripts/generate-available-docs.mjs && tsup",
+    "dev": "node scripts/generate-available-docs.mjs && tsup --watch",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "tsup": "^8.5.1"

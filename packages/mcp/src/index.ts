@@ -1,11 +1,3 @@
-export interface FictMcpPackageInfo {
-  name: string
-  version: string
-}
-
-export function getMcpPackageInfo(): FictMcpPackageInfo {
-  return {
-    name: '@fictjs/mcp',
-    version: '0.8.0',
-  }
-}
+export type { CreateFictMcpServerOptions } from './server/createServer'
+export { createFictMcpServer } from './server/createServer'
+export { startStdioServer } from './server/transports/stdio'
