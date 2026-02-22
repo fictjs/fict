@@ -11,11 +11,18 @@ interface SessionContext {
   transport: StreamableHTTPServerTransport
 }
 
+interface SessionEntry {
+  context: SessionContext
+  lastSeenAt: number
+}
+
 export interface StartStreamableHttpServerOptions extends CreateFictMcpServerOptions {
   host?: string
   port?: number
   path?: string
   enableCors?: boolean
+  maxSessions?: number
+  sessionTtlMs?: number
 }
 
 export interface StartedStreamableHttpServer {
@@ -29,6 +36,8 @@ export interface StartedStreamableHttpServer {
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 8788
 const DEFAULT_PATH = '/mcp'
+const DEFAULT_MAX_SESSIONS = 100
+const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000
 
 function normalizePath(rawPath: string): string {
   const withLeadingSlash = rawPath.startsWith('/') ? rawPath : `/${rawPath}`
@@ -68,6 +77,27 @@ async function closeSession(context: SessionContext): Promise<void> {
   await Promise.allSettled([context.server.close(), context.transport.close()])
 }
 
+function normalizePositiveInt(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value) || typeof value !== 'number') return fallback
+  const rounded = Math.floor(value)
+  if (rounded <= 0) return fallback
+  return rounded
+}
+
+function resolveOldestSessionId(sessions: Map<string, SessionEntry>): string | undefined {
+  let oldestId: string | undefined
+  let oldestSeen = Number.POSITIVE_INFINITY
+
+  for (const [id, entry] of sessions) {
+    if (entry.lastSeenAt < oldestSeen) {
+      oldestSeen = entry.lastSeenAt
+      oldestId = id
+    }
+  }
+
+  return oldestId
+}
+
 export async function startStreamableHttpServer(
   options: StartStreamableHttpServerOptions = {},
 ): Promise<StartedStreamableHttpServer> {
@@ -75,11 +105,45 @@ export async function startStreamableHttpServer(
   const configuredPort = options.port ?? DEFAULT_PORT
   const endpointPath = normalizePath(options.path ?? DEFAULT_PATH)
   const enableCors = options.enableCors ?? true
+  const maxSessions = normalizePositiveInt(options.maxSessions, DEFAULT_MAX_SESSIONS)
+  const sessionTtlMs = normalizePositiveInt(options.sessionTtlMs, DEFAULT_SESSION_TTL_MS)
   const baseServerOptions = buildServerOptions(options)
 
-  const sessions = new Map<string, SessionContext>()
+  const sessions = new Map<string, SessionEntry>()
+
+  async function removeSessionById(sessionId: string): Promise<void> {
+    const entry = sessions.get(sessionId)
+    if (!entry) return
+    sessions.delete(sessionId)
+    await closeSession(entry.context)
+  }
+
+  async function pruneExpiredSessions(now: number): Promise<void> {
+    if (sessionTtlMs <= 0) return
+
+    const expiredIds: string[] = []
+    for (const [sessionId, entry] of sessions) {
+      if (now - entry.lastSeenAt > sessionTtlMs) {
+        expiredIds.push(sessionId)
+      }
+    }
+
+    for (const sessionId of expiredIds) {
+      await removeSessionById(sessionId)
+    }
+  }
+
+  async function ensureSessionCapacity(): Promise<void> {
+    while (sessions.size >= maxSessions) {
+      const oldestSessionId = resolveOldestSessionId(sessions)
+      if (!oldestSessionId) break
+      await removeSessionById(oldestSessionId)
+    }
+  }
 
   async function createSession(): Promise<SessionContext> {
+    await ensureSessionCapacity()
+
     const { server } = createFictMcpServer(baseServerOptions)
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
@@ -107,6 +171,8 @@ export async function startStreamableHttpServer(
       return
     }
 
+    await pruneExpiredSessions(Date.now())
+
     const requestUrl = new URL(
       req.url ?? '/',
       `http://${req.headers.host ?? `${host}:${configuredPort}`}`,
@@ -119,10 +185,10 @@ export async function startStreamableHttpServer(
 
     const sessionId = readSessionIdHeader(req.headers['mcp-session-id'])
 
-    let context = sessionId ? sessions.get(sessionId) : undefined
+    let sessionEntry = sessionId ? sessions.get(sessionId) : undefined
     let createdThisRequest = false
 
-    if (!context) {
+    if (!sessionEntry) {
       if (sessionId) {
         res.statusCode = 404
         res.end('Unknown MCP session')
@@ -135,12 +201,17 @@ export async function startStreamableHttpServer(
         return
       }
 
-      context = await createSession()
+      const context = await createSession()
+      sessionEntry = {
+        context,
+        lastSeenAt: Date.now(),
+      }
       createdThisRequest = true
     }
 
     try {
-      await context.transport.handleRequest(req, res)
+      await sessionEntry.context.transport.handleRequest(req, res)
+      sessionEntry.lastSeenAt = Date.now()
     } catch (error) {
       if (!res.headersSent) {
         res.statusCode = 500
@@ -150,25 +221,24 @@ export async function startStreamableHttpServer(
       }
 
       if (createdThisRequest) {
-        await closeSession(context)
+        await closeSession(sessionEntry.context)
       }
 
       return
     }
 
     if (createdThisRequest) {
-      const newSessionId = context.transport.sessionId
+      const newSessionId = sessionEntry.context.transport.sessionId
       if (newSessionId) {
-        sessions.set(newSessionId, context)
+        sessions.set(newSessionId, sessionEntry)
       } else {
-        await closeSession(context)
+        await closeSession(sessionEntry.context)
       }
       return
     }
 
     if (requestMethod === 'DELETE' && sessionId) {
-      sessions.delete(sessionId)
-      await closeSession(context)
+      await removeSessionById(sessionId)
     }
   })
 
@@ -189,8 +259,8 @@ export async function startStreamableHttpServer(
     path: endpointPath,
     url: `http://${host}:${resolvedPort}${endpointPath}`,
     close: async () => {
-      for (const context of sessions.values()) {
-        await closeSession(context)
+      for (const entry of sessions.values()) {
+        await closeSession(entry.context)
       }
       sessions.clear()
 

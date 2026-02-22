@@ -8,6 +8,8 @@ interface CliOptions {
   host: string
   port: number
   path: string
+  maxSessions: number
+  sessionTtlMs: number
 }
 
 function readNumberEnv(name: string, fallback: number): number {
@@ -26,6 +28,8 @@ function parseArgs(argv: string[]): CliOptions {
     host: process.env.FICT_MCP_HTTP_HOST ?? '127.0.0.1',
     port: readNumberEnv('FICT_MCP_HTTP_PORT', 8788),
     path: process.env.FICT_MCP_HTTP_PATH ?? '/mcp',
+    maxSessions: readNumberEnv('FICT_MCP_HTTP_MAX_SESSIONS', 100),
+    sessionTtlMs: readNumberEnv('FICT_MCP_HTTP_SESSION_TTL_MS', 30 * 60 * 1000),
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -71,6 +75,30 @@ function parseArgs(argv: string[]): CliOptions {
       continue
     }
 
+    if (arg === '--max-sessions') {
+      const next = argv[index + 1]
+      if (!next) throw new Error('--max-sessions requires a numeric value')
+      const parsed = Number(next)
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error('--max-sessions requires a positive number')
+      }
+      options.maxSessions = parsed
+      index += 1
+      continue
+    }
+
+    if (arg === '--session-ttl-ms') {
+      const next = argv[index + 1]
+      if (!next) throw new Error('--session-ttl-ms requires a numeric value')
+      const parsed = Number(next)
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        throw new Error('--session-ttl-ms requires a positive number')
+      }
+      options.sessionTtlMs = parsed
+      index += 1
+      continue
+    }
+
     if (arg === '-h' || arg === '--help') {
       printHelp()
       process.exit(0)
@@ -94,10 +122,13 @@ function printHelp(): void {
     '  --host <host>    Bind host (default: 127.0.0.1)',
     '  --port <port>    Bind port (default: 8788)',
     '  --path <path>    MCP endpoint path (default: /mcp)',
+    '  --max-sessions <n>     Max concurrent sessions (default: 100)',
+    '  --session-ttl-ms <ms>  Session idle TTL in milliseconds (default: 1800000)',
     '',
     'Environment:',
     '  FICT_MCP_TRANSPORT=http|stdio',
     '  FICT_MCP_HTTP_HOST, FICT_MCP_HTTP_PORT, FICT_MCP_HTTP_PATH',
+    '  FICT_MCP_HTTP_MAX_SESSIONS, FICT_MCP_HTTP_SESSION_TTL_MS',
     '  FICT_MCP_DOCS_ROOT, FICT_PLAYGROUND_ORIGIN',
   ].join('\n')
 
@@ -116,6 +147,8 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
     host: options.host,
     port: options.port,
     path: options.path,
+    maxSessions: options.maxSessions,
+    sessionTtlMs: options.sessionTtlMs,
     docsRoot: process.env.FICT_MCP_DOCS_ROOT,
     playgroundOrigin: process.env.FICT_PLAYGROUND_ORIGIN,
   })
