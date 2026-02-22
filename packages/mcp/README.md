@@ -93,6 +93,7 @@ When running with `--http`, MCP also serves:
 
 `fict-autofixer` input supports:
 
+- `entry`: optional entry path; if provided it must exist in `files`
 - `profile`: `app-default | ci-hard-gate | migration`
 - `includeEslint` (default: `true`)
 - `includeTypescript` (default: `true`)
