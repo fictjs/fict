@@ -20,9 +20,41 @@ export interface StartStreamableHttpServerOptions extends CreateFictMcpServerOpt
   host?: string
   port?: number
   path?: string
+  healthPath?: string
+  statsPath?: string
   enableCors?: boolean
   maxSessions?: number
   sessionTtlMs?: number
+}
+
+export interface StreamableHttpServerStats {
+  startedAt: number
+  uptimeMs: number
+  requestsTotal: number
+  requestsByMethod: {
+    GET: number
+    POST: number
+    DELETE: number
+    OPTIONS: number
+    OTHER: number
+  }
+  responsesByStatus: Record<string, number>
+  errorsTotal: number
+  sessions: {
+    active: number
+    created: number
+    reused: number
+    deleted: number
+    expired: number
+    evicted: number
+  }
+  config: {
+    endpointPath: string
+    healthPath: string
+    statsPath: string
+    maxSessions: number
+    sessionTtlMs: number
+  }
 }
 
 export interface StartedStreamableHttpServer {
@@ -30,12 +62,17 @@ export interface StartedStreamableHttpServer {
   port: number
   path: string
   url: string
+  healthUrl: string
+  statsUrl: string
+  getStats: () => StreamableHttpServerStats
   close: () => Promise<void>
 }
 
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 8788
 const DEFAULT_PATH = '/mcp'
+const DEFAULT_HEALTH_PATH = '/healthz'
+const DEFAULT_STATS_PATH = '/stats'
 const DEFAULT_MAX_SESSIONS = 100
 const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000
 
@@ -101,21 +138,136 @@ function resolveOldestSessionId(sessions: Map<string, SessionEntry>): string | u
 export async function startStreamableHttpServer(
   options: StartStreamableHttpServerOptions = {},
 ): Promise<StartedStreamableHttpServer> {
+  const startedAt = Date.now()
   const host = options.host ?? DEFAULT_HOST
   const configuredPort = options.port ?? DEFAULT_PORT
   const endpointPath = normalizePath(options.path ?? DEFAULT_PATH)
+  const healthPath = normalizePath(options.healthPath ?? DEFAULT_HEALTH_PATH)
+  const statsPath = normalizePath(options.statsPath ?? DEFAULT_STATS_PATH)
   const enableCors = options.enableCors ?? true
   const maxSessions = normalizePositiveInt(options.maxSessions, DEFAULT_MAX_SESSIONS)
   const sessionTtlMs = normalizePositiveInt(options.sessionTtlMs, DEFAULT_SESSION_TTL_MS)
   const baseServerOptions = buildServerOptions(options)
 
   const sessions = new Map<string, SessionEntry>()
+  const responsesByStatus = new Map<number, number>()
+  const counters = {
+    requestsTotal: 0,
+    requestsByMethod: {
+      GET: 0,
+      POST: 0,
+      DELETE: 0,
+      OPTIONS: 0,
+      OTHER: 0,
+    },
+    errorsTotal: 0,
+    sessionsCreated: 0,
+    sessionsReused: 0,
+    sessionsDeleted: 0,
+    sessionsExpired: 0,
+    sessionsEvicted: 0,
+  }
 
-  async function removeSessionById(sessionId: string): Promise<void> {
+  function trackMethod(method: string): void {
+    counters.requestsTotal += 1
+    if (method === 'GET') {
+      counters.requestsByMethod.GET += 1
+      return
+    }
+    if (method === 'POST') {
+      counters.requestsByMethod.POST += 1
+      return
+    }
+    if (method === 'DELETE') {
+      counters.requestsByMethod.DELETE += 1
+      return
+    }
+    if (method === 'OPTIONS') {
+      counters.requestsByMethod.OPTIONS += 1
+      return
+    }
+    counters.requestsByMethod.OTHER += 1
+  }
+
+  function trackStatus(statusCode: number): void {
+    const prev = responsesByStatus.get(statusCode) ?? 0
+    responsesByStatus.set(statusCode, prev + 1)
+  }
+
+  function getStats(): StreamableHttpServerStats {
+    const responseMap: Record<string, number> = {}
+    for (const [status, count] of responsesByStatus.entries()) {
+      responseMap[String(status)] = count
+    }
+
+    return {
+      startedAt,
+      uptimeMs: Date.now() - startedAt,
+      requestsTotal: counters.requestsTotal,
+      requestsByMethod: { ...counters.requestsByMethod },
+      responsesByStatus: responseMap,
+      errorsTotal: counters.errorsTotal,
+      sessions: {
+        active: sessions.size,
+        created: counters.sessionsCreated,
+        reused: counters.sessionsReused,
+        deleted: counters.sessionsDeleted,
+        expired: counters.sessionsExpired,
+        evicted: counters.sessionsEvicted,
+      },
+      config: {
+        endpointPath,
+        healthPath,
+        statsPath,
+        maxSessions,
+        sessionTtlMs,
+      },
+    }
+  }
+
+  function respondJson(
+    res: {
+      statusCode: number
+      setHeader: (name: string, value: string) => void
+      end: (chunk?: string) => void
+    },
+    statusCode: number,
+    payload: unknown,
+  ): void {
+    const body = JSON.stringify(payload, null, 2)
+    res.statusCode = statusCode
+    res.setHeader('content-type', 'application/json; charset=utf-8')
+    res.end(body)
+    trackStatus(statusCode)
+  }
+
+  function respondText(
+    res: {
+      statusCode: number
+      setHeader: (name: string, value: string) => void
+      end: (chunk?: string) => void
+    },
+    statusCode: number,
+    message: string,
+  ): void {
+    res.statusCode = statusCode
+    res.setHeader('content-type', 'text/plain; charset=utf-8')
+    res.end(message)
+    trackStatus(statusCode)
+  }
+
+  async function removeSessionById(
+    sessionId: string,
+    reason: 'expired' | 'evicted' | 'deleted' | 'shutdown',
+  ): Promise<void> {
     const entry = sessions.get(sessionId)
     if (!entry) return
     sessions.delete(sessionId)
     await closeSession(entry.context)
+
+    if (reason === 'expired') counters.sessionsExpired += 1
+    if (reason === 'evicted') counters.sessionsEvicted += 1
+    if (reason === 'deleted') counters.sessionsDeleted += 1
   }
 
   async function pruneExpiredSessions(now: number): Promise<void> {
@@ -129,7 +281,7 @@ export async function startStreamableHttpServer(
     }
 
     for (const sessionId of expiredIds) {
-      await removeSessionById(sessionId)
+      await removeSessionById(sessionId, 'expired')
     }
   }
 
@@ -137,7 +289,7 @@ export async function startStreamableHttpServer(
     while (sessions.size >= maxSessions) {
       const oldestSessionId = resolveOldestSessionId(sessions)
       if (!oldestSessionId) break
-      await removeSessionById(oldestSessionId)
+      await removeSessionById(oldestSessionId, 'evicted')
     }
   }
 
@@ -153,21 +305,15 @@ export async function startStreamableHttpServer(
   }
 
   const httpServer = createHttpServer(async (req, res) => {
+    const requestMethod = req.method ?? 'UNKNOWN'
+    trackMethod(requestMethod)
+
     if (enableCors) {
       writeCorsHeaders(res)
     }
 
-    if (req.method === 'OPTIONS') {
-      res.statusCode = 204
-      res.end()
-      return
-    }
-
-    const requestMethod = req.method ?? ''
-    if (!['GET', 'POST', 'DELETE'].includes(requestMethod)) {
-      res.statusCode = 405
-      res.setHeader('allow', 'GET,POST,DELETE,OPTIONS')
-      res.end('Method Not Allowed')
+    if (requestMethod === 'OPTIONS') {
+      respondText(res, 204, '')
       return
     }
 
@@ -177,9 +323,44 @@ export async function startStreamableHttpServer(
       req.url ?? '/',
       `http://${req.headers.host ?? `${host}:${configuredPort}`}`,
     )
+
+    if (requestUrl.pathname === healthPath) {
+      if (requestMethod !== 'GET') {
+        respondText(res, 405, 'Method Not Allowed')
+        return
+      }
+
+      respondJson(res, 200, {
+        ok: true,
+        service: 'fict-mcp',
+        transport: 'streamable-http',
+        now: new Date().toISOString(),
+        stats: {
+          uptimeMs: Date.now() - startedAt,
+          activeSessions: sessions.size,
+        },
+      })
+      return
+    }
+
+    if (requestUrl.pathname === statsPath) {
+      if (requestMethod !== 'GET') {
+        respondText(res, 405, 'Method Not Allowed')
+        return
+      }
+
+      respondJson(res, 200, getStats())
+      return
+    }
+
+    if (!['GET', 'POST', 'DELETE'].includes(requestMethod)) {
+      res.setHeader('allow', 'GET,POST,DELETE,OPTIONS')
+      respondText(res, 405, 'Method Not Allowed')
+      return
+    }
+
     if (requestUrl.pathname !== endpointPath) {
-      res.statusCode = 404
-      res.end('Not Found')
+      respondText(res, 404, 'Not Found')
       return
     }
 
@@ -190,14 +371,12 @@ export async function startStreamableHttpServer(
 
     if (!sessionEntry) {
       if (sessionId) {
-        res.statusCode = 404
-        res.end('Unknown MCP session')
+        respondText(res, 404, 'Unknown MCP session')
         return
       }
 
       if (requestMethod !== 'POST') {
-        res.statusCode = 400
-        res.end('Missing mcp-session-id header')
+        respondText(res, 400, 'Missing mcp-session-id header')
         return
       }
 
@@ -207,17 +386,22 @@ export async function startStreamableHttpServer(
         lastSeenAt: Date.now(),
       }
       createdThisRequest = true
+      counters.sessionsCreated += 1
+    } else {
+      counters.sessionsReused += 1
     }
 
     try {
       await sessionEntry.context.transport.handleRequest(req, res)
       sessionEntry.lastSeenAt = Date.now()
+      trackStatus(res.statusCode || 200)
     } catch (error) {
+      counters.errorsTotal += 1
       if (!res.headersSent) {
-        res.statusCode = 500
-        res.end(error instanceof Error ? error.message : String(error))
+        respondText(res, 500, error instanceof Error ? error.message : String(error))
       } else {
         res.end()
+        trackStatus(res.statusCode || 500)
       }
 
       if (createdThisRequest) {
@@ -238,7 +422,7 @@ export async function startStreamableHttpServer(
     }
 
     if (requestMethod === 'DELETE' && sessionId) {
-      await removeSessionById(sessionId)
+      await removeSessionById(sessionId, 'deleted')
     }
   })
 
@@ -258,11 +442,13 @@ export async function startStreamableHttpServer(
     port: resolvedPort,
     path: endpointPath,
     url: `http://${host}:${resolvedPort}${endpointPath}`,
+    healthUrl: `http://${host}:${resolvedPort}${healthPath}`,
+    statsUrl: `http://${host}:${resolvedPort}${statsPath}`,
+    getStats,
     close: async () => {
-      for (const entry of sessions.values()) {
-        await closeSession(entry.context)
+      for (const sessionId of sessions.keys()) {
+        await removeSessionById(sessionId, 'shutdown')
       }
-      sessions.clear()
 
       await new Promise<void>((resolve, reject) => {
         httpServer.close(error => {

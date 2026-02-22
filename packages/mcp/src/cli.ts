@@ -8,6 +8,8 @@ interface CliOptions {
   host: string
   port: number
   path: string
+  healthPath: string
+  statsPath: string
   maxSessions: number
   sessionTtlMs: number
 }
@@ -28,6 +30,8 @@ function parseArgs(argv: string[]): CliOptions {
     host: process.env.FICT_MCP_HTTP_HOST ?? '127.0.0.1',
     port: readNumberEnv('FICT_MCP_HTTP_PORT', 8788),
     path: process.env.FICT_MCP_HTTP_PATH ?? '/mcp',
+    healthPath: process.env.FICT_MCP_HTTP_HEALTH_PATH ?? '/healthz',
+    statsPath: process.env.FICT_MCP_HTTP_STATS_PATH ?? '/stats',
     maxSessions: readNumberEnv('FICT_MCP_HTTP_MAX_SESSIONS', 100),
     sessionTtlMs: readNumberEnv('FICT_MCP_HTTP_SESSION_TTL_MS', 30 * 60 * 1000),
   }
@@ -71,6 +75,22 @@ function parseArgs(argv: string[]): CliOptions {
       const next = argv[index + 1]
       if (!next) throw new Error('--path requires a value')
       options.path = next
+      index += 1
+      continue
+    }
+
+    if (arg === '--health-path') {
+      const next = argv[index + 1]
+      if (!next) throw new Error('--health-path requires a value')
+      options.healthPath = next
+      index += 1
+      continue
+    }
+
+    if (arg === '--stats-path') {
+      const next = argv[index + 1]
+      if (!next) throw new Error('--stats-path requires a value')
+      options.statsPath = next
       index += 1
       continue
     }
@@ -122,12 +142,15 @@ function printHelp(): void {
     '  --host <host>    Bind host (default: 127.0.0.1)',
     '  --port <port>    Bind port (default: 8788)',
     '  --path <path>    MCP endpoint path (default: /mcp)',
+    '  --health-path <path>    Health endpoint path (default: /healthz)',
+    '  --stats-path <path>     Stats endpoint path (default: /stats)',
     '  --max-sessions <n>     Max concurrent sessions (default: 100)',
     '  --session-ttl-ms <ms>  Session idle TTL in milliseconds (default: 1800000)',
     '',
     'Environment:',
     '  FICT_MCP_TRANSPORT=http|stdio',
     '  FICT_MCP_HTTP_HOST, FICT_MCP_HTTP_PORT, FICT_MCP_HTTP_PATH',
+    '  FICT_MCP_HTTP_HEALTH_PATH, FICT_MCP_HTTP_STATS_PATH',
     '  FICT_MCP_HTTP_MAX_SESSIONS, FICT_MCP_HTTP_SESSION_TTL_MS',
     '  FICT_MCP_DOCS_ROOT, FICT_PLAYGROUND_ORIGIN',
   ].join('\n')
@@ -147,6 +170,8 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
     host: options.host,
     port: options.port,
     path: options.path,
+    healthPath: options.healthPath,
+    statsPath: options.statsPath,
     maxSessions: options.maxSessions,
     sessionTtlMs: options.sessionTtlMs,
     docsRoot: process.env.FICT_MCP_DOCS_ROOT,
@@ -154,6 +179,8 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
   })
 
   process.stderr.write(`Fict MCP HTTP server running at ${server.url}\n`)
+  process.stderr.write(`Health: ${server.healthUrl}\n`)
+  process.stderr.write(`Stats: ${server.statsUrl}\n`)
 
   const shutdown = async (): Promise<void> => {
     await server.close()

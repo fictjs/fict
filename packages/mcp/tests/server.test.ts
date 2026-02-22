@@ -183,6 +183,8 @@ export function List({ items }) {
       host: '127.0.0.1',
       port: 0,
       path: '/mcp',
+      healthPath: '/healthz',
+      statsPath: '/stats',
     })
 
     const transport = new StreamableHTTPClientTransport(new URL(started.url))
@@ -203,6 +205,24 @@ export function List({ items }) {
         ? ((sections.structuredContent as { sections: unknown[] }).sections ?? []).length
         : 0
       expect(count).toBeGreaterThan(0)
+
+      const healthRes = await fetch(started.healthUrl)
+      expect(healthRes.status).toBe(200)
+      const health = (await healthRes.json()) as {
+        ok: boolean
+        stats: { activeSessions: number }
+      }
+      expect(health.ok).toBe(true)
+      expect(health.stats.activeSessions).toBeGreaterThan(0)
+
+      const statsRes = await fetch(started.statsUrl)
+      expect(statsRes.status).toBe(200)
+      const stats = (await statsRes.json()) as {
+        requestsTotal: number
+        sessions: { active: number }
+      }
+      expect(stats.requestsTotal).toBeGreaterThan(0)
+      expect(stats.sessions.active).toBeGreaterThan(0)
     } finally {
       await client.close()
       await started.close()
