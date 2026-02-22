@@ -17,6 +17,7 @@ export default defineConfig([
       '@fictjs/eslint-plugin',
       '@fictjs/playground',
       'eslint',
+      'typescript',
     ],
   },
   {
@@ -39,6 +40,7 @@ export default defineConfig([
       '@fictjs/eslint-plugin',
       '@fictjs/playground',
       'eslint',
+      'typescript',
     ],
   },
 ])

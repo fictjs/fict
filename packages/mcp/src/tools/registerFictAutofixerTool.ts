@@ -5,13 +5,14 @@ import { createFictPlugin, type CompilerWarning, type FictCompilerOptions } from
 import fictEslintPlugin from '@fictjs/eslint-plugin'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { ESLint, type Linter } from 'eslint'
+import ts from 'typescript'
 import { z } from 'zod'
 
 type AutofixerProfile = 'app-default' | 'ci-hard-gate' | 'migration'
 type IssueSeverity = 'error' | 'warning' | 'info' | 'hint'
 
 interface Issue {
-  source: 'compiler' | 'eslint'
+  source: 'compiler' | 'eslint' | 'typescript'
   code: string
   severity: IssueSeverity
   message: string
@@ -129,6 +130,12 @@ function createFictEslint(): ESLint {
 function mapEslintSeverity(severity: number): IssueSeverity {
   if (severity >= 2) return 'error'
   if (severity === 1) return 'warning'
+  return 'info'
+}
+
+function mapTypeScriptSeverity(category: ts.DiagnosticCategory): IssueSeverity {
+  if (category === ts.DiagnosticCategory.Error) return 'error'
+  if (category === ts.DiagnosticCategory.Warning) return 'warning'
   return 'info'
 }
 
@@ -326,6 +333,81 @@ async function collectEslintIssues(files: Record<string, string>): Promise<Issue
   return issues
 }
 
+function toScriptKind(filePath: string): ts.ScriptKind {
+  if (/\.tsx$/i.test(filePath)) return ts.ScriptKind.TSX
+  if (/\.jsx$/i.test(filePath)) return ts.ScriptKind.JSX
+  if (/\.ts$/i.test(filePath)) return ts.ScriptKind.TS
+  if (/\.json$/i.test(filePath)) return ts.ScriptKind.JSON
+  return ts.ScriptKind.JS
+}
+
+function diagnosticMessage(diagnostic: ts.Diagnostic): string {
+  return ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
+}
+
+function diagnosticRange(diagnostic: ts.Diagnostic): Issue['range'] {
+  if (!diagnostic.file || typeof diagnostic.start !== 'number') {
+    return undefined
+  }
+
+  const start = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start)
+  const range: NonNullable<Issue['range']> = {
+    start: {
+      line: start.line + 1,
+      col: start.character + 1,
+    },
+  }
+
+  if (typeof diagnostic.length === 'number') {
+    const end = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start + diagnostic.length)
+    range.end = {
+      line: end.line + 1,
+      col: end.character + 1,
+    }
+  }
+
+  return range
+}
+
+async function collectTypeScriptIssues(files: Record<string, string>): Promise<Issue[]> {
+  const issues: Issue[] = []
+
+  for (const [filePath, sourceCode] of Object.entries(files)) {
+    const result = ts.transpileModule(sourceCode, {
+      fileName: filePath,
+      reportDiagnostics: true,
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2020,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        jsx: ts.JsxEmit.Preserve,
+        strict: true,
+      },
+      transformers: undefined,
+      jsDocParsingMode: ts.JSDocParsingMode.ParseForTypeErrors,
+    })
+
+    for (const diagnostic of result.diagnostics ?? []) {
+      const issue: Issue = {
+        source: 'typescript',
+        code: `TS${diagnostic.code}`,
+        severity: mapTypeScriptSeverity(diagnostic.category),
+        message: diagnosticMessage(diagnostic),
+        file: diagnostic.file?.fileName ?? filePath,
+      }
+
+      const range = diagnosticRange(diagnostic)
+      if (range) {
+        issue.range = range
+      }
+
+      issues.push(issue)
+    }
+  }
+
+  return issues
+}
+
 function totalBytes(files: Record<string, string>): number {
   let total = 0
   for (const content of Object.values(files)) {
@@ -368,12 +450,16 @@ export function registerFictAutofixerTool(server: McpServer): void {
           .boolean()
           .optional()
           .describe('Whether to include ESLint diagnostics (default: true).'),
+        includeTypescript: z
+          .boolean()
+          .optional()
+          .describe('Whether to include TypeScript diagnostics (default: true).'),
       },
       outputSchema: {
         ok: z.boolean(),
         issues: z.array(
           z.object({
-            source: z.enum(['compiler', 'eslint']),
+            source: z.enum(['compiler', 'eslint', 'typescript']),
             code: z.string(),
             severity: z.enum(['error', 'warning', 'info', 'hint']),
             message: z.string(),
@@ -403,9 +489,10 @@ export function registerFictAutofixerTool(server: McpServer): void {
         }),
       },
     },
-    async ({ files, profile, includeEslint }) => {
+    async ({ files, profile, includeEslint, includeTypescript }) => {
       const selectedProfile: AutofixerProfile = profile ?? DEFAULT_PROFILE
       const shouldRunEslint = includeEslint ?? true
+      const shouldRunTypeScript = includeTypescript ?? true
       const issues: Issue[] = []
       const totalInputBytes = totalBytes(files)
 
@@ -428,6 +515,21 @@ export function registerFictAutofixerTool(server: McpServer): void {
       } else {
         const compilerIssues = await collectCompilerIssues(files, selectedProfile)
         issues.push(...compilerIssues)
+
+        if (shouldRunTypeScript) {
+          try {
+            const typeScriptIssues = await collectTypeScriptIssues(files)
+            issues.push(...typeScriptIssues)
+          } catch (error) {
+            issues.push({
+              source: 'typescript',
+              code: 'FICT-TS-SETUP',
+              severity: 'error',
+              message: error instanceof Error ? error.message : String(error),
+              file: '(input)',
+            })
+          }
+        }
 
         if (shouldRunEslint) {
           try {
