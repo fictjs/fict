@@ -32,10 +32,26 @@ pnpm --filter @fictjs/mcp test
 pnpm --filter @fictjs/mcp exec fict-mcp
 ```
 
+## Run (Streamable HTTP transport)
+
+```bash
+pnpm --filter @fictjs/mcp exec fict-mcp --http --host 127.0.0.1 --port 8788 --path /mcp
+```
+
+You can also switch transports via env:
+
+```bash
+FICT_MCP_TRANSPORT=http pnpm --filter @fictjs/mcp exec fict-mcp
+```
+
 Environment variables:
 
 - `FICT_MCP_DOCS_ROOT`: absolute or relative path to docs root (default: auto-discover `<workspace>/docs`).
 - `FICT_PLAYGROUND_ORIGIN`: playground base URL (default: `http://localhost:4173`).
+- `FICT_MCP_TRANSPORT`: `stdio` or `http` (default: `stdio`).
+- `FICT_MCP_HTTP_HOST`: HTTP bind host (default: `127.0.0.1`).
+- `FICT_MCP_HTTP_PORT`: HTTP bind port (default: `8788`).
+- `FICT_MCP_HTTP_PATH`: HTTP endpoint path (default: `/mcp`).
 
 ## `fict-autofixer` options
 
