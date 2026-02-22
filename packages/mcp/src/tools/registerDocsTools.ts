@@ -190,6 +190,15 @@ export function registerDocsTools(server: McpServer, docs: DocsStore): void {
           .enum(['md', 'llms'])
           .optional()
           .describe('md = raw markdown, llms = normalized markdown. Default: llms.'),
+        maxCharsPerDocument: z
+          .number()
+          .int()
+          .min(200)
+          .max(200000)
+          .optional()
+          .describe(
+            'Optional max characters per returned document. Longer documents are truncated.',
+          ),
       },
       outputSchema: {
         documents: z
@@ -199,6 +208,8 @@ export function registerDocsTools(server: McpServer, docs: DocsStore): void {
               title: z.string(),
               format: z.string(),
               content: z.string(),
+              truncated: z.boolean().optional(),
+              originalChars: z.number().optional(),
             }),
           )
           .optional(),
@@ -206,7 +217,7 @@ export function registerDocsTools(server: McpServer, docs: DocsStore): void {
         missing: z.array(z.string()).optional(),
       },
     },
-    async ({ sections, format }) => {
+    async ({ sections, format, maxCharsPerDocument }) => {
       const mode: 'md' | 'llms' = format ?? 'llms'
       const missing = sections.filter(id => !docs.get(id))
 
@@ -229,11 +240,26 @@ export function registerDocsTools(server: McpServer, docs: DocsStore): void {
             throw new Error(`Unknown section: ${id}`)
           }
 
+          const fullContent = await docs.readFormatted(id, mode)
+          const maxChars =
+            typeof maxCharsPerDocument === 'number' ? Math.floor(maxCharsPerDocument) : undefined
+
+          if (maxChars && fullContent.length > maxChars) {
+            return {
+              id,
+              title: section.title,
+              format: mode,
+              content: fullContent.slice(0, maxChars),
+              truncated: true,
+              originalChars: fullContent.length,
+            }
+          }
+
           return {
             id,
             title: section.title,
             format: mode,
-            content: await docs.readFormatted(id, mode),
+            content: fullContent,
           }
         }),
       )

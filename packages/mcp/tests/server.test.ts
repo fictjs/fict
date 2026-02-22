@@ -225,6 +225,29 @@ describe('fict mcp server', () => {
       : []
     expect(docs[0]?.content?.length ?? 0).toBeGreaterThan(100)
 
+    const truncatedDocsResult = await client.callTool({
+      name: 'get-documentation',
+      arguments: {
+        sections: [firstId],
+        format: 'llms',
+        maxCharsPerDocument: 200,
+      },
+    })
+    const truncatedDocs = Array.isArray(
+      (truncatedDocsResult.structuredContent as { documents?: unknown })?.documents,
+    )
+      ? ((
+          truncatedDocsResult.structuredContent as {
+            documents: Array<{ content: string; truncated?: boolean; originalChars?: number }>
+          }
+        ).documents ?? [])
+      : []
+    expect(truncatedDocs[0]?.content?.length ?? 0).toBeLessThanOrEqual(200)
+    expect(truncatedDocs[0]?.truncated).toBe(true)
+    expect((truncatedDocs[0]?.originalChars ?? 0) > (truncatedDocs[0]?.content?.length ?? 0)).toBe(
+      true,
+    )
+
     const missingDocResult = await client.callTool({
       name: 'get-documentation',
       arguments: {
