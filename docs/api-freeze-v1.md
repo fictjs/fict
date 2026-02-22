@@ -129,7 +129,7 @@ export type Ref<T> = RefCallback<T> | RefObject<T>
 
 ```typescript
 export function createScope(): ReactiveScope
-export function runInScope(flag: () => boolean, fn: () => void): void
+export function runInScope(flag: boolean | (() => boolean), fn: () => void): void
 export function effectScope(fn: () => void): () => void
 
 export interface ReactiveScope {
