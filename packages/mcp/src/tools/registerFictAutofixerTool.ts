@@ -333,14 +333,6 @@ async function collectEslintIssues(files: Record<string, string>): Promise<Issue
   return issues
 }
 
-function toScriptKind(filePath: string): ts.ScriptKind {
-  if (/\.tsx$/i.test(filePath)) return ts.ScriptKind.TSX
-  if (/\.jsx$/i.test(filePath)) return ts.ScriptKind.JSX
-  if (/\.ts$/i.test(filePath)) return ts.ScriptKind.TS
-  if (/\.json$/i.test(filePath)) return ts.ScriptKind.JSON
-  return ts.ScriptKind.JS
-}
-
 function diagnosticMessage(diagnostic: ts.Diagnostic): string {
   return ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
 }

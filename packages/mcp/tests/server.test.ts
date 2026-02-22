@@ -3,10 +3,11 @@ import { fileURLToPath } from 'node:url'
 
 import { decodeSessionSnapshot } from '@fictjs/playground'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { createFictMcpServer } from '../src/index'
+import { createFictMcpServer, startStreamableHttpServer } from '../src/index'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -147,5 +148,37 @@ export function List({ items }) {
     const snapshot = decodeSessionSnapshot(payload.token)
     expect(snapshot.templateId).toBe('counter')
     expect(snapshot.files['src/App.tsx']).toContain('$state')
+  })
+
+  it('supports streamable http transport', async () => {
+    const started = await startStreamableHttpServer({
+      docsRoot: DOCS_ROOT,
+      host: '127.0.0.1',
+      port: 0,
+      path: '/mcp',
+    })
+
+    const transport = new StreamableHTTPClientTransport(new URL(started.url))
+    const client = new Client({ name: 'mcp-http-test-client', version: '0.0.0' })
+
+    try {
+      await client.connect(transport)
+
+      const tools = await client.listTools()
+      expect(tools.tools.some(tool => tool.name === 'list-sections')).toBe(true)
+
+      const sections = await client.callTool({
+        name: 'list-sections',
+        arguments: {},
+      })
+
+      const count = Array.isArray((sections.structuredContent as { sections?: unknown })?.sections)
+        ? ((sections.structuredContent as { sections: unknown[] }).sections ?? []).length
+        : 0
+      expect(count).toBeGreaterThan(0)
+    } finally {
+      await client.close()
+      await started.close()
+    }
   })
 })

@@ -1,3 +1,5 @@
 export type { CreateFictMcpServerOptions } from './server/createServer'
 export { createFictMcpServer } from './server/createServer'
 export { startStdioServer } from './server/transports/stdio'
+export type { StartStreamableHttpServerOptions } from './server/transports/streamableHttp'
+export { startStreamableHttpServer } from './server/transports/streamableHttp'
