@@ -1,14 +1,15 @@
 import { Buffer } from 'node:buffer'
 
-import {
-  encodeSessionSnapshot,
-  listPlaygroundTemplates,
-  type PlaygroundConfig,
-  type PlaygroundProfile,
-  type PlaygroundSessionSnapshot,
-} from '@fictjs/playground'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
+
+import { encodeSessionSnapshot } from '../playground/share'
+import { listPlaygroundTemplates } from '../playground/templates'
+import type {
+  PlaygroundConfig,
+  PlaygroundProfile,
+  PlaygroundSessionSnapshot,
+} from '../playground/types'
 
 const DEFAULT_PLAYGROUND_ORIGIN = 'http://localhost:4173'
 

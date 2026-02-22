@@ -3,7 +3,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { decodeSessionSnapshot } from '@fictjs/playground'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -11,6 +10,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { createFictMcpServer, startSseHttpServer, startStreamableHttpServer } from '../src/index'
+import { decodeSessionSnapshot } from '../src/playground/share'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)

@@ -38,11 +38,7 @@
       "outputs": []
     },
     "@fictjs/mcp#typecheck": {
-      "dependsOn": [
-        "@fictjs/compiler#build",
-        "@fictjs/eslint-plugin#build",
-        "@fictjs/playground#build"
-      ],
+      "dependsOn": ["@fictjs/compiler#build", "@fictjs/eslint-plugin#build"],
       "outputs": []
     },
     "clean": {

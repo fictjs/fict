@@ -6,8 +6,7 @@
     "baseUrl": ".",
     "paths": {
       "@fictjs/compiler": ["../compiler/dist/index.d.ts"],
-      "@fictjs/eslint-plugin": ["../eslint-plugin/dist/index.d.ts"],
-      "@fictjs/playground": ["../playground/dist/index.d.ts"]
+      "@fictjs/eslint-plugin": ["../eslint-plugin/dist/index.d.ts"]
     }
   },
   "include": ["src/**/*.ts"]
