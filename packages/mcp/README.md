@@ -38,7 +38,7 @@ pnpm --filter @fictjs/mcp start
 
 ```bash
 pnpm --filter @fictjs/mcp build
-pnpm --filter @fictjs/mcp start -- --http --host 127.0.0.1 --port 8788 --path /mcp
+pnpm --filter @fictjs/mcp start -- --http --host 127.0.0.1 --port 8788 --path /mcp --max-sessions 100 --session-ttl-ms 1800000
 ```
 
 You can also switch transports via env:
@@ -55,6 +55,8 @@ Environment variables:
 - `FICT_MCP_HTTP_HOST`: HTTP bind host (default: `127.0.0.1`).
 - `FICT_MCP_HTTP_PORT`: HTTP bind port (default: `8788`).
 - `FICT_MCP_HTTP_PATH`: HTTP endpoint path (default: `/mcp`).
+- `FICT_MCP_HTTP_MAX_SESSIONS`: max active HTTP sessions before LRU eviction (default: `100`).
+- `FICT_MCP_HTTP_SESSION_TTL_MS`: idle session TTL in milliseconds (default: `1800000`).
 
 ## `fict-autofixer` options
 
@@ -63,6 +65,12 @@ Environment variables:
 - `profile`: `app-default | ci-hard-gate | migration`
 - `includeEslint` (default: `true`)
 - `includeTypescript` (default: `true`)
+
+`fict-autofixer` issue output includes:
+
+- `source`: `compiler | eslint | typescript`
+- `code`: diagnostic/rule code
+- `suggestion`: actionable fix hint
 
 ## Example MCP client config
 
