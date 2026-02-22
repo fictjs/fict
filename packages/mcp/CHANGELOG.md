@@ -1,5 +1,18 @@
 # @fictjs/mcp
 
+## 0.13.0
+
+### Minor Changes
+
+- fix mcp
+
+### Patch Changes
+
+- 5782091: Decouple the MCP playground-link implementation from `@fictjs/playground` so `@fictjs/mcp` can be released independently via Changesets.
+- Updated dependencies
+  - @fictjs/compiler@0.13.0
+  - @fictjs/eslint-plugin@0.13.0
+
 ## 0.12.0
 
 ### Minor Changes

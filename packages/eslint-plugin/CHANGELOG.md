@@ -1,5 +1,11 @@
 # @fictjs/eslint-plugin
 
+## 0.13.0
+
+### Minor Changes
+
+- fix mcp
+
 ## 0.12.0
 
 ### Minor Changes

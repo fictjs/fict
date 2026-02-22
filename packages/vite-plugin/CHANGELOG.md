@@ -1,5 +1,16 @@
 # @fictjs/vite-plugin
 
+## 0.13.0
+
+### Minor Changes
+
+- fix mcp
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/compiler@0.13.0
+
 ## 0.12.0
 
 ### Minor Changes
