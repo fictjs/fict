@@ -58,6 +58,13 @@ pnpm --filter @fictjs/mcp build
 pnpm --filter @fictjs/mcp start -- --http --host 127.0.0.1 --port 8788 --path /mcp --health-path /healthz --stats-path /stats --max-sessions 100 --session-ttl-ms 1800000 --docs-root ../../docs --playground-origin http://localhost:4173
 ```
 
+## Run (Legacy HTTP+SSE transport, deprecated)
+
+```bash
+pnpm --filter @fictjs/mcp build
+pnpm --filter @fictjs/mcp start -- --sse --host 127.0.0.1 --port 8790 --sse-path /sse --messages-path /messages --health-path /healthz --stats-path /stats --max-sessions 100 --session-ttl-ms 1800000
+```
+
 You can also switch transports via env:
 
 ```bash
@@ -68,10 +75,12 @@ Environment variables:
 
 - `FICT_MCP_DOCS_ROOT`: absolute or relative path to docs root (default: auto-discover `<workspace>/docs`).
 - `FICT_PLAYGROUND_ORIGIN`: playground base URL (default: `http://localhost:4173`).
-- `FICT_MCP_TRANSPORT`: `stdio` or `http` (default: `stdio`).
+- `FICT_MCP_TRANSPORT`: `stdio`, `http`, or `sse` (default: `stdio`).
 - `FICT_MCP_HTTP_HOST`: HTTP bind host (default: `127.0.0.1`).
 - `FICT_MCP_HTTP_PORT`: HTTP bind port (default: `8788`).
 - `FICT_MCP_HTTP_PATH`: HTTP endpoint path (default: `/mcp`).
+- `FICT_MCP_SSE_PATH`: SSE stream endpoint path (default: `/sse`).
+- `FICT_MCP_SSE_MESSAGES_PATH`: SSE client message POST path (default: `/messages`).
 - `FICT_MCP_HTTP_HEALTH_PATH`: health endpoint path (default: `/healthz`).
 - `FICT_MCP_HTTP_STATS_PATH`: stats endpoint path (default: `/stats`).
 - `FICT_MCP_HTTP_MAX_SESSIONS`: max active HTTP sessions before LRU eviction (default: `100`).
@@ -88,6 +97,7 @@ When running with `--http`, MCP also serves:
 
 `/stats` includes request counters, status counters, error count, active session count, and session lifecycle totals (created/reused/expired/evicted/deleted).
 `--path`, `--health-path`, and `--stats-path` must be distinct values.
+For `--sse`, `--sse-path`, `--messages-path`, `--health-path`, and `--stats-path` must also be distinct.
 
 ## `fict-autofixer` options
 
