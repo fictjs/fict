@@ -1,13 +1,16 @@
 import { startStdioServer } from './server/transports/stdio'
+import { startSseHttpServer } from './server/transports/sse'
 import { startStreamableHttpServer } from './server/transports/streamableHttp'
 
-type TransportKind = 'stdio' | 'http'
+type TransportKind = 'stdio' | 'http' | 'sse'
 
 interface CliOptions {
   transport: TransportKind
   host: string
   port: number
   path: string
+  ssePath: string
+  messagesPath: string
   healthPath: string
   statsPath: string
   maxSessions: number
@@ -26,12 +29,15 @@ function readNumberEnv(name: string, fallback: number): number {
 
 function parseArgs(argv: string[]): CliOptions {
   const envTransport = process.env.FICT_MCP_TRANSPORT
-  const transport: TransportKind = envTransport === 'http' ? 'http' : 'stdio'
+  const transport: TransportKind =
+    envTransport === 'http' || envTransport === 'sse' ? envTransport : 'stdio'
   const options: CliOptions = {
     transport,
     host: process.env.FICT_MCP_HTTP_HOST ?? '127.0.0.1',
     port: readNumberEnv('FICT_MCP_HTTP_PORT', 8788),
     path: process.env.FICT_MCP_HTTP_PATH ?? '/mcp',
+    ssePath: process.env.FICT_MCP_SSE_PATH ?? '/sse',
+    messagesPath: process.env.FICT_MCP_SSE_MESSAGES_PATH ?? '/messages',
     healthPath: process.env.FICT_MCP_HTTP_HEALTH_PATH ?? '/healthz',
     statsPath: process.env.FICT_MCP_HTTP_STATS_PATH ?? '/stats',
     maxSessions: readNumberEnv('FICT_MCP_HTTP_MAX_SESSIONS', 100),
@@ -52,6 +58,11 @@ function parseArgs(argv: string[]): CliOptions {
 
     if (arg === '--http') {
       options.transport = 'http'
+      continue
+    }
+
+    if (arg === '--sse') {
+      options.transport = 'sse'
       continue
     }
 
@@ -79,6 +90,22 @@ function parseArgs(argv: string[]): CliOptions {
       const next = argv[index + 1]
       if (!next) throw new Error('--path requires a value')
       options.path = next
+      index += 1
+      continue
+    }
+
+    if (arg === '--sse-path') {
+      const next = argv[index + 1]
+      if (!next) throw new Error('--sse-path requires a value')
+      options.ssePath = next
+      index += 1
+      continue
+    }
+
+    if (arg === '--messages-path') {
+      const next = argv[index + 1]
+      if (!next) throw new Error('--messages-path requires a value')
+      options.messagesPath = next
       index += 1
       continue
     }
@@ -157,11 +184,14 @@ function printHelp(): void {
     'Transports:',
     '  --stdio          Run MCP over stdio (default)',
     '  --http           Run MCP over Streamable HTTP',
+    '  --sse            Run MCP over deprecated HTTP+SSE transport',
     '',
     'HTTP options:',
     '  --host <host>    Bind host (default: 127.0.0.1)',
     '  --port <port>    Bind port (default: 8788)',
     '  --path <path>    MCP endpoint path (default: /mcp)',
+    '  --sse-path <path>       SSE stream path (default: /sse)',
+    '  --messages-path <path>  SSE messages POST path (default: /messages)',
     '  --health-path <path>    Health endpoint path (default: /healthz)',
     '  --stats-path <path>     Stats endpoint path (default: /stats)',
     '  --max-sessions <n>     Max concurrent sessions (default: 100)',
@@ -170,8 +200,9 @@ function printHelp(): void {
     '  --playground-origin <url>  Playground base URL (default: env / localhost)',
     '',
     'Environment:',
-    '  FICT_MCP_TRANSPORT=http|stdio',
+    '  FICT_MCP_TRANSPORT=http|sse|stdio',
     '  FICT_MCP_HTTP_HOST, FICT_MCP_HTTP_PORT, FICT_MCP_HTTP_PATH',
+    '  FICT_MCP_SSE_PATH, FICT_MCP_SSE_MESSAGES_PATH',
     '  FICT_MCP_HTTP_HEALTH_PATH, FICT_MCP_HTTP_STATS_PATH',
     '  FICT_MCP_HTTP_MAX_SESSIONS, FICT_MCP_HTTP_SESSION_TTL_MS',
     '  FICT_MCP_DOCS_ROOT, FICT_PLAYGROUND_ORIGIN',
@@ -185,6 +216,39 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 
   if (options.transport === 'stdio') {
     await startStdioServer()
+    return
+  }
+
+  if (options.transport === 'sse') {
+    const server = await startSseHttpServer({
+      host: options.host,
+      port: options.port,
+      ssePath: options.ssePath,
+      messagesPath: options.messagesPath,
+      healthPath: options.healthPath,
+      statsPath: options.statsPath,
+      maxSessions: options.maxSessions,
+      sessionTtlMs: options.sessionTtlMs,
+      docsRoot: options.docsRoot,
+      playgroundOrigin: options.playgroundOrigin,
+    })
+
+    process.stderr.write(`Fict MCP SSE server running at ${server.url}\n`)
+    process.stderr.write(`Messages: ${server.messagesUrl}\n`)
+    process.stderr.write(`Health: ${server.healthUrl}\n`)
+    process.stderr.write(`Stats: ${server.statsUrl}\n`)
+
+    const shutdown = async (): Promise<void> => {
+      await server.close()
+      process.exit(0)
+    }
+
+    process.on('SIGINT', () => {
+      void shutdown()
+    })
+    process.on('SIGTERM', () => {
+      void shutdown()
+    })
     return
   }
 
