@@ -498,8 +498,16 @@ export interface FictDevtoolsHook {
 
 // Cycle protection configuration
 export function setCycleProtectionOptions(options: {
-  maxIterations?: number
-  onCycleDetected?: (info: CycleInfo) => void
+  enabled?: boolean
+  maxFlushCyclesPerMicrotask?: number
+  maxEffectRunsPerFlush?: number
+  windowSize?: number
+  highUsageRatio?: number
+  maxRootReentrantDepth?: number
+  enableWindowWarning?: boolean
+  devMode?: boolean
+  enableBackoffWarning?: boolean
+  backoffWarningRatio?: number
 }): void
 ```
 

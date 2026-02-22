@@ -1501,6 +1501,8 @@ interface CycleProtectionOptions {
   maxRootReentrantDepth?: number // Default: 10
   enableWindowWarning?: boolean // Default: true
   devMode?: boolean // Default: NODE_ENV !== 'production' (throw in dev, warn in prod)
+  enableBackoffWarning?: boolean // Default: dev-only true (warn at threshold)
+  backoffWarningRatio?: number // Default: 0.5
 }
 
 function setCycleProtectionOptions(options: CycleProtectionOptions): void
