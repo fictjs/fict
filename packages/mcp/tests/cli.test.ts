@@ -38,3 +38,17 @@ describe('cli transport guards', () => {
     await expect(runCli([])).rejects.toThrow(/FICT_MCP_ENABLE_SSE=1/)
   })
 })
+
+describe('cli numeric option validation', () => {
+  it('rejects non-integer --port values', async () => {
+    await expect(runCli(['--http', '--port', '8788.5'])).rejects.toThrow(
+      '--port requires a positive integer',
+    )
+  })
+
+  it('rejects non-integer --session-ttl-ms values', async () => {
+    await expect(runCli(['--http', '--session-ttl-ms', '12.3'])).rejects.toThrow(
+      '--session-ttl-ms requires a positive integer',
+    )
+  })
+})

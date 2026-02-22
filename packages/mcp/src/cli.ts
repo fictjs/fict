@@ -21,11 +21,32 @@ interface CliOptions {
   playgroundOrigin?: string
 }
 
-function readNumberEnv(name: string, fallback: number): number {
+function parsePositiveInt(raw: string): number | undefined {
+  const parsed = Number(raw)
+  if (!Number.isInteger(parsed) || parsed <= 0) return undefined
+  return parsed
+}
+
+function readPositiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name]
   if (!raw) return fallback
-  const parsed = Number(raw)
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback
+  const parsed = parsePositiveInt(raw)
+  if (parsed === undefined) return fallback
+  return parsed
+}
+
+function readArgValue(argv: string[], index: number, flagName: string): string {
+  const next = argv[index + 1]
+  if (!next) throw new Error(`${flagName} requires a value`)
+  return next
+}
+
+function readPositiveIntArg(argv: string[], index: number, flagName: string): number {
+  const raw = readArgValue(argv, index, flagName)
+  const parsed = parsePositiveInt(raw)
+  if (parsed === undefined) {
+    throw new Error(`${flagName} requires a positive integer`)
+  }
   return parsed
 }
 
@@ -36,14 +57,14 @@ function parseArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     transport,
     host: process.env.FICT_MCP_HTTP_HOST ?? '127.0.0.1',
-    port: readNumberEnv('FICT_MCP_HTTP_PORT', 8788),
+    port: readPositiveIntEnv('FICT_MCP_HTTP_PORT', 8788),
     path: process.env.FICT_MCP_HTTP_PATH ?? '/mcp',
     ssePath: process.env.FICT_MCP_SSE_PATH ?? '/sse',
     messagesPath: process.env.FICT_MCP_SSE_MESSAGES_PATH ?? '/messages',
     healthPath: process.env.FICT_MCP_HTTP_HEALTH_PATH ?? '/healthz',
     statsPath: process.env.FICT_MCP_HTTP_STATS_PATH ?? '/stats',
-    maxSessions: readNumberEnv('FICT_MCP_HTTP_MAX_SESSIONS', 100),
-    sessionTtlMs: readNumberEnv('FICT_MCP_HTTP_SESSION_TTL_MS', 30 * 60 * 1000),
+    maxSessions: readPositiveIntEnv('FICT_MCP_HTTP_MAX_SESSIONS', 100),
+    sessionTtlMs: readPositiveIntEnv('FICT_MCP_HTTP_SESSION_TTL_MS', 30 * 60 * 1000),
     docsRoot: process.env.FICT_MCP_DOCS_ROOT,
     docsManifestPath: process.env.FICT_MCP_DOCS_MANIFEST,
     playgroundOrigin: process.env.FICT_PLAYGROUND_ORIGIN,
@@ -70,109 +91,73 @@ function parseArgs(argv: string[]): CliOptions {
     }
 
     if (arg === '--host') {
-      const next = argv[index + 1]
-      if (!next) throw new Error('--host requires a value')
-      options.host = next
+      options.host = readArgValue(argv, index, '--host')
       index += 1
       continue
     }
 
     if (arg === '--port') {
-      const next = argv[index + 1]
-      if (!next) throw new Error('--port requires a numeric value')
-      const parsed = Number(next)
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        throw new Error('--port requires a numeric value')
-      }
-      options.port = parsed
+      options.port = readPositiveIntArg(argv, index, '--port')
       index += 1
       continue
     }
 
     if (arg === '--path') {
-      const next = argv[index + 1]
-      if (!next) throw new Error('--path requires a value')
-      options.path = next
+      options.path = readArgValue(argv, index, '--path')
       index += 1
       continue
     }
 
     if (arg === '--sse-path') {
-      const next = argv[index + 1]
-      if (!next) throw new Error('--sse-path requires a value')
-      options.ssePath = next
+      options.ssePath = readArgValue(argv, index, '--sse-path')
       index += 1
       continue
     }
 
     if (arg === '--messages-path') {
-      const next = argv[index + 1]
-      if (!next) throw new Error('--messages-path requires a value')
-      options.messagesPath = next
+      options.messagesPath = readArgValue(argv, index, '--messages-path')
       index += 1
       continue
     }
 
     if (arg === '--health-path') {
-      const next = argv[index + 1]
-      if (!next) throw new Error('--health-path requires a value')
-      options.healthPath = next
+      options.healthPath = readArgValue(argv, index, '--health-path')
       index += 1
       continue
     }
 
     if (arg === '--stats-path') {
-      const next = argv[index + 1]
-      if (!next) throw new Error('--stats-path requires a value')
-      options.statsPath = next
+      options.statsPath = readArgValue(argv, index, '--stats-path')
       index += 1
       continue
     }
 
     if (arg === '--max-sessions') {
-      const next = argv[index + 1]
-      if (!next) throw new Error('--max-sessions requires a numeric value')
-      const parsed = Number(next)
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        throw new Error('--max-sessions requires a positive number')
-      }
-      options.maxSessions = parsed
+      options.maxSessions = readPositiveIntArg(argv, index, '--max-sessions')
       index += 1
       continue
     }
 
     if (arg === '--session-ttl-ms') {
-      const next = argv[index + 1]
-      if (!next) throw new Error('--session-ttl-ms requires a numeric value')
-      const parsed = Number(next)
-      if (!Number.isFinite(parsed) || parsed <= 0) {
-        throw new Error('--session-ttl-ms requires a positive number')
-      }
-      options.sessionTtlMs = parsed
+      options.sessionTtlMs = readPositiveIntArg(argv, index, '--session-ttl-ms')
       index += 1
       continue
     }
 
     if (arg === '--docs-root') {
-      const next = argv[index + 1]
-      if (!next) throw new Error('--docs-root requires a value')
-      options.docsRoot = next
+      options.docsRoot = readArgValue(argv, index, '--docs-root')
       index += 1
       continue
     }
 
     if (arg === '--docs-manifest') {
-      const next = argv[index + 1]
-      if (!next) throw new Error('--docs-manifest requires a value')
-      options.docsManifestPath = next
+      options.docsManifestPath = readArgValue(argv, index, '--docs-manifest')
       index += 1
       continue
     }
 
     if (arg === '--playground-origin') {
-      const next = argv[index + 1]
-      if (!next) throw new Error('--playground-origin requires a value')
-      options.playgroundOrigin = next
+      options.playgroundOrigin = readArgValue(argv, index, '--playground-origin')
       index += 1
       continue
     }
