@@ -78,7 +78,7 @@ FICT_MCP_TRANSPORT=http pnpm --filter @fictjs/mcp start
 Environment variables:
 
 - `FICT_MCP_DOCS_ROOT`: absolute or relative path to docs root (default: auto-discover `<workspace>/docs`).
-- `FICT_MCP_DOCS_MANIFEST`: optional docs manifest path override.
+- `FICT_MCP_DOCS_MANIFEST`: optional docs manifest path override (if provided but missing/invalid, startup fails fast).
 - `FICT_PLAYGROUND_ORIGIN`: playground base URL (default: `http://localhost:4173`).
 - `FICT_MCP_TRANSPORT`: `stdio`, `http`, or `sse` (default: `stdio`, and `sse` requires `FICT_MCP_ENABLE_SSE=1`).
 - `FICT_MCP_ENABLE_SSE`: set to `1` to enable deprecated HTTP+SSE transport.
@@ -93,6 +93,7 @@ Environment variables:
 - `FICT_MCP_HTTP_SESSION_TTL_MS`: idle session TTL in milliseconds (default: `1800000`).
 
 In HTTP mode, invalid `docsRoot` config fails fast at startup instead of deferring the error to the first MCP request.
+When `docsManifestPath` / `FICT_MCP_DOCS_MANIFEST` is explicitly provided, missing/invalid manifests also fail fast at startup.
 If `docsRoot` is auto-discovered and no override is provided, server startup uses bundled `assets/docs-manifest.json` when present.
 
 ## HTTP observability endpoints

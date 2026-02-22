@@ -187,6 +187,35 @@ describe('fict mcp server', () => {
     }
   })
 
+  it('fails fast when explicit docs manifest is missing', async () => {
+    const missingManifest = path.join(os.tmpdir(), `fict-mcp-missing-${Date.now()}.json`)
+
+    expect(() =>
+      createFictMcpServer({
+        docsRoot: DOCS_ROOT,
+        docsManifestPath: missingManifest,
+      }),
+    ).toThrow('Docs manifest not found')
+  })
+
+  it('fails fast when explicit docs manifest is invalid', async () => {
+    const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'fict-mcp-manifest-invalid-'))
+    const manifestPath = path.join(tempRoot, 'docs-manifest.json')
+
+    await fsp.writeFile(manifestPath, '{ invalid json', 'utf8')
+
+    try {
+      expect(() =>
+        createFictMcpServer({
+          docsRoot: DOCS_ROOT,
+          docsManifestPath: manifestPath,
+        }),
+      ).toThrow('Invalid docs manifest')
+    } finally {
+      await fsp.rm(tempRoot, { recursive: true, force: true })
+    }
+  })
+
   it('exposes docs tools and returns section content', async () => {
     const { client } = await connectServer()
 

@@ -24,6 +24,7 @@ export interface DocsStore {
 interface CreateDocsStoreOptions {
   docsRoot: string
   manifestPath?: string
+  requireManifest?: boolean
 }
 
 interface DocDefaultMetadata {
@@ -202,7 +203,13 @@ export function createDocsStore(options: CreateDocsStoreOptions): DocsStore {
   }
 
   const manifestPath = options.manifestPath ? path.resolve(options.manifestPath) : undefined
+  if (manifestPath && options.requireManifest && !fs.existsSync(manifestPath)) {
+    throw new Error(`Docs manifest not found: ${manifestPath}`)
+  }
   const manifestSections = manifestPath ? loadSectionsFromManifest(root, manifestPath) : null
+  if (manifestPath && options.requireManifest && !manifestSections) {
+    throw new Error(`Invalid docs manifest: ${manifestPath}`)
+  }
   const sections = manifestSections ?? scanSections(root)
 
   const sectionMap = new Map(sections.map(section => [section.id, section] as const))

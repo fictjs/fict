@@ -58,6 +58,7 @@ export function createFictMcpServer(options: CreateFictMcpServerOptions = {}): {
   docsRoot: string
 } {
   const docsRootProvided = Boolean(options.docsRoot)
+  const docsManifestProvided = Boolean(options.docsManifestPath)
   const docsRoot = docsRootProvided ? path.resolve(options.docsRoot!) : findDocsRoot(process.cwd())
   const docsManifestPath = options.docsManifestPath
     ? path.resolve(options.docsManifestPath)
@@ -68,6 +69,7 @@ export function createFictMcpServer(options: CreateFictMcpServerOptions = {}): {
     ? createDocsStore({
         docsRoot,
         manifestPath: docsManifestPath,
+        requireManifest: docsManifestProvided,
       })
     : createDocsStore({
         docsRoot,
