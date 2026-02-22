@@ -137,7 +137,7 @@ Single-use derived values may be inlined as an optimization; use `$memo` or set
 
 ```ts
 $effect(() => {
-  console.log('count is now', count)
+  console.log(`count is now ${count}`)
   return () => {
     /* cleanup */
   }

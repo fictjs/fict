@@ -170,7 +170,7 @@ $effect(() => {
 
 // Correct
 $effect(() => {
-  console.log('Count is', count) // reactive read
+  console.log(`Count is ${count}`) // reactive read
 })
 ```
 
@@ -242,7 +242,7 @@ const data = $memo(() => {
 
 // Correct
 const data = $memo(() => count * 2)
-$effect(() => console.log('data changed:', data))
+$effect(() => console.log(`data changed: ${data}`))
 ```
 
 ---

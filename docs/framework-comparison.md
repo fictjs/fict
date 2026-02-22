@@ -60,7 +60,7 @@ export function Counter() {
   let count = $state(0) // Mutable source
   const doubled = count * 2 // Automatic derivation (no wrapper)
 
-  $effect(() => console.log(count))
+  $effect(() => console.log(`count=${count}`))
 
   return <button onClick={() => count++}>{doubled}</button>
 }

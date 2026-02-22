@@ -61,7 +61,7 @@ function Counter() {
   let count = $state(0)
 
   $effect(() => {
-    console.log('Count changed:', count)
+    console.log(`Count changed: ${count}`)
   })
 
   return <button onClick={() => count++}>Clicked {count} times</button>
@@ -130,7 +130,7 @@ function Timer() {
 
   // Basic effect
   $effect(() => {
-    console.log('Seconds:', seconds)
+    console.log(`Seconds: ${seconds}`)
   })
 
   // Effect with cleanup
@@ -607,7 +607,7 @@ function Logger() {
   $effect(() => {
     // Track only count, not logEnabled
     if (untrack(() => logEnabled)) {
-      console.log('Count:', count)
+      console.log(`Count: ${count}`)
     }
   })
 

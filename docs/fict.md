@@ -257,7 +257,7 @@ The compiler is only half the story; the other half is the execution model.
 function Demo() {
   console.log('mount once') // First run
   let count = $state(0)
-  $effect(() => console.log('count changed', count))
+  $effect(() => console.log(`count changed ${count}`))
   return <button onClick={() => count++}>{count}</button>
 }
 ```
@@ -340,7 +340,7 @@ runInScope(
 function Counter() {
   let count = $state(0)
   if (count > 0) {
-    createEffect(() => console.log('count > 0:', count))
+    createEffect(() => console.log(`count > 0: ${count}`))
   }
   return <button onClick={() => count++}>Inc</button>
 }
@@ -351,7 +351,7 @@ function CounterScoped() {
   runInScope(
     () => count > 0,
     () => {
-      createEffect(() => console.log('count > 0:', count))
+      createEffect(() => console.log(`count > 0: ${count}`))
     },
   )
   return <button onClick={() => count++}>Inc</button>
@@ -622,7 +622,7 @@ Fict's execution model differs from React (see Section 2.3):
 ```tsx
 console.log('A') // Executes once
 let count = $state(0)
-$effect(() => console.log('B', count)) // Runs when count changes
+$effect(() => console.log(`B ${count}`)) // Runs when count changes
 ```
 
 Developers from a React background might be confused: "Why doesn't A execute every time?" This requires understanding Fict's binding/memo graph model.

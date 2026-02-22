@@ -4,6 +4,11 @@ This document defines the semantic contract between Fict developers and the comp
 
 For fail-closed CI boundaries and unsupported/fallback classifications, see `docs/reactivity-guarantee-matrix.md`.
 
+Note: examples that pass reactive values directly to arbitrary function arguments (for example
+`console.log(count)`) illustrate lowering semantics. With default `strictGuarantee: true`, those
+patterns surface `FICT-S002`/`FICT-R002` as build errors unless you pass explicit getters/snapshots
+or intentionally opt out (`strictGuarantee: false`).
+
 ## Core Principle: Getter-Based Reactivity
 
 Fict's compiler transforms all reactive value access into **getter calls**. This single principle solves most "implicit semantics" problems elegantly:

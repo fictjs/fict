@@ -751,7 +751,7 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
   - Write: assignments/`++` to `count` are disallowed; mutate via `state.count++` or immutable updates (e.g., `state = { ...state(), count: state().count + 1 }`).
   - Correct Usage: `const s = $state({ id: 1 }); const id = () => s.id;` or usage in JSX `{s.id}`.
 - **Blackbox Functions**: Passing `$state` to a function `fn(state)` passes the _current value_. `fn` cannot subscribe to updates unless it receives a getter or signal object (`$store` from `fict`).
-- **Function arguments**: When you pass a `$state` accessor to an arbitrary function (e.g. `someFn(count)`), the compiler rewrites it to a snapshot (`someFn(count())`). If the callee expects reactivity, pass an explicit getter (`() => count`) or use `$store` from `fict`. The compiler emits `FICT-S002` as a warning in this case.
+- **Function arguments**: When you pass a `$state` accessor to an arbitrary function (e.g. `someFn(count)`), the compiler rewrites it to a snapshot (`someFn(count())`). If the callee expects reactivity, pass an explicit getter (`() => count`) or use `$store` from `fict`. The compiler emits `FICT-S002`; under default `strictGuarantee: true`, it is treated as a build error.
 - **Arrays**: `$state` arrays track mutations (`push`, index writes, `length` assignment) as writes to the signal. Prefer immutable updates for predictability; mutating `length` is allowed but should be documented as a full write.
 - **Refs**: Both ref callbacks (`ref={node => el = node}`) and ref objects (`ref={divRef}`) are supported. Choose callbacks for inline capture; use objects for reuse and cleanup semantics.
 
