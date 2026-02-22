@@ -138,6 +138,19 @@ export function List({ items }) {
   it('creates a valid playground share link', async () => {
     const { client } = await connectServer()
 
+    const templatesResult = await client.callTool({
+      name: 'list-playground-templates',
+      arguments: {},
+    })
+    const templates = Array.isArray(
+      (templatesResult.structuredContent as { templates?: unknown })?.templates,
+    )
+      ? ((templatesResult.structuredContent as { templates: Array<{ id: string }> }).templates ??
+        [])
+      : []
+    expect(templates.length).toBeGreaterThan(0)
+    expect(templates.some(template => template.id === 'counter')).toBe(true)
+
     const result = await client.callTool({
       name: 'playground-link',
       arguments: {

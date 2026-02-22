@@ -86,6 +86,41 @@ export function registerPlaygroundLinkTool(
   options: RegisterPlaygroundLinkToolOptions = {},
 ): void {
   server.registerTool(
+    'list-playground-templates',
+    {
+      title: 'List Fict Playground templates',
+      description: 'List available playground templates that can be used by playground-link.',
+      outputSchema: {
+        templates: z.array(
+          z.object({
+            id: z.string(),
+            name: z.string(),
+            description: z.string(),
+            entryFile: z.string(),
+          }),
+        ),
+      },
+    },
+    async () => {
+      const templates = listPlaygroundTemplates().map(template => ({
+        id: template.id,
+        name: template.name,
+        description: template.description,
+        entryFile: template.entryFile,
+      }))
+
+      const output = {
+        templates,
+      }
+
+      return {
+        content: [{ type: 'text', text: JSON.stringify(output, null, 2) }],
+        structuredContent: output,
+      }
+    },
+  )
+
+  server.registerTool(
     'playground-link',
     {
       title: 'Fict Playground Link',
