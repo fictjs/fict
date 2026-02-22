@@ -809,6 +809,7 @@ export const $memo = createMemo
 
 | Export     | Category  | Tier |
 | ---------- | --------- | ---- |
+| `$store`   | Store     | 1    |
 | `resource` | Async     | 1    |
 | `lazy`     | Lazy load | 1    |
 
