@@ -58,6 +58,7 @@ describe('fict mcp server', () => {
     const tools = await client.listTools()
     const toolNames = tools.tools.map(tool => tool.name)
     expect(toolNames).toContain('list-sections')
+    expect(toolNames).toContain('search-sections')
     expect(toolNames).toContain('get-documentation')
 
     const sectionsResult = await client.callTool({
@@ -88,6 +89,19 @@ describe('fict mcp server', () => {
         [])
       : []
     expect(docs[0]?.content?.length ?? 0).toBeGreaterThan(100)
+
+    const searchResult = await client.callTool({
+      name: 'search-sections',
+      arguments: {
+        query: 'reactivity semantics',
+      },
+    })
+    const matches = Array.isArray(
+      (searchResult.structuredContent as { matches?: unknown })?.matches,
+    )
+      ? ((searchResult.structuredContent as { matches: Array<{ id: string }> }).matches ?? [])
+      : []
+    expect(matches.some(match => match.id === 'reactivity-semantics')).toBe(true)
   })
 
   it('returns both compiler and eslint issues from fict-autofixer', async () => {
