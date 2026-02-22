@@ -502,6 +502,16 @@ function summarizeIssues(issues: Issue[]): {
   }
 }
 
+function normalizePathForLookup(filePath: string): string {
+  return filePath.replace(/\\/g, '/')
+}
+
+function hasFilePath(files: Record<string, string>, targetPath: string): boolean {
+  if (targetPath in files) return true
+  const normalizedTarget = normalizePathForLookup(targetPath)
+  return Object.keys(files).some(filePath => normalizePathForLookup(filePath) === normalizedTarget)
+}
+
 export function registerFictAutofixerTool(server: McpServer): void {
   server.registerTool(
     'fict-autofixer',
@@ -562,7 +572,7 @@ export function registerFictAutofixerTool(server: McpServer): void {
         }),
       },
     },
-    async ({ files, profile, includeEslint, includeTypescript }) => {
+    async ({ files, entry, profile, includeEslint, includeTypescript }) => {
       const selectedProfile: AutofixerProfile = profile ?? DEFAULT_PROFILE
       const shouldRunEslint = includeEslint ?? true
       const shouldRunTypeScript = includeTypescript ?? true
@@ -587,6 +597,16 @@ export function registerFictAutofixerTool(server: McpServer): void {
           message: 'No source files were provided.',
           file: '(input)',
           suggestion: 'Provide at least one source file, e.g. {"src/App.tsx":"..."}',
+        })
+      } else if (entry && !hasFilePath(files, entry)) {
+        issues.push({
+          source: 'compiler',
+          code: 'FICT-MCP-ENTRY',
+          severity: 'error',
+          message: `entry file "${entry}" was not found in files input.`,
+          file: '(input)',
+          suggestion:
+            'Pass an entry path that exists in files, or omit entry to analyze the provided map directly.',
         })
       } else {
         const compilerIssues = await collectCompilerIssues(files, selectedProfile)

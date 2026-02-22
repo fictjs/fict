@@ -213,6 +213,29 @@ export function List({ items }) {
     expect(issues.some(issue => issue.code === 'fict/require-list-key')).toBe(true)
   })
 
+  it('returns input error when fict-autofixer entry is missing', async () => {
+    const { client } = await connectServer()
+
+    const result = await client.callTool({
+      name: 'fict-autofixer',
+      arguments: {
+        entry: 'src/Missing.tsx',
+        files: {
+          'src/App.tsx':
+            "import { $state } from 'fict'\\nexport default function App(){let c=$state(0);return <button>{c}</button>}\\n",
+        },
+      },
+    })
+
+    expect(result.isError).toBe(true)
+    const issues = Array.isArray((result.structuredContent as { issues?: unknown })?.issues)
+      ? ((result.structuredContent as { issues: Array<{ code: string; severity: string }> })
+          .issues ?? [])
+      : []
+    expect(issues.some(issue => issue.code === 'FICT-MCP-ENTRY')).toBe(true)
+    expect(issues.some(issue => issue.severity === 'error')).toBe(true)
+  })
+
   it('creates a valid playground share link', async () => {
     const { client } = await connectServer()
 
