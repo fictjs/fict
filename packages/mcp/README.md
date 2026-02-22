@@ -55,7 +55,7 @@ pnpm --filter @fictjs/mcp start
 
 ```bash
 pnpm --filter @fictjs/mcp build
-pnpm --filter @fictjs/mcp start -- --http --host 127.0.0.1 --port 8788 --path /mcp --health-path /healthz --stats-path /stats --max-sessions 100 --session-ttl-ms 1800000
+pnpm --filter @fictjs/mcp start -- --http --host 127.0.0.1 --port 8788 --path /mcp --health-path /healthz --stats-path /stats --max-sessions 100 --session-ttl-ms 1800000 --docs-root ../../docs --playground-origin http://localhost:4173
 ```
 
 You can also switch transports via env:
