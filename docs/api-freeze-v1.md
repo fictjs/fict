@@ -661,7 +661,12 @@ export const $memo = createMemo
 
 ## Appendix: API Export Matrix
 
-### `fict` / `@fictjs/runtime` Main Entry
+### Runtime Combined Export Matrix (summary view)
+
+> **Note:** This table is a compatibility-oriented union view across `fict`,
+> `@fictjs/runtime`, `@fictjs/runtime/advanced`, and `@fictjs/runtime/internal`.
+> It is **not** the literal main-entry export list. Use the subpath tables below
+> for exact package/export boundaries.
 
 | Export                      | Category   | Tier | Compiler Dependent |
 | --------------------------- | ---------- | ---- | ------------------ |
