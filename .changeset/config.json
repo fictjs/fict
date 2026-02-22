@@ -23,6 +23,7 @@
     "fict-docs-site",
     "@fictjs/devtools",
     "@fictjs/playground",
+    "@fictjs/mcp",
     "fict-example-*",
     "fict-example-counter-basic"
   ],
