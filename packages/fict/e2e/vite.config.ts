@@ -13,7 +13,12 @@ const stripRuntimePrebundle = () => ({
 })
 
 export default defineConfig({
-  plugins: [fict(), stripRuntimePrebundle()],
+  plugins: [
+    // E2E fixture app intentionally exercises behavior-first fallback shapes.
+    // Keep strict guarantee coverage in compiler/unit suites.
+    fict({ strictGuarantee: false }),
+    stripRuntimePrebundle(),
+  ],
   cacheDir: path.resolve(__dirname, '../node_modules/.vite-e2e-v5'),
   optimizeDeps: {
     noDiscovery: true,
@@ -21,6 +26,7 @@ export default defineConfig({
     exclude: [
       '@fictjs/runtime',
       '@fictjs/runtime/internal',
+      '@fictjs/runtime/internal/list',
       '@fictjs/runtime/advanced',
       '@fictjs/runtime/jsx-runtime',
       path.resolve(__dirname, '../../runtime/src/dev-entry.ts'),
@@ -34,6 +40,10 @@ export default defineConfig({
       {
         find: '@fictjs/runtime/jsx-runtime',
         replacement: path.resolve(__dirname, '../../runtime/src/jsx-runtime.ts'),
+      },
+      {
+        find: '@fictjs/runtime/internal/list',
+        replacement: path.resolve(__dirname, '../../runtime/src/internal/list.ts'),
       },
       {
         find: '@fictjs/runtime/internal',

@@ -6,7 +6,7 @@ import {
   $memo,
   $store,
   prop,
-  createEffect,
+  $effect,
   onMount,
   onCleanup,
   $state,
@@ -21,9 +21,9 @@ function BasicReactivity() {
   const doubled = count * 2
 
   const increment = () => {
-    console.log('Increment clicked, current:', count)
+    console.log(`Increment clicked, current: ${count}`)
     count++
-    console.log('Incremented, new:', count)
+    console.log(`Incremented, new: ${count}`)
   }
 
   const decrement = () => {
@@ -323,7 +323,7 @@ function ThrowingComponent(props: { shouldThrow: boolean }) {
   if (props.shouldThrow) {
     throw new Error('Intentional error for testing')
   }
-  createEffect(() => {
+  $effect(() => {
     if (props.shouldThrow) {
       throw new Error('Intentional error for testing')
     }
@@ -340,10 +340,11 @@ function ErrorBoundaryTest() {
     if (remountTimer !== undefined) {
       clearTimeout(remountTimer)
     }
-    remountTimer = setTimeout(() => {
+    const remount = () => {
       showChild = true
       remountTimer = undefined
-    }, 0)
+    }
+    remountTimer = setTimeout(remount, 0)
   }
 
   const triggerError = () => {
@@ -919,7 +920,7 @@ function KeyboardNavigationTest() {
       if (items.length > 1) {
         const newItems = items.filter((_: string, i: number) => i !== selectedIndex)
         items = newItems
-        selectedIndex = Math.min(selectedIndex, newItems.length - 1)
+        selectedIndex = selectedIndex > newItems.length - 1 ? newItems.length - 1 : selectedIndex
       }
     }
   }
@@ -968,10 +969,12 @@ function DragDropTest() {
   }
 
   const endDrag = () => {
-    if (draggedIndex !== null && dropTargetIndex !== null && draggedIndex !== dropTargetIndex) {
+    const fromIndex = draggedIndex
+    const toIndex = dropTargetIndex
+    if (fromIndex !== null && toIndex !== null && fromIndex !== toIndex) {
       const newItems = [...items]
-      const [removed] = newItems.splice(draggedIndex, 1)
-      newItems.splice(dropTargetIndex, 0, removed!)
+      const [removed] = newItems.splice(fromIndex, 1)
+      newItems.splice(toIndex, 0, removed!)
       items = newItems
     }
     draggedIndex = null
@@ -1031,7 +1034,7 @@ function AnimationFrameTest() {
   let running = $state(false)
   let frameCount = $state(0)
 
-  createEffect(() => {
+  $effect(() => {
     if (!running) return
 
     let animationId: number
