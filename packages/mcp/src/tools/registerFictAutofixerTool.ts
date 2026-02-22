@@ -512,6 +512,68 @@ function hasFilePath(files: Record<string, string>, targetPath: string): boolean
   return Object.keys(files).some(filePath => normalizePathForLookup(filePath) === normalizedTarget)
 }
 
+const ISSUE_SEVERITY_RANK: Record<IssueSeverity, number> = {
+  error: 0,
+  warning: 1,
+  info: 2,
+  hint: 3,
+}
+
+function issueSortTuple(issue: Issue): [number, string, number, number, string, string, string] {
+  return [
+    ISSUE_SEVERITY_RANK[issue.severity],
+    issue.file,
+    issue.range?.start.line ?? Number.POSITIVE_INFINITY,
+    issue.range?.start.col ?? Number.POSITIVE_INFINITY,
+    issue.source,
+    issue.code,
+    issue.message,
+  ]
+}
+
+function compareIssues(left: Issue, right: Issue): number {
+  const leftTuple = issueSortTuple(left)
+  const rightTuple = issueSortTuple(right)
+  for (let i = 0; i < leftTuple.length; i += 1) {
+    const leftValue = leftTuple[i]
+    const rightValue = rightTuple[i]
+    if (leftValue < rightValue) return -1
+    if (leftValue > rightValue) return 1
+  }
+  return 0
+}
+
+function issueDedupeKey(issue: Issue): string {
+  const startLine = issue.range?.start.line ?? 0
+  const startCol = issue.range?.start.col ?? 0
+  const endLine = issue.range?.end?.line ?? 0
+  const endCol = issue.range?.end?.col ?? 0
+  return [
+    issue.source,
+    issue.code,
+    issue.severity,
+    issue.file,
+    startLine,
+    startCol,
+    endLine,
+    endCol,
+    issue.message,
+  ].join('|')
+}
+
+function dedupeAndSortIssues(issues: Issue[]): Issue[] {
+  const seen = new Set<string>()
+  const deduped: Issue[] = []
+  for (const issue of issues) {
+    const key = issueDedupeKey(issue)
+    if (seen.has(key)) continue
+    seen.add(key)
+    deduped.push(issue)
+  }
+
+  return deduped.sort(compareIssues)
+}
+
 export function registerFictAutofixerTool(server: McpServer): void {
   server.registerTool(
     'fict-autofixer',
@@ -647,10 +709,11 @@ export function registerFictAutofixerTool(server: McpServer): void {
         }
       }
 
-      const summary = summarizeIssues(issues)
+      const normalizedIssues = dedupeAndSortIssues(issues)
+      const summary = summarizeIssues(normalizedIssues)
       const output = {
         ok: summary.errors === 0,
-        issues,
+        issues: normalizedIssues,
         summary,
       }
 

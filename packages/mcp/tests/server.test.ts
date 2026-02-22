@@ -307,6 +307,42 @@ export function List({ items }) {
     expect(issues.some(issue => issue.severity === 'error')).toBe(true)
   })
 
+  it('returns stable severity-first ordering from fict-autofixer', async () => {
+    const { client } = await connectServer()
+
+    const result = await client.callTool({
+      name: 'fict-autofixer',
+      arguments: {
+        files: {
+          'src/App.tsx': `
+import { $state } from 'fict'
+
+export function App({ items }) {
+  let count = $state(0)
+  return (
+    <ul onClick={() => count++}>
+      {items.map(item => <li>{item.name}</li>)}
+    </ul>
+  )
+}
+`,
+        },
+      },
+    })
+
+    const issues = Array.isArray((result.structuredContent as { issues?: unknown })?.issues)
+      ? ((result.structuredContent as { issues: Array<{ severity: string }> }).issues ?? [])
+      : []
+
+    const firstWarningIndex = issues.findIndex(issue => issue.severity === 'warning')
+    const lastErrorIndex = [...issues].reverse().findIndex(issue => issue.severity === 'error')
+
+    expect(firstWarningIndex).toBeGreaterThanOrEqual(0)
+    expect(lastErrorIndex).toBeGreaterThanOrEqual(0)
+    const actualLastErrorIndex = issues.length - 1 - lastErrorIndex
+    expect(actualLastErrorIndex).toBeLessThan(firstWarningIndex)
+  })
+
   it('creates a valid playground share link', async () => {
     const { client } = await connectServer()
 
