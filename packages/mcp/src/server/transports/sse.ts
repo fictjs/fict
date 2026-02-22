@@ -12,6 +12,7 @@ import {
   pruneExpiredSessions,
   writeCorsHeaders,
 } from './httpShared'
+import { buildCreateFictMcpServerOptions } from './serverOptions'
 
 interface SessionContext {
   server: McpServer
@@ -87,20 +88,6 @@ const DEFAULT_STATS_PATH = '/stats'
 const DEFAULT_MAX_SESSIONS = 100
 const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000
 
-function buildServerOptions(
-  options: StartSseHttpServerOptions,
-): CreateFictMcpServerOptions | undefined {
-  const base: CreateFictMcpServerOptions = {}
-
-  if (options.docsRoot) base.docsRoot = options.docsRoot
-  if (options.docsManifestPath) base.docsManifestPath = options.docsManifestPath
-  if (options.playgroundOrigin) base.playgroundOrigin = options.playgroundOrigin
-  if (options.serverName) base.serverName = options.serverName
-  if (options.serverVersion) base.serverVersion = options.serverVersion
-
-  return Object.keys(base).length > 0 ? base : undefined
-}
-
 async function closeSession(context: SessionContext): Promise<void> {
   await Promise.allSettled([context.server.close(), context.transport.close()])
 }
@@ -118,7 +105,7 @@ export async function startSseHttpServer(
   const enableCors = options.enableCors ?? true
   const maxSessions = normalizePositiveInt(options.maxSessions, DEFAULT_MAX_SESSIONS)
   const sessionTtlMs = normalizePositiveInt(options.sessionTtlMs, DEFAULT_SESSION_TTL_MS)
-  const baseServerOptions = buildServerOptions(options)
+  const baseServerOptions = buildCreateFictMcpServerOptions(options)
 
   const uniquePaths = new Set([ssePath, messagesPath, healthPath, statsPath])
   if (uniquePaths.size < 4) {
