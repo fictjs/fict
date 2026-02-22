@@ -109,7 +109,7 @@ export function startTransition(fn: () => void): void {
 
 ---
 
-### `useTransition(): [() => boolean, (fn: () => void) => void]`
+### `useTransition(): [() => boolean, (fn: () => void | PromiseLike<unknown>) => void]`
 
 Returns a pending signal and a startTransition function.
 
@@ -144,19 +144,29 @@ function SearchComponent() {
 **Implementation:**
 
 ```typescript
-export function useTransition(): [() => boolean, (fn: () => void) => void] {
-  const pending = createSignal(false)
+export function useTransition(): [() => boolean, (fn: () => void | PromiseLike<unknown>) => void] {
+  const pending = signal(false)
+  let pendingCount = 0
 
-  const start = (fn: () => void) => {
-    // Keep pending updates inside the transition to avoid race conditions
+  const start = (fn: () => void | PromiseLike<unknown>) => {
+    pendingCount += 1
+    if (pendingCount === 1) pending(true)
+
+    let result: void | PromiseLike<unknown>
     startTransition(() => {
-      pending(true)
-      try {
-        fn()
-      } finally {
-        pending(false)
-      }
+      result = fn()
     })
+
+    const finish = () => {
+      pendingCount -= 1
+      if (pendingCount === 0) pending(false)
+    }
+
+    if (result && typeof (result as PromiseLike<unknown>).then === 'function') {
+      void Promise.resolve(result).finally(finish)
+      return
+    }
+    queueMicrotask(finish)
   }
 
   return [() => pending(), start]
@@ -212,7 +222,7 @@ export function useDeferredValue<T>(getValue: () => T): () => T {
 
 ### Test File Location
 
-`packages/runtime/src/__tests__/scheduler.test.ts`
+`packages/runtime/test/scheduler.test.ts`
 
 ### Test Coverage
 

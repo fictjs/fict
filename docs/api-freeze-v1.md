@@ -49,7 +49,10 @@ export function untrack<T>(fn: () => T): T
 
 // Transition API (priority scheduling)
 export function startTransition(fn: () => void): void
-export function useTransition(): [pending: () => boolean, start: (fn: () => void) => void]
+export function useTransition(): [
+  pending: () => boolean,
+  start: (fn: () => void | PromiseLike<unknown>) => void,
+]
 export function useDeferredValue<T>(value: () => T): () => T
 ```
 

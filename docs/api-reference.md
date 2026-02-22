@@ -670,7 +670,10 @@ function Search() {
 Get the transition state and a start function.
 
 ```typescript
-function useTransition(): [isPending: () => boolean, startTransition: (fn: () => void) => void]
+function useTransition(): [
+  isPending: () => boolean,
+  startTransition: (fn: () => void | PromiseLike<unknown>) => void,
+]
 ```
 
 **Example:**
