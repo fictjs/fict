@@ -1,3 +1,5 @@
+import fsp from 'node:fs/promises'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -20,10 +22,15 @@ interface ConnectedContext {
 
 const activeConnections: ConnectedContext[] = []
 
-async function connectServer(): Promise<ConnectedContext> {
+interface ConnectServerOptions {
+  docsRoot?: string
+  playgroundOrigin?: string
+}
+
+async function connectServer(options: ConnectServerOptions = {}): Promise<ConnectedContext> {
   const { server } = createFictMcpServer({
-    docsRoot: DOCS_ROOT,
-    playgroundOrigin: 'http://localhost:4173',
+    docsRoot: options.docsRoot ?? DOCS_ROOT,
+    playgroundOrigin: options.playgroundOrigin ?? 'http://localhost:4173',
   })
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -52,6 +59,63 @@ afterEach(async () => {
 })
 
 describe('fict mcp server', () => {
+  it('reads section metadata from markdown frontmatter', async () => {
+    const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'fict-mcp-docs-'))
+    const docsRoot = path.join(tempRoot, 'docs')
+
+    await fsp.mkdir(docsRoot, { recursive: true })
+    await fsp.writeFile(
+      path.join(docsRoot, 'custom.md'),
+      [
+        '---',
+        'title: Custom Metadata Guide',
+        'tags:',
+        '  - mcp',
+        '  - docs',
+        'use_cases:',
+        '  - Validate metadata extraction',
+        '---',
+        '',
+        '# Ignored Title',
+        '',
+        'Body',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const { client } = await connectServer({ docsRoot })
+
+    try {
+      const sectionsResult = await client.callTool({
+        name: 'list-sections',
+        arguments: {},
+      })
+
+      const sections = Array.isArray(
+        (sectionsResult.structuredContent as { sections?: unknown })?.sections,
+      )
+        ? ((
+            sectionsResult.structuredContent as {
+              sections: Array<{
+                id: string
+                title: string
+                tags?: string[]
+                use_cases?: string[]
+              }>
+            }
+          ).sections ?? [])
+        : []
+
+      const custom = sections.find(section => section.id === 'custom')
+      expect(custom).toBeTruthy()
+      expect(custom?.title).toBe('Custom Metadata Guide')
+      expect(custom?.tags).toEqual(['mcp', 'docs'])
+      expect(custom?.use_cases).toEqual(['Validate metadata extraction'])
+    } finally {
+      await fsp.rm(tempRoot, { recursive: true, force: true })
+    }
+  })
+
   it('exposes docs tools and returns section content', async () => {
     const { client } = await connectServer()
 
