@@ -77,6 +77,8 @@ Environment variables:
 - `FICT_MCP_HTTP_MAX_SESSIONS`: max active HTTP sessions before LRU eviction (default: `100`).
 - `FICT_MCP_HTTP_SESSION_TTL_MS`: idle session TTL in milliseconds (default: `1800000`).
 
+In HTTP mode, invalid `docsRoot` config fails fast at startup instead of deferring the error to the first MCP request.
+
 ## HTTP observability endpoints
 
 When running with `--http`, MCP also serves:
