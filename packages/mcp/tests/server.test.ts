@@ -443,6 +443,20 @@ export function App({ items }) {
     ).rejects.toThrow('HTTP paths must be distinct')
   })
 
+  it('rejects conflicting sse http paths', async () => {
+    await expect(
+      startSseHttpServer({
+        docsRoot: DOCS_ROOT,
+        host: '127.0.0.1',
+        port: 0,
+        ssePath: '/sse',
+        messagesPath: '/messages',
+        healthPath: '/sse',
+        statsPath: '/stats',
+      }),
+    ).rejects.toThrow('SSE HTTP paths must be distinct')
+  })
+
   it('fails fast for invalid docs root in streamable http startup', async () => {
     await expect(
       startStreamableHttpServer({

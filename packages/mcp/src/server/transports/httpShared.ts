@@ -69,6 +69,17 @@ export async function evictSessionsToCapacity<T extends SessionEntryLike>(option
   }
 }
 
+export function assertDistinctPaths(prefix: string, paths: Record<string, string>): void {
+  const entries = Object.entries(paths)
+  const values = entries.map(([, value]) => value)
+  const uniqueValues = new Set(values)
+
+  if (uniqueValues.size < values.length) {
+    const rendered = entries.map(([key, value]) => `${key}=${value}`).join(', ')
+    throw new Error(`${prefix} paths must be distinct: ${rendered}`)
+  }
+}
+
 export function writeCorsHeaders(
   res: { setHeader: (name: string, value: string) => void },
   options: {

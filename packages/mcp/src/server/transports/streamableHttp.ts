@@ -6,6 +6,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 
 import { createFictMcpServer, type CreateFictMcpServerOptions } from '../createServer'
 import {
+  assertDistinctPaths,
   createResponseHelpers,
   evictSessionsToCapacity,
   normalizeHttpPath,
@@ -108,12 +109,11 @@ export async function startStreamableHttpServer(
   const sessionTtlMs = normalizePositiveInt(options.sessionTtlMs, DEFAULT_SESSION_TTL_MS)
   const baseServerOptions = buildCreateFictMcpServerOptions(options)
 
-  const uniquePaths = new Set([endpointPath, healthPath, statsPath])
-  if (uniquePaths.size < 3) {
-    throw new Error(
-      `HTTP paths must be distinct: path=${endpointPath}, healthPath=${healthPath}, statsPath=${statsPath}`,
-    )
-  }
+  assertDistinctPaths('HTTP', {
+    path: endpointPath,
+    healthPath,
+    statsPath,
+  })
 
   // Validate docs/options eagerly so invalid config fails at startup instead of first MCP request.
   const preflight = createFictMcpServer(baseServerOptions)

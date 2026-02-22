@@ -5,6 +5,7 @@ import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
 
 import { createFictMcpServer, type CreateFictMcpServerOptions } from '../createServer'
 import {
+  assertDistinctPaths,
   createResponseHelpers,
   evictSessionsToCapacity,
   normalizeHttpPath,
@@ -107,12 +108,12 @@ export async function startSseHttpServer(
   const sessionTtlMs = normalizePositiveInt(options.sessionTtlMs, DEFAULT_SESSION_TTL_MS)
   const baseServerOptions = buildCreateFictMcpServerOptions(options)
 
-  const uniquePaths = new Set([ssePath, messagesPath, healthPath, statsPath])
-  if (uniquePaths.size < 4) {
-    throw new Error(
-      `SSE HTTP paths must be distinct: ssePath=${ssePath}, messagesPath=${messagesPath}, healthPath=${healthPath}, statsPath=${statsPath}`,
-    )
-  }
+  assertDistinctPaths('SSE HTTP', {
+    ssePath,
+    messagesPath,
+    healthPath,
+    statsPath,
+  })
 
   // Validate docs/options eagerly so invalid config fails at startup.
   const preflight = createFictMcpServer(baseServerOptions)
