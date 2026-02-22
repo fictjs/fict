@@ -17,6 +17,7 @@ interface Issue {
   severity: IssueSeverity
   message: string
   file: string
+  suggestion?: string
   range?: {
     start: {
       line: number
@@ -48,6 +49,73 @@ const STRICT_GUARANTEE_WARNING_CODES = new Set([
   'FICT-R003',
   'FICT-R006',
 ])
+
+const COMPILER_SUGGESTIONS: Record<string, string> = {
+  'FICT-J002': 'Add a stable key to elements returned from map(), for example key={item.id}.',
+  'FICT-C003': 'Move nested component definitions to module scope to preserve stable identity.',
+  'FICT-C004': 'Ensure the component returns JSX (or null) on all code paths.',
+  'FICT-E001':
+    'Add reactive reads inside $effect or move mount-only logic outside reactive effect.',
+  'FICT-M003': 'Keep $memo functions pure; move side effects into $effect.',
+  'FICT-R003':
+    'Avoid control-flow-dependent reactive declarations; hoist reactive values and branch on plain values.',
+  'FICT-R004':
+    'Do not create reactive primitives inside loops/conditionals; declare them at component top scope.',
+}
+
+const ESLINT_SUGGESTIONS: Record<string, string> = {
+  'fict/require-list-key': 'Add key={...} for each mapped JSX element using a stable id.',
+  'fict/no-nested-components':
+    'Define child components at module scope instead of inside another component.',
+  'fict/no-state-in-loop': 'Move $state initialization out of loops and conditionals.',
+  'fict/no-state-outside-component':
+    'Use $state inside a component or dedicated reactive module context.',
+  'fict/no-empty-effect': 'Make $effect observe reactive values or remove it.',
+  'fict/no-inline-functions':
+    'Extract inline callbacks into stable functions when used in hot render paths.',
+  'fict/no-direct-mutation':
+    'Prefer immutable updates or explicit setter patterns instead of deep direct mutation.',
+}
+
+const TYPESCRIPT_SUGGESTIONS: Record<string, string> = {
+  TS1005:
+    'Fix the syntax near the reported token (missing punctuation like ",", ":", ";", or brackets).',
+  TS1109: 'Provide a valid expression at the highlighted position.',
+  TS1128: 'Remove unexpected declarations/statements and restore valid top-level syntax.',
+  TS1136: 'Fix malformed object literal/property syntax.',
+}
+
+function suggestionForIssue(
+  source: Issue['source'],
+  code: string,
+  message: string,
+): string | undefined {
+  if (source === 'compiler') {
+    return (
+      COMPILER_SUGGESTIONS[code] ??
+      'Follow the related diagnostic-codes documentation and apply the recommended rewrite.'
+    )
+  }
+
+  if (source === 'eslint') {
+    return (
+      ESLINT_SUGGESTIONS[code] ??
+      'Apply the eslint rule guidance and refactor to satisfy the flagged pattern.'
+    )
+  }
+
+  const fromCode = TYPESCRIPT_SUGGESTIONS[code]
+  if (fromCode) return fromCode
+
+  if (message.includes('Cannot find module')) {
+    return 'Check import path spelling and project/module resolution configuration.'
+  }
+  if (message.includes('is not assignable to type')) {
+    return 'Align the value type with the target type or add explicit type narrowing/conversion.'
+  }
+
+  return 'Fix the TypeScript diagnostic at the reported location, then rerun fict-autofixer.'
+}
 
 function profileFlags(profile: AutofixerProfile): {
   strictGuarantee: boolean
@@ -230,6 +298,8 @@ async function collectCompilerIssues(
         severity: 'error',
         message: error instanceof Error ? error.message : String(error),
         file: filePath,
+        suggestion:
+          'Check syntax/imports first, then rerun. If it persists, isolate a minimal repro for compiler bug reporting.',
       })
       continue
     }
@@ -242,6 +312,7 @@ async function collectCompilerIssues(
         message: warning.message,
         file: warning.fileName || filePath,
         doc_refs: ['diagnostic-codes'],
+        suggestion: suggestionForIssue('compiler', warning.code, warning.message),
       }
 
       if (warning.line > 0) {
@@ -275,6 +346,8 @@ async function collectEslintIssues(files: Record<string, string>): Promise<Issue
         severity: 'error',
         message: error instanceof Error ? error.message : String(error),
         file: filePath,
+        suggestion:
+          'Simplify or fix TypeScript syntax in this file first so ESLint can parse transformed code.',
       })
       continue
     }
@@ -291,6 +364,7 @@ async function collectEslintIssues(files: Record<string, string>): Promise<Issue
         severity: 'error',
         message: error instanceof Error ? error.message : String(error),
         file: filePath,
+        suggestion: 'Check ESLint plugin/config compatibility and retry.',
       })
       continue
     }
@@ -308,6 +382,7 @@ async function collectEslintIssues(files: Record<string, string>): Promise<Issue
         message: message.message,
         file: filePath,
         doc_refs: ['eslint-rules'],
+        suggestion: suggestionForIssue('eslint', message.ruleId ?? 'ESLINT', message.message),
       }
 
       if (message.line > 0 && message.column > 0) {
@@ -386,6 +461,11 @@ async function collectTypeScriptIssues(files: Record<string, string>): Promise<I
         severity: mapTypeScriptSeverity(diagnostic.category),
         message: diagnosticMessage(diagnostic),
         file: diagnostic.file?.fileName ?? filePath,
+        suggestion: suggestionForIssue(
+          'typescript',
+          `TS${diagnostic.code}`,
+          diagnosticMessage(diagnostic),
+        ),
       }
 
       const range = diagnosticRange(diagnostic)
@@ -456,6 +536,7 @@ export function registerFictAutofixerTool(server: McpServer): void {
             severity: z.enum(['error', 'warning', 'info', 'hint']),
             message: z.string(),
             file: z.string(),
+            suggestion: z.string().optional(),
             range: z
               .object({
                 start: z.object({
@@ -495,6 +576,8 @@ export function registerFictAutofixerTool(server: McpServer): void {
           severity: 'error',
           message: `Input too large (${totalInputBytes} bytes). Max allowed: ${MAX_INPUT_BYTES} bytes.`,
           file: '(input)',
+          suggestion:
+            'Reduce the number of files or trim unrelated code before running fict-autofixer.',
         })
       } else if (Object.keys(files).length === 0) {
         issues.push({
@@ -503,6 +586,7 @@ export function registerFictAutofixerTool(server: McpServer): void {
           severity: 'error',
           message: 'No source files were provided.',
           file: '(input)',
+          suggestion: 'Provide at least one source file, e.g. {"src/App.tsx":"..."}',
         })
       } else {
         const compilerIssues = await collectCompilerIssues(files, selectedProfile)
@@ -519,6 +603,8 @@ export function registerFictAutofixerTool(server: McpServer): void {
               severity: 'error',
               message: error instanceof Error ? error.message : String(error),
               file: '(input)',
+              suggestion:
+                'Verify TypeScript dependency/config setup, or rerun with includeTypescript=false.',
             })
           }
         }
@@ -534,6 +620,8 @@ export function registerFictAutofixerTool(server: McpServer): void {
               severity: 'error',
               message: error instanceof Error ? error.message : String(error),
               file: '(input)',
+              suggestion:
+                'Verify ESLint dependency/config setup, or rerun with includeEslint=false.',
             })
           }
         }
