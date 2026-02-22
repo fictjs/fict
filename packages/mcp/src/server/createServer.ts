@@ -6,6 +6,7 @@ import { z } from 'zod'
 
 import { registerDocsResources } from '../tools/registerDocsResources'
 import { buildFictTaskPrompt } from '../tools/registerFictPrompts'
+import { registerFictAutofixerTool } from '../tools/registerFictAutofixerTool'
 import { registerDocsTools } from '../tools/registerDocsTools'
 import { createDocsStore } from '../store/docsStore'
 
@@ -46,6 +47,7 @@ export function createFictMcpServer(options: CreateFictMcpServerOptions = {}): {
 
   registerDocsTools(server, docsStore)
   registerDocsResources(server, docsStore)
+  registerFictAutofixerTool(server)
 
   server.registerPrompt(
     'fict-task',

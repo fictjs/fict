@@ -7,7 +7,14 @@ export default defineConfig([
     dts: true,
     clean: true,
     sourcemap: true,
-    external: ['@modelcontextprotocol/sdk', 'zod'],
+    external: [
+      '@modelcontextprotocol/sdk',
+      'zod',
+      '@babel/core',
+      '@babel/plugin-syntax-jsx',
+      '@babel/preset-typescript',
+      '@fictjs/compiler',
+    ],
   },
   {
     entry: {
@@ -19,6 +26,13 @@ export default defineConfig([
     banner: {
       js: '#!/usr/bin/env node',
     },
-    external: ['@modelcontextprotocol/sdk', 'zod'],
+    external: [
+      '@modelcontextprotocol/sdk',
+      'zod',
+      '@babel/core',
+      '@babel/plugin-syntax-jsx',
+      '@babel/preset-typescript',
+      '@fictjs/compiler',
+    ],
   },
 ])
