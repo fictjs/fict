@@ -37,6 +37,38 @@ export function resolveOldestSessionId<T extends SessionEntryLike>(
   return oldestId
 }
 
+export async function pruneExpiredSessions<T extends SessionEntryLike>(options: {
+  sessions: Map<string, T>
+  sessionTtlMs: number
+  now: number
+  removeSessionById: (sessionId: string) => Promise<void>
+}): Promise<void> {
+  if (options.sessionTtlMs <= 0) return
+
+  const expiredIds: string[] = []
+  for (const [sessionId, entry] of options.sessions) {
+    if (options.now - entry.lastSeenAt > options.sessionTtlMs) {
+      expiredIds.push(sessionId)
+    }
+  }
+
+  for (const sessionId of expiredIds) {
+    await options.removeSessionById(sessionId)
+  }
+}
+
+export async function evictSessionsToCapacity<T extends SessionEntryLike>(options: {
+  sessions: Map<string, T>
+  maxSessions: number
+  removeSessionById: (sessionId: string) => Promise<void>
+}): Promise<void> {
+  while (options.sessions.size >= options.maxSessions) {
+    const oldestSessionId = resolveOldestSessionId(options.sessions)
+    if (!oldestSessionId) break
+    await options.removeSessionById(oldestSessionId)
+  }
+}
+
 export function writeCorsHeaders(
   res: { setHeader: (name: string, value: string) => void },
   options: {

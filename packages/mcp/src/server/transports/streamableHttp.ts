@@ -7,9 +7,10 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createFictMcpServer, type CreateFictMcpServerOptions } from '../createServer'
 import {
   createResponseHelpers,
+  evictSessionsToCapacity,
   normalizeHttpPath,
   normalizePositiveInt,
-  resolveOldestSessionId,
+  pruneExpiredSessions,
   writeCorsHeaders,
 } from './httpShared'
 
@@ -223,31 +224,12 @@ export async function startStreamableHttpServer(
     if (reason === 'deleted') counters.sessionsDeleted += 1
   }
 
-  async function pruneExpiredSessions(now: number): Promise<void> {
-    if (sessionTtlMs <= 0) return
-
-    const expiredIds: string[] = []
-    for (const [sessionId, entry] of sessions) {
-      if (now - entry.lastSeenAt > sessionTtlMs) {
-        expiredIds.push(sessionId)
-      }
-    }
-
-    for (const sessionId of expiredIds) {
-      await removeSessionById(sessionId, 'expired')
-    }
-  }
-
-  async function ensureSessionCapacity(): Promise<void> {
-    while (sessions.size >= maxSessions) {
-      const oldestSessionId = resolveOldestSessionId(sessions)
-      if (!oldestSessionId) break
-      await removeSessionById(oldestSessionId, 'evicted')
-    }
-  }
-
   async function createSession(): Promise<SessionContext> {
-    await ensureSessionCapacity()
+    await evictSessionsToCapacity({
+      sessions,
+      maxSessions,
+      removeSessionById: sessionId => removeSessionById(sessionId, 'evicted'),
+    })
 
     const { server } = createFictMcpServer(baseServerOptions)
     const transport = new StreamableHTTPServerTransport({
@@ -280,7 +262,12 @@ export async function startStreamableHttpServer(
       return
     }
 
-    await pruneExpiredSessions(Date.now())
+    await pruneExpiredSessions({
+      sessions,
+      sessionTtlMs,
+      now: Date.now(),
+      removeSessionById: sessionId => removeSessionById(sessionId, 'expired'),
+    })
 
     const requestUrl = new URL(
       req.url ?? '/',
