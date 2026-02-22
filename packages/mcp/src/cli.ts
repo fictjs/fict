@@ -12,6 +12,8 @@ interface CliOptions {
   statsPath: string
   maxSessions: number
   sessionTtlMs: number
+  docsRoot?: string
+  playgroundOrigin?: string
 }
 
 function readNumberEnv(name: string, fallback: number): number {
@@ -34,6 +36,8 @@ function parseArgs(argv: string[]): CliOptions {
     statsPath: process.env.FICT_MCP_HTTP_STATS_PATH ?? '/stats',
     maxSessions: readNumberEnv('FICT_MCP_HTTP_MAX_SESSIONS', 100),
     sessionTtlMs: readNumberEnv('FICT_MCP_HTTP_SESSION_TTL_MS', 30 * 60 * 1000),
+    docsRoot: process.env.FICT_MCP_DOCS_ROOT,
+    playgroundOrigin: process.env.FICT_PLAYGROUND_ORIGIN,
   }
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -119,6 +123,22 @@ function parseArgs(argv: string[]): CliOptions {
       continue
     }
 
+    if (arg === '--docs-root') {
+      const next = argv[index + 1]
+      if (!next) throw new Error('--docs-root requires a value')
+      options.docsRoot = next
+      index += 1
+      continue
+    }
+
+    if (arg === '--playground-origin') {
+      const next = argv[index + 1]
+      if (!next) throw new Error('--playground-origin requires a value')
+      options.playgroundOrigin = next
+      index += 1
+      continue
+    }
+
     if (arg === '-h' || arg === '--help') {
       printHelp()
       process.exit(0)
@@ -146,6 +166,8 @@ function printHelp(): void {
     '  --stats-path <path>     Stats endpoint path (default: /stats)',
     '  --max-sessions <n>     Max concurrent sessions (default: 100)',
     '  --session-ttl-ms <ms>  Session idle TTL in milliseconds (default: 1800000)',
+    '  --docs-root <path>     Docs root path (default: auto-discover / env)',
+    '  --playground-origin <url>  Playground base URL (default: env / localhost)',
     '',
     'Environment:',
     '  FICT_MCP_TRANSPORT=http|stdio',
@@ -174,8 +196,8 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
     statsPath: options.statsPath,
     maxSessions: options.maxSessions,
     sessionTtlMs: options.sessionTtlMs,
-    docsRoot: process.env.FICT_MCP_DOCS_ROOT,
-    playgroundOrigin: process.env.FICT_PLAYGROUND_ORIGIN,
+    docsRoot: options.docsRoot,
+    playgroundOrigin: options.playgroundOrigin,
   })
 
   process.stderr.write(`Fict MCP HTTP server running at ${server.url}\n`)
