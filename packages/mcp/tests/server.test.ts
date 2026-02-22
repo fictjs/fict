@@ -154,6 +154,20 @@ describe('fict mcp server', () => {
       : []
     expect(docs[0]?.content?.length ?? 0).toBeGreaterThan(100)
 
+    const missingDocResult = await client.callTool({
+      name: 'get-documentation',
+      arguments: {
+        sections: ['__missing_section__'],
+      },
+    })
+    expect(missingDocResult.isError).toBe(true)
+    const missingPayload = missingDocResult.structuredContent as {
+      error?: string
+      missing?: string[]
+    }
+    expect(missingPayload.error).toContain('Unknown section ids')
+    expect(missingPayload.missing).toEqual(['__missing_section__'])
+
     const searchResult = await client.callTool({
       name: 'search-sections',
       arguments: {

@@ -192,14 +192,18 @@ export function registerDocsTools(server: McpServer, docs: DocsStore): void {
           .describe('md = raw markdown, llms = normalized markdown. Default: llms.'),
       },
       outputSchema: {
-        documents: z.array(
-          z.object({
-            id: z.string(),
-            title: z.string(),
-            format: z.string(),
-            content: z.string(),
-          }),
-        ),
+        documents: z
+          .array(
+            z.object({
+              id: z.string(),
+              title: z.string(),
+              format: z.string(),
+              content: z.string(),
+            }),
+          )
+          .optional(),
+        error: z.string().optional(),
+        missing: z.array(z.string()).optional(),
       },
     },
     async ({ sections, format }) => {
