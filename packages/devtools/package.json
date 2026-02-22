@@ -50,8 +50,8 @@
     "@fictjs/runtime": "workspace:*"
   },
   "devDependencies": {
-    "@types/chrome": "^0.0.268",
-    "jsdom": "^27.4.0",
+    "@types/chrome": "^0.1.37",
+    "jsdom": "^28.1.0",
     "tsup": "^8.5.1",
     "typescript": "^5.7.3",
     "vite": "^7.3.1",
