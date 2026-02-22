@@ -1,12 +1,7 @@
-export function toLlmsMarkdown(markdown: string): string {
-  let text = markdown
+import { splitFrontmatter } from './frontmatter'
 
-  if (text.startsWith('---')) {
-    const frontmatterEndIndex = text.indexOf('\n---', 3)
-    if (frontmatterEndIndex !== -1) {
-      text = text.slice(frontmatterEndIndex + '\n---'.length)
-    }
-  }
+export function toLlmsMarkdown(markdown: string): string {
+  let text = splitFrontmatter(markdown).body
 
   text = text.replace(/<!--([\s\S]*?)-->/g, '')
   text = text.replace(/^!\[[^\]]*\]\([^)]*\)\s*$/gm, '')
