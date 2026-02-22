@@ -192,9 +192,11 @@ export function createVersionedSignal<T>(
 ): VersionedSignal<T>
 
 export interface VersionedSignal<T> {
-  (): T
-  set(value: T | ((prev: T) => T)): void
-  version: () => number
+  read: () => T
+  write: (value: T) => void
+  force: () => void
+  peekVersion: () => number
+  peekValue: () => T
 }
 
 export interface VersionedSignalOptions<T> {
