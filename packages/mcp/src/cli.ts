@@ -21,6 +21,70 @@ interface CliOptions {
   playgroundOrigin?: string
 }
 
+type CliStringFlag =
+  | '--host'
+  | '--path'
+  | '--sse-path'
+  | '--messages-path'
+  | '--health-path'
+  | '--stats-path'
+  | '--docs-root'
+  | '--docs-manifest'
+  | '--playground-origin'
+
+type CliPositiveIntFlag = '--port' | '--max-sessions' | '--session-ttl-ms'
+
+const TRANSPORT_FLAGS: Record<string, TransportKind> = {
+  '--stdio': 'stdio',
+  '--http': 'http',
+  '--sse': 'sse',
+}
+
+const STRING_FLAG_SETTERS: Record<CliStringFlag, (options: CliOptions, value: string) => void> = {
+  '--host': (options, value) => {
+    options.host = value
+  },
+  '--path': (options, value) => {
+    options.path = value
+  },
+  '--sse-path': (options, value) => {
+    options.ssePath = value
+  },
+  '--messages-path': (options, value) => {
+    options.messagesPath = value
+  },
+  '--health-path': (options, value) => {
+    options.healthPath = value
+  },
+  '--stats-path': (options, value) => {
+    options.statsPath = value
+  },
+  '--docs-root': (options, value) => {
+    options.docsRoot = value
+  },
+  '--docs-manifest': (options, value) => {
+    options.docsManifestPath = value
+  },
+  '--playground-origin': (options, value) => {
+    options.playgroundOrigin = value
+  },
+}
+
+const POSITIVE_INT_FLAG_SETTERS: Record<
+  CliPositiveIntFlag,
+  (options: CliOptions, value: number) => void
+> = {
+  '--port': (options, value) => {
+    options.port = value
+  },
+  '--max-sessions': (options, value) => {
+    options.maxSessions = value
+  },
+  '--session-ttl-ms': (options, value) => {
+    options.sessionTtlMs = value
+  },
+}
+
 function parsePositiveInt(raw: string): number | undefined {
   const parsed = Number(raw)
   if (!Number.isInteger(parsed) || parsed <= 0) return undefined
@@ -75,96 +139,39 @@ function parseArgs(argv: string[]): CliOptions {
     if (!arg) continue
     if (arg === '--') continue
 
-    if (arg === '--stdio') {
-      options.transport = 'stdio'
-      continue
-    }
-
-    if (arg === '--http') {
-      options.transport = 'http'
-      continue
-    }
-
-    if (arg === '--sse') {
-      options.transport = 'sse'
-      continue
-    }
-
-    if (arg === '--host') {
-      options.host = readArgValue(argv, index, '--host')
-      index += 1
-      continue
-    }
-
-    if (arg === '--port') {
-      options.port = readPositiveIntArg(argv, index, '--port')
-      index += 1
-      continue
-    }
-
-    if (arg === '--path') {
-      options.path = readArgValue(argv, index, '--path')
-      index += 1
-      continue
-    }
-
-    if (arg === '--sse-path') {
-      options.ssePath = readArgValue(argv, index, '--sse-path')
-      index += 1
-      continue
-    }
-
-    if (arg === '--messages-path') {
-      options.messagesPath = readArgValue(argv, index, '--messages-path')
-      index += 1
-      continue
-    }
-
-    if (arg === '--health-path') {
-      options.healthPath = readArgValue(argv, index, '--health-path')
-      index += 1
-      continue
-    }
-
-    if (arg === '--stats-path') {
-      options.statsPath = readArgValue(argv, index, '--stats-path')
-      index += 1
-      continue
-    }
-
-    if (arg === '--max-sessions') {
-      options.maxSessions = readPositiveIntArg(argv, index, '--max-sessions')
-      index += 1
-      continue
-    }
-
-    if (arg === '--session-ttl-ms') {
-      options.sessionTtlMs = readPositiveIntArg(argv, index, '--session-ttl-ms')
-      index += 1
-      continue
-    }
-
-    if (arg === '--docs-root') {
-      options.docsRoot = readArgValue(argv, index, '--docs-root')
-      index += 1
-      continue
-    }
-
-    if (arg === '--docs-manifest') {
-      options.docsManifestPath = readArgValue(argv, index, '--docs-manifest')
-      index += 1
-      continue
-    }
-
-    if (arg === '--playground-origin') {
-      options.playgroundOrigin = readArgValue(argv, index, '--playground-origin')
-      index += 1
+    const transport = TRANSPORT_FLAGS[arg]
+    if (transport) {
+      options.transport = transport
       continue
     }
 
     if (arg === '-h' || arg === '--help') {
       printHelp()
       process.exit(0)
+    }
+
+    const stringSetter = (
+      STRING_FLAG_SETTERS as Record<
+        string,
+        ((options: CliOptions, value: string) => void) | undefined
+      >
+    )[arg]
+    if (stringSetter) {
+      stringSetter(options, readArgValue(argv, index, arg))
+      index += 1
+      continue
+    }
+
+    const positiveIntSetter = (
+      POSITIVE_INT_FLAG_SETTERS as Record<
+        string,
+        ((options: CliOptions, value: number) => void) | undefined
+      >
+    )[arg]
+    if (positiveIntSetter) {
+      positiveIntSetter(options, readPositiveIntArg(argv, index, arg))
+      index += 1
+      continue
     }
 
     throw new Error(`Unknown argument: ${arg}`)

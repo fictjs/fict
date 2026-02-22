@@ -52,3 +52,15 @@ describe('cli numeric option validation', () => {
     )
   })
 })
+
+describe('cli option parsing', () => {
+  it('rejects missing value for string options', async () => {
+    await expect(runCli(['--http', '--host'])).rejects.toThrow('--host requires a value')
+  })
+
+  it('rejects unknown arguments', async () => {
+    await expect(runCli(['--http', '--not-a-real-flag'])).rejects.toThrow(
+      'Unknown argument: --not-a-real-flag',
+    )
+  })
+})
