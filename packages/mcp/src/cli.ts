@@ -216,6 +216,30 @@ function printHelp(): void {
   process.stdout.write(`${message}\n`)
 }
 
+function printStartupLines(lines: string[]): void {
+  for (const line of lines) {
+    process.stderr.write(`${line}\n`)
+  }
+}
+
+function registerShutdown(close: () => Promise<void>): void {
+  let closing = false
+
+  const shutdown = async (): Promise<void> => {
+    if (closing) return
+    closing = true
+    await close()
+    process.exit(0)
+  }
+
+  process.on('SIGINT', () => {
+    void shutdown()
+  })
+  process.on('SIGTERM', () => {
+    void shutdown()
+  })
+}
+
 export async function runCli(argv: string[] = process.argv.slice(2)): Promise<void> {
   const options = parseArgs(argv)
 
@@ -243,22 +267,13 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
       playgroundOrigin: options.playgroundOrigin,
     })
 
-    process.stderr.write(`Fict MCP SSE server running at ${server.url}\n`)
-    process.stderr.write(`Messages: ${server.messagesUrl}\n`)
-    process.stderr.write(`Health: ${server.healthUrl}\n`)
-    process.stderr.write(`Stats: ${server.statsUrl}\n`)
-
-    const shutdown = async (): Promise<void> => {
-      await server.close()
-      process.exit(0)
-    }
-
-    process.on('SIGINT', () => {
-      void shutdown()
-    })
-    process.on('SIGTERM', () => {
-      void shutdown()
-    })
+    printStartupLines([
+      `Fict MCP SSE server running at ${server.url}`,
+      `Messages: ${server.messagesUrl}`,
+      `Health: ${server.healthUrl}`,
+      `Stats: ${server.statsUrl}`,
+    ])
+    registerShutdown(() => server.close())
     return
   }
 
@@ -275,19 +290,10 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
     playgroundOrigin: options.playgroundOrigin,
   })
 
-  process.stderr.write(`Fict MCP HTTP server running at ${server.url}\n`)
-  process.stderr.write(`Health: ${server.healthUrl}\n`)
-  process.stderr.write(`Stats: ${server.statsUrl}\n`)
-
-  const shutdown = async (): Promise<void> => {
-    await server.close()
-    process.exit(0)
-  }
-
-  process.on('SIGINT', () => {
-    void shutdown()
-  })
-  process.on('SIGTERM', () => {
-    void shutdown()
-  })
+  printStartupLines([
+    `Fict MCP HTTP server running at ${server.url}`,
+    `Health: ${server.healthUrl}`,
+    `Stats: ${server.statsUrl}`,
+  ])
+  registerShutdown(() => server.close())
 }
