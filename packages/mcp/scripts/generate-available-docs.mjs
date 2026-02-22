@@ -72,8 +72,7 @@ const availableDocsBlock = `<available-docs>\n${availableDocsBlockLines.join('\n
 const outFile = path.join(packageRoot, 'src', 'prompts', 'available-docs.generated.ts')
 fs.mkdirSync(path.dirname(outFile), { recursive: true })
 
-const header = `/* eslint-disable */
-/**
+const header = `/**
  * AUTO-GENERATED FILE. DO NOT EDIT.
  *
  * Regenerate with: pnpm --filter @fictjs/mcp build:assets

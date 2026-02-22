@@ -1,8 +1,6 @@
 import { Buffer } from 'node:buffer'
 
 import { transformAsync } from '@babel/core'
-import syntaxJsx from '@babel/plugin-syntax-jsx'
-import presetTypeScript from '@babel/preset-typescript'
 import { createFictPlugin, type CompilerWarning, type FictCompilerOptions } from '@fictjs/compiler'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
@@ -210,14 +208,17 @@ export function registerFictAutofixerTool(server: McpServer): void {
               },
               presets: [
                 [
-                  presetTypeScript,
+                  '@babel/preset-typescript',
                   {
                     isTSX: /\.(tsx|jsx)$/i.test(filePath),
                     allExtensions: true,
                   },
                 ],
               ],
-              plugins: [syntaxJsx, [createFictPlugin, pluginOptions]],
+              plugins: [
+                ['@babel/plugin-syntax-jsx', {}],
+                [createFictPlugin, pluginOptions],
+              ],
             })
           } catch (error) {
             issues.push({

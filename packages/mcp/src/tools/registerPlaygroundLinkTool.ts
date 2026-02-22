@@ -1,6 +1,5 @@
 import { Buffer } from 'node:buffer'
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import {
   encodeSessionSnapshot,
   listPlaygroundTemplates,
@@ -8,6 +7,7 @@ import {
   type PlaygroundProfile,
   type PlaygroundSessionSnapshot,
 } from '@fictjs/playground'
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
 const DEFAULT_PLAYGROUND_ORIGIN = 'http://localhost:4173'
@@ -44,6 +44,41 @@ const profileDefaults: Record<PlaygroundProfile, PlaygroundConfig> = {
 
 export interface RegisterPlaygroundLinkToolOptions {
   origin?: string
+}
+
+function applyConfigPatch(
+  base: PlaygroundConfig,
+  patch:
+    | Partial<Omit<PlaygroundConfig, 'profile'>>
+    | (Partial<Omit<PlaygroundConfig, 'profile'>> & { profile?: PlaygroundProfile })
+    | undefined,
+): PlaygroundConfig {
+  if (!patch) return base
+
+  const next: PlaygroundConfig = {
+    ...base,
+  }
+
+  if (typeof patch.strictGuarantee === 'boolean') {
+    next.strictGuarantee = patch.strictGuarantee
+  }
+  if (typeof patch.strictReactivity === 'boolean') {
+    next.strictReactivity = patch.strictReactivity
+  }
+  if (typeof patch.lazyConditional === 'boolean') {
+    next.lazyConditional = patch.lazyConditional
+  }
+  if (typeof patch.resumable === 'boolean') {
+    next.resumable = patch.resumable
+  }
+  if (typeof patch.functionSplitting === 'boolean') {
+    next.functionSplitting = patch.functionSplitting
+  }
+  if (typeof patch.devtools === 'boolean') {
+    next.devtools = patch.devtools
+  }
+
+  return next
 }
 
 export function registerPlaygroundLinkTool(
@@ -94,12 +129,12 @@ export function registerPlaygroundLinkTool(
       }
 
       const selectedProfile: PlaygroundProfile = profile ?? 'app-default'
-      const mergedConfig: PlaygroundConfig = {
+      const baseConfig: PlaygroundConfig = {
         ...profileDefaults[selectedProfile],
-        ...(selectedTemplate.recommendedConfig ?? {}),
-        ...(config ?? {}),
         profile: selectedProfile,
       }
+      const templateConfigPatched = applyConfigPatch(baseConfig, selectedTemplate.recommendedConfig)
+      const mergedConfig = applyConfigPatch(templateConfigPatched, config)
 
       const mergedFiles: Record<string, string> = {
         ...selectedTemplate.files,
@@ -107,7 +142,7 @@ export function registerPlaygroundLinkTool(
       }
 
       const resolvedEntryFile = entryFile ?? selectedTemplate.entryFile ?? 'src/App.tsx'
-      if (!mergedFiles[resolvedEntryFile]) {
+      if (!(resolvedEntryFile in mergedFiles)) {
         mergedFiles[resolvedEntryFile] = mergedFiles[selectedTemplate.entryFile] ?? ''
       }
 

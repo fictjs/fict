@@ -4,12 +4,12 @@ import path from 'node:path'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
 
-import { registerDocsResources } from '../tools/registerDocsResources'
-import { buildFictTaskPrompt } from '../tools/registerFictPrompts'
-import { registerFictAutofixerTool } from '../tools/registerFictAutofixerTool'
-import { registerDocsTools } from '../tools/registerDocsTools'
-import { registerPlaygroundLinkTool } from '../tools/registerPlaygroundLinkTool'
 import { createDocsStore } from '../store/docsStore'
+import { registerDocsResources } from '../tools/registerDocsResources'
+import { registerDocsTools } from '../tools/registerDocsTools'
+import { registerFictAutofixerTool } from '../tools/registerFictAutofixerTool'
+import { buildFictTaskPrompt } from '../tools/registerFictPrompts'
+import { registerPlaygroundLinkTool } from '../tools/registerPlaygroundLinkTool'
 
 export interface CreateFictMcpServerOptions {
   docsRoot?: string

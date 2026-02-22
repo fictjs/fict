@@ -9,7 +9,7 @@ export function toLlmsMarkdown(markdown: string): string {
   }
 
   text = text.replace(/<!--([\s\S]*?)-->/g, '')
-  text = text.replace(/^!\[[^\]]*\]\([^\)]*\)\s*$/gm, '')
+  text = text.replace(/^!\[[^\]]*\]\([^)]*\)\s*$/gm, '')
   text = text.replace(/\n{3,}/g, '\n\n')
 
   return `${text.trim()}\n`

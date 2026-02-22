@@ -52,7 +52,8 @@ function extractTitle(markdown: string, fallback: string): string {
   const lines = markdown.split(/\r?\n/)
   for (const line of lines.slice(0, 40)) {
     const match = line.match(/^#\s+(.+)$/)
-    if (match) return match[1].trim()
+    const title = match?.[1]
+    if (title) return title.trim()
   }
   return fallback
 }
