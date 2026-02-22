@@ -39,7 +39,7 @@ pnpm --filter @fictjs/mcp start
 
 ```bash
 pnpm --filter @fictjs/mcp build
-pnpm --filter @fictjs/mcp start -- --http --host 127.0.0.1 --port 8788 --path /mcp --max-sessions 100 --session-ttl-ms 1800000
+pnpm --filter @fictjs/mcp start -- --http --host 127.0.0.1 --port 8788 --path /mcp --health-path /healthz --stats-path /stats --max-sessions 100 --session-ttl-ms 1800000
 ```
 
 You can also switch transports via env:
@@ -56,8 +56,19 @@ Environment variables:
 - `FICT_MCP_HTTP_HOST`: HTTP bind host (default: `127.0.0.1`).
 - `FICT_MCP_HTTP_PORT`: HTTP bind port (default: `8788`).
 - `FICT_MCP_HTTP_PATH`: HTTP endpoint path (default: `/mcp`).
+- `FICT_MCP_HTTP_HEALTH_PATH`: health endpoint path (default: `/healthz`).
+- `FICT_MCP_HTTP_STATS_PATH`: stats endpoint path (default: `/stats`).
 - `FICT_MCP_HTTP_MAX_SESSIONS`: max active HTTP sessions before LRU eviction (default: `100`).
 - `FICT_MCP_HTTP_SESSION_TTL_MS`: idle session TTL in milliseconds (default: `1800000`).
+
+## HTTP observability endpoints
+
+When running with `--http`, MCP also serves:
+
+- `GET /healthz` (configurable via `--health-path` / `FICT_MCP_HTTP_HEALTH_PATH`)
+- `GET /stats` (configurable via `--stats-path` / `FICT_MCP_HTTP_STATS_PATH`)
+
+`/stats` includes request counters, status counters, error count, active session count, and session lifecycle totals (created/reused/expired/evicted/deleted).
 
 ## `fict-autofixer` options
 
