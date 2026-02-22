@@ -51,6 +51,8 @@ pnpm --filter @fictjs/mcp test
 ```bash
 pnpm --filter @fictjs/mcp build
 pnpm --filter @fictjs/mcp start
+# stdio mode also accepts docs/playground overrides:
+pnpm --filter @fictjs/mcp start -- --stdio --docs-root ../../docs --docs-manifest ./assets/docs-manifest.json --playground-origin http://localhost:4173
 ```
 
 ## Run (Streamable HTTP transport)
