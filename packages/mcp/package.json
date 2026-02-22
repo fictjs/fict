@@ -32,6 +32,7 @@
     "build:assets": "node scripts/generate-available-docs.mjs",
     "build": "node scripts/generate-available-docs.mjs && tsup",
     "dev": "node scripts/generate-available-docs.mjs && tsup --watch",
+    "start": "node dist/bin.js",
     "test": "vitest run --config vitest.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
     "lint": "eslint src",

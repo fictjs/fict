@@ -30,19 +30,21 @@ pnpm --filter @fictjs/mcp test
 ## Run (stdio transport)
 
 ```bash
-pnpm --filter @fictjs/mcp exec fict-mcp
+pnpm --filter @fictjs/mcp build
+pnpm --filter @fictjs/mcp start
 ```
 
 ## Run (Streamable HTTP transport)
 
 ```bash
-pnpm --filter @fictjs/mcp exec fict-mcp --http --host 127.0.0.1 --port 8788 --path /mcp
+pnpm --filter @fictjs/mcp build
+pnpm --filter @fictjs/mcp start -- --http --host 127.0.0.1 --port 8788 --path /mcp
 ```
 
 You can also switch transports via env:
 
 ```bash
-FICT_MCP_TRANSPORT=http pnpm --filter @fictjs/mcp exec fict-mcp
+FICT_MCP_TRANSPORT=http pnpm --filter @fictjs/mcp start
 ```
 
 Environment variables:
@@ -69,7 +71,7 @@ Environment variables:
   "mcpServers": {
     "fict": {
       "command": "pnpm",
-      "args": ["--filter", "@fictjs/mcp", "exec", "fict-mcp"],
+      "args": ["--filter", "@fictjs/mcp", "start"],
       "env": {
         "FICT_MCP_DOCS_ROOT": "/absolute/path/to/fict/docs",
         "FICT_PLAYGROUND_ORIGIN": "http://localhost:4173"
