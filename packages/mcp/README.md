@@ -66,7 +66,7 @@ pnpm --filter @fictjs/mcp start -- --http --host 127.0.0.1 --port 8788 --path /m
 
 ```bash
 pnpm --filter @fictjs/mcp build
-pnpm --filter @fictjs/mcp start -- --sse --host 127.0.0.1 --port 8790 --sse-path /sse --messages-path /messages --health-path /healthz --stats-path /stats --max-sessions 100 --session-ttl-ms 1800000
+FICT_MCP_ENABLE_SSE=1 pnpm --filter @fictjs/mcp start -- --sse --host 127.0.0.1 --port 8790 --sse-path /sse --messages-path /messages --health-path /healthz --stats-path /stats --max-sessions 100 --session-ttl-ms 1800000
 ```
 
 You can also switch transports via env:
@@ -80,7 +80,8 @@ Environment variables:
 - `FICT_MCP_DOCS_ROOT`: absolute or relative path to docs root (default: auto-discover `<workspace>/docs`).
 - `FICT_MCP_DOCS_MANIFEST`: optional docs manifest path override.
 - `FICT_PLAYGROUND_ORIGIN`: playground base URL (default: `http://localhost:4173`).
-- `FICT_MCP_TRANSPORT`: `stdio`, `http`, or `sse` (default: `stdio`).
+- `FICT_MCP_TRANSPORT`: `stdio`, `http`, or `sse` (default: `stdio`, and `sse` requires `FICT_MCP_ENABLE_SSE=1`).
+- `FICT_MCP_ENABLE_SSE`: set to `1` to enable deprecated HTTP+SSE transport.
 - `FICT_MCP_HTTP_HOST`: HTTP bind host (default: `127.0.0.1`).
 - `FICT_MCP_HTTP_PORT`: HTTP bind port (default: `8788`).
 - `FICT_MCP_HTTP_PATH`: HTTP endpoint path (default: `/mcp`).

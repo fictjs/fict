@@ -3,6 +3,7 @@ import { startSseHttpServer } from './server/transports/sse'
 import { startStreamableHttpServer } from './server/transports/streamableHttp'
 
 type TransportKind = 'stdio' | 'http' | 'sse'
+const ENABLE_SSE_ENV = 'FICT_MCP_ENABLE_SSE'
 
 interface CliOptions {
   transport: TransportKind
@@ -184,6 +185,12 @@ function parseArgs(argv: string[]): CliOptions {
     throw new Error(`Unknown argument: ${arg}`)
   }
 
+  if (options.transport === 'sse' && process.env[ENABLE_SSE_ENV] !== '1') {
+    throw new Error(
+      `SSE transport is deprecated and disabled by default. Set ${ENABLE_SSE_ENV}=1 to enable --sse or FICT_MCP_TRANSPORT=sse.`,
+    )
+  }
+
   return options
 }
 
@@ -194,7 +201,7 @@ function printHelp(): void {
     'Transports:',
     '  --stdio          Run MCP over stdio (default)',
     '  --http           Run MCP over Streamable HTTP',
-    '  --sse            Run MCP over deprecated HTTP+SSE transport',
+    '  --sse            Run MCP over deprecated HTTP+SSE transport (requires FICT_MCP_ENABLE_SSE=1)',
     '',
     'HTTP options:',
     '  --host <host>    Bind host (default: 127.0.0.1)',
@@ -212,6 +219,7 @@ function printHelp(): void {
     '',
     'Environment:',
     '  FICT_MCP_TRANSPORT=http|sse|stdio',
+    '  FICT_MCP_ENABLE_SSE=1  Enable deprecated --sse transport',
     '  FICT_MCP_HTTP_HOST, FICT_MCP_HTTP_PORT, FICT_MCP_HTTP_PATH',
     '  FICT_MCP_SSE_PATH, FICT_MCP_SSE_MESSAGES_PATH',
     '  FICT_MCP_HTTP_HEALTH_PATH, FICT_MCP_HTTP_STATS_PATH',
