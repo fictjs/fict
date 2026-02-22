@@ -7,6 +7,7 @@ Fict MCP server for docs retrieval, compiler diagnostics, and Playground link ge
 - `list-sections`: list all documentation section ids.
 - `search-sections`: keyword search for relevant section ids.
 - `get-documentation`: fetch docs content by section id (`md` or normalized `llms` format).
+  - supports `maxCharsPerDocument` for bounded per-section output.
 - `fict-autofixer`: run aggregated diagnostics on a virtual file map:
   - Compiler diagnostics (`source: "compiler"`)
   - ESLint diagnostics via `@fictjs/eslint-plugin` (`source: "eslint"`)
