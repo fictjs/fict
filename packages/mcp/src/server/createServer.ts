@@ -77,7 +77,7 @@ export function createFictMcpServer(options: CreateFictMcpServerOptions = {}): {
 
   const server = new McpServer({
     name: options.serverName ?? 'fict-mcp',
-    version: options.serverVersion ?? '0.12.0',
+    version: options.serverVersion ?? '0.13.0',
   })
 
   registerDocsTools(server, docsStore)

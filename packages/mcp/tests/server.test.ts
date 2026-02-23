@@ -87,6 +87,12 @@ describe('fict mcp server', () => {
     }
   })
 
+  it('reports the current default server version', async () => {
+    const { client } = await connectServer()
+    const serverVersion = client.getServerVersion()
+    expect(serverVersion?.version).toBe('0.13.0')
+  })
+
   it('reads section metadata from markdown frontmatter', async () => {
     const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'fict-mcp-docs-'))
     const docsRoot = path.join(tempRoot, 'docs')
