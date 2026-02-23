@@ -151,7 +151,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
   const routeTemplate = toRouteTemplate(pathname)
   const finishRequest = context.controllers.metrics.beginRequest()
   const startedAt = Date.now()
-  let status = 500
+  let status: number | undefined
   let actor: PlaygroundAuthContext | null = null
   let errorMessage: string | undefined
 
@@ -445,13 +445,14 @@ async function handleRequest(context: RequestContext): Promise<void> {
     sendJson(context.response, mapped.status, { error: mapped.message })
   } finally {
     const durationMs = Date.now() - startedAt
+    const responseStatus = status ?? 500
     finishRequest()
 
     if (isApiPath(pathname)) {
       context.controllers.metrics.recordRequest({
         method,
         route: routeTemplate,
-        status,
+        status: responseStatus,
         durationMs,
       })
 
@@ -463,7 +464,7 @@ async function handleRequest(context: RequestContext): Promise<void> {
         userId: auditActor.userId,
         method: method.toUpperCase(),
         route: routeTemplate,
-        status,
+        status: responseStatus,
         durationMs,
         ...(errorMessage ? { message: errorMessage } : {}),
       })

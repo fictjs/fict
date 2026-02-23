@@ -336,7 +336,7 @@ async function collectEslintIssues(files: Record<string, string>): Promise<Issue
   const eslint = createFictEslint()
 
   for (const [filePath, sourceCode] of Object.entries(files)) {
-    let lintableCode = sourceCode
+    let lintableCode: string
     try {
       lintableCode = await toLintableCode(filePath, sourceCode)
     } catch (error) {

@@ -1505,7 +1505,7 @@ async function fetchJson(url, options = {}) {
     body: options.body ? JSON.stringify(options.body) : undefined,
   })
 
-  let payload = null
+  let payload
   try {
     payload = await response.json()
   } catch {
