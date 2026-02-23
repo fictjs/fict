@@ -74,6 +74,11 @@
     "typescript-eslint": "^8.56.0",
     "vitest": "^4.0.18"
   },
+  "pnpm": {
+    "overrides": {
+      "@modelcontextprotocol/sdk>ajv": "^8.18.0"
+    }
+  },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,mjs,cjs}": [
       "prettier --write"
