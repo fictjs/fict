@@ -121,6 +121,24 @@ describe('rule validations', () => {
     expect(diagnostic?.code).toBe(DiagnosticCode.FICT_C001)
   })
 
+  it('reports hook calls in logical OR right branches (FICT_C001)', () => {
+    const call = t.callExpression(t.identifier('useEffect'), [
+      t.arrowFunctionExpression([], t.nullLiteral()),
+    ])
+    const logical = t.logicalExpression('||', t.identifier('flag'), call)
+    const diagnostic = validateNoConditionalHooks(call, ctx, t, [logical])
+    expect(diagnostic?.code).toBe(DiagnosticCode.FICT_C001)
+  })
+
+  it('reports hook calls in nullish-coalescing right branches (FICT_C001)', () => {
+    const call = t.callExpression(t.identifier('useEffect'), [
+      t.arrowFunctionExpression([], t.nullLiteral()),
+    ])
+    const logical = t.logicalExpression('??', t.identifier('flag'), call)
+    const diagnostic = validateNoConditionalHooks(call, ctx, t, [logical])
+    expect(diagnostic?.code).toBe(DiagnosticCode.FICT_C001)
+  })
+
   it('does not report hook calls in logical left branches', () => {
     const call = t.callExpression(t.identifier('useEffect'), [
       t.arrowFunctionExpression([], t.nullLiteral()),
