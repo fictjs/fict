@@ -59,7 +59,7 @@ pnpm --filter @fictjs/mcp start -- --stdio --docs-root ../../docs --docs-manifes
 
 ```bash
 pnpm --filter @fictjs/mcp build
-pnpm --filter @fictjs/mcp start -- --http --host 127.0.0.1 --port 8788 --path /mcp --health-path /healthz --stats-path /stats --max-sessions 100 --session-ttl-ms 1800000 --docs-root ../../docs --docs-manifest ./assets/docs-manifest.json --playground-origin http://localhost:4173
+pnpm --filter @fictjs/mcp start -- --http --host 127.0.0.1 --port 8788 --path /mcp --health-path /healthz --stats-path /stats --auth-token your-token --enable-cors --cors-origin https://your-client.example --max-sessions 100 --session-ttl-ms 1800000 --docs-root ../../docs --docs-manifest ./assets/docs-manifest.json --playground-origin http://localhost:4173
 ```
 
 ## Run (Legacy HTTP+SSE transport, deprecated)
@@ -85,6 +85,9 @@ Environment variables:
 - `FICT_MCP_HTTP_HOST`: HTTP bind host (default: `127.0.0.1`).
 - `FICT_MCP_HTTP_PORT`: HTTP bind port (default: `8788`).
 - `FICT_MCP_HTTP_PATH`: HTTP endpoint path (default: `/mcp`).
+- `FICT_MCP_AUTH_TOKEN`: optional bearer token; when set, all HTTP/SSE requests must include `Authorization: Bearer <token>`.
+- `FICT_MCP_HTTP_ENABLE_CORS`: set to `1`/`true` to emit CORS headers (default: disabled).
+- `FICT_MCP_HTTP_CORS_ORIGIN`: optional `Access-Control-Allow-Origin` value when CORS is enabled (default: `*`).
 - `FICT_MCP_SSE_PATH`: SSE stream endpoint path (default: `/sse`).
 - `FICT_MCP_SSE_MESSAGES_PATH`: SSE client message POST path (default: `/messages`).
 - `FICT_MCP_HTTP_HEALTH_PATH`: health endpoint path (default: `/healthz`).
@@ -95,6 +98,7 @@ Environment variables:
 In HTTP mode, invalid `docsRoot` config fails fast at startup instead of deferring the error to the first MCP request.
 When `docsManifestPath` / `FICT_MCP_DOCS_MANIFEST` is explicitly provided, missing/invalid manifests also fail fast at startup.
 If `docsRoot` is auto-discovered and no override is provided, server startup uses bundled `assets/docs-manifest.json` when present.
+For HTTP/SSE transports bound to non-loopback hosts (for example `0.0.0.0`), `--auth-token` / `FICT_MCP_AUTH_TOKEN` is required.
 
 ## HTTP observability endpoints
 
