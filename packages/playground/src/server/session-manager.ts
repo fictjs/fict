@@ -477,7 +477,10 @@ export class PlaygroundSessionManager {
         alias: this.createWorkspaceAliases(),
       },
       optimizeDeps: {
-        exclude: ['fict', '@fictjs/runtime', '@fictjs/ssr', '@fictjs/devtools'],
+        // Session preview servers are short-lived in tests; disable dep discovery to avoid
+        // esbuild "Request is outdated" races during rapid start/stop cycles.
+        noDiscovery: true,
+        include: [],
       },
       plugins,
     })
