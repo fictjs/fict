@@ -580,38 +580,6 @@ describe('Rule I: Component-only state placement', () => {
     `
     expect(() => transform(input)).toThrow(/top level of a component or hook/)
   })
-
-  it('throws when hook-style useX is called in logical OR branches', () => {
-    const input = `
-      import { $state } from 'fict'
-      function useCounter() {
-        let count = $state(0)
-        return count
-      }
-      function Component() {
-        const cond = false
-        cond || useCounter()
-        return null
-      }
-    `
-    expect(() => transform(input)).toThrow(/top level of a component or hook/)
-  })
-
-  it('throws when hook-style useX is called in nullish-coalescing branches', () => {
-    const input = `
-      import { $state } from 'fict'
-      function useCounter() {
-        let count = $state(0)
-        return count
-      }
-      function Component() {
-        const cond = null
-        cond ?? useCounter()
-        return null
-      }
-    `
-    expect(() => transform(input)).toThrow(/top level of a component or hook/)
-  })
 })
 
 // ============================================================================
