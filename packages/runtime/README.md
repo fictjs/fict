@@ -29,6 +29,31 @@ DX and dead-code elimination:
 - development: `__DEV__ = true`
 - production: `__DEV__ = false`
 
+## Multi-Document Contract (iframe / foreign `Document`)
+
+`@fictjs/runtime` supports rendering into containers owned by non-global documents
+(for example, elements from an iframe document). Runtime-created nodes, markers,
+and fragments are created from the active `ownerDocument`.
+
+Supported contract:
+
+- `render()` into a container from another `Document`
+- list/conditional/suspense marker creation in that container's `ownerDocument`
+- node insertion paths that rely on runtime-created nodes
+
+Important caveat:
+
+- If user code manually returns nodes created from a different document and inserts
+  them into another document tree, runtime may fall back to `adoptNode()` or
+  `importNode()` during insertion/reordering. `importNode()` clones DOM nodes and
+  does not preserve JS-side expando state or imperative listeners attached outside
+  of Fict's binding flow.
+
+Recommendation:
+
+- Create DOM nodes using the target container's `ownerDocument` (or let Fict create
+  nodes) when working across iframe/foreign-document boundaries.
+
 ## Runtime Stability Stress
 
 Run stress scenarios for runtime correctness and reliability:
