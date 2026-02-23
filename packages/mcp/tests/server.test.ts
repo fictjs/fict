@@ -241,6 +241,45 @@ describe('fict mcp server', () => {
     }
   })
 
+  it('fails fast when explicit docs manifest contains escaped file paths', async () => {
+    const tempRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'fict-mcp-manifest-escape-'))
+    const docsRoot = path.join(tempRoot, 'docs')
+    const manifestPath = path.join(tempRoot, 'docs-manifest.json')
+    const outsideDocPath = path.join(tempRoot, 'outside.md')
+
+    await fsp.mkdir(docsRoot, { recursive: true })
+    await fsp.writeFile(outsideDocPath, '# Outside\n', 'utf8')
+    await fsp.writeFile(
+      manifestPath,
+      JSON.stringify(
+        {
+          version: 1,
+          sections: [
+            {
+              id: 'escaped',
+              title: 'Escaped',
+              path: path.relative(docsRoot, outsideDocPath),
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+
+    try {
+      expect(() =>
+        createFictMcpServer({
+          docsRoot,
+          docsManifestPath: manifestPath,
+        }),
+      ).toThrow('Invalid docs manifest')
+    } finally {
+      await fsp.rm(tempRoot, { recursive: true, force: true })
+    }
+  })
+
   it('exposes docs tools and returns section content', async () => {
     const { client } = await connectServer()
 

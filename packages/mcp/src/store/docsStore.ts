@@ -37,6 +37,11 @@ interface DocsManifest {
   sections: unknown
 }
 
+interface ResolvedDocPath {
+  absolutePath: string
+  relativePath: string
+}
+
 function toPosix(filePath: string): string {
   return filePath.split(path.sep).join('/')
 }
@@ -169,6 +174,30 @@ function toDocSection(entry: unknown): DocSection | null {
   return section
 }
 
+function resolveDocPath(root: string, sectionPath: string): ResolvedDocPath | null {
+  const trimmedPath = sectionPath.trim()
+  if (!trimmedPath) return null
+  if (path.isAbsolute(trimmedPath)) return null
+
+  const rootPath = path.resolve(root)
+  const absolutePath = path.resolve(rootPath, trimmedPath)
+  const rootWithSep = rootPath.endsWith(path.sep) ? rootPath : `${rootPath}${path.sep}`
+
+  if (!absolutePath.startsWith(rootWithSep)) {
+    return null
+  }
+
+  const relativePath = toPosix(path.relative(rootPath, absolutePath))
+  if (!relativePath || relativePath === '..' || relativePath.startsWith('../')) {
+    return null
+  }
+
+  return {
+    absolutePath,
+    relativePath,
+  }
+}
+
 function loadSectionsFromManifest(root: string, manifestPath: string): DocSection[] | null {
   if (!fs.existsSync(manifestPath)) return null
 
@@ -183,15 +212,26 @@ function loadSectionsFromManifest(root: string, manifestPath: string): DocSectio
   const manifest = manifestJson as DocsManifest
   if (!Array.isArray(manifest.sections)) return null
 
-  const sections = manifest.sections
-    .map(section => toDocSection(section))
-    .filter((section): section is DocSection => section !== null)
-    .sort((left, right) => left.path.localeCompare(right.path))
+  const sections: DocSection[] = []
+
+  for (const entry of manifest.sections) {
+    const section = toDocSection(entry)
+    if (!section) continue
+
+    const resolvedPath = resolveDocPath(root, section.path)
+    if (!resolvedPath || !fs.existsSync(resolvedPath.absolutePath)) {
+      return null
+    }
+
+    sections.push({
+      ...section,
+      path: resolvedPath.relativePath,
+    })
+  }
+
+  sections.sort((left, right) => left.path.localeCompare(right.path))
 
   if (sections.length === 0) return null
-
-  const allFilesExist = sections.every(section => fs.existsSync(path.join(root, section.path)))
-  if (!allFilesExist) return null
 
   return sections
 }
@@ -219,7 +259,13 @@ export function createDocsStore(options: CreateDocsStoreOptions): DocsStore {
     if (!section) {
       throw new Error(`Unknown documentation section: ${sectionId}`)
     }
-    return fsp.readFile(path.join(root, section.path), 'utf8')
+
+    const resolvedPath = resolveDocPath(root, section.path)
+    if (!resolvedPath) {
+      throw new Error(`Invalid documentation path for section: ${sectionId}`)
+    }
+
+    return fsp.readFile(resolvedPath.absolutePath, 'utf8')
   }
 
   async function readFormatted(sectionId: string, format: 'md' | 'llms'): Promise<string> {
