@@ -21,6 +21,17 @@ export function normalizePositiveInt(value: number | undefined, fallback: number
   return rounded
 }
 
+export function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase()
+  return (
+    normalized === 'localhost' ||
+    normalized === '127.0.0.1' ||
+    normalized === '::1' ||
+    normalized === '[::1]' ||
+    normalized === '0:0:0:0:0:0:0:1'
+  )
+}
+
 export function resolveOldestSessionId<T extends SessionEntryLike>(
   sessions: Map<string, T>,
 ): string | undefined {
@@ -83,12 +94,13 @@ export function assertDistinctPaths(prefix: string, paths: Record<string, string
 export function writeCorsHeaders(
   res: { setHeader: (name: string, value: string) => void },
   options: {
+    origin?: string
     methods: string[]
     headers: string[]
     exposeHeaders?: string[]
   },
 ): void {
-  res.setHeader('access-control-allow-origin', '*')
+  res.setHeader('access-control-allow-origin', options.origin ?? '*')
   res.setHeader('access-control-allow-methods', options.methods.join(','))
   res.setHeader('access-control-allow-headers', options.headers.join(','))
   if (options.exposeHeaders && options.exposeHeaders.length > 0) {

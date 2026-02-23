@@ -563,6 +563,118 @@ export function App({ items }) {
     ).rejects.toThrow('Docs root not found')
   })
 
+  it('requires auth token when binding streamable http on non-loopback host', async () => {
+    await expect(
+      startStreamableHttpServer({
+        docsRoot: DOCS_ROOT,
+        host: '0.0.0.0',
+        port: 0,
+        path: '/mcp',
+        healthPath: '/healthz',
+        statsPath: '/stats',
+      }),
+    ).rejects.toThrow('authToken is required when binding non-loopback host')
+  })
+
+  it('requires auth token when binding sse transport on non-loopback host', async () => {
+    await expect(
+      startSseHttpServer({
+        docsRoot: DOCS_ROOT,
+        host: '0.0.0.0',
+        port: 0,
+        ssePath: '/sse',
+        messagesPath: '/messages',
+        healthPath: '/healthz',
+        statsPath: '/stats',
+      }),
+    ).rejects.toThrow('authToken is required when binding non-loopback host')
+  })
+
+  it('enforces bearer authorization when authToken is configured', async () => {
+    const started = await startStreamableHttpServer({
+      docsRoot: DOCS_ROOT,
+      host: '127.0.0.1',
+      port: 0,
+      path: '/mcp',
+      healthPath: '/healthz',
+      statsPath: '/stats',
+      authToken: 'top-secret',
+    })
+
+    try {
+      const unauthenticated = await fetch(started.healthUrl)
+      expect(unauthenticated.status).toBe(401)
+
+      const wrongToken = await fetch(started.healthUrl, {
+        headers: {
+          Authorization: 'Bearer nope',
+        },
+      })
+      expect(wrongToken.status).toBe(401)
+
+      const authorized = await fetch(started.healthUrl, {
+        headers: {
+          Authorization: 'Bearer top-secret',
+        },
+      })
+      expect(authorized.status).toBe(200)
+    } finally {
+      await started.close()
+    }
+  })
+
+  it('keeps CORS disabled by default', async () => {
+    const started = await startStreamableHttpServer({
+      docsRoot: DOCS_ROOT,
+      host: '127.0.0.1',
+      port: 0,
+      path: '/mcp',
+      healthPath: '/healthz',
+      statsPath: '/stats',
+    })
+
+    try {
+      const optionsRes = await fetch(started.url, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://evil.example',
+          'Access-Control-Request-Method': 'POST',
+        },
+      })
+      expect(optionsRes.status).toBe(204)
+      expect(optionsRes.headers.get('access-control-allow-origin')).toBeNull()
+    } finally {
+      await started.close()
+    }
+  })
+
+  it('emits configured CORS origin when enabled', async () => {
+    const started = await startStreamableHttpServer({
+      docsRoot: DOCS_ROOT,
+      host: '127.0.0.1',
+      port: 0,
+      path: '/mcp',
+      healthPath: '/healthz',
+      statsPath: '/stats',
+      enableCors: true,
+      corsOrigin: 'https://trusted.example',
+    })
+
+    try {
+      const optionsRes = await fetch(started.url, {
+        method: 'OPTIONS',
+        headers: {
+          Origin: 'https://trusted.example',
+          'Access-Control-Request-Method': 'POST',
+        },
+      })
+      expect(optionsRes.status).toBe(204)
+      expect(optionsRes.headers.get('access-control-allow-origin')).toBe('https://trusted.example')
+    } finally {
+      await started.close()
+    }
+  })
+
   it('supports streamable http transport', async () => {
     const started = await startStreamableHttpServer({
       docsRoot: DOCS_ROOT,

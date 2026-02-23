@@ -1,4 +1,5 @@
 import { createServer as createHttpServer } from 'node:http'
+import type { IncomingHttpHeaders } from 'node:http'
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js'
@@ -8,6 +9,7 @@ import {
   assertDistinctPaths,
   createResponseHelpers,
   evictSessionsToCapacity,
+  isLoopbackHost,
   normalizeHttpPath,
   normalizePositiveInt,
   pruneExpiredSessions,
@@ -34,6 +36,8 @@ export interface StartSseHttpServerOptions extends CreateFictMcpServerOptions {
   healthPath?: string
   statsPath?: string
   enableCors?: boolean
+  corsOrigin?: string
+  authToken?: string
   maxSessions?: number
   sessionTtlMs?: number
 }
@@ -89,6 +93,20 @@ const DEFAULT_STATS_PATH = '/stats'
 const DEFAULT_MAX_SESSIONS = 100
 const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1000
 
+function readBearerToken(headers: IncomingHttpHeaders): string | undefined {
+  const header = headers.authorization
+  const value = Array.isArray(header) ? header[0] : header
+  if (!value) return undefined
+  const match = value.match(/^Bearer\s+(.+)$/i)
+  if (!match) return undefined
+  return match[1]?.trim() || undefined
+}
+
+function isAuthorized(headers: IncomingHttpHeaders, authToken: string | undefined): boolean {
+  if (!authToken) return true
+  return readBearerToken(headers) === authToken
+}
+
 async function closeSession(context: SessionContext): Promise<void> {
   await Promise.allSettled([context.server.close(), context.transport.close()])
 }
@@ -103,10 +121,16 @@ export async function startSseHttpServer(
   const messagesPath = normalizeHttpPath(options.messagesPath ?? DEFAULT_MESSAGES_PATH)
   const healthPath = normalizeHttpPath(options.healthPath ?? DEFAULT_HEALTH_PATH)
   const statsPath = normalizeHttpPath(options.statsPath ?? DEFAULT_STATS_PATH)
-  const enableCors = options.enableCors ?? true
+  const enableCors = options.enableCors ?? false
+  const corsOrigin = options.corsOrigin?.trim() || '*'
+  const authToken = options.authToken?.trim() || undefined
   const maxSessions = normalizePositiveInt(options.maxSessions, DEFAULT_MAX_SESSIONS)
   const sessionTtlMs = normalizePositiveInt(options.sessionTtlMs, DEFAULT_SESSION_TTL_MS)
   const baseServerOptions = buildCreateFictMcpServerOptions(options)
+
+  if (!isLoopbackHost(host) && !authToken) {
+    throw new Error('authToken is required when binding non-loopback host')
+  }
 
   assertDistinctPaths('SSE HTTP', {
     ssePath,
@@ -212,6 +236,7 @@ export async function startSseHttpServer(
 
     if (enableCors) {
       writeCorsHeaders(res, {
+        origin: corsOrigin,
         methods: ['GET', 'POST', 'OPTIONS'],
         headers: ['content-type', 'last-event-id', 'authorization'],
       })
@@ -219,6 +244,11 @@ export async function startSseHttpServer(
 
     if (method === 'OPTIONS') {
       respondText(res, 204, '')
+      return
+    }
+
+    if (!isAuthorized(req.headers, authToken)) {
+      respondText(res, 401, 'Unauthorized')
       return
     }
 

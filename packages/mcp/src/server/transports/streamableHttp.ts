@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { createServer as createHttpServer } from 'node:http'
+import type { IncomingHttpHeaders } from 'node:http'
 
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
@@ -9,6 +10,7 @@ import {
   assertDistinctPaths,
   createResponseHelpers,
   evictSessionsToCapacity,
+  isLoopbackHost,
   normalizeHttpPath,
   normalizePositiveInt,
   pruneExpiredSessions,
@@ -33,6 +35,8 @@ export interface StartStreamableHttpServerOptions extends CreateFictMcpServerOpt
   healthPath?: string
   statsPath?: string
   enableCors?: boolean
+  corsOrigin?: string
+  authToken?: string
   maxSessions?: number
   sessionTtlMs?: number
 }
@@ -91,6 +95,20 @@ function readSessionIdHeader(header: string | string[] | undefined): string | un
   return header
 }
 
+function readBearerToken(headers: IncomingHttpHeaders): string | undefined {
+  const header = headers.authorization
+  const value = Array.isArray(header) ? header[0] : header
+  if (!value) return undefined
+  const match = value.match(/^Bearer\s+(.+)$/i)
+  if (!match) return undefined
+  return match[1]?.trim() || undefined
+}
+
+function isAuthorized(headers: IncomingHttpHeaders, authToken: string | undefined): boolean {
+  if (!authToken) return true
+  return readBearerToken(headers) === authToken
+}
+
 async function closeSession(context: SessionContext): Promise<void> {
   await Promise.allSettled([context.server.close(), context.transport.close()])
 }
@@ -104,10 +122,16 @@ export async function startStreamableHttpServer(
   const endpointPath = normalizeHttpPath(options.path ?? DEFAULT_PATH)
   const healthPath = normalizeHttpPath(options.healthPath ?? DEFAULT_HEALTH_PATH)
   const statsPath = normalizeHttpPath(options.statsPath ?? DEFAULT_STATS_PATH)
-  const enableCors = options.enableCors ?? true
+  const enableCors = options.enableCors ?? false
+  const corsOrigin = options.corsOrigin?.trim() || '*'
+  const authToken = options.authToken?.trim() || undefined
   const maxSessions = normalizePositiveInt(options.maxSessions, DEFAULT_MAX_SESSIONS)
   const sessionTtlMs = normalizePositiveInt(options.sessionTtlMs, DEFAULT_SESSION_TTL_MS)
   const baseServerOptions = buildCreateFictMcpServerOptions(options)
+
+  if (!isLoopbackHost(host) && !authToken) {
+    throw new Error('authToken is required when binding non-loopback host')
+  }
 
   assertDistinctPaths('HTTP', {
     path: endpointPath,
@@ -232,6 +256,7 @@ export async function startStreamableHttpServer(
 
     if (enableCors) {
       writeCorsHeaders(res, {
+        origin: corsOrigin,
         methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
         headers: [
           'content-type',
@@ -246,6 +271,11 @@ export async function startStreamableHttpServer(
 
     if (requestMethod === 'OPTIONS') {
       respondText(res, 204, '')
+      return
+    }
+
+    if (!isAuthorized(req.headers, authToken)) {
+      respondText(res, 401, 'Unauthorized')
       return
     }
 
