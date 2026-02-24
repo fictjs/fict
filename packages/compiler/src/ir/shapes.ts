@@ -357,8 +357,8 @@ function applyKeyAssignment(
   ctx.values.delete(name)
   ctx.keySets.delete(name)
 
-  let assignedKeys: KeyNarrowingValue | null = null
-  let keySet: KeyNarrowingValue | null = null
+  let assignedKeys: KeyNarrowingValue | null
+  let keySet: KeyNarrowingValue | null
 
   if (expr.kind === 'Identifier') {
     assignedKeys = resolveNarrowedKeys(expr, ctx)
@@ -413,7 +413,7 @@ export function analyzeObjectShapes(fn: HIRFunction): ShapeAnalysisResult {
 
   // First pass: collect all property accesses and assignments
   const baseCtx: KeyNarrowingContext = { values: new Map(), keySets: new Map() }
-  let structured: StructuredNode | null = null
+  let structured: StructuredNode | null
   try {
     structured = structurizeCFG(fn, {
       warnOnIssues: devMode,

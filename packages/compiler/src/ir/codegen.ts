@@ -4227,7 +4227,7 @@ function transformControlFlowReturns(
     const consequentStmts = toStatements(ifStmt.consequent)
     if (!endsWithReturn(consequentStmts)) return null
 
-    let alternateStmts: BabelCore.types.Statement[] | null = null
+    let alternateStmts: BabelCore.types.Statement[]
     if (ifStmt.alternate) {
       if (rest.length > 0) return null
       alternateStmts = toStatements(ifStmt.alternate)
@@ -4239,11 +4239,10 @@ function transformControlFlowReturns(
     }
 
     const trueFn = buildBranchFunction(consequentStmts)
-    const falseFn = alternateStmts ? buildBranchFunction(alternateStmts) : null
+    const falseFn = buildBranchFunction(alternateStmts)
     if (!trueFn || !falseFn) return null
     const shouldTrackBranchReads =
-      needsTrackedBranchReads(consequentStmts) ||
-      (alternateStmts ? needsTrackedBranchReads(alternateStmts) : false)
+      needsTrackedBranchReads(consequentStmts) || needsTrackedBranchReads(alternateStmts)
 
     return buildConditionalBindingExpr(
       ifStmt.test as BabelCore.types.Expression,

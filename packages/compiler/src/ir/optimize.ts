@@ -1270,11 +1270,9 @@ function inlineSingleUseDerivedMemos(
           if (useInstr?.kind === 'Assign') {
             const replaced = replaceIdentifier(useInstr.value, target, instr.value, false)
             instructions[use.instrIndex] = { ...useInstr, value: replaced }
-            changed = true
           } else if (useInstr?.kind === 'Expression') {
             const replaced = replaceIdentifier(useInstr.value, target, instr.value, false)
             instructions[use.instrIndex] = { ...useInstr, value: replaced }
-            changed = true
           }
         } else {
           const useInstructions = [...useBlock.instructions]
@@ -1291,7 +1289,6 @@ function inlineSingleUseDerivedMemos(
       } else if (use.kind === 'Terminator') {
         if (use.blockId === block.id) {
           terminator = replaceIdentifierInTerminator(terminator, target, instr.value)
-          changed = true
         } else {
           updatedBlocks.set(use.blockId, {
             ...useBlock,

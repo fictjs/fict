@@ -15,7 +15,7 @@ function expressionContainsJSX(expr: unknown): boolean {
   const cached = expressionContainsJSXCache.get(expr)
   if (cached !== undefined) return cached
 
-  let result = false
+  let result: boolean
   if (Array.isArray(expr)) {
     result = expr.some(item => expressionContainsJSX(item))
     expressionContainsJSXCache.set(expr, result)

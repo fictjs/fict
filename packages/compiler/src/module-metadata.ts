@@ -216,7 +216,7 @@ function pathIsFile(pathName: string, cache?: FsProbeCache): boolean {
     const cached = cache.get(pathName)
     if (cached && cached.expiresAt > now) return cached.exists
   }
-  let exists = false
+  let exists: boolean
   try {
     exists = statSync(pathName).isFile()
   } catch {

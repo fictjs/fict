@@ -3171,7 +3171,7 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
       })
     } else if (t.isJSXAttribute(attr)) {
       const nameNode = attr.name as BabelCore.types.Node
-      let attrName: string | null = null
+      let attrName: string
       if (t.isJSXIdentifier(attr.name)) {
         attrName = attr.name.name
       } else if (t.isJSXNamespacedName(attr.name)) {
