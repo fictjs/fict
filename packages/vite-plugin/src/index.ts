@@ -1518,12 +1518,15 @@ function extractAndRewriteHandlers(
       plugins: ['jsx', 'typescript'],
     })
   } catch (error) {
-    throw new Error(
-      buildPluginMessage(
-        'Failed to parse transformed code for handler extraction',
-        sourceModule,
-        error,
+    throw Object.assign(
+      new Error(
+        buildPluginMessage(
+          'Failed to parse transformed code for handler extraction',
+          sourceModule,
+          error,
+        ),
       ),
+      { cause: error },
     )
   }
 
