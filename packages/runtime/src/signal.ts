@@ -918,7 +918,7 @@ function runEffect(e: EffectNode): void {
       throw err
     }
   } else if (flags & Pending && e.deps) {
-    let isDirty = false
+    let isDirty: boolean
     try {
       isDirty = checkDirty(e.deps, e)
     } catch (err) {

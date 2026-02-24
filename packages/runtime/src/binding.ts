@@ -796,7 +796,7 @@ export function insert(
 
     const root = createRootContext(hostRoot)
     const prev = pushRoot(root)
-    let nodes: Node[] = []
+    let nodes: Node[]
     let handledError = false
     try {
       let newNode: Node | Node[]
@@ -968,7 +968,7 @@ export function insertBetween(
 
     const root = createRootContext(hostRoot)
     const prev = pushRoot(root)
-    let nodes: Node[] = []
+    let nodes: Node[]
     let handledError = false
     try {
       let newNode: Node | Node[] = undefined as unknown as Node | Node[]
@@ -1894,7 +1894,7 @@ export function createConditional(
       const scratchRoot = createRootContext(hostRoot)
       const prevScratch = pushRoot(scratchRoot)
       let handledPatchError = false
-      let scratchOutput: FictNode = null
+      let scratchOutput: FictNode | undefined
       try {
         const output = render()
         scratchOutput = output
@@ -1912,13 +1912,11 @@ export function createConditional(
       } catch (err) {
         if (handleSuspend(err as any, scratchRoot)) {
           handledPatchError = true
-          return
-        }
-        if (handleError(err, { source: 'renderChild' }, scratchRoot)) {
+        } else if (handleError(err, { source: 'renderChild' }, scratchRoot)) {
           handledPatchError = true
-          return
+        } else {
+          throw err
         }
-        throw err
       } finally {
         popRoot(prevScratch)
       }

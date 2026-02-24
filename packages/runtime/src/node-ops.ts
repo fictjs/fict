@@ -43,7 +43,7 @@ export function toNodeArray(
     return []
   }
 
-  let isNode = false
+  let isNode: boolean
   try {
     isNode = node instanceof Node
   } catch {
