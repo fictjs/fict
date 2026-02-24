@@ -81,9 +81,9 @@ function safeInflateToUtf8(compressed: Buffer): string {
     return inflateRawSync(compressed, { maxOutputLength: MAX_SNAPSHOT_BYTES }).toString('utf8')
   } catch (error) {
     if (isBufferTooLargeError(error)) {
-      throw new Error('Share payload exceeds safe size limits', { cause: error })
+      throw Object.assign(new Error('Share payload exceeds safe size limits'), { cause: error })
     }
-    throw new Error('Invalid snapshot payload', { cause: error })
+    throw Object.assign(new Error('Invalid snapshot payload'), { cause: error })
   }
 }
 
