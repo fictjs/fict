@@ -117,6 +117,41 @@ jobs:
       - run: FICT_STRICT_GUARANTEE=1 pnpm build
       - run: FICT_STRICT_GUARANTEE=1 pnpm test:bundlers
 
+  perf-guardrails:
+    name: Performance Guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Fallback checkout from codeload archive
+        if: steps.checkout.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          echo "::warning::actions/checkout failed; falling back to archive download."
+          archive_url="https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 "${archive_url}" \
+            | tar -xz -C "${tmp_dir}" --strip-components=1
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          cp -a "${tmp_dir}"/. .
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install
+      - run: pnpm --filter @fictjs/compiler build
+      - run: pnpm guardrails:perf
+
   test:
     name: Test
     runs-on: ubuntu-latest

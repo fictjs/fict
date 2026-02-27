@@ -30,6 +30,8 @@
     "prepare": "husky",
     "guardrails:hir": "node scripts/hir-guardrails.mjs",
     "guardrails:hir:update": "node scripts/hir-guardrails.mjs --update",
+    "guardrails:runtime": "NODE_OPTIONS=--expose-gc FICT_RUNTIME_STRESS=1 FICT_RUNTIME_SOAK_ITERS=900 FICT_RUNTIME_CHURN_CYCLES=100 FICT_RUNTIME_LEAK_ROUNDS=40 FICT_RUNTIME_LEAK_EFFECTS_PER_ROUND=60 FICT_RUNTIME_BACKPRESSURE_UPDATES=3000 FICT_RUNTIME_MAX_DRAIN_LATENCY_MS=1400 FICT_RUNTIME_MAX_HEAP_GROWTH_BYTES=33554432 pnpm --dir packages/runtime test -- test/runtime-stability.stress.test.ts",
+    "guardrails:perf": "pnpm guardrails:hir && pnpm bench:optimizer:guard && pnpm guardrails:runtime",
     "perf:build": "pnpm build && cd js-framework-benchmark/frameworks/keyed/fict && npm run build-prod",
     "perf:run": "cd js-framework-benchmark && npm run bench -- --framework keyed/fict --headless",
     "perf:data": "pnpm build && pnpm perf:build && pnpm perf:run",
