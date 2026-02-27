@@ -142,6 +142,7 @@ rerender([20])
 ```
 
 > **Note:** `rerender()` disposes the previous root and creates a new one. Hook state does not persist across rerenders.
+> Disposal runs effect cleanups from the previous root before mounting the new hook instance.
 
 ### 4. Testing Effects
 
@@ -266,12 +267,12 @@ function renderHook<Result, Props extends unknown[] = []>(
 
 **Returns:**
 
-| Property           | Type                      | Description                               |
-| ------------------ | ------------------------- | ----------------------------------------- |
-| `result`           | `{ current: Result }`     | Container holding the hook's return value |
-| `rerender(props?)` | `(props?: Props) => void` | Rerender with new props                   |
-| `cleanup()`        | `() => void`              | Clean up the hook                         |
-| `unmount()`        | `() => void`              | Alias for cleanup                         |
+| Property           | Type                      | Description                                      |
+| ------------------ | ------------------------- | ------------------------------------------------ |
+| `result`           | `{ current: Result }`     | Container holding the hook's return value        |
+| `rerender(props?)` | `(props?: Props) => void` | Remount with new props (previous state disposed) |
+| `cleanup()`        | `() => void`              | Clean up the hook                                |
+| `unmount()`        | `() => void`              | Alias for cleanup                                |
 
 **Example:**
 

@@ -151,6 +151,7 @@ function Timer() {
 **Notes:**
 
 - Cleanup runs before the next execution and when the component is destroyed.
+- Cleanup callbacks run in the same flush cycle as the invalidating update. If multiple effects update the same signal in one flush, cleanup reads observe the previous committed snapshot for that flush.
 - Avoid `async/await` inside `$effect`; for async work, use `resource`.
 - Dependencies are tracked automatically; no dependency arrays needed.
 

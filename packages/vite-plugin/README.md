@@ -79,4 +79,5 @@ Notes:
 
 - `reactiveScopes` only applies to **direct calls** and only treats the **first argument** as the reactive callback.
 - Aliased/indirect calls are not recognized (e.g., `const rh = renderHook; rh(() => ...)`).
+- Cross-module metadata lookup is filesystem-based (relative/absolute/alias/ts resolution). Bare package imports require a custom `resolveModuleMetadata` hook if you need metadata propagation.
 - `debug` logs are disabled by default; enable with `debug: true` or `FICT_VITE_PLUGIN_DEBUG=1`.
