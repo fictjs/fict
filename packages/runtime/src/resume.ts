@@ -64,8 +64,7 @@ const resumedScopes = new Map<
   { ctx: HookContext; host: Element; props?: Record<string, unknown> }
 >()
 
-export function __fictEnableSSR(): void {
-  ssrEnabled = true
+function resetSSRTrackingState(): void {
   scopeCounter = 0
   scopeRegistry = new Map()
   boundaryScopes = new Map()
@@ -73,9 +72,14 @@ export function __fictEnableSSR(): void {
   snapshotState = null
 }
 
+export function __fictEnableSSR(): void {
+  ssrEnabled = true
+  resetSSRTrackingState()
+}
+
 export function __fictDisableSSR(): void {
   ssrEnabled = false
-  boundaryScopes = new Map()
+  resetSSRTrackingState()
 }
 
 export function __fictEnableResumable(): void {
