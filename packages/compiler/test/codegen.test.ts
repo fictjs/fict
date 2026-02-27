@@ -179,6 +179,34 @@ describe('region metadata → DOM', () => {
     expect(code).not.toContain('setText(')
   })
 
+  it('keeps optional member text bindings reactive', () => {
+    const ast = parseFile(`
+      function View() {
+        let user = $state({ profile: { name: 'Ada' } })
+        return <div>{user?.profile?.name}</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { optimizeLevel: 'safe' })
+    const { code } = generate(file)
+
+    expect(code).toContain('bindText')
+  })
+
+  it('keeps optional member attribute bindings reactive', () => {
+    const ast = parseFile(`
+      function View() {
+        let user = $state({ profile: { name: 'Ada' } })
+        return <div title={user?.profile?.name}>x</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { optimizeLevel: 'safe' })
+    const { code } = generate(file)
+
+    expect(code).toContain('bindAttribute')
+  })
+
   it('fuses reactive bindings across different deps in full mode', () => {
     const ast = parseFile(`
       function View() {
@@ -489,6 +517,34 @@ describe('event handler transformation', () => {
     // Delegated event payload for __key should be assigned directly (no closure)
     expect(code).toMatch(/\$\$clickData\s*=\s*__key/)
     expect(code).not.toMatch(/\$\$clickData\s*=\s*\(\)\s*=>\s*__key/)
+  })
+
+  it('keeps optional key member aliases optimized in keyed lists', () => {
+    const ast = parseFile(`
+      function Table() {
+        let rows = $state([])
+        const pick = (id) => id
+        return (
+          <table>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row?.id}>
+                  <td><a onClick={() => pick(row?.id)}>{row?.id}</a></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('__key')
+    expect(code).not.toMatch(/bindText\([^,]+,\s*\(\)\s*=>\s*__key\)/)
+    expect(code).toMatch(/\$\$clickData\s*=\s*row\(\)\?\.id/)
+    expect(code).not.toMatch(/\$\$clickData\s*=\s*\(\)\s*=>\s*row\(\)\?\.id/)
   })
 
   it('does not extract delegated data when handler comes from event param', () => {
@@ -979,6 +1035,20 @@ describe('style binding', () => {
     expect(code).toContain('bindStyle')
     expect(code).toMatch(/width/)
   })
+
+  it('should keep optional member style bindings reactive', () => {
+    const ast = parseFile(`
+      function OptionalStyle() {
+        let theme = $state({ color: 'red' })
+        return <div style={theme?.color}>Text</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('bindStyle')
+  })
 })
 
 // ============================================================================
@@ -1236,6 +1306,20 @@ describe('class binding', () => {
     const { code } = generate(file)
 
     expect(code).toMatch(/classes/)
+  })
+
+  it('should keep optional member class bindings reactive', () => {
+    const ast = parseFile(`
+      function OptionalClass() {
+        let user = $state({ profile: { active: true } })
+        return <div className={user?.profile?.active ? 'active' : ''}>Content</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('bindClass')
   })
 })
 
