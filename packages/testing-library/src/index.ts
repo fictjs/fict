@@ -347,20 +347,23 @@ export function renderHook<Result, Props extends unknown[] = []>(
       // If there's a wrapper, we need to create the wrapper element
       if (wrapper) {
         const Wrapper = wrapper as unknown as (props: Record<string, unknown>) => FictNode
-        // Create a dummy element that executes the hook
+
+        const HookRunner = () => {
+          // Push a hook context so that compiled hooks can use __fictUseContext
+          __fictPushContext()
+          try {
+            hookResult = hookFn(...currentProps)
+          } finally {
+            __fictPopContext()
+          }
+          return null
+        }
+
+        // Execute the hook as a child component so wrapper providers/context are applied first.
         createElement({
           type: Wrapper,
           props: {
-            children: (() => {
-              // Push a hook context so that compiled hooks can use __fictUseContext
-              __fictPushContext()
-              try {
-                hookResult = hookFn(...currentProps)
-              } finally {
-                __fictPopContext()
-              }
-              return null
-            })(),
+            children: { type: HookRunner, props: {} },
           },
         })
       } else {

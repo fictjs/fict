@@ -4,7 +4,15 @@
 
 import { describe, it, expect, beforeEach } from 'vitest'
 import { renderHook, cleanup, act } from '../src/index'
-import { createElement, createMemo, createEffect, onMount, onCleanup } from '@fictjs/runtime'
+import {
+  createElement,
+  createMemo,
+  createEffect,
+  onMount,
+  onCleanup,
+  createContext,
+  useContext,
+} from '@fictjs/runtime'
 import { createSignal } from '@fictjs/runtime/advanced'
 
 const tick = () =>
@@ -188,6 +196,25 @@ describe('renderHook', () => {
   })
 
   describe('with wrapper', () => {
+    it('runs wrapper before hook execution', () => {
+      const order: string[] = []
+
+      const Wrapper = (props: { children: any }) => {
+        order.push('wrapper')
+        return props.children
+      }
+
+      renderHook(
+        () => {
+          order.push('hook')
+          return { value: 'test' }
+        },
+        { wrapper: Wrapper },
+      )
+
+      expect(order).toEqual(['wrapper', 'hook'])
+    })
+
     it('wraps the hook with a wrapper component', () => {
       let wrapperRendered = false
 
@@ -205,6 +232,25 @@ describe('renderHook', () => {
 
       expect(wrapperRendered).toBe(true)
       expect(result.current.value).toBe('test')
+    })
+
+    it('applies wrapper-provided context to the hook', () => {
+      const ThemeContext = createContext('light')
+
+      const Wrapper = (props: { children: any }) =>
+        createElement({
+          type: ThemeContext.Provider,
+          props: { value: 'dark', children: props.children },
+        })
+
+      const { result } = renderHook(
+        () => {
+          return { theme: useContext(ThemeContext) }
+        },
+        { wrapper: Wrapper },
+      )
+
+      expect(result.current.theme).toBe('dark')
     })
 
     it('rerenders wrapper on rerender', () => {
