@@ -238,10 +238,7 @@ describe('renderHook', () => {
       const ThemeContext = createContext('light')
 
       const Wrapper = (props: { children: any }) =>
-        createElement({
-          type: ThemeContext.Provider,
-          props: { value: 'dark', children: props.children },
-        })
+        ThemeContext.Provider({ value: 'dark', children: props.children })
 
       const { result } = renderHook(
         () => {

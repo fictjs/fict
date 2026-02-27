@@ -12,6 +12,11 @@ const mockBuildConfig = {
   resolve: { alias: [] },
 }
 
+const mockSsrBuildConfig = {
+  ...mockBuildConfig,
+  build: { ssr: true },
+}
+
 describe('fict vite-plugin', () => {
   it('applies the Babel transformer', async () => {
     const plugin = fict()
@@ -130,7 +135,7 @@ describe('fict vite-plugin', () => {
       }
     })
 
-    it('loads virtual handler modules as re-exports', async () => {
+    it('loads extracted virtual handler modules', async () => {
       const plugin = fict({ functionSplitting: true })
 
       // First, configure and do a transform to register handlers
@@ -138,30 +143,33 @@ describe('fict vite-plugin', () => {
         plugin.configResolved(mockBuildConfig as any)
       }
 
-      const sample = `
-        import { $state } from 'fict'
-        export function Counter() {
-          let count = $state(0)
-          return <button onClick$={() => count++}>{count}</button>
-        }
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const [count] = __fictUseLexicalScope(scopeId, ['count']);
+  const __handler = () => count(count() + 1);
+  return __handler.call(el, event);
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
       `
 
       const mockContext = { error: vi.fn() }
       const transform = plugin.transform as any
       if (typeof transform === 'function') {
-        await transform.call(mockContext, sample, '/project/src/Counter.tsx')
+        await transform.call(mockContext, compiledCode, '/project/src/Counter.tsx')
       }
 
       // Now test loading a virtual handler module
       const load = plugin.load as any
-      if (typeof load === 'function') {
-        const content = load('\0fict-handler:/project/src/Counter.tsx$$__fict_e0')
-        if (content) {
-          // Should be a re-export from the source module
-          expect(content).toContain('export')
-          expect(content).toContain('/project/src/Counter.tsx')
-        }
-      }
+      expect(typeof load).toBe('function')
+      const content = load('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as string | null
+      expect(content).not.toBeNull()
+      expect(content).toContain('export default')
+      expect(content).toContain('__fictUseLexicalScope')
     })
 
     it('clears extracted handlers on buildStart', async () => {
@@ -200,10 +208,182 @@ function Counter() {
       expect(typeof buildStart).toBe('function')
       buildStart?.()
 
-      const afterReset = load('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as string
-      expect(afterReset).toContain(
-        "export { __fict_e0 as default } from '/project/src/Counter.tsx'",
-      )
+      const afterReset = load('\0fict-handler:/project/src/Counter.tsx$$__fict_e0')
+      expect(afterReset).toBeNull()
+    })
+
+    it('keeps handler registries isolated across plugin instances', async () => {
+      const pluginA = fict({ functionSplitting: true })
+      const pluginB = fict({ functionSplitting: true })
+
+      if (typeof pluginA.configResolved === 'function') {
+        pluginA.configResolved(mockBuildConfig as any)
+      }
+      if (typeof pluginB.configResolved === 'function') {
+        pluginB.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const [count] = __fictUseLexicalScope(scopeId, ['count']);
+  const __handler = () => count(count() + 1);
+  return __handler.call(el, event);
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn() }
+      const transformA = pluginA.transform as any
+      if (typeof transformA === 'function') {
+        await transformA.call(mockContext, compiledCode, '/project/src/Counter.tsx')
+      }
+
+      const loadA = pluginA.load as any
+      expect(typeof loadA).toBe('function')
+      const before = loadA('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as string | null
+      expect(before).not.toBeNull()
+      expect(before).toContain('export default')
+
+      const buildStartB = pluginB.buildStart as (() => void) | undefined
+      expect(typeof buildStartB).toBe('function')
+      buildStartB?.()
+
+      const after = loadA('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as string | null
+      expect(after).not.toBeNull()
+      expect(after).toContain('export default')
+    })
+
+    it('isolates handler registries between client and ssr build contexts', async () => {
+      const clientPlugin = fict({ functionSplitting: true })
+      const ssrPlugin = fict({ functionSplitting: true })
+
+      if (typeof clientPlugin.configResolved === 'function') {
+        clientPlugin.configResolved(mockBuildConfig as any)
+      }
+      if (typeof ssrPlugin.configResolved === 'function') {
+        ssrPlugin.configResolved(mockSsrBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const [count] = __fictUseLexicalScope(scopeId, ['count']);
+  const __handler = () => count(count() + 1);
+  return __handler.call(el, event);
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const clientContext = { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() }
+      const ssrContext = { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() }
+
+      const clientTransform = clientPlugin.transform as any
+      const ssrTransform = ssrPlugin.transform as any
+      if (typeof clientTransform === 'function') {
+        await clientTransform.call(clientContext, compiledCode, '/project/src/Counter.tsx')
+      }
+      if (typeof ssrTransform === 'function') {
+        await ssrTransform.call(ssrContext, compiledCode, '/project/src/Counter.tsx')
+      }
+
+      expect(clientContext.error).not.toHaveBeenCalled()
+      expect(ssrContext.error).not.toHaveBeenCalled()
+
+      const clientLoad = clientPlugin.load as any
+      const ssrLoad = ssrPlugin.load as any
+      expect(typeof clientLoad).toBe('function')
+      expect(typeof ssrLoad).toBe('function')
+
+      const beforeClientReset = clientLoad('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as
+        | string
+        | null
+      const beforeSsrReset = ssrLoad('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as
+        | string
+        | null
+      expect(beforeClientReset).not.toBeNull()
+      expect(beforeSsrReset).not.toBeNull()
+
+      const ssrBuildStart = ssrPlugin.buildStart as (() => void) | undefined
+      expect(typeof ssrBuildStart).toBe('function')
+      ssrBuildStart?.()
+
+      const afterSsrResetClientLoad = clientLoad(
+        '\0fict-handler:/project/src/Counter.tsx$$__fict_e0',
+      ) as string | null
+      const afterSsrResetSsrLoad = ssrLoad('\0fict-handler:/project/src/Counter.tsx$$__fict_e0')
+
+      expect(afterSsrResetClientLoad).not.toBeNull()
+      expect(afterSsrResetClientLoad).toContain('export default')
+      expect(afterSsrResetSsrLoad).toBeNull()
+    })
+
+    it('keeps client handlers after ssr buildStart without ssr transform', async () => {
+      const clientPlugin = fict({ functionSplitting: true })
+      const ssrPlugin = fict({ functionSplitting: true })
+
+      if (typeof clientPlugin.configResolved === 'function') {
+        clientPlugin.configResolved(mockBuildConfig as any)
+      }
+      if (typeof ssrPlugin.configResolved === 'function') {
+        ssrPlugin.configResolved(mockSsrBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const [count] = __fictUseLexicalScope(scopeId, ['count']);
+  const __handler = () => count(count() + 1);
+  return __handler.call(el, event);
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const clientContext = { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() }
+      const clientTransform = clientPlugin.transform as any
+      if (typeof clientTransform === 'function') {
+        await clientTransform.call(clientContext, compiledCode, '/project/src/Counter.tsx')
+      }
+      expect(clientContext.error).not.toHaveBeenCalled()
+
+      const clientLoad = clientPlugin.load as any
+      const ssrLoad = ssrPlugin.load as any
+      expect(typeof clientLoad).toBe('function')
+      expect(typeof ssrLoad).toBe('function')
+
+      const beforeSsrBuildStartClient = clientLoad(
+        '\0fict-handler:/project/src/Counter.tsx$$__fict_e0',
+      ) as string | null
+      const beforeSsrBuildStartSsr = ssrLoad('\0fict-handler:/project/src/Counter.tsx$$__fict_e0')
+
+      expect(beforeSsrBuildStartClient).not.toBeNull()
+      expect(beforeSsrBuildStartClient).toContain('export default')
+      expect(beforeSsrBuildStartSsr).toBeNull()
+
+      const ssrBuildStart = ssrPlugin.buildStart as (() => void) | undefined
+      expect(typeof ssrBuildStart).toBe('function')
+      ssrBuildStart?.()
+
+      const afterSsrBuildStartClient = clientLoad(
+        '\0fict-handler:/project/src/Counter.tsx$$__fict_e0',
+      ) as string | null
+      const afterSsrBuildStartSsr = ssrLoad('\0fict-handler:/project/src/Counter.tsx$$__fict_e0')
+
+      expect(afterSsrBuildStartClient).not.toBeNull()
+      expect(afterSsrBuildStartClient).toContain('export default')
+      expect(afterSsrBuildStartSsr).toBeNull()
     })
 
     it('extracts handler code with AST and generates standalone modules', async () => {

@@ -185,9 +185,10 @@ interface ExtractedHandler {
 }
 
 /**
- * Registry for extracted handlers during compilation
+ * Registry used only by the standalone registerExtractedHandler helper.
+ * The plugin itself keeps per-instance registries to avoid cross-instance races.
  */
-const extractedHandlers = new Map<string, ExtractedHandler>()
+const manuallyRegisteredHandlers = new Map<string, ExtractedHandler>()
 
 /**
  * Vite plugin for Fict reactive UI library.
@@ -222,6 +223,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   let tsProject: TypeScriptProject | null = null
   let tsProjectInit: Promise<TypeScriptProject | null> | null = null
   const moduleMetadata: FictCompilerOptions['moduleMetadata'] = new Map()
+  const extractedHandlers = new Map<string, ExtractedHandler>()
   const debugEnabled =
     debugOption === true ||
     process.env.FICT_VITE_PLUGIN_DEBUG === '1' ||
@@ -314,27 +316,20 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         registrySize: extractedHandlers.size,
         handlers: Array.from(extractedHandlers.keys()),
       })
-      const handler = extractedHandlers.get(handlerId)
-      if (handler) {
-        const generatedCode = generateHandlerModule(handler)
-        debugLog(`Generated virtual module (${generatedCode.length} chars)`, {
-          preview: generatedCode.slice(0, 200),
-        })
-        return generatedCode
-      }
-
+      const handler = extractedHandlers.get(handlerId) ?? manuallyRegisteredHandlers.get(handlerId)
       if (!handler) {
-        // In dev mode or when splitting is disabled, the handler is still in the main module
-        // Generate a re-export from the source module
-        const [sourceModule, exportName] = parseHandlerId(handlerId)
-        if (sourceModule && exportName) {
-          return `export { ${exportName} as default } from '${sourceModule}'`
-        }
+        debugLog(`Virtual module not found: ${handlerId}`, {
+          registrySize: extractedHandlers.size,
+        })
         return null
       }
 
       // Generate the virtual module with the handler code
-      return generateHandlerModule(handler)
+      const generatedCode = generateHandlerModule(handler)
+      debugLog(`Generated virtual module (${generatedCode.length} chars)`, {
+        preview: generatedCode.slice(0, 200),
+      })
+      return generatedCode
     },
 
     config(userConfig, env) {
@@ -571,7 +566,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         if (shouldSplit) {
           let splitResult: { code: string; handlers: string[] } | null = null
           try {
-            splitResult = extractAndRewriteHandlers(finalCode, filename)
+            splitResult = extractAndRewriteHandlers(finalCode, filename, extractedHandlers)
           } catch (error) {
             this.warn(buildPluginMessage('extractAndRewriteHandlers failed', filename, error))
           }
@@ -1097,18 +1092,6 @@ async function createTypeScriptProject(
 // ============================================================================
 
 /**
- * Parse a handler ID into source module and export name.
- * Format: /path/to/module.tsx$$exportName (using $$ as separator to avoid URL fragment conflicts)
- */
-function parseHandlerId(handlerId: string): [string | null, string | null] {
-  const separatorIndex = handlerId.lastIndexOf('$$')
-  if (separatorIndex === -1) {
-    return [handlerId, 'default']
-  }
-  return [handlerId.slice(0, separatorIndex), handlerId.slice(separatorIndex + 2)]
-}
-
-/**
  * Generate handler ID from source module and export name.
  * Uses $$ as separator to avoid conflicts with URL # fragments.
  */
@@ -1172,7 +1155,7 @@ export function registerExtractedHandler(
   localDeps: string[] = [],
 ): string {
   const handlerId = createHandlerId(sourceModule, exportName)
-  extractedHandlers.set(handlerId, {
+  manuallyRegisteredHandlers.set(handlerId, {
     sourceModule,
     exportName,
     helpersUsed,
@@ -1520,6 +1503,7 @@ function collectPatternIdentifiers(pattern: t.LVal | t.PatternLike): string[] {
 function extractAndRewriteHandlers(
   code: string,
   sourceModule: string,
+  handlerRegistry: Map<string, ExtractedHandler>,
 ): { code: string; handlers: string[] } | null {
   let ast: ReturnType<typeof parse>
 
@@ -1649,7 +1633,7 @@ function extractAndRewriteHandlers(
 
           // Register the handler with its full code
           const handlerId = createHandlerId(sourceModule, name)
-          extractedHandlers.set(handlerId, {
+          handlerRegistry.set(handlerId, {
             sourceModule,
             exportName: name,
             helpersUsed,
@@ -1702,7 +1686,7 @@ function extractAndRewriteHandlers(
 
         // Register the handler with its full code
         const handlerId = createHandlerId(sourceModule, name)
-        extractedHandlers.set(handlerId, {
+        handlerRegistry.set(handlerId, {
           sourceModule,
           exportName: name,
           helpersUsed,
