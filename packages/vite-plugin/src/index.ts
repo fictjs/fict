@@ -270,6 +270,11 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     tsProjectInit = null
   }
 
+  const resetTransformState = () => {
+    moduleMetadata.clear()
+    extractedHandlers.clear()
+  }
+
   return {
     name: 'vite-plugin-fict',
 
@@ -280,8 +285,14 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       isDev = config.command === 'serve' || config.mode === 'development'
       // Rebuild cache with resolved config so cacheDir is available
       resetCache()
-      // Clear extracted handlers from previous builds
-      extractedHandlers.clear()
+      // Reset transform-only state from previous builds.
+      resetTransformState()
+    },
+
+    buildStart() {
+      // Vite can reuse plugin instances across watch rebuilds.
+      // Reset per-build metadata to avoid unbounded growth.
+      resetTransformState()
     },
 
     resolveId(id: string) {

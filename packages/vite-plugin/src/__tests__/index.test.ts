@@ -164,6 +164,48 @@ describe('fict vite-plugin', () => {
       }
     })
 
+    it('clears extracted handlers on buildStart', async () => {
+      const plugin = fict({ functionSplitting: true })
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const [count] = __fictUseLexicalScope(scopeId, ['count']);
+  const __handler = () => count(count() + 1);
+  return __handler.call(el, event);
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn() }
+      const transform = plugin.transform as any
+      if (typeof transform === 'function') {
+        await transform.call(mockContext, compiledCode, '/project/src/Counter.tsx')
+      }
+
+      const load = plugin.load as any
+      expect(typeof load).toBe('function')
+      const beforeReset = load('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as string
+      expect(beforeReset).toContain('export default')
+
+      const buildStart = plugin.buildStart as (() => void) | undefined
+      expect(typeof buildStart).toBe('function')
+      buildStart?.()
+
+      const afterReset = load('\0fict-handler:/project/src/Counter.tsx$$__fict_e0') as string
+      expect(afterReset).toContain(
+        "export { __fict_e0 as default } from '/project/src/Counter.tsx'",
+      )
+    })
+
     it('extracts handler code with AST and generates standalone modules', async () => {
       const plugin = fict({ functionSplitting: true })
 
