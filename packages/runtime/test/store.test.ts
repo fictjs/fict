@@ -7,6 +7,49 @@ import { createDiffingSignal } from '../src/store'
 const tick = () => Promise.resolve()
 
 describe('createStore iteration tracking', () => {
+  it('allocates property signals only when reads are tracked', async () => {
+    const originalHook = (globalThis as { __FICT_DEVTOOLS_HOOK__?: unknown }).__FICT_DEVTOOLS_HOOK__
+    const signalRegisters: number[] = []
+    ;(
+      globalThis as {
+        __FICT_DEVTOOLS_HOOK__?: {
+          registerSignal: (id: number) => void
+          updateSignal: (id: number, value: unknown) => void
+          registerComputed: (id: number, value: unknown) => void
+          updateComputed: (id: number, value: unknown) => void
+          registerEffect: (id: number) => void
+          effectRun: (id: number, duration?: number) => void
+        }
+      }
+    ).__FICT_DEVTOOLS_HOOK__ = {
+      registerSignal: (id: number) => {
+        signalRegisters.push(id)
+      },
+      updateSignal: (_id: number, _value: unknown) => {},
+      registerComputed: (_id: number, _value: unknown) => {},
+      updateComputed: (_id: number, _value: unknown) => {},
+      registerEffect: (_id: number) => {},
+      effectRun: (_id: number, _duration?: number) => {},
+    }
+
+    try {
+      const [state] = createStore({ foo: 1 })
+
+      // Non-reactive reads should not allocate signal nodes.
+      state.foo
+      expect(signalRegisters).toHaveLength(0)
+
+      createEffect(() => {
+        state.foo
+      })
+
+      await tick()
+      expect(signalRegisters).toHaveLength(1)
+    } finally {
+      ;(globalThis as { __FICT_DEVTOOLS_HOOK__?: unknown }).__FICT_DEVTOOLS_HOOK__ = originalHook
+    }
+  })
+
   it('tracks ownKeys/for-in when keys change', async () => {
     const [state, setState] = createStore<{ foo?: string; bar?: string }>({ foo: 'a' })
     const seen: string[][] = []

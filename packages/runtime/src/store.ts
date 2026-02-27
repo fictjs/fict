@@ -1,4 +1,4 @@
-import { signal, batch, type SignalAccessor } from './signal'
+import { signal, batch, getActiveSub, type SignalAccessor } from './signal'
 
 const PROXY = Symbol('fict:store-proxy')
 const TARGET = Symbol('fict:store-target')
@@ -166,6 +166,9 @@ export function unwrapStore<T>(value: T): T {
 }
 
 function track(target: object, prop: string | symbol) {
+  // Avoid allocating per-property signals when no reactive subscriber is active.
+  if (!getActiveSub()) return
+
   let signals = signalCache.get(target)
   if (!signals) {
     signals = new Map()
