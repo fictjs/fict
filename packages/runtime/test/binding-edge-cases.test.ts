@@ -695,6 +695,63 @@ describe('Binding Edge Cases', () => {
       expect(handler).toHaveBeenCalled()
     })
 
+    it('removes delegated handlers when onX prop is cleared', () => {
+      const el = document.createElement('button')
+      container.appendChild(el)
+      const handler = vi.fn()
+      const prevProps: Record<string, unknown> = {}
+
+      assign(el, { onClick: handler }, false, false, prevProps)
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(handler).toHaveBeenCalledTimes(1)
+
+      assign(el, {}, false, false, prevProps)
+      handler.mockClear()
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(handler).not.toHaveBeenCalled()
+    })
+
+    it('clears delegated tuple data when switching to plain handler', () => {
+      const el = document.createElement('button')
+      container.appendChild(el)
+      const tupleHandler = vi.fn()
+      const plainHandler = vi.fn()
+      const prevProps: Record<string, unknown> = {}
+
+      assign(el, { onClick: [tupleHandler, 'row-1'] }, false, false, prevProps)
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(tupleHandler).toHaveBeenCalledWith('row-1', expect.any(Event))
+
+      assign(el, { onClick: plainHandler }, false, false, prevProps)
+      plainHandler.mockClear()
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+
+      expect(plainHandler).toHaveBeenCalledTimes(1)
+      expect(plainHandler).toHaveBeenCalledWith(expect.any(Event))
+      expect(tupleHandler).toHaveBeenCalledTimes(1)
+    })
+
+    it('replaces and removes non-delegated tuple handlers correctly', () => {
+      const el = document.createElement('input')
+      const first = vi.fn()
+      const second = vi.fn()
+      const prevProps: Record<string, unknown> = {}
+
+      assign(el, { onFocus: [first, 'first'] }, false, false, prevProps)
+      el.dispatchEvent(new Event('focus'))
+      expect(first).toHaveBeenCalledWith('first', expect.any(Event))
+
+      assign(el, { onFocus: [second, 'second'] }, false, false, prevProps)
+      el.dispatchEvent(new Event('focus'))
+      expect(first).toHaveBeenCalledTimes(1)
+      expect(second).toHaveBeenCalledWith('second', expect.any(Event))
+
+      assign(el, {}, false, false, prevProps)
+      second.mockClear()
+      el.dispatchEvent(new Event('focus'))
+      expect(second).not.toHaveBeenCalled()
+    })
+
     it('handles attr: prefix for forced attributes', () => {
       const el = document.createElement('div')
 

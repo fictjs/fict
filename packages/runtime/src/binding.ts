@@ -52,6 +52,7 @@ const PROP_CACHE = Symbol('fict:prop')
 const STYLE_CACHE = Symbol('fict:style')
 const CLASS_STATE_CACHE = Symbol('fict:class-state')
 const CLASS_VALUE_CACHE = Symbol('fict:class-value')
+const EVENT_TUPLE_LISTENER_CACHE = Symbol('fict:event-tuple-listener-cache')
 const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
 const REACTIVE_FN_MARKER = Symbol.for('fict:reactive-fn')
 const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
@@ -59,6 +60,8 @@ const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
 type NonReactiveRegistryHost = typeof globalThis & {
   [NON_REACTIVE_FN_REGISTRY_KEY]?: WeakSet<(...args: unknown[]) => unknown>
 }
+
+type EventTupleListenerStore = Map<string, EventListener>
 
 const PROPERTY_BINDING_KEYS = new Set([
   'value',
@@ -1314,23 +1317,71 @@ export function addEventListener(
   handler: EventListener | [EventListener, unknown] | null | undefined,
   delegate?: boolean,
 ): void {
-  if (handler == null) return
-
   if (delegate) {
+    const key = `$$${name}`
+    const dataKey = `${key}Data`
+
+    if (handler == null) {
+      ;(node as unknown as Record<string, unknown>)[key] = undefined
+      ;(node as unknown as Record<string, unknown>)[dataKey] = undefined
+      return
+    }
+
     // Event delegation: store handler on element
     if (Array.isArray(handler)) {
-      ;(node as unknown as Record<string, unknown>)[`$$${name}`] = handler[0]
-      ;(node as unknown as Record<string, unknown>)[`$$${name}Data`] = handler[1]
+      ;(node as unknown as Record<string, unknown>)[key] = handler[0]
+      ;(node as unknown as Record<string, unknown>)[dataKey] = handler[1]
     } else {
-      ;(node as unknown as Record<string, unknown>)[`$$${name}`] = handler
+      ;(node as unknown as Record<string, unknown>)[key] = handler
+      ;(node as unknown as Record<string, unknown>)[dataKey] = undefined
     }
-  } else if (Array.isArray(handler)) {
+    return
+  }
+
+  if (handler == null) return
+
+  if (Array.isArray(handler)) {
     // Non-delegated with data binding
+    const store = getTupleEventListenerStore(node)
+    const existing = store.get(name)
+    if (existing) {
+      node.removeEventListener(name, existing)
+    }
     const handlerFn = handler[0] as (data: unknown, e: Event) => void
-    node.addEventListener(name, (e: Event) => handlerFn.call(node, handler[1], e))
-  } else {
-    // Regular event listener
-    node.addEventListener(name, handler as EventListener)
+    const wrapped = (e: Event) => handlerFn.call(node, handler[1], e)
+    store.set(name, wrapped)
+    node.addEventListener(name, wrapped)
+    return
+  }
+
+  // Regular event listener
+  node.addEventListener(name, handler as EventListener)
+}
+
+function getTupleEventListenerStore(node: Element): EventTupleListenerStore {
+  const host = node as unknown as {
+    [EVENT_TUPLE_LISTENER_CACHE]?: EventTupleListenerStore
+  }
+  if (!host[EVENT_TUPLE_LISTENER_CACHE]) {
+    host[EVENT_TUPLE_LISTENER_CACHE] = new Map<string, EventListener>()
+  }
+  return host[EVENT_TUPLE_LISTENER_CACHE]!
+}
+
+function removeStoredTupleEventListener(node: Element, name: string): void {
+  const host = node as unknown as {
+    [EVENT_TUPLE_LISTENER_CACHE]?: EventTupleListenerStore
+  }
+  const store = host[EVENT_TUPLE_LISTENER_CACHE]
+  if (!store) return
+
+  const wrapped = store.get(name)
+  if (!wrapped) return
+
+  node.removeEventListener(name, wrapped)
+  store.delete(name)
+  if (store.size === 0) {
+    host[EVENT_TUPLE_LISTENER_CACHE] = undefined
   }
 }
 
@@ -1656,11 +1707,19 @@ function assignProp(
     const eventName = prop.slice(2).toLowerCase()
     const shouldDelegate = DelegatedEvents.has(eventName)
     if (!shouldDelegate && prev) {
-      const handler = Array.isArray(prev) ? prev[0] : prev
-      node.removeEventListener(eventName, handler as EventListener)
+      if (Array.isArray(prev)) {
+        removeStoredTupleEventListener(node, eventName)
+      } else {
+        node.removeEventListener(eventName, prev as EventListener)
+      }
     }
     if (shouldDelegate || value) {
-      addEventListener(node, eventName, value as EventListener, shouldDelegate)
+      addEventListener(
+        node,
+        eventName,
+        value as EventListener | [EventListener, unknown] | null | undefined,
+        shouldDelegate,
+      )
       if (shouldDelegate) delegateEvents([eventName])
     }
     return value
