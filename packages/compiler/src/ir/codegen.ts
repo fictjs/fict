@@ -2692,6 +2692,7 @@ function lowerIntrinsicElement(
         ),
       )
     }
+    fusedPatchGroups.clear()
   }
 
   // Apply bindings using path navigation

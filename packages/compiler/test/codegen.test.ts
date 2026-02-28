@@ -1140,6 +1140,21 @@ describe('spread operator in JSX', () => {
     expect(code).toContain('spread(')
     expect(code).toMatch(/spread\([\s\S]*\["data-role"\]/)
   })
+
+  it('should not duplicate fused bindings when spread forces mid-stream flush', () => {
+    const ast = parseFile(`
+      function SpreadWithReactiveClass(props) {
+        let cls = $state('ready')
+        return <div className={cls} {...props}>Content</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    const bindClassMatches = code.match(/bindClass\(/g) ?? []
+    expect(bindClassMatches.length).toBe(1)
+  })
 })
 
 // ============================================================================
