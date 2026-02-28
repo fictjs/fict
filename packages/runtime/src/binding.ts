@@ -1381,7 +1381,7 @@ function removeStoredTupleEventListener(node: Element, name: string): void {
   node.removeEventListener(name, wrapped)
   store.delete(name)
   if (store.size === 0) {
-    host[EVENT_TUPLE_LISTENER_CACHE] = undefined
+    delete host[EVENT_TUPLE_LISTENER_CACHE]
   }
 }
 
