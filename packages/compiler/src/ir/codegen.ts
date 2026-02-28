@@ -2704,10 +2704,9 @@ function lowerIntrinsicElement(
       flushFusedPatchGroups()
       ctx.helpersUsed.add('spread')
       const spreadValueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
-      const spreadGetter =
-        t.isArrowFunctionExpression(spreadValueExpr) || t.isFunctionExpression(spreadValueExpr)
-          ? spreadValueExpr
-          : t.arrowFunctionExpression([], spreadValueExpr)
+      // Always wrap spread expressions so function-valued expressions are treated
+      // as values, not invoked as runtime spread getters.
+      const spreadGetter = t.arrowFunctionExpression([], spreadValueExpr)
       const spreadArgs: BabelCore.types.Expression[] = [
         targetId,
         spreadGetter,

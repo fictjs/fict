@@ -272,6 +272,45 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not invoke function-valued intrinsic spread expressions', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      const spreadFn = () => {
+        log.push('called')
+        return { 'data-from-fn': 'x' }
+      }
+
+      export function App() {
+        return <div {...spreadFn} data-role="fixed">SpreadFn</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      log: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    const el = container.querySelector('div') as HTMLDivElement
+    expect(el.getAttribute('data-role')).toBe('fixed')
+    expect(el.hasAttribute('data-from-fn')).toBe(false)
+    expect(mod.log).toEqual([])
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps todo list DOM in sync with keyed state updates', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'
