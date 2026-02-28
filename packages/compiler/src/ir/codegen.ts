@@ -2698,7 +2698,28 @@ function lowerIntrinsicElement(
   for (const binding of bindings) {
     const targetId = resolveHIRBindingPath(binding.path, nodeCache, statements, ctx, genTemp)
 
-    if (binding.type === 'event' && binding.expr && binding.name) {
+    if (binding.type === 'spread' && binding.expr) {
+      // Spread ordering must follow source order, so flush pending fused patches first.
+      flushFusedPatchGroups()
+      ctx.helpersUsed.add('spread')
+      const spreadValueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
+      const spreadGetter =
+        t.isArrowFunctionExpression(spreadValueExpr) || t.isFunctionExpression(spreadValueExpr)
+          ? spreadValueExpr
+          : t.arrowFunctionExpression([], spreadValueExpr)
+      const spreadArgs: BabelCore.types.Expression[] = [
+        targetId,
+        spreadGetter,
+        t.booleanLiteral(Boolean(isSVG || isMathML)),
+        t.booleanLiteral(true),
+      ]
+      if (binding.exclude && binding.exclude.length > 0) {
+        spreadArgs.push(t.arrayExpression(binding.exclude.map(name => t.stringLiteral(name))))
+      }
+      statements.push(
+        t.expressionStatement(t.callExpression(t.identifier(RUNTIME_ALIASES.spread), spreadArgs)),
+      )
+    } else if (binding.type === 'event' && binding.expr && binding.name) {
       // Event binding
       const eventName = binding.name
       const hasEventOptions =

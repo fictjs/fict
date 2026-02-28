@@ -1067,6 +1067,7 @@ describe('spread operator in JSX', () => {
     const { code } = generate(file)
 
     expect(code).toMatch(/props/)
+    expect(code).toContain('spread(')
   })
 
   it('should handle spread with additional props', () => {
@@ -1124,6 +1125,20 @@ describe('spread operator in JSX', () => {
 
     expect(code).toMatch(/props/)
     expect(code).toMatch(/specific/)
+  })
+
+  it('should preserve static attribute order after spread in fine-grained output', () => {
+    const ast = parseFile(`
+      function SpreadOrder(props) {
+        return <div {...props} data-role="fixed">Content</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('spread(')
+    expect(code).toMatch(/spread\([\s\S]*\["data-role"\]/)
   })
 })
 

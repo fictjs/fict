@@ -186,6 +186,92 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('applies intrinsic spread in fine-grained mode and preserves attribute/event ordering', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const calls: string[] = []
+      export let api: {
+        clear(): void
+        tuple(): void
+        fn(): void
+      }
+
+      export function App() {
+        let attrs = $state<any>({
+          'data-role': 'dynamic-1',
+          'data-id': 'one',
+          onClick: () => calls.push('one'),
+        })
+
+        api = {
+          clear() {
+            attrs = {}
+          },
+          tuple() {
+            attrs = {
+              'data-role': 'dynamic-2',
+              onClick: [((id: unknown) => calls.push(String(id))) as any, 'row-2'] as any,
+            }
+          },
+          fn() {
+            attrs = {
+              'data-role': 'dynamic-3',
+              onClick: () => calls.push('fn'),
+            }
+          },
+        }
+
+        return (
+          <button {...attrs} data-role="fixed" type="button">
+            Press
+          </button>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { clear(): void; tuple(): void; fn(): void }
+      calls: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const button = container.querySelector('button') as HTMLButtonElement
+
+    expect(button).toBeTruthy()
+    expect(button.getAttribute('data-role')).toBe('fixed')
+    expect(button.getAttribute('type')).toBe('button')
+
+    button.dispatchEvent(new Event('click', { bubbles: true }))
+    expect(mod.calls).toEqual(['one'])
+
+    mod.api.clear()
+    await flushUpdates()
+    button.dispatchEvent(new Event('click', { bubbles: true }))
+    expect(mod.calls).toEqual(['one'])
+
+    mod.api.tuple()
+    await flushUpdates()
+    expect(button.getAttribute('data-role')).toBe('fixed')
+    button.dispatchEvent(new Event('click', { bubbles: true }))
+    expect(mod.calls).toEqual(['one', 'row-2'])
+
+    mod.api.fn()
+    await flushUpdates()
+    expect(button.getAttribute('data-role')).toBe('fixed')
+    button.dispatchEvent(new Event('click', { bubbles: true }))
+    expect(mod.calls).toEqual(['one', 'row-2', 'fn'])
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps todo list DOM in sync with keyed state updates', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'

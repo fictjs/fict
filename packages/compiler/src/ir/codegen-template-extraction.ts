@@ -3,10 +3,11 @@ import { shouldAutoExtract } from './codegen-auto-extract'
 import type { Expression, JSXChild, JSXElementExpression } from './hir'
 
 export interface HIRBinding {
-  type: 'attr' | 'child' | 'event' | 'key' | 'text'
+  type: 'attr' | 'child' | 'event' | 'key' | 'spread' | 'text'
   path: number[] // path to navigate from root to target node
   name?: string // for attributes/events
   expr?: Expression // the dynamic expression
+  exclude?: string[] // spread-only: keys overridden by following explicit attrs
   eventOptions?: { capture?: boolean; passive?: boolean; once?: boolean }
   resumable?: boolean
   resumableExplicit?: boolean
@@ -97,9 +98,34 @@ export function extractHIRStaticHtml(
   const bindings: HIRBinding[] = []
 
   // Process attributes
-  for (const attr of jsx.attributes) {
+  for (let attrIndex = 0; attrIndex < jsx.attributes.length; attrIndex++) {
+    const attr = jsx.attributes[attrIndex]!
     if (attr.isSpread) {
-      // Spread attributes are always dynamic - skip in template
+      if (attr.spreadExpr) {
+        const excluded = new Set<string>()
+        for (let nextIndex = attrIndex + 1; nextIndex < jsx.attributes.length; nextIndex++) {
+          const nextAttr = jsx.attributes[nextIndex]!
+          if (nextAttr.isSpread) continue
+
+          let nextName = normalizeHIRAttrName(nextAttr.name)
+          if (nextName.endsWith('$')) {
+            nextName = nextName.slice(0, -1)
+          }
+          if (nextName === 'key') continue
+
+          excluded.add(nextName)
+          if (nextName !== nextAttr.name) {
+            excluded.add(nextAttr.name)
+          }
+        }
+
+        bindings.push({
+          type: 'spread',
+          path: [...parentPath],
+          expr: attr.spreadExpr,
+          exclude: excluded.size > 0 ? Array.from(excluded) : undefined,
+        })
+      }
       continue
     }
 

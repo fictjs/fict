@@ -643,6 +643,35 @@ describe('Binding Edge Cases', () => {
 
       expect(prevProps).toBeTypeOf('object')
     })
+
+    it('supports getter props and updates assignments reactively', async () => {
+      const el = document.createElement('button')
+      container.appendChild(el)
+      const firstHandler = vi.fn()
+      const secondHandler = vi.fn()
+      const props = createSignal<Record<string, unknown>>({
+        'data-id': 'first',
+        onClick: firstHandler,
+      })
+
+      const { dispose } = createRoot(() => {
+        spread(el, () => props(), false, true)
+      })
+
+      expect(el.getAttribute('data-id')).toBe('first')
+
+      props({
+        'data-id': 'second',
+        onClick: secondHandler,
+      })
+      await tick()
+
+      expect(el.getAttribute('data-id')).toBe('second')
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(firstHandler).not.toHaveBeenCalled()
+      expect(secondHandler).toHaveBeenCalledTimes(1)
+      dispose()
+    })
   })
 
   describe('assign', () => {

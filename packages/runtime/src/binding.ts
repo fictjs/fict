@@ -1577,29 +1577,40 @@ export function bindRef(el: Element, ref: unknown): Cleanup {
  */
 export function spread(
   node: Element,
-  props: Record<string, unknown> = {},
+  props: Record<string, unknown> | (() => Record<string, unknown>) = {},
   isSVG = false,
   skipChildren = false,
+  exclude: readonly string[] = [],
 ): Record<string, unknown> {
   const prevProps: Record<string, unknown> = {}
+  const excludedProps = exclude.length > 0 ? new Set(exclude) : undefined
+  const resolveProps = (): Record<string, unknown> => {
+    const next = typeof props === 'function' ? (props as () => Record<string, unknown>)() : props
+    if (!next || typeof next !== 'object') return {}
+    return next
+  }
 
   // Handle children if not skipped
-  if (!skipChildren && 'children' in props) {
+  if (!skipChildren) {
     createRenderEffect(() => {
-      prevProps.children = props.children
+      const nextProps = resolveProps()
+      if ('children' in nextProps) {
+        prevProps.children = nextProps.children
+      }
     })
   }
 
   // Handle ref
   createRenderEffect(() => {
-    if (typeof props.ref === 'function') {
-      ;(props.ref as (el: Element) => void)(node)
+    const nextProps = resolveProps()
+    if (typeof nextProps.ref === 'function') {
+      ;(nextProps.ref as (el: Element) => void)(node)
     }
   })
 
   // Handle all other props
   createRenderEffect(() => {
-    assign(node, props, isSVG, true, prevProps, true)
+    assign(node, resolveProps(), isSVG, true, prevProps, true, excludedProps)
   })
 
   return prevProps
@@ -1623,11 +1634,13 @@ export function assign(
   skipChildren = false,
   prevProps: Record<string, unknown> = {},
   skipRef = false,
+  excludedProps?: ReadonlySet<string>,
 ): void {
   props = props || {}
 
   // Remove props that are no longer present
   for (const prop in prevProps) {
+    if (excludedProps?.has(prop)) continue
     if (!(prop in props)) {
       if (prop === 'children') continue
       prevProps[prop] = assignProp(node, prop, null, prevProps[prop], isSVG, skipRef, props)
@@ -1636,6 +1649,7 @@ export function assign(
 
   // Set or update props
   for (const prop in props) {
+    if (excludedProps?.has(prop)) continue
     if (prop === 'children') {
       if (!skipChildren) {
         // Handle children insertion
