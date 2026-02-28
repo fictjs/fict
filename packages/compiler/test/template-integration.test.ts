@@ -1094,6 +1094,41 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('invokes handlers returned by event call expressions', () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      const createHandler = (label: string) => () => log.push(label)
+
+      export function App() {
+        return <button data-id="btn" onClick={createHandler('factory')}>Click</button>
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      log: string[]
+    }>(source, { fineGrainedDom: true })
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const button = container.querySelector('[data-id="btn"]') as HTMLButtonElement
+    button.click()
+    expect(mod.log).toEqual(['factory'])
+
+    teardown()
+    container.remove()
+  })
+
   /**
    * Tests that memo variables are correctly identified as reactive.
    * This ensures that expressions accessing memo/derived values are bound reactively.
