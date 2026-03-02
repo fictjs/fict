@@ -11,9 +11,11 @@ import { LiveTraceStore } from './analysis/live-trace'
 import type { FictDocumentAnalysis } from './analysis/types'
 import { CompiledOutputProvider, compileDocumentSource } from './commands/compilePreview'
 import { buildReactivityExplanation } from './commands/explain'
+import { formatDoctorReport, runProjectDoctor } from './commands/projectDoctor'
 import { FictCodeActionProvider } from './ui/codeActions'
 import { TraceDecorationManager } from './ui/decorations'
 import { FictFileDecorationProvider } from './ui/fileDecorations'
+import { FictInspectorPanel } from './ui/inspectorPanel'
 import { FictStatusBar } from './ui/statusBar'
 import { FictComponentTreeProvider } from './ui/treeView'
 
@@ -38,6 +40,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const fileDecorations = new FictFileDecorationProvider()
   const statusBar = new FictStatusBar()
   const treeProvider = new FictComponentTreeProvider()
+  const inspectorPanel = new FictInspectorPanel()
   const compiledOutputProvider = new CompiledOutputProvider()
   const liveTraceStore = new LiveTraceStore()
   const analysisByUri = new Map<string, FictDocumentAnalysis>()
@@ -69,6 +72,7 @@ export function activate(context: vscode.ExtensionContext): void {
       fileDecorations.update(uri, null)
       statusBar.update(null)
       treeProvider.update(uri, null)
+      inspectorPanel.update(null)
       return
     }
 
@@ -96,6 +100,7 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBar.update(analysis)
     treeProvider.update(uri, analysis)
     treeProvider.setActiveDocument(uri)
+    inspectorPanel.update(analysis)
   }
 
   const runAnalysis = async (editor?: vscode.TextEditor): Promise<void> => {
@@ -229,16 +234,57 @@ export function activate(context: vscode.ExtensionContext): void {
     },
   )
 
+  const runDoctor = vscode.commands.registerCommand('fict.runProjectDoctor', async () => {
+    const folder = vscode.workspace.workspaceFolders?.[0]
+    if (!folder) {
+      void vscode.window.showWarningMessage('Fict Doctor requires an open workspace folder.')
+      return
+    }
+
+    const checks = await runProjectDoctor(folder.uri.fsPath)
+    const report = formatDoctorReport(checks)
+    output?.appendLine('Fict Doctor Report')
+    output?.appendLine(report)
+    output?.show(true)
+
+    const warnCount = checks.filter(check => check.status === 'warn').length
+    void vscode.window.showInformationMessage(
+      warnCount === 0
+        ? 'Fict Doctor: all required checks passed.'
+        : `Fict Doctor finished with ${warnCount} warning(s). See Fict output for details.`,
+    )
+  })
+
+  const openInspector = vscode.commands.registerCommand('fict.openInspector', async () => {
+    const editor = vscode.window.activeTextEditor
+    if (!editor) {
+      inspectorPanel.show(context, null)
+      return
+    }
+
+    const uriKey = editor.document.uri.toString()
+    let analysis = analysisByUri.get(uriKey)
+    if (!analysis) {
+      await runAnalysis(editor)
+      analysis = analysisByUri.get(uriKey)
+    }
+
+    inspectorPanel.show(context, analysis ?? null)
+  })
+
   context.subscriptions.push(
     output,
     traceDecorations,
     diagnostics,
     statusBar,
+    inspectorPanel,
     refreshTrace,
     explainReactivity,
     openCompiledOutput,
     revealRange,
     openDiagnosticDocs,
+    runDoctor,
+    openInspector,
     vscode.window.createTreeView('fict.components', { treeDataProvider: treeProvider }),
     vscode.window.registerFileDecorationProvider(fileDecorations),
     vscode.workspace.registerTextDocumentContentProvider('fict-compiled', compiledOutputProvider),

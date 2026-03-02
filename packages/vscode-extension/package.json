@@ -37,7 +37,9 @@
     "workspaceContains:**/*.{tsx,jsx}",
     "onCommand:fict.explainReactivityHere",
     "onCommand:fict.openCompiledOutput",
-    "onCommand:fict.refreshTrace"
+    "onCommand:fict.refreshTrace",
+    "onCommand:fict.runProjectDoctor",
+    "onCommand:fict.openInspector"
   ],
   "contributes": {
     "commands": [
@@ -52,6 +54,14 @@
       {
         "command": "fict.refreshTrace",
         "title": "Fict: Refresh Trace"
+      },
+      {
+        "command": "fict.runProjectDoctor",
+        "title": "Fict: Run Project Doctor"
+      },
+      {
+        "command": "fict.openInspector",
+        "title": "Fict: Open Inspector"
       }
     ],
     "viewsContainers": {
