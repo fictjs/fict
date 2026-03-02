@@ -1926,5 +1926,16 @@ export type {
   ModuleReactiveMetadata,
   ReactiveExportKind,
 } from './types'
+export { analyzeFictFile, inferTraceMarkersForComponent } from './tooling'
+export type {
+  AnalyzeDiagnostic,
+  AnalyzeOptions,
+  AnalyzeResult,
+  ComponentAnalysis,
+  LineTrace,
+  RegionInfoSerializable,
+  TraceMarker,
+  TraceMarkerKind,
+} from './tooling'
 
 export default createFictPlugin
