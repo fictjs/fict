@@ -1176,52 +1176,61 @@ function createHIREntrypointVisitor(
             ) {
               return
             }
-            const cb = expr.arguments[0]
-            if (!cb || (!t.isArrowFunctionExpression(cb) && !t.isFunctionExpression(cb))) return
-
-            const getReturnedJsx = (
-              fn: BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression,
-            ): BabelCore.types.JSXElement | BabelCore.types.JSXFragment | null => {
-              if (t.isJSXElement(fn.body) || t.isJSXFragment(fn.body)) return fn.body
-              if (t.isBlockStatement(fn.body)) {
-                const ret = fn.body.body.find(stmt => t.isReturnStatement(stmt))
-                if (
-                  ret &&
-                  t.isReturnStatement(ret) &&
-                  ret.argument &&
-                  (t.isJSXElement(ret.argument) || t.isJSXFragment(ret.argument))
-                ) {
-                  return ret.argument
-                }
-              }
-              return null
-            }
-
-            const jsx = getReturnedJsx(cb)
-            if (!jsx) return
-            if (t.isJSXFragment(jsx)) {
-              warn({
-                code: 'FICT-J002',
-                message: 'Missing key prop in list rendering.',
-                fileName,
-                line: expr.loc?.start.line ?? 0,
-                column: expr.loc ? expr.loc.start.column + 1 : 0,
-              })
+            const callExprPath = exprPath.get('expression')
+            if (!callExprPath.isCallExpression()) return
+            const [cbPath] = callExprPath.get('arguments')
+            if (
+              !cbPath ||
+              (!cbPath.isArrowFunctionExpression() && !cbPath.isFunctionExpression())
+            ) {
               return
             }
 
-            let hasKey = false
-            let hasUnknownSpread = false
-            for (const attr of jsx.openingElement.attributes) {
-              if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name, { name: 'key' })) {
-                hasKey = true
-                break
-              }
-              if (t.isJSXSpreadAttribute(attr)) {
-                hasUnknownSpread = true
-              }
+            const getReturnedJsx = (
+              fnPath: BabelCore.NodePath<
+                BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression
+              >,
+            ): Array<BabelCore.types.JSXElement | BabelCore.types.JSXFragment> => {
+              const fn = fnPath.node
+              if (t.isJSXElement(fn.body) || t.isJSXFragment(fn.body)) return [fn.body]
+              if (!t.isBlockStatement(fn.body)) return []
+
+              const returned: Array<BabelCore.types.JSXElement | BabelCore.types.JSXFragment> = []
+              fnPath.get('body').traverse({
+                Function(innerFnPath) {
+                  innerFnPath.skip()
+                },
+                ReturnStatement(retPath) {
+                  const arg = retPath.node.argument
+                  if (arg && (t.isJSXElement(arg) || t.isJSXFragment(arg))) {
+                    returned.push(arg)
+                  }
+                },
+              })
+              return returned
             }
-            if (hasKey || hasUnknownSpread) return
+
+            const returnedJsx = getReturnedJsx(cbPath)
+            if (returnedJsx.length === 0) return
+
+            const hasMissingKeyBranch = returnedJsx.some(jsx => {
+              if (t.isJSXFragment(jsx)) return true
+
+              let hasKey = false
+              let hasUnknownSpread = false
+              for (const attr of jsx.openingElement.attributes) {
+                if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name, { name: 'key' })) {
+                  hasKey = true
+                  break
+                }
+                if (t.isJSXSpreadAttribute(attr)) {
+                  hasUnknownSpread = true
+                }
+              }
+              return !hasKey && !hasUnknownSpread
+            })
+
+            if (!hasMissingKeyBranch) return
 
             warn({
               code: 'FICT-J002',

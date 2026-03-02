@@ -503,6 +503,29 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
   })
 
+  it('warns when any list return branch is missing a key', () => {
+    const source = `
+      function App({ items }) {
+        return (
+          <ul>
+            {items.map(item => {
+              if (item.kind === 'primary') {
+                return <li key={item.id}>{item.name}</li>
+              }
+              if (item.kind === 'secondary') {
+                return <li>{item.name}</li>
+              }
+              return <li key={item.id + '-fallback'}>{item.name}</li>
+            })}
+          </ul>
+        )
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
+  })
+
   it('does not warn effects that read props', () => {
     const source = `
       import { $effect } from 'fict'
