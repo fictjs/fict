@@ -33,6 +33,63 @@ function collectReturnedJSXFromExpression(
   }
 }
 
+function extractKeyExpressionFromReturnedExpression(
+  expression: Expression,
+): Expression | undefined {
+  if (expression.kind === 'JSXElement') {
+    return extractKeyFromAttributes(expression.attributes)
+  }
+  if (expression.kind === 'ConditionalExpression') {
+    const consequentKey = extractKeyExpressionFromReturnedExpression(expression.consequent)
+    const alternateKey = extractKeyExpressionFromReturnedExpression(expression.alternate)
+    if (!consequentKey || !alternateKey) return undefined
+    return {
+      kind: 'ConditionalExpression',
+      test: expression.test,
+      consequent: consequentKey,
+      alternate: alternateKey,
+      loc: expression.loc,
+    }
+  }
+  if (expression.kind === 'SequenceExpression') {
+    const tail = expression.expressions[expression.expressions.length - 1]
+    return tail ? extractKeyExpressionFromReturnedExpression(tail) : undefined
+  }
+  return undefined
+}
+
+function getReturnedKeyExpressionsFromCallback(callback: Expression): Expression[] {
+  const returned: Expression[] = []
+
+  if (callback.kind === 'ArrowFunction') {
+    if (callback.isExpression && !Array.isArray(callback.body)) {
+      const keyExpr = extractKeyExpressionFromReturnedExpression(callback.body)
+      if (keyExpr) returned.push(keyExpr)
+      return returned
+    }
+    if (Array.isArray(callback.body)) {
+      for (const block of callback.body) {
+        const term = block.terminator
+        if (term.kind !== 'Return' || !term.argument) continue
+        const keyExpr = extractKeyExpressionFromReturnedExpression(term.argument)
+        if (keyExpr) returned.push(keyExpr)
+      }
+    }
+    return returned
+  }
+
+  if (callback.kind === 'FunctionExpression') {
+    for (const block of callback.body ?? []) {
+      const term = block.terminator
+      if (term.kind !== 'Return' || !term.argument) continue
+      const keyExpr = extractKeyExpressionFromReturnedExpression(term.argument)
+      if (keyExpr) returned.push(keyExpr)
+    }
+  }
+
+  return returned
+}
+
 function getReturnedJSXFromCallback(callback: Expression): JSXElementExpression[] {
   const returned: JSXElementExpression[] = []
 
@@ -79,6 +136,21 @@ function keyExpressionSignature(expression: Expression): string {
 }
 
 export function extractKeyFromMapCallback(callback: Expression): Expression | undefined {
+  const returnedKeyExpressions = getReturnedKeyExpressionsFromCallback(callback)
+  if (returnedKeyExpressions.length === 1) {
+    return returnedKeyExpressions[0]
+  }
+  if (returnedKeyExpressions.length > 1) {
+    const [firstKey, ...restKeys] = returnedKeyExpressions
+    const firstSignature = keyExpressionSignature(firstKey)
+    if (
+      firstSignature &&
+      restKeys.every(keyExpr => keyExpressionSignature(keyExpr) === firstSignature)
+    ) {
+      return firstKey
+    }
+  }
+
   const returned = getReturnedJSXFromCallback(callback)
   if (returned.length === 0) return undefined
 

@@ -249,6 +249,32 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toMatch(/createKeyedList\([\s\S]*?\.id\b/)
     })
 
+    it('preserves keyed extraction when ternary branches use different key expressions', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let users = $state([
+            { type: 'a', aId: 1, bId: 101, name: 'Alice' },
+            { type: 'b', aId: 2, bId: 202, name: 'Bob' },
+          ])
+          return (
+            <ul>
+              {users.map(user =>
+                user.type === 'a'
+                  ? <li key={user.aId}>{user.name}</li>
+                  : <li key={user.bId}>{user.name}</li>
+              )}
+            </ul>
+          )
+        }
+      `
+
+      const output = runTransform(input)
+      expect(output).toContain('createKeyedList')
+      expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*__index\b/)
+      expect(output).toMatch(/createKeyedList\([\s\S]*?\?\s*user\.aId\s*:\s*user\.bId/)
+    })
+
     it('uses returned sequence tail for key extraction', () => {
       const input = `
         import { $state } from 'fict'
