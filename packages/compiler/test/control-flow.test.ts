@@ -249,6 +249,28 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toMatch(/createKeyedList\([\s\S]*?\.id\b/)
     })
 
+    it('uses returned sequence tail for key extraction', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let users = $state([{ id: 1, name: 'Alice' }, { id: 2, name: 'Bob' }])
+          return (
+            <ul>
+              {users.map(user => (
+                <li>{user.name}</li>,
+                <li key={user.id}>{user.name}</li>
+              ))}
+            </ul>
+          )
+        }
+      `
+
+      const output = runTransform(input)
+      expect(output).toContain('createKeyedList')
+      expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*__index\b/)
+      expect(output).toMatch(/createKeyedList\([\s\S]*?\.id\b/)
+    })
+
     it('handles array map with index', () => {
       const input = `
         import { $state } from 'fict'

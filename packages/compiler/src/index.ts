@@ -1212,7 +1212,8 @@ function createHIREntrypointVisitor(
                   return
                 }
                 if (t.isSequenceExpression(node)) {
-                  node.expressions.forEach(expr => collectReturnedJsxFromExpression(expr, returned))
+                  const tail = node.expressions[node.expressions.length - 1]
+                  collectReturnedJsxFromExpression(tail, returned)
                   return
                 }
                 if (t.isParenthesizedExpression(node)) {

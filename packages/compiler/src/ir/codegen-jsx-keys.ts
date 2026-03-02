@@ -28,7 +28,8 @@ function collectReturnedJSXFromExpression(
     return
   }
   if (expression.kind === 'SequenceExpression') {
-    expression.expressions.forEach(expr => collectReturnedJSXFromExpression(expr, returned))
+    const tail = expression.expressions[expression.expressions.length - 1]
+    if (tail) collectReturnedJSXFromExpression(tail, returned)
   }
 }
 

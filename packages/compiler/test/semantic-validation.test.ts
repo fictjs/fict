@@ -560,6 +560,24 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
   })
 
+  it('does not warn for dead unkeyed sequence operands when returned JSX is keyed', () => {
+    const source = `
+      function App({ items }) {
+        return (
+          <ul>
+            {items.map(item => (
+              <li>{item.name}</li>,
+              <li key={item.id}>{item.name}</li>
+            ))}
+          </ul>
+        )
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-J002')).toBe(false)
+  })
+
   it('does not warn effects that read props', () => {
     const source = `
       import { $effect } from 'fict'
