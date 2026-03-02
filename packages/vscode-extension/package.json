@@ -1,0 +1,154 @@
+{
+  "name": "@fictjs/vscode-extension",
+  "version": "0.1.0",
+  "description": "VSCode extension for Fict",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fictjs/fict.git",
+    "directory": "packages/vscode-extension"
+  },
+  "license": "MIT",
+  "type": "module",
+  "displayName": "Fict",
+  "publisher": "fictjs",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Other"
+  ],
+  "main": "./dist/extension.cjs",
+  "files": [
+    "dist",
+    "media"
+  ],
+  "activationEvents": [
+    "onLanguage:typescriptreact",
+    "onLanguage:javascriptreact",
+    "onLanguage:typescript",
+    "onLanguage:javascript",
+    "onView:fict.components",
+    "workspaceContains:**/*.{tsx,jsx}",
+    "onCommand:fict.explainReactivityHere",
+    "onCommand:fict.openCompiledOutput",
+    "onCommand:fict.refreshTrace"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "fict.explainReactivityHere",
+        "title": "Fict: Explain Reactivity Here"
+      },
+      {
+        "command": "fict.openCompiledOutput",
+        "title": "Fict: Open Compiled Output"
+      },
+      {
+        "command": "fict.refreshTrace",
+        "title": "Fict: Refresh Trace"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "fict",
+          "title": "Fict",
+          "icon": "media/trace-reactive.svg"
+        }
+      ]
+    },
+    "views": {
+      "fict": [
+        {
+          "id": "fict.components",
+          "name": "Components & Regions"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Fict",
+      "properties": {
+        "fict.trace.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Fict trace decorations in the editor gutter."
+        },
+        "fict.trace.mode": {
+          "type": "string",
+          "enum": [
+            "static",
+            "compiler",
+            "live"
+          ],
+          "default": "compiler",
+          "description": "Trace data source mode."
+        },
+        "fict.trace.verbosity": {
+          "type": "string",
+          "enum": [
+            "minimal",
+            "verbose"
+          ],
+          "default": "minimal",
+          "description": "How dense trace markers should be."
+        },
+        "fict.trace.showOnce": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show setup-only (once) markers."
+        },
+        "fict.trace.showInJsxOnly": {
+          "type": "boolean",
+          "default": false,
+          "description": "Only display trace markers for JSX expression lines."
+        },
+        "fict.trace.showRegionShading": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show background shading for reactive regions."
+        },
+        "fict.dev.serverUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional dev server URL for live trace mode."
+        },
+        "fict.dev.tokenPath": {
+          "type": "string",
+          "default": ".fict-cache/devtools-token",
+          "description": "Token file path used by live trace bridge."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup src/extension.ts --format cjs --platform node --external vscode --out-dir dist --sourcemap",
+    "dev": "tsup src/extension.ts --format cjs --platform node --external vscode --out-dir dist --watch",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "vscode:prepublish": "pnpm build",
+    "package:vsix": "vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/preset-typescript": "^7.26.0",
+    "@fictjs/compiler": "workspace:*",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.0",
+    "@types/vscode": "^1.90.0",
+    "@types/ws": "^8.18.1",
+    "@vscode/vsce": "^3.6.2",
+    "tsup": "^8.5.1",
+    "vitest": "^4.0.18"
+  }
+}
