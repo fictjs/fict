@@ -1191,20 +1191,57 @@ function createHIREntrypointVisitor(
                 BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression
               >,
             ): Array<BabelCore.types.JSXElement | BabelCore.types.JSXFragment> => {
-              const fn = fnPath.node
-              if (t.isJSXElement(fn.body) || t.isJSXFragment(fn.body)) return [fn.body]
-              if (!t.isBlockStatement(fn.body)) return []
+              const collectReturnedJsxFromExpression = (
+                node: BabelCore.types.Node | null | undefined,
+                returned: Array<BabelCore.types.JSXElement | BabelCore.types.JSXFragment>,
+              ): void => {
+                if (!node) return
+                if (t.isJSXElement(node) || t.isJSXFragment(node)) {
+                  returned.push(node)
+                  return
+                }
+                if (t.isConditionalExpression(node)) {
+                  collectReturnedJsxFromExpression(node.consequent, returned)
+                  collectReturnedJsxFromExpression(node.alternate, returned)
+                  return
+                }
+                if (t.isLogicalExpression(node)) {
+                  collectReturnedJsxFromExpression(node.left, returned)
+                  collectReturnedJsxFromExpression(node.right, returned)
+                  return
+                }
+                if (t.isSequenceExpression(node)) {
+                  node.expressions.forEach(expr => collectReturnedJsxFromExpression(expr, returned))
+                  return
+                }
+                if (t.isParenthesizedExpression(node)) {
+                  collectReturnedJsxFromExpression(node.expression, returned)
+                  return
+                }
+                if (
+                  t.isTSAsExpression(node) ||
+                  t.isTSTypeAssertion(node) ||
+                  t.isTSNonNullExpression(node) ||
+                  t.isTSSatisfiesExpression(node) ||
+                  t.isTypeCastExpression(node)
+                ) {
+                  collectReturnedJsxFromExpression(node.expression, returned)
+                }
+              }
 
+              const fn = fnPath.node
               const returned: Array<BabelCore.types.JSXElement | BabelCore.types.JSXFragment> = []
+              if (!t.isBlockStatement(fn.body)) {
+                collectReturnedJsxFromExpression(fn.body, returned)
+                return returned
+              }
+
               fnPath.get('body').traverse({
                 Function(innerFnPath) {
                   innerFnPath.skip()
                 },
                 ReturnStatement(retPath) {
-                  const arg = retPath.node.argument
-                  if (arg && (t.isJSXElement(arg) || t.isJSXFragment(arg))) {
-                    returned.push(arg)
-                  }
+                  collectReturnedJsxFromExpression(retPath.node.argument, returned)
                 },
               })
               return returned
