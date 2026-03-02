@@ -1191,10 +1191,10 @@ function createHIREntrypointVisitor(
               fnPath: BabelCore.NodePath<
                 BabelCore.types.ArrowFunctionExpression | BabelCore.types.FunctionExpression
               >,
-            ): Array<BabelCore.types.JSXElement | BabelCore.types.JSXFragment> => {
+            ): (BabelCore.types.JSXElement | BabelCore.types.JSXFragment)[] => {
               const collectReturnedJsxFromExpression = (
                 node: BabelCore.types.Node | null | undefined,
-                returned: Array<BabelCore.types.JSXElement | BabelCore.types.JSXFragment>,
+                returned: (BabelCore.types.JSXElement | BabelCore.types.JSXFragment)[],
               ): void => {
                 if (!node) return
                 if (t.isJSXElement(node) || t.isJSXFragment(node)) {
@@ -1232,7 +1232,7 @@ function createHIREntrypointVisitor(
               }
 
               const fn = fnPath.node
-              const returned: Array<BabelCore.types.JSXElement | BabelCore.types.JSXFragment> = []
+              const returned: (BabelCore.types.JSXElement | BabelCore.types.JSXFragment)[] = []
               if (!t.isBlockStatement(fn.body)) {
                 collectReturnedJsxFromExpression(fn.body, returned)
                 return returned

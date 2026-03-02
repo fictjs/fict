@@ -6,6 +6,7 @@
  */
 
 import type * as BabelCore from '@babel/core'
+
 import { normalizeDependencyKey } from './ir/dependency-key'
 
 // ============================================================================
