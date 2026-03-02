@@ -545,6 +545,21 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
   })
 
+  it('warns when optional map list items are missing keys', () => {
+    const source = `
+      function App({ items }) {
+        return (
+          <ul>
+            {items?.map(item => <li>{item.name}</li>)}
+          </ul>
+        )
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
+  })
+
   it('does not warn effects that read props', () => {
     const source = `
       import { $effect } from 'fict'

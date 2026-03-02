@@ -1169,16 +1169,17 @@ function createHIREntrypointVisitor(
         path.traverse({
           JSXExpressionContainer(exprPath) {
             const expr = exprPath.node.expression
-            if (!t.isCallExpression(expr)) return
+            if (!t.isCallExpression(expr) && !t.isOptionalCallExpression(expr)) return
             if (
-              !t.isMemberExpression(expr.callee) ||
+              (!t.isMemberExpression(expr.callee) && !t.isOptionalMemberExpression(expr.callee)) ||
               !t.isIdentifier(expr.callee.property, { name: 'map' })
             ) {
               return
             }
             const callExprPath = exprPath.get('expression')
-            if (!callExprPath.isCallExpression()) return
-            const [cbPath] = callExprPath.get('arguments')
+            if (!callExprPath.isCallExpression() && !callExprPath.isOptionalCallExpression()) return
+            const argPaths = callExprPath.get('arguments')
+            const cbPath = Array.isArray(argPaths) ? argPaths[0] : undefined
             if (
               !cbPath ||
               (!cbPath.isArrowFunctionExpression() && !cbPath.isFunctionExpression())
