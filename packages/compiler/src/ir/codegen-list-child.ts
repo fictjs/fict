@@ -254,6 +254,20 @@ export function buildListCallExpression(
   let callbackExpr = ops.lowerExpression(mapCallback, ctx)
   ctx.inListRender = prevInListRender
 
+  const shouldDeferOptionalCallbackEvaluation =
+    isOptional &&
+    !t.isArrowFunctionExpression(callbackExpr) &&
+    !t.isFunctionExpression(callbackExpr)
+
+  let deferredCallbackId: BabelCore.types.Identifier | null = null
+  let deferredCallbackInitId: BabelCore.types.Identifier | null = null
+  let deferredItemsId: BabelCore.types.Identifier | null = null
+  if (shouldDeferOptionalCallbackEvaluation) {
+    deferredCallbackId = ops.genTemp(ctx, 'mapCb')
+    deferredCallbackInitId = ops.genTemp(ctx, 'mapCbReady')
+    deferredItemsId = ops.genTemp(ctx, 'mapItems')
+  }
+
   // Capture key param name BEFORE restoring context (for selector hoist).
   const capturedKeyParamName = ctx.listKeyParamName
 
@@ -381,8 +395,9 @@ export function buildListCallExpression(
     )
 
     const hasIndexParam =
-      (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) &&
-      callbackExpr.params.length >= 2
+      shouldDeferOptionalCallbackEvaluation ||
+      ((t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) &&
+        callbackExpr.params.length >= 2)
 
     // Add __key as third parameter to the callback for key constification.
     if (
@@ -412,15 +427,85 @@ export function buildListCallExpression(
     // Insert hoisted template declarations before list call.
     statements.push(...hoistedStatements)
 
+    if (shouldDeferOptionalCallbackEvaluation) {
+      statements.push(
+        t.variableDeclaration('let', [
+          t.variableDeclarator(t.cloneNode(deferredCallbackId!, true)),
+        ]),
+        t.variableDeclaration('let', [
+          t.variableDeclarator(t.cloneNode(deferredCallbackInitId!, true), t.booleanLiteral(false)),
+        ]),
+      )
+    }
+
+    const getItemsExpr = shouldDeferOptionalCallbackEvaluation
+      ? t.arrowFunctionExpression(
+          [],
+          t.blockStatement([
+            t.variableDeclaration('const', [
+              t.variableDeclarator(
+                t.cloneNode(deferredItemsId!, true),
+                t.cloneNode(arrayExprBase, true) as BabelCore.types.Expression,
+              ),
+            ]),
+            t.ifStatement(
+              t.binaryExpression('==', t.cloneNode(deferredItemsId!, true), t.nullLiteral()),
+              t.blockStatement([t.returnStatement(t.arrayExpression([]))]),
+            ),
+            t.ifStatement(
+              t.unaryExpression('!', t.cloneNode(deferredCallbackInitId!, true)),
+              t.blockStatement([
+                t.expressionStatement(
+                  t.assignmentExpression(
+                    '=',
+                    t.cloneNode(deferredCallbackId!, true),
+                    t.cloneNode(callbackExpr, true) as BabelCore.types.Expression,
+                  ),
+                ),
+                t.expressionStatement(
+                  t.assignmentExpression(
+                    '=',
+                    t.cloneNode(deferredCallbackInitId!, true),
+                    t.booleanLiteral(true),
+                  ),
+                ),
+              ]),
+            ),
+            t.returnStatement(t.cloneNode(deferredItemsId!, true)),
+          ]),
+        )
+      : t.arrowFunctionExpression([], arrayExpr)
+    const renderExpr = shouldDeferOptionalCallbackEvaluation
+      ? t.arrowFunctionExpression(
+          [t.identifier('__item'), t.identifier('__index'), t.identifier('__key')],
+          t.callExpression(t.cloneNode(deferredCallbackId!, true), [
+            t.identifier('__item'),
+            t.identifier('__index'),
+            t.identifier('__key'),
+          ]),
+        )
+      : callbackExpr
+
     listCall = t.callExpression(t.identifier(RUNTIME_ALIASES.keyedList), [
-      t.arrowFunctionExpression([], arrayExpr),
+      getItemsExpr,
       keyFn,
-      callbackExpr,
+      renderExpr,
       t.booleanLiteral(hasIndexParam),
     ])
   } else {
     // Insert hoisted template declarations before list call.
     statements.push(...hoistedStatements)
+
+    if (shouldDeferOptionalCallbackEvaluation) {
+      statements.push(
+        t.variableDeclaration('let', [
+          t.variableDeclarator(t.cloneNode(deferredCallbackId!, true)),
+        ]),
+        t.variableDeclaration('let', [
+          t.variableDeclarator(t.cloneNode(deferredCallbackInitId!, true), t.booleanLiteral(false)),
+        ]),
+      )
+    }
 
     const itemParamName =
       t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)
@@ -435,8 +520,57 @@ export function buildListCallExpression(
           : '__index'
         : '__index'
     const hasIndexParam =
-      (t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) &&
-      callbackExpr.params.length >= 2
+      shouldDeferOptionalCallbackEvaluation ||
+      ((t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) &&
+        callbackExpr.params.length >= 2)
+
+    const getItemsExpr = shouldDeferOptionalCallbackEvaluation
+      ? t.arrowFunctionExpression(
+          [],
+          t.blockStatement([
+            t.variableDeclaration('const', [
+              t.variableDeclarator(
+                t.cloneNode(deferredItemsId!, true),
+                t.cloneNode(arrayExprBase, true) as BabelCore.types.Expression,
+              ),
+            ]),
+            t.ifStatement(
+              t.binaryExpression('==', t.cloneNode(deferredItemsId!, true), t.nullLiteral()),
+              t.blockStatement([t.returnStatement(t.arrayExpression([]))]),
+            ),
+            t.ifStatement(
+              t.unaryExpression('!', t.cloneNode(deferredCallbackInitId!, true)),
+              t.blockStatement([
+                t.expressionStatement(
+                  t.assignmentExpression(
+                    '=',
+                    t.cloneNode(deferredCallbackId!, true),
+                    t.cloneNode(callbackExpr, true) as BabelCore.types.Expression,
+                  ),
+                ),
+                t.expressionStatement(
+                  t.assignmentExpression(
+                    '=',
+                    t.cloneNode(deferredCallbackInitId!, true),
+                    t.booleanLiteral(true),
+                  ),
+                ),
+              ]),
+            ),
+            t.returnStatement(t.cloneNode(deferredItemsId!, true)),
+          ]),
+        )
+      : t.arrowFunctionExpression([], arrayExpr)
+    const renderExpr = shouldDeferOptionalCallbackEvaluation
+      ? t.arrowFunctionExpression(
+          [t.identifier('__item'), t.identifier('__index'), t.identifier('__key')],
+          t.callExpression(t.cloneNode(deferredCallbackId!, true), [
+            t.identifier('__item'),
+            t.identifier('__index'),
+            t.identifier('__key'),
+          ]),
+        )
+      : callbackExpr
 
     const keyFn = t.arrowFunctionExpression(
       [t.identifier(itemParamName), t.identifier(indexParamName)],
@@ -444,9 +578,9 @@ export function buildListCallExpression(
     )
 
     listCall = t.callExpression(t.identifier(RUNTIME_ALIASES.keyedList), [
-      t.arrowFunctionExpression([], arrayExpr),
+      getItemsExpr,
       keyFn,
-      callbackExpr,
+      renderExpr,
       t.booleanLiteral(hasIndexParam),
     ])
   }

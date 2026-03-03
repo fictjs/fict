@@ -184,6 +184,26 @@ describe('rule validations', () => {
     expect(diagnostic).toBeNull()
   })
 
+  it('reports spread-only list items inside map callbacks', () => {
+    const spreadOnly = t.jsxElement(
+      t.jsxOpeningElement(
+        t.jsxIdentifier('li'),
+        [t.jsxSpreadAttribute(t.identifier('item'))],
+        false,
+      ),
+      t.jsxClosingElement(t.jsxIdentifier('li')),
+      [t.jsxExpressionContainer(t.memberExpression(t.identifier('item'), t.identifier('name')))],
+      false,
+    )
+    const callback = t.arrowFunctionExpression([t.identifier('item')], spreadOnly)
+    const mapCall = t.callExpression(
+      t.memberExpression(t.identifier('items'), t.identifier('map')),
+      [callback],
+    )
+    const diagnostic = validateListKeys(spreadOnly, ctx, t, [mapCall, callback])
+    expect(diagnostic?.code).toBe(DiagnosticCode.FICT_J002)
+  })
+
   it('collects diagnostics across function body validation', () => {
     const listItem = t.jsxElement(
       t.jsxOpeningElement(t.jsxIdentifier('li'), [], false),

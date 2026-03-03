@@ -560,6 +560,21 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
   })
 
+  it('warns when map list items rely on spread-only attrs (key cannot be statically proven)', () => {
+    const source = `
+      function App({ items }) {
+        return (
+          <ul>
+            {items.map(item => <li {...item}>{item.name}</li>)}
+          </ul>
+        )
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
+  })
+
   it('does not warn for dead unkeyed sequence operands when returned JSX is keyed', () => {
     const source = `
       function App({ items }) {

@@ -311,6 +311,92 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves optional map short-circuiting for callback argument evaluation', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const calls: string[] = []
+
+      function makeMapper() {
+        calls.push('factory')
+        return (item: number) => <li key={item}>{item}</li>
+      }
+
+      export function App() {
+        let items = $state<number[] | null>(null)
+        return <ul>{items?.map(makeMapper())}</ul>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      calls: string[]
+    }>(source, { fineGrainedDom: true })
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(mod.calls).toEqual([])
+
+    teardown()
+    container.remove()
+  })
+
+  it('preserves optional map callback third argument forwarding', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const seen: number[] = []
+      export let api: { set(next: number[] | null): void }
+
+      const cb = (item: number, index: number, key: unknown) => {
+        seen.push(Number(key))
+        return <li key={item}>{item}</li>
+      }
+
+      export function App() {
+        let items = $state<number[] | null>(null)
+        api = {
+          set(next) {
+            items = next
+          },
+        }
+        return <ul>{items?.map(cb)}</ul>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(next: number[] | null): void }
+      seen: number[]
+    }>(source, { fineGrainedDom: true })
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(mod.seen).toEqual([])
+
+    mod.api.set([10, 20])
+    await flushUpdates()
+
+    expect(mod.seen).toEqual([0, 1])
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps todo list DOM in sync with keyed state updates', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'

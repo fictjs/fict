@@ -1275,6 +1275,35 @@ describe('array/map rendering', () => {
     expect(code).toMatch(/item\s*,\s*\.\.\.rest/)
     expect(code).not.toMatch(/\.\.\.rest\s*,\s*__key/)
   })
+
+  it('defers optional map callback factory evaluation and keeps init ordering safe', () => {
+    const ast = parseFile(`
+      function makeMapper() {
+        return item => <li key={item}>{item}</li>
+      }
+
+      function OptionalFactoryList(props) {
+        return (
+          <ul>
+            {props.items?.map(makeMapper())}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/let __mapCb_\d+;/)
+    expect(code).toMatch(/let __mapCbReady_\d+ = false;/)
+    expect(code).toMatch(
+      /if \(!__mapCbReady_\d+\) \{[\s\S]*__mapCb_\d+ = makeMapper\(\);[\s\S]*__mapCbReady_\d+ = true;[\s\S]*\}/,
+    )
+    expect(code).toMatch(
+      /\(__item,\s*__index,\s*__key\)\s*=>\s*__mapCb_\d+\(__item,\s*__index,\s*__key\)/,
+    )
+    expect(code).not.toContain(', makeMapper(),')
+  })
 })
 
 // ============================================================================

@@ -1256,17 +1256,13 @@ function createHIREntrypointVisitor(
               if (t.isJSXFragment(jsx)) return true
 
               let hasKey = false
-              let hasUnknownSpread = false
               for (const attr of jsx.openingElement.attributes) {
                 if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name, { name: 'key' })) {
                   hasKey = true
                   break
                 }
-                if (t.isJSXSpreadAttribute(attr)) {
-                  hasUnknownSpread = true
-                }
               }
-              return !hasKey && !hasUnknownSpread
+              return !hasKey
             })
 
             if (!hasMissingKeyBranch) return

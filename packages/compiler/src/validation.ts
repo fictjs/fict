@@ -435,17 +435,13 @@ export function validateListKeys(
   }
 
   let hasKey = false
-  let hasUnknownSpread = false
   for (const attr of node.openingElement.attributes) {
     if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name, { name: 'key' })) {
       hasKey = true
       break
     }
-    if (t.isJSXSpreadAttribute(attr)) {
-      hasUnknownSpread = true
-    }
   }
-  if (hasKey || hasUnknownSpread) return null
+  if (hasKey) return null
   return createDiagnostic(DiagnosticCode.FICT_J002, node, fileName)
 }
 
