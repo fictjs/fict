@@ -1,9 +1,8 @@
 import type { HIRFunction, Identifier, Instruction } from '../ir/hir'
-import type { RegionInfoSerializable, TraceMarker } from './types'
-import type { LineTrace } from './types'
-
 import { deSSAVarName } from '../ir/regions'
 import { walkExpression } from '../ir/walk-expression'
+
+import type { LineTrace, RegionInfoSerializable, TraceMarker } from './types'
 
 interface InferTraceInput {
   fn: HIRFunction
@@ -96,8 +95,8 @@ function isStateCallInstruction(instr: Instruction): instr is Instruction & { ta
   )
 }
 
-function collectStateDeclNames(fn: HIRFunction): Array<{ name: string; line: number }> {
-  const result: Array<{ name: string; line: number }> = []
+function collectStateDeclNames(fn: HIRFunction): { name: string; line: number }[] {
+  const result: { name: string; line: number }[] = []
   for (const block of fn.blocks) {
     for (const instr of block.instructions) {
       if (!isStateCallInstruction(instr) || !instr.loc) continue
