@@ -1,14 +1,32 @@
-# Fict
+<p align="center">
+  <a href="https://github.com/fictjs/fict">
+    <img src="./logo.png" alt="Fict Logo" width="160" />
+  </a>
+</p>
 
-![Node CI](https://github.com/fictjs/fict/workflows/CI/badge.svg)
-![npm](https://img.shields.io/npm/v/fict.svg)
-![license](https://img.shields.io/npm/l/fict)
+<h1 align="center">Fict</h1>
 
-> Reactive UI with zero boilerplate.
+<p align="center">
+  <strong>Reactive UI with zero boilerplate.</strong><br/>
+  Write JavaScript; let the compiler handle signals, derived values, and DOM updates.
+</p>
 
-Fict is a UI library where you write plain JavaScript and the compiler figures out the reactivity.
+<p align="center">
+  <a href="https://github.com/fictjs/fict/actions"><img src="https://github.com/fictjs/fict/workflows/CI/badge.svg" alt="CI" /></a>
+  <a href="https://www.npmjs.com/package/fict"><img src="https://img.shields.io/npm/v/fict.svg?colorB=brightgreen" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/fict"><img src="https://img.shields.io/npm/dm/fict.svg" alt="npm downloads" /></a>
+  <a href="https://github.com/fictjs/fict/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/fict" alt="license" /></a>
+</p>
 
-> Write JavaScript; let the compiler handle signals, derived values, and DOM updates. It’s a new way to think about UI—not a drop-in replacement for React/Vue/Svelte. The promise is less code and lower cognitive load.
+<p align="center">
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#core-concepts">Core Concepts</a> ·
+  <a href="#examples">Examples</a> ·
+  <a href="#documentation">Docs</a> ·
+  <a href="https://stackblitz.com/edit/vite-fict-ts?file=src%2Fmain.tsx">Playground</a>
+</p>
+
+---
 
 ```jsx
 function Counter() {
@@ -25,24 +43,61 @@ function Counter() {
 
 ## Why Fict?
 
-**Positioning**
+> _"Write JavaScript; the compiler handles reactivity."_
+> No `.value`, no deps arrays, no manual memo wiring. Not pitching "better React/Vue/Svelte" — Fict is a **different mental model**: compile-time reactivity on plain JS. The gain: **less code, lower cognitive overhead**.
 
-- “Write JavaScript; the compiler handles reactivity.” No `.value`, no deps arrays, no manual memo wiring (no explicit unwrap/getter calls).
-- Not pitching “better React/Vue/Svelte”; Fict is a different mental model (compile-time reactivity on plain JS).
-- The gain: less code, lower cognitive overhead. Performance is surgical by design, but we’re not selling unproven speed charts.
+<table>
+  <thead>
+    <tr>
+      <th>Pain Point</th>
+      <th>React</th>
+      <th>Vue 3</th>
+      <th>Solid</th>
+      <th>Svelte 5</th>
+      <th>Fict ✨</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>State syntax</strong></td>
+      <td><code>useState()</code> + setter</td>
+      <td><code>ref()</code> + <code>.value</code></td>
+      <td><code>createSignal()</code> + <code>()</code></td>
+      <td><code>$state()</code></td>
+      <td><code>$state()</code></td>
+    </tr>
+    <tr>
+      <td><strong>Derived values</strong></td>
+      <td><code>useMemo</code> + deps</td>
+      <td><code>computed()</code></td>
+      <td><code>createMemo()</code></td>
+      <td><code>$derived()</code></td>
+      <td><strong>automatic</strong> 🔥</td>
+    </tr>
+    <tr>
+      <td><strong>Props destructure</strong></td>
+      <td>✅</td>
+      <td>⚠️ breaks reactivity</td>
+      <td>❌ breaks reactivity</td>
+      <td>✅ (<code>$props()</code>)</td>
+      <td>✅</td>
+    </tr>
+    <tr>
+      <td><strong>Control flow</strong></td>
+      <td>native JS</td>
+      <td><code>v-if</code>/<code>v-for</code></td>
+      <td><code>&lt;Show&gt;</code>/<code>&lt;For&gt;</code></td>
+      <td><code>{#if}</code>/<code>{#each}</code></td>
+      <td>native JS</td>
+    </tr>
+  </tbody>
+</table>
 
-| Pain Point        | React                          | Vue 3                                                            | Solid                         | Svelte 5                  | Fict          |
-| ----------------- | ------------------------------ | ---------------------------------------------------------------- | ----------------------------- | ------------------------- | ------------- |
-| State syntax      | `useState()` + setter          | `ref()` + `.value` (JS) / template auto-unwrap / or `reactive()` | `createSignal()` + `()` calls | `$state()`                | `$state()`    |
-| Derived values    | `useMemo` + deps (or Compiler) | `computed()`                                                     | `createMemo()`                | `$derived()`              | **automatic** |
-| Props destructure | ✅                             | ⚠️ usually breaks reactivity                                     | ❌ (breaks reactivity)        | ✅ (`$props()` semantics) | ✅            |
-| Control flow      | native JS                      | typically `v-if`/`v-for`                                         | typically `<Show>/<For>`      | `{#if}/{#each}`           | native JS     |
+**Fict gives you the best of every world:**
 
-Fict gives you:
-
-- **React's familiar syntax** — JSX, destructuring-friendly, native `if`/`for`, etc.
-- **Solid's fine-grained update model** — no VDOM, surgical DOM updates
-- **Less boilerplate than both** — compiler infers derived values automatically (when possible)
+- 🧩 **React's familiar syntax** — JSX, destructuring-friendly, native `if`/`for`
+- ⚡ **Solid's fine-grained updates** — no VDOM, surgical DOM patches
+- ✨ **Less boilerplate than both** — compiler infers derived values automatically
 
 ---
 
@@ -53,7 +108,8 @@ npm install fict
 npm install -D @fictjs/vite-plugin  # Vite users
 ```
 
-**Counter App:**
+<details>
+<summary><strong>📦 Counter App — full example</strong></summary>
 
 ```tsx
 import { $state, render } from 'fict'
@@ -78,7 +134,10 @@ export function Counter() {
 render(() => <Counter />, document.getElementById('app')!)
 ```
 
-**Vite setup:**
+</details>
+
+<details>
+<summary><strong>⚙️ Vite config</strong></summary>
 
 ```ts
 // vite.config.ts
@@ -90,7 +149,10 @@ export default defineConfig({
 })
 ```
 
-**TypeScript:**
+</details>
+
+<details>
+<summary><strong>🔧 TypeScript config</strong></summary>
 
 ```json
 {
@@ -101,11 +163,15 @@ export default defineConfig({
 }
 ```
 
+</details>
+
 ---
 
 ## Online Examples
 
-- [Counter](https://stackblitz.com/edit/vite-fict-ts?file=src%2Fmain.tsx)
+- 🎮 [Counter](https://stackblitz.com/edit/vite-fict-ts?file=src%2Fmain.tsx)
+
+---
 
 ## Core Concepts
 
@@ -148,7 +214,7 @@ $effect(() => {
 
 ## Execution Model: Not React, Not Solid
 
-**This is the most important concept to understand.**
+> **This is the most important concept to understand.**
 
 ```tsx
 function Counter() {
@@ -165,23 +231,24 @@ function Counter() {
 }
 ```
 
-**Initial render:** `A → B 0 → C → D`
-
-**After click (count: 0 → 1):** `B 2 → C` (A and D don't run!)
+| Phase                        | Output            | Why                  |
+| :--------------------------- | :---------------- | :------------------- |
+| **Initial render**           | `A → B 0 → C → D` | Everything runs once |
+| **After click** (count: 0→1) | `B 2 → C`         | A and D don't run!   |
 
 ### The mental model
 
 | Framework | What happens on state change                                     |
-| --------- | ---------------------------------------------------------------- |
+| :-------- | :--------------------------------------------------------------- |
 | React     | Entire component function re-runs                                |
 | Solid     | Component runs once; you manually wrap derived values            |
 | **Fict**  | Component runs once; **code depending on state** auto-recomputes |
 
-Fict splits your component into "reactive regions":
+Fict splits your component into **reactive regions**:
 
-- Code before `$state`: runs once
-- Expressions using state (`count * 2`): recompute when dependencies change
-- Static JSX: runs once
+- 🔵 Code before `$state`: runs **once**
+- 🟢 Expressions using state (`count * 2`): **recompute** when dependencies change
+- 🔵 Static JSX: runs **once**
 
 ---
 
@@ -267,14 +334,14 @@ Destructuring works. No `toRefs()` or special handling needed.
 ## What Fict Compiles To
 
 ```tsx
-// Your code
+// ✍️ Your code
 function Counter() {
   let count = $state(0)
   const doubled = count * 2
   return <div>{doubled}</div>
 }
 
-// Compiled output (simplified)
+// ⚡ Compiled output (simplified)
 function Counter() {
   const count = createSignal(0)
   const doubled = createMemo(() => count() * 2)
@@ -341,7 +408,8 @@ await shellReady
 await allReady
 ```
 
-Partial prerendering is also supported:
+<details>
+<summary><strong>🧪 Partial prerendering (Preview)</strong></summary>
 
 ```tsx
 import { renderToPartial } from '@fictjs/ssr'
@@ -352,6 +420,8 @@ const { shell, stream } = renderToPartial(() => <App />, { mode: 'shell' })
 ```
 
 `renderToPartial` is an advanced API (Preview in v1.0).
+
+</details>
 
 ### `fict/plus` — Advanced APIs
 
@@ -377,15 +447,18 @@ const value = store[props.key] // reactive, updates when key or store changes
 const result = untrack(() => externalLib.compute(count))
 ```
 
-**`$store` vs `$state`:**
+<details>
+<summary><strong>📊 <code>$store</code> vs <code>$state</code></strong></summary>
 
 | Feature        | `$state`                   | `$store`                 |
-| -------------- | -------------------------- | ------------------------ |
+| :------------- | :------------------------- | :----------------------- |
 | Depth          | Shallow                    | Deep (nested objects)    |
 | Access         | Direct value               | Proxy-based              |
 | Mutations      | Reassignment               | Direct property mutation |
 | Derived values | Auto-memoized              | Auto-memoized            |
 | Best for       | Primitives, simple objects | Complex nested state     |
+
+</details>
 
 ---
 
@@ -393,14 +466,14 @@ const result = untrack(() => externalLib.compute(count))
 
 Fict components execute once on mount. Reactive updates happen through bindings/memos.
 
-**JSX-only reads → Fine-grained DOM updates:**
+**JSX-only reads → fine-grained DOM updates:**
 
 ```tsx
 let count = $state(0)
 return <div>{count}</div> // Only the text node updates
 ```
 
-**Control flow returns → Compiler emits reactive branch bindings:**
+**Control flow returns → compiler emits reactive branch bindings:**
 
 ```tsx
 let count = $state(0)
@@ -415,14 +488,14 @@ return branches) and lowers them to reactive conditionals.
 
 ## Framework Comparison
 
-| Feature           | React+Compiler | Solid            | Svelte 5        | Vue 3             | Fict          |
-| ----------------- | -------------- | ---------------- | --------------- | ----------------- | ------------- |
+| Feature           | React+Compiler | Solid            | Svelte 5        | Vue 3             | Fict ✨       |
+| :---------------- | :------------- | :--------------- | :-------------- | :---------------- | :------------ |
 | State syntax      | `useState()`   | `createSignal()` | `$state()`      | `ref()`           | `$state()`    |
 | Read state        | `count`        | `count()`        | `count`         | `count.value`     | `count`       |
 | Update state      | `setCount(n)`  | `setCount(n)`    | `count = n`     | `count.value = n` | `count = n`   |
 | Derived values    | auto           | `createMemo()`   | `$derived()`    | `computed()`      | **auto**      |
 | Props destructure | ✅             | ❌               | via `$props()`  | via `toRefs()`    | ✅            |
-| Control flow      | native JS      | `<Show>/<For>`   | `{#if}/{#each}` | `v-if/v-for`      | native JS     |
+| Control flow      | native JS      | `<Show>`/`<For>` | `{#if}/{#each}` | `v-if/v-for`      | native JS     |
 | File format       | `.jsx`/`.tsx`  | `.jsx`/`.tsx`    | `.svelte`       | `.vue`            | `.jsx`/`.tsx` |
 | Rendering         | VDOM           | fine-grained     | fine-grained    | fine-grained      | fine-grained  |
 
@@ -451,19 +524,15 @@ return branches) and lowers them to reactive conditionals.
 
 _Lower is better. Geometric mean is the weighted mean of all relative factors._
 
-**Versions**: Vue Vapor 3.6.0-alpha.2, Solid 1.9.3, Svelte 5.42.1, React Compiler 19.0.0
+**Versions**: Vue Vapor 3.6.0-alpha.2 · Solid 1.9.3 · Svelte 5.42.1 · React Compiler 19.0.0
 
 ---
 
-## Status
+## Status & Roadmap
 
-> ⚠️ **Alpha** — Fict is feature-complete for core compiler and runtime. API is stable, but edge cases may be refined.
+> ⚠️ **Alpha** — Fict is feature-complete for core compiler and runtime. API is stable, but edge cases may be refined. **Don't use it in production yet.**
 
-> ⚠️ Don't use it in production yet.
-
-## Roadmap
-
-### Completed
+### ✅ Completed
 
 - [x] Compiler with HIR/SSA
 - [x] Stable `$state` / `$effect` semantics
@@ -478,7 +547,7 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 - [x] Testing library
 - [x] SSR / streaming
 
-### Planned
+### 🗺️ Planned
 
 - [ ] Migration guides from React/Vue/Svelte/Solid
 
@@ -486,23 +555,24 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 
 ## Documentation
 
-- [Architecture](./docs/architecture.md) — How the compiler and runtime work
-- [API Reference](./docs/api-reference.md) — Complete API documentation
-- [Compiler Spec](./docs/compiler-spec.md) — Formal semantics
-- [ESLint Rules](./docs/eslint-rules.md) — Linting configuration
-- [Diagnostic Codes](./docs/diagnostic-codes.md) — Compiler warnings reference
-- [Config Profiles](./docs/config-profiles.md) — Recommended dev/CI/prod compiler and runtime settings
-- [Cycle Protection](./docs/cycle-protection.md) — Development-mode infinite loop detection
-- [SSR SEO Guide](./docs/ssr-seo.md) — SEO best practices for SSR and streaming pages
-- [SSR Performance Tuning](./docs/ssr-performance.md) — Snapshot size and render-mode optimization
-- [SSR Deployment Guide](./docs/ssr-deployment.md) — Vercel/Cloudflare/edge deployment patterns
-- [DevTools](./packages/devtools/README.md) — Vite plugin usage and auto-injection notes
+| Doc                                            | Description                        |
+| :--------------------------------------------- | :--------------------------------- |
+| [Architecture](./docs/architecture.md)         | How the compiler and runtime work  |
+| [API Reference](./docs/api-reference.md)       | Complete API documentation         |
+| [Compiler Spec](./docs/compiler-spec.md)       | Formal semantics                   |
+| [ESLint Rules](./docs/eslint-rules.md)         | Linting configuration              |
+| [Diagnostic Codes](./docs/diagnostic-codes.md) | Compiler warnings reference        |
+| [Config Profiles](./docs/config-profiles.md)   | Recommended dev/CI/prod settings   |
+| [Cycle Protection](./docs/cycle-protection.md) | Dev-mode infinite loop detection   |
+| [SSR SEO Guide](./docs/ssr-seo.md)             | SEO best practices for SSR pages   |
+| [SSR Performance](./docs/ssr-performance.md)   | Snapshot size & render-mode tuning |
+| [SSR Deployment](./docs/ssr-deployment.md)     | Vercel/Cloudflare/edge deployment  |
+| [DevTools](./packages/devtools/README.md)      | Vite plugin usage & auto-injection |
 
-### Linting & diagnostics
+<details>
+<summary><strong>🔍 Linting & diagnostics</strong></summary>
 
-- Install `@fictjs/eslint-plugin` and extend `plugin:fict/recommended` to mirror compiler guardrails.
-- Key rules: nested component definitions (FICT-C003), missing list keys (FICT-J002), memo side effects (FICT-M003), empty `$effect` (FICT-E001), component return checks (FICT-C004), plus `$state` placement/alias footguns.
-- Example `.eslintrc`:
+Install `@fictjs/eslint-plugin` and extend `plugin:fict/recommended`:
 
 ```json
 {
@@ -511,38 +581,61 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 }
 ```
 
+Key rules: nested component definitions (FICT-C003), missing list keys (FICT-J002), memo side effects (FICT-M003), empty `$effect` (FICT-E001), component return checks (FICT-C004), plus `$state` placement/alias footguns.
+
 - Recommended config mirrors compiler warnings so IDE diagnostics stay aligned with build output.
-- For strict CI gates, enable compiler `strictReactivity: true` to escalate
-  control-flow fallback diagnostics (`FICT-R003`, `FICT-R006`) to build errors.
+- For strict CI gates, enable compiler `strictReactivity: true` to escalate control-flow fallback diagnostics (`FICT-R003`, `FICT-R006`) to build errors.
 - `strictGuarantee` is enabled by default for fail-closed guarantees.
 - Set `strictGuarantee: false` only when you intentionally opt out.
 - CI can force strict mode with `FICT_STRICT_GUARANTEE=1` during build steps.
 - Guarantee boundary reference: `docs/reactivity-guarantee-matrix.md`.
 
+</details>
+
 ---
 
 ## FAQ
 
-**Is Fict production-ready?**
+<details>
+<summary><strong>Is Fict production-ready?</strong></summary>
+
 Alpha. Core is stable, but expect edge cases. Test thoroughly for critical apps.
 
-**Does Fict use a virtual DOM?**
-No.
+</details>
 
-**How does Fict handle arrays?**
-Default: immutable style (`todos = [...todos, newTodo]`). For deep mutations, you can use spread operation to create new immutable data, or use Immer/Mutative, or use `$store` from `fict`.
+<details>
+<summary><strong>Does Fict use a virtual DOM?</strong></summary>
 
-**Can I use existing React components?**
+No. Fict compiles to direct DOM operations for surgical, fine-grained updates.
+
+</details>
+
+<details>
+<summary><strong>How does Fict handle arrays?</strong></summary>
+
+Default: immutable style (`todos = [...todos, newTodo]`). For deep mutations, use spread to create new immutable data, or use Immer/Mutative, or use `$store` from `fict`.
+
+</details>
+
+<details>
+<summary><strong>Can I use existing React components?</strong></summary>
+
 Not directly. Fict compiles to DOM operations, not React elements.
 
-**How big is the runtime?**
+</details>
+
+<details>
+<summary><strong>How big is the runtime?</strong></summary>
+
 ~10kb brotli compressed. Performance is within ~3% of Solid in js-framework-benchmark (geometric mean 1.07 vs 1.04).
+
+</details>
 
 ---
 
 ## Known Limitations
 
-The compiler has some limitations when handling conditional rendering patterns. Understanding these can help you avoid unexpected behavior:
+The compiler has some limitations when handling conditional rendering patterns.
 
 ### Control-flow patterns supported
 
@@ -557,17 +650,15 @@ The compiler has some limitations when handling conditional rendering patterns. 
 
 ## Acknowledgments
 
-Fict is built upon the brilliant ideas and relentless innovation of the open-source community. We would like to express our deepest respect and sincere gratitude to the following projects, whose work has been an indispensable source of inspiration and reference for Fict:
+Fict is built upon the brilliant ideas and relentless innovation of the open-source community. We express our deepest respect and gratitude to these projects:
 
-- **[React](https://react.dev/)** – For defining the modern era of UI development. Its component model and declarative philosophy set the standard for developer experience, a standard Fict strives to uphold.
-- **[Solid](https://www.solidjs.com/)** – For pioneering fine-grained reactivity and demonstrating the power of compilation. Its architecture is the bedrock upon which Fict’s performance assertions are built.
-- **[Qwik](https://qwik.dev/)** – For its outstanding resumability-first SSR vision. Its approach to instant interactivity and progressive execution has been a major inspiration for Fict’s resumable SSR direction.
-- **[alien-signals](https://github.com/stackblitz/alien-signals)** – For pushing the boundaries of signal performance. Its advanced implementation details provided critical guidance for Fict’s reactive system.
-
-We are profoundly grateful for their contributions to the web development world.
+- **[React](https://react.dev/)** — For defining the modern era of UI development. Its component model and declarative philosophy set the standard for developer experience.
+- **[Solid](https://www.solidjs.com/)** — For pioneering fine-grained reactivity and demonstrating the power of compilation. Its architecture is the bedrock upon which Fict's performance is built.
+- **[Qwik](https://qwik.dev/)** — For its outstanding resumability-first SSR vision. Its approach to instant interactivity has been a major inspiration for Fict's resumable SSR direction.
+- **[alien-signals](https://github.com/stackblitz/alien-signals)** — For pushing the boundaries of signal performance. Its implementation provided critical guidance for Fict's reactive system.
 
 ---
 
-## License
-
-[MIT](https://github.com/fictjs/fict/blob/main/LICENSE)
+<p align="center">
+  <a href="https://github.com/fictjs/fict/blob/main/LICENSE">MIT License</a> · © Fict Contributors
+</p>
