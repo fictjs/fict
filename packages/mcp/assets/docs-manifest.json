@@ -19,6 +19,18 @@
       "tags": ["architecture", "compiler", "runtime"]
     },
     {
+      "id": "blog__fict",
+      "title": "Fict – A compiler that makes JavaScript variables automatically reactive",
+      "path": "blog/fict.md",
+      "use_cases": ["Framework overview and mental model"],
+      "tags": ["framework", "overview"]
+    },
+    {
+      "id": "blog__react-compiler-and-beyond-en",
+      "title": "React Compiler and Beyond: Capability Boundaries of Compiler-Driven UI Frameworks",
+      "path": "blog/react-compiler-and-beyond-en.md"
+    },
+    {
       "id": "compiler-spec",
       "title": "Fict Compiler Spec (v1.0)",
       "path": "compiler-spec.md",
@@ -55,13 +67,6 @@
       "path": "eslint-rules.md",
       "use_cases": ["Lint rule expectations and examples"],
       "tags": ["eslint", "lint"]
-    },
-    {
-      "id": "fict",
-      "title": "Fict – A compiler that makes JavaScript variables automatically reactive",
-      "path": "fict.md",
-      "use_cases": ["Framework overview and mental model"],
-      "tags": ["framework", "overview"]
     },
     {
       "id": "fiction-ui",

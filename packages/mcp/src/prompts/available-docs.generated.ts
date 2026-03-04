@@ -21,6 +21,16 @@ export const AVAILABLE_DOCS = [
     relPath: 'architecture.md',
   },
   {
+    id: 'blog__fict',
+    title: 'Fict – A compiler that makes JavaScript variables automatically reactive',
+    relPath: 'blog/fict.md',
+  },
+  {
+    id: 'blog__react-compiler-and-beyond-en',
+    title: 'React Compiler and Beyond: Capability Boundaries of Compiler-Driven UI Frameworks',
+    relPath: 'blog/react-compiler-and-beyond-en.md',
+  },
+  {
     id: 'compiler-spec',
     title: 'Fict Compiler Spec (v1.0)',
     relPath: 'compiler-spec.md',
@@ -49,11 +59,6 @@ export const AVAILABLE_DOCS = [
     id: 'eslint-rules',
     title: 'ESLint rules for Fict',
     relPath: 'eslint-rules.md',
-  },
-  {
-    id: 'fict',
-    title: 'Fict – A compiler that makes JavaScript variables automatically reactive',
-    relPath: 'fict.md',
   },
   {
     id: 'fiction-ui',
@@ -113,4 +118,4 @@ export const AVAILABLE_DOCS = [
 ] as const
 
 export const AVAILABLE_DOCS_BLOCK =
-  '<available-docs>\n- api-freeze-v1 — Fict v1.0 API Freeze Specification\n- api-reference — Fict API Reference\n- architecture — Fict Architecture\n- compiler-spec — Fict Compiler Spec (v1.0)\n- config-profiles — Fict Config Profiles (Dev / CI / Prod)\n- cycle-protection — Cycle Protection\n- diagnostic-codes — Diagnostic Codes Reference\n- error-boundary — Error Handling & ErrorBoundary (Runtime)\n- eslint-rules — ESLint rules for Fict\n- fict — Fict – A compiler that makes JavaScript variables automatically reactive\n- fiction-ui — Fiction UI: Think About Your "Fiction Layer" Before Designing UI\n- framework-comparison — Fict Framework Comparison Report\n- reactivity-guarantee-matrix — Reactivity Guarantee Matrix\n- reactivity-semantics — Fict Reactivity Semantics\n- README — Fict Documentation\n- scheduler — Multi-Priority Scheduler Technical Documentation\n- ssr-deployment — SSR Deployment Guide\n- ssr-performance — SSR Performance Tuning\n- ssr-resume-stability-contract — SSR / Streaming / Resume Stability Contract\n- ssr-seo — SSR SEO Guide\n- strict-guarantee-test-policy — Strict Guarantee Test Policy\n</available-docs>'
+  '<available-docs>\n- api-freeze-v1 — Fict v1.0 API Freeze Specification\n- api-reference — Fict API Reference\n- architecture — Fict Architecture\n- blog__fict — Fict – A compiler that makes JavaScript variables automatically reactive\n- blog__react-compiler-and-beyond-en — React Compiler and Beyond: Capability Boundaries of Compiler-Driven UI Frameworks\n- compiler-spec — Fict Compiler Spec (v1.0)\n- config-profiles — Fict Config Profiles (Dev / CI / Prod)\n- cycle-protection — Cycle Protection\n- diagnostic-codes — Diagnostic Codes Reference\n- error-boundary — Error Handling & ErrorBoundary (Runtime)\n- eslint-rules — ESLint rules for Fict\n- fiction-ui — Fiction UI: Think About Your "Fiction Layer" Before Designing UI\n- framework-comparison — Fict Framework Comparison Report\n- reactivity-guarantee-matrix — Reactivity Guarantee Matrix\n- reactivity-semantics — Fict Reactivity Semantics\n- README — Fict Documentation\n- scheduler — Multi-Priority Scheduler Technical Documentation\n- ssr-deployment — SSR Deployment Guide\n- ssr-performance — SSR Performance Tuning\n- ssr-resume-stability-contract — SSR / Streaming / Resume Stability Contract\n- ssr-seo — SSR SEO Guide\n- strict-guarantee-test-policy — Strict Guarantee Test Policy\n</available-docs>'
