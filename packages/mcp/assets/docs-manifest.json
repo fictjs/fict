@@ -26,9 +26,9 @@
       "tags": ["framework", "overview"]
     },
     {
-      "id": "blog__react-compiler-and-beyond-en",
+      "id": "blog__react-compiler-and-beyond",
       "title": "React Compiler and Beyond: Capability Boundaries of Compiler-Driven UI Frameworks",
-      "path": "blog/react-compiler-and-beyond-en.md"
+      "path": "blog/react-compiler-and-beyond.md"
     },
     {
       "id": "compiler-spec",
