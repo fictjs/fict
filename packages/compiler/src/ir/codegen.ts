@@ -1291,22 +1291,10 @@ function lowerExpressionImpl(
         blocks,
         meta: { fromExpression: true },
       }
-      const cfg = analyzeCFG(fn.blocks)
-      const hasLoop = cfg.loopHeaders.size > 0 || cfg.backEdges.size > 0
       const { node, diagnostics } = structurizeCFGWithDiagnostics(fn)
       const structured =
-        node.kind === 'stateMachine' || hasLoop
-          ? node.kind === 'stateMachine'
-            ? node
-            : {
-                kind: 'stateMachine' as const,
-                blocks: fn.blocks.map(block => ({
-                  blockId: block.id,
-                  instructions: block.instructions,
-                  terminator: block.terminator,
-                })),
-                entryBlock: fn.blocks[0]?.id ?? 0,
-              }
+        node.kind === 'stateMachine'
+          ? node
           : diagnostics.isComplete
             ? node
             : {

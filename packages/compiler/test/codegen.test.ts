@@ -776,6 +776,57 @@ describe('resumable event handler transformation', () => {
       '__fictRegisterResume(__fictQrl(import.meta.url, "__fict_r1"), __fict_r1)',
     )
   })
+
+  it('keeps loop-based resumable handlers structurized instead of truncating after setup', () => {
+    const ast = parseFile(`
+      const taskRows = [
+        { title: 'Design review', team: 'Design' },
+        { title: 'Growth sync', team: 'Growth' },
+      ]
+
+      function Tasks() {
+        let query = $state('')
+        let filteredTasks = $state(taskRows)
+
+        return (
+          <input
+            onInput$={(event) => {
+              const target = event.currentTarget
+              if (!(target instanceof HTMLInputElement)) {
+                return
+              }
+
+              const nextQuery = target.value
+              query = nextQuery
+              const normalized = nextQuery.trim().toLowerCase()
+              const nextRows = []
+
+              for (const task of taskRows) {
+                if (
+                  normalized.length === 0 ||
+                  (task.title + ' ' + task.team).toLowerCase().includes(normalized)
+                ) {
+                  nextRows.push(task)
+                }
+              }
+
+              filteredTasks = nextRows
+            }}
+          />
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('for (const task of taskRows)')
+    expect(code).toContain('filteredTasks(nextRows)')
+    expect(code).toMatch(
+      /for \(const task of taskRows\) \{[\s\S]*nextRows\.push\(task\);[\s\S]*\}\s*filteredTasks\(nextRows\)/,
+    )
+    expect(code).not.toContain('throw new Error("Unreachable code")')
+  })
 })
 
 // ============================================================================

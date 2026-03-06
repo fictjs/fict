@@ -856,6 +856,26 @@ function structurizeBlockUntilJoin(
       break
     }
 
+    case 'Switch': {
+      nodes.push(structurizeSwitch(ctx, block, term))
+      break
+    }
+
+    case 'ForOf': {
+      nodes.push(structurizeForOf(ctx, block, term))
+      break
+    }
+
+    case 'ForIn': {
+      nodes.push(structurizeForIn(ctx, block, term))
+      break
+    }
+
+    case 'Try': {
+      nodes.push(structurizeTry(ctx, block, term))
+      break
+    }
+
     case 'Break':
       nodes.push({ kind: 'break', label: term.label })
       break
@@ -1079,7 +1099,9 @@ function structurizeForOf(
     exit: BlockId
   },
 ): StructuredNode {
+  ctx.reservedBlocks.add(term.exit)
   const body = structurizeBlock(ctx, term.body)
+  ctx.reservedBlocks.delete(term.exit)
   const exit = !ctx.emitted.has(term.exit) ? structurizeBlock(ctx, term.exit) : null
 
   const forOfNode: StructuredNode = {
@@ -1113,7 +1135,9 @@ function structurizeForIn(
     exit: BlockId
   },
 ): StructuredNode {
+  ctx.reservedBlocks.add(term.exit)
   const body = structurizeBlock(ctx, term.body)
+  ctx.reservedBlocks.delete(term.exit)
   const exit = !ctx.emitted.has(term.exit) ? structurizeBlock(ctx, term.exit) : null
 
   const forInNode: StructuredNode = {
