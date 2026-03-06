@@ -314,4 +314,84 @@ describe('resumable loader snapshot validation', () => {
     delete (globalThis as { __fictHandlerHits?: number }).__fictHandlerHits
     delete (globalThis as { __FICT_MANIFEST__?: Record<string, string> }).__FICT_MANIFEST__
   })
+
+  it('retargets currentTarget to the interactive element for resumable handlers', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    ;(globalThis as { __fictCurrentTargetText?: string }).__fictCurrentTargetText = undefined
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const button = doc.createElement('button')
+    button.textContent = 'Run'
+    button.setAttribute(
+      'on:click',
+      'data:text/javascript,export function currentTarget(scopeId,event){globalThis.__fictCurrentTargetText=event.currentTarget?.textContent??null}#currentTarget',
+    )
+    host.appendChild(button)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    button.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect(
+      (globalThis as { __fictCurrentTargetText?: string | null }).__fictCurrentTargetText,
+    ).toBe('Run')
+
+    delete (globalThis as { __fictCurrentTargetText?: string | null }).__fictCurrentTargetText
+  })
+
+  it('preserves control values across first-event hydration for resumable input handlers', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    ;(globalThis as { __fictCapturedInputValue?: string | null }).__fictCapturedInputValue =
+      undefined
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    host.setAttribute('data-fict-h', 'data:text/javascript,export default null#__fict_r0')
+
+    __fictRegisterResume('__fict_r0', (_scopeId, node) => {
+      const input = node instanceof Element ? node.querySelector('input') : null
+      if (input instanceof HTMLInputElement) {
+        input.value = ''
+      }
+    })
+
+    const input = doc.createElement('input')
+    input.setAttribute(
+      'on:input',
+      'data:text/javascript,export function capture(scopeId,event){globalThis.__fictCapturedInputValue=event.currentTarget?.value??null}#capture',
+    )
+    host.appendChild(input)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['input'], prefetch: false })
+
+    input.value = 'growth'
+    input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect(
+      (globalThis as { __fictCapturedInputValue?: string | null }).__fictCapturedInputValue,
+    ).toBe('growth')
+
+    delete (globalThis as { __fictCapturedInputValue?: string | null }).__fictCapturedInputValue
+  })
 })

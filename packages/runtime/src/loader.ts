@@ -48,6 +48,80 @@ function resolveAbsoluteModuleUrl(url: string, ownerDocument?: Document): string
   }
 }
 
+interface PreservedControlState {
+  value?: string
+  checked?: boolean
+  selectedIndex?: number
+  selectedValues?: string[]
+}
+
+function captureControlState(node: Element, event: Event): PreservedControlState | null {
+  if (event.type !== 'input' && event.type !== 'change') return null
+
+  if (node instanceof HTMLInputElement) {
+    if (node.type === 'file') return null
+    if (node.type === 'checkbox' || node.type === 'radio') {
+      return { checked: node.checked }
+    }
+    return { value: node.value }
+  }
+
+  if (node instanceof HTMLTextAreaElement) {
+    return { value: node.value }
+  }
+
+  if (node instanceof HTMLSelectElement) {
+    return node.multiple
+      ? {
+          selectedValues: Array.from(node.selectedOptions).map(option => option.value),
+        }
+      : {
+          value: node.value,
+          selectedIndex: node.selectedIndex,
+        }
+  }
+
+  return null
+}
+
+function restoreControlState(node: Element, state: PreservedControlState | null): void {
+  if (!state) return
+
+  if (node instanceof HTMLInputElement) {
+    if (typeof state.checked === 'boolean') {
+      node.checked = state.checked
+    }
+    if (typeof state.value === 'string' && node.type !== 'file') {
+      node.value = state.value
+    }
+    return
+  }
+
+  if (node instanceof HTMLTextAreaElement) {
+    if (typeof state.value === 'string') {
+      node.value = state.value
+    }
+    return
+  }
+
+  if (node instanceof HTMLSelectElement) {
+    if (Array.isArray(state.selectedValues) && node.multiple) {
+      const selected = new Set(state.selectedValues)
+      for (const option of Array.from(node.options)) {
+        option.selected = selected.has(option.value)
+      }
+      return
+    }
+
+    if (typeof state.selectedIndex === 'number') {
+      node.selectedIndex = state.selectedIndex
+    }
+    if (typeof state.value === 'string') {
+      node.value = state.value
+    }
+  }
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -569,6 +643,9 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
       }
     }
 
+    const preservedControlState = captureControlState(node, event)
+    let resumedDuringEvent = false
+
     // Resume FIRST to set up reactive bindings BEFORE the handler runs
     if (!hydratedScopes.has(scopeId)) {
       const resumeQrl = host.getAttribute('data-fict-h')
@@ -592,8 +669,13 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
         if (typeof resumeFn === 'function') {
           await (resumeFn as (scopeId: string, host: Element) => unknown)(scopeId, host)
           hydratedScopes.add(scopeId)
+          resumedDuringEvent = true
         }
       }
+    }
+
+    if (resumedDuringEvent) {
+      restoreControlState(node, preservedControlState)
     }
 
     // THEN run the handler - now signal updates will trigger DOM updates
@@ -601,7 +683,27 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
     const mod = await import(/* @vite-ignore */ resolvedUrl)
     const handler = (mod as Record<string, unknown>)[exportName]
     if (typeof handler === 'function') {
-      await (handler as (scopeId: string, ev: Event, el: Element) => unknown)(scopeId, event, node)
+      const originalCurrentTarget = event.currentTarget
+      Object.defineProperty(event, 'currentTarget', {
+        configurable: true,
+        get() {
+          return node
+        },
+      })
+      try {
+        await (handler as (scopeId: string, ev: Event, el: Element) => unknown)(
+          scopeId,
+          event,
+          node,
+        )
+      } finally {
+        Object.defineProperty(event, 'currentTarget', {
+          configurable: true,
+          get() {
+            return originalCurrentTarget
+          },
+        })
+      }
     }
 
     return
