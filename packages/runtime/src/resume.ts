@@ -294,23 +294,23 @@ export function __fictQrl(moduleId: string, exportName: string): string {
   return `${moduleId}#${exportName}`
 }
 
-// Registry for resume functions to prevent tree-shaking
+// Registry for resume functions to prevent tree-shaking.
 const resumeFunctionRegistry = new Map<string, (...args: unknown[]) => unknown>()
 
 /**
  * Register a resume function to prevent it from being tree-shaken.
  * This is called at module load time by compiled component code.
  */
-export function __fictRegisterResume(name: string, fn: (...args: unknown[]) => unknown): void {
-  resumeFunctionRegistry.set(name, fn)
+export function __fictRegisterResume(key: string, fn: (...args: unknown[]) => unknown): void {
+  resumeFunctionRegistry.set(key, fn)
 }
 
 /**
  * Get a registered resume function by name.
  * Used by the loader to find resume functions.
  */
-export function __fictGetResume(name: string): ((...args: unknown[]) => unknown) | undefined {
-  return resumeFunctionRegistry.get(name)
+export function __fictGetResume(key: string): ((...args: unknown[]) => unknown) | undefined {
+  return resumeFunctionRegistry.get(key)
 }
 
 function serializeSlots(ctx: HookContext): SlotSnapshot[] {

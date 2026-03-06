@@ -9,6 +9,7 @@ import {
 import {
   FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
   __fictDisableResumable,
+  __fictRegisterResume,
   __fictGetSSRScope,
   __fictSetSSRState,
 } from '../src/internal'
@@ -49,6 +50,7 @@ describe('resumable loader snapshot validation', () => {
     cleanupEventListeners()
     __fictSetSSRState(null)
     __fictDisableResumable()
+    delete (globalThis as { __FICT_MANIFEST__?: Record<string, string> }).__FICT_MANIFEST__
   })
 
   it('accepts versioned snapshots', () => {
@@ -263,5 +265,53 @@ describe('resumable loader snapshot validation', () => {
       expect.anything(),
     )
     errorSpy.mockRestore()
+  })
+
+  it('resolves resume registry keys when hosts use relative asset QRLs', async () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+    ;(globalThis as { __FICT_MANIFEST__?: Record<string, string> }).__FICT_MANIFEST__ = {
+      '/assets/example-pages.js': 'data:text/javascript,export default null',
+    }
+    ;(globalThis as { __fictResumeHits?: number }).__fictResumeHits = 0
+    ;(globalThis as { __fictHandlerHits?: number }).__fictHandlerHits = 0
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    host.setAttribute('data-fict-h', '/assets/example-pages.js#__fict_r2')
+
+    __fictRegisterResume('data:text/javascript,export default null#__fict_r2', (_scopeId, node) => {
+      ;(globalThis as { __fictResumeHits?: number }).__fictResumeHits =
+        ((globalThis as { __fictResumeHits?: number }).__fictResumeHits ?? 0) + 1
+      ;(node as Element).setAttribute('data-resumed', 'yes')
+    })
+
+    const button = doc.createElement('button')
+    button.textContent = 'Run'
+    button.setAttribute(
+      'on:click',
+      'data:text/javascript,export default function(){globalThis.__fictHandlerHits=(globalThis.__fictHandlerHits||0)+1}#default',
+    )
+    host.appendChild(button)
+    doc.body.appendChild(host)
+
+    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+
+    button.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect((globalThis as { __fictResumeHits?: number }).__fictResumeHits).toBe(1)
+    expect(host.getAttribute('data-resumed')).toBe('yes')
+    expect((globalThis as { __fictHandlerHits?: number }).__fictHandlerHits).toBe(1)
+
+    delete (globalThis as { __fictResumeHits?: number }).__fictResumeHits
+    delete (globalThis as { __fictHandlerHits?: number }).__fictHandlerHits
+    delete (globalThis as { __FICT_MANIFEST__?: Record<string, string> }).__FICT_MANIFEST__
   })
 })

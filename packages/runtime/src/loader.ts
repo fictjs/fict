@@ -36,6 +36,18 @@ function resolveModuleUrl(url: string): string {
   return url
 }
 
+function resolveAbsoluteModuleUrl(url: string, ownerDocument?: Document): string {
+  const baseUrl =
+    ownerDocument?.baseURI ?? (typeof document !== 'undefined' ? document.baseURI : undefined)
+  if (!baseUrl) return url
+
+  try {
+    return new URL(url, baseUrl).href
+  } catch {
+    return url
+  }
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -563,10 +575,20 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
       if (resumeQrl) {
         const { url: resumeUrl, exportName: resumeExport } = parseQrl(resumeQrl)
         const resolvedResumeUrl = resolveModuleUrl(resumeUrl)
+        const resolvedAbsoluteResumeUrl = resolveAbsoluteModuleUrl(
+          resolvedResumeUrl,
+          host.ownerDocument ?? undefined,
+        )
+        const resolvedResumeQrl = `${resolvedResumeUrl}#${resumeExport}`
+        const resolvedAbsoluteResumeQrl = `${resolvedAbsoluteResumeUrl}#${resumeExport}`
         // Load the module to ensure resume functions are registered
         await import(/* @vite-ignore */ resolvedResumeUrl)
         // Get resume function from registry (not module exports)
-        const resumeFn = __fictGetResume(resumeExport)
+        const resumeFn =
+          __fictGetResume(resumeQrl) ??
+          __fictGetResume(resolvedResumeQrl) ??
+          __fictGetResume(resolvedAbsoluteResumeQrl) ??
+          __fictGetResume(resumeExport)
         if (typeof resumeFn === 'function') {
           await (resumeFn as (scopeId: string, host: Element) => unknown)(scopeId, host)
           hydratedScopes.add(scopeId)
