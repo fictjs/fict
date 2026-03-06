@@ -102,7 +102,6 @@ import {
 import { generateRegions, generateRegionCode, regionToMetadata } from './regions'
 import type { ReactiveScopeResult } from './scopes'
 import { analyzeReactiveScopesWithSSA } from './scopes'
-import { analyzeCFG } from './ssa'
 import { structurizeCFG, structurizeCFGWithDiagnostics } from './structurize'
 
 export { getReactiveCallKind } from './codegen-reactive-kind'

@@ -48,6 +48,29 @@ function resolveAbsoluteModuleUrl(url: string, ownerDocument?: Document): string
   }
 }
 
+function normalizeImportUrl(url: string): string {
+  if (!url.startsWith('data:')) {
+    return url
+  }
+
+  const dataSeparatorIndex = url.indexOf(',')
+  if (dataSeparatorIndex === -1) {
+    return url
+  }
+
+  const metadata = url.slice(0, dataSeparatorIndex)
+  const payload = url.slice(dataSeparatorIndex + 1)
+  if (metadata.includes(';base64')) {
+    return url
+  }
+
+  try {
+    return `${metadata},${encodeURIComponent(decodeURIComponent(payload))}`
+  } catch {
+    return `${metadata},${encodeURIComponent(payload)}`
+  }
+}
+
 interface PreservedControlState {
   value?: string
   checked?: boolean
@@ -658,8 +681,9 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
         )
         const resolvedResumeQrl = `${resolvedResumeUrl}#${resumeExport}`
         const resolvedAbsoluteResumeQrl = `${resolvedAbsoluteResumeUrl}#${resumeExport}`
+        const normalizedResumeImportUrl = normalizeImportUrl(resolvedResumeUrl)
         // Load the module to ensure resume functions are registered
-        await import(/* @vite-ignore */ resolvedResumeUrl)
+        await import(/* @vite-ignore */ normalizedResumeImportUrl)
         // Get resume function from registry (not module exports)
         const resumeFn =
           __fictGetResume(resumeQrl) ??
@@ -680,7 +704,8 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
 
     // THEN run the handler - now signal updates will trigger DOM updates
     const resolvedUrl = resolveModuleUrl(url)
-    const mod = await import(/* @vite-ignore */ resolvedUrl)
+    const normalizedImportUrl = normalizeImportUrl(resolvedUrl)
+    const mod = await import(/* @vite-ignore */ normalizedImportUrl)
     const handler = (mod as Record<string, unknown>)[exportName]
     if (typeof handler === 'function') {
       const originalCurrentTarget = event.currentTarget
