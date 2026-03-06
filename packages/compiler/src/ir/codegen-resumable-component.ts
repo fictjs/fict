@@ -16,6 +16,10 @@ export function registerResumableComponent(componentName: string, ctx: CodegenCo
   const hostParam = t.identifier('host')
   const snapshotId = t.identifier('snapshot')
   const ctxId = t.identifier('ctx')
+  const runtimeModuleUrlExpr = t.memberExpression(
+    t.metaProperty(t.identifier('import'), t.identifier('meta')),
+    t.identifier('url'),
+  )
 
   ctx.helpersUsed.add('getSSRScope')
   ctx.helpersUsed.add('ensureScope')
@@ -98,7 +102,10 @@ export function registerResumableComponent(componentName: string, ctx: CodegenCo
   ctx.helpersUsed.add('registerResume')
   const registerCall = t.expressionStatement(
     t.callExpression(t.identifier(RUNTIME_ALIASES.registerResume), [
-      t.stringLiteral(resumeExport),
+      t.callExpression(t.identifier(RUNTIME_ALIASES.qrl), [
+        runtimeModuleUrlExpr,
+        t.stringLiteral(resumeExport),
+      ]),
       resumeFnId,
     ]),
   )

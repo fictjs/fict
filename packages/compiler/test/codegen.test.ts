@@ -754,6 +754,28 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('$$clickData')
     expect(code).not.toContain('setAttribute(\"on:click\"')
   })
+
+  it('registers resumable component resumes with full QRL keys', () => {
+    const ast = parseFile(`
+      export function Alpha() {
+        return <button onClick$={() => 1}>A</button>
+      }
+
+      export function Beta() {
+        return <button onClick$={() => 2}>B</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain(
+      '__fictRegisterResume(__fictQrl(import.meta.url, "__fict_r0"), __fict_r0)',
+    )
+    expect(code).toContain(
+      '__fictRegisterResume(__fictQrl(import.meta.url, "__fict_r1"), __fict_r1)',
+    )
+  })
 })
 
 // ============================================================================
