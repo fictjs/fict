@@ -207,59 +207,105 @@ interface HTMLAttributes<T> {
 
   // Event handlers
   onClick?: (e: MouseEvent) => void
+  onClick$?: (e: MouseEvent) => void
   onDblClick?: (e: MouseEvent) => void
+  onDblClick$?: (e: MouseEvent) => void
   onMouseDown?: (e: MouseEvent) => void
+  onMouseDown$?: (e: MouseEvent) => void
   onMouseUp?: (e: MouseEvent) => void
+  onMouseUp$?: (e: MouseEvent) => void
   onMouseMove?: (e: MouseEvent) => void
+  onMouseMove$?: (e: MouseEvent) => void
   onMouseEnter?: (e: MouseEvent) => void
+  onMouseEnter$?: (e: MouseEvent) => void
   onMouseLeave?: (e: MouseEvent) => void
+  onMouseLeave$?: (e: MouseEvent) => void
   onMouseOver?: (e: MouseEvent) => void
+  onMouseOver$?: (e: MouseEvent) => void
   onMouseOut?: (e: MouseEvent) => void
+  onMouseOut$?: (e: MouseEvent) => void
   onContextMenu?: (e: MouseEvent) => void
+  onContextMenu$?: (e: MouseEvent) => void
   onInput?: (e: InputEvent) => void
+  onInput$?: (e: InputEvent) => void
   onChange?: (e: Event) => void
+  onChange$?: (e: Event) => void
   onSubmit?: (e: SubmitEvent) => void
+  onSubmit$?: (e: SubmitEvent) => void
   onReset?: (e: Event) => void
+  onReset$?: (e: Event) => void
   onKeyDown?: (e: KeyboardEvent) => void
+  onKeyDown$?: (e: KeyboardEvent) => void
   onKeyUp?: (e: KeyboardEvent) => void
+  onKeyUp$?: (e: KeyboardEvent) => void
   onKeyPress?: (e: KeyboardEvent) => void
+  onKeyPress$?: (e: KeyboardEvent) => void
   onFocus?: (e: FocusEvent) => void
+  onFocus$?: (e: FocusEvent) => void
   onBlur?: (e: FocusEvent) => void
+  onBlur$?: (e: FocusEvent) => void
   onScroll?: (e: Event) => void
+  onScroll$?: (e: Event) => void
   onWheel?: (e: WheelEvent) => void
+  onWheel$?: (e: WheelEvent) => void
   onLoad?: (e: Event) => void
+  onLoad$?: (e: Event) => void
   onError?: (e: Event) => void
+  onError$?: (e: Event) => void
 
   // Drag events
   onDrag?: (e: DragEvent) => void
+  onDrag$?: (e: DragEvent) => void
   onDragStart?: (e: DragEvent) => void
+  onDragStart$?: (e: DragEvent) => void
   onDragEnd?: (e: DragEvent) => void
+  onDragEnd$?: (e: DragEvent) => void
   onDragEnter?: (e: DragEvent) => void
+  onDragEnter$?: (e: DragEvent) => void
   onDragLeave?: (e: DragEvent) => void
+  onDragLeave$?: (e: DragEvent) => void
   onDragOver?: (e: DragEvent) => void
+  onDragOver$?: (e: DragEvent) => void
   onDrop?: (e: DragEvent) => void
+  onDrop$?: (e: DragEvent) => void
 
   // Touch events
   onTouchStart?: (e: TouchEvent) => void
+  onTouchStart$?: (e: TouchEvent) => void
   onTouchMove?: (e: TouchEvent) => void
+  onTouchMove$?: (e: TouchEvent) => void
   onTouchEnd?: (e: TouchEvent) => void
+  onTouchEnd$?: (e: TouchEvent) => void
   onTouchCancel?: (e: TouchEvent) => void
+  onTouchCancel$?: (e: TouchEvent) => void
 
   // Animation events
   onAnimationStart?: (e: AnimationEvent) => void
+  onAnimationStart$?: (e: AnimationEvent) => void
   onAnimationEnd?: (e: AnimationEvent) => void
+  onAnimationEnd$?: (e: AnimationEvent) => void
   onAnimationIteration?: (e: AnimationEvent) => void
+  onAnimationIteration$?: (e: AnimationEvent) => void
   onTransitionEnd?: (e: TransitionEvent) => void
+  onTransitionEnd$?: (e: TransitionEvent) => void
 
   // Pointer events
   onPointerDown?: (e: PointerEvent) => void
+  onPointerDown$?: (e: PointerEvent) => void
   onPointerUp?: (e: PointerEvent) => void
+  onPointerUp$?: (e: PointerEvent) => void
   onPointerMove?: (e: PointerEvent) => void
+  onPointerMove$?: (e: PointerEvent) => void
   onPointerEnter?: (e: PointerEvent) => void
+  onPointerEnter$?: (e: PointerEvent) => void
   onPointerLeave?: (e: PointerEvent) => void
+  onPointerLeave$?: (e: PointerEvent) => void
   onPointerOver?: (e: PointerEvent) => void
+  onPointerOver$?: (e: PointerEvent) => void
   onPointerOut?: (e: PointerEvent) => void
+  onPointerOut$?: (e: PointerEvent) => void
   onPointerCancel?: (e: PointerEvent) => void
+  onPointerCancel$?: (e: PointerEvent) => void
 
   // Ref
   ref?: ((el: T | null) => void) | { current: T | null }
