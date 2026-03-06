@@ -19,7 +19,7 @@ const mockSsrBuildConfig = {
 
 describe('fict vite-plugin', () => {
   it('applies the Babel transformer', async () => {
-    const plugin = fict()
+    const plugin = fict() as any
     const sample = `
       import { $state } from 'fict'
       function Button() {
@@ -50,7 +50,7 @@ describe('fict vite-plugin', () => {
   })
 
   it('transforms files with Vite query params', async () => {
-    const plugin = fict()
+    const plugin = fict() as any
     const sample = `
       import { $state } from 'fict'
       function Button() {
@@ -78,9 +78,38 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('registers resumable component resumes with runtime module URLs', async () => {
+    const plugin = fict({ resumable: true }) as any
+    const sample = `
+      import { $state } from 'fict'
+
+      export function Counter() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const mockContext = {
+      error: vi.fn(),
+    }
+
+    const transform = plugin.transform as any
+    const result =
+      typeof transform === 'function'
+        ? await transform.call(mockContext, sample, '/project/src/Counter.tsx')
+        : await transform?.handler.call(mockContext, sample, '/project/src/Counter.tsx')
+
+    expect(result && typeof result === 'object').toBe(true)
+    if (result && typeof result === 'object' && 'code' in result) {
+      expect(result.code as string).toContain(
+        '__fictRegisterResume(__fictQrl(import.meta.url, "__fict_r0"), __fict_r0)',
+      )
+    }
+  })
+
   describe('function-level code splitting', () => {
     it('rewrites QRLs to virtual modules when functionSplitting is enabled', async () => {
-      const plugin = fict({ functionSplitting: true })
+      const plugin = fict({ functionSplitting: true }) as any
 
       // Configure the plugin as if in build mode
       if (typeof plugin.configResolved === 'function') {
@@ -126,7 +155,7 @@ describe('fict vite-plugin', () => {
     })
 
     it('resolves virtual handler modules', async () => {
-      const plugin = fict({ functionSplitting: true })
+      const plugin = fict({ functionSplitting: true }) as any
 
       const resolveId = plugin.resolveId as any
       if (typeof resolveId === 'function') {
@@ -136,7 +165,7 @@ describe('fict vite-plugin', () => {
     })
 
     it('loads extracted virtual handler modules', async () => {
-      const plugin = fict({ functionSplitting: true })
+      const plugin = fict({ functionSplitting: true }) as any
 
       // First, configure and do a transform to register handlers
       if (typeof plugin.configResolved === 'function') {
@@ -173,7 +202,7 @@ function Counter() {
     })
 
     it('clears extracted handlers on buildStart', async () => {
-      const plugin = fict({ functionSplitting: true })
+      const plugin = fict({ functionSplitting: true }) as any
 
       if (typeof plugin.configResolved === 'function') {
         plugin.configResolved(mockBuildConfig as any)
@@ -213,8 +242,8 @@ function Counter() {
     })
 
     it('keeps handler registries isolated across plugin instances', async () => {
-      const pluginA = fict({ functionSplitting: true })
-      const pluginB = fict({ functionSplitting: true })
+      const pluginA = fict({ functionSplitting: true }) as any
+      const pluginB = fict({ functionSplitting: true }) as any
 
       if (typeof pluginA.configResolved === 'function') {
         pluginA.configResolved(mockBuildConfig as any)
@@ -259,8 +288,8 @@ function Counter() {
     })
 
     it('isolates handler registries between client and ssr build contexts', async () => {
-      const clientPlugin = fict({ functionSplitting: true })
-      const ssrPlugin = fict({ functionSplitting: true })
+      const clientPlugin = fict({ functionSplitting: true }) as any
+      const ssrPlugin = fict({ functionSplitting: true }) as any
 
       if (typeof clientPlugin.configResolved === 'function') {
         clientPlugin.configResolved(mockBuildConfig as any)
@@ -327,8 +356,8 @@ function Counter() {
     })
 
     it('keeps client handlers after ssr buildStart without ssr transform', async () => {
-      const clientPlugin = fict({ functionSplitting: true })
-      const ssrPlugin = fict({ functionSplitting: true })
+      const clientPlugin = fict({ functionSplitting: true }) as any
+      const ssrPlugin = fict({ functionSplitting: true }) as any
 
       if (typeof clientPlugin.configResolved === 'function') {
         clientPlugin.configResolved(mockBuildConfig as any)
@@ -387,7 +416,7 @@ function Counter() {
     })
 
     it('extracts handler code with AST and generates standalone modules', async () => {
-      const plugin = fict({ functionSplitting: true })
+      const plugin = fict({ functionSplitting: true }) as any
 
       // Configure the plugin as if in build mode
       if (typeof plugin.configResolved === 'function') {
@@ -451,7 +480,7 @@ function Counter() {
     })
 
     it('includes hoisted helper functions in handler virtual modules', async () => {
-      const plugin = fict({ functionSplitting: true })
+      const plugin = fict({ functionSplitting: true }) as any
 
       // Configure the plugin as if in build mode
       if (typeof plugin.configResolved === 'function') {
@@ -516,7 +545,7 @@ function Counter() {
     })
 
     it('handler with direct function reference works in virtual module', async () => {
-      const plugin = fict({ functionSplitting: true })
+      const plugin = fict({ functionSplitting: true }) as any
 
       if (typeof plugin.configResolved === 'function') {
         plugin.configResolved(mockBuildConfig as any)
@@ -565,7 +594,7 @@ function Button() {
     })
 
     it('skips recompiling precompiled modules when splitting is disabled', async () => {
-      const plugin = fict({ functionSplitting: false })
+      const plugin = fict({ functionSplitting: false }) as any
 
       if (typeof plugin.configResolved === 'function') {
         plugin.configResolved(mockBuildConfig as any)
