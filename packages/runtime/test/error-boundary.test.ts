@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
-import { render, ErrorBoundary, Fragment, createEffect, onMount } from '../src/index'
-import { createSignal } from '../src/advanced'
+import { render, ErrorBoundary, Fragment, createEffect, onMount, onDestroy } from '../src/index'
+import { createRenderEffect, createSignal } from '../src/advanced'
 import { bindEvent, createKeyedList } from '../src/internal'
 
 const nextTick = () => Promise.resolve()
@@ -190,6 +190,169 @@ describe('ErrorBoundary', () => {
     await nextTick()
 
     expect(container.textContent).toBe('eff-fallback')
+
+    dispose()
+  })
+
+  it('captures effect cleanup errors and switches to fallback', async () => {
+    const container = document.createElement('div')
+    const trigger = createSignal(0)
+    let captured: unknown = null
+    let shouldThrow = false
+
+    const ThrowInCleanup = () => {
+      createEffect(() => {
+        trigger()
+        return () => {
+          if (shouldThrow) {
+            throw new Error('cleanup boom')
+          }
+        }
+      })
+      return { type: 'span', props: { children: 'ok' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'cleanup-fallback',
+          onError: err => {
+            captured = err
+          },
+          children: { type: ThrowInCleanup, props: {} },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('ok')
+
+    shouldThrow = true
+    trigger(1)
+    await nextTick()
+
+    expect(captured).toBeInstanceOf(Error)
+    expect((captured as Error).message).toBe('cleanup boom')
+    expect(container.textContent).toBe('cleanup-fallback')
+
+    dispose()
+  })
+
+  it('captures render effect cleanup errors and switches to fallback', async () => {
+    const container = document.createElement('div')
+    const trigger = createSignal(0)
+    let captured: unknown = null
+    let shouldThrow = false
+
+    const ThrowInRenderCleanup = () => {
+      createRenderEffect(() => {
+        trigger()
+        return () => {
+          if (shouldThrow) {
+            throw new Error('render cleanup boom')
+          }
+        }
+      })
+      return { type: 'span', props: { children: 'ok' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'render-cleanup-fallback',
+          onError: err => {
+            captured = err
+          },
+          children: { type: ThrowInRenderCleanup, props: {} },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('ok')
+
+    shouldThrow = true
+    trigger(1)
+    await nextTick()
+
+    expect(captured).toBeInstanceOf(Error)
+    expect((captured as Error).message).toBe('render cleanup boom')
+    expect(container.textContent).toBe('render-cleanup-fallback')
+
+    dispose()
+  })
+
+  it('captures cleanup errors during root dispose', async () => {
+    const container = document.createElement('div')
+    let captured: unknown = null
+
+    const ThrowOnDisposeCleanup = () => {
+      createEffect(() => () => {
+        throw new Error('dispose cleanup boom')
+      })
+      return { type: 'span', props: { children: 'ok' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'dispose-fallback',
+          onError: err => {
+            captured = err
+          },
+          children: { type: ThrowOnDisposeCleanup, props: {} },
+        },
+      }),
+      container,
+    )
+
+    expect(() => dispose()).not.toThrow()
+    expect(captured).toBeInstanceOf(Error)
+    expect((captured as Error).message).toBe('dispose cleanup boom')
+  })
+
+  it('captures onDestroy errors when a subtree unmounts', async () => {
+    const container = document.createElement('div')
+    const show = createSignal(true)
+    let captured: unknown = null
+
+    const ThrowOnDestroy = () => {
+      onDestroy(() => {
+        throw new Error('destroy boom')
+      })
+      return { type: 'span', props: { children: 'child-ok' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'destroy-fallback',
+          onError: err => {
+            captured = err
+          },
+          children: {
+            type: 'div',
+            props: {
+              children: () => (show() ? { type: ThrowOnDestroy, props: {} } : null),
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('child-ok')
+
+    show(false)
+    await nextTick()
+
+    expect(captured).toBeInstanceOf(Error)
+    expect((captured as Error).message).toBe('destroy boom')
+    expect(container.textContent).toBe('destroy-fallback')
 
     dispose()
   })

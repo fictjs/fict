@@ -8,6 +8,7 @@ import {
   handleError,
   pushRoot,
   popRoot,
+  registerRootCleanup,
   registerSuspenseHandler,
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
@@ -233,6 +234,13 @@ export function Suspense(props: SuspenseProps): FictNode {
   // Note: This will be called synchronously during component creation.
   // If children suspend, the handler above will be called and switch to fallback.
   renderView(props.children ?? null)
+
+  registerRootCleanup(() => {
+    if (cleanup) {
+      cleanup()
+      cleanup = undefined
+    }
+  })
 
   if (props.resetKeys !== undefined) {
     const isGetter =

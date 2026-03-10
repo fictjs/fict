@@ -115,20 +115,28 @@ export function onCleanup(fn: Cleanup): void {
 export function flushOnMount(root: RootContext): void {
   const cbs = root.onMountCallbacks
   if (!cbs || cbs.length === 0) return
-  // Temporarily restore root context so onCleanup calls inside
-  // mount callbacks register correctly
+  try {
+    withRootContext(root, () => {
+      for (let i = 0; i < cbs.length; i++) {
+        const cleanup = cbs[i]!()
+        if (typeof cleanup === 'function') {
+          root.cleanups.push(cleanup)
+        }
+      }
+    })
+  } finally {
+    cbs.length = 0
+  }
+}
+
+export function withRootContext<T>(root: RootContext | undefined, fn: () => T): T {
+  if (!root) return fn()
   const prevRoot = currentRoot
   currentRoot = root
   try {
-    for (let i = 0; i < cbs.length; i++) {
-      const cleanup = cbs[i]!()
-      if (typeof cleanup === 'function') {
-        root.cleanups.push(cleanup)
-      }
-    }
+    return fn()
   } finally {
     currentRoot = prevRoot
-    cbs.length = 0
   }
 }
 
@@ -139,7 +147,7 @@ export function registerRootCleanup(fn: Cleanup): void {
 }
 
 export function clearRoot(root: RootContext): void {
-  runCleanupList(root.cleanups)
+  runCleanupList(root.cleanups, root)
   if (root.onMountCallbacks) {
     root.onMountCallbacks.length = 0
   }
@@ -147,7 +155,7 @@ export function clearRoot(root: RootContext): void {
 
 export function destroyRoot(root: RootContext): void {
   clearRoot(root)
-  runCleanupList(root.destroyCallbacks)
+  runCleanupList(root.destroyCallbacks, root)
   if (root.errorHandlers) {
     root.errorHandlers.length = 0
   }
@@ -201,21 +209,23 @@ export function registerEffectCleanup(fn: Cleanup): void {
   }
 }
 
-export function runCleanupList(list: Cleanup[]): void {
+export function runCleanupList(list: Cleanup[], root?: RootContext): void {
   let error: unknown
-  for (let i = list.length - 1; i >= 0; i--) {
-    try {
-      const cleanup = list[i]
-      if (cleanup) cleanup()
-    } catch (err) {
-      if (error === undefined) {
-        error = err
+  withRootContext(root, () => {
+    for (let i = list.length - 1; i >= 0; i--) {
+      try {
+        const cleanup = list[i]
+        if (cleanup) cleanup()
+      } catch (err) {
+        if (error === undefined) {
+          error = err
+        }
       }
     }
-  }
+  })
   list.length = 0
   if (error !== undefined) {
-    if (!handleError(error, { source: 'cleanup' })) {
+    if (!handleError(error, { source: 'cleanup' }, root)) {
       throw error
     }
   }

@@ -21,7 +21,7 @@ export function createEffect(fn: Effect, options?: EffectOptions): () => void {
 
   // Cleanup runner - called by runEffect BEFORE signal values are committed
   const doCleanup = () => {
-    runCleanupList(cleanups)
+    runCleanupList(cleanups, rootForError)
     cleanups = []
   }
 
@@ -49,7 +49,7 @@ export function createEffect(fn: Effect, options?: EffectOptions): () => void {
 
   const disposeEffect = effectWithCleanup(run, doCleanup, rootForError, options)
   const teardown = () => {
-    runCleanupList(cleanups)
+    runCleanupList(cleanups, rootForError)
     disposeEffect()
   }
 
@@ -61,15 +61,13 @@ export function createEffect(fn: Effect, options?: EffectOptions): () => void {
 export const $effect = createEffect
 
 export function createRenderEffect(fn: Effect, options?: EffectOptions): () => void {
-  let cleanup: Cleanup | undefined
+  let cleanups: Cleanup[] = []
   const rootForError = getCurrentRoot()
 
   // Cleanup runner - called by runEffect BEFORE signal values are committed
   const doCleanup = () => {
-    if (cleanup) {
-      cleanup()
-      cleanup = undefined
-    }
+    runCleanupList(cleanups, rootForError)
+    cleanups = []
   }
 
   const run = () => {
@@ -77,7 +75,9 @@ export function createRenderEffect(fn: Effect, options?: EffectOptions): () => v
     try {
       const maybeCleanup = fn()
       if (typeof maybeCleanup === 'function') {
-        cleanup = maybeCleanup
+        cleanups = [maybeCleanup]
+      } else {
+        cleanups = []
       }
     } catch (err) {
       if (handleSuspend(err as any, rootForError)) {
@@ -93,10 +93,7 @@ export function createRenderEffect(fn: Effect, options?: EffectOptions): () => v
 
   const disposeEffect = effectWithCleanup(run, doCleanup, rootForError, options)
   const teardown = () => {
-    if (cleanup) {
-      cleanup()
-      cleanup = undefined
-    }
+    runCleanupList(cleanups, rootForError)
     disposeEffect()
   }
 

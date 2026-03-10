@@ -8,6 +8,7 @@ import {
   pushRoot,
   popRoot,
   registerErrorHandler,
+  registerRootCleanup,
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import type { BaseProps, FictNode } from './types'
@@ -104,6 +105,13 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   }
 
   renderValue(props.children ?? null)
+
+  registerRootCleanup(() => {
+    if (cleanup) {
+      cleanup()
+      cleanup = undefined
+    }
+  })
 
   registerErrorHandler(err => {
     renderValue(toView(err))

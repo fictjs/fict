@@ -6,6 +6,7 @@ import {
   handleError,
   handleSuspend,
   registerRootCleanup,
+  withRootContext,
   type RootContext,
 } from './lifecycle'
 import type { SuspenseToken } from './types'
@@ -890,7 +891,9 @@ function runEffect(e: EffectNode): void {
     inCleanup = true
     activeCleanupFlushId = currentFlushId
     try {
-      e.runCleanup()
+      withRootContext(e.root, () => {
+        e.runCleanup!()
+      })
     } finally {
       activeCleanupFlushId = 0
       inCleanup = false
