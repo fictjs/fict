@@ -1330,6 +1330,10 @@ export function addEventListener(
   if (delegate) {
     const key = `$$${name}`
     const dataKey = `${key}Data`
+    const rootRef = getCurrentRoot()
+    const delegationDocument = resolveDelegationDocument(node, rootRef)
+
+    delegateEvents([name], delegationDocument)
 
     if (handler == null) {
       ;(node as unknown as Record<string, unknown>)[key] = undefined
@@ -1337,7 +1341,6 @@ export function addEventListener(
       return
     }
 
-    const rootRef = getCurrentRoot()
     ;(node as unknown as Record<string, unknown>)[key] = createEventInvoker(
       name,
       handler,
@@ -1358,6 +1361,14 @@ export function addEventListener(
     listener: wrapped,
     options,
   })
+}
+
+function resolveDelegationDocument(node: Element, rootRef: RootContext | undefined): Document {
+  const nodeDocument = node.ownerDocument ?? undefined
+  if (rootRef?.ownerDocument && nodeDocument?.defaultView == null) {
+    return rootRef.ownerDocument
+  }
+  return nodeDocument ?? rootRef?.ownerDocument ?? document
 }
 
 function getStoredEventListenerStore(node: Element): EventListenerStore {
@@ -1490,8 +1501,6 @@ export function bindEvent(
   // we attach the handler to the element property and rely on the global listener.
   const shouldDelegate = options == null && DelegatedEvents.has(eventName)
   if (shouldDelegate) {
-    // Ensure global delegation is active for this event
-    delegateEvents([eventName])
     addEventListener(el, eventName, handler, true)
 
     // Cleanup: remove property (no effect needed for static or reactive)
@@ -1817,7 +1826,6 @@ function assignProp(
         shouldDelegate,
         false,
       )
-      if (shouldDelegate) delegateEvents([eventName])
     }
     return value
   }

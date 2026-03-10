@@ -194,6 +194,21 @@ describe('Binding Edge Cases', () => {
       cleanup()
     })
 
+    it('uses the element ownerDocument for delegated events', () => {
+      const foreignDoc = document.implementation.createHTMLDocument('foreign-delegated-events')
+      const el = foreignDoc.createElement('button')
+      foreignDoc.body.appendChild(el)
+      const handler = vi.fn()
+
+      const cleanup = bindEvent(el, 'click', handler)
+
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(handler).toHaveBeenCalledTimes(1)
+
+      cleanup()
+      clearDelegatedEvents(foreignDoc)
+    })
+
     it('treats prop getters as reactive handlers (does not pass event to getter)', () => {
       const el = document.createElement('button')
       container.appendChild(el)

@@ -5002,18 +5002,6 @@ function lowerFunctionWithRegions(
     )
   }
 
-  // Hoist delegateEvents call if any delegated events are used
-  if (ctx.delegatedEventsUsed && ctx.delegatedEventsUsed.size > 0) {
-    ctx.helpersUsed.add('delegateEvents')
-    statements.unshift(
-      t.expressionStatement(
-        t.callExpression(t.identifier(RUNTIME_ALIASES.delegateEvents), [
-          t.arrayExpression(Array.from(ctx.delegatedEventsUsed).map(name => t.stringLiteral(name))),
-        ]),
-      ),
-    )
-  }
-
   // Handle props destructuring pattern for component functions
   // If first rawParam is ObjectPattern, emit __props and add destructuring
   let finalParams = buildOutputParams(fn, t)

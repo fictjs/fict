@@ -319,6 +319,46 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('handles compiled delegated events in foreign documents', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        return (
+          <button type="button" onClick={() => calls.push('clicked')}>
+            Press
+          </button>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      calls: string[]
+    }>(source, { fineGrainedDom: true })
+    const foreignDoc = document.implementation.createHTMLDocument('foreign-compiled-events')
+    const container = foreignDoc.createElement('div')
+    foreignDoc.body.appendChild(container)
+    const teardown = mod.mount(container as unknown as HTMLElement)
+
+    const button = container.querySelector('button') as HTMLButtonElement
+    expect(button).toBeTruthy()
+
+    button.dispatchEvent(new Event('click', { bubbles: true }))
+    await flushUpdates()
+
+    expect(mod.calls).toEqual(['clicked'])
+
+    teardown()
+    clearDelegatedEvents(foreignDoc)
+  })
+
   it('forwards children props through intrinsic spread when no explicit host children exist', async () => {
     const source = `
       import { render } from 'fict'

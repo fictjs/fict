@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import { render, createElement, Fragment, createRoot, onDestroy, onMount } from '../src/index'
 import { createSignal, nonReactive } from '../src/advanced'
-import { template } from '../src/internal'
+import { clearDelegatedEvents, spread, template } from '../src/internal'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -823,6 +823,25 @@ describe('DOM Module', () => {
       expect(createdNode?.ownerDocument).toBe(foreignDoc)
       expect(foreignContainer.firstChild?.ownerDocument).toBe(foreignDoc)
       teardown()
+    })
+
+    it('delegates template-clone events on the render root document', () => {
+      const handler = vi.fn()
+      const teardown = render(() => {
+        const factory = template('<button type="button">Press</button>')
+        const button = factory() as HTMLButtonElement
+        spread(button, { onClick: handler }, false, true)
+        return button
+      }, container)
+
+      const button = container.querySelector('button') as HTMLButtonElement
+      expect(button).toBeTruthy()
+
+      button.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(handler).toHaveBeenCalledTimes(1)
+
+      teardown()
+      clearDelegatedEvents()
     })
 
     it('uses importNode when isImportNode is true', () => {
