@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import { render, createElement, Fragment, createRoot, onDestroy, onMount } from '../src/index'
 import { createSignal, nonReactive } from '../src/advanced'
-import { clearDelegatedEvents, spread, template } from '../src/internal'
+import { clearDelegatedEvents, hydrateComponent, spread, template } from '../src/internal'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -113,6 +113,29 @@ describe('DOM Module', () => {
       expect(destroyed).toBe(false)
       teardown()
       expect(destroyed).toBe(true)
+    })
+  })
+
+  describe('hydrateComponent', () => {
+    it('preserves spread children text nodes during hydration', () => {
+      container.innerHTML = '<div>hello</div>'
+      const existingElement = container.firstChild as HTMLDivElement
+      const existingText = existingElement.firstChild
+
+      const teardown = hydrateComponent(() => {
+        const factory = template('<div></div>')
+        const el = factory() as HTMLDivElement
+        spread(el, { children: 'hello' }, false, false)
+        return el
+      }, container)
+
+      const hydratedElement = container.firstChild as HTMLDivElement
+
+      expect(hydratedElement).toBe(existingElement)
+      expect(hydratedElement.firstChild).toBe(existingText)
+      expect(hydratedElement.textContent).toBe('hello')
+
+      teardown()
     })
   })
 

@@ -21,7 +21,7 @@ import {
   SVGNamespace,
 } from './constants'
 import { createRenderEffect } from './effect'
-import { withHydrationRange, isHydratingActive } from './hydration'
+import { withHydration, withHydrationRange, isHydratingActive } from './hydration'
 import { Fragment } from './jsx'
 import {
   createRootContext,
@@ -1674,6 +1674,9 @@ function bindAssignedChildren(
   let currentNodes: Node[] = []
   let currentText: Text | null = null
   let currentRoot: RootContext | null = null
+  let initialHydrating = __fictIsHydrating()
+
+  const collectCurrentChildren = (): Node[] => Array.from(node.childNodes)
 
   const clearCurrentNodes = () => {
     if (currentRoot) {
@@ -1690,7 +1693,25 @@ function bindAssignedChildren(
   const setTextNode = (textValue: string, shouldInsert: boolean) => {
     if (!shouldInsert) {
       clearCurrentNodes()
+      if (node.childNodes.length > 0) {
+        node.replaceChildren()
+      }
+      initialHydrating = false
       return
+    }
+
+    if (initialHydrating && isHydratingActive()) {
+      const hydratedNodes = collectCurrentChildren()
+      if (hydratedNodes.length === 1 && hydratedNodes[0]?.nodeType === Node.TEXT_NODE) {
+        const hydratedText = hydratedNodes[0] as Text
+        if (hydratedText.data !== textValue) {
+          hydratedText.data = textValue
+        }
+        currentText = hydratedText
+        currentNodes = [hydratedText]
+        initialHydrating = false
+        return
+      }
     }
 
     const textNode = currentText ?? (node.ownerDocument ?? document).createTextNode(textValue)
@@ -1715,6 +1736,7 @@ function bindAssignedChildren(
     node.replaceChildren(textNode)
     currentText = textNode
     currentNodes = [textNode]
+    initialHydrating = false
   }
 
   const dispose = createRenderEffect(() => {
@@ -1738,27 +1760,37 @@ function bindAssignedChildren(
     const root = createRootContext(hostRoot)
     const prev = pushRoot(root)
     let nodes: Node[]
+    let currentHydratedNodes: Node[] | undefined
     let handledError = false
     try {
       let newNode: Node | Node[]
       const ownerDocument = node.ownerDocument ?? hostRoot?.ownerDocument ?? document
-
-      if (value instanceof Node) {
-        newNode = value
-      } else if (Array.isArray(value)) {
-        if (value.every(v => v instanceof Node)) {
-          newNode = value as Node[]
-        } else if (createFn) {
-          const mapped: Node[] = []
-          for (const item of value) {
-            mapped.push(...toNodeArray(createFn(item as any), ownerDocument))
-          }
-          newNode = mapped
-        } else {
-          newNode = ownerDocument.createTextNode(String(value))
+      const createValue = () => {
+        if (value instanceof Node) {
+          return value
         }
+        if (Array.isArray(value)) {
+          if (value.every(v => v instanceof Node)) {
+            return value as Node[]
+          }
+          if (createFn) {
+            const mapped: Node[] = []
+            for (const item of value) {
+              mapped.push(...toNodeArray(createFn(item as any), ownerDocument))
+            }
+            return mapped
+          }
+          return ownerDocument.createTextNode(String(value))
+        }
+        return createFn ? createFn(value) : ownerDocument.createTextNode(String(value))
+      }
+
+      if (initialHydrating && isHydratingActive()) {
+        withHydration(node, () => {
+          newNode = createValue()
+        })
       } else {
-        newNode = createFn ? createFn(value) : ownerDocument.createTextNode(String(value))
+        newNode = createValue()
       }
 
       nodes = toNodeArray(newNode, ownerDocument)
@@ -1767,7 +1799,20 @@ function bindAssignedChildren(
         destroyRoot(root)
         return
       }
-      node.replaceChildren(...nodes)
+
+      if (initialHydrating) {
+        const hydratedNodes = collectCurrentChildren()
+        const reuseHydratedNodes =
+          hydratedNodes.length === nodes.length &&
+          nodes.every((candidate, index) => candidate === hydratedNodes[index])
+        if (reuseHydratedNodes) {
+          currentHydratedNodes = hydratedNodes
+        } else {
+          node.replaceChildren(...nodes)
+        }
+      } else {
+        node.replaceChildren(...nodes)
+      }
     } catch (err) {
       if (handleSuspend(err as any, root)) {
         handledError = true
@@ -1788,7 +1833,8 @@ function bindAssignedChildren(
     }
 
     currentRoot = root
-    currentNodes = nodes
+    currentNodes = currentHydratedNodes ?? nodes
+    initialHydrating = false
   })
 
   return () => {
