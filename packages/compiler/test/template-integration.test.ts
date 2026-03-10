@@ -272,6 +272,53 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('routes compiled delegated event errors through ErrorBoundary', async () => {
+    const source = `
+      import { ErrorBoundary, render } from 'fict'
+
+      export let captured: string | null = null
+
+      export function App() {
+        return (
+          <ErrorBoundary
+            fallback="event-fallback"
+            onError={err => {
+              captured = err instanceof Error ? err.message : String(err)
+            }}
+          >
+            <button type="button" onClick={() => { throw new Error('compiled event boom') }}>
+              Press
+            </button>
+          </ErrorBoundary>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      captured: string | null
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const button = container.querySelector('button') as HTMLButtonElement
+    expect(button).toBeTruthy()
+
+    button.dispatchEvent(new Event('click', { bubbles: true }))
+    await flushUpdates()
+
+    expect(mod.captured).toBe('compiled event boom')
+    expect(container.textContent).toBe('event-fallback')
+
+    teardown()
+    container.remove()
+  })
+
   it('does not invoke function-valued intrinsic spread expressions', async () => {
     const source = `
       import { render } from 'fict'

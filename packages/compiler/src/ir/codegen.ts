@@ -2754,28 +2754,18 @@ function lowerIntrinsicElement(
           skipRegionRootOverride: true,
         })
 
-        // Assign handler directly so runtime can apply `this` and pass (data, event)
-        statements.push(
-          t.expressionStatement(
-            t.assignmentExpression(
-              '=',
-              t.memberExpression(targetId, t.identifier(`$$${eventName}`)),
-              handlerExpr,
-            ),
-          ),
-        )
-
-        // Assign static delegated data directly for list keys/literals to avoid per-row closures.
         const dataValue = isStaticDelegatedDataExpression(hirDataBinding.data, ctx)
           ? dataExpr
           : t.arrowFunctionExpression([], dataExpr)
+        ctx.helpersUsed.add('addEventListener')
         statements.push(
           t.expressionStatement(
-            t.assignmentExpression(
-              '=',
-              t.memberExpression(targetId, t.identifier(`$$${eventName}Data`)),
-              dataValue,
-            ),
+            t.callExpression(t.identifier(RUNTIME_ALIASES.addEventListener), [
+              targetId,
+              t.stringLiteral(eventName),
+              t.arrayExpression([handlerExpr, dataValue]),
+              t.booleanLiteral(true),
+            ]),
           ),
         )
       } else {
@@ -2914,27 +2904,20 @@ function lowerIntrinsicElement(
             ? handlerForDelegate
             : t.arrowFunctionExpression([eventParam], handlerForDelegate)
 
+          ctx.helpersUsed.add('addEventListener')
+          const delegatedValue = dataForDelegate
+            ? t.arrayExpression([handlerToAssign, dataForDelegate])
+            : handlerToAssign
           statements.push(
             t.expressionStatement(
-              t.assignmentExpression(
-                '=',
-                t.memberExpression(targetId, t.identifier(`$$${eventName}`)),
-                handlerToAssign,
-              ),
+              t.callExpression(t.identifier(RUNTIME_ALIASES.addEventListener), [
+                targetId,
+                t.stringLiteral(eventName),
+                delegatedValue,
+                t.booleanLiteral(true),
+              ]),
             ),
           )
-          if (dataForDelegate) {
-            // Assign data getter so runtime can pass (data, event) and preserve `this`.
-            statements.push(
-              t.expressionStatement(
-                t.assignmentExpression(
-                  '=',
-                  t.memberExpression(targetId, t.identifier(`$$${eventName}Data`)),
-                  dataForDelegate,
-                ),
-              ),
-            )
-          }
         } else {
           // Fallback: Use bindEvent for non-delegated events or events with options
           ctx.helpersUsed.add('bindEvent')

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 
 import { render, ErrorBoundary, Fragment, createEffect, onMount, onDestroy } from '../src/index'
 import { createRenderEffect, createSignal } from '../src/advanced'
-import { bindEvent, createKeyedList } from '../src/internal'
+import { bindEvent, createKeyedList, spread } from '../src/internal'
 
 const nextTick = () => Promise.resolve()
 
@@ -400,6 +400,53 @@ describe('ErrorBoundary', () => {
 
     dispose()
     // Clean up
+    document.body.removeChild(container)
+  })
+
+  it('captures spread event errors', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    let captured: unknown = null
+
+    const SpreadButton = () => {
+      const button = document.createElement('button')
+      button.textContent = 'spread'
+      spread(
+        button,
+        {
+          onClick: () => {
+            throw new Error('spread event boom')
+          },
+        },
+        false,
+        true,
+      )
+      return button
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'spread-fallback',
+          onError: err => {
+            captured = err
+          },
+          children: { type: SpreadButton, props: {} },
+        },
+      }),
+      container,
+    )
+
+    const button = container.querySelector('button') as HTMLButtonElement
+    button.dispatchEvent(new Event('click', { bubbles: true }))
+    await nextTick()
+
+    expect(captured).toBeInstanceOf(Error)
+    expect((captured as Error).message).toBe('spread event boom')
+    expect(container.textContent).toBe('spread-fallback')
+
+    dispose()
     document.body.removeChild(container)
   })
 

@@ -52,7 +52,7 @@ const PROP_CACHE = Symbol('fict:prop')
 const STYLE_CACHE = Symbol('fict:style')
 const CLASS_STATE_CACHE = Symbol('fict:class-state')
 const CLASS_VALUE_CACHE = Symbol('fict:class-value')
-const EVENT_TUPLE_LISTENER_CACHE = Symbol('fict:event-tuple-listener-cache')
+const EVENT_LISTENER_CACHE = Symbol('fict:event-listener-cache')
 const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
 const REACTIVE_FN_MARKER = Symbol.for('fict:reactive-fn')
 const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
@@ -61,7 +61,12 @@ type NonReactiveRegistryHost = typeof globalThis & {
   [NON_REACTIVE_FN_REGISTRY_KEY]?: WeakSet<(...args: unknown[]) => unknown>
 }
 
-type EventTupleListenerStore = Map<string, EventListener>
+interface StoredEventListener {
+  listener: EventListener
+  options?: boolean | AddEventListenerOptions
+}
+
+type EventListenerStore = Map<string, StoredEventListener>
 
 const PROPERTY_BINDING_KEYS = new Set([
   'value',
@@ -1215,21 +1220,9 @@ function globalEventHandler(e: Event): void {
     if (!node) return false
     const handler = node[key]
     if (handler && !(node as HTMLButtonElement).disabled) {
-      const resolveData = (value: unknown): unknown => {
-        if (typeof value === 'function') {
-          try {
-            const fn = value as (event?: Event) => unknown
-            return fn.length > 0 ? fn(e) : fn()
-          } catch {
-            return (value as () => unknown)()
-          }
-        }
-        return value
-      }
-
       const rawData = (node as any)[dataKey] as unknown
       const hasData = rawData !== undefined
-      const resolvedNodeData = hasData ? resolveData(rawData) : undefined
+      const resolvedNodeData = hasData ? resolveEventData(rawData, e) : undefined
       // Wrap event handler calls in batch for synchronous flush & reduced microtasks
       batch(() => {
         if (typeof handler === 'function') {
@@ -1314,8 +1307,13 @@ function globalEventHandler(e: Event): void {
 export function addEventListener(
   node: Element,
   name: string,
-  handler: EventListener | [EventListener, unknown] | null | undefined,
+  handler:
+    | EventListenerOrEventListenerObject
+    | [EventListenerOrEventListenerObject, unknown]
+    | null
+    | undefined,
   delegate?: boolean,
+  options?: boolean | AddEventListenerOptions,
 ): void {
   if (delegate) {
     const key = `$$${name}`
@@ -1327,61 +1325,123 @@ export function addEventListener(
       return
     }
 
-    // Event delegation: store handler on element
-    if (Array.isArray(handler)) {
-      ;(node as unknown as Record<string, unknown>)[key] = handler[0]
-      ;(node as unknown as Record<string, unknown>)[dataKey] = handler[1]
-    } else {
-      ;(node as unknown as Record<string, unknown>)[key] = handler
-      ;(node as unknown as Record<string, unknown>)[dataKey] = undefined
-    }
+    const rootRef = getCurrentRoot()
+    ;(node as unknown as Record<string, unknown>)[key] = createEventInvoker(
+      name,
+      handler,
+      node,
+      rootRef,
+    )
+    ;(node as unknown as Record<string, unknown>)[dataKey] = undefined
     return
   }
 
+  removeStoredEventListener(node, name, options)
   if (handler == null) return
 
-  if (Array.isArray(handler)) {
-    // Non-delegated with data binding
-    const store = getTupleEventListenerStore(node)
-    const existing = store.get(name)
-    if (existing) {
-      node.removeEventListener(name, existing)
-    }
-    const handlerFn = handler[0] as (data: unknown, e: Event) => void
-    const wrapped = (e: Event) => handlerFn.call(node, handler[1], e)
-    store.set(name, wrapped)
-    node.addEventListener(name, wrapped)
-    return
-  }
-
-  // Regular event listener
-  node.addEventListener(name, handler as EventListener)
+  const rootRef = getCurrentRoot()
+  const wrapped = createEventInvoker(name, handler, node, rootRef)
+  node.addEventListener(name, wrapped, options)
+  getStoredEventListenerStore(node).set(getEventListenerStoreKey(name, options), {
+    listener: wrapped,
+    options,
+  })
 }
 
-function getTupleEventListenerStore(node: Element): EventTupleListenerStore {
+function getStoredEventListenerStore(node: Element): EventListenerStore {
   const host = node as unknown as {
-    [EVENT_TUPLE_LISTENER_CACHE]?: EventTupleListenerStore
+    [EVENT_LISTENER_CACHE]?: EventListenerStore
   }
-  if (!host[EVENT_TUPLE_LISTENER_CACHE]) {
-    host[EVENT_TUPLE_LISTENER_CACHE] = new Map<string, EventListener>()
+  if (!host[EVENT_LISTENER_CACHE]) {
+    host[EVENT_LISTENER_CACHE] = new Map<string, StoredEventListener>()
   }
-  return host[EVENT_TUPLE_LISTENER_CACHE]!
+  return host[EVENT_LISTENER_CACHE]!
 }
 
-function removeStoredTupleEventListener(node: Element, name: string): void {
+function getEventListenerStoreKey(
+  name: string,
+  options?: boolean | AddEventListenerOptions,
+): string {
+  const capture = typeof options === 'boolean' ? options : options?.capture === true
+  const passive = typeof options === 'object' && options?.passive === true
+  const once = typeof options === 'object' && options?.once === true
+  return `${name}:${capture ? 1 : 0}:${passive ? 1 : 0}:${once ? 1 : 0}`
+}
+
+function removeStoredEventListener(
+  node: Element,
+  name: string,
+  options?: boolean | AddEventListenerOptions,
+): void {
   const host = node as unknown as {
-    [EVENT_TUPLE_LISTENER_CACHE]?: EventTupleListenerStore
+    [EVENT_LISTENER_CACHE]?: EventListenerStore
   }
-  const store = host[EVENT_TUPLE_LISTENER_CACHE]
+  const store = host[EVENT_LISTENER_CACHE]
   if (!store) return
 
-  const wrapped = store.get(name)
-  if (!wrapped) return
+  const entry = store.get(getEventListenerStoreKey(name, options))
+  if (!entry) return
 
-  node.removeEventListener(name, wrapped)
-  store.delete(name)
+  node.removeEventListener(name, entry.listener, entry.options)
+  store.delete(getEventListenerStoreKey(name, options))
   if (store.size === 0) {
-    delete host[EVENT_TUPLE_LISTENER_CACHE]
+    delete host[EVENT_LISTENER_CACHE]
+  }
+}
+
+function resolveEventData(value: unknown, event: Event): unknown {
+  if (typeof value !== 'function') return value
+  if (isReactive(value)) {
+    return (value as () => unknown)()
+  }
+  try {
+    const fn = value as (event?: Event) => unknown
+    return fn.length > 0 ? fn(event) : fn()
+  } catch {
+    return (value as () => unknown)()
+  }
+}
+
+function resolveEventHandlerValue(
+  value: EventListenerOrEventListenerObject | null | undefined,
+): EventListenerOrEventListenerObject | null | undefined {
+  if (isStrictlyReactive(value)) {
+    return (value as () => EventListenerOrEventListenerObject | null | undefined)()
+  }
+  return value
+}
+
+function createEventInvoker(
+  eventName: string,
+  handler:
+    | EventListenerOrEventListenerObject
+    | [EventListenerOrEventListenerObject, unknown]
+    | null
+    | undefined,
+  node: Element,
+  rootRef: RootContext | undefined,
+): EventListener {
+  return (event: Event) => {
+    try {
+      if (Array.isArray(handler)) {
+        const resolvedHandler = resolveEventHandlerValue(
+          handler[0] as EventListenerOrEventListenerObject | null | undefined,
+        )
+        const data = resolveEventData(handler[1], event)
+        callEventHandler(resolvedHandler, event, node, data)
+        return
+      }
+
+      const resolvedHandler = resolveEventHandlerValue(
+        handler as EventListenerOrEventListenerObject | null | undefined,
+      )
+      callEventHandler(resolvedHandler, event, node)
+    } catch (err) {
+      if (handleError(err, { source: 'event', eventName }, rootRef)) {
+        return
+      }
+      throw err
+    }
   }
 }
 
@@ -1412,63 +1472,30 @@ export function bindEvent(
   options?: boolean | AddEventListenerOptions,
 ): Cleanup {
   if (handler == null) return () => {}
-  const rootRef = getCurrentRoot()
 
   // Optimization: Global Event Delegation
   // If the event is delegatable and no options were provided,
   // we attach the handler to the element property and rely on the global listener.
   const shouldDelegate = options == null && DelegatedEvents.has(eventName)
   if (shouldDelegate) {
-    const key = `$$${eventName}`
-
     // Ensure global delegation is active for this event
     delegateEvents([eventName])
-
-    // Use stricter check - don't misidentify regular callbacks as reactive
-    const resolveHandler = isStrictlyReactive(handler)
-      ? (handler as () => EventListenerOrEventListenerObject | null | undefined)
-      : () => handler
-
-    // Cache a single wrapper that resolves the latest handler when invoked
-    // @ts-expect-error - using dynamic property for delegation
-    el[key] = function (this: any, ...args: any[]) {
-      try {
-        const fn = resolveHandler()
-        callEventHandler(fn as EventListenerOrEventListenerObject, args[0] as Event, el)
-      } catch (err) {
-        if (!handleError(err, { source: 'event', eventName }, rootRef)) {
-          throw err
-        }
-      }
-    }
+    addEventListener(el, eventName, handler, true)
 
     // Cleanup: remove property (no effect needed for static or reactive)
     return () => {
-      // @ts-expect-error - using dynamic property for delegation
-      el[key] = undefined
+      addEventListener(el, eventName, null, true)
     }
   }
 
-  // Fallback: Native addEventListener
-  // Used for non-delegated events or when options are present
-  // Use stricter check - don't misidentify regular callbacks as reactive
-  const getHandler = isStrictlyReactive(handler) ? (handler as () => unknown) : () => handler
-
-  // Create wrapped handler that resolves reactive handlers
-  const wrapped: EventListener = event => {
-    try {
-      const resolved = getHandler()
-      callEventHandler(resolved as EventListenerOrEventListenerObject, event, el)
-    } catch (err) {
-      if (handleError(err, { source: 'event', eventName }, rootRef)) {
-        return
-      }
-      throw err
-    }
-  }
-
-  el.addEventListener(eventName, wrapped, options)
-  const cleanup = () => el.removeEventListener(eventName, wrapped, options)
+  addEventListener(
+    el,
+    eventName,
+    handler as EventListenerOrEventListenerObject | null | undefined,
+    false,
+    options,
+  )
+  const cleanup = () => removeStoredEventListener(el, eventName, options)
   registerRootCleanup(cleanup)
   return cleanup
 }
@@ -1703,16 +1730,35 @@ function assignProp(
       node.setAttribute(prop, value)
       return value
     }
-    if (prev && typeof prev !== 'string') node.removeEventListener(eventName, prev as EventListener)
-    if (value) node.addEventListener(eventName, value as EventListener)
+    if (prev && typeof prev !== 'string') removeStoredEventListener(node, eventName)
+    addEventListener(
+      node,
+      eventName,
+      value as
+        | EventListenerOrEventListenerObject
+        | [EventListenerOrEventListenerObject, unknown]
+        | null
+        | undefined,
+      false,
+    )
     return value
   }
 
   // Capture event handling: oncapture:eventname
   if (prop.slice(0, 10) === 'oncapture:') {
     const eventName = prop.slice(10)
-    if (prev) node.removeEventListener(eventName, prev as EventListener, true)
-    if (value) node.addEventListener(eventName, value as EventListener, true)
+    if (prev) removeStoredEventListener(node, eventName, true)
+    addEventListener(
+      node,
+      eventName,
+      value as
+        | EventListenerOrEventListenerObject
+        | [EventListenerOrEventListenerObject, unknown]
+        | null
+        | undefined,
+      false,
+      true,
+    )
     return value
   }
 
@@ -1721,18 +1767,19 @@ function assignProp(
     const eventName = prop.slice(2).toLowerCase()
     const shouldDelegate = DelegatedEvents.has(eventName)
     if (!shouldDelegate && prev) {
-      if (Array.isArray(prev)) {
-        removeStoredTupleEventListener(node, eventName)
-      } else {
-        node.removeEventListener(eventName, prev as EventListener)
-      }
+      removeStoredEventListener(node, eventName)
     }
     if (shouldDelegate || value) {
       addEventListener(
         node,
         eventName,
-        value as EventListener | [EventListener, unknown] | null | undefined,
+        value as
+          | EventListenerOrEventListenerObject
+          | [EventListenerOrEventListenerObject, unknown]
+          | null
+          | undefined,
         shouldDelegate,
+        false,
       )
       if (shouldDelegate) delegateEvents([eventName])
     }

@@ -672,6 +672,27 @@ describe('Binding Edge Cases', () => {
       expect(secondHandler).toHaveBeenCalledTimes(1)
       dispose()
     })
+
+    it('treats delegated reactive handlers as accessors instead of raw listeners', async () => {
+      const el = document.createElement('button')
+      container.appendChild(el)
+      const firstHandler = vi.fn()
+      const secondHandler = vi.fn()
+      const currentHandler = createSignal<EventListener>(firstHandler)
+      const prevProps: Record<string, unknown> = {}
+
+      assign(el, { onClick: currentHandler }, false, false, prevProps)
+
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(firstHandler).toHaveBeenCalledTimes(1)
+
+      currentHandler(secondHandler)
+      await tick()
+
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(secondHandler).toHaveBeenCalledTimes(1)
+      expect(currentHandler()).toBe(secondHandler)
+    })
   })
 
   describe('assign', () => {
@@ -712,6 +733,26 @@ describe('Binding Edge Cases', () => {
 
       el.dispatchEvent(new Event('click'))
       expect(handler).toHaveBeenCalled()
+    })
+
+    it('treats on: reactive handlers as accessors instead of native listeners', async () => {
+      const el = document.createElement('input')
+      const firstHandler = vi.fn()
+      const secondHandler = vi.fn()
+      const currentHandler = createSignal<EventListener>(firstHandler)
+      const prevProps: Record<string, unknown> = {}
+
+      assign(el, { 'on:focus': currentHandler }, false, false, prevProps)
+
+      el.dispatchEvent(new Event('focus'))
+      expect(firstHandler).toHaveBeenCalledTimes(1)
+
+      currentHandler(secondHandler)
+      await tick()
+
+      el.dispatchEvent(new Event('focus'))
+      expect(secondHandler).toHaveBeenCalledTimes(1)
+      expect(currentHandler()).toBe(secondHandler)
     })
 
     it('handles oncapture: event syntax', () => {
@@ -872,18 +913,20 @@ describe('Binding Edge Cases', () => {
 
       addEventListener(el, 'click', handler, true)
 
-      expect((el as any).$$click).toBe(handler)
+      expect((el as any).$$click).toBeTypeOf('function')
     })
 
     it('handles [handler, data] tuple', () => {
       const el = document.createElement('button')
       const handler = vi.fn()
       const data = { id: 123 }
+      container.appendChild(el)
+      delegateEvents(['click'])
 
       addEventListener(el, 'click', [handler, data] as any, true)
 
-      expect((el as any).$$click).toBe(handler)
-      expect((el as any).$$clickData).toBe(data)
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(handler).toHaveBeenCalledWith(data, expect.any(Event))
     })
 
     it('adds non-delegated listener directly', () => {
