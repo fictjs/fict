@@ -21,6 +21,7 @@ import {
   bindEvent,
   bindRef,
   isReactive,
+  registerCreateElement,
   type MaybeReactive,
   type AttributeSetter,
   type BindingHandle,
@@ -214,6 +215,8 @@ export function hydrateComponent(view: () => FictNode, container: HTMLElement): 
 export function createElement(node: FictNode): DOMElement {
   return createElementWithContext(node, null, resolveOwnerDocument())
 }
+
+registerCreateElement(createElement)
 
 function resolveNamespace(tagName: string, namespace: NamespaceContext): NamespaceContext {
   if (tagName === 'svg') return 'svg'

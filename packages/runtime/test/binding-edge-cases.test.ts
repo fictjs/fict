@@ -652,6 +652,35 @@ describe('Binding Edge Cases', () => {
       expect(ref.current).toBe(null)
     })
 
+    it('renders children from spread props', async () => {
+      const el = document.createElement('div')
+
+      const { dispose } = createRoot(() => {
+        spread(el, { children: 'hello' }, false, false)
+      })
+
+      await tick()
+      expect(el.textContent).toBe('hello')
+      dispose()
+    })
+
+    it('updates reactive children from spread props', async () => {
+      const el = document.createElement('div')
+      const message = createSignal('hello')
+
+      const { dispose } = createRoot(() => {
+        spread(el, { children: () => message() }, false, false)
+      })
+
+      await tick()
+      expect(el.textContent).toBe('hello')
+
+      message('world')
+      await tick()
+      expect(el.textContent).toBe('world')
+      dispose()
+    })
+
     it('returns prevProps for tracking', () => {
       const el = document.createElement('div')
 

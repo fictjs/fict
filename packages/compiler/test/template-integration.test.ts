@@ -319,6 +319,36 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('forwards children props through intrinsic spread when no explicit host children exist', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      function Box(props: any) {
+        return <div data-testid="box" {...props} />
+      }
+
+      export function App() {
+        return <Box children="hello" />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.textContent).toBe('hello')
+
+    teardown()
+    container.remove()
+  })
+
   it('does not invoke function-valued intrinsic spread expressions', async () => {
     const source = `
       import { render } from 'fict'

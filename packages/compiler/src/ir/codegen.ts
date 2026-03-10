@@ -2698,7 +2698,7 @@ function lowerIntrinsicElement(
         targetId,
         spreadGetter,
         t.booleanLiteral(Boolean(isSVG || isMathML)),
-        t.booleanLiteral(true),
+        t.booleanLiteral(jsx.children.length > 0),
       ]
       if (binding.exclude && binding.exclude.length > 0) {
         spreadArgs.push(t.arrayExpression(binding.exclude.map(name => t.stringLiteral(name))))

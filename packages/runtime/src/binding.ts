@@ -38,7 +38,7 @@ import {
 import { toNodeArray, removeNodes, insertNodesBefore } from './node-ops'
 import { __fictIsHydrating } from './resume'
 import { batch } from './scheduler'
-import { computed, untrack, isSignal, isComputed, isEffect, isEffectScope } from './signal'
+import { computed, signal, untrack, isSignal, isComputed, isEffect, isEffectScope } from './signal'
 import type { Cleanup, FictNode } from './types'
 
 const isDev =
@@ -53,6 +53,7 @@ const STYLE_CACHE = Symbol('fict:style')
 const CLASS_STATE_CACHE = Symbol('fict:class-state')
 const CLASS_VALUE_CACHE = Symbol('fict:class-value')
 const EVENT_LISTENER_CACHE = Symbol('fict:event-listener-cache')
+const CHILDREN_BINDING_CACHE = Symbol('fict:children-binding-cache')
 const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
 const REACTIVE_FN_MARKER = Symbol.for('fict:reactive-fn')
 const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
@@ -64,6 +65,11 @@ type NonReactiveRegistryHost = typeof globalThis & {
 interface StoredEventListener {
   listener: EventListener
   options?: boolean | AddEventListenerOptions
+}
+
+interface ChildrenBindingState {
+  cleanup: Cleanup
+  value: (next?: FictNode | undefined) => FictNode | void
 }
 
 type EventListenerStore = Map<string, StoredEventListener>
@@ -109,6 +115,12 @@ export type MaybeReactive<T> = T | (() => T)
 
 /** Internal type for createElement function reference */
 export type CreateElementFn = (node: FictNode) => Node
+
+let registeredCreateElement: CreateElementFn | undefined
+
+export function registerCreateElement(fn: CreateElementFn): void {
+  registeredCreateElement = fn
+}
 
 /** Handle returned by conditional/list bindings for cleanup */
 export interface BindingHandle {
@@ -1570,6 +1582,48 @@ export function bindRef(el: Element, ref: unknown): Cleanup {
   }
 }
 
+function resolveAssignedChildrenValue(value: FictNode | undefined): FictNode {
+  if (typeof value === 'function') {
+    return isReactive(value) ? (value as () => FictNode)() : null
+  }
+  return value ?? null
+}
+
+function updateChildrenBinding(
+  node: Element,
+  value: FictNode | undefined,
+  createElementFn?: CreateElementFn,
+): void {
+  const host = node as {
+    [CHILDREN_BINDING_CACHE]?: ChildrenBindingState
+  }
+  const createFn = createElementFn ?? registeredCreateElement
+  let state = host[CHILDREN_BINDING_CACHE]
+
+  if (!state) {
+    const valueSignal = signal<FictNode | undefined>(value)
+    const cleanup = insert(
+      node as unknown as ParentNode & Node,
+      () => resolveAssignedChildrenValue(valueSignal() as FictNode | undefined),
+      createFn,
+    )
+    state = {
+      cleanup,
+      value: valueSignal,
+    }
+    host[CHILDREN_BINDING_CACHE] = state
+    registerRootCleanup(() => {
+      state?.cleanup()
+      if (host[CHILDREN_BINDING_CACHE] === state) {
+        delete host[CHILDREN_BINDING_CACHE]
+      }
+    })
+    return
+  }
+
+  state.value(value)
+}
+
 // ============================================================================
 // Spread Props
 // ============================================================================
@@ -1605,16 +1659,6 @@ export function spread(
     return next
   }
 
-  // Handle children if not skipped
-  if (!skipChildren) {
-    createRenderEffect(() => {
-      const nextProps = resolveProps()
-      if ('children' in nextProps) {
-        prevProps.children = nextProps.children
-      }
-    })
-  }
-
   // Handle ref
   bindRef(
     node,
@@ -1623,7 +1667,7 @@ export function spread(
 
   // Handle all other props
   createRenderEffect(() => {
-    assign(node, resolveProps(), isSVG, true, prevProps, true, excludedProps)
+    assign(node, resolveProps(), isSVG, skipChildren, prevProps, true, excludedProps)
   })
 
   return prevProps
@@ -1655,7 +1699,13 @@ export function assign(
   for (const prop in prevProps) {
     if (excludedProps?.has(prop)) continue
     if (!(prop in props)) {
-      if (prop === 'children') continue
+      if (prop === 'children') {
+        if (!skipChildren) {
+          updateChildrenBinding(node, undefined)
+          prevProps.children = undefined
+        }
+        continue
+      }
       prevProps[prop] = assignProp(node, prop, null, prevProps[prop], isSVG, skipRef, props)
     }
   }
@@ -1663,14 +1713,14 @@ export function assign(
   // Set or update props
   for (const prop in props) {
     if (excludedProps?.has(prop)) continue
+    const value = props[prop]
     if (prop === 'children') {
       if (!skipChildren) {
-        // Handle children insertion
+        updateChildrenBinding(node, value as FictNode | undefined)
         prevProps.children = props.children
       }
       continue
     }
-    const value = props[prop]
     prevProps[prop] = assignProp(node, prop, value, prevProps[prop], isSVG, skipRef, props)
   }
 }

@@ -1143,6 +1143,19 @@ describe('spread operator in JSX', () => {
     expect(code).toContain('spread(')
   })
 
+  it('does not skip spread children when no explicit host children exist', () => {
+    const ast = parseFile(`
+      function Box(props) {
+        return <div {...props} />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/spread\([\s\S]*false,\s*false\)/)
+  })
+
   it('should handle spread with additional props', () => {
     const ast = parseFile(`
       function ExtendedWrapper(props) {
@@ -1212,6 +1225,19 @@ describe('spread operator in JSX', () => {
 
     expect(code).toContain('spread(')
     expect(code).toMatch(/spread\([\s\S]*\["data-role"\]/)
+  })
+
+  it('skips spread children when explicit host children are present', () => {
+    const ast = parseFile(`
+      function Wrapper(props) {
+        return <div {...props}>Content</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/spread\([\s\S]*false,\s*true\)/)
   })
 
   it('should not duplicate fused bindings when spread forces mid-stream flush', () => {
