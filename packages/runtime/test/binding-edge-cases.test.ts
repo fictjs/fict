@@ -787,6 +787,32 @@ describe('Binding Edge Cases', () => {
       expect(el.classList.contains('disabled')).toBe(false)
     })
 
+    it('assigns and clears object refs', () => {
+      const el = document.createElement('div')
+      const ref = { current: null as Element | null }
+      const prevProps: Record<string, unknown> = {}
+
+      assign(el, { ref }, false, false, prevProps)
+      expect(ref.current).toBe(el)
+
+      assign(el, {}, false, false, prevProps)
+      expect(ref.current).toBe(null)
+    })
+
+    it('clears the previous object ref before applying a new one', () => {
+      const el = document.createElement('div')
+      const first = { current: null as Element | null }
+      const second = { current: null as Element | null }
+      const prevProps: Record<string, unknown> = {}
+
+      assign(el, { ref: first }, false, false, prevProps)
+      expect(first.current).toBe(el)
+
+      assign(el, { ref: second }, false, false, prevProps)
+      expect(first.current).toBe(null)
+      expect(second.current).toBe(el)
+    })
+
     it('handles on: event syntax', () => {
       const el = document.createElement('button')
       const handler = vi.fn()

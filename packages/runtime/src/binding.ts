@@ -53,6 +53,7 @@ const STYLE_CACHE = Symbol('fict:style')
 const CLASS_STATE_CACHE = Symbol('fict:class-state')
 const CLASS_VALUE_CACHE = Symbol('fict:class-value')
 const EVENT_LISTENER_CACHE = Symbol('fict:event-listener-cache')
+const REF_ASSIGN_CACHE = Symbol('fict:ref-assign-cache')
 const CHILDREN_BINDING_CACHE = Symbol('fict:children-binding-cache')
 const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
 const REACTIVE_FN_MARKER = Symbol.for('fict:reactive-fn')
@@ -70,6 +71,11 @@ interface StoredEventListener {
 interface ChildrenBindingState {
   cleanup: Cleanup
   value: (next?: FictNode | undefined) => FictNode | void
+}
+
+interface AssignedRefState {
+  cleanup?: Cleanup
+  registeredCleanup: boolean
 }
 
 type EventListenerStore = Map<string, StoredEventListener>
@@ -1766,6 +1772,38 @@ function updateChildrenBinding(
   state.value(value)
 }
 
+function updateAssignedRefBinding(node: Element, value: unknown): void {
+  const host = node as {
+    [REF_ASSIGN_CACHE]?: AssignedRefState
+  }
+  let state = host[REF_ASSIGN_CACHE]
+  if (!state) {
+    state = {
+      registeredCleanup: false,
+    }
+    host[REF_ASSIGN_CACHE] = state
+  }
+
+  state.cleanup?.()
+  state.cleanup = undefined
+
+  if (value == null) {
+    delete host[REF_ASSIGN_CACHE]
+    return
+  }
+
+  state.cleanup = bindRef(node, value)
+
+  if (!state.registeredCleanup && getCurrentRoot()) {
+    state.registeredCleanup = true
+    registerRootCleanup(() => {
+      if (host[REF_ASSIGN_CACHE] === state) {
+        delete host[REF_ASSIGN_CACHE]
+      }
+    })
+  }
+}
+
 // ============================================================================
 // Spread Props
 // ============================================================================
@@ -1895,8 +1933,8 @@ function assignProp(
 
   // Ref handling
   if (prop === 'ref') {
-    if (!skipRef && typeof value === 'function') {
-      ;(value as (el: Element) => void)(node)
+    if (!skipRef) {
+      updateAssignedRefBinding(node, value)
     }
     return value
   }
