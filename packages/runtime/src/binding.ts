@@ -1528,58 +1528,46 @@ export function bindEvent(
 export function bindRef(el: Element, ref: unknown): Cleanup {
   if (ref == null) return () => {}
 
-  // Handle reactive refs (getters)
   const getRef = isReactive(ref) ? (ref as () => unknown) : () => ref
+  let currentRef: unknown
 
-  const applyRef = (refValue: unknown) => {
+  const applyRefValue = (refValue: unknown, value: Element | null) => {
     if (refValue == null) return
-
     if (typeof refValue === 'function') {
-      // Callback ref: call with element
-      ;(refValue as (el: Element) => void)(el)
+      ;(refValue as (el: Element | null) => void)(value)
     } else if (typeof refValue === 'object' && 'current' in refValue) {
-      // Ref object: set current property
-      ;(refValue as { current: Element | null }).current = el
+      ;(refValue as { current: Element | null }).current = value
     }
   }
 
-  // Apply ref initially
-  const initialRef = getRef()
-  applyRef(initialRef)
+  const clearCurrentRef = () => {
+    if (currentRef == null) return
+    applyRefValue(currentRef, null)
+    currentRef = undefined
+  }
 
-  // For reactive refs, track changes
+  const syncRef = (nextRef: unknown) => {
+    if (nextRef === currentRef) return
+    clearCurrentRef()
+    currentRef = nextRef
+    applyRefValue(currentRef, el)
+  }
+
+  let disposeTracking: Cleanup | undefined
   if (isReactive(ref)) {
-    const cleanup = createRenderEffect(() => {
-      const currentRef = getRef()
-      applyRef(currentRef)
+    disposeTracking = createRenderEffect(() => {
+      syncRef(getRef())
     })
-    registerRootCleanup(cleanup)
-
-    // On cleanup, null out the ref
-    const nullifyCleanup = () => {
-      const currentRef = getRef()
-      if (currentRef && typeof currentRef === 'object' && 'current' in currentRef) {
-        ;(currentRef as { current: Element | null }).current = null
-      }
-    }
-    registerRootCleanup(nullifyCleanup)
-
-    return () => {
-      cleanup()
-      nullifyCleanup()
-    }
+  } else {
+    syncRef(getRef())
   }
 
-  // For static refs, register cleanup to null out on unmount
-  const cleanup = () => {
-    const refValue = getRef()
-    if (refValue && typeof refValue === 'object' && 'current' in refValue) {
-      ;(refValue as { current: Element | null }).current = null
-    }
-  }
-  registerRootCleanup(cleanup)
+  registerRootCleanup(clearCurrentRef)
 
-  return cleanup
+  return () => {
+    disposeTracking?.()
+    clearCurrentRef()
+  }
 }
 
 // ============================================================================
@@ -1628,12 +1616,10 @@ export function spread(
   }
 
   // Handle ref
-  createRenderEffect(() => {
-    const nextProps = resolveProps()
-    if (typeof nextProps.ref === 'function') {
-      ;(nextProps.ref as (el: Element) => void)(node)
-    }
-  })
+  bindRef(
+    node,
+    (typeof props === 'function' ? () => resolveProps().ref : resolveProps().ref) ?? null,
+  )
 
   // Handle all other props
   createRenderEffect(() => {

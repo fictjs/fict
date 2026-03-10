@@ -19,6 +19,7 @@ import {
   createClassBinding,
   createChildBinding,
   bindEvent,
+  bindRef,
   isReactive,
   type MaybeReactive,
   type AttributeSetter,
@@ -51,7 +52,7 @@ import {
   __fictExitHydration,
 } from './resume'
 import { untrack } from './scheduler'
-import type { DOMElement, FictNode, FictVNode, RefObject } from './types'
+import type { DOMElement, FictNode, FictVNode } from './types'
 
 type NamespaceContext = 'svg' | 'mathml' | null
 
@@ -675,43 +676,15 @@ function appendChildren(
  * Both types are automatically cleaned up on unmount.
  */
 function applyRef(el: Element, value: unknown): void {
-  if (typeof value === 'function') {
-    // Callback ref
-    const refFn = value as (el: Element | null) => void
-    refFn(el)
-
-    // Match React behavior: call ref(null) on unmount
-    const root = getCurrentRoot()
-    if (root) {
-      registerRootCleanup(() => {
-        refFn(null)
-      })
-    } else if (isDev) {
-      console.warn(
-        '[fict] Ref applied outside of a root context. ' +
-          'The ref cleanup (setting to null) will not run automatically. ' +
-          'Consider using createRoot() or ensure the element is created within a component.',
-      )
-    }
-  } else if (value && typeof value === 'object' && 'current' in value) {
-    // Object ref
-    const refObj = value as RefObject<Element>
-    refObj.current = el
-
-    // Auto-cleanup on unmount
-    const root = getCurrentRoot()
-    if (root) {
-      registerRootCleanup(() => {
-        refObj.current = null
-      })
-    } else if (isDev) {
-      console.warn(
-        '[fict] Ref applied outside of a root context. ' +
-          'The ref cleanup (setting to null) will not run automatically. ' +
-          'Consider using createRoot() or ensure the element is created within a component.',
-      )
-    }
+  if (!getCurrentRoot() && isDev) {
+    console.warn(
+      '[fict] Ref applied outside of a root context. ' +
+        'The ref cleanup (setting to null) will not run automatically. ' +
+        'Consider using createRoot() or ensure the element is created within a component.',
+    )
+    return
   }
+  bindRef(el, value)
 }
 
 // ============================================================================

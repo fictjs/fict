@@ -63,7 +63,7 @@ describe('Binding Edge Cases', () => {
       let refValue: Element | null = null
 
       const { dispose } = createRoot(() => {
-        bindRef(el, (elem: Element) => {
+        bindRef(el, (elem: Element | null) => {
           refValue = elem
         })
       })
@@ -112,6 +112,7 @@ describe('Binding Edge Cases', () => {
 
       currentRef(ref2)
       await tick()
+      expect(ref1.current).toBe(null)
       expect(ref2.current).toBe(el)
 
       dispose()
@@ -121,9 +122,9 @@ describe('Binding Edge Cases', () => {
     it('handles reactive callback ref', async () => {
       const el = document.createElement('div')
       const calls: Array<{ cb: string; elem: Element | null }> = []
-      const cb1 = (elem: Element) => calls.push({ cb: 'cb1', elem })
-      const cb2 = (elem: Element) => calls.push({ cb: 'cb2', elem })
-      const currentCb = createSignal<(elem: Element) => void>(cb1)
+      const cb1 = (elem: Element | null) => calls.push({ cb: 'cb1', elem })
+      const cb2 = (elem: Element | null) => calls.push({ cb: 'cb2', elem })
+      const currentCb = createSignal<(elem: Element | null) => void>(cb1)
 
       const { dispose } = createRoot(() => {
         bindRef(el, () => currentCb())
@@ -134,10 +135,12 @@ describe('Binding Edge Cases', () => {
 
       currentCb(cb2)
       await tick()
+      expect(calls.some(c => c.cb === 'cb1' && c.elem === null)).toBe(true)
       // After changing the signal, cb2 should be called
       expect(calls.some(c => c.cb === 'cb2' && c.elem === el)).toBe(true)
 
       dispose()
+      expect(calls.some(c => c.cb === 'cb2' && c.elem === null)).toBe(true)
     })
   })
 
@@ -634,6 +637,19 @@ describe('Binding Edge Cases', () => {
       spread(el, { ref: (elem: Element) => (refElement = elem) })
 
       expect(refElement).toBe(el)
+    })
+
+    it('handles object refs in props', () => {
+      const el = document.createElement('div')
+      const ref = { current: null as Element | null }
+
+      const { dispose } = createRoot(() => {
+        spread(el, { ref })
+      })
+
+      expect(ref.current).toBe(el)
+      dispose()
+      expect(ref.current).toBe(null)
     })
 
     it('returns prevProps for tracking', () => {
