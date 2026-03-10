@@ -1552,7 +1552,7 @@ export function bindEvent(
  * bindRef(el, () => props.ref)
  * ```
  */
-export function bindRef(el: Element, ref: unknown): Cleanup {
+export function bindRef(el: Element, ref: unknown, registerCleanup = true): Cleanup {
   if (ref == null) return () => {}
 
   const getRef = isReactive(ref) ? (ref as () => unknown) : () => ref
@@ -1589,7 +1589,9 @@ export function bindRef(el: Element, ref: unknown): Cleanup {
     syncRef(getRef())
   }
 
-  registerRootCleanup(clearCurrentRef)
+  if (registerCleanup) {
+    registerRootCleanup(clearCurrentRef)
+  }
 
   return () => {
     disposeTracking?.()
@@ -1788,15 +1790,19 @@ function updateAssignedRefBinding(node: Element, value: unknown): void {
   state.cleanup = undefined
 
   if (value == null) {
-    delete host[REF_ASSIGN_CACHE]
+    if (!state.registeredCleanup) {
+      delete host[REF_ASSIGN_CACHE]
+    }
     return
   }
 
-  state.cleanup = bindRef(node, value)
+  state.cleanup = bindRef(node, value, false)
 
   if (!state.registeredCleanup && getCurrentRoot()) {
     state.registeredCleanup = true
     registerRootCleanup(() => {
+      state.cleanup?.()
+      state.cleanup = undefined
       if (host[REF_ASSIGN_CACHE] === state) {
         delete host[REF_ASSIGN_CACHE]
       }

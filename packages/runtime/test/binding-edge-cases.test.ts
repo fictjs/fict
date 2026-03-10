@@ -22,6 +22,7 @@ import {
   insert,
   callEventHandler,
 } from '../src/internal'
+import { createRootContext, destroyRoot, popRoot, pushRoot } from '../src/lifecycle'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -811,6 +812,36 @@ describe('Binding Edge Cases', () => {
       assign(el, { ref: second }, false, false, prevProps)
       expect(first.current).toBe(null)
       expect(second.current).toBe(el)
+    })
+
+    it('does not accumulate root cleanups when assign churns refs', () => {
+      const el = document.createElement('div')
+      const prevProps: Record<string, unknown> = {}
+      const root = createRootContext()
+      const prev = pushRoot(root)
+      const first = { current: null as Element | null }
+      const second = { current: null as Element | null }
+      const third = { current: null as Element | null }
+
+      try {
+        assign(el, { ref: first }, false, false, prevProps)
+        const cleanupCount = root.cleanups.length
+
+        assign(el, { ref: second }, false, false, prevProps)
+        expect(root.cleanups.length).toBe(cleanupCount)
+        expect(first.current).toBe(null)
+        expect(second.current).toBe(el)
+
+        assign(el, { ref: third }, false, false, prevProps)
+        expect(root.cleanups.length).toBe(cleanupCount)
+        expect(second.current).toBe(null)
+        expect(third.current).toBe(el)
+      } finally {
+        popRoot(prev)
+      }
+
+      destroyRoot(root)
+      expect(third.current).toBe(null)
     })
 
     it('handles on: event syntax', () => {
