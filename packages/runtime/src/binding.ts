@@ -69,12 +69,14 @@ interface StoredEventListener {
 }
 
 interface ChildrenBindingState {
-  cleanup: Cleanup
+  cleanup?: Cleanup
   value: (next?: FictNode | undefined) => FictNode | void
+  owner?: RootContext
 }
 
 interface AssignedRefState {
   cleanup?: Cleanup
+  owner?: RootContext
   registeredCleanup: boolean
 }
 
@@ -1748,7 +1750,15 @@ function updateChildrenBinding(
     [CHILDREN_BINDING_CACHE]?: ChildrenBindingState
   }
   const createFn = createElementFn ?? registeredCreateElement
+  const owner = getCurrentRoot()
   let state = host[CHILDREN_BINDING_CACHE]
+
+  if (state && state.owner !== owner) {
+    state.cleanup?.()
+    state.cleanup = undefined
+    delete host[CHILDREN_BINDING_CACHE]
+    state = undefined
+  }
 
   if (!state) {
     const valueSignal = signal<FictNode | undefined>(value)
@@ -1759,11 +1769,15 @@ function updateChildrenBinding(
     )
     state = {
       cleanup,
+      owner,
       value: valueSignal,
     }
     host[CHILDREN_BINDING_CACHE] = state
     registerRootCleanup(() => {
-      state?.cleanup()
+      state?.cleanup?.()
+      if (state) {
+        state.cleanup = undefined
+      }
       if (host[CHILDREN_BINDING_CACHE] === state) {
         delete host[CHILDREN_BINDING_CACHE]
       }
@@ -1778,9 +1792,19 @@ function updateAssignedRefBinding(node: Element, value: unknown): void {
   const host = node as {
     [REF_ASSIGN_CACHE]?: AssignedRefState
   }
+  const owner = getCurrentRoot()
   let state = host[REF_ASSIGN_CACHE]
+
+  if (state && state.owner !== owner) {
+    state.cleanup?.()
+    state.cleanup = undefined
+    delete host[REF_ASSIGN_CACHE]
+    state = undefined
+  }
+
   if (!state) {
     state = {
+      owner,
       registeredCleanup: false,
     }
     host[REF_ASSIGN_CACHE] = state

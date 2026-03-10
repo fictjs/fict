@@ -844,6 +844,51 @@ describe('Binding Edge Cases', () => {
       expect(third.current).toBe(null)
     })
 
+    it('does not let a disposed root clear refs rebound under another owner', () => {
+      const el = document.createElement('div')
+      const prevProps: Record<string, unknown> = {}
+      const root = createRootContext()
+      const first = { current: null as Element | null }
+      const second = { current: null as Element | null }
+      const prev = pushRoot(root)
+
+      try {
+        assign(el, { ref: first }, false, false, prevProps)
+        assign(el, {}, false, false, prevProps)
+      } finally {
+        popRoot(prev)
+      }
+
+      assign(el, { ref: second }, false, false, prevProps)
+      expect(second.current).toBe(el)
+
+      destroyRoot(root)
+      expect(second.current).toBe(el)
+    })
+
+    it('does not let a disposed root clear children rebound under another owner', async () => {
+      const el = document.createElement('div')
+      const prevProps: Record<string, unknown> = {}
+      const root = createRootContext()
+      const prev = pushRoot(root)
+
+      try {
+        assign(el, { children: 'old' }, false, false, prevProps)
+        await tick()
+        assign(el, {}, false, false, prevProps)
+        await tick()
+      } finally {
+        popRoot(prev)
+      }
+
+      assign(el, { children: 'new' }, false, false, prevProps)
+      await tick()
+      expect(el.textContent).toBe('new')
+
+      destroyRoot(root)
+      expect(el.textContent).toBe('new')
+    })
+
     it('handles on: event syntax', () => {
       const el = document.createElement('button')
       const handler = vi.fn()
