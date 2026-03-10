@@ -31,7 +31,9 @@ import {
 import { createVersionedSignalAccessor } from '../src/list-helpers'
 import {
   handleError,
+  handleSuspend,
   registerErrorHandler,
+  registerSuspenseHandler,
   getCurrentRoot,
   pushRoot,
   popRoot,
@@ -387,6 +389,40 @@ describe('handleError return value', () => {
     popRoot(prev)
 
     expect(result).toBe(true)
+  })
+
+  it('does not invoke the same root error handler twice when it returns false', () => {
+    const root = createRootContext()
+    const prev = pushRoot(root)
+    const handler = vi.fn(() => false)
+
+    registerErrorHandler(handler)
+
+    const result = handleError(new Error('retry'), { source: 'render' }, root)
+
+    popRoot(prev)
+
+    expect(result).toBe(false)
+    expect(handler).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('handleSuspend return value', () => {
+  it('does not invoke the same root suspense handler twice when it returns false', () => {
+    const root = createRootContext()
+    const prev = pushRoot(root)
+    const handler = vi.fn(() => false)
+    const token = createSuspenseToken()
+
+    registerSuspenseHandler(handler)
+
+    const result = handleSuspend(token.token, root)
+
+    popRoot(prev)
+
+    expect(result).toBe(false)
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(root.suspended).toBe(false)
   })
 })
 

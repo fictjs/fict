@@ -29,8 +29,6 @@ type SuspenseHandler = (token: SuspenseToken | PromiseLike<unknown>) => boolean 
 
 let currentRoot: RootContext | undefined
 let currentEffectCleanups: Cleanup[] | undefined
-const globalErrorHandlers = new WeakMap<RootContext, ErrorHandler[]>()
-const globalSuspenseHandlers = new WeakMap<RootContext, SuspenseHandler[]>()
 const rootDevtoolsIds = new WeakMap<RootContext, number>()
 let nextRootDevtoolsId = 0
 
@@ -159,14 +157,8 @@ export function destroyRoot(root: RootContext): void {
   if (root.errorHandlers) {
     root.errorHandlers.length = 0
   }
-  if (globalErrorHandlers.has(root)) {
-    globalErrorHandlers.delete(root)
-  }
   if (root.suspenseHandlers) {
     root.suspenseHandlers.length = 0
-  }
-  if (globalSuspenseHandlers.has(root)) {
-    globalSuspenseHandlers.delete(root)
   }
   disposeRootDevtools(root)
 }
@@ -249,12 +241,6 @@ export function registerErrorHandler(fn: ErrorHandler): void {
     currentRoot.errorHandlers = []
   }
   currentRoot.errorHandlers.push(fn)
-  const existing = globalErrorHandlers.get(currentRoot)
-  if (existing) {
-    existing.push(fn)
-  } else {
-    globalErrorHandlers.set(currentRoot, [fn])
-  }
 }
 
 export function registerSuspenseHandler(fn: SuspenseHandler): void {
@@ -268,12 +254,6 @@ export function registerSuspenseHandler(fn: SuspenseHandler): void {
     currentRoot.suspenseHandlers = []
   }
   currentRoot.suspenseHandlers.push(fn)
-  const existing = globalSuspenseHandlers.get(currentRoot)
-  if (existing) {
-    existing.push(fn)
-  } else {
-    globalSuspenseHandlers.set(currentRoot, [fn])
-  }
 }
 
 export function handleError(err: unknown, info?: ErrorInfo, startRoot?: RootContext): boolean {
@@ -295,24 +275,6 @@ export function handleError(err: unknown, info?: ErrorInfo, startRoot?: RootCont
       }
     }
     root = root.parent
-  }
-  const globalForRoot = startRoot
-    ? globalErrorHandlers.get(startRoot)
-    : currentRoot
-      ? globalErrorHandlers.get(currentRoot)
-      : undefined
-  if (globalForRoot && globalForRoot.length) {
-    for (let i = globalForRoot.length - 1; i >= 0; i--) {
-      const handler = globalForRoot[i]!
-      try {
-        const handled = handler(error, info)
-        if (handled !== false) {
-          return true
-        }
-      } catch (nextErr) {
-        error = nextErr
-      }
-    }
   }
   // The caller (e.g., runCleanupList) can decide whether to rethrow.
   // This makes the API consistent: handleError always returns a boolean
@@ -343,26 +305,6 @@ export function handleSuspend(
       }
     }
     root = root.parent
-  }
-  const globalForRoot =
-    startRoot && globalSuspenseHandlers.get(startRoot)
-      ? globalSuspenseHandlers.get(startRoot)
-      : currentRoot
-        ? globalSuspenseHandlers.get(currentRoot)
-        : undefined
-  if (globalForRoot && globalForRoot.length) {
-    for (let i = globalForRoot.length - 1; i >= 0; i--) {
-      const handler = globalForRoot[i]!
-      const handled = handler(token)
-      if (handled !== false) {
-        // Only set suspended = true when a handler actually handles the token
-        if (originRoot) {
-          originRoot.suspended = true
-          setRootSuspendDevtools(originRoot, true)
-        }
-        return true
-      }
-    }
   }
   return false
 }
