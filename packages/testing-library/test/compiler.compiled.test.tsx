@@ -569,6 +569,7 @@ describe('Compiler Integration: Suspense', () => {
       expect(onResolveCalled).toBe(false)
 
       // Resolve the suspense
+      shouldSuspend = false
       testSuspenseToken.resolve()
       await tick()
       await tick()
@@ -595,6 +596,7 @@ describe('Compiler Integration: Suspense', () => {
       expect(onRejectCalled).toBe(false)
 
       // Reject the suspense
+      shouldSuspend = false
       const testError = new Error('Rejection test')
       testSuspenseToken.reject(testError)
       await tick()

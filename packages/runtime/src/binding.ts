@@ -65,20 +65,20 @@ type NonReactiveRegistryHost = typeof globalThis & {
 
 interface StoredEventListener {
   listener: EventListener
-  options?: boolean | AddEventListenerOptions
+  options: boolean | AddEventListenerOptions | undefined
 }
 
 interface ChildrenBindingState {
-  cleanup?: Cleanup
+  cleanup: Cleanup | undefined
   value: (next?: FictNode | undefined) => FictNode | void
-  owner?: RootContext
+  owner: RootContext | undefined
 }
 
 interface AssignedRefState {
-  cleanup?: Cleanup
-  owner?: RootContext
+  cleanup: Cleanup | undefined
+  owner: RootContext | undefined
   registeredCleanup: boolean
-  value?: (next?: unknown) => unknown | void
+  value: ((next?: unknown) => unknown | void) | undefined
 }
 
 type EventListenerStore = Map<string, StoredEventListener>
@@ -1249,8 +1249,11 @@ function globalEventHandler(e: Event): void {
         if (typeof handler === 'function') {
           callEventHandler(handler, e, node, hasData ? resolvedNodeData : undefined)
         } else if (Array.isArray(handler)) {
-          const tupleData = resolveData(handler[1])
-          callEventHandler(handler[0], e, node, tupleData)
+          const tupleHandler = resolveEventHandlerValue(
+            handler[0] as EventListenerOrEventListenerObject | null | undefined,
+          )
+          const tupleData = resolveEventData(handler[1], e)
+          callEventHandler(tupleHandler, e, node, tupleData)
         }
       })
       if (e.cancelBubble) return false
@@ -1763,7 +1766,6 @@ function bindAssignedChildren(
     let currentHydratedNodes: Node[] | undefined
     let handledError = false
     try {
-      let newNode: Node | Node[]
       const ownerDocument = node.ownerDocument ?? hostRoot?.ownerDocument ?? document
       const createValue = () => {
         if (value instanceof Node) {
@@ -1785,13 +1787,10 @@ function bindAssignedChildren(
         return createFn ? createFn(value) : ownerDocument.createTextNode(String(value))
       }
 
-      if (initialHydrating && isHydratingActive()) {
-        withHydration(node, () => {
-          newNode = createValue()
-        })
-      } else {
-        newNode = createValue()
-      }
+      const newNode =
+        initialHydrating && isHydratingActive()
+          ? withHydration(node, () => createValue())
+          : createValue()
 
       nodes = toNodeArray(newNode, ownerDocument)
       if (root.suspended) {
@@ -1869,12 +1868,13 @@ function updateChildrenBinding(
       () => resolveAssignedChildrenValue(valueSignal() as FictNode | undefined),
       createFn,
     )
-    state = {
+    const nextState: ChildrenBindingState = {
       cleanup,
       owner,
       value: valueSignal,
     }
-    host[CHILDREN_BINDING_CACHE] = state
+    state = nextState
+    host[CHILDREN_BINDING_CACHE] = nextState
     registerRootCleanup(() => {
       state?.cleanup?.()
       if (state) {

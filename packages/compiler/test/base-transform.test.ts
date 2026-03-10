@@ -581,13 +581,9 @@ describe('createFictPlugin (HIR)', () => {
         }
       `)
 
-      // Should generate handler assignment and data getter:
-      //   $$click = select
-      //   $$clickData = () => data.key
-      expect(output).toContain('$$click')
-      expect(output).toContain('$$clickData')
-      // Handler should be assigned directly (runtime will pass data + event)
-      expect(output).toContain('$$click = select')
+      expect(output).toMatch(
+        /addEventListener\([^,]+,\s*"click",\s*\[select,\s*\(\)\s*=>\s*data\.key\],\s*true\)/,
+      )
       expect(output).toContain('data.key')
     })
 
@@ -601,10 +597,8 @@ describe('createFictPlugin (HIR)', () => {
         }
       `)
 
-      // console.log uses standard event delegation (not optimization)
-      // Standard path still creates data binding for tracked variables
-      expect(output).toContain('$$click')
-      // The handler is an arrow function wrapping the console.log call
+      expect(output).toMatch(/addEventListener\([^,]+,\s*"click",/)
+      expect(output).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*\[/)
       expect(output).toContain('console.log(count())')
     })
 
@@ -619,9 +613,8 @@ describe('createFictPlugin (HIR)', () => {
         }
       `)
 
-      // handler is a signal, so should not apply
-      // The pattern should fall through to standard event handling
-      expect(output).toContain('$$click')
+      expect(output).toMatch(/addEventListener\([^,]+,\s*"click",/)
+      expect(output).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*\[/)
     })
   })
 })

@@ -268,8 +268,7 @@ describe('R006: JSX dynamic binding', () => {
         return <button onClick={() => count++}>+</button>
       }
     `)
-    // Fine-grained DOM converts onClick to $$click (delegated) or bindEvent (non-delegated)
-    expect(output).toMatch(/\$\$click|bindEvent.*click|onClick/)
+    expect(output).toMatch(/addEventListener|bindEvent.*click|onClick/)
   })
 
   it('handles multiple dynamic props', () => {

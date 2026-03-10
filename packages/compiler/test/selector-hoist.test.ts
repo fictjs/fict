@@ -166,8 +166,9 @@ describe('P1: Selector Hoist Optimization', () => {
     // row.id text should be treated as static key text (no per-row bindText effect)
     expect(output).not.toMatch(/bindText\([^,]+,\s*\(\)\s*=>\s*__key\)/)
 
-    // Delegated event key payload should be assigned directly (no per-row data getter closure)
-    expect(output).toMatch(/\$\$clickData\s*=\s*__key/)
-    expect(output).not.toMatch(/\$\$clickData\s*=\s*\(\)\s*=>\s*__key/)
+    expect(output).toMatch(/addEventListener\([^,]+,\s*"click",\s*\[remove,\s*__key\],\s*true\)/)
+    expect(output).not.toMatch(
+      /addEventListener\([^,]+,\s*"click",\s*\[remove,\s*\(\)\s*=>\s*__key\],\s*true\)/,
+    )
   })
 })

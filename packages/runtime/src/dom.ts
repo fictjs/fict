@@ -29,7 +29,7 @@ import {
 import { Properties, ChildProperties, getPropAlias, SVGElements, SVGNamespace } from './constants'
 import { getDevtoolsHook } from './devtools'
 import { __fictPushContext, __fictPopContext, __fictGetCurrentComponentId } from './hooks'
-import { claimNodes, isHydratingActive, withHydration } from './hydration'
+import { claimNodes, claimText, isHydratingActive, withHydration } from './hydration'
 import { Fragment } from './jsx'
 import {
   createRootContext,
@@ -231,6 +231,13 @@ function resolveOwnerDocument(ownerDocument?: Document): Document {
   return ownerDocument ?? getCurrentRoot()?.ownerDocument ?? document
 }
 
+function createTextNodeWithHydration(value: string, ownerDocument: Document): Text {
+  if (!isHydratingActive()) {
+    return ownerDocument.createTextNode(value)
+  }
+  return claimText(value, () => ownerDocument.createTextNode(value))
+}
+
 function createElementWithContext(
   node: FictNode,
   namespace: NamespaceContext,
@@ -243,14 +250,14 @@ function createElementWithContext(
 
   // Null/undefined/false - empty placeholder
   if (node === null || node === undefined || node === false) {
-    return ownerDocument.createTextNode('')
+    return createTextNodeWithHydration('', ownerDocument)
   }
 
   // Reactive getter function - resolve to actual node
   if (isReactive(node)) {
     const resolved = (node as () => FictNode)()
     if (resolved === node) {
-      return ownerDocument.createTextNode('')
+      return createTextNodeWithHydration('', ownerDocument)
     }
     return createElementWithContext(resolved, namespace, ownerDocument)
   }
@@ -258,7 +265,7 @@ function createElementWithContext(
   // Non-reactive function values are not valid DOM nodes.
   // Keep callback values inert instead of stringifying function source.
   if (typeof node === 'function') {
-    return ownerDocument.createTextNode('')
+    return createTextNodeWithHydration('', ownerDocument)
   }
 
   if (typeof node === 'object' && node !== null && !(node instanceof Node)) {
@@ -294,11 +301,11 @@ function createElementWithContext(
 
   // Primitive values - text node
   if (typeof node === 'string' || typeof node === 'number') {
-    return ownerDocument.createTextNode(String(node))
+    return createTextNodeWithHydration(String(node), ownerDocument)
   }
 
   if (typeof node === 'boolean') {
-    return ownerDocument.createTextNode('')
+    return createTextNodeWithHydration('', ownerDocument)
   }
 
   // VNode
@@ -619,7 +626,7 @@ function appendChildNode(
   // Cast to Node for remaining logic
   let domNode: Node
   if (typeof child !== 'object' || child === null) {
-    domNode = parentOwnerDocument.createTextNode(String(child ?? ''))
+    domNode = createTextNodeWithHydration(String(child ?? ''), parentOwnerDocument)
   } else {
     domNode = createElementWithContext(child as any, namespace, parentOwnerDocument) as Node
   }

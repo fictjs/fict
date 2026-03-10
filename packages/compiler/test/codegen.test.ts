@@ -362,8 +362,7 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    // Delegated events like click use direct property assignment for performance
-    expect(code).toContain('$$click')
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
     expect(code).toMatch(
       /__next_\d+\s*=>\s*\(count\(__next_\d+\),\s*__next_\d+\)\)\(count\(\)\s*\+\s*1\)/,
     )
@@ -380,8 +379,7 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    // input is a delegated event, uses direct property assignment
-    expect(code).toContain('$$input')
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"input",/)
   })
 
   it('should transform onChange handler', () => {
@@ -436,8 +434,7 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    // Multiple delegated event handlers use $$eventName pattern
-    expect(code).toContain('$$click')
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
     // mouseenter/mouseleave are NOT delegated, use bindEvent
     expect(code).toContain('bindEvent')
   })
@@ -452,8 +449,7 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    // click is delegated, uses direct property assignment
-    expect(code).toContain('$$click')
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
     expect(code).toMatch(/props/)
   })
 
@@ -468,8 +464,8 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    expect(code).toMatch(/\$\$click\s*=\s*\(\)\s*=>\s*_e/)
-    expect(code).not.toMatch(/\$\$click\s*=\s*_e\s*=>\s*_e/)
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",\s*\(\)\s*=>\s*_e,\s*true\)/)
+    expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*_e\s*=>\s*_e,\s*true\)/)
   })
 
   it('preserves call-expression handler semantics', () => {
@@ -514,9 +510,10 @@ describe('event handler transformation', () => {
     // __key text should not create a per-row bindText effect
     expect(code).not.toMatch(/bindText\([^,]+,\s*\(\)\s*=>\s*__key\)/)
 
-    // Delegated event payload for __key should be assigned directly (no closure)
-    expect(code).toMatch(/\$\$clickData\s*=\s*__key/)
-    expect(code).not.toMatch(/\$\$clickData\s*=\s*\(\)\s*=>\s*__key/)
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",\s*\[pick,\s*__key\],\s*true\)/)
+    expect(code).not.toMatch(
+      /addEventListener\([^,]+,\s*"click",\s*\[pick,\s*\(\)\s*=>\s*__key\],\s*true\)/,
+    )
   })
 
   it('keeps optional key member aliases optimized in keyed lists', () => {
@@ -543,8 +540,12 @@ describe('event handler transformation', () => {
 
     expect(code).toContain('__key')
     expect(code).not.toMatch(/bindText\([^,]+,\s*\(\)\s*=>\s*__key\)/)
-    expect(code).toMatch(/\$\$clickData\s*=\s*row\(\)\?\.id/)
-    expect(code).not.toMatch(/\$\$clickData\s*=\s*\(\)\s*=>\s*row\(\)\?\.id/)
+    expect(code).toMatch(
+      /addEventListener\([^,]+,\s*"click",\s*\[pick,\s*row\(\)\?\.id\],\s*true\)/,
+    )
+    expect(code).not.toMatch(
+      /addEventListener\([^,]+,\s*"click",\s*\[pick,\s*\(\)\s*=>\s*row\(\)\?\.id\],\s*true\)/,
+    )
   })
 
   it('does not extract delegated data when handler comes from event param', () => {
@@ -558,9 +559,9 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    expect(code).toContain('$$click')
-    expect(code).not.toContain('$$clickData')
-    expect(code).not.toMatch(/\$\$click\s*=\s*e\s*;/)
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*\[/)
+    expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*e\s*[),]/)
   })
 
   it('does not extract delegated data for unknown global callees', () => {
@@ -574,10 +575,10 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    expect(code).toContain('$$click')
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
     expect(code).toContain('parseInt(id)')
-    expect(code).not.toContain('$$clickData')
-    expect(code).not.toMatch(/\$\$click\s*=\s*parseInt\s*;/)
+    expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*\[/)
+    expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*parseInt\s*[),]/)
   })
 
   it('does not extract delegated data when callee is not a function binding', () => {
@@ -592,10 +593,10 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    expect(code).toContain('$$click')
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
     expect(code).toContain('pick(id)')
-    expect(code).not.toContain('$$clickData')
-    expect(code).not.toMatch(/\$\$click\s*=\s*pick\s*;/)
+    expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*\[/)
+    expect(code).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*pick\s*[),]/)
   })
 })
 
@@ -726,7 +727,7 @@ describe('resumable event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t, { resumable: true })
     const { code } = generate(file)
 
-    expect(code).toContain('$$click')
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
     expect(code).not.toContain('setAttribute(\"on:click\"')
   })
 
@@ -750,8 +751,8 @@ describe('resumable event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t, { resumable: true })
     const { code } = generate(file)
 
-    expect(code).toContain('$$click')
-    expect(code).toContain('$$clickData')
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",\s*\[remove,\s*__key\],\s*true\)/)
     expect(code).not.toContain('setAttribute(\"on:click\"')
   })
 
@@ -1585,8 +1586,7 @@ describe('complex component integration', () => {
     const { code } = generate(file)
 
     expect(code).toContain('__fictUseSignal')
-    // click is a delegated event, uses direct property assignment
-    expect(code).toContain('$$click')
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
   })
 
   it('should handle form component with state', () => {
@@ -1618,9 +1618,8 @@ describe('complex component integration', () => {
     const { code } = generate(file)
 
     expect(code).toContain('__fictUseSignal')
-    // submit is NOT a delegated event, uses bindEvent; input IS delegated
     expect(code).toContain('bindEvent')
-    expect(code).toContain('$$input')
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"input",/)
   })
 
   it('should handle todo list component', () => {

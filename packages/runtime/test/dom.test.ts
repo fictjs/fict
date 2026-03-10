@@ -62,7 +62,7 @@ describe('DOM Module', () => {
         foreignContainer as unknown as HTMLElement,
       )
 
-      expect(createdNode?.ownerDocument).toBe(foreignDoc)
+      expect((createdNode as Node | null)?.ownerDocument).toBe(foreignDoc)
       expect(foreignContainer.firstChild?.ownerDocument).toBe(foreignDoc)
       teardown()
     })
@@ -134,6 +134,37 @@ describe('DOM Module', () => {
       expect(hydratedElement).toBe(existingElement)
       expect(hydratedElement.firstChild).toBe(existingText)
       expect(hydratedElement.textContent).toBe('hello')
+
+      teardown()
+    })
+
+    it('preserves spread children arrays during hydration', () => {
+      container.innerHTML = '<div>hello<span>world</span></div>'
+      const existingElement = container.firstChild as HTMLDivElement
+      const existingText = existingElement.firstChild
+
+      const teardown = hydrateComponent(() => {
+        const factory = template('<div></div>')
+        const el = factory() as HTMLDivElement
+        spread(
+          el,
+          {
+            children: ['hello', { type: 'span', props: { children: 'world' }, key: undefined }],
+          },
+          false,
+          false,
+        )
+        return el
+      }, container)
+
+      const hydratedElement = container.firstChild as HTMLDivElement
+
+      expect(hydratedElement).toBe(existingElement)
+      expect(hydratedElement.firstChild).toBe(existingText)
+      expect(hydratedElement.childNodes).toHaveLength(2)
+      expect((hydratedElement.lastChild as HTMLSpanElement).tagName).toBe('SPAN')
+      expect((hydratedElement.lastChild as HTMLSpanElement).textContent).toBe('world')
+      expect(hydratedElement.textContent).toBe('helloworld')
 
       teardown()
     })
@@ -332,9 +363,9 @@ describe('DOM Module', () => {
 
     describe('Function Components', () => {
       it('renders function components', () => {
-        const MyComponent = (props: { text: string }) => {
+        const MyComponent = (props: Record<string, unknown>) => {
           const div = document.createElement('div')
-          div.textContent = props.text
+          div.textContent = String(props.text)
           return div
         }
 
@@ -859,7 +890,7 @@ describe('DOM Module', () => {
         foreignContainer as unknown as HTMLElement,
       )
 
-      expect(createdNode?.ownerDocument).toBe(foreignDoc)
+      expect((createdNode as Node | null)?.ownerDocument).toBe(foreignDoc)
       expect(foreignContainer.firstChild?.ownerDocument).toBe(foreignDoc)
       teardown()
     })
@@ -1050,7 +1081,7 @@ describe('DOM Module', () => {
         key: undefined,
       })
 
-      expect(result.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
+      expect((result as Element).namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
     })
   })
 
