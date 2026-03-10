@@ -844,6 +844,39 @@ describe('Binding Edge Cases', () => {
       expect(third.current).toBe(null)
     })
 
+    it('does not accumulate root cleanups when assign churns reactive refs', async () => {
+      const el = document.createElement('div')
+      const prevProps: Record<string, unknown> = {}
+      const root = createRootContext()
+      const prev = pushRoot(root)
+      const first = { current: null as Element | null }
+      const second = { current: null as Element | null }
+      const third = { current: null as Element | null }
+
+      try {
+        assign(el, { ref: reactive(() => first) }, false, false, prevProps)
+        await tick()
+        const cleanupCount = root.cleanups.length
+
+        assign(el, { ref: reactive(() => second) }, false, false, prevProps)
+        await tick()
+        expect(root.cleanups.length).toBe(cleanupCount)
+        expect(first.current).toBe(null)
+        expect(second.current).toBe(el)
+
+        assign(el, { ref: reactive(() => third) }, false, false, prevProps)
+        await tick()
+        expect(root.cleanups.length).toBe(cleanupCount)
+        expect(second.current).toBe(null)
+        expect(third.current).toBe(el)
+      } finally {
+        popRoot(prev)
+      }
+
+      destroyRoot(root)
+      expect(third.current).toBe(null)
+    })
+
     it('does not let a disposed root clear refs rebound under another owner', () => {
       const el = document.createElement('div')
       const prevProps: Record<string, unknown> = {}

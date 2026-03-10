@@ -78,6 +78,7 @@ interface AssignedRefState {
   cleanup?: Cleanup
   owner?: RootContext
   registeredCleanup: boolean
+  value?: (next?: unknown) => unknown | void
 }
 
 type EventListenerStore = Map<string, StoredEventListener>
@@ -1608,6 +1609,61 @@ function resolveAssignedChildrenValue(value: FictNode | undefined): FictNode {
   return value ?? null
 }
 
+function resolveAssignedRefValue(value: unknown): unknown {
+  if (isReactive(value)) {
+    return (value as () => unknown)()
+  }
+  return value
+}
+
+function createAssignedRefState(
+  node: Element,
+  owner: RootContext | undefined,
+  initialValue: unknown,
+): AssignedRefState {
+  const valueSignal = signal<unknown>(initialValue)
+  let currentRef: unknown
+
+  const applyRefValue = (refValue: unknown, value: Element | null) => {
+    if (refValue == null) return
+    if (typeof refValue === 'function') {
+      ;(refValue as (el: Element | null) => void)(value)
+    } else if (typeof refValue === 'object' && 'current' in refValue) {
+      ;(refValue as { current: Element | null }).current = value
+    }
+  }
+
+  const clearCurrentRef = () => {
+    if (currentRef == null) return
+    applyRefValue(currentRef, null)
+    currentRef = undefined
+  }
+
+  const syncRef = (nextRef: unknown) => {
+    if (nextRef === currentRef) return
+    clearCurrentRef()
+    currentRef = nextRef
+    applyRefValue(currentRef, node)
+  }
+
+  const disposeTracking = createRenderEffect(() => {
+    syncRef(resolveAssignedRefValue(valueSignal() as unknown))
+  })
+
+  return {
+    cleanup: () => {
+      disposeTracking()
+      clearCurrentRef()
+    },
+    owner,
+    registeredCleanup: false,
+    value: (next?: unknown) => {
+      valueSignal(next)
+      syncRef(resolveAssignedRefValue(next))
+    },
+  }
+}
+
 function bindAssignedChildren(
   node: Element,
   getValue: () => FictNode,
@@ -1802,31 +1858,32 @@ function updateAssignedRefBinding(node: Element, value: unknown): void {
     state = undefined
   }
 
+  if (!state && value == null) {
+    return
+  }
+
   if (!state) {
-    state = {
-      owner,
-      registeredCleanup: false,
-    }
+    state = createAssignedRefState(node, owner, value)
     host[REF_ASSIGN_CACHE] = state
   }
 
-  state.cleanup?.()
-  state.cleanup = undefined
+  state.value?.(value)
 
   if (value == null) {
     if (!state.registeredCleanup) {
+      state.cleanup?.()
+      state.cleanup = undefined
       delete host[REF_ASSIGN_CACHE]
     }
     return
   }
-
-  state.cleanup = bindRef(node, value, false)
 
   if (!state.registeredCleanup && getCurrentRoot()) {
     state.registeredCleanup = true
     registerRootCleanup(() => {
       state.cleanup?.()
       state.cleanup = undefined
+      state.value = undefined
       if (host[REF_ASSIGN_CACHE] === state) {
         delete host[REF_ASSIGN_CACHE]
       }
