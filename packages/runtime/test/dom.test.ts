@@ -732,6 +732,22 @@ describe('DOM Module', () => {
         dispose()
         expect(ref.current).toBeNull()
       })
+
+      it('still assigns refs outside a root while warning in dev', () => {
+        const ref = { current: null as Element | null }
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+        const result = createElement({
+          type: 'div',
+          props: { ref },
+          key: undefined,
+        })
+
+        expect(ref.current).toBe(result as Element)
+        expect(warn).toHaveBeenCalledTimes(1)
+
+        warn.mockRestore()
+      })
     })
 
     describe('dangerouslySetInnerHTML', () => {
