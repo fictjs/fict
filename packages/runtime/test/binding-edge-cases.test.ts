@@ -676,6 +676,8 @@ describe('Binding Edge Cases', () => {
 
       await tick()
       expect(el.textContent).toBe('hello')
+      expect(el.innerHTML).toBe('hello')
+      expect(Array.from(el.childNodes).map(node => node.nodeType)).toEqual([Node.TEXT_NODE])
       dispose()
     })
 

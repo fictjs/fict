@@ -1598,6 +1598,139 @@ function resolveAssignedChildrenValue(value: FictNode | undefined): FictNode {
   return value ?? null
 }
 
+function bindAssignedChildren(
+  node: Element,
+  getValue: () => FictNode,
+  createElementFn?: CreateElementFn,
+): Cleanup {
+  const hostRoot = getCurrentRoot()
+  const createFn = createElementFn ?? registeredCreateElement
+  let currentNodes: Node[] = []
+  let currentText: Text | null = null
+  let currentRoot: RootContext | null = null
+
+  const clearCurrentNodes = () => {
+    if (currentRoot) {
+      destroyRoot(currentRoot)
+      currentRoot = null
+    }
+    if (currentNodes.length > 0) {
+      removeNodes(currentNodes)
+      currentNodes = []
+    }
+    currentText = null
+  }
+
+  const setTextNode = (textValue: string, shouldInsert: boolean) => {
+    if (!shouldInsert) {
+      clearCurrentNodes()
+      return
+    }
+
+    const textNode = currentText ?? (node.ownerDocument ?? document).createTextNode(textValue)
+    if (textNode.data !== textValue) {
+      textNode.data = textValue
+    }
+
+    if (currentNodes.length === 1 && currentNodes[0] === textNode) {
+      currentText = textNode
+      return
+    }
+
+    if (currentRoot) {
+      destroyRoot(currentRoot)
+      currentRoot = null
+    }
+    if (currentNodes.length > 0) {
+      removeNodes(currentNodes)
+      currentNodes = []
+    }
+
+    node.replaceChildren(textNode)
+    currentText = textNode
+    currentNodes = [textNode]
+  }
+
+  const dispose = createRenderEffect(() => {
+    const value = getValue()
+    const isPrimitive =
+      value == null ||
+      value === false ||
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean'
+
+    if (isPrimitive) {
+      const textValue = value == null || value === false ? '' : String(value)
+      const shouldInsert = value != null && value !== false
+      setTextNode(textValue, shouldInsert)
+      return
+    }
+
+    clearCurrentNodes()
+
+    const root = createRootContext(hostRoot)
+    const prev = pushRoot(root)
+    let nodes: Node[]
+    let handledError = false
+    try {
+      let newNode: Node | Node[]
+      const ownerDocument = node.ownerDocument ?? hostRoot?.ownerDocument ?? document
+
+      if (value instanceof Node) {
+        newNode = value
+      } else if (Array.isArray(value)) {
+        if (value.every(v => v instanceof Node)) {
+          newNode = value as Node[]
+        } else if (createFn) {
+          const mapped: Node[] = []
+          for (const item of value) {
+            mapped.push(...toNodeArray(createFn(item as any), ownerDocument))
+          }
+          newNode = mapped
+        } else {
+          newNode = ownerDocument.createTextNode(String(value))
+        }
+      } else {
+        newNode = createFn ? createFn(value) : ownerDocument.createTextNode(String(value))
+      }
+
+      nodes = toNodeArray(newNode, ownerDocument)
+      if (root.suspended) {
+        handledError = true
+        destroyRoot(root)
+        return
+      }
+      node.replaceChildren(...nodes)
+    } catch (err) {
+      if (handleSuspend(err as any, root)) {
+        handledError = true
+        destroyRoot(root)
+        return
+      }
+      if (handleError(err, { source: 'renderChild' }, root)) {
+        handledError = true
+        destroyRoot(root)
+        return
+      }
+      throw err
+    } finally {
+      popRoot(prev)
+      if (!handledError) {
+        flushOnMount(root)
+      }
+    }
+
+    currentRoot = root
+    currentNodes = nodes
+  })
+
+  return () => {
+    dispose()
+    clearCurrentNodes()
+  }
+}
+
 function updateChildrenBinding(
   node: Element,
   value: FictNode | undefined,
@@ -1611,8 +1744,8 @@ function updateChildrenBinding(
 
   if (!state) {
     const valueSignal = signal<FictNode | undefined>(value)
-    const cleanup = insert(
-      node as unknown as ParentNode & Node,
+    const cleanup = bindAssignedChildren(
+      node,
       () => resolveAssignedChildrenValue(valueSignal() as FictNode | undefined),
       createFn,
     )

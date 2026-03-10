@@ -382,8 +382,11 @@ describe('compiled templates DOM integration', () => {
     const container = document.createElement('div')
     document.body.appendChild(container)
     const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
 
     expect(container.textContent).toBe('hello')
+    expect(box.innerHTML).toBe('hello')
+    expect(Array.from(box.childNodes).map(node => node.nodeType)).toEqual([Node.TEXT_NODE])
 
     teardown()
     container.remove()
