@@ -141,6 +141,22 @@ export function analyzeHookReturnInfo(
     }
   }
 
+  const copyHookInfo = (source: HookReturnInfo | null) => {
+    if (!source) return
+    if (source.objectProps) {
+      info.objectProps = new Map(source.objectProps)
+      hasInfo = true
+    }
+    if (source.arrayProps) {
+      info.arrayProps = new Map(source.arrayProps)
+      hasInfo = true
+    }
+    if (source.directAccessor) {
+      info.directAccessor = source.directAccessor
+      hasInfo = true
+    }
+  }
+
   const exprAccessorKind = (name: string | undefined): HookAccessorKind | undefined => {
     if (!name) return undefined
     const base = deSSAVarName(name)
@@ -183,6 +199,11 @@ export function analyzeHookReturnInfo(
       recordAccessor(kind, () => {
         info.directAccessor = kind
       })
+    } else if (
+      (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') &&
+      expr.callee.kind === 'Identifier'
+    ) {
+      copyHookInfo(getHookReturnInfo(expr.callee.name, ctx, ops))
     }
   }
 
