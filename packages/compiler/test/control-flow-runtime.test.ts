@@ -67,4 +67,29 @@ describe('control flow runtime regressions', () => {
     const resolved = typeof result === 'function' ? result() : result
     expect(resolved).toBe(5)
   })
+
+  it('keeps partial while-loop control flow inline when memoization would be incomplete', () => {
+    const result = compileAndRunHook<number | (() => number)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let n = $state(3)
+          let total = 0
+          let i = 0
+
+          while (i < n) {
+            total += 1
+            i++
+          }
+
+          return total
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe(3)
+  })
 })

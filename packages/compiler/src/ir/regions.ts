@@ -804,8 +804,14 @@ function lowerStructuredNodeWithRegions(
 interface RegionEmitContext {
   regionResult: RegionResult
   emittedRegions: Set<number>
+  disabledRegions: Set<number>
   pendingInstructions: Map<number, Instruction[]>
   rootNode: StructuredNode
+}
+
+interface ControlFlowRegionState {
+  region?: Region
+  partialRegionIds: Set<number>
 }
 
 /**
@@ -824,6 +830,7 @@ function lowerStructuredNodeInternal(
     ? {
         regionResult,
         emittedRegions: new Set<number>(),
+        disabledRegions: new Set<number>(),
         pendingInstructions: new Map<number, Instruction[]>(),
         rootNode: node,
       }
@@ -875,12 +882,24 @@ function lowerNodeWithRegionContext(
           const region = findRegionForInstruction(child.instruction, regionCtx)
           instructionBuffer.push({ instr: child.instruction, region })
         } else {
+          const controlFlowState = analyzeControlFlowRegion(child, regionCtx)
+          controlFlowState.partialRegionIds.forEach(id => regionCtx?.disabledRegions.add(id))
           // Flush pending instructions before control flow
-          stmts.push(...flushInstructionBuffer(instructionBuffer, t, ctx, declaredVars, regionCtx))
+          stmts.push(
+            ...flushInstructionBuffer(
+              instructionBuffer,
+              t,
+              ctx,
+              declaredVars,
+              regionCtx,
+              controlFlowState.partialRegionIds,
+            ),
+          )
           instructionBuffer.length = 0
-          const controlFlowRegion = findControlFlowRegionForNode(child, regionCtx)
+          const controlFlowRegion = controlFlowState.region
           if (
             controlFlowRegion?.shouldMemoize &&
+            !regionCtx?.disabledRegions.has(controlFlowRegion.id) &&
             regionCtx?.emittedRegions.has(controlFlowRegion.id)
           ) {
             continue
@@ -908,7 +927,12 @@ function lowerNodeWithRegionContext(
     case 'instruction': {
       // Single instruction - check if it belongs to a region
       const region = findRegionForInstruction(node.instruction, regionCtx)
-      if (region && region.shouldMemoize && !regionCtx?.emittedRegions.has(region.id)) {
+      if (
+        region &&
+        region.shouldMemoize &&
+        !regionCtx?.disabledRegions.has(region.id) &&
+        !regionCtx?.emittedRegions.has(region.id)
+      ) {
         // Emit the entire region with memo
         regionCtx?.emittedRegions.add(region.id)
         return generateRegionStatements(region, t, declaredVars, ctx, regionCtx)
@@ -1634,11 +1658,13 @@ function findRegionForInstruction(
   return undefined
 }
 
-function findControlFlowRegionForNode(
+function analyzeControlFlowRegion(
   node: StructuredNode,
   regionCtx?: RegionEmitContext,
-): Region | undefined {
-  if (!regionCtx || node.kind === 'instruction') return undefined
+): ControlFlowRegionState {
+  if (!regionCtx || node.kind === 'instruction') {
+    return { partialRegionIds: new Set() }
+  }
 
   const regionIds = new Set<number>()
   let sawInstruction = false
@@ -1688,14 +1714,25 @@ function findControlFlowRegionForNode(
 
   visit(node)
 
-  if (!sawInstruction || hasUnownedInstruction || regionIds.size !== 1) {
-    return undefined
+  if (!sawInstruction || regionIds.size === 0) {
+    return { partialRegionIds: new Set() }
+  }
+
+  if (hasUnownedInstruction) {
+    return { partialRegionIds: new Set(regionIds) }
+  }
+
+  if (regionIds.size !== 1) {
+    return { partialRegionIds: new Set() }
   }
 
   const [regionId] = Array.from(regionIds)
-  return regionCtx.regionResult.regions.find(
-    region => region.id === regionId && region.hasControlFlow,
-  )
+  return {
+    region: regionCtx.regionResult.regions.find(
+      region => region.id === regionId && region.hasControlFlow,
+    ),
+    partialRegionIds: new Set(),
+  }
 }
 
 /**
@@ -1719,11 +1756,16 @@ function flushInstructionBuffer(
   ctx: CodegenContext,
   declaredVars: Set<string>,
   regionCtx?: RegionEmitContext,
+  suppressedRegionIds?: Set<number>,
 ): BabelCore.types.Statement[] {
   const stmts: BabelCore.types.Statement[] = []
 
   for (const item of buffer) {
-    if (item.region) {
+    if (
+      item.region &&
+      !suppressedRegionIds?.has(item.region.id) &&
+      !regionCtx?.disabledRegions.has(item.region.id)
+    ) {
       if (regionCtx?.emittedRegions.has(item.region.id)) {
         continue
       }
