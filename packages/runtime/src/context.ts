@@ -56,6 +56,7 @@ import {
   type RootContext,
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
+import { untrack } from './signal'
 import type { BaseProps, FictNode } from './types'
 
 // ============================================================================
@@ -222,7 +223,13 @@ export function createContext<T>(defaultValue: T): Context<T> {
     createRenderEffect(() => {
       // Update context value on re-render (if value prop changes reactively)
       contextMap.set(id, props.value)
-      renderChildren(props.children)
+
+      // Provider value updates should not subscribe this effect to arbitrary
+      // signal reads that happen while rendering descendants. Child trees own
+      // their own reactivity; the provider only needs to react to its props.
+      untrack(() => {
+        renderChildren(props.children)
+      })
     })
 
     return fragment
