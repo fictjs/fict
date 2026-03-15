@@ -878,6 +878,13 @@ function lowerNodeWithRegionContext(
           // Flush pending instructions before control flow
           stmts.push(...flushInstructionBuffer(instructionBuffer, t, ctx, declaredVars, regionCtx))
           instructionBuffer.length = 0
+          const controlFlowRegion = findControlFlowRegionForNode(child, regionCtx)
+          if (
+            controlFlowRegion?.shouldMemoize &&
+            regionCtx?.emittedRegions.has(controlFlowRegion.id)
+          ) {
+            continue
+          }
           stmts.push(...lowerNodeWithRegionContext(child, t, ctx, declaredVars, regionCtx))
         }
       }
@@ -1625,6 +1632,70 @@ function findRegionForInstruction(
     }
   }
   return undefined
+}
+
+function findControlFlowRegionForNode(
+  node: StructuredNode,
+  regionCtx?: RegionEmitContext,
+): Region | undefined {
+  if (!regionCtx || node.kind === 'instruction') return undefined
+
+  const regionIds = new Set<number>()
+  let sawInstruction = false
+  let hasUnownedInstruction = false
+
+  const visit = (current: StructuredNode): void => {
+    switch (current.kind) {
+      case 'instruction': {
+        sawInstruction = true
+        const owner = findRegionForInstruction(current.instruction, regionCtx)
+        if (!owner) {
+          hasUnownedInstruction = true
+          return
+        }
+        regionIds.add(owner.id)
+        return
+      }
+      case 'sequence':
+        current.nodes.forEach(visit)
+        return
+      case 'block':
+        current.statements.forEach(visit)
+        return
+      case 'if':
+        visit(current.consequent)
+        if (current.alternate) visit(current.alternate)
+        return
+      case 'while':
+      case 'doWhile':
+      case 'for':
+      case 'forOf':
+      case 'forIn':
+        visit(current.body)
+        return
+      case 'switch':
+        current.cases.forEach(c => visit(c.body))
+        return
+      case 'try':
+        visit(current.block)
+        if (current.handler) visit(current.handler.body)
+        if (current.finalizer) visit(current.finalizer)
+        return
+      default:
+        return
+    }
+  }
+
+  visit(node)
+
+  if (!sawInstruction || hasUnownedInstruction || regionIds.size !== 1) {
+    return undefined
+  }
+
+  const [regionId] = Array.from(regionIds)
+  return regionCtx.regionResult.regions.find(
+    region => region.id === regionId && region.hasControlFlow,
+  )
 }
 
 /**
