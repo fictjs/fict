@@ -618,6 +618,10 @@ function structurizeBranch(
   // Check if this is a loop header
   const isLoopHeader = ctx.loopHeaders.has(block.id)
   if (isLoopHeader) {
+    const forLoop = detectForLoop(ctx, block.id, consequent, alternate)
+    if (forLoop) {
+      return structurizeForLoop(ctx, test, forLoop)
+    }
     return structurizeWhileLoop(ctx, block, test, consequent, alternate)
   }
 
@@ -625,12 +629,89 @@ function structurizeBranch(
   const consBackEdge = `${consequent}->${block.id}`
   const altBackEdge = `${alternate}->${block.id}`
   if (ctx.backEdges.has(consBackEdge) || ctx.backEdges.has(altBackEdge)) {
+    const forLoop = detectForLoop(ctx, block.id, consequent, alternate)
+    if (forLoop) {
+      return structurizeForLoop(ctx, test, forLoop)
+    }
     // This block is the condition of a while loop
     return structurizeWhileLoop(ctx, block, test, consequent, alternate)
   }
 
   // Regular if-else structure
   return structurizeIfElse(ctx, test, consequent, alternate)
+}
+
+interface CanonicalForLoop {
+  headerBlockId: BlockId
+  bodyBlockId: BlockId
+  exitBlockId: BlockId
+  updateBlockId: BlockId
+  updateInstructions: Instruction[]
+}
+
+function detectForLoop(
+  ctx: StructurizeContext,
+  headerBlockId: BlockId,
+  consequentId: BlockId,
+  alternateId: BlockId,
+): CanonicalForLoop | null {
+  const predecessors = ctx.predecessors.get(headerBlockId) ?? []
+  const backEdgePreds = predecessors.filter(pred => ctx.backEdges.has(`${pred}->${headerBlockId}`))
+  if (backEdgePreds.length !== 1) return null
+
+  const updateBlockId = backEdgePreds[0]
+  if (
+    updateBlockId === undefined ||
+    updateBlockId === consequentId ||
+    updateBlockId === alternateId
+  ) {
+    return null
+  }
+
+  const updateBlock = ctx.blockMap.get(updateBlockId)
+  if (!updateBlock) return null
+  if (updateBlock.terminator.kind !== 'Jump' || updateBlock.terminator.target !== headerBlockId) {
+    return null
+  }
+
+  const consequentReachable = collectReachableBlocks(ctx, consequentId, new Set()).has(
+    updateBlockId,
+  )
+  const alternateReachable = collectReachableBlocks(ctx, alternateId, new Set()).has(updateBlockId)
+  if (!consequentReachable || alternateReachable) return null
+
+  return {
+    headerBlockId,
+    bodyBlockId: consequentId,
+    exitBlockId: alternateId,
+    updateBlockId,
+    updateInstructions: updateBlock.instructions,
+  }
+}
+
+function structurizeForLoop(
+  ctx: StructurizeContext,
+  test: Expression,
+  loop: CanonicalForLoop,
+): StructuredNode {
+  const body = structurizeBlockUntilJoin(ctx, loop.bodyBlockId, loop.updateBlockId)
+  ctx.emitted.add(loop.updateBlockId)
+
+  const forNode: StructuredNode = {
+    kind: 'for',
+    init: null,
+    test,
+    update: loop.updateInstructions,
+    body,
+    headerBlock: loop.headerBlockId,
+  }
+
+  if (!ctx.emitted.has(loop.exitBlockId)) {
+    const exit = structurizeBlock(ctx, loop.exitBlockId)
+    return { kind: 'sequence', nodes: [forNode, exit] }
+  }
+
+  return forNode
 }
 
 /**

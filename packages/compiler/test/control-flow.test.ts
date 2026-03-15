@@ -638,6 +638,37 @@ describe('Fict Compiler - Control Flow', () => {
       `
       expect(() => runTransform(input)).toThrow('cannot be declared inside loops')
     })
+
+    it('preserves for-loop updates on continue inside nested functions', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let n = $state(3)
+          const fn = () => {
+            let total = 0
+            for (let i = 0; i < n; i++) {
+              if (i === 1) {
+                continue
+              }
+              total += i
+            }
+            return total
+          }
+          return <button>{fn()}</button>
+        }
+      `
+      const output = runTransform(input)
+
+      const hasStructuredForLoop = /for\s*\(\s*(?:let i = 0\s*)?;\s*i < n\(\);\s*i\+\+\s*\)/.test(
+        output,
+      )
+      const hasSafeContinueUpdate = /if\s*\(i === 1\)\s*\{\s*i\+\+;\s*continue;\s*\}/.test(output)
+
+      expect(hasStructuredForLoop || hasSafeContinueUpdate).toBe(true)
+      expect(output).not.toMatch(
+        /while\s*\(i < n\(\)\)\s*\{[\s\S]*?if\s*\(i === 1\)\s*\{\s*continue;\s*\}/,
+      )
+    })
   })
 
   describe('Nested control flow', () => {
