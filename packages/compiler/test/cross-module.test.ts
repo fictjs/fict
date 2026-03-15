@@ -153,6 +153,44 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('propagates hook return metadata through namespace wrapper imports', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { directAccessor: "signal" } */
+        export function useCounter() {
+          const count = $state(0)
+          return count
+        }
+      `
+      const wrapperSource = `
+        import { useCounter } from './use-counter'
+
+        export function useWrapped() {
+          return useCounter()
+        }
+      `
+      const appSource = `
+        import * as wrapper from './wrapper'
+
+        export function App() {
+          const count = wrapper.useWrapped()
+          return <div>{count}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'use-counter.tsx'))
+      transform(wrapperSource, { moduleMetadata }, path.join(baseDir, 'wrapper.tsx'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-wrapper-ns.tsx'),
+      )
+
+      expect(output).toMatch(/count\(\)/)
+    })
+
     it('propagates createSignal exports from advanced modules (alias)', () => {
       const storeSource = `
         import { createSignal as makeSignal } from 'fict/advanced'

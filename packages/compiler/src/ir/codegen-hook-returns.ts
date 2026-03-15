@@ -221,10 +221,10 @@ export function getHookReturnInfo(
   ctx: CodegenContext,
   ops: HookReturnInfoAnalysisOps,
 ): HookReturnInfo | null {
-  if (!isHookName(name)) return null
   if (!ctx.hookReturnInfo) ctx.hookReturnInfo = new Map()
   const cached = ctx.hookReturnInfo.get(name)
   if (cached) return cached
+  if (!isHookName(name)) return null
 
   const fn = ctx.programFunctions?.get(name)
   if (!fn) return null

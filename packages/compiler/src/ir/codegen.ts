@@ -543,6 +543,32 @@ export function resolveHookMemberValue(
   return { member, kind }
 }
 
+function resolveNamespaceHookCallInfo(
+  expr: Expression,
+  ctx: CodegenContext,
+): { hookName: string; info: HookReturnInfo } | null {
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return null
+  const callee = expr.callee
+  if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') return null
+  if (callee.object.kind !== 'Identifier') return null
+
+  const namespaceName = deSSAVarName(callee.object.name)
+  const nsMeta = ctx.importedNamespaces?.get(namespaceName)
+  if (!nsMeta?.hooks) return null
+
+  const propName = getStaticPropName(callee.property as Expression, callee.computed)
+  if (typeof propName !== 'string') return null
+
+  const serialized = nsMeta.hooks[propName]
+  if (!serialized) return null
+
+  const hookName = `${namespaceName}.${propName}`
+  const info = deserializeHookReturnInfo(serialized)
+  ctx.hookReturnInfo = ctx.hookReturnInfo ?? new Map()
+  ctx.hookReturnInfo.set(hookName, info)
+  return { hookName, info }
+}
+
 function withNonReactiveScope<T>(ctx: CodegenContext, fn: () => T): T {
   const prevDepth = ctx.nonReactiveScopeDepth ?? 0
   ctx.nonReactiveScopeDepth = prevDepth + 1
@@ -767,6 +793,16 @@ function lowerInstruction(
         ctx.signalVars?.add(baseName)
         ctx.trackedVars.add(baseName)
       } else if (retInfo?.directAccessor === 'memo') {
+        ctx.memoVars?.add(baseName)
+      }
+    }
+    const namespaceHookCall = resolveNamespaceHookCallInfo(instr.value, ctx)
+    if (namespaceHookCall) {
+      ctx.hookResultVarMap?.set(baseName, namespaceHookCall.hookName)
+      if (namespaceHookCall.info.directAccessor === 'signal') {
+        ctx.signalVars?.add(baseName)
+        ctx.trackedVars.add(baseName)
+      } else if (namespaceHookCall.info.directAccessor === 'memo') {
         ctx.memoVars?.add(baseName)
       }
     }
@@ -4580,6 +4616,11 @@ function lowerFunctionWithRegions(
         ) {
           hookResultVars.add(target)
           ctx.hookResultVarMap?.set(target, instr.value.callee.name)
+        }
+        const namespaceHookCall = resolveNamespaceHookCallInfo(instr.value, ctx)
+        if (namespaceHookCall) {
+          hookResultVars.add(target)
+          ctx.hookResultVarMap?.set(target, namespaceHookCall.hookName)
         }
         if (
           instr.value.kind === 'MemberExpression' &&
