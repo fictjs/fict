@@ -63,6 +63,47 @@ describe('buildHIR', () => {
     expect(printed.toLowerCase()).toContain('jump')
     expect(printed.toLowerCase()).toContain('branch')
   })
+
+  it('preserves nested function directive metadata', () => {
+    const ast = parseFile(`
+      function View() {
+        const noMemo = () => {
+          "use no memo"
+          return 1
+        }
+        const pure = function () {
+          "use pure"
+          return 2
+        }
+        return noMemo() + pure()
+      }
+    `)
+    const hir = buildHIR(ast)
+    const instructions = hir.functions[0]?.blocks.flatMap(block => block.instructions) ?? []
+    const noMemoFn = instructions.find(
+      instr =>
+        instr.kind === 'Assign' &&
+        instr.target.name === 'noMemo' &&
+        instr.value.kind === 'ArrowFunction',
+    )
+    const pureFn = instructions.find(
+      instr =>
+        instr.kind === 'Assign' &&
+        instr.target.name === 'pure' &&
+        instr.value.kind === 'FunctionExpression',
+    )
+
+    expect(
+      noMemoFn && noMemoFn.kind === 'Assign' && noMemoFn.value.kind === 'ArrowFunction'
+        ? noMemoFn.value.noMemo
+        : undefined,
+    ).toBe(true)
+    expect(
+      pureFn && pureFn.kind === 'Assign' && pureFn.value.kind === 'FunctionExpression'
+        ? pureFn.value.pure
+        : undefined,
+    ).toBe(true)
+  })
 })
 
 describe('buildHIR - complex control flow', () => {

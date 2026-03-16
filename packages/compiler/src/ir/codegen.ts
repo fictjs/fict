@@ -1383,6 +1383,8 @@ function lowerExpressionImpl(
         hasExpressionBody: fnExpr.kind === 'ArrowFunction' && fnExpr.isExpression,
         isAsync: fnExpr.isAsync ?? false,
         isGenerator: fnExpr.kind === 'FunctionExpression' ? !!fnExpr.isGenerator : false,
+        noMemo: fnExpr.noMemo ?? false,
+        pure: fnExpr.pure ?? false,
       },
       loc: fnExpr.loc ?? null,
     }
@@ -1792,36 +1794,42 @@ function lowerExpressionImpl(
         withFunctionScope(
           shadowed,
           () => {
+            const prevNoMemo = ctx.noMemo
+            ctx.noMemo = !!(prevNoMemo || expr.noMemo)
             let fn: BabelCore.types.ArrowFunctionExpression
 
-            if (expr.isExpression && !Array.isArray(expr.body)) {
-              // Rule L: Enable getter caching for sync arrow functions with expression body
-              const { result: bodyExpr, cacheDeclarations } = withGetterCache(ctx, () =>
-                lowerTrackedExpression(expr.body as Expression, ctx),
-              )
-              if (cacheDeclarations.length > 0) {
-                // Need to convert to block body to include cache declarations
+            try {
+              if (expr.isExpression && !Array.isArray(expr.body)) {
+                // Rule L: Enable getter caching for sync arrow functions with expression body
+                const { result: bodyExpr, cacheDeclarations } = withGetterCache(ctx, () =>
+                  lowerTrackedExpression(expr.body as Expression, ctx),
+                )
+                if (cacheDeclarations.length > 0) {
+                  // Need to convert to block body to include cache declarations
+                  fn = t.arrowFunctionExpression(
+                    paramIds,
+                    t.blockStatement([...cacheDeclarations, t.returnStatement(bodyExpr)]),
+                  )
+                } else {
+                  fn = t.arrowFunctionExpression(paramIds, bodyExpr)
+                }
+              } else if (Array.isArray(expr.body)) {
+                // Rule L: Enable getter caching for sync arrow functions with block body
+                const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
+                  lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
+                )
                 fn = t.arrowFunctionExpression(
                   paramIds,
-                  t.blockStatement([...cacheDeclarations, t.returnStatement(bodyExpr)]),
+                  t.blockStatement([...cacheDeclarations, ...stmts]),
                 )
               } else {
-                fn = t.arrowFunctionExpression(paramIds, bodyExpr)
+                fn = t.arrowFunctionExpression(paramIds, t.blockStatement([]))
               }
-            } else if (Array.isArray(expr.body)) {
-              // Rule L: Enable getter caching for sync arrow functions with block body
-              const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
-                lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
-              )
-              fn = t.arrowFunctionExpression(
-                paramIds,
-                t.blockStatement([...cacheDeclarations, ...stmts]),
-              )
-            } else {
-              fn = t.arrowFunctionExpression(paramIds, t.blockStatement([]))
+              fn.async = expr.isAsync ?? false
+              return fn
+            } finally {
+              ctx.noMemo = prevNoMemo
             }
-            fn.async = expr.isAsync ?? false
-            return fn
           },
           localDeclared,
         ),
@@ -1840,27 +1848,33 @@ function lowerExpressionImpl(
         withFunctionScope(
           shadowed,
           () => {
+            const prevNoMemo = ctx.noMemo
+            ctx.noMemo = !!(prevNoMemo || expr.noMemo)
             let fn: BabelCore.types.FunctionExpression
-            if (Array.isArray(expr.body)) {
-              // Rule L: Enable getter caching for sync function expressions
-              const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
-                lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
-              )
-              fn = t.functionExpression(
-                expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
-                paramIds,
-                t.blockStatement([...cacheDeclarations, ...stmts]),
-              )
-            } else {
-              fn = t.functionExpression(
-                expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
-                paramIds,
-                t.blockStatement([]),
-              )
+            try {
+              if (Array.isArray(expr.body)) {
+                // Rule L: Enable getter caching for sync function expressions
+                const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
+                  lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
+                )
+                fn = t.functionExpression(
+                  expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
+                  paramIds,
+                  t.blockStatement([...cacheDeclarations, ...stmts]),
+                )
+              } else {
+                fn = t.functionExpression(
+                  expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
+                  paramIds,
+                  t.blockStatement([]),
+                )
+              }
+              fn.async = expr.isAsync ?? false
+              fn.generator = expr.isGenerator ?? false
+              return fn
+            } finally {
+              ctx.noMemo = prevNoMemo
             }
-            fn.async = expr.isAsync ?? false
-            fn.generator = expr.isGenerator ?? false
-            return fn
           },
           localDeclared,
         ),

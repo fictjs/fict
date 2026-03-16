@@ -2138,11 +2138,13 @@ function expressionContainsImpureMarkers(expr: Expression): boolean {
       if (expressionContainsImpureMarkers(expr.callee as Expression)) return true
       return expr.arguments.some(arg => expressionContainsImpureMarkers(arg as Expression))
     case 'ArrowFunction':
+      if (expr.pure) return false
       if (expr.isExpression) {
         return expressionContainsImpureMarkers(expr.body as Expression)
       }
       return blocksContainImpureMarkers(expr.body as BasicBlock[])
     case 'FunctionExpression':
+      if (expr.pure) return false
       return blocksContainImpureMarkers(expr.body)
     case 'AssignmentExpression':
       return (

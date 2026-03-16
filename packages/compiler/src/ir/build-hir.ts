@@ -2969,6 +2969,8 @@ function convertExpression(
         body: nested.blocks,
         isExpression: false,
         isAsync: node.async,
+        noMemo: nested.meta?.noMemo,
+        pure: nested.meta?.pure,
         reactiveScope: options?.reactiveScope,
         loc,
       }
@@ -3013,6 +3015,8 @@ function convertExpression(
       body: nested.blocks,
       isAsync: node.async,
       isGenerator: node.generator,
+      noMemo: nested.meta?.noMemo,
+      pure: nested.meta?.pure,
       reactiveScope: options?.reactiveScope,
       loc,
     }

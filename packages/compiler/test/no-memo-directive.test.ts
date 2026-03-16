@@ -33,4 +33,21 @@ describe('"use no memo" directive', () => {
     expect(output).not.toContain('__fictMemo')
     expect(output).toContain('count()')
   })
+
+  it('propagates nested function-scoped directives into nested lowering', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+      export function View() {
+        let count = $state(0)
+        const Inner = () => {
+          "use no memo";
+          return <span>{count}</span>
+        }
+        return <div>{Inner()}</div>
+      }
+    `)
+
+    expect(output).not.toMatch(/const Inner = \(\) => \{\s*return __fictUseMemo/)
+    expect(output).toContain('count()')
+  })
 })
