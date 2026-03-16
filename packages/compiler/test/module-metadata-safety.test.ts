@@ -346,6 +346,66 @@ describe('module metadata safety', () => {
     }
   })
 
+  it('refreshes disk-loaded metadata when sidecars change', async () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_refresh__')
+    const importer = path.join(baseDir, 'consumer.ts')
+    const depPath = path.join(baseDir, 'dep.ts')
+    const depMetaPath = `${depPath}.fict.meta.json`
+    mkdirSync(baseDir, { recursive: true })
+
+    try {
+      writeFileSync(
+        depMetaPath,
+        JSON.stringify({
+          exports: {
+            value: 'signal',
+          },
+        }),
+        'utf8',
+      )
+
+      const first = resolveModuleMetadata('./dep', importer, {
+        emitModuleMetadata: false,
+      })
+      expect(first).toEqual({
+        exports: {
+          value: 'signal',
+        },
+      })
+
+      writeFileSync(
+        depMetaPath,
+        JSON.stringify({
+          exports: {
+            value: 'memo',
+          },
+        }),
+        'utf8',
+      )
+
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      const second = resolveModuleMetadata('./dep', importer, {
+        emitModuleMetadata: false,
+      })
+
+      expect(second).toEqual({
+        exports: {
+          value: 'memo',
+        },
+      })
+    } finally {
+      if (existsSync(depMetaPath)) {
+        rmSync(depMetaPath, { force: true })
+      }
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
   it('does not fall back to cwd sidecars for unresolved relative imports', () => {
     clearModuleMetadata()
     const marker = '__fict_relative_probe__'

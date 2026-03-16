@@ -7,6 +7,7 @@ import type { FictCompilerOptions, ModuleReactiveMetadata } from './types'
 
 const globalMetadata = new Map<string, ModuleReactiveMetadata>()
 const lastWrittenMetadataPayload = new Map<string, string>()
+const diskLoadedMetadataKeys = new Set<string>()
 const defaultResolutionCache = new Map<string, ModuleReactiveMetadata>()
 let resolutionCacheByOptions = new WeakMap<
   FictCompilerOptions,
@@ -64,6 +65,10 @@ function clearResolutionCaches(): void {
 
 function clearFsProbeCache(): void {
   sharedFsProbeCache.clear()
+}
+
+function canReuseStoredMetadata(key: string): boolean {
+  return !diskLoadedMetadataKeys.has(key)
 }
 
 function cacheFsProbeResult(cache: FsProbeCache, pathName: string, exists: boolean): void {
@@ -236,10 +241,15 @@ function readMetadataFromDisk(
       const raw = readFileSync(metaPath, 'utf8')
       const parsed = JSON.parse(raw) as ModuleReactiveMetadata
       store.set(normalized, parsed)
+      diskLoadedMetadataKeys.add(normalized)
       return parsed
     } catch {
       // Ignore malformed/partial metadata files and try the next path.
     }
+  }
+  if (diskLoadedMetadataKeys.has(normalized)) {
+    store.delete(normalized)
+    diskLoadedMetadataKeys.delete(normalized)
   }
   return undefined
 }
@@ -349,32 +359,42 @@ export function resolveModuleMetadata(
     resolvedKey = resolveImportSourceByMetadata(source, importer, options, fsCache)
   }
   let resolvedMetadata: ModuleReactiveMetadata | undefined
+  let resolvedFromDisk = false
   if (resolvedKey) {
     const existing = store.get(resolvedKey)
-    if (existing) {
+    if (existing && canReuseStoredMetadata(resolvedKey)) {
       resolvedMetadata = existing
-    } else {
+    } else if (shouldProbeFs) {
       const loaded = shouldProbeFs
         ? readMetadataFromDisk(resolvedKey, store, options, fsCache)
         : undefined
       if (loaded) {
         resolvedMetadata = loaded
+        resolvedFromDisk = true
       }
     }
   }
-  if (!resolvedMetadata && store.has(source)) {
+  if (!resolvedMetadata && store.has(source) && canReuseStoredMetadata(source)) {
     resolvedMetadata = store.get(source)
   }
   if (!resolvedMetadata && canReadSourceDirectly) {
-    const loaded = shouldProbeFs ? readMetadataFromDisk(source, store, options, fsCache) : undefined
-    if (loaded) {
-      resolvedMetadata = loaded
+    if ((store.has(source) && !canReuseStoredMetadata(source)) || !store.has(source)) {
+      const loaded = shouldProbeFs
+        ? readMetadataFromDisk(source, store, options, fsCache)
+        : undefined
+      if (loaded) {
+        resolvedMetadata = loaded
+        resolvedFromDisk = true
+      }
+    }
+    if (!resolvedMetadata && store.has(source) && canReuseStoredMetadata(source)) {
+      resolvedMetadata = store.get(source)
     }
   }
 
   if (useResolutionCache) {
     const cache = getResolutionCache(options)
-    if (resolvedMetadata) {
+    if (resolvedMetadata && !resolvedFromDisk) {
       cache.set(cacheKey, resolvedMetadata)
     }
   }
@@ -400,6 +420,7 @@ export function setModuleMetadata(
   }
   const store = getMetadataStore(options)
   store.set(normalized, metadata)
+  diskLoadedMetadataKeys.delete(normalized)
   clearResolutionCaches()
   const metaPath = getMetadataWritePath(normalized, writeMode, options)
   if (!metaPath) return
@@ -423,6 +444,7 @@ export function setModuleMetadata(
 export function clearModuleMetadata(options?: FictCompilerOptions): void {
   const store = getMetadataStore(options)
   store.clear()
+  diskLoadedMetadataKeys.clear()
   lastWrittenMetadataPayload.clear()
   clearResolutionCaches()
   clearFsProbeCache()
