@@ -184,6 +184,26 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-C004')).toBe(false)
   })
 
+  it('does not warn when switch fallthrough still guarantees a return', () => {
+    const warnings: CompilerWarning[] = []
+    const input = `
+      import { render } from 'fict'
+      function Counter() {
+        switch (1) {
+          case 1:
+          default:
+            return <div>ready</div>
+        }
+      }
+      export function mount(el) {
+        return render(() => <Counter />, el)
+      }
+    `
+
+    transform(input, { onWarn: w => warnings.push(w) })
+    expect(warnings.some(w => w.code === 'FICT-C004')).toBe(false)
+  })
+
   it('emits a warning when $effect has no reactive reads', () => {
     const warnings: CompilerWarning[] = []
     const input = `

@@ -275,63 +275,189 @@ function isComponentName(name: string | undefined): boolean {
   return !!name && name[0] === name[0]?.toUpperCase()
 }
 
-function statementAlwaysReturns(stmt: BabelCore.types.Statement): boolean {
-  if (stmt.type === 'ReturnStatement' || stmt.type === 'ThrowStatement') return true
+type CompletionKind = 'normal' | 'abrupt'
+type CaseCompletionKind = 'fallthrough' | 'break' | 'abrupt'
+
+function mapToCaseCompletions(completions: Set<CompletionKind>): Set<CaseCompletionKind> {
+  const outcomes = new Set<CaseCompletionKind>()
+  if (completions.has('normal')) outcomes.add('fallthrough')
+  if (completions.has('abrupt')) outcomes.add('abrupt')
+  return outcomes
+}
+
+function statementListCompletions(statements: BabelCore.types.Statement[]): Set<CompletionKind> {
+  let outcomes = new Set<CompletionKind>(['normal'])
+
+  for (const stmt of statements) {
+    if (!outcomes.has('normal')) break
+
+    const next = new Set<CompletionKind>()
+    outcomes.forEach(outcome => {
+      if (outcome !== 'normal') {
+        next.add(outcome)
+      }
+    })
+    statementCompletions(stmt).forEach(outcome => next.add(outcome))
+    outcomes = next
+  }
+
+  return outcomes
+}
+
+function caseStatementListCompletions(
+  statements: BabelCore.types.Statement[],
+): Set<CaseCompletionKind> {
+  let outcomes = new Set<CaseCompletionKind>(['fallthrough'])
+
+  for (const stmt of statements) {
+    if (!outcomes.has('fallthrough')) break
+
+    const next = new Set<CaseCompletionKind>()
+    outcomes.forEach(outcome => {
+      if (outcome !== 'fallthrough') {
+        next.add(outcome)
+      }
+    })
+    caseStatementCompletions(stmt).forEach(outcome => next.add(outcome))
+    outcomes = next
+  }
+
+  return outcomes
+}
+
+function switchCaseChainCompletions(
+  cases: BabelCore.types.SwitchCase[],
+  index: number,
+): Set<CaseCompletionKind> {
+  if (index >= cases.length) {
+    return new Set<CaseCompletionKind>(['fallthrough'])
+  }
+
+  const outcomes = caseStatementListCompletions(cases[index].consequent)
+  if (!outcomes.has('fallthrough')) {
+    return outcomes
+  }
+
+  const nextOutcomes = switchCaseChainCompletions(cases, index + 1)
+  const merged = new Set<CaseCompletionKind>()
+  outcomes.forEach(outcome => {
+    if (outcome !== 'fallthrough') {
+      merged.add(outcome)
+    }
+  })
+  nextOutcomes.forEach(outcome => merged.add(outcome))
+  return merged
+}
+
+function switchCompletions(stmt: BabelCore.types.SwitchStatement): Set<CompletionKind> {
+  const outcomes = new Set<CompletionKind>()
+  const hasDefaultCase = stmt.cases.some(switchCase => switchCase.test === null)
+
+  if (!hasDefaultCase) {
+    outcomes.add('normal')
+  }
+
+  stmt.cases.forEach((_, index) => {
+    switchCaseChainCompletions(stmt.cases, index).forEach(outcome => {
+      if (outcome === 'abrupt') {
+        outcomes.add('abrupt')
+      } else {
+        outcomes.add('normal')
+      }
+    })
+  })
+
+  return outcomes
+}
+
+function statementCompletions(stmt: BabelCore.types.Statement): Set<CompletionKind> {
+  if (stmt.type === 'ReturnStatement' || stmt.type === 'ThrowStatement') {
+    return new Set<CompletionKind>(['abrupt'])
+  }
 
   if (stmt.type === 'BlockStatement') {
-    return blockAlwaysReturns(stmt)
+    return statementListCompletions(stmt.body)
   }
 
   if (stmt.type === 'IfStatement') {
-    return (
-      pathAlwaysReturns(stmt.consequent) && !!stmt.alternate && pathAlwaysReturns(stmt.alternate)
-    )
+    const outcomes = new Set<CompletionKind>()
+    statementPathCompletions(stmt.consequent).forEach(outcome => outcomes.add(outcome))
+    if (stmt.alternate) {
+      statementPathCompletions(stmt.alternate).forEach(outcome => outcomes.add(outcome))
+    } else {
+      outcomes.add('normal')
+    }
+    return outcomes
   }
 
   if (stmt.type === 'SwitchStatement') {
-    const hasDefaultCase = stmt.cases.some(switchCase => switchCase.test === null)
-    return (
-      hasDefaultCase &&
-      stmt.cases.every(switchCase => statementListAlwaysReturns(switchCase.consequent))
-    )
+    return switchCompletions(stmt)
   }
 
   if (stmt.type === 'TryStatement') {
-    if (stmt.finalizer && blockAlwaysReturns(stmt.finalizer)) {
-      return true
+    const tryOutcomes = statementListCompletions(stmt.block.body)
+    const catchOutcomes = stmt.handler
+      ? statementListCompletions(stmt.handler.body.body)
+      : new Set<CompletionKind>()
+    const outcomes = new Set<CompletionKind>([...tryOutcomes, ...catchOutcomes])
+
+    if (!stmt.finalizer) {
+      return outcomes
     }
 
-    const tryReturns = blockAlwaysReturns(stmt.block)
-    if (!stmt.handler) {
-      return tryReturns
+    const finalizerOutcomes = statementListCompletions(stmt.finalizer.body)
+    if (!finalizerOutcomes.has('normal')) {
+      return new Set<CompletionKind>(['abrupt'])
     }
-    return tryReturns && blockAlwaysReturns(stmt.handler.body)
+    return outcomes
   }
 
-  return false
+  return new Set<CompletionKind>(['normal'])
 }
 
-function statementListAlwaysReturns(statements: BabelCore.types.Statement[]): boolean {
-  for (const stmt of statements) {
-    if (statementAlwaysReturns(stmt)) return true
+function caseStatementCompletions(stmt: BabelCore.types.Statement): Set<CaseCompletionKind> {
+  if (stmt.type === 'BreakStatement') {
+    return new Set<CaseCompletionKind>(['break'])
   }
-  return false
+
+  if (stmt.type === 'BlockStatement') {
+    return caseStatementListCompletions(stmt.body)
+  }
+
+  if (stmt.type === 'IfStatement') {
+    const outcomes = new Set<CaseCompletionKind>()
+    caseStatementPathCompletions(stmt.consequent).forEach(outcome => outcomes.add(outcome))
+    if (stmt.alternate) {
+      caseStatementPathCompletions(stmt.alternate).forEach(outcome => outcomes.add(outcome))
+    } else {
+      outcomes.add('fallthrough')
+    }
+    return outcomes
+  }
+
+  return mapToCaseCompletions(statementCompletions(stmt))
 }
 
-function pathAlwaysReturns(
+function statementPathCompletions(
   node: BabelCore.types.Statement | BabelCore.types.BlockStatement,
-): boolean {
-  return node.type === 'BlockStatement' ? blockAlwaysReturns(node) : statementAlwaysReturns(node)
+): Set<CompletionKind> {
+  return node.type === 'BlockStatement'
+    ? statementListCompletions(node.body)
+    : statementCompletions(node)
 }
 
-function blockAlwaysReturns(block: BabelCore.types.BlockStatement): boolean {
-  return statementListAlwaysReturns(block.body)
+function caseStatementPathCompletions(
+  node: BabelCore.types.Statement | BabelCore.types.BlockStatement,
+): Set<CaseCompletionKind> {
+  return node.type === 'BlockStatement'
+    ? caseStatementListCompletions(node.body)
+    : caseStatementCompletions(node)
 }
 
 function functionHasReturn(node: BabelCore.types.Function): boolean {
   if (node.type === 'ArrowFunctionExpression' && node.expression) return true
   if (node.body && node.body.type === 'BlockStatement') {
-    return blockAlwaysReturns(node.body)
+    return !statementListCompletions(node.body.body).has('normal')
   }
   return false
 }
