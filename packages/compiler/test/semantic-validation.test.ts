@@ -1,4 +1,8 @@
+import { transformSync } from '@babel/core'
+import syntaxJsx from '@babel/plugin-syntax-jsx'
 import { describe, expect, it } from 'vitest'
+
+import createFictPlugin from '../src'
 import { transform } from './test-utils'
 
 describe('semantic validation', () => {
@@ -109,6 +113,40 @@ describe('semantic validation', () => {
     expect(() => transform(source, { reactiveScopes: ['renderHook'] })).toThrow(
       /component or hook function body|no nested functions|cannot be declared inside nested functions/,
     )
+  })
+
+  it('allows wrapped reactive scope callbacks when using the raw compiler plugin', () => {
+    const source = `
+      import { $state } from 'fict'
+      import { renderHook } from '@fictjs/testing-library'
+      renderHook((() => {
+        const x = $state(0)
+        return x
+      }) as any)
+    `
+
+    expect(() =>
+      transformSync(source, {
+        filename: 'wrapped-render-hook.tsx',
+        configFile: false,
+        babelrc: false,
+        sourceType: 'module',
+        parserOpts: {
+          sourceType: 'module',
+          plugins: ['typescript', 'jsx'],
+        },
+        plugins: [
+          [syntaxJsx, {}],
+          [
+            createFictPlugin,
+            { emitModuleMetadata: false, strictGuarantee: false, reactiveScopes: ['renderHook'] },
+          ],
+        ],
+        generatorOpts: {
+          compact: false,
+        },
+      }),
+    ).not.toThrow()
   })
 
   it('throws when $effect is used inside a loop', () => {

@@ -2533,6 +2533,42 @@ function convertExpression(
   options?: { reactiveScope?: string },
 ): Expression {
   const loc = getLoc(node)
+  const unwrapTransparentExpression = (
+    expr: BabelCore.types.Expression,
+  ): BabelCore.types.Expression => {
+    let current = expr
+    while (true) {
+      const chainCandidate = current as unknown as {
+        type?: string
+        expression?: BabelCore.types.Node
+      }
+      if (
+        chainCandidate.type === 'ChainExpression' &&
+        chainCandidate.expression !== undefined &&
+        t.isExpression(chainCandidate.expression)
+      ) {
+        current = chainCandidate.expression
+        continue
+      }
+      if (t.isParenthesizedExpression(current) && t.isExpression(current.expression)) {
+        current = current.expression
+        continue
+      }
+      if (
+        (t.isTSAsExpression(current) ||
+          t.isTSTypeAssertion(current) ||
+          t.isTSNonNullExpression(current) ||
+          t.isTSSatisfiesExpression(current) ||
+          t.isTSInstantiationExpression(current) ||
+          t.isTypeCastExpression(current)) &&
+        t.isExpression(current.expression)
+      ) {
+        current = current.expression
+        continue
+      }
+      return current
+    }
+  }
   const convertCallArguments = (
     args: (
       | BabelCore.types.Expression
@@ -2552,12 +2588,14 @@ function convertExpression(
         continue
       }
       if (t.isExpression(arg)) {
+        const unwrappedArg =
+          reactiveScope && arg === args[0] ? unwrapTransparentExpression(arg) : arg
         if (
           reactiveScope &&
           arg === args[0] &&
-          (t.isArrowFunctionExpression(arg) || t.isFunctionExpression(arg))
+          (t.isArrowFunctionExpression(unwrappedArg) || t.isFunctionExpression(unwrappedArg))
         ) {
-          converted.push(convertExpression(arg, { reactiveScope }))
+          converted.push(convertExpression(unwrappedArg, { reactiveScope }))
           continue
         }
         converted.push(convertExpression(arg))
@@ -2602,7 +2640,7 @@ function convertExpression(
   }
 
   if (t.isParenthesizedExpression(node) && t.isExpression(node.expression)) {
-    return convertExpression(node.expression)
+    return convertExpression(node.expression, options)
   }
   if (
     (t.isTSAsExpression(node) ||
@@ -2613,7 +2651,7 @@ function convertExpression(
       t.isTypeCastExpression(node)) &&
     t.isExpression(node.expression)
   ) {
-    return convertExpression(node.expression)
+    return convertExpression(node.expression, options)
   }
 
   if (t.isImportExpression(node)) {

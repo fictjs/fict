@@ -65,6 +65,44 @@ function isInsideJSX(path: BabelCore.NodePath): boolean {
   return !!path.findParent(p => p.isJSXElement?.() || p.isJSXFragment?.())
 }
 
+function unwrapTransparentExpression(
+  node: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): BabelCore.types.Expression {
+  let current: BabelCore.types.Expression = node
+  while (true) {
+    const chainCandidate = current as unknown as {
+      type?: string
+      expression?: BabelCore.types.Node
+    }
+    if (
+      chainCandidate.type === 'ChainExpression' &&
+      chainCandidate.expression !== undefined &&
+      t.isExpression(chainCandidate.expression)
+    ) {
+      current = chainCandidate.expression
+      continue
+    }
+    if (t.isParenthesizedExpression(current) && t.isExpression(current.expression)) {
+      current = current.expression
+      continue
+    }
+    if (
+      (t.isTSAsExpression(current) ||
+        t.isTSTypeAssertion(current) ||
+        t.isTSNonNullExpression(current) ||
+        t.isTSSatisfiesExpression(current) ||
+        t.isTSInstantiationExpression(current) ||
+        t.isTypeCastExpression(current)) &&
+      t.isExpression(current.expression)
+    ) {
+      current = current.expression
+      continue
+    }
+    return current
+  }
+}
+
 type WarningSink = (warning: CompilerWarning) => void
 
 interface SuppressionDirective {
@@ -834,12 +872,26 @@ function createHIREntrypointVisitor(
           fnPath: BabelCore.NodePath<BabelCore.types.Function>,
         ): boolean => {
           if (reactiveScopesSet.size === 0) return false
-          const parent = fnPath.parentPath
+          let parent: BabelCore.NodePath | null = fnPath.parentPath
+          while (
+            parent &&
+            (parent.isParenthesizedExpression?.() ||
+              parent.isTSAsExpression?.() ||
+              parent.isTSTypeAssertion?.() ||
+              parent.isTSNonNullExpression?.() ||
+              parent.isTSSatisfiesExpression?.() ||
+              parent.isTSInstantiationExpression?.() ||
+              parent.isTypeCastExpression?.())
+          ) {
+            parent = parent.parentPath as BabelCore.NodePath | null
+          }
           if (!parent || !(parent.isCallExpression() || parent.isOptionalCallExpression())) {
             return false
           }
           // Check if the function is the first argument
-          if (parent.node.arguments[0] !== fnPath.node) return false
+          const firstArg = parent.node.arguments[0]
+          if (!firstArg || !t.isExpression(firstArg)) return false
+          if (unwrapTransparentExpression(firstArg, t) !== fnPath.node) return false
           const callee = parent.node.callee
           return !!resolveReactiveScopeName(callee)
         }
@@ -855,7 +907,9 @@ function createHIREntrypointVisitor(
             return false
           }
           // Check if the function is the first argument
-          if (parentNode.arguments[0] !== fnNode) return false
+          const firstArg = parentNode.arguments[0]
+          if (!firstArg || !t.isExpression(firstArg)) return false
+          if (unwrapTransparentExpression(firstArg, t) !== fnNode) return false
           return !!resolveReactiveScopeName(parentNode.callee)
         }
 
