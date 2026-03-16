@@ -16,23 +16,32 @@ function stripMacroImports(
   path: BabelCore.NodePath<BabelCore.types.Program>,
   t: typeof BabelCore.types,
 ): void {
-  path.traverse({
-    ImportDeclaration(importPath) {
-      if (importPath.node.source.value !== 'fict' && importPath.node.source.value !== 'fict/slim')
-        return
-      const filtered = importPath.node.specifiers.filter(spec => {
-        if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
-          return !['$state', '$effect'].includes(spec.imported.name)
-        }
-        return true
-      })
-      if (filtered.length === 0) {
-        importPath.remove()
-      } else if (filtered.length !== importPath.node.specifiers.length) {
-        importPath.node.specifiers = filtered
+  const nextBody: BabelCore.types.Statement[] = []
+  for (const stmt of path.node.body) {
+    if (!t.isImportDeclaration(stmt)) {
+      nextBody.push(stmt)
+      continue
+    }
+    if (stmt.source.value !== 'fict' && stmt.source.value !== 'fict/slim') {
+      nextBody.push(stmt)
+      continue
+    }
+    const filtered = stmt.specifiers.filter(spec => {
+      if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
+        return !['$state', '$effect'].includes(spec.imported.name)
       }
-    },
-  })
+      return true
+    })
+    if (filtered.length === 0) {
+      continue
+    }
+    if (filtered.length !== stmt.specifiers.length) {
+      nextBody.push(t.importDeclaration(filtered, stmt.source))
+      continue
+    }
+    nextBody.push(stmt)
+  }
+  path.node.body = nextBody
 }
 
 function isInsideLoop(path: BabelCore.NodePath): boolean {
