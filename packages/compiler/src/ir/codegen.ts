@@ -12,6 +12,7 @@ import {
   collectCalledIdentifiers,
   functionContainsJSX,
   functionHasAsyncAwait,
+  functionHasYield,
   structuredNodeHasComplexControlFlow,
 } from './codegen-analysis'
 import {
@@ -683,6 +684,7 @@ function lowerFunction(
     fn.loc,
   )
   result.async = !!fn.meta?.isAsync || functionHasAsyncAwait(fn)
+  result.generator = !!fn.meta?.isGenerator || functionHasYield(fn)
   ctx.trackedVars = prevTracked
   return result
 }
@@ -1380,6 +1382,7 @@ function lowerExpressionImpl(
         isArrow: fnExpr.kind === 'ArrowFunction',
         hasExpressionBody: fnExpr.kind === 'ArrowFunction' && fnExpr.isExpression,
         isAsync: fnExpr.isAsync ?? false,
+        isGenerator: fnExpr.kind === 'FunctionExpression' ? !!fnExpr.isGenerator : false,
       },
       loc: fnExpr.loc ?? null,
     }
@@ -1400,6 +1403,7 @@ function lowerExpressionImpl(
       lowered.body,
     )
     fnExprAst.async = lowered.async
+    fnExprAst.generator = lowered.generator ?? fnExpr.isGenerator ?? false
     return fnExprAst
   }
 
@@ -1855,6 +1859,7 @@ function lowerExpressionImpl(
               )
             }
             fn.async = expr.isAsync ?? false
+            fn.generator = expr.isGenerator ?? false
             return fn
           },
           localDeclared,
@@ -3298,6 +3303,7 @@ function lowerFunctionWithScopes(
     fn.loc,
   )
   result.async = !!fn.meta?.isAsync || functionHasAsyncAwait(fn)
+  result.generator = !!fn.meta?.isGenerator || functionHasYield(fn)
   return result
 }
 
@@ -3698,6 +3704,9 @@ export function lowerHIRWithRegions(
               if (t.isArrowFunctionExpression(funcExpr) || t.isFunctionExpression(funcExpr)) {
                 funcExpr.async = true
               }
+            }
+            if (t.isFunctionExpression(funcExpr)) {
+              funcExpr.generator = !!(found.fn.meta?.isGenerator || found.stmt.generator)
             }
             rebuiltDeclarators.push(t.variableDeclarator(decl.id, funcExpr))
             generatedFunctions.delete(decl.id.name)
@@ -4939,6 +4948,7 @@ function lowerFunctionWithRegions(
     (ctx.memoVars?.size ?? 0) > 0 ||
     (ctx.aliasVars?.size ?? 0) > 0
   const isAsync = !!fn.meta?.isAsync || functionHasAsyncAwait(fn)
+  const isGenerator = !!fn.meta?.isGenerator || functionHasYield(fn)
   if (!hasJSX && !hasTrackedValues) {
     // For pure functions without JSX or tracked values, check if we can safely lower from HIR.
     // We skip functions with complex control flow (loops, async) as the simple lowering
@@ -4961,6 +4971,7 @@ function lowerFunctionWithRegions(
         fn.loc,
       )
       funcDecl.async = isAsync
+      funcDecl.generator = isGenerator
       ctx.needsCtx = prevNeedsCtx
       ctx.shadowedNames = prevShadowed
       ctx.localDeclaredNames = prevLocalDeclared
@@ -5096,6 +5107,7 @@ function lowerFunctionWithRegions(
     fn.loc,
   )
   funcDecl.async = isAsync
+  funcDecl.generator = isGenerator
   if (isComponent && fn.name) {
     registerResumableComponent(fn.name, ctx)
   }

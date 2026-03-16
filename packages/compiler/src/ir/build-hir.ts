@@ -749,6 +749,7 @@ export function buildHIR(
             directives: stmt.body.directives,
             loc: getLoc(stmt),
             isAsync: stmt.async,
+            isGenerator: stmt.generator,
             astNode: stmt,
           }),
         )
@@ -769,6 +770,7 @@ export function buildHIR(
               directives: decl.body.directives,
               loc: getLoc(decl),
               isAsync: decl.async,
+              isGenerator: decl.generator,
               astNode: [decl, stmt],
             }),
           )
@@ -794,6 +796,7 @@ export function buildHIR(
                     directives: body.directives,
                     loc: getLoc(v.init ?? v),
                     isAsync: v.init.async,
+                    isGenerator: t.isFunctionExpression(v.init) ? v.init.generator : false,
                     astNode: [v.init, v, decl, stmt],
                   })
                 : convertFunction(name, params, [t.returnStatement(body)], {
@@ -801,6 +804,7 @@ export function buildHIR(
                     pure: programPure,
                     loc: getLoc(v.init ?? v),
                     isAsync: v.init.async,
+                    isGenerator: false,
                     astNode: [v.init, v, decl, stmt],
                   })
               fnHIR.meta = {
@@ -808,6 +812,9 @@ export function buildHIR(
                 fromExpression: true,
                 isArrow,
                 hasExpressionBody,
+                ...(!isArrow && t.isFunctionExpression(v.init) && v.init.generator
+                  ? { isGenerator: true }
+                  : null),
               }
               functions.push(fnHIR)
               postamble.push({ kind: 'ExportFunction', name })
@@ -839,6 +846,7 @@ export function buildHIR(
               directives: decl.body.directives,
               loc: getLoc(decl),
               isAsync: decl.async,
+              isGenerator: decl.generator,
               astNode: [decl, stmt],
             }),
           )
@@ -871,6 +879,7 @@ export function buildHIR(
                   directives: body.directives,
                   loc: getLoc(decl.init ?? decl),
                   isAsync: decl.init.async,
+                  isGenerator: t.isFunctionExpression(decl.init) ? decl.init.generator : false,
                   astNode: [decl.init, decl, stmt],
                 })
               : convertFunction(
@@ -882,10 +891,19 @@ export function buildHIR(
                     pure: programPure,
                     loc: getLoc(decl.init ?? decl),
                     isAsync: decl.init.async,
+                    isGenerator: false,
                     astNode: [decl.init, decl, stmt],
                   },
                 )
-            fnHIR.meta = { ...(fnHIR.meta ?? {}), fromExpression: true, isArrow, hasExpressionBody }
+            fnHIR.meta = {
+              ...(fnHIR.meta ?? {}),
+              fromExpression: true,
+              isArrow,
+              hasExpressionBody,
+              ...(!isArrow && t.isFunctionExpression(decl.init) && decl.init.generator
+                ? { isGenerator: true }
+                : null),
+            }
             functions.push(fnHIR)
           }
         }
@@ -917,6 +935,7 @@ function convertFunction(
     directives?: BabelCore.types.Directive[] | null
     loc?: BabelCore.types.SourceLocation | null
     isAsync?: boolean
+    isGenerator?: boolean
     /** Original AST node(s) for parsing @fictReturn annotations */
     astNode?: BabelCore.types.Node | null | (BabelCore.types.Node | null | undefined)[]
   },
@@ -1627,11 +1646,12 @@ function convertFunction(
     !!options?.noMemo || hasNoMemoDirective(options?.directives ?? null) || hasNoMemoInBody
   const hasPure = !!options?.pure || hasPureDirective(options?.directives ?? null) || hasPureInBody
   const isAsync = !!options?.isAsync
+  const isGenerator = !!options?.isGenerator
 
   // Parse @fictReturn annotation for cross-module hook return info
   const fictReturnInfo = parseFictReturnAnnotation(options?.astNode)
 
-  const hasMeta = hasNoMemo || hasPure || fictReturnInfo || isAsync
+  const hasMeta = hasNoMemo || hasPure || fictReturnInfo || isAsync || isGenerator
 
   return {
     rawParams: params,
@@ -1644,6 +1664,7 @@ function convertFunction(
           ...(hasPure ? { pure: true } : null),
           ...(fictReturnInfo ? { hookReturnInfo: fictReturnInfo } : null),
           ...(isAsync ? { isAsync: true } : null),
+          ...(isGenerator ? { isGenerator: true } : null),
         }
       : undefined,
     loc: options?.loc ?? null,
@@ -2991,6 +3012,7 @@ function convertExpression(
       rawParams: nested.rawParams ?? node.params,
       body: nested.blocks,
       isAsync: node.async,
+      isGenerator: node.generator,
       reactiveScope: options?.reactiveScope,
       loc,
     }

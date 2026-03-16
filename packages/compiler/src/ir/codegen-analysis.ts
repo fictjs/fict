@@ -1,4 +1,4 @@
-import type { BasicBlock, Expression, HIRFunction, Instruction } from './hir'
+import type { BasicBlock, Expression, HIRFunction, Instruction, Terminator } from './hir'
 import { deSSAVarName } from './regions'
 import type { StructuredNode } from './structurize'
 
@@ -236,6 +236,125 @@ export function functionHasAsyncAwait(fn: HIRFunction): boolean {
       }
     }
     if (terminatorHasAwait(block.terminator)) return true
+  }
+  return false
+}
+
+function expressionHasYield(expr: Expression): boolean {
+  switch (expr.kind) {
+    case 'Identifier':
+    case 'Literal':
+    case 'ThisExpression':
+    case 'SuperExpression':
+      return false
+    case 'CallExpression':
+    case 'OptionalCallExpression':
+      return (
+        expressionHasYield(expr.callee as Expression) ||
+        expr.arguments.some(arg => expressionHasYield(arg as Expression))
+      )
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      return (
+        expressionHasYield(expr.object as Expression) ||
+        (expr.computed ? expressionHasYield(expr.property as Expression) : false)
+      )
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      return (
+        expressionHasYield(expr.left as Expression) || expressionHasYield(expr.right as Expression)
+      )
+    case 'UnaryExpression':
+      return expressionHasYield(expr.argument as Expression)
+    case 'ConditionalExpression':
+      return (
+        expressionHasYield(expr.test as Expression) ||
+        expressionHasYield(expr.consequent as Expression) ||
+        expressionHasYield(expr.alternate as Expression)
+      )
+    case 'ArrayExpression':
+      return expr.elements.some(el => (el ? expressionHasYield(el as Expression) : false))
+    case 'ObjectExpression':
+      return expr.properties.some(prop =>
+        prop.kind === 'SpreadElement'
+          ? expressionHasYield(prop.argument as Expression)
+          : (prop.computed && expressionHasYield(prop.key as Expression)) ||
+            expressionHasYield(prop.value as Expression),
+      )
+    case 'TemplateLiteral':
+      return expr.expressions.some(e => expressionHasYield(e as Expression))
+    case 'SpreadElement':
+      return expressionHasYield(expr.argument as Expression)
+    case 'SequenceExpression':
+      return expr.expressions.some(e => expressionHasYield(e as Expression))
+    case 'AwaitExpression':
+      return expressionHasYield(expr.argument as Expression)
+    case 'NewExpression':
+      return (
+        expressionHasYield(expr.callee as Expression) ||
+        expr.arguments.some(arg => expressionHasYield(arg as Expression))
+      )
+    case 'ImportExpression':
+      return expressionHasYield(expr.source as Expression)
+    case 'YieldExpression':
+      return true
+    case 'TaggedTemplateExpression':
+      return (
+        expressionHasYield(expr.tag as Expression) ||
+        expr.quasi.expressions.some(ex => expressionHasYield(ex as Expression))
+      )
+    case 'ClassExpression':
+      return expr.superClass ? expressionHasYield(expr.superClass as Expression) : false
+    case 'AssignmentExpression':
+      return (
+        expressionHasYield(expr.left as Expression) || expressionHasYield(expr.right as Expression)
+      )
+    case 'UpdateExpression':
+      return expressionHasYield(expr.argument as Expression)
+    case 'ArrowFunction':
+    case 'FunctionExpression':
+      return false
+    default:
+      return false
+  }
+}
+
+function terminatorHasYield(term: Terminator): boolean {
+  switch (term.kind) {
+    case 'Return':
+      return term.argument ? expressionHasYield(term.argument as Expression) : false
+    case 'Throw':
+      return expressionHasYield(term.argument as Expression)
+    case 'Branch':
+      return expressionHasYield(term.test as Expression)
+    case 'Switch':
+      return (
+        expressionHasYield(term.discriminant as Expression) ||
+        term.cases.some(c => (c.test ? expressionHasYield(c.test as Expression) : false))
+      )
+    case 'ForOf':
+      return expressionHasYield(term.iterable as Expression)
+    case 'ForIn':
+      return expressionHasYield(term.object as Expression)
+    case 'Try':
+    case 'Jump':
+    case 'Break':
+    case 'Continue':
+    case 'Unreachable':
+      return false
+    default:
+      return false
+  }
+}
+
+export function functionHasYield(fn: HIRFunction): boolean {
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if ((instr.kind === 'Assign' || instr.kind === 'Expression') && instr.value) {
+        if (expressionHasYield(instr.value)) return true
+      }
+    }
+    if (terminatorHasYield(block.terminator)) return true
   }
   return false
 }

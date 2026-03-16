@@ -499,6 +499,7 @@ export interface FunctionExpression extends SourceInfo {
   rawParams?: BabelParamNode[]
   body: BasicBlock[]
   isAsync?: boolean
+  isGenerator?: boolean
   /** Marks this function as a reactive scope callback (e.g., renderHook(() => ...)). */
   reactiveScope?: string
 }
@@ -609,6 +610,7 @@ export interface HIRFunction extends SourceInfo {
     isArrow?: boolean
     hasExpressionBody?: boolean
     isAsync?: boolean
+    isGenerator?: boolean
     noMemo?: boolean
     pure?: boolean
     /**

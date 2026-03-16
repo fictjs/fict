@@ -84,6 +84,33 @@ describe('lowerHIRWithRegions', () => {
 
     expect(result.type).toBe('File')
   })
+
+  it('preserves generator functions across HIR and codegen', () => {
+    const ast = parseFile(`
+      function* declared() {
+        yield 1
+      }
+
+      function Container() {
+        const nested = function* () {
+          yield 2
+        }
+        const obj = {
+          *gen() {
+            yield 3
+          }
+        }
+        return [declared, nested, obj]
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('function* declared()')
+    expect(code).toContain('function* ()')
+    expect(code).toContain('*gen()')
+  })
 })
 
 describe('getRegionMetadataForFunction', () => {
