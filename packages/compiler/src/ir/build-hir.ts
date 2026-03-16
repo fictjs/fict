@@ -418,6 +418,54 @@ function extractIdentifiersFromPattern(pattern: BabelCore.types.PatternLike): HI
   return ids
 }
 
+type BabelJSXChild =
+  | BabelCore.types.JSXText
+  | BabelCore.types.JSXExpressionContainer
+  | BabelCore.types.JSXSpreadChild
+  | BabelCore.types.JSXElement
+  | BabelCore.types.JSXFragment
+
+function appendJSXChild(children: HJSXChild[], child: BabelJSXChild): void {
+  if (t.isJSXText(child)) {
+    const text = child.value
+    if (text.trim()) {
+      children.push({ kind: 'text', value: text, loc: getLoc(child) })
+    }
+    return
+  }
+
+  if (t.isJSXExpressionContainer(child)) {
+    if (!t.isJSXEmptyExpression(child.expression)) {
+      children.push({
+        kind: 'expression',
+        value: convertExpression(child.expression as BabelCore.types.Expression),
+        loc: getLoc(child),
+      })
+    }
+    return
+  }
+
+  if (t.isJSXElement(child)) {
+    children.push({
+      kind: 'element',
+      value: convertJSXElement(child),
+      loc: getLoc(child),
+    })
+    return
+  }
+
+  if (t.isJSXSpreadChild(child)) {
+    return reportUnsupportedExpression(
+      child,
+      'JSX spread children are not supported in HIR conversion.',
+    )
+  }
+
+  for (const fragmentChild of child.children) {
+    appendJSXChild(children, fragmentChild)
+  }
+}
+
 /**
  * Build a simple list of BasicBlocks from a list of statements.
  * This is a simplified version for arrow function block bodies.
@@ -2932,60 +2980,7 @@ function convertExpression(
   if (t.isJSXFragment(node)) {
     const children: HJSXChild[] = []
     for (const child of node.children) {
-      if (t.isJSXText(child)) {
-        const text = child.value
-        if (text.trim()) {
-          children.push({ kind: 'text', value: text, loc: getLoc(child) })
-        }
-      } else if (t.isJSXExpressionContainer(child)) {
-        if (!t.isJSXEmptyExpression(child.expression)) {
-          children.push({
-            kind: 'expression',
-            value: convertExpression(child.expression as BabelCore.types.Expression),
-            loc: getLoc(child),
-          })
-        }
-      } else if (t.isJSXElement(child)) {
-        children.push({
-          kind: 'element',
-          value: convertJSXElement(child),
-          loc: getLoc(child),
-        })
-      } else if (t.isJSXSpreadChild(child)) {
-        return reportUnsupportedExpression(
-          child,
-          'JSX spread children are not supported in HIR conversion.',
-        )
-      } else if (t.isJSXFragment(child)) {
-        // Nested fragment - flatten its children
-        for (const fragChild of child.children) {
-          if (t.isJSXText(fragChild)) {
-            const text = fragChild.value
-            if (text.trim()) {
-              children.push({ kind: 'text', value: text, loc: getLoc(fragChild) })
-            }
-          } else if (t.isJSXExpressionContainer(fragChild)) {
-            if (!t.isJSXEmptyExpression(fragChild.expression)) {
-              children.push({
-                kind: 'expression',
-                value: convertExpression(fragChild.expression as BabelCore.types.Expression),
-                loc: getLoc(fragChild),
-              })
-            }
-          } else if (t.isJSXElement(fragChild)) {
-            children.push({
-              kind: 'element',
-              value: convertJSXElement(fragChild),
-              loc: getLoc(fragChild),
-            })
-          } else if (t.isJSXSpreadChild(fragChild)) {
-            return reportUnsupportedExpression(
-              fragChild,
-              'JSX spread children are not supported in HIR conversion.',
-            )
-          }
-        }
-      }
+      appendJSXChild(children, child)
     }
     // Return as JSXElement with Fragment type
     return {
@@ -3279,60 +3274,7 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
 
   const children: HJSXChild[] = []
   for (const child of node.children) {
-    if (t.isJSXText(child)) {
-      const text = child.value
-      if (text.trim()) {
-        children.push({ kind: 'text', value: text, loc: getLoc(child) })
-      }
-    } else if (t.isJSXExpressionContainer(child)) {
-      if (!t.isJSXEmptyExpression(child.expression)) {
-        children.push({
-          kind: 'expression',
-          value: convertExpression(child.expression as BabelCore.types.Expression),
-          loc: getLoc(child),
-        })
-      }
-    } else if (t.isJSXElement(child)) {
-      children.push({
-        kind: 'element',
-        value: convertJSXElement(child),
-        loc: getLoc(child),
-      })
-    } else if (t.isJSXSpreadChild(child)) {
-      return reportUnsupportedExpression(
-        child,
-        'JSX spread children are not supported in HIR conversion.',
-      )
-    } else if (t.isJSXFragment(child)) {
-      // Flatten fragment children
-      for (const fragChild of child.children) {
-        if (t.isJSXText(fragChild)) {
-          const text = fragChild.value
-          if (text.trim()) {
-            children.push({ kind: 'text', value: text, loc: getLoc(fragChild) })
-          }
-        } else if (t.isJSXExpressionContainer(fragChild)) {
-          if (!t.isJSXEmptyExpression(fragChild.expression)) {
-            children.push({
-              kind: 'expression',
-              value: convertExpression(fragChild.expression as BabelCore.types.Expression),
-              loc: getLoc(fragChild),
-            })
-          }
-        } else if (t.isJSXElement(fragChild)) {
-          children.push({
-            kind: 'element',
-            value: convertJSXElement(fragChild),
-            loc: getLoc(fragChild),
-          })
-        } else if (t.isJSXSpreadChild(fragChild)) {
-          return reportUnsupportedExpression(
-            fragChild,
-            'JSX spread children are not supported in HIR conversion.',
-          )
-        }
-      }
-    }
+    appendJSXChild(children, child)
   }
 
   return {

@@ -621,6 +621,26 @@ describe('buildHIR - Advanced Patterns', () => {
     expect(() => buildHIR(ast)).toThrow(/JSX spread children are not supported/)
   })
 
+  it('preserves deeply nested fragment children', () => {
+    const ast = parseFile(`
+      function App() {
+        return <><><><span>A</span></></></>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const fn = hir.functions.find(f => f.name === 'App') ?? hir.functions[0]
+    const returnTerm = fn.blocks
+      .map(block => block.terminator)
+      .find(term => term.kind === 'Return' && (term as any).argument) as any
+    const fragment = returnTerm.argument
+
+    expect(fragment.kind).toBe('JSXElement')
+    expect(fragment.tagName?.name ?? '').toBe('Fragment')
+    expect(fragment.children).toHaveLength(1)
+    expect(fragment.children[0]?.kind).toBe('element')
+    expect(fragment.children[0]?.value?.tagName).toBe('span')
+  })
+
   it('handles callback with reactive closure', () => {
     const ast = parseFile(`
       function ReactiveCallback(items, onClick) {
