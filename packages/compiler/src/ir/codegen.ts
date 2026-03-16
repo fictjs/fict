@@ -1285,21 +1285,38 @@ function lowerExpressionImpl(
     prefix: boolean,
   ): BabelCore.types.Expression => {
     const op = operator === '++' ? '+' : '-'
-    const delta = t.numericLiteral(1)
     const current = t.callExpression(t.cloneNode(callee, true), [])
+    const prevId = genTemp(ctx, 'prev')
+    const buildDelta = (valueExpr: BabelCore.types.Expression): BabelCore.types.Expression =>
+      t.conditionalExpression(
+        t.binaryExpression(
+          '===',
+          t.unaryExpression('typeof', valueExpr),
+          t.stringLiteral('bigint'),
+        ),
+        t.bigIntLiteral('1'),
+        t.numericLiteral(1),
+      )
+    const buildNext = (valueExpr: BabelCore.types.Expression): BabelCore.types.BinaryExpression =>
+      t.binaryExpression(op, valueExpr, buildDelta(valueExpr))
     if (!valueUsed) {
-      return t.callExpression(t.cloneNode(callee, true), [t.binaryExpression(op, current, delta)])
+      return t.callExpression(
+        t.arrowFunctionExpression(
+          [t.cloneNode(prevId, true)],
+          t.callExpression(t.cloneNode(callee, true), [buildNext(t.identifier(prevId.name))]),
+        ),
+        [current],
+      )
     }
 
-    const prevId = genTemp(ctx, 'prev')
     const prevForSet = t.identifier(prevId.name)
     const prevForResult = t.identifier(prevId.name)
     return t.callExpression(
       t.arrowFunctionExpression(
         [t.cloneNode(prevId, true)],
         t.sequenceExpression([
-          t.callExpression(t.cloneNode(callee, true), [t.binaryExpression(op, prevForSet, delta)]),
-          prefix ? t.binaryExpression(op, prevForResult, t.numericLiteral(1)) : prevForResult,
+          t.callExpression(t.cloneNode(callee, true), [buildNext(prevForSet)]),
+          prefix ? buildNext(prevForResult) : prevForResult,
         ]),
       ),
       [current],

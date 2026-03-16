@@ -140,4 +140,24 @@ describe('state write expression semantics', () => {
     )
     expect(values).toEqual([2, 3, 10, 3, 11])
   })
+
+  it('preserves bigint update semantics for $state', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useBigIntUpdateSemantics() {
+        let count = $state(1n)
+        const post = count++
+        const pre = ++count
+        return [post, pre, count]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const raw = mod.useBigIntUpdateSemantics() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual([1n, 3n, 3n])
+  })
 })
