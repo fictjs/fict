@@ -3139,6 +3139,7 @@ function eliminateCommonSubexpressions(fn: HIRFunction, purity: PurityContext): 
     const newInstructions = block.instructions.map(instr => {
       if (instr.kind !== 'Assign') return instr
       if (!isPureExpression(instr.value, purity)) return instr
+      if (!isCSESafeExpression(instr.value, purity)) return instr
       if (isExplicitMemoCall(instr.value, purity)) return instr
       const deps = collectExpressionIdentifiers(instr.value)
       const hash = `${hashExpression(instr.value)}|${[...deps].sort().join(',')}`

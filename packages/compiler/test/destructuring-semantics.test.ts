@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { createRequire } from 'node:module'
 import { runInNewContext } from 'node:vm'
 
-import { transformCommonJS } from './test-utils'
+import { transform, transformCommonJS } from './test-utils'
 
 const require = createRequire(import.meta.url)
 
@@ -140,5 +140,44 @@ describe('destructuring semantic alignment', () => {
     const mod = runCompiled(output)
     expect(mod.assign({ a: 1 }, [undefined])).toEqual([1, 2, 5])
     expect(mod.assign({ a: 4, b: 6 }, [9])).toEqual([4, 6, 9])
+  })
+
+  it('preserves nested function parameter patterns and defaults', () => {
+    const source = `
+      export function nestedParams() {
+        const pickObject = ({ a = 1, b: { c = 2 } = {}, ...rest } = { a: 10, b: { c: 20 }, d: 30 }) => [a, c, rest.d ?? 0]
+        const pickArray = ([first = 1, second, ...rest] = [3, 4, 5]) => [first, second, rest.length]
+        return [
+          pickObject(undefined),
+          pickObject({}),
+          pickObject({ a: 5, b: { c: 7 }, d: 9 }),
+          pickArray(undefined),
+          pickArray([undefined, 2]),
+          pickArray([9, 8, 7, 6]),
+        ]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    expect(mod.nestedParams()).toEqual([
+      [10, 20, 30],
+      [1, 2, 0],
+      [5, 7, 9],
+      [3, 4, 1],
+      [1, 2, 0],
+      [9, 8, 2],
+    ])
+  })
+
+  it('preserves reactive scope callback parameter patterns', () => {
+    const output = transform(
+      `
+        import { renderHook } from '@fictjs/testing-library'
+        renderHook(({ value } = { value: 1 }) => value)
+      `,
+      { reactiveScopes: ['renderHook'] },
+    )
+
+    expect(output).toMatch(/renderHook\(\(\{\s*value\s*\}\s*=\s*\{\s*value:\s*1\s*\}\)\s*=>/)
   })
 })

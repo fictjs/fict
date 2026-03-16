@@ -1373,6 +1373,7 @@ function lowerExpressionImpl(
 
     const fn: HIRFunction = {
       params: fnExpr.params,
+      rawParams: fnExpr.rawParams,
       blocks,
       meta: {
         fromExpression: true,
@@ -1386,7 +1387,7 @@ function lowerExpressionImpl(
     const lowered = lowerFunctionWithRegions(fn, ctx, { forceHookContext: true })
     if (!lowered) return null
 
-    const params = lowered.params as BabelCore.types.Identifier[]
+    const params = lowered.params
     if (fnExpr.kind === 'ArrowFunction') {
       const arrow = t.arrowFunctionExpression(params, lowered.body)
       arrow.async = lowered.async
@@ -1772,17 +1773,8 @@ function lowerExpressionImpl(
     case 'ArrowFunction': {
       const reactiveLowered = lowerReactiveScopeExpression(expr)
       if (reactiveLowered) return reactiveLowered
-      const useRawParams =
-        expr.rawParams &&
-        expr.rawParams.length > 0 &&
-        expr.rawParams.every(
-          param =>
-            t.isIdentifier(param) || (t.isRestElement(param) && t.isIdentifier(param.argument)),
-        )
-      const paramIds = useRawParams
-        ? expr.rawParams!.map(
-            param => t.cloneNode(param, true) as BabelCore.types.FunctionParameter,
-          )
+      const paramIds = expr.rawParams
+        ? expr.rawParams.map(param => t.cloneNode(param, true) as BabelCore.types.FunctionParameter)
         : mapParams(expr.params)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
       const localDeclared = collectLocalDeclaredNames(
@@ -1835,17 +1827,8 @@ function lowerExpressionImpl(
     case 'FunctionExpression': {
       const reactiveLowered = lowerReactiveScopeExpression(expr)
       if (reactiveLowered) return reactiveLowered
-      const useRawParams =
-        expr.rawParams &&
-        expr.rawParams.length > 0 &&
-        expr.rawParams.every(
-          param =>
-            t.isIdentifier(param) || (t.isRestElement(param) && t.isIdentifier(param.argument)),
-        )
-      const paramIds = useRawParams
-        ? expr.rawParams!.map(
-            param => t.cloneNode(param, true) as BabelCore.types.FunctionParameter,
-          )
+      const paramIds = expr.rawParams
+        ? expr.rawParams.map(param => t.cloneNode(param, true) as BabelCore.types.FunctionParameter)
         : mapParams(expr.params)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
       const localDeclared = collectLocalDeclaredNames(expr.params, expr.body as BasicBlock[], t)
