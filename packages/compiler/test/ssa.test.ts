@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseSync } from '@babel/core'
 import { buildHIR } from '../src/ir/build-hir'
+import { getSSABaseName, makeSSAName, resetGeneratedSSANames } from '../src/ir/hir'
 import { enterSSA, analyzeCFG } from '../src/ir/ssa'
 import { printHIR } from '../src/ir/printer'
 
@@ -14,6 +15,25 @@ const parseFile = (code: string) =>
   })!
 
 describe('enterSSA', () => {
+  it('resets generated SSA names between compilations', () => {
+    resetGeneratedSSANames()
+    expect(getSSABaseName('count$$ssa1')).toBe('count$$ssa1')
+    makeSSAName('count', 1)
+    expect(getSSABaseName('count$$ssa1')).toBe('count')
+
+    resetGeneratedSSANames()
+    expect(getSSABaseName('count$$ssa1')).toBe('count$$ssa1')
+
+    buildHIR(
+      parseFile(`
+      function Foo() {
+        return 1
+      }
+    `),
+    )
+    expect(getSSABaseName('count$$ssa1')).toBe('count$$ssa1')
+  })
+
   it('renames assigns with versions', () => {
     const ast = parseFile(`
       function Foo() {

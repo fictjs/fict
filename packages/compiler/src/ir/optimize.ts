@@ -11,7 +11,7 @@ import type {
   JSXElementExpression,
   BlockId,
 } from './hir'
-import { getSSABaseName, makeSSAName } from './hir'
+import { getSSABaseName, makeSSAName, resetGeneratedSSANames } from './hir'
 import { isHookLikeFunction } from './hook-utils'
 import { analyzeReactiveScopesWithSSA, type ReactiveScopeResult } from './scopes'
 import { analyzeCFG, enterSSA } from './ssa'
@@ -126,6 +126,7 @@ export interface OptimizeOptions {
 }
 
 export function optimizeHIR(program: HIRProgram, options: OptimizeOptions = {}): HIRProgram {
+  resetGeneratedSSANames()
   const exportedNames = collectExportedNames(program)
   const functions = program.functions.map(fn => {
     if (isPureOptimizationCandidate(fn)) {

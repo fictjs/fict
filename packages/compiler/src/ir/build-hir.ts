@@ -35,6 +35,7 @@ import {
   type TemplateLiteral as HTemplateLiteral,
   type UnaryExpression as HUnaryExpression,
   type UpdateExpression as HUpdateExpression,
+  resetGeneratedSSANames,
 } from './hir'
 
 export interface BuildHIROptions {
@@ -711,6 +712,7 @@ export function buildHIR(
   macroAliases?: MacroAliases,
   options?: BuildHIROptions,
 ): HIRProgram {
+  resetGeneratedSSANames()
   const prevMacroAliases = activeMacroAliases
   const prevOptions = activeBuildOptions
   activeMacroAliases = resolveMacroAliases(macroAliases)

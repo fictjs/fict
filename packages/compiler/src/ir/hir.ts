@@ -132,6 +132,10 @@ export function makeSSAName(baseName: string, version: number): string {
   return name
 }
 
+export function resetGeneratedSSANames(): void {
+  GENERATED_SSA_NAMES.clear()
+}
+
 /**
  * Extract the base name from an SSA-versioned variable name.
  * Returns the original name if no SSA suffix is present.
