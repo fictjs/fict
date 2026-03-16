@@ -540,6 +540,41 @@ describe('R010: Lazy conditional evaluation', () => {
     expect(output).toContain('() => label()')
   })
 
+  it('keeps control-flow region outputs reactive when the branch also has side effects', () => {
+    const output = transform(
+      `
+      import { $state } from 'fict'
+      function Counter() {
+        let count = $state(0)
+        const double = count * 2
+        let message = 'Keep going...'
+        let color = 'black'
+
+        if (count >= 3) {
+          message = 'Threshold Reached!'
+          color = 'red'
+          if (count === 3) {
+            console.log('Just hit 3!')
+          }
+        }
+
+        return (
+          <div style={{ color }}>
+            <h1>{count}</h1>
+            <h2>{double}</h2>
+            <p>{message}</p>
+          </div>
+        )
+      }
+    `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toContain('color: color()')
+    expect(output).toContain('message()')
+    expect(output).toContain('console.log("Just hit 3!")')
+  })
+
   it('handles pending outputs captured in returned closures', () => {
     const output = transform(
       `

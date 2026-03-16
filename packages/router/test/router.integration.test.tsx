@@ -4,7 +4,6 @@ import { render, screen, act } from '@fictjs/testing-library'
 import {
   MemoryRouter,
   Route,
-  Routes,
   useNavigate,
   useLocation,
   useBeforeLeave,
@@ -72,6 +71,7 @@ describe('Router integration (MemoryRouter)', () => {
           path="/from"
           element={
             <div>
+              <LocationText />
               <Guarded onCall={onCall} />
               <NavigateButton to="/to" />
             </div>
@@ -100,6 +100,7 @@ describe('Router integration (MemoryRouter)', () => {
           path="/from"
           element={
             <div>
+              <LocationText />
               <Guarded onCall={onCall} />
               <NavigateButton to="/to" />
             </div>
@@ -124,6 +125,7 @@ describe('Router integration (MemoryRouter)', () => {
           path="/users"
           element={
             <div>
+              <LocationText />
               <NavLink to="/users" activeClassName="active" pendingClassName="pending">
                 {({ isActive, isPending }) => (
                   <span

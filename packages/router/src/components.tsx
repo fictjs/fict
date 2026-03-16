@@ -76,7 +76,7 @@ export function Router(props: BrowserRouterProps & { children?: FictNode }) {
 
   return (
     <RouterProvider history={history} routes={routes} base={props.base}>
-      <Routes>{props.children}</Routes>
+      <Routes routes={routes}>{props.children}</Routes>
     </RouterProvider>
   )
 }
@@ -91,7 +91,7 @@ export function HashRouter(props: HashRouterProps & { children?: FictNode }) {
 
   return (
     <RouterProvider history={history} routes={routes} base={props.base}>
-      <Routes>{props.children}</Routes>
+      <Routes routes={routes}>{props.children}</Routes>
     </RouterProvider>
   )
 }
@@ -114,7 +114,7 @@ export function MemoryRouter(props: MemoryRouterProps & { children?: FictNode })
 
   return (
     <RouterProvider history={history} routes={routes} base={props.base}>
-      <Routes>{props.children}</Routes>
+      <Routes routes={routes}>{props.children}</Routes>
     </RouterProvider>
   )
 }
@@ -128,7 +128,7 @@ export function StaticRouter(props: StaticRouterProps & { children?: FictNode })
 
   return (
     <RouterProvider history={history} routes={routes} base={props.base}>
-      <Routes>{props.children}</Routes>
+      <Routes routes={routes}>{props.children}</Routes>
     </RouterProvider>
   )
 }
@@ -139,6 +139,7 @@ export function StaticRouter(props: StaticRouterProps & { children?: FictNode })
 
 interface RoutesProps {
   children?: FictNode
+  routes?: RouteDefinition[]
 }
 
 /**
@@ -149,7 +150,7 @@ export function Routes(props: RoutesProps) {
   const parentRoute = useRoute()
 
   // Get routes from children
-  const routes = extractRoutes(props.children)
+  const routes = props.routes ?? extractRoutes(props.children)
 
   // Compile routes for matching
   const compiledRoutes = routes.map(r => compileRoute(r))
@@ -178,17 +179,30 @@ export function Routes(props: RoutesProps) {
     return matchRoutes(branches, relativePath) || []
   })
 
-  // Render the matched routes
-  const matches = currentMatches()
-  return <>{matches.length > 0 ? renderMatches(matches, 0) : null}</>
+  return <CurrentMatchesView matches={currentMatches} />
 }
 
 // ============================================================================
 // Route Component
 // ============================================================================
 
-export function renderMatches(matches: RouteMatch[], index: number): FictNode {
-  const match = matches[index]!
+interface RenderMatchesProps {
+  matches: RouteMatch[]
+  index: number
+}
+
+interface CurrentMatchesProps {
+  matches: RouteMatch[] | (() => RouteMatch[])
+}
+
+function CurrentMatchesView(props: CurrentMatchesProps): FictNode {
+  const matches = () => readAccessor(props.matches)
+
+  return <>{matches().length > 0 ? renderMatches(matches(), 0) : null}</>
+}
+
+function RenderMatchesView(props: RenderMatchesProps): FictNode {
+  const match = props.matches[props.index]!
   const route = match.route
   const router = useRouter()
 
@@ -280,7 +294,10 @@ export function renderMatches(matches: RouteMatch[], index: number): FictNode {
     match: () => match,
     data: () => dataState().data,
     error: () => dataState().error,
-    outlet: () => (index + 1 < matches.length ? renderMatches(matches, index + 1) : null),
+    outlet: () =>
+      props.index + 1 < props.matches.length ? (
+        <RenderMatchesView matches={props.matches} index={props.index + 1} />
+      ) : null,
     resolvePath: wrapAccessor((to: To) => {
       const basePath = match.pathname
       const targetPath = typeof to === 'string' ? to : to.pathname || '/'
@@ -288,32 +305,33 @@ export function renderMatches(matches: RouteMatch[], index: number): FictNode {
     }),
   }
 
-  // Build the route content with context provider
-  let content: FictNode = (
+  const routeContent: FictNode = (
     <RouteContext.Provider value={routeContext}>{renderContent()}</RouteContext.Provider>
   )
 
-  // Always wrap with ErrorBoundary if errorElement is defined
-  if (route.errorElement) {
-    content = (
-      <ErrorBoundary
-        fallback={(err: unknown, reset?: () => void) => (
-          <RouteErrorContext.Provider value={{ error: err, reset }}>
-            {route.errorElement}
-          </RouteErrorContext.Provider>
-        )}
-      >
-        {content}
-      </ErrorBoundary>
-    )
-  }
+  const errorBoundaryContent: FictNode = route.errorElement ? (
+    <ErrorBoundary
+      fallback={(err: unknown, reset?: () => void) => (
+        <RouteErrorContext.Provider value={{ error: err, reset }}>
+          {route.errorElement}
+        </RouteErrorContext.Provider>
+      )}
+    >
+      {routeContent}
+    </ErrorBoundary>
+  ) : (
+    routeContent
+  )
 
-  // If route has loadingElement and component uses Suspense internally
-  if (route.loadingElement) {
-    content = <Suspense fallback={route.loadingElement}>{content}</Suspense>
-  }
+  return route.loadingElement ? (
+    <Suspense fallback={route.loadingElement}>{errorBoundaryContent}</Suspense>
+  ) : (
+    errorBoundaryContent
+  )
+}
 
-  return content
+export function renderMatches(matches: RouteMatch[], index: number): FictNode {
+  return <RenderMatchesView matches={matches} index={index} />
 }
 
 interface RouteJSXProps {

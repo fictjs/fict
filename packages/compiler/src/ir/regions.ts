@@ -814,6 +814,19 @@ interface ControlFlowRegionState {
   partialRegionIds: Set<number>
 }
 
+function shouldDisablePartialRegions(node: StructuredNode): boolean {
+  switch (node.kind) {
+    case 'while':
+    case 'doWhile':
+    case 'for':
+    case 'forOf':
+    case 'forIn':
+      return true
+    default:
+      return false
+  }
+}
+
 /**
  * Internal function to lower structured nodes
  * Handles region-aware code generation with memo/dependency tracking
@@ -883,7 +896,10 @@ function lowerNodeWithRegionContext(
           instructionBuffer.push({ instr: child.instruction, region })
         } else {
           const controlFlowState = analyzeControlFlowRegion(child, regionCtx)
-          controlFlowState.partialRegionIds.forEach(id => regionCtx?.disabledRegions.add(id))
+          const disablePartialRegions = shouldDisablePartialRegions(child)
+          if (disablePartialRegions) {
+            controlFlowState.partialRegionIds.forEach(id => regionCtx?.disabledRegions.add(id))
+          }
           // Flush pending instructions before control flow
           stmts.push(
             ...flushInstructionBuffer(
@@ -892,7 +908,7 @@ function lowerNodeWithRegionContext(
               ctx,
               declaredVars,
               regionCtx,
-              controlFlowState.partialRegionIds,
+              disablePartialRegions ? controlFlowState.partialRegionIds : undefined,
             ),
           )
           instructionBuffer.length = 0
