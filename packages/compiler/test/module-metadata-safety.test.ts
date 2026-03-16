@@ -262,6 +262,52 @@ describe('module metadata safety', () => {
     }
   })
 
+  it('does not permanently cache metadata resolution misses', async () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_negative_cache__')
+    const importer = path.join(baseDir, 'consumer.ts')
+    const depPath = path.join(baseDir, 'dep.ts')
+    const depMetaPath = `${depPath}.fict.meta.json`
+    mkdirSync(baseDir, { recursive: true })
+
+    try {
+      const first = resolveModuleMetadata('./dep', importer, {
+        emitModuleMetadata: false,
+      })
+      expect(first).toBeUndefined()
+
+      writeFileSync(
+        depMetaPath,
+        JSON.stringify({
+          exports: {
+            value: 'signal',
+          },
+        }),
+        'utf8',
+      )
+
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      const resolved = resolveModuleMetadata('./dep', importer, {
+        emitModuleMetadata: false,
+      })
+
+      expect(resolved).toEqual({
+        exports: {
+          value: 'signal',
+        },
+      })
+    } finally {
+      if (existsSync(depMetaPath)) {
+        rmSync(depMetaPath, { force: true })
+      }
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
   it('does not fall back to cwd sidecars for unresolved relative imports', () => {
     clearModuleMetadata()
     const marker = '__fict_relative_probe__'

@@ -7,10 +7,10 @@ import type { FictCompilerOptions, ModuleReactiveMetadata } from './types'
 
 const globalMetadata = new Map<string, ModuleReactiveMetadata>()
 const lastWrittenMetadataPayload = new Map<string, string>()
-const defaultResolutionCache = new Map<string, ModuleReactiveMetadata | null>()
+const defaultResolutionCache = new Map<string, ModuleReactiveMetadata>()
 let resolutionCacheByOptions = new WeakMap<
   FictCompilerOptions,
-  Map<string, ModuleReactiveMetadata | null>
+  Map<string, ModuleReactiveMetadata>
 >()
 
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
@@ -47,13 +47,11 @@ function shouldUseResolutionCache(options?: FictCompilerOptions): boolean {
   return !options?.resolveModuleMetadata && !options?.moduleMetadata
 }
 
-function getResolutionCache(
-  options?: FictCompilerOptions,
-): Map<string, ModuleReactiveMetadata | null> {
+function getResolutionCache(options?: FictCompilerOptions): Map<string, ModuleReactiveMetadata> {
   if (!options) return defaultResolutionCache
   let cache = resolutionCacheByOptions.get(options)
   if (!cache) {
-    cache = new Map<string, ModuleReactiveMetadata | null>()
+    cache = new Map<string, ModuleReactiveMetadata>()
     resolutionCacheByOptions.set(options, cache)
   }
   return cache
@@ -61,10 +59,7 @@ function getResolutionCache(
 
 function clearResolutionCaches(): void {
   defaultResolutionCache.clear()
-  resolutionCacheByOptions = new WeakMap<
-    FictCompilerOptions,
-    Map<string, ModuleReactiveMetadata | null>
-  >()
+  resolutionCacheByOptions = new WeakMap<FictCompilerOptions, Map<string, ModuleReactiveMetadata>>()
 }
 
 function clearFsProbeCache(): void {
@@ -328,9 +323,8 @@ export function resolveModuleMetadata(
   const cacheKey = `${importer ?? ''}\0${source}`
   if (useResolutionCache) {
     const cache = getResolutionCache(options)
-    const cached = cache.get(cacheKey)
-    if (cached !== undefined) {
-      return cached ?? undefined
+    if (cache.has(cacheKey)) {
+      return cache.get(cacheKey)
     }
   }
 
@@ -380,7 +374,9 @@ export function resolveModuleMetadata(
 
   if (useResolutionCache) {
     const cache = getResolutionCache(options)
-    cache.set(cacheKey, resolvedMetadata ?? null)
+    if (resolvedMetadata) {
+      cache.set(cacheKey, resolvedMetadata)
+    }
   }
   return resolvedMetadata
 }
