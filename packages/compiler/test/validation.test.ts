@@ -7,6 +7,7 @@ import {
   getAllDiagnosticCodes,
   getDiagnosticInfo,
   createDiagnostic,
+  reportDiagnostic,
   validateFunction,
   validateListKeys,
   validateNoConditionalHooks,
@@ -55,7 +56,8 @@ describe('createDiagnostic', () => {
     expect(diagnostic.message).toBe(DiagnosticMessages[DiagnosticCode.FICT_S001])
     expect(diagnostic.fileName).toBe('test.tsx')
     expect(diagnostic.line).toBe(10)
-    expect(diagnostic.column).toBe(5)
+    expect(diagnostic.column).toBe(6)
+    expect(diagnostic.endColumn).toBe(10)
   })
 
   it('should include context when provided', () => {
@@ -65,6 +67,31 @@ describe('createDiagnostic', () => {
     })
 
     expect(diagnostic.context).toEqual({ propName: 'x' })
+  })
+
+  it('reports diagnostics with 1-based warning columns', () => {
+    const node = t.identifier('warn')
+    node.loc = {
+      start: { line: 3, column: 2, index: 0 },
+      end: { line: 3, column: 6, index: 4 },
+      filename: 'test.tsx',
+      identifierName: 'warn',
+    }
+
+    const warnings: Array<{ line: number; column: number }> = []
+    reportDiagnostic(
+      {
+        file: { opts: { filename: 'test.tsx' } },
+        options: {
+          filename: 'test.tsx',
+          onWarn: warning => warnings.push({ line: warning.line, column: warning.column }),
+        },
+      },
+      DiagnosticCode.FICT_S001,
+      node,
+    )
+
+    expect(warnings).toEqual([{ line: 3, column: 3 }])
   })
 })
 

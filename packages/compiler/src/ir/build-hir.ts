@@ -168,7 +168,7 @@ const reportUnsupportedExpression = (
 ): never => {
   const loc = getLoc(node)
   const line = loc?.start.line ?? 0
-  const column = loc?.start.column ?? 0
+  const column = loc ? loc.start.column + 1 : 0
   const fileName = activeBuildOptions?.fileName ?? '<unknown>'
   const message = overrideMessage ?? `Unsupported expression '${node.type}' in HIR conversion`
 

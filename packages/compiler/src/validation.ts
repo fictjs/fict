@@ -200,9 +200,9 @@ export function createDiagnostic(
     message: DiagnosticMessages[code],
     fileName,
     line: loc?.start.line ?? 0,
-    column: loc?.start.column ?? 0,
+    column: loc ? loc.start.column + 1 : 0,
     endLine: loc?.end.line,
-    endColumn: loc?.end.column,
+    endColumn: loc?.end ? loc.end.column + 1 : undefined,
     context,
   }
 }

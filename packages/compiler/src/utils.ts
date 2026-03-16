@@ -466,7 +466,7 @@ export function emitWarning(
     message,
     fileName: ctx.file.opts.filename || '<unknown>',
     line: loc?.start.line ?? 0,
-    column: loc?.start.column ?? 0,
+    column: loc ? loc.start.column + 1 : 0,
   })
 }
 
