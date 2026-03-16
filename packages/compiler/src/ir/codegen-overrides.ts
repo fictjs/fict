@@ -63,6 +63,45 @@ export function replaceIdentifiersWithOverrides(
     return
   }
 
+  const collectPatternNames = (
+    pattern: BabelCore.types.LVal | BabelCore.types.PatternLike,
+    into: Set<string>,
+  ) => {
+    if (t.isIdentifier(pattern)) {
+      into.add(normalizeDependencyKey(pattern.name).split('.')[0] ?? pattern.name)
+      return
+    }
+    if (t.isTSParameterProperty(pattern)) {
+      collectPatternNames(pattern.parameter, into)
+      return
+    }
+    if (t.isRestElement(pattern)) {
+      collectPatternNames(pattern.argument as BabelCore.types.PatternLike, into)
+      return
+    }
+    if (t.isAssignmentPattern(pattern)) {
+      collectPatternNames(pattern.left, into)
+      return
+    }
+    if (t.isObjectPattern(pattern)) {
+      pattern.properties.forEach(prop => {
+        if (t.isRestElement(prop)) {
+          collectPatternNames(prop.argument as BabelCore.types.PatternLike, into)
+        } else if (t.isObjectProperty(prop)) {
+          collectPatternNames(prop.value as BabelCore.types.PatternLike, into)
+        }
+      })
+      return
+    }
+    if (t.isArrayPattern(pattern)) {
+      pattern.elements.forEach(el => {
+        if (el && t.isPatternLike(el)) {
+          collectPatternNames(el as BabelCore.types.PatternLike, into)
+        }
+      })
+    }
+  }
+
   const collectParamNames = (params: BabelCore.types.Function['params']): Set<string> => {
     const names = new Set<string>()
     const addName = (n: string | undefined) => {
@@ -98,6 +137,86 @@ export function replaceIdentifiersWithOverrides(
     return names
   }
 
+  const collectFunctionLocalNames = (
+    body: BabelCore.types.Node | null | undefined,
+  ): Set<string> => {
+    const names = new Set<string>()
+
+    const visit = (current: BabelCore.types.Node | null | undefined) => {
+      if (!current) return
+      if (t.isFunctionDeclaration(current) && current.id) {
+        names.add(normalizeDependencyKey(current.id.name).split('.')[0] ?? current.id.name)
+        return
+      }
+      if (
+        t.isFunctionExpression(current) ||
+        t.isArrowFunctionExpression(current) ||
+        t.isFunctionDeclaration(current)
+      ) {
+        return
+      }
+
+      if (t.isVariableDeclaration(current)) {
+        current.declarations.forEach(decl => {
+          collectPatternNames(decl.id as BabelCore.types.PatternLike, names)
+          visit(decl.init)
+        })
+        return
+      }
+
+      if (t.isCatchClause(current)) {
+        if (current.param) {
+          collectPatternNames(current.param as BabelCore.types.PatternLike, names)
+        }
+        visit(current.body)
+        return
+      }
+
+      if (t.isForOfStatement(current) || t.isForInStatement(current)) {
+        if (t.isVariableDeclaration(current.left)) {
+          current.left.declarations.forEach(decl => {
+            collectPatternNames(decl.id as BabelCore.types.PatternLike, names)
+          })
+        } else if (t.isPatternLike(current.left)) {
+          collectPatternNames(current.left as BabelCore.types.PatternLike, names)
+        }
+        visit(current.right)
+        visit(current.body)
+        return
+      }
+
+      if (t.isForStatement(current)) {
+        visit(current.init as BabelCore.types.Node | null)
+        visit(current.test as BabelCore.types.Node | null)
+        visit(current.update as BabelCore.types.Node | null)
+        visit(current.body)
+        return
+      }
+
+      if (t.isBlockStatement(current)) {
+        current.body.forEach(visit)
+        return
+      }
+
+      for (const key of Object.keys(current)) {
+        if (key === 'type' || key === 'loc' || key === 'start' || key === 'end') continue
+        const value = (current as unknown as Record<string, unknown>)[key]
+        if (Array.isArray(value)) {
+          value.forEach(item => {
+            if (item && typeof item === 'object' && 'type' in item) {
+              visit(item as BabelCore.types.Node)
+            }
+          })
+        } else if (value && typeof value === 'object' && 'type' in value) {
+          visit(value as BabelCore.types.Node)
+        }
+      }
+    }
+
+    visit(body)
+    return names
+  }
+
   if (!skipCurrentNode && (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))) {
     const propertyNode = node.property as BabelCore.types.Node
     const isDynamicComputed =
@@ -126,6 +245,8 @@ export function replaceIdentifiersWithOverrides(
 
   if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
     const paramNames = collectParamNames(node.params)
+    const localNames = collectFunctionLocalNames(node.body)
+    localNames.forEach(name => paramNames.add(name))
     let scopedOverrides = overrides
     if (paramNames.size > 0) {
       scopedOverrides = {}

@@ -1108,11 +1108,21 @@ function lowerExpressionImpl(
     const prevLocalDeclared = ctx.localDeclaredNames
     const scoped = new Set(ctx.trackedVars)
     paramNames.forEach(n => scoped.delete(deSSAVarName(n)))
+    if (localDeclared) {
+      for (const name of localDeclared) {
+        scoped.delete(deSSAVarName(name))
+      }
+    }
     ctx.trackedVars = scoped
     ctx.aliasVars = new Set(ctx.aliasVars)
     ctx.externalTracked = new Set(prevTracked)
     const shadowed = new Set(prevShadowed ?? [])
     paramNames.forEach(n => shadowed.add(deSSAVarName(n)))
+    if (localDeclared) {
+      for (const name of localDeclared) {
+        shadowed.add(deSSAVarName(name))
+      }
+    }
     ctx.shadowedNames = shadowed
     const localNames = new Set(prevLocalDeclared ?? [])
     if (localDeclared) {
