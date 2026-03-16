@@ -997,7 +997,14 @@ function lowerNodeWithRegionContext(
         } else {
           const controlFlowState = analyzeControlFlowRegion(child, regionCtx)
           const disablePartialRegions = shouldDisablePartialRegions(child)
+          const disableEarlyExitRegion = _structuredNodeHasEarlyExit(child)
           if (disablePartialRegions) {
+            controlFlowState.partialRegionIds.forEach(id => regionCtx?.disabledRegions.add(id))
+          }
+          if (disableEarlyExitRegion) {
+            if (controlFlowState.region) {
+              regionCtx?.disabledRegions.add(controlFlowState.region.id)
+            }
             controlFlowState.partialRegionIds.forEach(id => regionCtx?.disabledRegions.add(id))
           }
           // Flush pending instructions before control flow
@@ -1008,7 +1015,9 @@ function lowerNodeWithRegionContext(
               ctx,
               declaredVars,
               regionCtx,
-              disablePartialRegions ? controlFlowState.partialRegionIds : undefined,
+              disablePartialRegions || disableEarlyExitRegion
+                ? controlFlowState.partialRegionIds
+                : undefined,
             ),
           )
           instructionBuffer.length = 0

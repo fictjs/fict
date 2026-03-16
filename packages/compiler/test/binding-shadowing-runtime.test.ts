@@ -95,6 +95,52 @@ describe('binding shadowing runtime regressions', () => {
     expect(value).toBe(1)
   })
 
+  it('preserves returns from shadowed locals inside if branches', () => {
+    const value = compileAndRun<number | (() => number)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          if (true) {
+            let count = 1
+            return count
+          }
+          return count
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof value === 'function' ? value() : value
+    expect(resolved).toBe(1)
+  })
+
+  it('preserves returns from shadowed locals inside switch cases', () => {
+    const value = compileAndRun<number | (() => number)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun(mode) {
+          let count = $state(0)
+          switch (mode) {
+            case 1: {
+              const count = 2
+              return count
+            }
+            default:
+              return count
+          }
+        }
+      `,
+      'useRun',
+      [1],
+    )
+
+    const resolved = typeof value === 'function' ? value() : value
+    expect(resolved).toBe(2)
+  })
+
   it('keeps for-of loop bindings from rewriting to outer signals', () => {
     const total = compileAndRun<number>(
       `
