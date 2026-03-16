@@ -1935,10 +1935,10 @@ function createHIREntrypointVisitor(
         path.node.body = lowered.program.body
         path.node.directives = lowered.program.directives
 
+        stripMacroImports(path, t)
         if (!process.env.FICT_SKIP_SCOPE_CRAWL) {
           path.scope.crawl()
         }
-        stripMacroImports(path, t)
       },
     },
   }

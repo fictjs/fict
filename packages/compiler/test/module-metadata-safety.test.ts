@@ -167,6 +167,44 @@ describe('module metadata safety', () => {
     expect(resolveCalls).toBeGreaterThan(firstPassCalls)
   })
 
+  it('rebuilds scope after stripping macro imports for later plugins', () => {
+    let hasStateBinding: boolean | undefined
+    let hasKeepBinding: boolean | undefined
+
+    transformSync(
+      `
+        import { $state, keep } from 'fict'
+        export const value = keep
+      `,
+      {
+        filename: '/tmp/strip-macro-imports.ts',
+        configFile: false,
+        babelrc: false,
+        sourceType: 'module',
+        parserOpts: {
+          sourceType: 'module',
+          plugins: ['typescript'],
+        },
+        plugins: [
+          [createFictPlugin, { emitModuleMetadata: false, dev: false }],
+          () => ({
+            visitor: {
+              Program: {
+                exit(path) {
+                  hasStateBinding = path.scope.hasBinding('$state')
+                  hasKeepBinding = path.scope.hasBinding('keep')
+                },
+              },
+            },
+          }),
+        ],
+      },
+    )
+
+    expect(hasStateBinding).toBe(false)
+    expect(hasKeepBinding).toBe(true)
+  })
+
   it('does not resolve bare package imports from cwd metadata sidecars', () => {
     clearModuleMetadata()
     const bareSource = '__fict_bare_pkg__'
