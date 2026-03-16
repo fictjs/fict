@@ -1342,8 +1342,6 @@ function lowerNodeWithRegionContext(
           case 'Switch':
           case 'ForOf':
           case 'ForIn':
-          case 'Break':
-          case 'Continue':
             return true
           default:
             return false
@@ -1470,13 +1468,15 @@ function lowerTerminatorForStateMachine(
       ]
 
     case 'Break':
-      // State machine doesn't preserve break semantics perfectly
-      // For labeled breaks, we'd need more complex handling
-      return [t.breakStatement(term.label ? t.identifier(term.label) : t.identifier('__cfgLoop'))]
+      return [
+        t.expressionStatement(t.assignmentExpression('=', stateVar, t.numericLiteral(term.target))),
+        t.continueStatement(t.identifier('__cfgLoop')),
+      ]
 
     case 'Continue':
       return [
-        t.continueStatement(term.label ? t.identifier(term.label) : t.identifier('__cfgLoop')),
+        t.expressionStatement(t.assignmentExpression('=', stateVar, t.numericLiteral(term.target))),
+        t.continueStatement(t.identifier('__cfgLoop')),
       ]
 
     case 'Unreachable':

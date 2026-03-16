@@ -126,4 +126,29 @@ describe('control flow runtime regressions', () => {
       ),
     ).toThrow(/Unsafe state-machine fallback: Try terminator/)
   })
+
+  it('preserves do-while continue targets inside state-machine fallback', () => {
+    const result = compileAndRunHook<number | (() => number)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let i = $state(0)
+
+          do {
+            i++
+            if (i === 3) {
+              continue
+            }
+          } while (i < 5)
+
+          return i
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe(5)
+  })
 })
