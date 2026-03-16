@@ -1176,25 +1176,25 @@ function createHIREntrypointVisitor(
         const importedReactiveBindingIds = new Set<BabelCore.types.Identifier>()
         path.traverse({
           ImportDeclaration(importPath) {
-            if (
-              importPath.node.source.value !== 'fict' &&
-              importPath.node.source.value !== 'fict/slim'
-            )
-              return
+            const source = importPath.node.source.value
+            if (source !== 'fict' && source !== 'fict/slim' && source !== 'fict/plus') return
             for (const spec of importPath.node.specifiers) {
               if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
-                fictImports.add(spec.imported.name)
-                if (spec.imported.name === '$state' && t.isIdentifier(spec.local)) {
-                  stateMacroNames.add(spec.local.name)
+                const importedName = spec.imported.name
+                if (source === 'fict' || source === 'fict/slim') {
+                  fictImports.add(importedName)
+                  if (importedName === '$state' && t.isIdentifier(spec.local)) {
+                    stateMacroNames.add(spec.local.name)
+                  }
+                  if (importedName === '$effect' && t.isIdentifier(spec.local)) {
+                    effectMacroNames.add(spec.local.name)
+                  }
                 }
-                if (spec.imported.name === '$effect' && t.isIdentifier(spec.local)) {
-                  effectMacroNames.add(spec.local.name)
-                }
-                if (
-                  (spec.imported.name === '$memo' || spec.imported.name === 'createMemo') &&
-                  t.isIdentifier(spec.local)
-                ) {
-                  memoMacroNames.add(spec.local.name)
+                if (importedName === '$memo' || importedName === 'createMemo') {
+                  fictImports.add(importedName)
+                  if (t.isIdentifier(spec.local)) {
+                    memoMacroNames.add(spec.local.name)
+                  }
                 }
               }
             }

@@ -267,4 +267,18 @@ describe('$store memoization and dynamic access', () => {
     expect(output).toContain(`store.items.map`)
     expect(output).not.toMatch(/__fictUseMemo\([^)]+__fictUseMemo/)
   })
+
+  it('recognizes aliased memo imports from fict/plus', () => {
+    const output = transform(`
+      import { $store, $memo as m } from 'fict/plus'
+      function Component() {
+        const store = $store({ items: [1, 2, 3] })
+        const doubled = m(() => store.items.map(x => x * 2))
+        return <div>{doubled()}</div>
+      }
+    `)
+
+    expect(output).toContain(`const doubled = m(() => store.items.map`)
+    expect(output).not.toContain(`__fictUseMemo(__fictCtx, () => m(`)
+  })
 })
