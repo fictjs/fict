@@ -93,9 +93,10 @@ describe('control flow runtime regressions', () => {
     expect(resolved).toBe(3)
   })
 
-  it('initializes reactive declarations correctly inside state-machine fallback blocks', () => {
-    const output = transformCommonJS(
-      `
+  it('rejects unsafe state-machine fallback for try-finally control flow', () => {
+    expect(() =>
+      transformCommonJS(
+        `
         import { $state } from 'fict'
 
         export function useRun() {
@@ -122,9 +123,7 @@ describe('control flow runtime regressions', () => {
           return x
         }
       `,
-    )
-
-    expect(output).toContain('x = (0, _internal.__fictUseSignal)')
-    expect(output).not.toContain('x((0, _internal.__fictUseSignal)')
+      ),
+    ).toThrow(/Unsafe state-machine fallback: Try terminator/)
   })
 })

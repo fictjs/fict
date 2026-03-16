@@ -1206,6 +1206,26 @@ function lowerNodeWithRegionContext(
     }
 
     case 'stateMachine': {
+      const unsupportedBlock = node.blocks.find(block => {
+        switch (block.terminator.kind) {
+          case 'Try':
+          case 'Switch':
+          case 'ForOf':
+          case 'ForIn':
+          case 'Break':
+          case 'Continue':
+            return true
+          default:
+            return false
+        }
+      })
+      if (unsupportedBlock) {
+        throw new Error(
+          `Unsafe state-machine fallback: ${unsupportedBlock.terminator.kind} terminator in block ` +
+            `${unsupportedBlock.blockId} cannot be lowered without changing semantics`,
+        )
+      }
+
       const hoisted: string[] = []
       const normalizedBlocks = node.blocks.map(block => {
         const instructions = block.instructions.map(instr => {
