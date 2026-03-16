@@ -1227,6 +1227,7 @@ function lowerNodeWithRegionContext(
               ),
             ]
           : []
+      const hoistedInitializers = new Set(hoisted)
       const stateMachineDeclared = new Set(declaredVars)
       hoisted.forEach(n => stateMachineDeclared.add(n))
 
@@ -1244,7 +1245,14 @@ function lowerNodeWithRegionContext(
 
         // Lower instructions
         for (const instr of block.instructions) {
-          const stmt = instructionToStatement(instr, t, stateMachineDeclared, ctx)
+          const stmt = instructionToStatement(
+            instr,
+            t,
+            stateMachineDeclared,
+            ctx,
+            undefined,
+            hoistedInitializers,
+          )
           if (stmt) stmts.push(stmt)
         }
 
@@ -2608,6 +2616,7 @@ function instructionToStatement(
   declaredVars: Set<string>,
   ctx: CodegenContext,
   _buildMemoCall?: (expr: BabelCore.types.Expression, name?: string) => BabelCore.types.Expression,
+  hoistedDeclarationInitializers?: Set<string>,
 ): BabelCore.types.Statement | null {
   if (instr.kind === 'Assign') {
     const ssaName = instr.target.name
@@ -2673,6 +2682,7 @@ function instructionToStatement(
     const inRegionMemo = ctx.inRegionMemo ?? false
     const isFunctionValue =
       instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression'
+    const isHoistedDeclarationInitializer = hoistedDeclarationInitializers?.has(baseName) ?? false
     // Detect accessor-returning calls ($memo, createMemo, prop) - these return accessors and should be added to memoVars
     const isAccessorReturningCall =
       callKind === 'memo' ||
@@ -2716,9 +2726,47 @@ function instructionToStatement(
         source,
       })
     }
+    const buildHoistedInitializer = (): BabelCore.types.Expression => {
+      if (isStateCall) {
+        ctx.currentAssignmentName = baseName
+        try {
+          return lowerAssignedValue(true)
+        } finally {
+          ctx.currentAssignmentName = undefined
+        }
+      }
+
+      if (dependsOnTracked && !isDestructuringTemp) {
+        if (
+          instr.value.kind === 'Identifier' &&
+          ctx.trackedVars.has(deSSAVarName(instr.value.name)) &&
+          !isDestructuringTemp
+        ) {
+          aliasVars.add(baseName)
+        }
+        const derivedExpr = lowerAssignedValue(true)
+        if (needsMutable) {
+          ctx.memoVars?.delete(baseName)
+          return derivedExpr
+        }
+        if (!isReactiveObjectCall) ctx.memoVars?.add(baseName)
+        if (ctx.noMemo) {
+          return t.arrowFunctionExpression([], derivedExpr)
+        }
+        return isMemoReturningCall ? derivedExpr : buildDerivedMemoCall(derivedExpr)
+      }
+
+      return lowerAssignedValue(true)
+    }
 
     if (isShadowDeclaration && declKind) {
       ctx.trackedVars.delete(baseName)
+    }
+
+    if (isHoistedDeclarationInitializer) {
+      return t.expressionStatement(
+        t.assignmentExpression('=', t.identifier(baseName), buildHoistedInitializer()),
+      )
     }
 
     if (declKind) {

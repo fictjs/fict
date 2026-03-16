@@ -92,4 +92,39 @@ describe('control flow runtime regressions', () => {
     const resolved = typeof result === 'function' ? result() : result
     expect(resolved).toBe(3)
   })
+
+  it('initializes reactive declarations correctly inside state-machine fallback blocks', () => {
+    const output = transformCommonJS(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let x = $state(0)
+          let step = 0
+
+          const flag = () => {
+            step += 1
+            return step <= 2
+          }
+
+          while (flag()) {
+            try {
+              if (flag()) {
+                continue
+              }
+            } finally {
+              x = x + 1
+            }
+
+            break
+          }
+
+          return x
+        }
+      `,
+    )
+
+    expect(output).toContain('x = (0, _internal.__fictUseSignal)')
+    expect(output).not.toContain('x((0, _internal.__fictUseSignal)')
+  })
 })
