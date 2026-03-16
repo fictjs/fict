@@ -149,6 +149,41 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-C004')).toBe(true)
   })
 
+  it('warns when a component may fall through without returning', () => {
+    const warnings: CompilerWarning[] = []
+    const input = `
+      import { render } from 'fict'
+      function Counter({ ready }) {
+        if (ready) return <div>ready</div>
+      }
+      export function mount(el) {
+        return render(() => <Counter ready />, el)
+      }
+    `
+
+    transform(input, { onWarn: w => warnings.push(w) })
+    expect(warnings.some(w => w.code === 'FICT-C004')).toBe(true)
+  })
+
+  it('does not warn when all conditional branches return', () => {
+    const warnings: CompilerWarning[] = []
+    const input = `
+      import { render } from 'fict'
+      function Counter({ ready }) {
+        if (ready) {
+          return <div>ready</div>
+        }
+        return <div>waiting</div>
+      }
+      export function mount(el) {
+        return render(() => <Counter ready />, el)
+      }
+    `
+
+    transform(input, { onWarn: w => warnings.push(w) })
+    expect(warnings.some(w => w.code === 'FICT-C004')).toBe(false)
+  })
+
   it('emits a warning when $effect has no reactive reads', () => {
     const warnings: CompilerWarning[] = []
     const input = `

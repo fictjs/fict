@@ -275,42 +275,63 @@ function isComponentName(name: string | undefined): boolean {
   return !!name && name[0] === name[0]?.toUpperCase()
 }
 
-function blockHasReturn(block: BabelCore.types.BlockStatement): boolean {
-  for (const stmt of block.body) {
-    if (stmt.type === 'ReturnStatement') return true
-    if (stmt.type === 'IfStatement') {
-      if (
-        (stmt.consequent && stmt.consequent.type === 'BlockStatement'
-          ? blockHasReturn(stmt.consequent)
-          : stmt.consequent?.type === 'ReturnStatement') ||
-        (stmt.alternate && stmt.alternate.type === 'BlockStatement'
-          ? blockHasReturn(stmt.alternate)
-          : stmt.alternate?.type === 'ReturnStatement')
-      ) {
-        return true
-      }
+function statementAlwaysReturns(stmt: BabelCore.types.Statement): boolean {
+  if (stmt.type === 'ReturnStatement' || stmt.type === 'ThrowStatement') return true
+
+  if (stmt.type === 'BlockStatement') {
+    return blockAlwaysReturns(stmt)
+  }
+
+  if (stmt.type === 'IfStatement') {
+    return (
+      pathAlwaysReturns(stmt.consequent) && !!stmt.alternate && pathAlwaysReturns(stmt.alternate)
+    )
+  }
+
+  if (stmt.type === 'SwitchStatement') {
+    const hasDefaultCase = stmt.cases.some(switchCase => switchCase.test === null)
+    return (
+      hasDefaultCase &&
+      stmt.cases.every(switchCase => statementListAlwaysReturns(switchCase.consequent))
+    )
+  }
+
+  if (stmt.type === 'TryStatement') {
+    if (stmt.finalizer && blockAlwaysReturns(stmt.finalizer)) {
+      return true
     }
-    if (stmt.type === 'SwitchStatement') {
-      for (const cs of stmt.cases) {
-        for (const cstmt of cs.consequent) {
-          if (cstmt.type === 'ReturnStatement') return true
-          if (cstmt.type === 'BlockStatement' && blockHasReturn(cstmt)) return true
-        }
-      }
+
+    const tryReturns = blockAlwaysReturns(stmt.block)
+    if (!stmt.handler) {
+      return tryReturns
     }
-    if (stmt.type === 'TryStatement') {
-      if (stmt.block && blockHasReturn(stmt.block)) return true
-      if (stmt.handler?.body && blockHasReturn(stmt.handler.body)) return true
-      if (stmt.finalizer && blockHasReturn(stmt.finalizer)) return true
-    }
+    return tryReturns && blockAlwaysReturns(stmt.handler.body)
+  }
+
+  return false
+}
+
+function statementListAlwaysReturns(statements: BabelCore.types.Statement[]): boolean {
+  for (const stmt of statements) {
+    if (statementAlwaysReturns(stmt)) return true
   }
   return false
+}
+
+function pathAlwaysReturns(
+  node: BabelCore.types.Statement | BabelCore.types.BlockStatement,
+): boolean {
+  return node.type === 'BlockStatement' ? blockAlwaysReturns(node) : statementAlwaysReturns(node)
+}
+
+function blockAlwaysReturns(block: BabelCore.types.BlockStatement): boolean {
+  return statementListAlwaysReturns(block.body)
 }
 
 function functionHasReturn(node: BabelCore.types.Function): boolean {
   if (node.type === 'ArrowFunctionExpression' && node.expression) return true
   if (node.body && node.body.type === 'BlockStatement') {
-    return blockHasReturn(node.body)
+    return blockAlwaysReturns(node.body)
   }
   return false
 }
