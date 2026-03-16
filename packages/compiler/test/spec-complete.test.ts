@@ -96,8 +96,8 @@ describe('R001: $state source identification', () => {
         return count
       }
     `)
-    expect(output).toContain('count(count() + 1)')
-    expect(output).toContain('count(count() - 1)')
+    expect(output).toMatch(/count\(__prev_\d+ \+ \(typeof __prev_\d+ === "bigint" \? 1n : 1\)\)/)
+    expect(output).toMatch(/count\(__prev_\d+ - \(typeof __prev_\d+ === "bigint" \? 1n : 1\)\)/)
   })
 })
 
@@ -980,10 +980,10 @@ describe('Integration scenarios', () => {
 
     expect(output).toContain('__fictUseSignal')
     expect(output).toMatch(
-      /\(__prev_\d+\s*=>\s*\(count\(__prev_\d+\s*\+\s*1\),\s*__prev_\d+\)\)\(count\(\)\)/,
+      /\(__prev_\d+\s*=>\s*\(count\(__prev_\d+\s*\+\s*\(typeof __prev_\d+ === "bigint" \? 1n : 1\)\),\s*__prev_\d+\)\)\(count\(\)\)/,
     )
     expect(output).toMatch(
-      /\(__prev_\d+\s*=>\s*\(count\(__prev_\d+\s*-\s*1\),\s*__prev_\d+\)\)\(count\(\)\)/,
+      /\(__prev_\d+\s*=>\s*\(count\(__prev_\d+\s*-\s*\(typeof __prev_\d+ === "bigint" \? 1n : 1\)\),\s*__prev_\d+\)\)\(count\(\)\)/,
     )
   })
 
