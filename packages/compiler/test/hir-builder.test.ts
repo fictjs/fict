@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import * as BabelCore from '@babel/core'
 import { parseSync } from '@babel/core'
-import { buildHIR } from '../src/ir/build-hir'
+import { buildHIR, convertStatementsToHIRFunction } from '../src/ir/build-hir'
 import { printHIR } from '../src/ir/printer'
 
 const parseFile = (code: string) =>
@@ -307,6 +307,73 @@ describe('buildHIR - Advanced Patterns', () => {
     const targets = assigns.map(a => (a as any).target.name)
     expect(targets).toContain('count')
     expect(targets).toContain('double')
+  })
+
+  it('resets destructuring temp names between buildHIR calls', () => {
+    const parseWrapperStatements = () => {
+      const wrapper = parseFile(`
+        function Wrapper(getSource) {
+          const { count } = getSource()
+          return count
+        }
+      `).program.body[0]
+
+      if (!wrapper || !BabelCore.types.isFunctionDeclaration(wrapper)) {
+        throw new Error('expected function declaration')
+      }
+
+      return wrapper.body.body
+    }
+    const getDestructTemps = (fn: ReturnType<typeof convertStatementsToHIRFunction>) =>
+      fn.blocks
+        .flatMap(block => block.instructions)
+        .filter(instr => instr.kind === 'Assign')
+        .map(instr => instr.target.name)
+        .filter(name => name.startsWith('__destruct_'))
+
+    const polluted = convertStatementsToHIRFunction('Wrapper', parseWrapperStatements())
+    expect(getDestructTemps(polluted)).toContain('__destruct_0')
+
+    buildHIR(
+      parseFile(`
+        function Foo() {
+          return 1
+        }
+      `),
+    )
+
+    const afterBuild = convertStatementsToHIRFunction('Wrapper', parseWrapperStatements())
+    expect(getDestructTemps(afterBuild)).toContain('__destruct_0')
+  })
+
+  it('resets destructuring temp names for statement block conversion', () => {
+    const parseStatements = (code: string) =>
+      parseFile(`
+        function Wrapper(getSource) {
+          ${code}
+        }
+      `).program.body[0]
+
+    const wrapper = parseStatements(`
+      const { count } = getSource()
+      return count
+    `)
+
+    if (!wrapper || !BabelCore.types.isFunctionDeclaration(wrapper)) {
+      throw new Error('expected function declaration')
+    }
+
+    const first = convertStatementsToHIRFunction('Wrapper', wrapper.body.body)
+    const second = convertStatementsToHIRFunction('Wrapper', wrapper.body.body)
+    const getDestructTemps = (fn: typeof first) =>
+      fn.blocks
+        .flatMap(block => block.instructions)
+        .filter(instr => instr.kind === 'Assign')
+        .map(instr => instr.target.name)
+        .filter(name => name.startsWith('__destruct_'))
+
+    expect(getDestructTemps(first)).toContain('__destruct_0')
+    expect(getDestructTemps(second)).toContain('__destruct_0')
   })
 
   it('handles destructuring assignment statements', () => {

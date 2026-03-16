@@ -53,6 +53,10 @@ interface BlockBuilder {
 let destructuringTempCounter = 0
 let activeBuildOptions: BuildHIROptions | undefined
 
+export function resetDestructuringTempCounter(): void {
+  destructuringTempCounter = 0
+}
+
 const getLoc = (node?: BabelCore.types.Node | null): BabelCore.types.SourceLocation | null => {
   return node?.loc ?? null
 }
@@ -713,6 +717,7 @@ export function buildHIR(
   options?: BuildHIROptions,
 ): HIRProgram {
   resetGeneratedSSANames()
+  resetDestructuringTempCounter()
   const prevMacroAliases = activeMacroAliases
   const prevOptions = activeBuildOptions
   activeMacroAliases = resolveMacroAliases(macroAliases)
@@ -1682,6 +1687,7 @@ export function convertStatementsToHIRFunction(
   statements: BabelCore.types.Statement[],
   options?: BuildHIROptions,
 ): HIRFunction {
+  resetDestructuringTempCounter()
   const prevOptions = activeBuildOptions
   if (options) {
     activeBuildOptions = options
