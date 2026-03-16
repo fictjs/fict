@@ -5,9 +5,11 @@ import * as fict from '../src'
 import * as slim from '../src/slim'
 
 describe('fict/plus exports', () => {
-  it('exposes resource and lazy', () => {
+  it('exposes resource, lazy, and compatibility aliases', () => {
     expect(plus.resource).toBeTypeOf('function')
     expect(plus.lazy).toBeTypeOf('function')
+    expect(plus.$store).toBeTypeOf('function')
+    expect(plus.$memo).toBeTypeOf('function')
   })
 })
 
