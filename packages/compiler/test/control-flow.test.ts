@@ -861,8 +861,52 @@ describe('Fict Compiler - Control Flow', () => {
         }
       `
       const output = runTransform(input)
+      expect(output).toContain('outer:')
       expect(output).toContain('continue outer')
       expect(output).toContain('total')
+    })
+
+    it('keeps for-of continue branches as conditionals instead of synthetic while loops', () => {
+      const input = `
+        function Component() {
+          let total = 0
+          for (const row of [[1, 2], [3]]) {
+            for (const cell of row) {
+              if (cell === 2) continue
+              total = total + cell
+            }
+          }
+          return <div>{total}</div>
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('if (cell === 2)')
+      expect(output).toContain('continue;')
+      expect(output).not.toContain('while (cell === 2)')
+    })
+
+    it('does not duplicate labels for generic labeled blocks around nested control flow', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let hot = $state(true)
+          let label = 'cold'
+          choose: {
+            for (const item of hot ? [1] : [2]) {
+              if (item === 1) {
+                label = 'hot'
+                break choose
+              }
+            }
+            label = 'warm'
+          }
+          return <div>{label}</div>
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('choose: {')
+      expect(output).toContain('break choose')
+      expect(output).not.toContain('choose: choose:')
     })
 
     it('emits FICT-R003 when reactive if-return lowering is skipped', () => {

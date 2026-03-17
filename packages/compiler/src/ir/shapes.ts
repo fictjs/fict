@@ -508,6 +508,9 @@ function analyzeStructuredNode(
     case 'block':
       node.statements.forEach(child => analyzeStructuredNode(child, shapes, propertyReads, ctx))
       return
+    case 'labeled':
+      analyzeStructuredNode(node.statement, shapes, propertyReads, ctx)
+      return
     case 'instruction':
       analyzeInstruction(node.instruction, shapes, propertyReads, ctx)
       return

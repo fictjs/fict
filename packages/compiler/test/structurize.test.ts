@@ -32,6 +32,9 @@ function countNodes(node: StructuredNode, kind: string): number {
         count += countNodes(child, kind)
       }
       break
+    case 'labeled':
+      count += countNodes(node.statement, kind)
+      break
     case 'if':
       count += countNodes(node.consequent, kind)
       if (node.alternate) count += countNodes(node.alternate, kind)
@@ -280,6 +283,32 @@ describe('CFG Structurization', () => {
       const structured = structurizeCFG(fn!)
       expect(countNodes(structured, 'try')).toBe(1)
     })
+
+    it('should structurize try-finally with internal loop continue', () => {
+      const ast = parseFile(`
+        function foo(flag) {
+          let total = 0
+          try {
+            for (const item of flag ? [1, 2, 3] : [1, 2]) {
+              if (item === 2) {
+                continue
+              }
+              total = total + item
+            }
+          } finally {
+            total = total + 10
+          }
+          return total
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'try')).toBe(1)
+      expect(countNodes(structured, 'forOf')).toBe(1)
+    })
   })
 
   describe('complex control flow', () => {
@@ -466,6 +495,8 @@ describe('CFG Structurization', () => {
 
       const structured = structurizeCFG(fn!)
       expect(countNodes(structured, 'forOf')).toBe(1)
+      expect(countNodes(structured, 'if')).toBe(1)
+      expect(countNodes(structured, 'while')).toBe(0)
     })
 
     it('should structurize continue in for-in loop', () => {
@@ -487,6 +518,8 @@ describe('CFG Structurization', () => {
 
       const structured = structurizeCFG(fn!)
       expect(countNodes(structured, 'forIn')).toBe(1)
+      expect(countNodes(structured, 'if')).toBe(1)
+      expect(countNodes(structured, 'while')).toBe(0)
     })
 
     it('should structurize nested for-of with continue', () => {
@@ -510,6 +543,8 @@ describe('CFG Structurization', () => {
 
       const structured = structurizeCFG(fn!)
       expect(countNodes(structured, 'forOf')).toBe(2)
+      expect(countNodes(structured, 'if')).toBe(1)
+      expect(countNodes(structured, 'while')).toBe(0)
     })
   })
 
@@ -534,8 +569,8 @@ describe('CFG Structurization', () => {
       expect(fn).toBeDefined()
 
       const structured = structurizeCFG(fn!)
-      // Labeled loops are structured, the exact representation may vary
-      expect(structured).toBeDefined()
+      expect(countNodes(structured, 'labeled')).toBe(1)
+      expect(countNodes(structured, 'forOf')).toBe(2)
     })
 
     it('should structurize labeled for-in loop', () => {
@@ -558,8 +593,156 @@ describe('CFG Structurization', () => {
       expect(fn).toBeDefined()
 
       const structured = structurizeCFG(fn!)
-      // Labeled loops are structured, the exact representation may vary
-      expect(structured).toBeDefined()
+      expect(countNodes(structured, 'labeled')).toBe(1)
+      expect(countNodes(structured, 'forIn')).toBe(2)
+    })
+
+    it('should structurize labeled for loop', () => {
+      const ast = parseFile(`
+        function sumUntil(stop) {
+          let total = 0
+          outer: for (let i = 0; i < 5; i++) {
+            if (i === stop) {
+              continue outer
+            }
+            total = total + i
+          }
+          return total
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'labeled')).toBe(1)
+      expect(countNodes(structured, 'for')).toBe(1)
+    })
+
+    it('should structurize labeled block', () => {
+      const ast = parseFile(`
+        function choose(flag) {
+          let result = 'cold'
+          pick: {
+            if (flag) {
+              result = 'hot'
+              break pick
+            }
+            result = 'warm'
+          }
+          return result
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'labeled')).toBe(1)
+      expect(countNodes(structured, 'break')).toBe(1)
+    })
+
+    it('should structurize generic labeled block around nested for-of', () => {
+      const ast = parseFile(`
+        function choose(flag) {
+          let result = 'cold'
+          pick: {
+            for (const item of flag ? [1] : [2]) {
+              if (item === 1) {
+                result = 'hot'
+                break pick
+              }
+            }
+            result = 'warm'
+          }
+          return result
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'labeled')).toBe(1)
+      expect(countNodes(structured, 'forOf')).toBe(1)
+      expect(countNodes(structured, 'break')).toBe(1)
+    })
+
+    it('should structurize labeled switch', () => {
+      const ast = parseFile(`
+        function choose(mode) {
+          let result = 'a'
+          pick: switch (mode) {
+            case 0:
+              result = 'a'
+              break pick
+            default:
+              result = 'b'
+              break pick
+          }
+          return result
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'labeled')).toBe(1)
+      expect(countNodes(structured, 'switch')).toBe(1)
+    })
+
+    it('should structurize generic labeled block around nested switch', () => {
+      const ast = parseFile(`
+        function choose(flag) {
+          let result = 'cold'
+          pick: {
+            switch (flag ? 1 : 0) {
+              case 1:
+                result = 'hot'
+                break pick
+              default:
+                result = 'warm'
+                break
+            }
+          }
+          return result
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'labeled')).toBe(1)
+      expect(countNodes(structured, 'switch')).toBe(1)
+      expect(countNodes(structured, 'break')).toBe(2)
+    })
+
+    it('should structurize labeled try-finally with labeled break', () => {
+      const ast = parseFile(`
+        function choose(flag) {
+          let result = 'cold'
+          pick: try {
+            if (flag) {
+              result = 'hot'
+              break pick
+            }
+            result = 'warm'
+          } finally {
+            result = result + '!'
+          }
+          return result
+        }
+      `)
+      const hir = buildHIR(ast)
+      const fn = hir.functions[0]
+      expect(fn).toBeDefined()
+
+      const structured = structurizeCFG(fn!)
+      expect(countNodes(structured, 'labeled')).toBe(1)
+      expect(countNodes(structured, 'try')).toBe(1)
+      expect(countNodes(structured, 'break')).toBe(1)
     })
   })
 

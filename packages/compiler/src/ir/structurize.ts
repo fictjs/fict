@@ -14,7 +14,14 @@
 
 import type { LVal } from '@babel/types'
 
-import type { BasicBlock, BlockId, Expression, HIRFunction, Instruction } from './hir'
+import type {
+  BasicBlock,
+  BlockId,
+  Expression,
+  HIRFunction,
+  Instruction,
+  LabeledStatementMeta,
+} from './hir'
 import { analyzeCFG } from './ssa'
 
 /**
@@ -65,6 +72,7 @@ export interface StructurizationResult {
 export type StructuredNode =
   | { kind: 'block'; blockId: BlockId; statements: StructuredNode[] }
   | { kind: 'sequence'; nodes: StructuredNode[] }
+  | { kind: 'labeled'; label: string; statement: StructuredNode }
   | {
       kind: 'if'
       test: Expression
@@ -465,11 +473,82 @@ function computeReachableBlocks(
   return reachable
 }
 
+function getLabeledStatementMeta(
+  ctx: StructurizeContext,
+  blockId: BlockId,
+): LabeledStatementMeta | undefined {
+  return ctx.fn.meta?.labeledStatements?.get(blockId)
+}
+
+function wrapStructuredNodeWithLabel(
+  meta: LabeledStatementMeta | undefined,
+  node: StructuredNode,
+  options?: { allowBoundaryLabel?: boolean },
+): StructuredNode {
+  if (!meta?.label) return node
+  if (!options?.allowBoundaryLabel && meta.exitBlock !== undefined) return node
+  return { kind: 'labeled', label: meta.label, statement: node }
+}
+
+function combineStructuredNodes(
+  ...nodes: Array<StructuredNode | null | undefined>
+): StructuredNode {
+  const flattened: StructuredNode[] = []
+  for (const node of nodes) {
+    if (!node) continue
+    if (node.kind === 'sequence') {
+      flattened.push(...node.nodes)
+    } else {
+      flattened.push(node)
+    }
+  }
+
+  if (flattened.length === 0) {
+    return { kind: 'sequence', nodes: [] }
+  }
+  if (flattened.length === 1) {
+    return flattened[0]!
+  }
+  return { kind: 'sequence', nodes: flattened }
+}
+
+function structurizeLabeledStatement(
+  ctx: StructurizeContext,
+  blockId: BlockId,
+  meta: LabeledStatementMeta,
+  outerJoin?: BlockId,
+): StructuredNode {
+  const exitBlock = meta.exitBlock
+  if (exitBlock === undefined) {
+    return structurizeBlock(ctx, blockId, { ignoreLabeledBoundary: true })
+  }
+
+  const body = structurizeBlockUntilJoin(ctx, blockId, exitBlock, {
+    ignoreLabeledBoundary: true,
+  })
+  const labeledNode = wrapStructuredNodeWithLabel(meta, body, { allowBoundaryLabel: true })
+
+  if (exitBlock === outerJoin || ctx.emitted.has(exitBlock)) {
+    return labeledNode
+  }
+
+  const exitNode =
+    outerJoin !== undefined
+      ? structurizeBlockUntilJoin(ctx, exitBlock, outerJoin)
+      : structurizeBlock(ctx, exitBlock)
+
+  return combineStructuredNodes(labeledNode, exitNode)
+}
+
 /**
  * Structurize a block and its control flow successors.
  * Includes depth limit to prevent infinite recursion in pathological CFGs.
  */
-function structurizeBlock(ctx: StructurizeContext, blockId: BlockId): StructuredNode {
+function structurizeBlock(
+  ctx: StructurizeContext,
+  blockId: BlockId,
+  options?: { ignoreLabeledBoundary?: boolean },
+): StructuredNode {
   // Safety: check depth limit
   if (ctx.depth > ctx.maxDepth) {
     ctx.problematicBlocks.add(blockId)
@@ -509,6 +588,13 @@ function structurizeBlock(ctx: StructurizeContext, blockId: BlockId): Structured
       }
     }
     return { kind: 'sequence', nodes: [] }
+  }
+
+  const labeledMeta = !options?.ignoreLabeledBoundary
+    ? getLabeledStatementMeta(ctx, blockId)
+    : undefined
+  if (labeledMeta?.exitBlock !== undefined) {
+    return structurizeLabeledStatement(ctx, blockId, labeledMeta)
   }
 
   const block = ctx.blockMap.get(blockId)
@@ -616,7 +702,8 @@ function structurizeBranch(
   const { consequent, alternate, test } = term
 
   // Check if this is a loop header
-  const isLoopHeader = ctx.loopHeaders.has(block.id)
+  const isSyntheticIteratorBodyHeader = hasSyntheticIteratorBodyPredecessor(ctx, block.id)
+  const isLoopHeader = ctx.loopHeaders.has(block.id) && !isSyntheticIteratorBodyHeader
   if (isLoopHeader) {
     const forLoop = detectForLoop(ctx, block.id, consequent, alternate)
     if (forLoop) {
@@ -628,7 +715,18 @@ function structurizeBranch(
   // Check if consequent or alternate leads back (indicating a while loop started earlier)
   const consBackEdge = `${consequent}->${block.id}`
   const altBackEdge = `${alternate}->${block.id}`
-  if (ctx.backEdges.has(consBackEdge) || ctx.backEdges.has(altBackEdge)) {
+  const consequentBlock = ctx.blockMap.get(consequent)
+  const alternateBlock = ctx.blockMap.get(alternate)
+  const consequentIsLoopContinue =
+    consequentBlock?.terminator.kind === 'Continue' &&
+    consequentBlock.terminator.target === block.id
+  const alternateIsLoopContinue =
+    alternateBlock?.terminator.kind === 'Continue' && alternateBlock.terminator.target === block.id
+  const hasLoopBackEdge =
+    !isSyntheticIteratorBodyHeader &&
+    ((ctx.backEdges.has(consBackEdge) && !consequentIsLoopContinue) ||
+      (ctx.backEdges.has(altBackEdge) && !alternateIsLoopContinue))
+  if (hasLoopBackEdge) {
     const forLoop = detectForLoop(ctx, block.id, consequent, alternate)
     if (forLoop) {
       return structurizeForLoop(ctx, test, forLoop)
@@ -639,6 +737,18 @@ function structurizeBranch(
 
   // Regular if-else structure
   return structurizeIfElse(ctx, test, consequent, alternate)
+}
+
+function hasSyntheticIteratorBodyPredecessor(ctx: StructurizeContext, blockId: BlockId): boolean {
+  const predecessors = ctx.predecessors.get(blockId) ?? []
+  return predecessors.some(predecessorId => {
+    const predecessor = ctx.blockMap.get(predecessorId)
+    if (!predecessor) return false
+    return (
+      (predecessor.terminator.kind === 'ForOf' && predecessor.terminator.body === blockId) ||
+      (predecessor.terminator.kind === 'ForIn' && predecessor.terminator.body === blockId)
+    )
+  })
 }
 
 interface CanonicalForLoop {
@@ -693,6 +803,7 @@ function structurizeForLoop(
   ctx: StructurizeContext,
   test: Expression,
   loop: CanonicalForLoop,
+  outerJoin?: BlockId,
 ): StructuredNode {
   const body = structurizeBlockUntilJoin(ctx, loop.bodyBlockId, loop.updateBlockId)
   ctx.emitted.add(loop.updateBlockId)
@@ -705,13 +816,20 @@ function structurizeForLoop(
     body,
     headerBlock: loop.headerBlockId,
   }
+  const labeledForNode = wrapStructuredNodeWithLabel(
+    getLabeledStatementMeta(ctx, loop.headerBlockId),
+    forNode,
+  )
 
-  if (!ctx.emitted.has(loop.exitBlockId)) {
-    const exit = structurizeBlock(ctx, loop.exitBlockId)
-    return { kind: 'sequence', nodes: [forNode, exit] }
+  if (loop.exitBlockId !== outerJoin && !ctx.emitted.has(loop.exitBlockId)) {
+    const exit =
+      outerJoin !== undefined
+        ? structurizeBlockUntilJoin(ctx, loop.exitBlockId, outerJoin)
+        : structurizeBlock(ctx, loop.exitBlockId)
+    return combineStructuredNodes(labeledForNode, exit)
   }
 
-  return forNode
+  return labeledForNode
 }
 
 /**
@@ -723,6 +841,7 @@ function structurizeWhileLoop(
   test: Expression,
   bodyBlockId: BlockId,
   exitBlockId: BlockId,
+  outerJoin?: BlockId,
 ): StructuredNode {
   // Determine which block is the body and which is the exit
   // The body block usually has a back-edge to the condition
@@ -735,20 +854,29 @@ function structurizeWhileLoop(
   if (ctx.backEdges.has(bodyEdge) || !ctx.emitted.has(bodyBlockId)) {
     // bodyBlockId is the loop body
     body = structurizeBlock(ctx, bodyBlockId)
-    if (!ctx.emitted.has(exitBlockId)) {
-      exit = structurizeBlock(ctx, exitBlockId)
+    if (exitBlockId !== outerJoin && !ctx.emitted.has(exitBlockId)) {
+      exit =
+        outerJoin !== undefined
+          ? structurizeBlockUntilJoin(ctx, exitBlockId, outerJoin)
+          : structurizeBlock(ctx, exitBlockId)
     }
   } else if (ctx.backEdges.has(exitEdge)) {
     // exitBlockId is actually the body (test was inverted)
     body = structurizeBlock(ctx, exitBlockId)
-    if (!ctx.emitted.has(bodyBlockId)) {
-      exit = structurizeBlock(ctx, bodyBlockId)
+    if (bodyBlockId !== outerJoin && !ctx.emitted.has(bodyBlockId)) {
+      exit =
+        outerJoin !== undefined
+          ? structurizeBlockUntilJoin(ctx, bodyBlockId, outerJoin)
+          : structurizeBlock(ctx, bodyBlockId)
     }
   } else {
     // Fallback: treat consequent as body
     body = structurizeBlock(ctx, bodyBlockId)
-    if (!ctx.emitted.has(exitBlockId)) {
-      exit = structurizeBlock(ctx, exitBlockId)
+    if (exitBlockId !== outerJoin && !ctx.emitted.has(exitBlockId)) {
+      exit =
+        outerJoin !== undefined
+          ? structurizeBlockUntilJoin(ctx, exitBlockId, outerJoin)
+          : structurizeBlock(ctx, exitBlockId)
     }
   }
 
@@ -758,11 +886,15 @@ function structurizeWhileLoop(
     body,
     headerBlock: condBlock.id,
   }
+  const labeledWhileNode = wrapStructuredNodeWithLabel(
+    getLabeledStatementMeta(ctx, condBlock.id),
+    whileNode,
+  )
 
   if (exit) {
-    return { kind: 'sequence', nodes: [whileNode, exit] }
+    return combineStructuredNodes(labeledWhileNode, exit)
   }
-  return whileNode
+  return labeledWhileNode
 }
 
 /**
@@ -821,6 +953,7 @@ function findJoinBlock(
     const current = queue.shift()!
     if (visited.has(current)) continue
     visited.add(current)
+    if (ctx.reservedBlocks.has(current)) continue
 
     if (reachable1.has(current) && current !== block1 && current !== block2) {
       return current
@@ -845,6 +978,7 @@ function collectReachableBlocks(
   start: BlockId,
   visited: Set<BlockId>,
 ): Set<BlockId> {
+  if (ctx.reservedBlocks.has(start)) return visited
   if (visited.has(start)) return visited
   visited.add(start)
 
@@ -867,8 +1001,13 @@ function structurizeBlockUntilJoin(
   ctx: StructurizeContext,
   blockId: BlockId,
   joinBlock: BlockId | undefined,
+  options?: { ignoreLabeledBoundary?: boolean },
 ): StructuredNode {
   if (joinBlock !== undefined && blockId === joinBlock) {
+    return { kind: 'sequence', nodes: [] }
+  }
+
+  if (ctx.reservedBlocks.has(blockId)) {
     return { kind: 'sequence', nodes: [] }
   }
 
@@ -886,6 +1025,13 @@ function structurizeBlockUntilJoin(
       }
     }
     return { kind: 'sequence', nodes: [] }
+  }
+
+  const labeledMeta = !options?.ignoreLabeledBoundary
+    ? getLabeledStatementMeta(ctx, blockId)
+    : undefined
+  if (labeledMeta?.exitBlock !== undefined) {
+    return structurizeLabeledStatement(ctx, blockId, labeledMeta, joinBlock)
   }
 
   const block = ctx.blockMap.get(blockId)
@@ -938,22 +1084,22 @@ function structurizeBlockUntilJoin(
     }
 
     case 'Switch': {
-      nodes.push(structurizeSwitch(ctx, block, term))
+      nodes.push(structurizeSwitch(ctx, block, term, joinBlock))
       break
     }
 
     case 'ForOf': {
-      nodes.push(structurizeForOf(ctx, block, term))
+      nodes.push(structurizeForOf(ctx, block, term, joinBlock))
       break
     }
 
     case 'ForIn': {
-      nodes.push(structurizeForIn(ctx, block, term))
+      nodes.push(structurizeForIn(ctx, block, term, joinBlock))
       break
     }
 
     case 'Try': {
-      nodes.push(structurizeTry(ctx, block, term))
+      nodes.push(structurizeTry(ctx, block, term, joinBlock))
       break
     }
 
@@ -985,6 +1131,37 @@ function structurizeBranchUntilJoin(
   outerJoin: BlockId | undefined,
 ): StructuredNode | null {
   const { test, consequent, alternate } = term
+
+  const isSyntheticIteratorBodyHeader = hasSyntheticIteratorBodyPredecessor(ctx, block.id)
+  const isLoopHeader = ctx.loopHeaders.has(block.id) && !isSyntheticIteratorBodyHeader
+  if (isLoopHeader) {
+    const forLoop = detectForLoop(ctx, block.id, consequent, alternate)
+    if (forLoop) {
+      return structurizeForLoop(ctx, test, forLoop, outerJoin)
+    }
+    return structurizeWhileLoop(ctx, block, test, consequent, alternate, outerJoin)
+  }
+
+  const consBackEdge = `${consequent}->${block.id}`
+  const altBackEdge = `${alternate}->${block.id}`
+  const consequentBlock = ctx.blockMap.get(consequent)
+  const alternateBlock = ctx.blockMap.get(alternate)
+  const consequentIsLoopContinue =
+    consequentBlock?.terminator.kind === 'Continue' &&
+    consequentBlock.terminator.target === block.id
+  const alternateIsLoopContinue =
+    alternateBlock?.terminator.kind === 'Continue' && alternateBlock.terminator.target === block.id
+  const hasLoopBackEdge =
+    !isSyntheticIteratorBodyHeader &&
+    ((ctx.backEdges.has(consBackEdge) && !consequentIsLoopContinue) ||
+      (ctx.backEdges.has(altBackEdge) && !alternateIsLoopContinue))
+  if (hasLoopBackEdge) {
+    const forLoop = detectForLoop(ctx, block.id, consequent, alternate)
+    if (forLoop) {
+      return structurizeForLoop(ctx, test, forLoop, outerJoin)
+    }
+    return structurizeWhileLoop(ctx, block, test, consequent, alternate, outerJoin)
+  }
 
   // Find inner join (between consequent and alternate)
   const innerJoin = findJoinBlock(ctx, consequent, alternate)
@@ -1028,9 +1205,16 @@ function structurizeSwitch(
     discriminant: Expression
     cases: { test?: Expression; target: BlockId }[]
   },
+  outerJoin?: BlockId,
 ): StructuredNode {
   const uniqueTargets = Array.from(new Set(term.cases.map(c => c.target)))
-  const joinBlock = findSwitchJoinBlock(ctx, uniqueTargets)
+  let joinBlock = findSwitchJoinBlock(ctx, uniqueTargets)
+  if (outerJoin !== undefined && (joinBlock === undefined || joinBlock === outerJoin)) {
+    const localExit = findSwitchLocalExitBlock(ctx, uniqueTargets, outerJoin)
+    if (localExit !== undefined) {
+      joinBlock = localExit
+    }
+  }
   const cases: { test: Expression | null; body: StructuredNode }[] = []
   const emittedBeforeSwitch = new Set(ctx.emitted)
   const emittedBySwitchCases = new Set<BlockId>()
@@ -1063,13 +1247,20 @@ function structurizeSwitch(
     discriminant: term.discriminant,
     cases,
   }
+  const labeledSwitchNode = wrapStructuredNodeWithLabel(
+    getLabeledStatementMeta(ctx, block.id),
+    switchNode,
+  )
 
-  if (joinBlock !== undefined && !ctx.emitted.has(joinBlock)) {
-    const joinNode = structurizeBlock(ctx, joinBlock)
-    return { kind: 'sequence', nodes: [switchNode, joinNode] }
+  if (joinBlock !== undefined && joinBlock !== outerJoin && !ctx.emitted.has(joinBlock)) {
+    const joinNode =
+      outerJoin !== undefined
+        ? structurizeBlockUntilJoin(ctx, joinBlock, outerJoin)
+        : structurizeBlock(ctx, joinBlock)
+    return combineStructuredNodes(labeledSwitchNode, joinNode)
   }
 
-  return switchNode
+  return labeledSwitchNode
 }
 
 function findSwitchJoinBlock(ctx: StructurizeContext, caseTargets: BlockId[]): BlockId | undefined {
@@ -1125,6 +1316,54 @@ function findSwitchJoinBlock(ctx: StructurizeContext, caseTargets: BlockId[]): B
   return candidates[0]?.id
 }
 
+function findSwitchLocalExitBlock(
+  ctx: StructurizeContext,
+  caseTargets: BlockId[],
+  outerJoin: BlockId,
+): BlockId | undefined {
+  const exitTargets = new Set<BlockId>()
+
+  const visit = (blockId: BlockId, visited: Set<BlockId>): void => {
+    if (blockId === outerJoin || visited.has(blockId) || ctx.reservedBlocks.has(blockId)) {
+      return
+    }
+    visited.add(blockId)
+
+    const block = ctx.blockMap.get(blockId)
+    if (!block) return
+
+    if (block.terminator.kind === 'Break') {
+      if (block.terminator.target !== outerJoin) {
+        exitTargets.add(block.terminator.target)
+      }
+      return
+    }
+    if (
+      block.terminator.kind === 'Continue' ||
+      block.terminator.kind === 'Return' ||
+      block.terminator.kind === 'Throw' ||
+      block.terminator.kind === 'Unreachable'
+    ) {
+      return
+    }
+
+    const succs = ctx.successors.get(blockId) ?? []
+    for (const succ of succs) {
+      const edgeKey = `${blockId}->${succ}`
+      if (!ctx.backEdges.has(edgeKey)) {
+        visit(succ, visited)
+      }
+    }
+  }
+
+  for (const target of caseTargets) {
+    visit(target, new Set<BlockId>())
+  }
+
+  if (exitTargets.size !== 1) return undefined
+  return Array.from(exitTargets)[0]
+}
+
 function appendSwitchCaseBreak(body: StructuredNode): StructuredNode {
   if (isSwitchCaseTerminated(body)) return body
   if (body.kind === 'sequence') {
@@ -1148,6 +1387,8 @@ function isSwitchCaseTerminated(node: StructuredNode | null | undefined): boolea
         node.statements.length > 0 &&
         isSwitchCaseTerminated(node.statements[node.statements.length - 1])
       )
+    case 'labeled':
+      return false
     case 'if':
       return (
         isSwitchCaseTerminated(node.consequent) &&
@@ -1179,11 +1420,17 @@ function structurizeForOf(
     body: BlockId
     exit: BlockId
   },
+  outerJoin?: BlockId,
 ): StructuredNode {
   ctx.reservedBlocks.add(term.exit)
   const body = structurizeBlock(ctx, term.body)
   ctx.reservedBlocks.delete(term.exit)
-  const exit = !ctx.emitted.has(term.exit) ? structurizeBlock(ctx, term.exit) : null
+  const exit =
+    term.exit !== outerJoin && !ctx.emitted.has(term.exit)
+      ? outerJoin !== undefined
+        ? structurizeBlockUntilJoin(ctx, term.exit, outerJoin)
+        : structurizeBlock(ctx, term.exit)
+      : null
 
   const forOfNode: StructuredNode = {
     kind: 'forOf',
@@ -1193,11 +1440,15 @@ function structurizeForOf(
     iterable: term.iterable,
     body,
   }
+  const labeledForOfNode = wrapStructuredNodeWithLabel(
+    getLabeledStatementMeta(ctx, block.id),
+    forOfNode,
+  )
 
   if (exit) {
-    return { kind: 'sequence', nodes: [forOfNode, exit] }
+    return combineStructuredNodes(labeledForOfNode, exit)
   }
-  return forOfNode
+  return labeledForOfNode
 }
 
 /**
@@ -1215,11 +1466,17 @@ function structurizeForIn(
     body: BlockId
     exit: BlockId
   },
+  outerJoin?: BlockId,
 ): StructuredNode {
   ctx.reservedBlocks.add(term.exit)
   const body = structurizeBlock(ctx, term.body)
   ctx.reservedBlocks.delete(term.exit)
-  const exit = !ctx.emitted.has(term.exit) ? structurizeBlock(ctx, term.exit) : null
+  const exit =
+    term.exit !== outerJoin && !ctx.emitted.has(term.exit)
+      ? outerJoin !== undefined
+        ? structurizeBlockUntilJoin(ctx, term.exit, outerJoin)
+        : structurizeBlock(ctx, term.exit)
+      : null
 
   const forInNode: StructuredNode = {
     kind: 'forIn',
@@ -1229,11 +1486,82 @@ function structurizeForIn(
     object: term.object,
     body,
   }
+  const labeledForInNode = wrapStructuredNodeWithLabel(
+    getLabeledStatementMeta(ctx, block.id),
+    forInNode,
+  )
 
   if (exit) {
-    return { kind: 'sequence', nodes: [forInNode, exit] }
+    return combineStructuredNodes(labeledForInNode, exit)
   }
-  return forInNode
+  return labeledForInNode
+}
+
+function collectSubgraphBlocksUntilStop(
+  ctx: StructurizeContext,
+  start: BlockId | undefined,
+  stopBlocks: Set<BlockId>,
+  visited = new Set<BlockId>(),
+): Set<BlockId> {
+  if (start === undefined || stopBlocks.has(start) || visited.has(start)) {
+    return visited
+  }
+  visited.add(start)
+
+  const block = ctx.blockMap.get(start)
+  if (!block) {
+    return visited
+  }
+  if (block.terminator.kind === 'Break' || block.terminator.kind === 'Continue') {
+    return visited
+  }
+
+  const successors = ctx.successors.get(start) ?? []
+  for (const succ of successors) {
+    collectSubgraphBlocksUntilStop(ctx, succ, stopBlocks, visited)
+  }
+  return visited
+}
+
+function subgraphHasEscapingLoopControlTransfer(
+  ctx: StructurizeContext,
+  start: BlockId | undefined,
+  protectedBlocks: Set<BlockId>,
+  stopBlocks: Set<BlockId>,
+  allowedTargets?: Set<BlockId>,
+  visited = new Set<BlockId>(),
+): boolean {
+  if (start === undefined || stopBlocks.has(start) || visited.has(start)) {
+    return false
+  }
+  visited.add(start)
+
+  const block = ctx.blockMap.get(start)
+  if (!block) return false
+  if (
+    (block.terminator.kind === 'Break' || block.terminator.kind === 'Continue') &&
+    !protectedBlocks.has(block.terminator.target) &&
+    !(allowedTargets?.has(block.terminator.target) ?? false)
+  ) {
+    return true
+  }
+
+  const successors = ctx.successors.get(start) ?? []
+  for (const succ of successors) {
+    if (
+      subgraphHasEscapingLoopControlTransfer(
+        ctx,
+        succ,
+        protectedBlocks,
+        stopBlocks,
+        allowedTargets,
+        visited,
+      )
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 /**
@@ -1250,7 +1578,34 @@ function structurizeTry(
     finallyBlock?: BlockId
     exit: BlockId
   },
+  outerJoin?: BlockId,
 ): StructuredNode {
+  if (term.finallyBlock !== undefined) {
+    const stopBlocks = new Set<BlockId>([term.finallyBlock, term.exit])
+    const trySubgraph = collectSubgraphBlocksUntilStop(ctx, term.tryBlock, stopBlocks)
+    const catchSubgraph = collectSubgraphBlocksUntilStop(ctx, term.catchBlock, stopBlocks)
+    const allowedTargets = outerJoin !== undefined ? new Set<BlockId>([outerJoin]) : undefined
+    if (
+      subgraphHasEscapingLoopControlTransfer(
+        ctx,
+        term.tryBlock,
+        trySubgraph,
+        stopBlocks,
+        allowedTargets,
+      ) ||
+      subgraphHasEscapingLoopControlTransfer(
+        ctx,
+        term.catchBlock,
+        catchSubgraph,
+        stopBlocks,
+        allowedTargets,
+      )
+    ) {
+      ctx.problematicBlocks.add(block.id)
+      return { kind: 'sequence', nodes: [] }
+    }
+  }
+
   // Reserve finally and exit blocks to prevent catch/try blocks from prematurely processing them
   // This avoids "shared side effect block" issues when catch jumps to finally
   if (term.finallyBlock !== undefined) {
@@ -1277,10 +1632,15 @@ function structurizeTry(
 
   let finalizer: StructuredNode | null = null
   if (term.finallyBlock !== undefined) {
-    finalizer = structurizeBlock(ctx, term.finallyBlock)
+    finalizer = structurizeBlockUntilJoin(ctx, term.finallyBlock, term.exit)
   }
 
-  const exit = !ctx.emitted.has(term.exit) ? structurizeBlock(ctx, term.exit) : null
+  const exit =
+    term.exit !== outerJoin && !ctx.emitted.has(term.exit)
+      ? outerJoin !== undefined
+        ? structurizeBlockUntilJoin(ctx, term.exit, outerJoin)
+        : structurizeBlock(ctx, term.exit)
+      : null
 
   const tryNode: StructuredNode = {
     kind: 'try',

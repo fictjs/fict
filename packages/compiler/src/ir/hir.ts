@@ -604,6 +604,15 @@ export interface BasicBlock {
   terminator: Terminator
 }
 
+export interface LabeledStatementMeta {
+  label: string
+  /**
+   * Explicit exit boundary for generic labeled statements.
+   * Loop/switch labels don't need this because their hosts are structurized directly.
+   */
+  exitBlock?: BlockId
+}
+
 export interface HIRFunction extends SourceInfo {
   name?: string
   params: Identifier[]
@@ -630,6 +639,8 @@ export interface HIRFunction extends SourceInfo {
       arrayProps?: Map<number, 'signal' | 'memo'>
       directAccessor?: 'signal' | 'memo'
     }
+    /** Labels attached to structured hosts or explicit labeled-statement entry blocks. */
+    labeledStatements?: Map<BlockId, LabeledStatementMeta>
   }
 }
 

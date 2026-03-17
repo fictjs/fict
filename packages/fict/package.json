@@ -63,7 +63,7 @@
     "dev": "tsup --watch",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
-    "pretest": "[ -f ../runtime/dist/internal.js ] || pnpm -C ../runtime build",
+    "pretest": "pnpm -C ../runtime build && pnpm build",
     "test": "vitest run",
     "test:e2e": "playwright test --reporter=list",
     "clean": "rm -rf dist"

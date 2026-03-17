@@ -25,6 +25,7 @@ import {
   type JSXAttribute as HJSXAttribute,
   type JSXChild as HJSXChild,
   type JSXElementExpression as HJSXElementExpression,
+  type LabeledStatementMeta,
   type Literal as HLiteral,
   type LogicalExpression as HLogicalExpression,
   type MemberExpression as HMemberExpression,
@@ -1060,6 +1061,7 @@ function convertFunction(
     nextBlockId: () => nextBlockId++,
     createBlock,
     loopStack: [],
+    labeledStatements: new Map(),
   }
 
   for (const stmt of bodyStatements) {
@@ -1706,7 +1708,9 @@ function convertFunction(
   // Parse @fictReturn annotation for cross-module hook return info
   const fictReturnInfo = parseFictReturnAnnotation(options?.astNode)
 
-  const hasMeta = hasNoMemo || hasPure || fictReturnInfo || isAsync || isGenerator
+  const hasLabeledStatements = cfgContext.labeledStatements.size > 0
+  const hasMeta =
+    hasNoMemo || hasPure || fictReturnInfo || isAsync || isGenerator || hasLabeledStatements
 
   return {
     rawParams: params,
@@ -1720,6 +1724,9 @@ function convertFunction(
           ...(fictReturnInfo ? { hookReturnInfo: fictReturnInfo } : null),
           ...(isAsync ? { isAsync: true } : null),
           ...(isGenerator ? { isGenerator: true } : null),
+          ...(hasLabeledStatements
+            ? { labeledStatements: new Map(cfgContext.labeledStatements) }
+            : null),
         }
       : undefined,
     loc: options?.loc ?? null,
@@ -1832,6 +1839,17 @@ interface CFGBuildContext {
   nextBlockId: () => number
   createBlock: () => BlockBuilder
   loopStack: LoopContext[]
+  labeledStatements: Map<number, LabeledStatementMeta>
+}
+
+function markLabeledStatement(
+  ctx: CFGBuildContext | undefined,
+  blockId: number,
+  label: string | undefined,
+  exitBlock?: number,
+): void {
+  if (!ctx || !label) return
+  ctx.labeledStatements.set(blockId, { label, ...(exitBlock !== undefined ? { exitBlock } : null) })
 }
 
 function findBreakContext(ctx: CFGBuildContext, label?: string): LoopContext | undefined {
@@ -1926,12 +1944,21 @@ function processStatement(
       return processStatement(body, bb, jumpTarget, ctx, label)
     }
 
+    const bodyBlock = ctx.createBlock()
+    const exitBlock = ctx.createBlock()
+    ctx.blocks.push(bodyBlock.block, exitBlock.block)
+    markLabeledStatement(ctx, bodyBlock.block.id, label, exitBlock.block.id)
+
+    bb.block.terminator = { kind: 'Jump', target: bodyBlock.block.id }
+    bb.sealed = true
+
     ctx.loopStack.push({
-      breakTarget: jumpTarget,
+      breakTarget: exitBlock.block.id,
       label,
     })
     try {
-      return processStatement(body, bb, jumpTarget, ctx)
+      fillStatements(body, bodyBlock, exitBlock.block.id, ctx)
+      return exitBlock
     } finally {
       ctx.loopStack.pop()
     }
@@ -2203,6 +2230,7 @@ function processStatement(
     const exitBlock = ctx.createBlock()
 
     ctx.blocks.push(condBlock.block, bodyBlock.block, exitBlock.block)
+    markLabeledStatement(ctx, condBlock.block.id, labelOverride)
 
     // Jump to condition
     bb.block.terminator = { kind: 'Jump', target: condBlock.block.id }
@@ -2242,6 +2270,7 @@ function processStatement(
     const exitBlock = ctx.createBlock()
 
     ctx.blocks.push(condBlock.block, bodyBlock.block, updateBlock.block, exitBlock.block)
+    markLabeledStatement(ctx, condBlock.block.id, labelOverride)
 
     // Init in current block
     if (stmt.init && t.isVariableDeclaration(stmt.init)) {
@@ -2315,6 +2344,7 @@ function processStatement(
     const exitBlock = ctx.createBlock()
 
     ctx.blocks.push(bodyBlock.block, condBlock.block, exitBlock.block)
+    markLabeledStatement(ctx, condBlock.block.id, labelOverride)
 
     // Jump directly to body (do-while executes body first)
     bb.block.terminator = { kind: 'Jump', target: bodyBlock.block.id }
@@ -2352,6 +2382,7 @@ function processStatement(
     const exitBlock = ctx.createBlock()
 
     ctx.blocks.push(bodyBlock.block, exitBlock.block)
+    markLabeledStatement(ctx, bb.block.id, labelOverride)
 
     // Get the iteration variable info (name, kind, pattern)
     const left = stmt.left
@@ -2409,6 +2440,7 @@ function processStatement(
     const exitBlock = ctx.createBlock()
 
     ctx.blocks.push(bodyBlock.block, exitBlock.block)
+    markLabeledStatement(ctx, bb.block.id, labelOverride)
 
     // Get the iteration variable info (name, kind, pattern)
     const left = stmt.left
@@ -2464,6 +2496,7 @@ function processStatement(
   if (t.isSwitchStatement(stmt) && ctx) {
     const exitBlock = ctx.createBlock()
     ctx.blocks.push(exitBlock.block)
+    markLabeledStatement(ctx, bb.block.id, labelOverride)
 
     const caseBlocks = stmt.cases.map(() => ctx.createBlock())
     for (const caseBlock of caseBlocks) {

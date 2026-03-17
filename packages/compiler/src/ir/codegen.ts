@@ -9,6 +9,7 @@ import { DiagnosticCode, reportDiagnostic } from '../validation'
 
 import { convertStatementsToHIRFunction } from './build-hir'
 import {
+  collectMutatedIdentifiers,
   collectCalledIdentifiers,
   functionContainsJSX,
   functionHasAsyncAwait,
@@ -3881,6 +3882,7 @@ function lowerTopLevelStatementBlock(
       }
     }
   }
+  collectMutatedIdentifiers(fn).forEach(name => mutatedVars.add(name))
 
   const reactive = computeReactiveAccessors(fn, ctx)
   ctx.trackedVars = reactive.tracked
@@ -4670,6 +4672,7 @@ function lowerFunctionWithRegions(
       }
     }
   }
+  collectMutatedIdentifiers(fn).forEach(name => ctx.mutatedVars?.add(name))
   hookAccessorAliases.forEach(name => {
     ctx.aliasVars?.add(name)
     ctx.trackedVars.add(name)

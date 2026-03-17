@@ -1,6 +1,7 @@
 import type { BasicBlock, Expression, HIRFunction, Instruction, Terminator } from './hir'
 import { deSSAVarName } from './regions'
 import type { StructuredNode } from './structurize'
+import { walkExpression } from './walk-expression'
 
 const hasInstructionArray = (value: unknown): value is { instructions: Instruction[] } => {
   if (!value || typeof value !== 'object') return false
@@ -110,6 +111,8 @@ export function functionContainsJSX(fn: HIRFunction): boolean {
 
 export function structuredNodeHasComplexControlFlow(node: StructuredNode): boolean {
   switch (node.kind) {
+    case 'labeled':
+      return structuredNodeHasComplexControlFlow(node.statement)
     case 'while':
     case 'doWhile':
     case 'for':
@@ -480,4 +483,69 @@ export function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
   }
 
   return called
+}
+
+function collectMutatedIdentifiersFromExpression(
+  expr: Expression | null | undefined,
+  into: Set<string>,
+): void {
+  if (!expr) return
+  walkExpression(
+    expr,
+    node => {
+      if (node.kind === 'AssignmentExpression' && node.left.kind === 'Identifier') {
+        into.add(deSSAVarName(node.left.name))
+      } else if (node.kind === 'UpdateExpression' && node.argument.kind === 'Identifier') {
+        into.add(deSSAVarName(node.argument.name))
+      }
+    },
+    { includeFunctionBodies: false },
+  )
+}
+
+function collectMutatedIdentifiersFromTerminator(term: Terminator, into: Set<string>): void {
+  switch (term.kind) {
+    case 'Return':
+      collectMutatedIdentifiersFromExpression(term.argument ?? null, into)
+      return
+    case 'Throw':
+      collectMutatedIdentifiersFromExpression(term.argument, into)
+      return
+    case 'Branch':
+      collectMutatedIdentifiersFromExpression(term.test, into)
+      return
+    case 'Switch':
+      collectMutatedIdentifiersFromExpression(term.discriminant, into)
+      term.cases.forEach(c => collectMutatedIdentifiersFromExpression(c.test ?? null, into))
+      return
+    case 'ForOf':
+      collectMutatedIdentifiersFromExpression(term.iterable, into)
+      return
+    case 'ForIn':
+      collectMutatedIdentifiersFromExpression(term.object, into)
+      return
+    case 'Jump':
+    case 'Unreachable':
+    case 'Break':
+    case 'Continue':
+    case 'Try':
+      return
+    default:
+      assertNever(term)
+  }
+}
+
+export function collectMutatedIdentifiers(fn: HIRFunction): Set<string> {
+  const mutated = new Set<string>()
+
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+        collectMutatedIdentifiersFromExpression(instr.value, mutated)
+      }
+    }
+    collectMutatedIdentifiersFromTerminator(block.terminator, mutated)
+  }
+
+  return mutated
 }

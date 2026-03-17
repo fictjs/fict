@@ -64,6 +64,7 @@ export function analyzeReactiveScopes(fn: HIRFunction): ReactiveScopeResult {
   const scopes: ReactiveScope[] = []
   const byName = new Map<string, ReactiveScope>()
   const definitionScope = new Map<string, ReactiveScope>()
+  const entryBlockId = fn.blocks[0]?.id
   let nextId = 0
 
   const getScope = (name: string) => {
@@ -116,6 +117,7 @@ export function analyzeReactiveScopes(fn: HIRFunction): ReactiveScopeResult {
       collectExprReads(term.argument, escapingVars, undefined, new Set(), true)
     }
   }
+  propagateEscapingReads(scopes, escapingVars)
 
   // Second pass: calculate dependencies and external effects
   for (const scope of scopes) {
@@ -137,7 +139,7 @@ export function analyzeReactiveScopes(fn: HIRFunction): ReactiveScopeResult {
 
   // Determine which scopes should be memoized
   for (const scope of scopes) {
-    scope.shouldMemoize = shouldMemoizeScope(scope, byName)
+    scope.shouldMemoize = shouldMemoizeScope(scope, byName, entryBlockId)
   }
 
   // Merge overlapping scopes
@@ -160,12 +162,22 @@ export function analyzeReactiveScopes(fn: HIRFunction): ReactiveScopeResult {
 /**
  * Determine if a scope should be memoized based on its characteristics
  */
-function shouldMemoizeScope(scope: ReactiveScope, byName: Map<string, ReactiveScope>): boolean {
+function shouldMemoizeScope(
+  scope: ReactiveScope,
+  byName: Map<string, ReactiveScope>,
+  entryBlockId?: number,
+): boolean {
+  const touchesEntry = entryBlockId !== undefined && scope.blocks.has(entryBlockId)
+
   // Memoize if it has reactive dependencies
   if (scope.dependencies.size > 0) {
     for (const dep of scope.dependencies) {
       const depScope = byName.get(dep)
-      if (depScope && (depScope.writes.size > 0 || depScope.dependencies.size > 0)) {
+      if (
+        depScope &&
+        (depScope.writes.size > 0 || depScope.dependencies.size > 0) &&
+        (scope.blocks.size > 1 || scope.hasExternalEffect || touchesEntry)
+      ) {
         return true
       }
     }
@@ -177,6 +189,26 @@ function shouldMemoizeScope(scope: ReactiveScope, byName: Map<string, ReactiveSc
   }
 
   return false
+}
+
+function propagateEscapingReads(scopes: ReactiveScope[], escapingVars: Set<string>): void {
+  let changed = true
+
+  while (changed) {
+    changed = false
+
+    for (const scope of scopes) {
+      const escapes = Array.from(scope.declarations).some(decl => escapingVars.has(decl))
+      if (!escapes) continue
+
+      for (const read of scope.reads) {
+        if (!escapingVars.has(read)) {
+          escapingVars.add(read)
+          changed = true
+        }
+      }
+    }
+  }
 }
 
 /**

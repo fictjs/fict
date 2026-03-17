@@ -391,6 +391,9 @@ function buildControlDependencyMap(fn: HIRFunction): Map<Instruction, Set<string
       case 'block':
         node.statements.forEach(child => walk(child, activeDeps))
         return
+      case 'labeled':
+        walk(node.statement, activeDeps)
+        return
       case 'instruction':
         registerInstruction(node.instruction, activeDeps)
         return
@@ -553,6 +556,23 @@ export function computeReactiveAccessors(
   const isFunctionVar = (name: string) => ctx.functionVars?.has(name) ?? false
   const isSignal = (name: string) => ctx.signalVars?.has(name) ?? false
   const isStore = (name: string) => ctx.storeVars?.has(name) ?? false
+  const isAlias = (name: string) => ctx.aliasVars?.has(name) ?? false
+  const hasObservableScope = (name: string) => {
+    if (!ctx.scopes) return false
+    const direct = ctx.scopes.byName.get(name)
+    if ((direct?.hasExternalEffect ?? false) || (direct?.shouldMemoize ?? false)) return true
+    return ctx.scopes.scopes.some(
+      scope =>
+        (scope.hasExternalEffect || scope.shouldMemoize) &&
+        Array.from(scope.declarations).some(decl => deSSAVarName(decl) === name),
+    )
+  }
+  const isMutableLocal = (name: string) =>
+    (ctx.mutatedVars?.has(name) ?? false) &&
+    !isSignal(name) &&
+    !isStore(name) &&
+    !isAlias(name) &&
+    !hasObservableScope(name)
 
   let changed = true
   while (changed) {
@@ -571,6 +591,7 @@ export function computeReactiveAccessors(
 
           if (!hasDataDep && !hasControlDep) continue
           if (!neededVars.has(target)) continue
+          if (isMutableLocal(target)) continue
 
           if (!tracked.has(target)) {
             tracked.add(target)

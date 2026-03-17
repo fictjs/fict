@@ -68,6 +68,73 @@ describe('control flow runtime regressions', () => {
     expect(resolved).toBe(5)
   })
 
+  it('preserves for-of continue semantics at iterator body entry', () => {
+    const result = compileAndRunHook<{ toggle: () => void; view: () => number }>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let mode = $state(0)
+          let visited = 0
+
+          for (const cell of mode === 0 ? [2] : [2, 3]) {
+            let current = cell
+            if (current-- === 2) {
+              continue
+            }
+            visited += 1
+          }
+
+          return {
+            toggle: () => {
+              mode = 1
+            },
+            view: () => visited,
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result.view()).toBe(0)
+    result.toggle()
+    expect(result.view()).toBe(1)
+  })
+
+  it('preserves for-in continue semantics at iterator body entry', () => {
+    const result = compileAndRunHook<{ toggle: () => void; view: () => string }>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let mode = $state(0)
+          let seen = ''
+          const source = mode === 0 ? { a: 2 } : { a: 2, b: 3 }
+
+          for (const key in source) {
+            let current = source[key]
+            if (current-- === 2) {
+              continue
+            }
+            seen += key + current
+          }
+
+          return {
+            toggle: () => {
+              mode = 1
+            },
+            view: () => seen,
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result.view()).toBe('')
+    result.toggle()
+    expect(result.view()).toBe('b2')
+  })
+
   it('keeps partial while-loop control flow inline when memoization would be incomplete', () => {
     const result = compileAndRunHook<number | (() => number)>(
       `
@@ -91,6 +158,357 @@ describe('control flow runtime regressions', () => {
 
     const resolved = typeof result === 'function' ? result() : result
     expect(resolved).toBe(3)
+  })
+
+  it('preserves trailing assignments in directly emitted control-flow regions', () => {
+    const result = compileAndRunHook<{ bump: () => void; view: () => number }>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let n = $state(3)
+          let total = 0
+
+          while (total < n) {
+            total += 1
+          }
+
+          total = total * 2
+
+          return {
+            bump: () => {
+              n = 4
+            },
+            view: () => total,
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result.view()).toBe(6)
+    result.bump()
+    expect(result.view()).toBe(8)
+  })
+
+  it('preserves switch-case assignments with break before a trailing return', () => {
+    const result = compileAndRunHook<{ next: () => void; view: () => string }>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let mode = $state(0)
+          let label = 'A'
+
+          switch (mode) {
+            case 0:
+              label = 'A'
+              break
+            case 1:
+              label = 'B'
+              break
+            default:
+              label = 'D'
+              break
+          }
+
+          return {
+            next: () => {
+              mode = (mode + 1) % 3
+            },
+            view: () => \`\${label}-\${mode}\`,
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result.view()).toBe('A-0')
+    result.next()
+    expect(result.view()).toBe('B-1')
+    result.next()
+    expect(result.view()).toBe('D-2')
+    result.next()
+    expect(result.view()).toBe('A-0')
+  })
+
+  it('preserves labeled while-continue targets', () => {
+    const result = compileAndRunHook<number | (() => number)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let n = $state(0)
+          let total = 0
+
+          outer: while (n < 4) {
+            n++
+            if (n === 2) {
+              continue outer
+            }
+            total = total + n
+          }
+
+          return total
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe(8)
+  })
+
+  it('preserves nested labeled for-of continues without corrupting fallthrough', () => {
+    const result = compileAndRunHook<number | (() => number)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let mode = $state(0)
+          let total = 0
+
+          outer: for (const row of mode === 0 ? [[1, 2], [3]] : [[1], [2, 3]]) {
+            for (const cell of row) {
+              if (cell === 2) {
+                continue outer
+              }
+              total = total + cell
+            }
+          }
+
+          return total
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe(4)
+  })
+
+  it('preserves labeled block breaks with trailing reactive reads', () => {
+    const result = compileAndRunHook<{ toggle: () => void; view: () => string }>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let hot = $state(true)
+          let label = 'cold'
+
+          choose: {
+            if (hot) {
+              label = 'hot'
+              break choose
+            }
+            label = 'warm'
+          }
+
+          return {
+            toggle: () => {
+              hot = !hot
+            },
+            view: () => label,
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result.view()).toBe('hot')
+    result.toggle()
+    expect(result.view()).toBe('warm')
+    result.toggle()
+    expect(result.view()).toBe('hot')
+  })
+
+  it('preserves generic labeled blocks around nested for-of exits', () => {
+    const result = compileAndRunHook<{ toggle: () => void; view: () => string }>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let hot = $state(true)
+          let label = 'cold'
+
+          choose: {
+            for (const item of hot ? [1] : [2]) {
+              if (item === 1) {
+                label = 'hot'
+                break choose
+              }
+            }
+            label = 'warm'
+          }
+
+          return {
+            toggle: () => {
+              hot = !hot
+            },
+            view: () => label,
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result.view()).toBe('hot')
+    result.toggle()
+    expect(result.view()).toBe('warm')
+    result.toggle()
+    expect(result.view()).toBe('hot')
+  })
+
+  it('preserves generic labeled blocks around nested switches', () => {
+    const result = compileAndRunHook<{ toggle: () => void; view: () => string }>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let hot = $state(true)
+          let label = 'cold'
+
+          choose: {
+            switch (hot ? 1 : 0) {
+              case 1:
+                label = 'hot'
+                break choose
+              default:
+                label = 'warm'
+                break
+            }
+          }
+
+          return {
+            toggle: () => {
+              hot = !hot
+            },
+            view: () => label,
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result.view()).toBe('hot')
+    result.toggle()
+    expect(result.view()).toBe('warm')
+    result.toggle()
+    expect(result.view()).toBe('hot')
+  })
+
+  it('preserves labeled switch breaks before trailing reactive returns', () => {
+    const result = compileAndRunHook<{ next: () => void; view: () => string }>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let mode = $state(0)
+          let label = 'A'
+
+          choose: switch (mode) {
+            case 0:
+              label = 'A'
+              break choose
+            case 1:
+              label = 'B'
+              break choose
+            default:
+              label = 'C'
+              break choose
+          }
+
+          return {
+            next: () => {
+              mode = (mode + 1) % 3
+            },
+            view: () => label,
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result.view()).toBe('A')
+    result.next()
+    expect(result.view()).toBe('B')
+    result.next()
+    expect(result.view()).toBe('C')
+    result.next()
+    expect(result.view()).toBe('A')
+  })
+
+  it('preserves labeled try-finally breaks that exit an outer label', () => {
+    const result = compileAndRunHook<{ toggle: () => void; view: () => string }>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let hot = $state(true)
+          let label = 'cold'
+
+          choose: try {
+            if (hot) {
+              label = 'hot'
+              break choose
+            }
+            label = 'warm'
+          } finally {
+            label = label + '!'
+          }
+
+          return {
+            toggle: () => {
+              hot = !hot
+            },
+            view: () => label,
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result.view()).toBe('hot!')
+    result.toggle()
+    expect(result.view()).toBe('warm!')
+    result.toggle()
+    expect(result.view()).toBe('hot!')
+  })
+
+  it('preserves internal loop continues inside try-finally blocks', () => {
+    const result = compileAndRunHook<{ toggle: () => void; view: () => number }>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let mode = $state(0)
+          let total = 0
+
+          try {
+            for (const item of mode === 0 ? [1, 2] : [1, 2, 3]) {
+              if (item === 2) {
+                continue
+              }
+              total += item
+            }
+          } finally {
+            total += 10
+          }
+
+          return {
+            toggle: () => {
+              mode = 1
+            },
+            view: () => total,
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result.view()).toBe(11)
+    result.toggle()
+    expect(result.view()).toBe(14)
   })
 
   it('rejects unsafe state-machine fallback for try-finally control flow', () => {

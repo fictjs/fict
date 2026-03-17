@@ -325,6 +325,8 @@ function nodeIsPureReactiveScope(node: StructuredNode, memoMacroNames?: Set<stri
       case 'block':
         if (n.statements.length === 0) return false
         return n.statements.every(child => visit(child))
+      case 'labeled':
+        return visit(n.statement)
       default:
         return false
     }
@@ -347,6 +349,9 @@ export function generateRegions(
 
   // Create regions from scopes
   for (const scope of scopeResult.scopes) {
+    if (!scope.hasExternalEffect && !scope.shouldMemoize) {
+      continue
+    }
     const region = createRegionFromScope(scope, fn, nextRegionId++, shapeResult)
     regions.push(region)
 
@@ -808,15 +813,20 @@ interface RegionEmitContext {
   disabledRegions: Set<number>
   pendingInstructions: Map<number, Instruction[]>
   rootNode: StructuredNode
+  inlineUnownedInRegionBody?: boolean
 }
 
 interface ControlFlowRegionState {
   region?: Region
   partialRegionIds: Set<number>
+  hasUnownedInstructions?: boolean
+  ownedInstructionsByRegion?: Map<number, Instruction[]>
 }
 
 function shouldDisablePartialRegions(node: StructuredNode): boolean {
   switch (node.kind) {
+    case 'labeled':
+      return shouldDisablePartialRegions(node.statement)
     case 'while':
     case 'doWhile':
     case 'for':
@@ -873,6 +883,199 @@ function ensureSwitchCaseBreak(
     return stmts
   }
   return [...stmts, t.breakStatement()]
+}
+
+function shouldLabelStructuredNodeDirectly(node: StructuredNode): boolean {
+  switch (node.kind) {
+    case 'while':
+    case 'doWhile':
+    case 'for':
+    case 'forOf':
+    case 'forIn':
+    case 'switch':
+      return true
+    default:
+      return false
+  }
+}
+
+function canEmitControlFlowRegionDirectly(node: StructuredNode): boolean {
+  switch (node.kind) {
+    case 'while':
+    case 'doWhile':
+    case 'for':
+    case 'forOf':
+    case 'forIn':
+    case 'try':
+    case 'labeled':
+      return true
+    default:
+      return false
+  }
+}
+
+function combineDirectEmitNodes(nodes: StructuredNode[]): StructuredNode {
+  if (nodes.length === 1) {
+    return nodes[0]!
+  }
+  return { kind: 'sequence', nodes: [...nodes] }
+}
+
+function instructionListCoversRegion(
+  region: Region,
+  candidateInstructions: Instruction[],
+): boolean {
+  if (candidateInstructions.length < region.instructions.length) {
+    return false
+  }
+
+  const used = new Array(candidateInstructions.length).fill(false)
+  for (const regionInstr of region.instructions) {
+    let matched = false
+    for (let index = 0; index < candidateInstructions.length; index++) {
+      if (used[index]) continue
+      const candidate = candidateInstructions[index]
+      if (candidate && instructionsMatch(regionInstr, candidate)) {
+        used[index] = true
+        matched = true
+        break
+      }
+    }
+    if (!matched) {
+      return false
+    }
+  }
+
+  return true
+}
+
+function buildDirectRegionEmitCandidate(
+  nodes: StructuredNode[],
+  startIndex: number,
+  state: ControlFlowRegionState,
+  instructionBuffer: { instr: Instruction; region?: Region }[],
+  regionCtx?: RegionEmitContext,
+): {
+  region: Region
+  rootNode: StructuredNode
+  consumedUntil: number
+  bufferedRegionInstructions: Instruction[]
+} | null {
+  const region = state.region
+  if (!regionCtx || !region) return null
+
+  const bufferedRegionInstructions = instructionBuffer
+    .filter(item => item.region?.id === region.id)
+    .map(item => item.instr)
+  const coveredInstructions = [
+    ...bufferedRegionInstructions,
+    ...(state.ownedInstructionsByRegion?.get(region.id) ?? []),
+  ]
+  const selectedNodes: StructuredNode[] = [nodes[startIndex]!]
+
+  if (instructionListCoversRegion(region, coveredInstructions)) {
+    return {
+      region,
+      rootNode: combineDirectEmitNodes(selectedNodes),
+      consumedUntil: startIndex,
+      bufferedRegionInstructions,
+    }
+  }
+
+  for (let index = startIndex + 1; index < nodes.length; index++) {
+    const sibling = nodes[index]!
+
+    if (sibling.kind === 'instruction') {
+      const owner = findRegionForInstruction(sibling.instruction, regionCtx)
+      if (!owner || owner.id !== region.id) {
+        break
+      }
+      selectedNodes.push(sibling)
+      coveredInstructions.push(sibling.instruction)
+    } else {
+      const siblingState = analyzeControlFlowRegion(sibling, regionCtx)
+      if (siblingState.region?.id !== region.id) {
+        break
+      }
+      selectedNodes.push(sibling)
+      coveredInstructions.push(...(siblingState.ownedInstructionsByRegion?.get(region.id) ?? []))
+    }
+
+    if (instructionListCoversRegion(region, coveredInstructions)) {
+      return {
+        region,
+        rootNode: combineDirectEmitNodes(selectedNodes),
+        consumedUntil: index,
+        bufferedRegionInstructions,
+      }
+    }
+  }
+
+  return null
+}
+
+function structuredNodeUsesTrackedControlFlow(node: StructuredNode, ctx: CodegenContext): boolean {
+  switch (node.kind) {
+    case 'sequence':
+      return node.nodes.some(child => structuredNodeUsesTrackedControlFlow(child, ctx))
+    case 'block':
+      return node.statements.some(child => structuredNodeUsesTrackedControlFlow(child, ctx))
+    case 'labeled':
+      return structuredNodeUsesTrackedControlFlow(node.statement, ctx)
+    case 'if':
+      return (
+        expressionUsesTracked(node.test, ctx) ||
+        structuredNodeUsesTrackedControlFlow(node.consequent, ctx) ||
+        (node.alternate ? structuredNodeUsesTrackedControlFlow(node.alternate, ctx) : false)
+      )
+    case 'while':
+    case 'doWhile':
+      return (
+        expressionUsesTracked(node.test, ctx) ||
+        structuredNodeUsesTrackedControlFlow(node.body, ctx)
+      )
+    case 'for':
+      return (
+        (node.test ? expressionUsesTracked(node.test, ctx) : false) ||
+        structuredNodeUsesTrackedControlFlow(node.body, ctx)
+      )
+    case 'forOf':
+      return (
+        expressionUsesTracked(node.iterable, ctx) ||
+        structuredNodeUsesTrackedControlFlow(node.body, ctx)
+      )
+    case 'forIn':
+      return (
+        expressionUsesTracked(node.object, ctx) ||
+        structuredNodeUsesTrackedControlFlow(node.body, ctx)
+      )
+    case 'switch':
+      return (
+        expressionUsesTracked(node.discriminant, ctx) ||
+        node.cases.some(c => structuredNodeUsesTrackedControlFlow(c.body, ctx))
+      )
+    case 'try':
+      return (
+        structuredNodeUsesTrackedControlFlow(node.block, ctx) ||
+        (node.handler ? structuredNodeUsesTrackedControlFlow(node.handler.body, ctx) : false) ||
+        (node.finalizer ? structuredNodeUsesTrackedControlFlow(node.finalizer, ctx) : false)
+      )
+    default:
+      return false
+  }
+}
+
+function buildLabeledStructuredStatement(
+  node: Extract<StructuredNode, { kind: 'labeled' }>,
+  stmts: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): BabelCore.types.Statement[] {
+  if (stmts.length === 0) return []
+  const body =
+    shouldLabelStructuredNodeDirectly(node.statement) && stmts.length === 1
+      ? stmts[0]!
+      : t.blockStatement(stmts)
+  return [t.labeledStatement(t.identifier(node.label), body)]
 }
 
 function collectPatternBindingNames(
@@ -990,7 +1193,8 @@ function lowerNodeWithRegionContext(
       // Collect instructions and emit regions as complete units
       const instructionBuffer: { instr: Instruction; region?: Region }[] = []
 
-      for (const child of node.nodes) {
+      for (let index = 0; index < node.nodes.length; index++) {
+        const child = node.nodes[index]!
         if (child.kind === 'instruction') {
           const region = findRegionForInstruction(child.instruction, regionCtx)
           instructionBuffer.push({ instr: child.instruction, region })
@@ -998,6 +1202,57 @@ function lowerNodeWithRegionContext(
           const controlFlowState = analyzeControlFlowRegion(child, regionCtx)
           const disablePartialRegions = shouldDisablePartialRegions(child)
           const disableEarlyExitRegion = _structuredNodeHasEarlyExit(child)
+          const directEmitCandidate = buildDirectRegionEmitCandidate(
+            node.nodes,
+            index,
+            controlFlowState,
+            instructionBuffer,
+            regionCtx,
+          )
+          const controlFlowRegion = directEmitCandidate?.region ?? controlFlowState.region
+          const canDirectlyEmitRegion =
+            !!directEmitCandidate &&
+            controlFlowRegion.shouldMemoize &&
+            canEmitControlFlowRegionDirectly(child) &&
+            !regionCtx?.disabledRegions.has(controlFlowRegion.id)
+          // Flush pending instructions before control flow
+          stmts.push(
+            ...flushInstructionBuffer(
+              instructionBuffer,
+              t,
+              ctx,
+              declaredVars,
+              regionCtx,
+              !canDirectlyEmitRegion && (disablePartialRegions || disableEarlyExitRegion)
+                ? controlFlowState.partialRegionIds
+                : undefined,
+              canDirectlyEmitRegion && controlFlowRegion
+                ? new Set([controlFlowRegion.id])
+                : undefined,
+            ),
+          )
+          instructionBuffer.length = 0
+          if (canDirectlyEmitRegion) {
+            if (!regionCtx?.emittedRegions.has(controlFlowRegion.id)) {
+              regionCtx?.emittedRegions.add(controlFlowRegion.id)
+              stmts.push(
+                ...generateRegionStatements(
+                  controlFlowRegion,
+                  t,
+                  declaredVars,
+                  ctx,
+                  {
+                    ...regionCtx,
+                    rootNode: directEmitCandidate.rootNode,
+                    inlineUnownedInRegionBody: true,
+                  },
+                  directEmitCandidate.bufferedRegionInstructions,
+                ),
+              )
+            }
+            index = directEmitCandidate.consumedUntil
+            continue
+          }
           if (disablePartialRegions) {
             controlFlowState.partialRegionIds.forEach(id => regionCtx?.disabledRegions.add(id))
           }
@@ -1007,21 +1262,6 @@ function lowerNodeWithRegionContext(
             }
             controlFlowState.partialRegionIds.forEach(id => regionCtx?.disabledRegions.add(id))
           }
-          // Flush pending instructions before control flow
-          stmts.push(
-            ...flushInstructionBuffer(
-              instructionBuffer,
-              t,
-              ctx,
-              declaredVars,
-              regionCtx,
-              disablePartialRegions || disableEarlyExitRegion
-                ? controlFlowState.partialRegionIds
-                : undefined,
-            ),
-          )
-          instructionBuffer.length = 0
-          const controlFlowRegion = controlFlowState.region
           if (
             controlFlowRegion?.shouldMemoize &&
             !regionCtx?.disabledRegions.has(controlFlowRegion.id) &&
@@ -1035,6 +1275,38 @@ function lowerNodeWithRegionContext(
       // Flush remaining instructions
       stmts.push(...flushInstructionBuffer(instructionBuffer, t, ctx, declaredVars, regionCtx))
       return stmts
+    }
+
+    case 'labeled': {
+      const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
+      const mightWrapInEffect =
+        !shouldLabelStructuredNodeDirectly(node.statement) &&
+        ctx.wrapTrackedExpressions !== false &&
+        !ctx.inRegionMemo &&
+        !inNonReactiveScope &&
+        structuredNodeUsesTrackedControlFlow(node.statement, ctx)
+      const prevNonReactiveDepth = ctx.nonReactiveScopeDepth ?? 0
+      if (mightWrapInEffect) {
+        ctx.nonReactiveScopeDepth = prevNonReactiveDepth + 1
+      }
+      let body: BabelCore.types.Statement[]
+      try {
+        body = lowerNodeWithRegionContext(node.statement, t, ctx, declaredVars, regionCtx)
+      } finally {
+        if (mightWrapInEffect) {
+          ctx.nonReactiveScopeDepth = prevNonReactiveDepth
+        }
+      }
+      const labeledStmt = buildLabeledStructuredStatement(node, body, t)
+      if (
+        mightWrapInEffect &&
+        labeledStmt.length > 0 &&
+        !_structuredNodeHasEarlyExit(node.statement, { ignoreBreakLabel: node.label })
+      ) {
+        const effectFn = t.arrowFunctionExpression([], t.blockStatement(labeledStmt))
+        return [t.expressionStatement(buildEffectCall(ctx, t, effectFn))]
+      }
+      return labeledStmt
     }
 
     case 'block': {
@@ -1531,6 +1803,46 @@ function lowerStructuredNodeForRegion(
       return stmts
     }
 
+    case 'labeled': {
+      const inNonReactiveScope = !!(ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0)
+      const mightWrapInEffect =
+        !shouldLabelStructuredNodeDirectly(node.statement) &&
+        ctx.wrapTrackedExpressions !== false &&
+        !ctx.inRegionMemo &&
+        !inNonReactiveScope &&
+        structuredNodeUsesTrackedControlFlow(node.statement, ctx)
+      const prevNonReactiveDepth = ctx.nonReactiveScopeDepth ?? 0
+      if (mightWrapInEffect) {
+        ctx.nonReactiveScopeDepth = prevNonReactiveDepth + 1
+      }
+      let body: BabelCore.types.Statement[]
+      try {
+        body = lowerStructuredNodeForRegion(
+          node.statement,
+          region,
+          t,
+          ctx,
+          declaredVars,
+          regionCtx,
+          skipInstructions,
+        )
+      } finally {
+        if (mightWrapInEffect) {
+          ctx.nonReactiveScopeDepth = prevNonReactiveDepth
+        }
+      }
+      const labeledStmt = buildLabeledStructuredStatement(node, body, t)
+      if (
+        mightWrapInEffect &&
+        labeledStmt.length > 0 &&
+        !_structuredNodeHasEarlyExit(node.statement, { ignoreBreakLabel: node.label })
+      ) {
+        const effectFn = t.arrowFunctionExpression([], t.blockStatement(labeledStmt))
+        return [t.expressionStatement(buildEffectCall(ctx, t, effectFn))]
+      }
+      return labeledStmt
+    }
+
     case 'block': {
       const stmts: BabelCore.types.Statement[] = []
       const scopedDeclared = new Set(declaredVars)
@@ -1557,7 +1869,12 @@ function lowerStructuredNodeForRegion(
     case 'instruction': {
       if (skipInstructions?.has(node.instruction)) return []
       const owner = findRegionForInstruction(node.instruction, regionCtx)
-      if (!owner || owner.id !== region.id) return []
+      if (!owner) {
+        if (!regionCtx?.inlineUnownedInRegionBody) return []
+        const stmt = instructionToStatement(node.instruction, t, declaredVars, ctx)
+        return stmt ? [stmt] : []
+      }
+      if (owner.id !== region.id) return []
       const stmt = instructionToStatement(node.instruction, t, declaredVars, ctx)
       return stmt ? [stmt] : []
     }
@@ -1878,6 +2195,7 @@ function analyzeControlFlowRegion(
   const regionIds = new Set<number>()
   let sawInstruction = false
   let hasUnownedInstruction = false
+  const ownedInstructionsByRegion = new Map<number, Instruction[]>()
 
   const visit = (current: StructuredNode): void => {
     switch (current.kind) {
@@ -1889,6 +2207,9 @@ function analyzeControlFlowRegion(
           return
         }
         regionIds.add(owner.id)
+        const existing = ownedInstructionsByRegion.get(owner.id) ?? []
+        existing.push(current.instruction)
+        ownedInstructionsByRegion.set(owner.id, existing)
         return
       }
       case 'sequence':
@@ -1896,6 +2217,9 @@ function analyzeControlFlowRegion(
         return
       case 'block':
         current.statements.forEach(visit)
+        return
+      case 'labeled':
+        visit(current.statement)
         return
       case 'if':
         visit(current.consequent)
@@ -1928,11 +2252,26 @@ function analyzeControlFlowRegion(
   }
 
   if (hasUnownedInstruction) {
-    return { partialRegionIds: new Set(regionIds) }
+    if (regionIds.size === 1) {
+      const [regionId] = Array.from(regionIds)
+      return {
+        region: regionCtx.regionResult.regions.find(
+          region => region.id === regionId && region.hasControlFlow,
+        ),
+        partialRegionIds: new Set(regionIds),
+        hasUnownedInstructions: true,
+        ownedInstructionsByRegion,
+      }
+    }
+    return {
+      partialRegionIds: new Set(regionIds),
+      hasUnownedInstructions: true,
+      ownedInstructionsByRegion,
+    }
   }
 
   if (regionIds.size !== 1) {
-    return { partialRegionIds: new Set() }
+    return { partialRegionIds: new Set(), ownedInstructionsByRegion }
   }
 
   const [regionId] = Array.from(regionIds)
@@ -1941,6 +2280,7 @@ function analyzeControlFlowRegion(
       region => region.id === regionId && region.hasControlFlow,
     ),
     partialRegionIds: new Set(),
+    ownedInstructionsByRegion,
   }
 }
 
@@ -1966,10 +2306,14 @@ function flushInstructionBuffer(
   declaredVars: Set<string>,
   regionCtx?: RegionEmitContext,
   suppressedRegionIds?: Set<number>,
+  deferredRegionIds?: Set<number>,
 ): BabelCore.types.Statement[] {
   const stmts: BabelCore.types.Statement[] = []
 
   for (const item of buffer) {
+    if (item.region && deferredRegionIds?.has(item.region.id)) {
+      continue
+    }
     if (
       item.region &&
       !suppressedRegionIds?.has(item.region.id) &&
@@ -2118,25 +2462,39 @@ function statementHasEarlyExit(
  * This is used to determine if we should wrap an if statement in an effect
  * BEFORE lowering its children.
  */
-function _structuredNodeHasEarlyExit(node: StructuredNode | null | undefined): boolean {
+function _structuredNodeHasEarlyExit(
+  node: StructuredNode | null | undefined,
+  options?: { ignoreBreak?: boolean; ignoreBreakLabel?: string },
+): boolean {
   if (!node) return false
 
   switch (node.kind) {
     case 'return':
     case 'throw':
-    case 'break':
     case 'continue':
       return true
+    case 'break':
+      return !(
+        options?.ignoreBreak === true ||
+        (options?.ignoreBreakLabel !== undefined && node.label === options.ignoreBreakLabel)
+      )
 
     case 'block':
-      return node.statements.some(stmt => _structuredNodeHasEarlyExit(stmt))
+      return node.statements.some(stmt => _structuredNodeHasEarlyExit(stmt, options))
 
     case 'sequence':
-      return node.nodes.some(n => _structuredNodeHasEarlyExit(n))
+      return node.nodes.some(n => _structuredNodeHasEarlyExit(n, options))
+
+    case 'labeled':
+      return _structuredNodeHasEarlyExit(node.statement, {
+        ...options,
+        ignoreBreakLabel: node.label,
+      })
 
     case 'if':
       return (
-        _structuredNodeHasEarlyExit(node.consequent) || _structuredNodeHasEarlyExit(node.alternate)
+        _structuredNodeHasEarlyExit(node.consequent, options) ||
+        _structuredNodeHasEarlyExit(node.alternate, options)
       )
 
     case 'while':
@@ -2147,13 +2505,15 @@ function _structuredNodeHasEarlyExit(node: StructuredNode | null | undefined): b
       return _structuredNodeHasEarlyExit(node.body)
 
     case 'switch':
-      return node.cases.some(c => _structuredNodeHasEarlyExit(c.body))
+      // `break` is the normal terminator for a switch case and should not disable
+      // region lowering for a trailing return that consumes case-assigned locals.
+      return node.cases.some(c => _structuredNodeHasEarlyExit(c.body, { ignoreBreak: true }))
 
     case 'try':
       return (
-        _structuredNodeHasEarlyExit(node.block) ||
-        _structuredNodeHasEarlyExit(node.handler?.body) ||
-        _structuredNodeHasEarlyExit(node.finalizer)
+        _structuredNodeHasEarlyExit(node.block, options) ||
+        _structuredNodeHasEarlyExit(node.handler?.body, options) ||
+        _structuredNodeHasEarlyExit(node.finalizer, options)
       )
 
     default:
@@ -2179,6 +2539,7 @@ function generateRegionStatements(
   declaredVars: Set<string>,
   ctx: CodegenContext,
   regionCtx?: RegionEmitContext,
+  prefixInstructions?: Instruction[],
 ): BabelCore.types.Statement[] {
   const statements: BabelCore.types.Statement[] = []
   const regionInfo = {
@@ -2227,6 +2588,12 @@ function generateRegionStatements(
     if (!shouldInline) {
       ctx.inRegionMemo = true
     }
+    const prefixStatements =
+      prefixInstructions?.flatMap(instr => {
+        if (hoistedInstructionSet.has(instr)) return []
+        const stmt = instructionToStatement(instr, t, localDeclared, ctx)
+        return stmt ? [stmt] : []
+      }) ?? []
     const bodyStatements = lowerStructuredNodeForRegion(
       regionCtx.rootNode,
       region,
@@ -2239,12 +2606,20 @@ function generateRegionStatements(
     ctx.inRegionMemo = prevInRegionMemo
     if (shouldInline) {
       statements.push(...hoistedStatements)
+      statements.push(...prefixStatements)
       statements.push(...bodyStatements)
     } else {
       const outputNamesOverride = Array.from(memoDeclarations).map(name => deSSAVarName(name))
       statements.push(...hoistedStatements)
       statements.push(
-        ...wrapInMemo(region, t, declaredVars, ctx, bodyStatements, outputNamesOverride),
+        ...wrapInMemo(
+          region,
+          t,
+          declaredVars,
+          ctx,
+          [...prefixStatements, ...bodyStatements],
+          outputNamesOverride,
+        ),
       )
     }
   } else if (shouldInline) {

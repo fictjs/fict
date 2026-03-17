@@ -3,6 +3,7 @@ import type * as BabelCore from '@babel/core'
 import type { HookReturnInfoSerializable } from '../types'
 
 import type { CodegenContext } from './codegen'
+import { collectMutatedIdentifiers } from './codegen-analysis'
 import { computeReactiveAccessors } from './codegen-reactive-accessors'
 import { getReactiveCallKind } from './codegen-reactive-kind'
 import type { Expression, HIRFunction } from './hir'
@@ -98,6 +99,7 @@ function collectHookReactiveVars(
       }
     }
   }
+  collectMutatedIdentifiers(fn).forEach(name => mutatedVars.add(name))
 
   return { signalVars, storeVars, memoVars, functionVars, mutatedVars }
 }
