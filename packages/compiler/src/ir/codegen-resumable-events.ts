@@ -8,7 +8,7 @@ import {
   genModuleUrlExpr,
   renameIdentifiersInExpr,
 } from './codegen-resumable-utils'
-import type { Expression } from './hir'
+import { HIRError, type Expression } from './hir'
 
 export interface ResumableEventBindingOps {
   lowerDomExpression: (
@@ -125,9 +125,14 @@ export function emitResumableEventBinding(
     if (options?.explicit) {
       const loc = expr.loc?.start
       const fileName = ctx.options?.filename ?? '<unknown>'
-      const location = loc ? `${fileName}:${loc.line}:${loc.column + 1}` : fileName
-      throw new Error(
-        `${detail} Use signals/props/function references or remove '$' suffix.\n  at ${location}`,
+      throw new HIRError(
+        `${detail} Use signals/props/function references or remove '$' suffix.`,
+        'BUILD_ERROR',
+        {
+          file: fileName,
+          line: loc?.line,
+          variable: detailParts.join(' | '),
+        },
       )
     }
     return false

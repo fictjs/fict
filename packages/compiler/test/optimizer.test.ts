@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { parseSync } from '@babel/core'
 
-import type { Expression, HIRFunction, HIRProgram, Terminator } from '../src/ir/hir'
+import type {
+  ArrowFunctionExpression,
+  BasicBlock,
+  Expression,
+  FunctionExpression,
+  HIRFunction,
+  HIRProgram,
+  Identifier,
+  Literal,
+  Terminator,
+} from '../src/ir/hir'
 import { buildHIR } from '../src/ir/build-hir'
 import { optimizeHIR } from '../src/ir/optimize'
 import { printHIR } from '../src/ir/printer'
@@ -25,6 +35,36 @@ const findReturnArgument = (program: HIRProgram): Expression | null => {
     }
   }
   return null
+}
+
+function visitBlockExpressions(blocks: BasicBlock[], visit: (expr: Expression) => void): void {
+  blocks.forEach(block => {
+    block.instructions.forEach(instr => {
+      if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+        walkExpression(instr.value, visit)
+      } else if (instr.kind === 'Phi') {
+        instr.sources.forEach(src => walkExpression(src.id, visit))
+      }
+    })
+
+    if (block.terminator.kind === 'Return' && block.terminator.argument) {
+      walkExpression(block.terminator.argument, visit)
+    }
+  })
+}
+
+function expectIdentifier(expr: Expression | null | undefined, message: string): Identifier {
+  if (!expr || expr.kind !== 'Identifier') {
+    throw new Error(message)
+  }
+  return expr
+}
+
+function expectLiteral(expr: Expression | null | undefined, message: string): Literal {
+  if (!expr || expr.kind !== 'Literal') {
+    throw new Error(message)
+  }
+  return expr
 }
 
 const walkExpression = (expr: Expression | null | undefined, visit: (expr: Expression) => void) => {
@@ -90,28 +130,12 @@ const walkExpression = (expr: Expression | null | undefined, visit: (expr: Expre
         walkExpression(expr.body as Expression, visit)
         return
       }
-      ;(expr.body as any[]).forEach(block => {
-        block.instructions.forEach((instr: any) => {
-          if (instr.kind === 'Assign' || instr.kind === 'Expression') {
-            walkExpression(instr.value as Expression, visit)
-          } else if (instr.kind === 'Phi') {
-            instr.sources.forEach((src: any) => walkExpression(src.id as Expression, visit))
-          }
-        })
-        walkExpression(block.terminator?.argument as Expression, visit)
-      })
+      if (Array.isArray(expr.body)) {
+        visitBlockExpressions(expr.body, visit)
+      }
       return
     case 'FunctionExpression':
-      expr.body.forEach((block: any) => {
-        block.instructions.forEach((instr: any) => {
-          if (instr.kind === 'Assign' || instr.kind === 'Expression') {
-            walkExpression(instr.value as Expression, visit)
-          } else if (instr.kind === 'Phi') {
-            instr.sources.forEach((src: any) => walkExpression(src.id as Expression, visit))
-          }
-        })
-        walkExpression(block.terminator?.argument as Expression, visit)
-      })
+      visitBlockExpressions(expr.body, visit)
       return
     case 'AssignmentExpression':
       walkExpression(expr.left as Expression, visit)
@@ -195,6 +219,18 @@ const countExpression = (program: HIRProgram, predicate: (expr: Expression) => b
     }
   }
   return count
+}
+
+const findFirstArrowFunction = (program: HIRProgram): ArrowFunctionExpression | null => {
+  let found: ArrowFunctionExpression | null = null
+  countExpression(program, expr => {
+    if (!found && expr.kind === 'ArrowFunction') {
+      found = expr
+      return true
+    }
+    return false
+  })
+  return found
 }
 
 const hasAssignTarget = (program: HIRProgram, name: string): boolean => {
@@ -369,24 +405,21 @@ describe('optimizeHIR', () => {
         }
       `)
       const optimized = optimizeHIR(buildHIR(ast))
-      let arrowFn: Expression | null = null
-      countExpression(optimized, expr => {
-        if (!arrowFn && expr.kind === 'ArrowFunction') {
-          arrowFn = expr
-        }
-        return false
-      })
-      expect(arrowFn?.kind).toBe('ArrowFunction')
-      if (arrowFn?.kind === 'ArrowFunction' && !arrowFn.isExpression) {
-        const blocks = arrowFn.body as any[]
+      const foundArrowFn = findFirstArrowFunction(optimized)
+      expect(foundArrowFn).not.toBeNull()
+      if (!foundArrowFn) {
+        throw new Error('expected arrow function')
+      }
+      expect(foundArrowFn.kind).toBe('ArrowFunction')
+      if (!foundArrowFn.isExpression && Array.isArray(foundArrowFn.body)) {
+        const blocks = foundArrowFn.body
         const returnArgs = blocks
           .map(block => block.terminator)
-          .filter(term => term.kind === 'Return')
+          .filter((term): term is Extract<Terminator, { kind: 'Return' }> => term.kind === 'Return')
           .map(term => term.argument)
         expect(returnArgs.length).toBeGreaterThan(0)
-        const ret = returnArgs[0] as Expression
-        expect(ret?.kind).toBe('Identifier')
-        expect((ret as any).name).toBe('__x')
+        const ret = expectIdentifier(returnArgs[0], 'expected identifier return')
+        expect(ret.name).toBe('__x')
       }
     } finally {
       if (previous === undefined) {
@@ -405,9 +438,8 @@ describe('optimizeHIR', () => {
       }
     `)
     const optimized = optimizeHIR(buildHIR(ast))
-    const ret = findReturnArgument(optimized)
-    expect(ret?.kind).toBe('Literal')
-    expect((ret as any)?.value).toBe(3)
+    const ret = expectLiteral(findReturnArgument(optimized), 'expected literal return')
+    expect(ret.value).toBe(3)
   })
 
   it('eliminates common subexpressions within a block', () => {
@@ -510,9 +542,8 @@ describe('optimizeHIR', () => {
       }
     `)
     const optimized = optimizeHIR(buildHIR(ast))
-    const ret = findReturnArgument(optimized)
-    expect(ret?.kind).toBe('Literal')
-    expect((ret as any)?.value).toBe(6)
+    const ret = expectLiteral(findReturnArgument(optimized), 'expected literal return')
+    expect(ret.value).toBe(6)
   })
 
   it('propagates const object member reads in reactive functions', () => {
@@ -525,9 +556,8 @@ describe('optimizeHIR', () => {
       }
     `)
     const optimized = optimizeHIR(buildHIR(ast))
-    const ret = findReturnArgument(optimized)
-    expect(ret?.kind).toBe('Literal')
-    expect((ret as any)?.value).toBe(3)
+    const ret = expectLiteral(findReturnArgument(optimized), 'expected literal return')
+    expect(ret.value).toBe(3)
   })
 
   it('inlines single-use derived memo to avoid useMemo for compiler temps', () => {

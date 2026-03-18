@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { parseSync, traverse } from '@babel/core'
+import { parseSync, traverse, type NodePath } from '@babel/core'
 import * as t from '@babel/types'
-import { DirectiveType, parseDirectives, hasDirective, removeDirective } from '../src/utils'
+import {
+  DirectiveType,
+  type DirectiveResult,
+  parseDirectives,
+  hasDirective,
+  removeDirective,
+} from '../src/utils'
+
+type DirectivePath = NodePath<t.Program | t.BlockStatement>
 
 const parseProgram = (code: string) =>
   parseSync(code, {
@@ -27,10 +35,10 @@ describe('parseDirectives', () => {
       const x = 1
     `)
 
-    let results: any[] = []
+    let results: DirectiveResult[] = []
     traverse(ast, {
       Program(path) {
-        results = parseDirectives(path as any, t)
+        results = parseDirectives(path as DirectivePath, t)
       },
     })
 
@@ -43,10 +51,10 @@ describe('parseDirectives', () => {
       function Foo() {}
     `)
 
-    let results: any[] = []
+    let results: DirectiveResult[] = []
     traverse(ast, {
       Program(path) {
-        results = parseDirectives(path as any, t)
+        results = parseDirectives(path as DirectivePath, t)
       },
     })
 
@@ -59,10 +67,10 @@ describe('parseDirectives', () => {
       const x = 1
     `)
 
-    let results: any[] = []
+    let results: DirectiveResult[] = []
     traverse(ast, {
       Program(path) {
-        results = parseDirectives(path as any, t)
+        results = parseDirectives(path as DirectivePath, t)
       },
     })
 
@@ -74,10 +82,10 @@ describe('parseDirectives', () => {
       const x = 1
     `)
 
-    let results: any[] = []
+    let results: DirectiveResult[] = []
     traverse(ast, {
       Program(path) {
-        results = parseDirectives(path as any, t)
+        results = parseDirectives(path as DirectivePath, t)
       },
     })
 
@@ -95,7 +103,7 @@ describe('hasDirective', () => {
     let found = false
     traverse(ast, {
       Program(path) {
-        found = hasDirective(path as any, DirectiveType.FictCompiler, t)
+        found = hasDirective(path as DirectivePath, DirectiveType.FictCompiler, t)
       },
     })
 
@@ -110,7 +118,7 @@ describe('hasDirective', () => {
     let found = false
     traverse(ast, {
       Program(path) {
-        found = hasDirective(path as any, DirectiveType.FictCompiler, t)
+        found = hasDirective(path as DirectivePath, DirectiveType.FictCompiler, t)
       },
     })
 

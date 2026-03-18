@@ -9,6 +9,7 @@ import { replaceIdentifiersWithOverrides, type RegionOverrideMap } from './codeg
 import { applySelectorHoist } from './codegen-selector-hoist'
 import type { BasicBlock, Expression } from './hir'
 import { deSSAVarName } from './regions'
+import { walkExpression } from './walk-expression'
 
 export interface ListChildOps {
   applyRegionMetadataToExpression: (
@@ -176,6 +177,219 @@ function hasUnresolvedCallbackLocalKeyDependencies(
   return false
 }
 
+function isDefinitelyNonCallableMapCallback(expr: Expression): boolean {
+  switch (expr.kind) {
+    case 'Literal':
+    case 'ArrayExpression':
+    case 'ObjectExpression':
+    case 'TemplateLiteral':
+    case 'JSXElement':
+    case 'ClassExpression':
+    case 'MetaProperty':
+    case 'ThisExpression':
+    case 'SuperExpression':
+      return true
+    default:
+      return false
+  }
+}
+
+function blocksUseArguments(blocks: BasicBlock[]): boolean {
+  for (const block of blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+        let found = false
+        walkExpression(instr.value, expr => {
+          if (expr.kind === 'Identifier' && expr.name === 'arguments') {
+            found = true
+          }
+        })
+        if (found) return true
+      }
+    }
+
+    const term = block.terminator
+    const termExprs: Expression[] = []
+    switch (term.kind) {
+      case 'Return':
+        if (term.argument) termExprs.push(term.argument)
+        break
+      case 'Throw':
+        termExprs.push(term.argument)
+        break
+      case 'Branch':
+        termExprs.push(term.test)
+        break
+      case 'Switch':
+        termExprs.push(term.discriminant)
+        term.cases.forEach(c => {
+          if (c.test) termExprs.push(c.test)
+        })
+        break
+      case 'ForOf':
+        termExprs.push(term.iterable)
+        break
+      case 'ForIn':
+        termExprs.push(term.object)
+        break
+      default:
+        break
+    }
+    for (const expr of termExprs) {
+      let found = false
+      walkExpression(expr, inner => {
+        if (inner.kind === 'Identifier' && inner.name === 'arguments') {
+          found = true
+        }
+      })
+      if (found) return true
+    }
+  }
+
+  return false
+}
+
+function blocksUseThis(blocks: BasicBlock[]): boolean {
+  for (const block of blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+        let found = false
+        walkExpression(instr.value, expr => {
+          if (expr.kind === 'ThisExpression') {
+            found = true
+          }
+        })
+        if (found) return true
+      }
+    }
+
+    const term = block.terminator
+    const termExprs: Expression[] = []
+    switch (term.kind) {
+      case 'Return':
+        if (term.argument) termExprs.push(term.argument)
+        break
+      case 'Throw':
+        termExprs.push(term.argument)
+        break
+      case 'Branch':
+        termExprs.push(term.test)
+        break
+      case 'Switch':
+        termExprs.push(term.discriminant)
+        term.cases.forEach(c => {
+          if (c.test) termExprs.push(c.test)
+        })
+        break
+      case 'ForOf':
+        termExprs.push(term.iterable)
+        break
+      case 'ForIn':
+        termExprs.push(term.object)
+        break
+      default:
+        break
+    }
+    for (const expr of termExprs) {
+      let found = false
+      walkExpression(expr, inner => {
+        if (inner.kind === 'ThisExpression') {
+          found = true
+        }
+      })
+      if (found) return true
+    }
+  }
+
+  return false
+}
+
+function callbackUsesArguments(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind === 'ArrowFunction' || expr.kind === 'FunctionExpression') {
+    return blocksUseArguments(getCallbackBlocks(expr))
+  }
+
+  if (expr.kind === 'Identifier') {
+    const resolved = ctx.componentFunctionDefs?.get(deSSAVarName(expr.name))
+    if (resolved && (resolved.kind === 'ArrowFunction' || resolved.kind === 'FunctionExpression')) {
+      return blocksUseArguments(getCallbackBlocks(resolved))
+    }
+
+    const programFn = ctx.programFunctions?.get(expr.name)
+    if (programFn) {
+      return blocksUseArguments(programFn.blocks)
+    }
+  }
+
+  return false
+}
+
+function callbackUsesThis(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind === 'FunctionExpression') {
+    return blocksUseThis(getCallbackBlocks(expr))
+  }
+
+  if (expr.kind === 'Identifier') {
+    const resolved = ctx.componentFunctionDefs?.get(deSSAVarName(expr.name))
+    if (resolved?.kind === 'FunctionExpression') {
+      return blocksUseThis(getCallbackBlocks(resolved))
+    }
+
+    const programFn = ctx.programFunctions?.get(expr.name)
+    if (programFn) {
+      return blocksUseThis(programFn.blocks)
+    }
+  }
+
+  return false
+}
+
+function getMapCallbackSignature(
+  expr: Expression,
+  ctx: CodegenContext,
+): { paramCount: number; hasRest: boolean } | null {
+  if (expr.kind === 'ArrowFunction' || expr.kind === 'FunctionExpression') {
+    return {
+      paramCount: expr.rawParams?.length ?? expr.params.length,
+      hasRest:
+        Array.isArray(expr.rawParams) && expr.rawParams.some(param => ctx.t.isRestElement(param)),
+    }
+  }
+
+  if (expr.kind === 'Identifier') {
+    const resolved = ctx.componentFunctionDefs?.get(deSSAVarName(expr.name))
+    if (resolved && (resolved.kind === 'ArrowFunction' || resolved.kind === 'FunctionExpression')) {
+      return {
+        paramCount: resolved.rawParams?.length ?? resolved.params.length,
+        hasRest:
+          Array.isArray(resolved.rawParams) &&
+          resolved.rawParams.some(param => ctx.t.isRestElement(param)),
+      }
+    }
+
+    const programFn = ctx.programFunctions?.get(expr.name)
+    if (programFn) {
+      return {
+        paramCount: programFn.params.length,
+        hasRest: false,
+      }
+    }
+  }
+
+  return null
+}
+
+function hasUnsupportedMapCallbackParams(expr: Expression, ctx: CodegenContext): boolean {
+  const rawParams =
+    expr.kind === 'ArrowFunction' || expr.kind === 'FunctionExpression' ? expr.rawParams : undefined
+
+  if (rawParams && rawParams.length > 0) {
+    return rawParams.some(param => !ctx.t.isIdentifier(param))
+  }
+
+  return false
+}
+
 /**
  * Build a list binding call expression (array.map).
  */
@@ -204,10 +418,25 @@ export function buildListCallExpression(
   const arrayExpr = isOptional
     ? t.logicalExpression('??', arrayExprBase, t.arrayExpression([]))
     : arrayExprBase
+  if (expr.arguments.length !== 1) return null
   const mapCallback = expr.arguments[0]
-  if (!mapCallback) {
-    throw new Error('map callback is required')
+  if (!mapCallback) return null
+  if (mapCallback.kind !== 'ArrowFunction' && mapCallback.kind !== 'FunctionExpression') {
+    return null
   }
+  if (
+    mapCallback.isAsync ||
+    (mapCallback.kind === 'FunctionExpression' && mapCallback.isGenerator)
+  ) {
+    return null
+  }
+  if (hasUnsupportedMapCallbackParams(mapCallback, ctx)) return null
+  if (isDefinitelyNonCallableMapCallback(mapCallback)) return null
+  if (callbackUsesArguments(mapCallback, ctx)) return null
+  if (callbackUsesThis(mapCallback, ctx)) return null
+  const callbackSignature = getMapCallbackSignature(mapCallback, ctx)
+  if (!callbackSignature) return null
+  if (callbackSignature.hasRest || callbackSignature.paramCount >= 3) return null
   const extractedKeyExpr = extractKeyFromMapCallback(mapCallback)
   const keyExpr = extractedKeyExpr
     ? resolveMapCallbackKeyExpression(extractedKeyExpr, mapCallback)
@@ -598,11 +827,11 @@ export function emitListChild(
   statements: BabelCore.types.Statement[],
   ctx: CodegenContext,
   ops: ListChildOps,
-): void {
+): boolean {
   const { t } = ctx
 
   const listCall = buildListCallExpression(expr, statements, ctx, ops)
-  if (!listCall) return
+  if (!listCall) return false
 
   if (t.isCallExpression(listCall)) {
     listCall.arguments.push(startMarkerId, endMarkerId)
@@ -628,4 +857,5 @@ export function emitListChild(
       ]),
     ),
   )
+  return true
 }

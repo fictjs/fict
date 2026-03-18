@@ -38,6 +38,26 @@ export function debugEnabled(flag: string): boolean {
   return parts.includes(normalized) || parts.includes('all')
 }
 
+export function debugExplicitlyEnabled(flag: string): boolean {
+  const normalized = flag.toLowerCase()
+
+  const legacy = process.env[`DEBUG_${flag.toUpperCase()}`]
+  if (parseFlag(legacy)) return true
+
+  const fictLegacy = process.env[`FICT_DEBUG_${flag.toUpperCase()}`]
+  if (parseFlag(fictLegacy)) return true
+
+  const raw = process.env.FICT_DEBUG ?? process.env.DEBUG_FICT
+  if (!raw || parseFlag(raw)) return false
+
+  const parts = raw
+    .split(',')
+    .map(p => p.trim().toLowerCase())
+    .filter(Boolean)
+
+  return parts.includes(normalized)
+}
+
 /**
  * Log a debug message if the specified flag is enabled.
  * This is the preferred way to output debug information in the compiler.

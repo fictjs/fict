@@ -1,7 +1,5 @@
 import { transformSync, type PluginItem } from '@babel/core'
-// @ts-expect-error - CommonJS module without proper types
 import pluginTransformCjs from '@babel/plugin-transform-modules-commonjs'
-// @ts-expect-error - CommonJS module without proper types
 import presetTypescript from '@babel/preset-typescript'
 
 import createFictPlugin, { type FictCompilerOptions } from '../src/index'

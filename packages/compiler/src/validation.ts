@@ -65,6 +65,11 @@ export enum DiagnosticCode {
   FICT_R003 = 'FICT-R003', // Non-memoizable expression
   FICT_R004 = 'FICT-R004', // Reactive creation inside non-JSX control flow
   FICT_R005 = 'FICT-R005', // Function captures reactive variable without explicit dependency boundary
+  FICT_R006 = 'FICT-R006',
+
+  FICT_M = 'FICT-M',
+  FICT_H = 'FICT-H',
+  FICT_HIR_UNSUPPORTED = 'FICT-HIR-UNSUPPORTED',
 
   // Performance (FICT-X*)
   FICT_X001 = 'FICT-X001', // Object recreation on each render
@@ -113,6 +118,13 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
     'Reactive creation inside non-JSX control flow may not auto-dispose in complex paths. Prefer createScope/runInScope (or JSX-managed regions) for explicit lifecycle control.',
   [DiagnosticCode.FICT_R005]:
     'Function captures reactive variables from outer scope; pass them as parameters or memoize explicitly to avoid hidden dependencies.',
+  [DiagnosticCode.FICT_R006]:
+    'Reactive control-flow reads force region re-execution; prefer expression-only branching in JSX for finer-grained updates.',
+  [DiagnosticCode.FICT_M]:
+    'Direct mutation of nested $state properties is not tracked; use immutable updates or $store helpers.',
+  [DiagnosticCode.FICT_H]: 'Dynamic property access widens dependency tracking.',
+  [DiagnosticCode.FICT_HIR_UNSUPPORTED]:
+    'The HIR conversion encountered syntax that it cannot faithfully represent.',
 
   [DiagnosticCode.FICT_X001]: 'Object is recreated on each render, consider memoizing.',
   [DiagnosticCode.FICT_X002]: 'Array is recreated on each render, consider memoizing.',
@@ -154,6 +166,10 @@ export const DiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = 
   [DiagnosticCode.FICT_R003]: DiagnosticSeverity.Info,
   [DiagnosticCode.FICT_R004]: DiagnosticSeverity.Error,
   [DiagnosticCode.FICT_R005]: DiagnosticSeverity.Warning,
+  [DiagnosticCode.FICT_R006]: DiagnosticSeverity.Warning,
+  [DiagnosticCode.FICT_M]: DiagnosticSeverity.Warning,
+  [DiagnosticCode.FICT_H]: DiagnosticSeverity.Warning,
+  [DiagnosticCode.FICT_HIR_UNSUPPORTED]: DiagnosticSeverity.Error,
 
   [DiagnosticCode.FICT_X001]: DiagnosticSeverity.Hint,
   [DiagnosticCode.FICT_X002]: DiagnosticSeverity.Hint,

@@ -1,20 +1,20 @@
 import { describe, it, expect } from 'vitest'
+import * as t from '@babel/types'
 
 import { parseFictReturnAnnotation } from '../src/ir/build-hir'
 
 import { transform } from './test-utils'
 
+function createAnnotatedNode(comment: string): t.Noop {
+  const node = t.noop()
+  node.leadingComments = [{ type: 'CommentBlock', value: comment }]
+  return node
+}
+
 describe('Hook Return Annotation (@fictReturn)', () => {
   describe('parseFictReturnAnnotation', () => {
     it('parses object return annotation', () => {
-      const node = {
-        leadingComments: [
-          {
-            type: 'CommentBlock',
-            value: '* @fictReturn { count: signal, double: memo } ',
-          },
-        ],
-      } as any
+      const node = createAnnotatedNode('* @fictReturn { count: signal, double: memo } ')
 
       const result = parseFictReturnAnnotation(node)
       expect(result).not.toBeNull()
@@ -24,14 +24,7 @@ describe('Hook Return Annotation (@fictReturn)', () => {
     })
 
     it('parses object return annotation with quotes', () => {
-      const node = {
-        leadingComments: [
-          {
-            type: 'CommentBlock',
-            value: "* @fictReturn { count: 'signal', double: 'memo' } ",
-          },
-        ],
-      } as any
+      const node = createAnnotatedNode("* @fictReturn { count: 'signal', double: 'memo' } ")
 
       const result = parseFictReturnAnnotation(node)
       expect(result).not.toBeNull()
@@ -40,14 +33,7 @@ describe('Hook Return Annotation (@fictReturn)', () => {
     })
 
     it('parses array return annotation', () => {
-      const node = {
-        leadingComments: [
-          {
-            type: 'CommentBlock',
-            value: '* @fictReturn [0: signal, 1: memo] ',
-          },
-        ],
-      } as any
+      const node = createAnnotatedNode('* @fictReturn [0: signal, 1: memo] ')
 
       const result = parseFictReturnAnnotation(node)
       expect(result).not.toBeNull()
@@ -57,14 +43,7 @@ describe('Hook Return Annotation (@fictReturn)', () => {
     })
 
     it('parses direct accessor annotation - signal', () => {
-      const node = {
-        leadingComments: [
-          {
-            type: 'CommentBlock',
-            value: "* @fictReturn 'signal' ",
-          },
-        ],
-      } as any
+      const node = createAnnotatedNode("* @fictReturn 'signal' ")
 
       const result = parseFictReturnAnnotation(node)
       expect(result).not.toBeNull()
@@ -72,14 +51,7 @@ describe('Hook Return Annotation (@fictReturn)', () => {
     })
 
     it('parses direct accessor annotation - memo', () => {
-      const node = {
-        leadingComments: [
-          {
-            type: 'CommentBlock',
-            value: '* @fictReturn "memo" ',
-          },
-        ],
-      } as any
+      const node = createAnnotatedNode('* @fictReturn "memo" ')
 
       const result = parseFictReturnAnnotation(node)
       expect(result).not.toBeNull()
@@ -87,14 +59,7 @@ describe('Hook Return Annotation (@fictReturn)', () => {
     })
 
     it('returns null for node without annotation', () => {
-      const node = {
-        leadingComments: [
-          {
-            type: 'CommentBlock',
-            value: '* This is a regular comment ',
-          },
-        ],
-      } as any
+      const node = createAnnotatedNode('* This is a regular comment ')
 
       const result = parseFictReturnAnnotation(node)
       expect(result).toBeNull()

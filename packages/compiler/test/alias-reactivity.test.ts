@@ -1,5 +1,20 @@
+import { parseSync } from '@babel/core'
+import * as t from '@babel/types'
 import { describe, expect, it } from 'vitest'
+
+import { buildHIR } from '../src/ir/build-hir'
+import { lowerHIRWithRegions } from '../src/ir/codegen'
+import { HIRError } from '../src/ir/hir'
 import { transform } from './test-utils'
+
+const parseFile = (code: string) =>
+  parseSync(code, {
+    filename: 'module.tsx',
+    parserOpts: { sourceType: 'module', plugins: ['typescript', 'jsx'] },
+    ast: true,
+    code: false,
+    cloneInputAst: false,
+  })!
 
 describe('Alias-Safe Reactive Lowering', () => {
   describe('Local Aliasing', () => {
@@ -67,6 +82,35 @@ describe('Alias-Safe Reactive Lowering', () => {
         }
       `
       expect(() => transform(source)).toThrow(/Alias reassignment is not supported/)
+    })
+
+    it('surfaces alias reassignment as HIRError during lowering', () => {
+      const source = `
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          let alias = count
+          alias = 1
+          return alias
+        }
+      `
+      const hir = buildHIR(parseFile(source))
+
+      try {
+        lowerHIRWithRegions(hir, t, {
+          filename: 'module.tsx',
+          fineGrainedDom: true,
+          strictGuarantee: false,
+        })
+        throw new Error('expected lowerHIRWithRegions to throw')
+      } catch (error) {
+        expect(error).toBeInstanceOf(HIRError)
+        const hirError = error as HIRError
+        expect(hirError.code).toBe('BUILD_ERROR')
+        expect(hirError.message).toContain('Alias reassignment is not supported')
+        expect(hirError.context?.file).toBe('module.tsx')
+        expect(hirError.context?.variable).toBe('alias')
+      }
     })
 
     it('handles alias usage in JSX', () => {

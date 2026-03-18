@@ -2,6 +2,18 @@ import { describe, expect, it } from 'vitest'
 import * as BabelCore from '@babel/core'
 import { parseSync } from '@babel/core'
 import { buildHIR, convertStatementsToHIRFunction } from '../src/ir/build-hir'
+import {
+  type AssignInstruction,
+  type Expression,
+  type HIRFunction,
+  type JSXAttribute,
+  type JSXElementExpression,
+  type Identifier,
+  type ObjectExpression,
+  type ObjectProperty,
+  type Terminator,
+  isAssignInstruction,
+} from '../src/ir/hir'
 import { printHIR } from '../src/ir/printer'
 
 const parseFile = (code: string) =>
@@ -12,6 +24,61 @@ const parseFile = (code: string) =>
     code: false,
     cloneInputAst: false,
   })!
+
+type ReturnTerminator = Extract<Terminator, { kind: 'Return' }> & { argument: Expression }
+
+function assertDefined<T>(value: T | undefined, message: string): T {
+  if (value === undefined) {
+    throw new Error(message)
+  }
+  return value
+}
+
+function getAssignTargets(fn: HIRFunction): string[] {
+  return fn.blocks
+    .flatMap(block => block.instructions)
+    .filter(isAssignInstruction)
+    .map(instr => instr.target.name)
+}
+
+function findAssignInstruction(fn: HIRFunction, targetName: string): AssignInstruction | undefined {
+  return fn.blocks
+    .flatMap(block => block.instructions)
+    .filter(isAssignInstruction)
+    .find(instr => instr.target.name === targetName)
+}
+
+function findReturnWithArgument(fn: HIRFunction): ReturnTerminator | undefined {
+  return fn.blocks
+    .map(block => block.terminator)
+    .find((term): term is ReturnTerminator => term.kind === 'Return' && term.argument !== undefined)
+}
+
+function isObjectProperty(
+  property: ObjectExpression['properties'][number],
+): property is ObjectProperty {
+  return property.kind === 'Property'
+}
+
+function isJSXElementExpression(value: JSXAttribute['value']): value is JSXElementExpression {
+  return value?.kind === 'JSXElement'
+}
+
+function isLiteralExpression(
+  value: JSXAttribute['value'],
+): value is Extract<Expression, { kind: 'Literal' }> {
+  return value?.kind === 'Literal'
+}
+
+function expectIdentifierExpression(
+  value: Expression | string | undefined,
+  message: string,
+): Identifier {
+  if (!value || typeof value === 'string' || value.kind !== 'Identifier') {
+    throw new Error(message)
+  }
+  return value
+}
 
 describe('buildHIR', () => {
   it('builds simple functions into blocks with branch', () => {
@@ -256,7 +323,9 @@ describe('buildHIR - Advanced Patterns', () => {
   })
 
   it('handles optional chaining when isChainExpression is unavailable', () => {
-    const types = BabelCore.types as any
+    const types = BabelCore.types as typeof BabelCore.types & {
+      isChainExpression?: ((node: unknown, opts?: unknown) => boolean) | undefined
+    }
     const prev = types.isChainExpression
     try {
       types.isChainExpression = undefined
@@ -303,8 +372,7 @@ describe('buildHIR - Advanced Patterns', () => {
     const hir = buildHIR(ast)
     const fn = hir.functions[0]
     expect(fn.blocks.length).toBeGreaterThan(0)
-    const assigns = fn.blocks.flatMap(b => b.instructions).filter(i => i.kind === 'Assign')
-    const targets = assigns.map(a => (a as any).target.name)
+    const targets = getAssignTargets(fn)
     expect(targets).toContain('count')
     expect(targets).toContain('double')
   })
@@ -388,8 +456,7 @@ describe('buildHIR - Advanced Patterns', () => {
     `)
     const hir = buildHIR(ast)
     const fn = hir.functions.find(f => f.name === 'Assign') ?? hir.functions[0]
-    const assigns = fn.blocks.flatMap(b => b.instructions).filter(i => i.kind === 'Assign')
-    const targets = assigns.map(a => (a as any).target.name)
+    const targets = getAssignTargets(fn)
     expect(targets).toContain('a')
     expect(targets).toContain('b')
   })
@@ -508,22 +575,31 @@ describe('buildHIR - Advanced Patterns', () => {
     `)
     const hir = buildHIR(ast)
     const fn = hir.functions.find(f => f.name === 'Obj') ?? hir.functions[0]
-    const assign = fn.blocks
-      .flatMap(b => b.instructions)
-      .find(instr => instr.kind === 'Assign' && (instr as any).target?.name === 'obj') as any
-    expect(assign).toBeDefined()
+    const assign = assertDefined(findAssignInstruction(fn, 'obj'), 'expected obj assign')
     const objExpr = assign.value
     expect(objExpr?.kind).toBe('ObjectExpression')
-    const props = objExpr.properties as any[]
+    if (objExpr.kind !== 'ObjectExpression') {
+      throw new Error('expected object expression')
+    }
+    const props = objExpr.properties
     expect(props.length).toBe(2)
-    const computedProp = props.find(p => p.kind === 'Property' && p.computed)
-    expect(computedProp).toBeDefined()
-    expect(computedProp.key.kind).toBe('Identifier')
-    expect(computedProp.key.name).toBe('key')
-    const fixedProp = props.find(p => p.kind === 'Property' && !p.computed)
-    expect(fixedProp).toBeDefined()
-    expect(fixedProp.key.kind).toBe('Identifier')
-    expect(fixedProp.key.name).toBe('fixed')
+    const computedProp = assertDefined(
+      props.find((p): p is ObjectProperty => isObjectProperty(p) && !!p.computed),
+      'expected computed property',
+    )
+    const computedKey = expectIdentifierExpression(
+      computedProp.key,
+      'expected computed identifier key',
+    )
+    expect(computedKey.kind).toBe('Identifier')
+    expect(computedKey.name).toBe('key')
+    const fixedProp = assertDefined(
+      props.find((p): p is ObjectProperty => isObjectProperty(p) && !p.computed),
+      'expected fixed property',
+    )
+    const fixedKey = expectIdentifierExpression(fixedProp.key, 'expected fixed identifier key')
+    expect(fixedKey.kind).toBe('Identifier')
+    expect(fixedKey.name).toBe('fixed')
   })
 
   it('captures object method kinds', () => {
@@ -539,15 +615,24 @@ describe('buildHIR - Advanced Patterns', () => {
     `)
     const hir = buildHIR(ast)
     const fn = hir.functions.find(f => f.name === 'ObjMethods') ?? hir.functions[0]
-    const assign = fn.blocks
-      .flatMap(b => b.instructions)
-      .find(instr => instr.kind === 'Assign' && (instr as any).target?.name === 'obj') as any
-    expect(assign).toBeDefined()
+    const assign = assertDefined(findAssignInstruction(fn, 'obj'), 'expected obj assign')
     const objExpr = assign.value
-    const props = objExpr.properties as any[]
-    const getter = props.find(p => p.kind === 'Property' && p.propertyKind === 'get')
-    const setter = props.find(p => p.kind === 'Property' && p.propertyKind === 'set')
-    const method = props.find(p => p.kind === 'Property' && p.propertyKind === 'method')
+    if (objExpr.kind !== 'ObjectExpression') {
+      throw new Error('expected object expression')
+    }
+    const props = objExpr.properties
+    const getter = assertDefined(
+      props.find((p): p is ObjectProperty => isObjectProperty(p) && p.propertyKind === 'get'),
+      'expected getter property',
+    )
+    const setter = assertDefined(
+      props.find((p): p is ObjectProperty => isObjectProperty(p) && p.propertyKind === 'set'),
+      'expected setter property',
+    )
+    const method = assertDefined(
+      props.find((p): p is ObjectProperty => isObjectProperty(p) && p.propertyKind === 'method'),
+      'expected method property',
+    )
     expect(getter).toBeDefined()
     expect(setter).toBeDefined()
     expect(method).toBeDefined()
@@ -586,30 +671,51 @@ describe('buildHIR - Advanced Patterns', () => {
     `)
     const hir = buildHIR(ast)
     const fn = hir.functions.find(f => f.name === 'App') ?? hir.functions[0]
-    const returnTerm = fn.blocks
-      .map(b => b.terminator)
-      .find(t => t.kind === 'Return' && (t as any).argument) as any
+    const returnTerm = assertDefined(findReturnWithArgument(fn), 'expected jsx return')
     const jsx = returnTerm.argument
     expect(jsx.kind).toBe('JSXElement')
-    const attrs = jsx.attributes as any[]
-    const iconAttr = attrs.find(a => a.name === 'icon')
-    expect(iconAttr).toBeDefined()
+    if (jsx.kind !== 'JSXElement') {
+      throw new Error('expected jsx element')
+    }
+    const attrs = jsx.attributes
+    const iconAttr = assertDefined(
+      attrs.find(a => a.name === 'icon'),
+      'expected icon attr',
+    )
     expect(iconAttr.value?.kind).toBe('JSXElement')
-    const iconVal = iconAttr.value as any
-    expect(iconVal.tagName?.kind ?? null).toBe('Identifier')
-    expect(iconVal.tagName?.name ?? '').toBe('Icon')
-    const fragAttr = attrs.find(a => a.name === 'frag')
-    expect(fragAttr).toBeDefined()
+    if (!isJSXElementExpression(iconAttr.value)) {
+      throw new Error('expected icon jsx element')
+    }
+    const iconVal = iconAttr.value
+    const iconTag = expectIdentifierExpression(iconVal.tagName, 'expected icon identifier tag')
+    expect(iconTag.kind).toBe('Identifier')
+    expect(iconTag.name).toBe('Icon')
+    const fragAttr = assertDefined(
+      attrs.find(a => a.name === 'frag'),
+      'expected frag attr',
+    )
     expect(fragAttr.value?.kind).toBe('JSXElement')
-    const fragVal = fragAttr.value as any
-    expect(fragVal.tagName?.kind ?? null).toBe('Identifier')
-    expect(fragVal.tagName?.name ?? '').toBe('Fragment')
-    const xlinkAttr = attrs.find(a => a.name === 'xlink:href')
+    if (!isJSXElementExpression(fragAttr.value)) {
+      throw new Error('expected fragment jsx element')
+    }
+    const fragVal = fragAttr.value
+    const fragTag = expectIdentifierExpression(fragVal.tagName, 'expected fragment identifier tag')
+    expect(fragTag.kind).toBe('Identifier')
+    expect(fragTag.name).toBe('Fragment')
+    const xlinkAttr = assertDefined(
+      attrs.find(a => a.name === 'xlink:href'),
+      'expected xlink attr',
+    )
     expect(xlinkAttr).toBeDefined()
-    const xmlAttr = attrs.find(a => a.name === 'xml:space')
-    expect(xmlAttr).toBeDefined()
+    const xmlAttr = assertDefined(
+      attrs.find(a => a.name === 'xml:space'),
+      'expected xml attr',
+    )
     expect(xmlAttr.value?.kind).toBe('Literal')
-    expect(xmlAttr.value?.value).toBe('preserve')
+    if (!isLiteralExpression(xmlAttr.value)) {
+      throw new Error('expected xml literal attr')
+    }
+    expect(xmlAttr.value.value).toBe('preserve')
   })
 
   it('throws on JSX spread children', () => {
@@ -629,16 +735,22 @@ describe('buildHIR - Advanced Patterns', () => {
     `)
     const hir = buildHIR(ast)
     const fn = hir.functions.find(f => f.name === 'App') ?? hir.functions[0]
-    const returnTerm = fn.blocks
-      .map(block => block.terminator)
-      .find(term => term.kind === 'Return' && (term as any).argument) as any
+    const returnTerm = assertDefined(findReturnWithArgument(fn), 'expected fragment return')
     const fragment = returnTerm.argument
 
     expect(fragment.kind).toBe('JSXElement')
-    expect(fragment.tagName?.name ?? '').toBe('Fragment')
+    if (fragment.kind !== 'JSXElement') {
+      throw new Error('expected fragment jsx element')
+    }
+    const fragmentTag = expectIdentifierExpression(fragment.tagName, 'expected fragment tag')
+    expect(fragmentTag.name).toBe('Fragment')
     expect(fragment.children).toHaveLength(1)
     expect(fragment.children[0]?.kind).toBe('element')
-    expect(fragment.children[0]?.value?.tagName).toBe('span')
+    const child = fragment.children[0]
+    if (!child || child.kind !== 'element') {
+      throw new Error('expected fragment element child')
+    }
+    expect(child.value.tagName).toBe('span')
   })
 
   it('handles callback with reactive closure', () => {

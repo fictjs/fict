@@ -18,6 +18,17 @@ describe('warnings as errors', () => {
     )
   })
 
+  it('surfaces escalated warnings as SyntaxError', () => {
+    try {
+      transform(source, { warningsAsErrors: true })
+      throw new Error('expected transform to throw')
+    } catch (error) {
+      expect(error).toBeInstanceOf(SyntaxError)
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toMatch(/Fict warning treated as error/)
+    }
+  })
+
   it('throws when warnings are escalated to errors (prod)', () => {
     expect(() => transform(source, { dev: false, warningsAsErrors: ['FICT-M'] })).toThrow(
       /Fict warning treated as error/,
@@ -191,6 +202,26 @@ describe('warnings as errors', () => {
     )
   })
 
+  it('strictGuarantee suppression failures surface as SyntaxError', () => {
+    const source = `
+      // fict-ignore-next-line FICT-R006
+      import { $state } from 'fict'
+      function App() {
+        const count = $state(0)
+        if (count > 0) return <div>High</div>
+        return <div>Low</div>
+      }
+    `
+
+    try {
+      transform(source, { strictGuarantee: true, dev: false })
+      throw new Error('expected transform to throw')
+    } catch (error) {
+      expect(error).toBeInstanceOf(SyntaxError)
+      expect((error as Error).message).toMatch(/strictGuarantee does not allow fict-ignore/)
+    }
+  })
+
   it('strictGuarantee disallows warningLevels downgrades for guarantee codes', () => {
     const source = `
       import { $state } from 'fict'
@@ -209,6 +240,32 @@ describe('warnings as errors', () => {
         warningLevels: { 'FICT-R006': 'warn' },
       }),
     ).toThrow(/strictGuarantee does not allow downgrading FICT-R006/)
+  })
+
+  it('strictGuarantee warning-level downgrade failures surface as SyntaxError', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const count = $state(0)
+        if (count > 0) return <div>High</div>
+        return <div>Low</div>
+      }
+    `
+
+    try {
+      transform(source, {
+        strictGuarantee: true,
+        strictReactivity: true,
+        dev: false,
+        warningLevels: { 'FICT-R006': 'warn' },
+      })
+      throw new Error('expected transform to throw')
+    } catch (error) {
+      expect(error).toBeInstanceOf(SyntaxError)
+      expect((error as Error).message).toMatch(
+        /strictGuarantee does not allow downgrading FICT-R006/,
+      )
+    }
   })
 
   it('FICT_STRICT_GUARANTEE env enforces strictGuarantee even when options set false', () => {

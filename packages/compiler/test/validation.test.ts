@@ -103,6 +103,30 @@ describe('getDiagnosticInfo', () => {
     expect(info.severity).toBe(DiagnosticSeverity.Error)
     expect(info.message).toContain('conditionally')
   })
+
+  it('returns info for reactive control-flow re-execution warnings', () => {
+    const info = getDiagnosticInfo(DiagnosticCode.FICT_R006)
+
+    expect(info.code).toBe(DiagnosticCode.FICT_R006)
+    expect(info.severity).toBe(DiagnosticSeverity.Warning)
+    expect(info.message).toContain('control-flow')
+    expect(info.message).toContain('region re-execution')
+  })
+
+  it('returns info for legacy compiler diagnostics', () => {
+    const mutationInfo = getDiagnosticInfo(DiagnosticCode.FICT_M)
+    const dynamicAccessInfo = getDiagnosticInfo(DiagnosticCode.FICT_H)
+    const hirUnsupportedInfo = getDiagnosticInfo(DiagnosticCode.FICT_HIR_UNSUPPORTED)
+
+    expect(mutationInfo.severity).toBe(DiagnosticSeverity.Warning)
+    expect(mutationInfo.message).toContain('nested $state')
+
+    expect(dynamicAccessInfo.severity).toBe(DiagnosticSeverity.Warning)
+    expect(dynamicAccessInfo.message).toContain('dependency tracking')
+
+    expect(hirUnsupportedInfo.severity).toBe(DiagnosticSeverity.Error)
+    expect(hirUnsupportedInfo.message).toContain('HIR conversion')
+  })
 })
 
 describe('getAllDiagnosticCodes', () => {
@@ -111,7 +135,11 @@ describe('getAllDiagnosticCodes', () => {
 
     // Should have all codes defined in the enum
     expect(codes.length).toBeGreaterThan(20)
+    expect(codes).toContain(DiagnosticCode.FICT_H)
+    expect(codes).toContain(DiagnosticCode.FICT_M)
+    expect(codes).toContain(DiagnosticCode.FICT_HIR_UNSUPPORTED)
     expect(codes).toContain(DiagnosticCode.FICT_P001)
+    expect(codes).toContain(DiagnosticCode.FICT_R006)
     expect(codes).toContain(DiagnosticCode.FICT_X003)
   })
 })

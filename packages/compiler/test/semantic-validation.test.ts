@@ -122,7 +122,7 @@ describe('semantic validation', () => {
       renderHook((() => {
         const x = $state(0)
         return x
-      }) as any)
+      }))
     `
 
     expect(() =>

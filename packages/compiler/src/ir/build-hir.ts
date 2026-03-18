@@ -1,6 +1,5 @@
 import { transformFromAstSync } from '@babel/core'
 import type * as BabelCore from '@babel/core'
-// @ts-expect-error - CommonJS module without proper types
 import transformDestructuring from '@babel/plugin-transform-destructuring'
 import traverseModule from '@babel/traverse'
 import * as t from '@babel/types'

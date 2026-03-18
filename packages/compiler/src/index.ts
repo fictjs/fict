@@ -112,7 +112,7 @@ function unwrapTransparentExpression(
   }
 }
 
-type WarningSink = (warning: CompilerWarning) => void
+type WarningSink = (warning: CompilerWarning, path?: BabelCore.NodePath) => void
 
 interface SuppressionDirective {
   line: number
@@ -196,7 +196,7 @@ function validateStrictGuaranteeConfig(
 ): void {
   if (!options.strictGuarantee) return
   if (suppressions.length > 0) {
-    throw new Error(
+    throw new SyntaxError(
       'strictGuarantee does not allow fict-ignore suppression comments. Remove suppressions to keep fail-closed guarantees.',
     )
   }
@@ -204,7 +204,7 @@ function validateStrictGuaranteeConfig(
   for (const [code, level] of Object.entries(options.warningLevels)) {
     if (!STRICT_GUARANTEE_WARNING_CODES.has(code)) continue
     if (level === 'error') continue
-    throw new Error(
+    throw new SyntaxError(
       `strictGuarantee does not allow downgrading ${code} to "${level}". Remove this warningLevels override.`,
     )
   }
@@ -241,21 +241,46 @@ function formatWarningAsError(warning: CompilerWarning): string {
   return `Fict warning treated as error (${warning.code}): ${warning.message}\n  at ${location}`
 }
 
+function formatWarningCodeFrame(warning: CompilerWarning, sourceCode: string): string | null {
+  if (warning.line <= 0) return null
+  const lines = sourceCode.split(/\r?\n/)
+  const lineText = lines[warning.line - 1]
+  if (lineText === undefined) return null
+
+  const lineNumber = String(warning.line)
+  const gutter = `${lineNumber} | `
+  const caretPadding = ' '.repeat(gutter.length + Math.max(0, warning.column - 1))
+  return `${gutter}${lineText}\n${caretPadding}^`
+}
+
+function buildWarningAsErrorMessage(warning: CompilerWarning, sourceCode?: string): string {
+  const base = formatWarningAsError(warning)
+  if (!sourceCode || warning.line <= 0) return base
+
+  const frame = formatWarningCodeFrame(warning, sourceCode)
+
+  return frame ? `${base}\n${frame}` : base
+}
+
 function createWarningDispatcher(
   onWarn: FictCompilerOptions['onWarn'],
   suppressions: SuppressionDirective[],
   options: FictCompilerOptions,
   dev: boolean,
+  sourceCode?: string,
 ): WarningSink {
   validateStrictGuaranteeConfig(options, suppressions)
   const hasEscalation = hasErrorEscalation(options)
   if (!dev && !hasEscalation) return () => {}
-  return warning => {
+  return (warning, path) => {
     if (shouldSuppressWarning(suppressions, warning.code, warning.line)) return
     const level = resolveWarningLevel(warning.code, options)
     if (level === 'off') return
     if (level === 'error') {
-      throw new Error(formatWarningAsError(warning))
+      if (path?.buildCodeFrameError) {
+        throw path.buildCodeFrameError(formatWarningAsError(warning))
+      }
+      throw new SyntaxError(buildWarningAsErrorMessage(warning, sourceCode))
     }
     if (dev && onWarn) {
       onWarn(warning)
@@ -264,20 +289,24 @@ function createWarningDispatcher(
 }
 
 function emitWarning(
-  node: BabelCore.types.Node,
+  nodeOrPath: BabelCore.types.Node | BabelCore.NodePath,
   code: string,
   message: string,
   warn: WarningSink,
   fileName: string,
 ): void {
+  const node = 'node' in nodeOrPath ? nodeOrPath.node : nodeOrPath
   const loc = node.loc?.start
-  warn({
-    code,
-    message,
-    fileName,
-    line: loc?.line ?? 0,
-    column: loc ? loc.column + 1 : 0,
-  })
+  warn(
+    {
+      code,
+      message,
+      fileName,
+      line: loc?.line ?? 0,
+      column: loc ? loc.column + 1 : 0,
+    },
+    'node' in nodeOrPath ? nodeOrPath : undefined,
+  )
 }
 
 function isComponentName(name: string | undefined): boolean {
@@ -704,10 +733,13 @@ function runWarningPass(
     if (!member || member.computed || !t.isIdentifier(member.property)) return false
     return NON_ESCAPING_CALLBACK_METHODS.has(member.property.name)
   }
-  const emitClosureCaptureWarning = (node: BabelCore.types.Node, captured: Set<string>): void => {
+  const emitClosureCaptureWarning = (
+    nodeOrPath: BabelCore.types.Node | BabelCore.NodePath,
+    captured: Set<string>,
+  ): void => {
     const names = Array.from(captured).sort().join(', ')
     emitWarning(
-      node,
+      nodeOrPath,
       'FICT-R005',
       `Function captures reactive variable(s): ${names}. Pass them as parameters or memoize explicitly to avoid hidden dependencies.`,
       warn,
@@ -756,7 +788,7 @@ function runWarningPass(
         const reactiveRoot = isReactiveRoot(left.object as BabelCore.types.Expression, path)
         if (stateRoot || reactiveRoot) {
           emitWarning(
-            path.node,
+            path,
             'FICT-M',
             'Direct mutation of nested property detected; use immutable update or $store helpers',
             warn,
@@ -764,7 +796,7 @@ function runWarningPass(
           )
           if (isDynamicPropertyAccess(left, t)) {
             emitWarning(
-              path.node,
+              path,
               'FICT-H',
               'Dynamic property access widens dependency tracking',
               warn,
@@ -782,7 +814,7 @@ function runWarningPass(
         const reactiveRoot = isReactiveRoot(arg.object as BabelCore.types.Expression, path)
         if (stateRoot || reactiveRoot) {
           emitWarning(
-            path.node,
+            path,
             'FICT-M',
             'Direct mutation of nested property detected; use immutable update or $store helpers',
             warn,
@@ -790,7 +822,7 @@ function runWarningPass(
           )
           if (isDynamicPropertyAccess(arg, t)) {
             emitWarning(
-              path.node,
+              path,
               'FICT-H',
               'Dynamic property access widens dependency tracking',
               warn,
@@ -812,7 +844,7 @@ function runWarningPass(
         isReactiveRoot(path.node.object as BabelCore.types.Expression, path)
       ) {
         emitWarning(
-          path.node,
+          path,
           'FICT-H',
           'Dynamic property access widens dependency tracking',
           warn,
@@ -905,7 +937,7 @@ function runWarningPass(
         }
         if (argumentHasReactive(argPath)) {
           emitWarning(
-            argPath.node,
+            argPath,
             'FICT-R002',
             'Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise',
             warn,
@@ -917,7 +949,7 @@ function runWarningPass(
       for (const argPath of argPaths) {
         const captured = collectCapturedForArgument(argPath)
         if (!captured) continue
-        emitClosureCaptureWarning(argPath.node, captured)
+        emitClosureCaptureWarning(argPath, captured)
         break
       }
     },
@@ -990,13 +1022,14 @@ function createHIREntrypointVisitor(
     Program: {
       exit(path) {
         const hub = path.hub as unknown as {
-          file?: { opts?: { filename?: string }; ast?: BabelCore.types.File }
+          file?: { opts?: { filename?: string }; ast?: BabelCore.types.File; code?: string }
         }
         const fileName = hub.file?.opts?.filename ?? '<unknown>'
+        const sourceCode = hub.file?.code
         const comments = hub.file?.ast?.comments ?? []
         const suppressions = parseSuppressions(comments)
         const dev = options.dev !== false
-        const warn = createWarningDispatcher(options.onWarn, suppressions, options, dev)
+        const warn = createWarningDispatcher(options.onWarn, suppressions, options, dev, sourceCode)
         const optionsWithWarnings: FictCompilerOptions = {
           ...options,
           onWarn: warn,
@@ -1275,7 +1308,7 @@ function createHIREntrypointVisitor(
             if (!functionHasJSX(fnPath) && !functionUsesStateLike(fnPath, t)) return
             if (functionHasReturn(fnPath.node)) return
             emitWarning(
-              fnPath.node,
+              fnPath,
               'FICT-C004',
               'Component has no return statement and will render nothing.',
               warn,
@@ -1295,7 +1328,7 @@ function createHIREntrypointVisitor(
             if (!functionHasJSX(fnPath) && !functionUsesStateLike(fnPath, t)) return
             if (functionHasReturn(init)) return
             emitWarning(
-              init,
+              fnPath,
               'FICT-C004',
               'Component has no return statement and will render nothing.',
               warn,
@@ -1637,7 +1670,7 @@ function createHIREntrypointVisitor(
             if (!isComponentLike(parentFn)) return
             if (!isNamedComponentOrHookDefinition(fnPath)) return
             emitWarning(
-              fnPath.node,
+              fnPath,
               'FICT-C003',
               'Components should not be defined inside other components. Move this definition to module scope to preserve identity and performance.',
               warn,
@@ -1732,7 +1765,7 @@ function createHIREntrypointVisitor(
               !isInsideJSX(callPath)
             ) {
               emitWarning(
-                callPath.node,
+                callPath,
                 'FICT-R004',
                 'Reactive creation inside non-JSX control flow may not auto-dispose in complex paths. Prefer createScope/runInScope (or JSX-managed regions) for explicit lifecycle control.',
                 warn,

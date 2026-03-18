@@ -438,9 +438,38 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transformWithOptions(input)
-      expect(output).toContain('createKeyedList')
+      expect(output).not.toContain('createKeyedList')
+      expect(output).toContain('.map(')
       expect(output).toMatch(/item\s*,\s*\.\.\.rest/)
       expect(output).not.toMatch(/\.\.\.rest\s*,\s*__key/)
+    })
+
+    it('preserves async map callbacks without keyed list lowering', () => {
+      const input = `
+        import { $state } from 'fict'
+        function AsyncList() {
+          let items = $state([1, 2])
+          return <ul>{items.map(async item => <li>{item}</li>)}</ul>
+        }
+      `
+      const output = transformWithOptions(input)
+      expect(output).not.toContain('createKeyedList')
+      expect(output).toContain('.map(')
+      expect(output).toContain('async item')
+    })
+
+    it('preserves generator map callbacks without keyed list lowering', () => {
+      const input = `
+        import { $state } from 'fict'
+        function GeneratorList() {
+          let items = $state([1, 2])
+          return <ul>{items.map(function* (item) { yield item })}</ul>
+        }
+      `
+      const output = transformWithOptions(input)
+      expect(output).not.toContain('createKeyedList')
+      expect(output).toContain('.map(')
+      expect(output).toContain('function*')
     })
 
     it('lowers conditional branches to fine-grained DOM operations', () => {

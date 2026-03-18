@@ -1,9 +1,9 @@
-import { debugEnabled, debugLog } from '../debug'
+import { debugExplicitlyEnabled, debugLog } from '../debug'
 
 import type { CodegenContext } from './codegen'
 import { collectExpressionDependencies } from './codegen-expression-deps'
 import { getReactiveCallKind } from './codegen-reactive-kind'
-import type { HIRFunction } from './hir'
+import { HIRError, type HIRFunction } from './hir'
 import { deSSAVarName } from './regions'
 import type { ReactiveScopeResult } from './scopes'
 
@@ -12,7 +12,7 @@ export function detectDerivedCycles(
   _scopeResult: ReactiveScopeResult,
   ctx: CodegenContext,
 ): void {
-  if (debugEnabled('cycles_throw')) {
+  if (debugExplicitlyEnabled('cycles_throw')) {
     throw new Error('cycle check invoked')
   }
   const declared = new Map<
@@ -73,13 +73,17 @@ export function detectDerivedCycles(
     if (visiting.has(node)) {
       const idx = stack.indexOf(node)
       const cycle = idx >= 0 ? [...stack.slice(idx), node] : [...stack, node]
-      throw new Error(
+      throw new HIRError(
         `Detected cyclic derived dependency: ${cycle.join(' -> ')}\n\n` +
           `Tip: This usually happens when derived values depend on each other in a loop.\n` +
           `Consider:\n` +
           `  - Using untrack() to break the dependency cycle\n` +
           `  - Restructuring your derived values to avoid circular dependencies\n` +
           `  - Moving one of the values to $state if it should be independently mutable`,
+        'BUILD_ERROR',
+        {
+          file: ctx.options?.filename,
+        },
       )
     }
     if (visited.has(node)) return

@@ -92,6 +92,7 @@ import {
   type Instruction,
   type JSXChild,
   type JSXElementExpression,
+  type Terminator,
 } from './hir'
 import { isHookLikeFunction, isHookName } from './hook-utils'
 import { buildPropsExpression } from './props-plan'
@@ -129,6 +130,19 @@ function setNodeLoc<T extends { loc?: BabelCore.types.SourceLocation | null }>(
   if (loc === undefined) return node
   node.loc = cloneLoc(loc) ?? null
   return node
+}
+
+function getTerminatorArgumentLoc(
+  terminator: Terminator,
+): BabelCore.types.SourceLocation | undefined {
+  switch (terminator.kind) {
+    case 'Return':
+      return terminator.argument?.loc ?? undefined
+    case 'Throw':
+      return terminator.argument.loc ?? undefined
+    default:
+      return undefined
+  }
 }
 
 /**
@@ -866,10 +880,7 @@ function lowerInstruction(
 
 function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.types.Statement[] {
   const { t } = ctx
-  const baseLoc =
-    block.terminator.loc ??
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    ((block.terminator as any).argument?.loc as BabelCore.types.SourceLocation | undefined)
+  const baseLoc = block.terminator.loc ?? getTerminatorArgumentLoc(block.terminator)
   const applyLoc = (stmts: BabelCore.types.Statement[]): BabelCore.types.Statement[] =>
     stmts.map(stmt => setNodeLoc(stmt, baseLoc))
   switch (block.terminator.kind) {
@@ -1823,7 +1834,11 @@ function lowerExpressionImpl(
           shadowed,
           () => {
             const prevNoMemo = ctx.noMemo
+            const prevHookFlag = ctx.currentFnIsHook
+            const prevIsComponent = ctx.isComponentFn
             ctx.noMemo = !!(prevNoMemo || expr.noMemo)
+            ctx.currentFnIsHook = false
+            ctx.isComponentFn = false
             let fn: BabelCore.types.ArrowFunctionExpression
 
             try {
@@ -1857,6 +1872,8 @@ function lowerExpressionImpl(
               return fn
             } finally {
               ctx.noMemo = prevNoMemo
+              ctx.currentFnIsHook = prevHookFlag
+              ctx.isComponentFn = prevIsComponent
             }
           },
           localDeclared,
@@ -1877,7 +1894,11 @@ function lowerExpressionImpl(
           shadowed,
           () => {
             const prevNoMemo = ctx.noMemo
+            const prevHookFlag = ctx.currentFnIsHook
+            const prevIsComponent = ctx.isComponentFn
             ctx.noMemo = !!(prevNoMemo || expr.noMemo)
+            ctx.currentFnIsHook = expr.name ? isHookName(deSSAVarName(expr.name)) : false
+            ctx.isComponentFn = false
             let fn: BabelCore.types.FunctionExpression
             try {
               if (Array.isArray(expr.body)) {
@@ -1902,6 +1923,8 @@ function lowerExpressionImpl(
               return fn
             } finally {
               ctx.noMemo = prevNoMemo
+              ctx.currentFnIsHook = prevHookFlag
+              ctx.isComponentFn = prevIsComponent
             }
           },
           localDeclared,
@@ -2551,8 +2574,12 @@ function lowerIntrinsicElement(
   }
   const prevRegion = applyRegionToContext(ctx, containingRegion)
   const regionMeta = containingRegion ? regionInfoToMetadata(containingRegion) : null
+  const canUseRenderMemo = !!(ctx.inModule || ctx.isComponentFn || ctx.currentFnIsHook)
   const shouldMemo =
-    !ctx.inListRender && !(ctx.inConditional && ctx.inConditional > 0) && regionMeta
+    canUseRenderMemo &&
+    !ctx.inListRender &&
+    !(ctx.inConditional && ctx.inConditional > 0) &&
+    regionMeta
       ? shouldMemoizeRegion(regionMeta)
       : false
   if (shouldMemo) {

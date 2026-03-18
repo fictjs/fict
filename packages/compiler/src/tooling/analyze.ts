@@ -280,16 +280,24 @@ function analyzeDiagnostics(
   options: AnalyzeOptions,
 ): AnalyzeDiagnostic[] {
   const warnings: CompilerWarning[] = []
+  const warningLevels = Object.fromEntries(
+    Object.entries(options.compilerOptions?.warningLevels ?? {}).map(([code, level]) => [
+      code,
+      level === 'error' ? 'warn' : level,
+    ]),
+  ) as FictCompilerOptions['warningLevels']
   const pluginOptions: FictCompilerOptions = {
+    ...options.compilerOptions,
     dev: true,
     filename: fileName,
     emitModuleMetadata: false,
     strictGuarantee: false,
+    strictReactivity: false,
+    warningsAsErrors: false,
     warningLevels: {
-      ...(options.compilerOptions?.warningLevels ?? {}),
+      ...warningLevels,
       'FICT-R004': 'warn',
     },
-    ...options.compilerOptions,
     onWarn: warning => warnings.push(warning),
   }
 
@@ -310,7 +318,11 @@ function analyzeDiagnostics(
       },
     })
   } catch (error) {
-    return [...warnings.map(normalizeWarningToDiagnostic), normalizeThrownError(error)]
+    const diagnostics = warnings.map(normalizeWarningToDiagnostic)
+    if (diagnostics.some(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)) {
+      return diagnostics
+    }
+    return [...diagnostics, normalizeThrownError(error)]
   }
 
   return warnings.map(normalizeWarningToDiagnostic)
@@ -349,17 +361,27 @@ export function analyzeFictFile(
   const verbosity = options.verbosity ?? 'minimal'
 
   const ast = parseFileAst(code, fileName)
-  const hir = buildHIR(
-    ast,
-    {
-      state: new Set(['$state']),
-      effect: new Set(['$effect']),
-    },
-    {
-      dev: true,
+  let hir
+  try {
+    hir = buildHIR(
+      ast,
+      {
+        state: new Set(['$state']),
+        effect: new Set(['$effect']),
+      },
+      {
+        dev: true,
+        fileName,
+      },
+    )
+  } catch (error) {
+    if (!includeDiagnostics) throw error
+    return {
       fileName,
-    },
-  )
+      components: [],
+      diagnostics: analyzeDiagnostics(code, fileName, options),
+    }
+  }
 
   const sourceLines = code.split(/\r?\n/)
   const components: ComponentAnalysis[] = []

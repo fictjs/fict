@@ -1115,10 +1115,7 @@ function collectPatternBindingNames(
   }
 }
 
-function collectDirectBlockBindingNames(
-  statements: StructuredNode[],
-  t: typeof BabelCore.types,
-): Set<string> {
+function collectDirectBlockBindingNames(statements: StructuredNode[]): Set<string> {
   const names = new Set<string>()
   for (const statement of statements) {
     if (statement.kind !== 'instruction') continue
@@ -1212,6 +1209,7 @@ function lowerNodeWithRegionContext(
           const controlFlowRegion = directEmitCandidate?.region ?? controlFlowState.region
           const canDirectlyEmitRegion =
             !!directEmitCandidate &&
+            !!controlFlowRegion &&
             controlFlowRegion.shouldMemoize &&
             canEmitControlFlowRegionDirectly(child) &&
             !regionCtx?.disabledRegions.has(controlFlowRegion.id)
@@ -1232,7 +1230,7 @@ function lowerNodeWithRegionContext(
             ),
           )
           instructionBuffer.length = 0
-          if (canDirectlyEmitRegion) {
+          if (canDirectlyEmitRegion && controlFlowRegion && regionCtx && directEmitCandidate) {
             if (!regionCtx?.emittedRegions.has(controlFlowRegion.id)) {
               regionCtx?.emittedRegions.add(controlFlowRegion.id)
               stmts.push(
@@ -1263,7 +1261,8 @@ function lowerNodeWithRegionContext(
             controlFlowState.partialRegionIds.forEach(id => regionCtx?.disabledRegions.add(id))
           }
           if (
-            controlFlowRegion?.shouldMemoize &&
+            controlFlowRegion &&
+            controlFlowRegion.shouldMemoize &&
             !regionCtx?.disabledRegions.has(controlFlowRegion.id) &&
             regionCtx?.emittedRegions.has(controlFlowRegion.id)
           ) {
@@ -1312,7 +1311,7 @@ function lowerNodeWithRegionContext(
     case 'block': {
       const stmts: BabelCore.types.Statement[] = []
       const scopedDeclared = new Set(declaredVars)
-      const blockBindings = collectDirectBlockBindingNames(node.statements, t)
+      const blockBindings = collectDirectBlockBindingNames(node.statements)
       withShadowedBindings(ctx, blockBindings, () => {
         for (const child of node.statements) {
           stmts.push(...lowerNodeWithRegionContext(child, t, ctx, scopedDeclared, regionCtx))
@@ -1629,9 +1628,15 @@ function lowerNodeWithRegionContext(
         }
       })
       if (unsupportedBlock) {
-        throw new Error(
+        throw new HIRError(
           `Unsafe state-machine fallback: ${unsupportedBlock.terminator.kind} terminator in block ` +
             `${unsupportedBlock.blockId} cannot be lowered without changing semantics`,
+          'BUILD_ERROR',
+          {
+            blockId: unsupportedBlock.blockId,
+            file: ctx.options?.filename,
+            line: unsupportedBlock.terminator.loc?.start.line,
+          },
         )
       }
 
@@ -1846,7 +1851,7 @@ function lowerStructuredNodeForRegion(
     case 'block': {
       const stmts: BabelCore.types.Statement[] = []
       const scopedDeclared = new Set(declaredVars)
-      const blockBindings = collectDirectBlockBindingNames(node.statements, t)
+      const blockBindings = collectDirectBlockBindingNames(node.statements)
       withShadowedBindings(ctx, blockBindings, () => {
         for (const child of node.statements) {
           stmts.push(
@@ -3262,16 +3267,19 @@ function instructionToStatement(
     const lowerAssignedValue = (forceAssigned = false) =>
       lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
     const throwAliasReassignment = (): never => {
-      const fileName = ctx.options?.filename ?? '<unknown>'
       const loc = instr.loc?.start
-      const location = loc ? `${fileName}:${loc.line}:${loc.column + 1}` : fileName
-      throw new Error(
+      throw new HIRError(
         `Alias reassignment is not supported for "${baseName}".\n\n` +
           `"${baseName}" was assigned from a reactive value and cannot be reassigned.\n` +
           `Consider:\n` +
           `  - Using a new variable name for the new value\n` +
-          `  - Updating the original reactive source instead\n` +
-          `Context: ${location}`,
+          `  - Updating the original reactive source instead`,
+        'BUILD_ERROR',
+        {
+          file: ctx.options?.filename,
+          line: loc?.line,
+          variable: baseName,
+        },
       )
     }
     const buildDerivedMemoCall = (expr: BabelCore.types.Expression) => {

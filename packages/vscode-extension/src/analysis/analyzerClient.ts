@@ -44,6 +44,20 @@ function asFictAnalysis(result: {
   }
 }
 
+function shouldFallbackToStaticAnalysis(result: {
+  components: FictDocumentAnalysis['components']
+  diagnostics: FictDocumentAnalysis['diagnostics']
+}): boolean {
+  const hasHIRFailure = result.diagnostics.some(diagnostic => {
+    return (
+      diagnostic.code === 'FICT-HIR-UNSUPPORTED' ||
+      (diagnostic.code === 'FICT-COMPILE' && diagnostic.message.includes('[HIR]'))
+    )
+  })
+
+  return result.components.length === 0 && hasHIRFailure
+}
+
 export function mergeComponentTraces(
   analysis: FictDocumentAnalysis,
   cursorLine: number,
@@ -83,7 +97,13 @@ export async function analyzeDocument(
       verbosity: settings.verbosity,
     })
 
-    let analysis = asFictAnalysis(compilerAnalysis)
+    let analysis = shouldFallbackToStaticAnalysis(compilerAnalysis)
+      ? {
+          ...analyzeStaticFictSource(source, fileName, settings.verbosity),
+          diagnostics: compilerAnalysis.diagnostics,
+          mode: settings.mode,
+        }
+      : asFictAnalysis(compilerAnalysis)
     analysis.mode = settings.mode
 
     if (settings.mode === 'live' && liveLineUpdates) {

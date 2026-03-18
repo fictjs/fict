@@ -490,9 +490,7 @@ function wrapStructuredNodeWithLabel(
   return { kind: 'labeled', label: meta.label, statement: node }
 }
 
-function combineStructuredNodes(
-  ...nodes: Array<StructuredNode | null | undefined>
-): StructuredNode {
+function combineStructuredNodes(...nodes: (StructuredNode | null | undefined)[]): StructuredNode {
   const flattened: StructuredNode[] = []
   for (const node of nodes) {
     if (!node) continue

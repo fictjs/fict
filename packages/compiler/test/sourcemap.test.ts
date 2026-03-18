@@ -1,7 +1,6 @@
 import { transformSync } from '@babel/core'
-// @ts-expect-error CJS default export lacks types
 import presetTypescript from '@babel/preset-typescript'
-import { TraceMap, originalPositionFor } from '@jridgewell/trace-mapping'
+import { TraceMap, originalPositionFor, type SourceMapInput } from '@jridgewell/trace-mapping'
 import { describe, expect, it } from 'vitest'
 
 import createFictPlugin from '../src/index'
@@ -14,6 +13,12 @@ interface TransformResult {
   code: string
   map: TraceMap
   rawMap: unknown
+}
+
+function isSourceMapInput(value: unknown): value is SourceMapInput {
+  if (typeof value === 'string') return true
+  if (!value || typeof value !== 'object') return false
+  return 'version' in value && 'mappings' in value
 }
 
 function compileWithSourcemap(
@@ -46,10 +51,13 @@ function compileWithSourcemap(
   if (!result?.map || !result?.code) {
     throw new Error('Transform failed to produce code and sourcemap')
   }
+  if (!isSourceMapInput(result.map)) {
+    throw new Error('Transform produced an invalid sourcemap payload')
+  }
 
   return {
     code: result.code,
-    map: new TraceMap(result.map as any),
+    map: new TraceMap(result.map),
     rawMap: result.map,
   }
 }
@@ -1361,7 +1369,7 @@ export function Destructure() {
     const { clientX: x, clientY: y } = e
     pos = { x, y }
   }
-  return <div onMouseMove={handleMove as any}>{pos.x}, {pos.y}</div>
+  return <div onMouseMove={handleMove}>{pos.x}, {pos.y}</div>
 }
 `
       const filename = 'Destructure.tsx'

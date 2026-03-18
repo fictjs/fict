@@ -20,7 +20,7 @@ export interface HIRChildBindingOps {
     expr: Expression,
     statements: BabelCore.types.Statement[],
     ctx: CodegenContext,
-  ) => void
+  ) => boolean
   genTemp: (ctx: CodegenContext, prefix?: string) => BabelCore.types.Identifier
   lowerDomExpression: (
     expr: Expression,
@@ -153,8 +153,9 @@ export function emitHIRChildBinding(
       callee.property.kind === 'Identifier' &&
       callee.property.name === 'map'
     ) {
-      ops.emitListChild(markerId, endMarkerId, expr, statements, ctx)
-      return
+      if (ops.emitListChild(markerId, endMarkerId, expr, statements, ctx)) {
+        return
+      }
     }
   }
 

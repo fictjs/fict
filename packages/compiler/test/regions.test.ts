@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { parseSync } from '@babel/core'
 import * as t from '@babel/types'
 import { buildHIR } from '../src/ir/build-hir'
-import { createCodegenContext } from '../src/ir/codegen'
+import { createCodegenContext, lowerHIRWithRegions } from '../src/ir/codegen'
+import { HIRError } from '../src/ir/hir'
 import { analyzeReactiveScopes } from '../src/ir/scopes'
 import {
   generateRegions,
@@ -154,6 +155,55 @@ describe('analyzeRegionMemoization', () => {
       if (region.hasControlFlow && region.dependencies.size > 0) {
         expect(memoMap.get(region.id)).toBe(true)
       }
+    }
+  })
+})
+
+describe('state-machine fallback diagnostics', () => {
+  it('reports unsupported try/finally fallback as HIRError', () => {
+    const ast = parseFile(`
+      import { $state } from 'fict'
+
+      export function useRun() {
+        let x = $state(0)
+        let step = 0
+
+        const flag = () => {
+          step += 1
+          return step <= 2
+        }
+
+        while (flag()) {
+          try {
+            if (flag()) {
+              continue
+            }
+          } finally {
+            x = x + 1
+          }
+
+          break
+        }
+
+        return x
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    try {
+      lowerHIRWithRegions(hir, t, {
+        filename: 'module.tsx',
+        fineGrainedDom: true,
+        strictGuarantee: false,
+      })
+      throw new Error('expected lowerHIRWithRegions to throw')
+    } catch (error) {
+      expect(error).toBeInstanceOf(HIRError)
+      const hirError = error as HIRError
+      expect(hirError.code).toBe('BUILD_ERROR')
+      expect(hirError.message).toContain('Unsafe state-machine fallback: Try terminator')
+      expect(hirError.context?.blockId).toBeDefined()
+      expect(hirError.context?.file).toBe('module.tsx')
     }
   })
 })

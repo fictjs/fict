@@ -8,6 +8,7 @@ import type {
   HIRProgram,
   Identifier,
   Instruction,
+  ObjectExpression,
   Terminator,
 } from '../src/ir/hir'
 import { getSSABaseName } from '../src/ir/hir'
@@ -149,13 +150,9 @@ function generateArrayExpression(ctx: GeneratorContext): Expression {
 
 function generateObjectExpression(ctx: GeneratorContext): Expression {
   const propCount = ctx.rng.nextInt(0, 3)
-  const properties: Expression['kind'] extends 'ObjectExpression'
-    ? Expression extends { properties: infer P }
-      ? P
-      : never
-    : never = []
+  const properties: ObjectExpression['properties'] = []
   for (let i = 0; i < propCount; i++) {
-    ;(properties as any[]).push({
+    properties.push({
       kind: 'Property',
       key: { kind: 'Identifier', name: `prop${i}` },
       value: generateExpression(ctx),
@@ -580,11 +577,11 @@ function collectReferenceSummary(
       case 'CallExpression':
       case 'OptionalCallExpression':
         visitExpr(expr.callee, { calleePosition: true })
-        expr.arguments.forEach(visitExpr)
+        expr.arguments.forEach(arg => visitExpr(arg))
         break
       case 'NewExpression':
         visitExpr(expr.callee, { calleePosition: true })
-        expr.arguments.forEach(visitExpr)
+        expr.arguments.forEach(arg => visitExpr(arg))
         break
       case 'TaggedTemplateExpression':
         visitExpr(expr.tag, { calleePosition: true })
@@ -599,7 +596,7 @@ function collectReferenceSummary(
         visitExpr(expr.alternate)
         break
       case 'ArrayExpression':
-        expr.elements.forEach(visitExpr)
+        expr.elements.forEach(element => visitExpr(element))
         break
       case 'ObjectExpression':
         for (const prop of expr.properties) {
@@ -630,7 +627,7 @@ function collectReferenceSummary(
         visitExpr(expr.argument)
         break
       case 'TemplateLiteral':
-        expr.expressions.forEach(visitExpr)
+        expr.expressions.forEach(expression => visitExpr(expression))
         break
       case 'SpreadElement':
         visitExpr(expr.argument)
@@ -639,7 +636,7 @@ function collectReferenceSummary(
         visitExpr(expr.argument)
         break
       case 'SequenceExpression':
-        expr.expressions.forEach(visitExpr)
+        expr.expressions.forEach(expression => visitExpr(expression))
         break
       case 'YieldExpression':
         if (expr.argument) visitExpr(expr.argument)

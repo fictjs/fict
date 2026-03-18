@@ -159,7 +159,7 @@ describe('compiled templates DOM integration', () => {
       import { render } from 'fict'
 
       function Layout(props: { children?: unknown }) {
-        return <section data-testid="layout">{props.children as any}</section>
+        return <section data-testid="layout">{props.children}</section>
       }
 
       export function App() {
@@ -184,6 +184,28 @@ describe('compiled templates DOM integration', () => {
 
     teardown()
     container.remove()
+  })
+
+  it('preserves runtime map() callback errors instead of crashing during compilation', () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const items = [1, 2, 3]
+        return <div>{items.map()}</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+
+    expect(() => mod.mount(container)).toThrow(TypeError)
   })
 
   it('applies intrinsic spread in fine-grained mode and preserves attribute/event ordering', async () => {
@@ -211,7 +233,7 @@ describe('compiled templates DOM integration', () => {
           tuple() {
             attrs = {
               'data-role': 'dynamic-2',
-              onClick: [((id: unknown) => calls.push(String(id))) as any, 'row-2'] as any,
+              onClick: [((id: unknown) => calls.push(String(id))), 'row-2'],
             }
           },
           fn() {
@@ -468,15 +490,15 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  it('preserves optional map callback third argument forwarding', async () => {
+  it('preserves optional map callback array third argument semantics', async () => {
     const source = `
       import { $state, render } from 'fict'
 
       export const seen: number[] = []
       export let api: { set(next: number[] | null): void }
 
-      const cb = (item: number, index: number, key: unknown) => {
-        seen.push(Number(key))
+      const cb = (item: number, index: number, source: number[]) => {
+        seen.push(source.length)
         return <li key={item}>{item}</li>
       }
 
@@ -511,7 +533,254 @@ describe('compiled templates DOM integration', () => {
     mod.api.set([10, 20])
     await flushUpdates()
 
-    expect(mod.seen).toEqual([0, 1])
+    expect(mod.seen).toEqual([2, 2])
+
+    teardown()
+    container.remove()
+  })
+
+  it('preserves map thisArg semantics by falling back from list specialization', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      const scope = { prefix: 'item-' }
+
+      function renderItem(this: typeof scope, item: number) {
+        return <li key={item}>{this.prefix + item}</li>
+      }
+
+      export function App() {
+        const items = [1, 2]
+        return <ul>{items.map(renderItem, scope)}</ul>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(Array.from(container.querySelectorAll('li')).map(node => node.textContent)).toEqual([
+      'item-1',
+      'item-2',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
+  it('preserves runtime errors for obviously non-callable map callbacks', () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const items = [1, 2]
+        return <div>{items.map(123)}</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+
+    expect(() => mod.mount(container)).toThrow(TypeError)
+  })
+
+  it('preserves map callback arguments semantics by falling back from list specialization', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const items = [10, 20]
+        function cb(item: number) {
+          return String(arguments[2].length)
+        }
+        return <div>{items.map(cb)}</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(container.textContent).toBe('22')
+
+    teardown()
+    container.remove()
+  })
+
+  it('renders repeated local JSX helper calls without collapsing DOM nodes', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        function row(label: string) {
+          return <li>{label}</li>
+        }
+        return <ul>{row('a')}{row('b')}</ul>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(Array.from(container.querySelectorAll('li')).map(node => node.textContent)).toEqual([
+      'a',
+      'b',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
+  it('renders named JSX map callbacks for each item', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const items = [1, 2]
+        function cb(item: number) {
+          return <li key={item}>{item}</li>
+        }
+        return <ul>{items.map(cb)}</ul>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(Array.from(container.querySelectorAll('li')).map(node => node.textContent)).toEqual([
+      '1',
+      '2',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
+  it('preserves destructured map callback semantics by falling back from list specialization', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const items = [{ x: 1 }, { x: 2 }]
+        return <ul>{items.map(({ x }) => <li>{x}</li>)}</ul>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(Array.from(container.querySelectorAll('li')).map(node => node.textContent)).toEqual([
+      '1',
+      '2',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
+  it('preserves defaulted map callback semantics by falling back from list specialization', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const items = [1, undefined]
+        return <ul>{items.map((item = 5) => <li>{item}</li>)}</ul>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(Array.from(container.querySelectorAll('li')).map(node => node.textContent)).toEqual([
+      '1',
+      '5',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
+  it('preserves function callback this semantics by falling back from list specialization', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const items = [1, 2]
+        return <div>{items.map(function (item) { return this === undefined ? String(item) : 'bad' })}</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(container.textContent).toBe('12')
 
     teardown()
     container.remove()

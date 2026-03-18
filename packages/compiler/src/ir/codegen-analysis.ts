@@ -11,6 +11,10 @@ const hasInstructionArray = (value: unknown): value is { instructions: Instructi
 
 const expressionContainsJSXCache = new WeakMap<object, boolean>()
 
+function assertNever(value: never): never {
+  throw new Error(`Unhandled terminator in codegen analysis: ${JSON.stringify(value)}`)
+}
+
 function expressionContainsJSX(expr: unknown): boolean {
   if (!expr || typeof expr !== 'object') return false
   const cached = expressionContainsJSXCache.get(expr)
