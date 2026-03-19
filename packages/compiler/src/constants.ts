@@ -41,11 +41,82 @@ const DelegatedEventNames = [
 // Runtime Constants
 // ============================================================================
 
+export type RuntimeImportFamily = 'fict' | 'runtime'
+
+const FICT_RUNTIME_IMPORT_MODULES = new Set([
+  'fict',
+  'fict/advanced',
+  'fict/internal',
+  'fict/internal/list',
+  'fict/jsx-runtime',
+  'fict/jsx-dev-runtime',
+  'fict/loader',
+  'fict/plus',
+  'fict/slim',
+])
+
+const STANDALONE_RUNTIME_IMPORT_MODULES = new Set([
+  '@fictjs/runtime',
+  '@fictjs/runtime/advanced',
+  '@fictjs/runtime/internal',
+  '@fictjs/runtime/internal/list',
+  '@fictjs/runtime/jsx-runtime',
+  '@fictjs/runtime/jsx-dev-runtime',
+  '@fictjs/runtime/loader',
+])
+
+/**
+ * Compiler-generated helpers should follow the package family that the source
+ * module already uses. This keeps `fict` apps self-contained while preserving
+ * direct `@fictjs/runtime` usage for lower-level integrations.
+ */
+export const DEFAULT_RUNTIME_IMPORT_FAMILY: RuntimeImportFamily = 'fict'
+
+/**
+ * Infer which package family compiler-generated helpers should use.
+ *
+ * Rules:
+ * - Prefer `fict` whenever a module already imports from the main framework.
+ * - Fall back to `@fictjs/runtime` only for runtime-only modules.
+ * - Default to `fict` when there is no signal in source imports.
+ */
+export function detectRuntimeImportFamily(body: ReadonlyArray<unknown>): RuntimeImportFamily {
+  let sawFictFamily = false
+  let sawStandaloneRuntimeFamily = false
+
+  for (const stmt of body) {
+    const source =
+      stmt && typeof stmt === 'object' && 'source' in stmt
+        ? (stmt as { source?: { value?: string } | null }).source?.value
+        : undefined
+    if (typeof source !== 'string') continue
+
+    if (FICT_RUNTIME_IMPORT_MODULES.has(source)) {
+      sawFictFamily = true
+      continue
+    }
+
+    if (STANDALONE_RUNTIME_IMPORT_MODULES.has(source)) {
+      sawStandaloneRuntimeFamily = true
+    }
+  }
+
+  if (sawFictFamily) return 'fict'
+  if (sawStandaloneRuntimeFamily) return 'runtime'
+  return DEFAULT_RUNTIME_IMPORT_FAMILY
+}
+
+export function isRuntimeImportModule(source: string): boolean {
+  return FICT_RUNTIME_IMPORT_MODULES.has(source) || STANDALONE_RUNTIME_IMPORT_MODULES.has(source)
+}
+
 /**
  * The runtime module path for compiler-generated imports.
  * Uses the internal subpath to access compiler-dependent APIs.
  */
-export const RUNTIME_MODULE = '@fictjs/runtime/internal'
+export function getRuntimeModule(family: RuntimeImportFamily): string {
+  return family === 'runtime' ? '@fictjs/runtime/internal' : 'fict/internal'
+}
 
 /**
  * Runtime helper function names used by compiler-generated code.
@@ -176,12 +247,19 @@ export type RuntimeHelperName = keyof typeof RUNTIME_HELPERS
 /**
  * Optional per-helper module overrides.
  *
- * By default, helpers are imported from {@link RUNTIME_MODULE}. Use this map
+ * By default, helpers are imported from {@link getRuntimeModule}. Use this map
  * to route heavyweight helpers to narrower subpath entry points so bundlers
  * don't pull the full internal barrel.
  */
-export const RUNTIME_HELPER_MODULES: Partial<Record<RuntimeHelperName, string>> = {
-  keyedList: '@fictjs/runtime/internal/list',
+export function getRuntimeHelperModule(
+  family: RuntimeImportFamily,
+  helper: RuntimeHelperName,
+): string {
+  if (helper === 'keyedList') {
+    return family === 'runtime' ? '@fictjs/runtime/internal/list' : 'fict/internal/list'
+  }
+
+  return getRuntimeModule(family)
 }
 
 // Attributes that should NOT be wrapped in reactive functions

@@ -1,21 +1,12 @@
 import type * as BabelCore from '@babel/core'
 
-import { RUNTIME_HELPER_MODULES, RUNTIME_MODULE } from '../constants'
+import { isRuntimeImportModule } from '../constants'
 
 export interface RuntimeImportCollection {
   names: Set<string>
   importMap: Map<string, string>
   namespaces: Set<string>
 }
-
-const RUNTIME_IMPORT_MODULES = new Set([
-  RUNTIME_MODULE,
-  ...Object.values(RUNTIME_HELPER_MODULES),
-  '@fictjs/runtime',
-  '@fictjs/runtime/advanced',
-  'fict',
-  'fict/advanced',
-])
 
 export function collectRuntimeImports(
   body: BabelCore.types.Statement[],
@@ -28,7 +19,7 @@ export function collectRuntimeImports(
   for (const stmt of body) {
     if (!t.isImportDeclaration(stmt)) continue
     if ((stmt as { importKind?: string }).importKind === 'type') continue
-    if (!RUNTIME_IMPORT_MODULES.has(stmt.source.value)) continue
+    if (!isRuntimeImportModule(stmt.source.value)) continue
     for (const spec of stmt.specifiers) {
       if (t.isImportSpecifier(spec) && spec.importKind === 'type') {
         continue

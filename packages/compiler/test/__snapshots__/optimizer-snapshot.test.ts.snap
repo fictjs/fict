@@ -1,7 +1,7 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
 exports[`optimizer output snapshots > createMemo with equals option 1`] = `
-"import { __fictUseSignal, __fictUseContext } from "@fictjs/runtime/internal";
+"import { __fictUseSignal, __fictUseContext } from "fict/internal";
 import { createMemo } from 'fict';
 export function Demo() {
   const __fictCtx = __fictUseContext();
@@ -20,7 +20,7 @@ export function Demo() {
 `;
 
 exports[`optimizer output snapshots > createMemo with name and devToolsSource options 1`] = `
-"import { __fictUseSignal, __fictUseContext } from "@fictjs/runtime/internal";
+"import { __fictUseSignal, __fictUseContext } from "fict/internal";
 import { createMemo } from 'fict';
 export function Demo() {
   const __fictCtx = __fictUseContext();
@@ -36,7 +36,7 @@ export function Demo() {
 `;
 
 exports[`optimizer output snapshots > stabilizes cross-block constants in a reactive function 1`] = `
-"import { __fictUseSignal, __fictUseContext, createConditional, createElement, onDestroy } from "@fictjs/runtime/internal";
+"import { __fictUseSignal, __fictUseContext, createConditional, createElement, onDestroy } from "fict/internal";
 export function Demo(flag) {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 1, {
@@ -57,7 +57,7 @@ export function Demo(flag) {
 `;
 
 exports[`optimizer output snapshots > stabilizes derived values and memo accessors 1`] = `
-"import { __fictUseSignal, __fictUseContext } from "@fictjs/runtime/internal";
+"import { __fictUseSignal, __fictUseContext } from "fict/internal";
 export function Demo() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 2, {

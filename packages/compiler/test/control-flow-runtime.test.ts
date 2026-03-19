@@ -16,7 +16,7 @@ function compileAndRunHook<T>(source: string, exportName: string): T {
 
   wrapped(
     (id: string) => {
-      if (id === '@fictjs/runtime/internal' || id === 'fict') {
+      if (id === '@fictjs/runtime/internal' || id === 'fict/internal' || id === 'fict') {
         return runtimeInternal
       }
       throw new Error(`Unexpected import in compiler runtime test: ${id}`)

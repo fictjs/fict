@@ -57,7 +57,7 @@ Fict SSR adopts a **Resumability** architecture, which is fundamentally differen
 ## Installation
 
 ```bash
-pnpm add @fictjs/ssr
+pnpm add fict @fictjs/ssr
 ```
 
 ## Quick Start
@@ -89,7 +89,7 @@ const html = renderToString(() => <App />, {
 
 ```typescript
 // entry-client.tsx
-import { installResumableLoader } from '@fictjs/runtime/loader'
+import { installResumableLoader } from 'fict/loader'
 
 // Load manifest (production)
 async function loadManifest() {

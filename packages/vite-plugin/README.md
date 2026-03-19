@@ -9,12 +9,16 @@ Vite plugin for Fict
 ## Usage
 
 ```bash
+npm install fict
 npm install -D @fictjs/vite-plugin
 # or
+yarn add fict
 yarn add -D @fictjs/vite-plugin
 ```
 
 You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
+
+Use `fict` as the runtime dependency for standard Fict apps. If you intentionally build directly on `@fictjs/runtime`, keep your source imports on that package family consistently.
 
 ## Options
 

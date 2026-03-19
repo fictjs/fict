@@ -188,6 +188,8 @@ interface ExtractedHandler {
   localDeps: string[]
   /** The handler function code (without export) */
   code: string
+  /** Which runtime package family this module uses for helper imports */
+  runtimeImportFamily: 'fict' | 'runtime'
 }
 
 /**
@@ -355,6 +357,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         'fict',
         'fict/plus',
         'fict/advanced',
+        'fict/internal',
+        'fict/internal/list',
+        'fict/loader',
         'fict/slim',
         'fict/jsx-runtime',
         'fict/jsx-dev-runtime',
@@ -376,7 +381,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         exclude.add(dep)
       }
       // Only dedupe core runtime packages to avoid duplicate instances
-      const dedupePackages = ['fict', '@fictjs/runtime', '@fictjs/runtime/internal']
+      const dedupePackages = [
+        'fict',
+        'fict/internal',
+        '@fictjs/runtime',
+        '@fictjs/runtime/internal',
+      ]
       for (const dep of dedupePackages) {
         dedupe.add(dep)
       }
@@ -1143,6 +1153,58 @@ function createHandlerId(sourceModule: string, exportName: string): string {
   return `${sourceModule}$$${exportName}`
 }
 
+function detectRuntimeImportFamilyFromCode(body: ReadonlyArray<unknown>): 'fict' | 'runtime' {
+  let sawFictFamily = false
+  let sawStandaloneRuntimeFamily = false
+
+  for (const stmt of body) {
+    const source =
+      stmt && typeof stmt === 'object' && 'source' in stmt
+        ? (stmt as { source?: { value?: string } | null }).source?.value
+        : undefined
+    if (typeof source !== 'string') continue
+
+    if (
+      source === 'fict' ||
+      source === 'fict/advanced' ||
+      source === 'fict/internal' ||
+      source === 'fict/internal/list' ||
+      source === 'fict/jsx-runtime' ||
+      source === 'fict/jsx-dev-runtime' ||
+      source === 'fict/loader' ||
+      source === 'fict/plus' ||
+      source === 'fict/slim'
+    ) {
+      sawFictFamily = true
+      continue
+    }
+
+    if (
+      source === '@fictjs/runtime' ||
+      source === '@fictjs/runtime/advanced' ||
+      source === '@fictjs/runtime/internal' ||
+      source === '@fictjs/runtime/internal/list' ||
+      source === '@fictjs/runtime/jsx-runtime' ||
+      source === '@fictjs/runtime/jsx-dev-runtime' ||
+      source === '@fictjs/runtime/loader'
+    ) {
+      sawStandaloneRuntimeFamily = true
+    }
+  }
+
+  if (sawFictFamily) return 'fict'
+  if (sawStandaloneRuntimeFamily) return 'runtime'
+  return 'fict'
+}
+
+function getRuntimeHelperModule(helperName: string, family: 'fict' | 'runtime'): string {
+  if (helperName === 'keyedList') {
+    return family === 'runtime' ? '@fictjs/runtime/internal/list' : 'fict/internal/list'
+  }
+
+  return family === 'runtime' ? '@fictjs/runtime/internal' : 'fict/internal'
+}
+
 /**
  * Generate a standalone virtual module for an extracted handler.
  * The module contains the complete handler code with its own imports,
@@ -1161,11 +1223,12 @@ function generateHandlerModule(handler: ExtractedHandler): string {
     const helper = RUNTIME_HELPERS[helperName]
     if (!helper) continue
 
-    const existing = importsByModule.get(helper.from) ?? []
+    const moduleSource = getRuntimeHelperModule(helperName, handler.runtimeImportFamily)
+    const existing = importsByModule.get(moduleSource) ?? []
     if (!existing.includes(helper.import)) {
       existing.push(helper.import)
     }
-    importsByModule.set(helper.from, existing)
+    importsByModule.set(moduleSource, existing)
   }
 
   // Generate import statements for runtime helpers
@@ -1205,6 +1268,7 @@ export function registerExtractedHandler(
     helpersUsed,
     localDeps,
     code,
+    runtimeImportFamily: 'fict',
   })
   return `${VIRTUAL_HANDLER_RESOLVE_PREFIX}${handlerId}`
 }
@@ -1213,15 +1277,15 @@ export function registerExtractedHandler(
  * Runtime helper name mappings for generating imports in virtual modules
  */
 const RUNTIME_HELPERS: Record<string, { import: string; from: string }> = {
-  __fictUseLexicalScope: { import: '__fictUseLexicalScope', from: '@fictjs/runtime/internal' },
-  __fictGetScopeProps: { import: '__fictGetScopeProps', from: '@fictjs/runtime/internal' },
-  __fictGetSSRScope: { import: '__fictGetSSRScope', from: '@fictjs/runtime/internal' },
-  __fictEnsureScope: { import: '__fictEnsureScope', from: '@fictjs/runtime/internal' },
-  __fictPrepareContext: { import: '__fictPrepareContext', from: '@fictjs/runtime/internal' },
-  __fictPushContext: { import: '__fictPushContext', from: '@fictjs/runtime/internal' },
-  __fictPopContext: { import: '__fictPopContext', from: '@fictjs/runtime/internal' },
-  hydrateComponent: { import: 'hydrateComponent', from: '@fictjs/runtime/internal' },
-  __fictQrl: { import: '__fictQrl', from: '@fictjs/runtime/internal' },
+  __fictUseLexicalScope: { import: '__fictUseLexicalScope', from: 'fict/internal' },
+  __fictGetScopeProps: { import: '__fictGetScopeProps', from: 'fict/internal' },
+  __fictGetSSRScope: { import: '__fictGetSSRScope', from: 'fict/internal' },
+  __fictEnsureScope: { import: '__fictEnsureScope', from: 'fict/internal' },
+  __fictPrepareContext: { import: '__fictPrepareContext', from: 'fict/internal' },
+  __fictPushContext: { import: '__fictPushContext', from: 'fict/internal' },
+  __fictPopContext: { import: '__fictPopContext', from: 'fict/internal' },
+  hydrateComponent: { import: 'hydrateComponent', from: 'fict/internal' },
+  __fictQrl: { import: '__fictQrl', from: 'fict/internal' },
 }
 
 /** Known global identifiers that don't need to be imported */
@@ -1632,6 +1696,7 @@ function extractAndRewriteHandlers(
   const handlerNames: string[] = []
   const nodesToRemove = new Set<t.Node>()
   const allLocalDeps = new Set<string>()
+  const runtimeImportFamily = detectRuntimeImportFamilyFromCode(ast.program.body)
 
   // First pass: find all handler exports and extract their code
   traverse(ast, {
@@ -1683,6 +1748,7 @@ function extractAndRewriteHandlers(
             helpersUsed,
             localDeps,
             code: handlerCode,
+            runtimeImportFamily,
           })
 
           // Mark this export for removal
@@ -1736,6 +1802,7 @@ function extractAndRewriteHandlers(
           helpersUsed,
           localDeps,
           code: handlerCode,
+          runtimeImportFamily,
         })
 
         // Mark this export for removal

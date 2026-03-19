@@ -1,4 +1,4 @@
-import { installResumableLoader } from '@fictjs/runtime/loader'
+import { installResumableLoader } from 'fict/loader'
 
 // Import App to ensure its handlers are included in the client build
 // The handlers will be code-split into separate chunks for lazy loading

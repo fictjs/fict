@@ -9,12 +9,16 @@ Babel plugin for Fict Compiler
 ## Usage
 
 ```bash
+npm install fict
 npm install -D @fictjs/compiler
 # or
+yarn add fict
 yarn add -D @fictjs/compiler
 ```
 
 You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
+
+For typical apps, install `fict` as the runtime dependency and let compiler output target the same package family. Direct `@fictjs/runtime` usage remains supported for lower-level integrations, but your source imports should stay on one package family.
 
 ## Options
 

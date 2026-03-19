@@ -44,10 +44,10 @@ function runCompiled(code: string): Record<string, (...args: unknown[]) => unkno
   const runtime = createRuntimeStub()
   const module = { exports: {} as Record<string, unknown> }
   const sandboxRequire = (id: string) => {
-    if (id === '@fictjs/runtime/internal') return runtime
-    if (id === '@fictjs/runtime/internal/list') return {}
-    if (id.startsWith('@fictjs/runtime/internal/')) {
-      throw new Error(`Unexpected @fictjs/runtime internal subpath in test sandbox: ${id}`)
+    if (id === '@fictjs/runtime/internal' || id === 'fict/internal') return runtime
+    if (id === '@fictjs/runtime/internal/list' || id === 'fict/internal/list') return {}
+    if (id.startsWith('@fictjs/runtime/internal/') || id.startsWith('fict/internal/')) {
+      throw new Error(`Unexpected internal subpath in test sandbox: ${id}`)
     }
     return require(id)
   }

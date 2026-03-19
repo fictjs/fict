@@ -1,10 +1,11 @@
 import type * as BabelCore from '@babel/core'
 
 import {
+  detectRuntimeImportFamily,
+  getRuntimeHelperModule,
+  getRuntimeModule,
   RUNTIME_ALIASES,
   RUNTIME_HELPERS,
-  RUNTIME_HELPER_MODULES,
-  RUNTIME_MODULE,
 } from '../constants'
 
 import type { CodegenContext } from './codegen'
@@ -98,6 +99,8 @@ export function attachHelperImports(
 ): BabelCore.types.Statement[] {
   if (ctx.helpersUsed.size === 0) return body
   const declared = collectDeclaredNames(body, t)
+  const runtimeImportFamily = detectRuntimeImportFamily(body)
+  const runtimeModule = getRuntimeModule(runtimeImportFamily)
 
   const specifiersByModule = new Map<string, BabelCore.types.ImportSpecifier[]>()
 
@@ -106,8 +109,10 @@ export function attachHelperImports(
     const helper = (RUNTIME_HELPERS as Record<string, string>)[name]
     if (alias && helper) {
       if (declared.has(alias)) continue
-      const modulePath =
-        (RUNTIME_HELPER_MODULES as Record<string, string | undefined>)[name] ?? RUNTIME_MODULE
+      const modulePath = getRuntimeHelperModule(
+        runtimeImportFamily,
+        name as keyof typeof RUNTIME_HELPERS,
+      )
       const moduleSpecifiers = specifiersByModule.get(modulePath) ?? []
       moduleSpecifiers.push(t.importSpecifier(t.identifier(alias), t.identifier(helper)))
       specifiersByModule.set(modulePath, moduleSpecifiers)
@@ -155,8 +160,8 @@ export function attachHelperImports(
   }
 
   const modulePaths = Array.from(specifiersByModule.keys()).sort((a, b) => {
-    if (a === RUNTIME_MODULE) return -1
-    if (b === RUNTIME_MODULE) return 1
+    if (a === runtimeModule) return -1
+    if (b === runtimeModule) return 1
     return a.localeCompare(b)
   })
   const importDecls = modulePaths.map(modulePath =>

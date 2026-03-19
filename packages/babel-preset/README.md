@@ -9,12 +9,16 @@ Babel preset for Fict - includes TypeScript, JSX, and Fict compiler
 ## Usage
 
 ```bash
+npm install fict
 npm install -D @fictjs/babel-preset
 # or
+yarn add fict
 yarn add -D @fictjs/babel-preset
 ```
 
 You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
+
+For standard apps, `fict` is the runtime dependency that pairs with this preset. Direct `@fictjs/runtime` usage remains supported for lower-level integrations, but your source imports should stay on one package family.
 
 ## Configuration
 

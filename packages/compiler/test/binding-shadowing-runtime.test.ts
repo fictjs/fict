@@ -16,7 +16,7 @@ function compileAndRun<T>(source: string, exportName: string, args: unknown[] = 
 
   wrapped(
     (id: string) => {
-      if (id === '@fictjs/runtime/internal' || id === 'fict') {
+      if (id === '@fictjs/runtime/internal' || id === 'fict/internal' || id === 'fict') {
         return runtimeInternal
       }
       throw new Error(`Unexpected import in compiler binding test: ${id}`)

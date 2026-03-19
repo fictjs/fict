@@ -44,7 +44,7 @@ describe('fict vite-plugin', () => {
       // The output should contain __fict_hir_codegen__ marker or runtime imports
       const code = result.code as string
       const hasHIRMarker = code.includes('__fict_hir_codegen__')
-      const hasRuntimeImport = code.includes('@fictjs/runtime')
+      const hasRuntimeImport = code.includes('@fictjs/runtime') || code.includes('fict/internal')
       expect(hasHIRMarker || hasRuntimeImport).toBe(true)
     }
   })
@@ -73,7 +73,7 @@ describe('fict vite-plugin', () => {
     if (result && typeof result === 'object' && 'code' in result) {
       const code = result.code as string
       const hasHIRMarker = code.includes('__fict_hir_codegen__')
-      const hasRuntimeImport = code.includes('@fictjs/runtime')
+      const hasRuntimeImport = code.includes('@fictjs/runtime') || code.includes('fict/internal')
       expect(hasHIRMarker || hasRuntimeImport).toBe(true)
     }
   })
@@ -199,6 +199,48 @@ function Counter() {
       expect(content).not.toBeNull()
       expect(content).toContain('export default')
       expect(content).toContain('__fictUseLexicalScope')
+    })
+
+    it('preserves fict/internal imports in extracted handler modules', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from 'fict/internal';
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const [count] = __fictUseLexicalScope(scopeId, ['count']);
+  const __handler = () => count(count() + 1);
+  return __handler.call(el, event);
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn() }
+      const transform = plugin.transform as any
+      const result =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, compiledCode, '/project/src/FictCounter.tsx')
+          : await transform?.handler.call(mockContext, compiledCode, '/project/src/FictCounter.tsx')
+
+      if (result && typeof result === 'object' && 'code' in result) {
+        expect(result.code as string).toContain('virtual:fict-handler:')
+      }
+
+      const load = plugin.load as any
+      expect(typeof load).toBe('function')
+      const content = load('\0fict-handler:/project/src/FictCounter.tsx$$__fict_e0') as
+        | string
+        | null
+      expect(content).not.toBeNull()
+      expect(content).toContain("from 'fict/internal'")
+      expect(content).not.toContain('@fictjs/runtime/internal')
     })
 
     it('clears extracted handlers on buildStart', async () => {

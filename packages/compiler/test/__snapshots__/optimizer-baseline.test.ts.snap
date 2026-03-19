@@ -1,7 +1,7 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
 exports[`optimizer output baselines > hook + derived accessors 1`] = `
-"import { __fictUseSignal, __fictUseMemo, __fictUseContext, template, resolvePath, getSlotEnd, insertBetween, createElement } from "@fictjs/runtime/internal";
+"import { __fictUseSignal, __fictUseMemo, __fictUseContext, template, resolvePath, getSlotEnd, insertBetween, createElement } from "fict/internal";
 export function useCounter() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 0, {
@@ -59,8 +59,8 @@ export function View() {
 `;
 
 exports[`optimizer output baselines > keyed list rendering 1`] = `
-"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, bindText, onDestroy, __fictUseContext } from "@fictjs/runtime/internal";
-import { createKeyedList } from "@fictjs/runtime/internal/list";
+"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, bindText, onDestroy, __fictUseContext } from "fict/internal";
+import { createKeyedList } from "fict/internal/list";
 function List() {
   const __fictCtx = __fictUseContext();
   const items = __fictUseSignal(__fictCtx, [{
@@ -94,7 +94,7 @@ export default List;"
 `;
 
 exports[`optimizer output baselines > props destructuring + defaults 1`] = `
-"import { __fictUseMemo, template, resolvePath, getSlotEnd, insertBetween, createElement, __fictUseContext, prop } from "@fictjs/runtime/internal";
+"import { __fictUseMemo, template, resolvePath, getSlotEnd, insertBetween, createElement, __fictUseContext, prop } from "fict/internal";
 function Card(__props) {
   const title = prop(() => __props.title);
   const count = prop(() => __props.count ?? 0);
@@ -115,7 +115,7 @@ export default Card;"
 `;
 
 exports[`optimizer output baselines > region grouping across control flow 1`] = `
-"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, insertBetween, createElement, __fictUseContext } from "@fictjs/runtime/internal";
+"import { __fictUseSignal, __fictUseMemo, template, resolvePath, getSlotEnd, insertBetween, createElement, __fictUseContext } from "fict/internal";
 function Summary() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 0, {

@@ -8,7 +8,9 @@ const stripRuntimePrebundle = () => ({
   configResolved(resolved: { optimizeDeps: { include?: string[] } }) {
     if (!resolved.optimizeDeps) return
     const include = resolved.optimizeDeps.include ?? []
-    resolved.optimizeDeps.include = include.filter(id => !id.startsWith('@fictjs/runtime'))
+    resolved.optimizeDeps.include = include.filter(
+      id => !id.startsWith('@fictjs/runtime') && !id.startsWith('fict/internal'),
+    )
   },
 })
 
@@ -24,6 +26,9 @@ export default defineConfig({
     noDiscovery: true,
     include: [],
     exclude: [
+      'fict/internal',
+      'fict/internal/list',
+      'fict/loader',
       '@fictjs/runtime',
       '@fictjs/runtime/internal',
       '@fictjs/runtime/internal/list',
@@ -36,6 +41,12 @@ export default defineConfig({
     alias: [
       { find: 'fict/plus', replacement: path.resolve(__dirname, '../src/plus.ts') },
       { find: 'fict/advanced', replacement: path.resolve(__dirname, '../src/advanced.ts') },
+      { find: 'fict/loader', replacement: path.resolve(__dirname, '../src/loader.ts') },
+      {
+        find: 'fict/internal/list',
+        replacement: path.resolve(__dirname, '../src/internal-list.ts'),
+      },
+      { find: 'fict/internal', replacement: path.resolve(__dirname, '../src/internal.ts') },
       { find: 'fict', replacement: path.resolve(__dirname, '../src/index.ts') },
       {
         find: '@fictjs/runtime/jsx-runtime',

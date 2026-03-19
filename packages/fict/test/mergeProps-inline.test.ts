@@ -29,10 +29,12 @@ function compileAndLoad<TModule extends Record<string, any>>(
   const wrapped = new Function('require', 'module', 'exports', output)
   wrapped(
     (id: string) => {
-      if (id === '@fictjs/runtime/internal/list') return runtimeInternalList
-      if (id === '@fictjs/runtime/internal') return runtimeInternal
+      if (id === '@fictjs/runtime/internal/list' || id === 'fict/internal/list') {
+        return runtimeInternalList
+      }
+      if (id === '@fictjs/runtime/internal' || id === 'fict/internal') return runtimeInternal
       if (id === '@fictjs/runtime') return runtime
-      if (id === '@fictjs/runtime/jsx-runtime') return runtimeJsx
+      if (id === '@fictjs/runtime/jsx-runtime' || id === 'fict/jsx-runtime') return runtimeJsx
       if (id === 'fict') return fict
       if (id === 'fict/plus') return fictPlus
       return dynamicRequire(id)
