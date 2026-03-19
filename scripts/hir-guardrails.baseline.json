@@ -3,20 +3,20 @@
     "counter-basic": {
       "helpers": 4,
       "regions": 0,
-      "sizeBytes": 1040,
-      "gzipBytes": 454
+      "sizeBytes": 1029,
+      "gzipBytes": 446
     },
     "optional-chain": {
       "helpers": 3,
       "regions": 0,
-      "sizeBytes": 687,
-      "gzipBytes": 363
+      "sizeBytes": 676,
+      "gzipBytes": 355
     },
     "no-jsx": {
       "helpers": 4,
       "regions": 1,
-      "sizeBytes": 546,
-      "gzipBytes": 261
+      "sizeBytes": 535,
+      "gzipBytes": 250
     }
   }
 }
