@@ -1,6 +1,6 @@
 {
   "name": "@fictjs/testing-library",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "description": "Testing utilities for Fict components, built on @testing-library/dom",
   "publishConfig": {
     "access": "public",

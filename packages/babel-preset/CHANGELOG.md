@@ -1,5 +1,13 @@
 # @fictjs/babel-preset
 
+## 0.17.1
+
+### Patch Changes
+
+- Fix standard `fict` app installs so compiler-generated helpers resolve through `fict/internal` and `fict/loader` instead of requiring a separate top-level `@fictjs/runtime` install. This also adds the new `fict/internal`, `fict/internal/list`, and `fict/loader` bridge entrypoints and updates docs/examples to use the main `fict` package consistently.
+- Updated dependencies
+  - @fictjs/compiler@0.17.1
+
 ## 0.17.0
 
 ### Minor Changes
