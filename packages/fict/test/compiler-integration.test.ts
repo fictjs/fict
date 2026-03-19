@@ -4,13 +4,14 @@ vi.setConfig({ testTimeout: 60000, hookTimeout: 60000 })
 import { createRequire } from 'module'
 
 import { transformCommonJS } from '../../compiler/test/test-utils'
+import * as fict from '../src'
+import * as fictPlus from '../src/plus'
+import * as runtime from '@fictjs/runtime'
+import * as runtimeInternal from '@fictjs/runtime/internal'
+import * as runtimeInternalList from '@fictjs/runtime/internal/list'
+import * as runtimeJsx from '@fictjs/runtime/jsx-runtime'
 
 const dynamicRequire = createRequire(import.meta.url)
-const runtime = dynamicRequire('@fictjs/runtime')
-const runtimeInternal = dynamicRequire('@fictjs/runtime/internal')
-const runtimeJsx = dynamicRequire('@fictjs/runtime/jsx-runtime')
-const fict = dynamicRequire('fict')
-const fictPlus = dynamicRequire('fict/plus')
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -68,6 +69,7 @@ function compileAndLoad<TModule extends Record<string, any>>(
   wrapped(
     (id: string) => {
       if (Object.prototype.hasOwnProperty.call(deps, id)) return deps[id]
+      if (id === '@fictjs/runtime/internal/list') return runtimeInternalList
       if (id === '@fictjs/runtime/internal') return runtimeInternal
       if (id === '@fictjs/runtime') return runtime
       if (id === '@fictjs/runtime/jsx-runtime') return runtimeJsx
