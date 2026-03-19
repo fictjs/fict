@@ -1153,7 +1153,7 @@ function createHandlerId(sourceModule: string, exportName: string): string {
   return `${sourceModule}$$${exportName}`
 }
 
-function detectRuntimeImportFamilyFromCode(body: ReadonlyArray<unknown>): 'fict' | 'runtime' {
+function detectRuntimeImportFamilyFromCode(body: readonly unknown[]): 'fict' | 'runtime' {
   let sawFictFamily = false
   let sawStandaloneRuntimeFamily = false
 

@@ -8,7 +8,6 @@
  * 4. Partial hydration updates DOM
  */
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
@@ -56,10 +55,8 @@ function compileModule(
   options?: Partial<FictCompilerOptions> & { baseDir?: string },
 ): CompiledModule {
   const { baseDir, ...compilerOverrides } = options ?? {}
-  const tempBase = baseDir ?? tmpdir()
-  if (baseDir) {
-    mkdirSync(baseDir, { recursive: true })
-  }
+  const tempBase = baseDir ?? path.join(process.cwd(), '.tmp')
+  mkdirSync(tempBase, { recursive: true })
   const tempDir = mkdtempSync(path.join(tempBase, 'fict-e2e-'))
   const entryPath = path.join(tempDir, 'entry.mjs')
 

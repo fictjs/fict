@@ -80,7 +80,7 @@ export const DEFAULT_RUNTIME_IMPORT_FAMILY: RuntimeImportFamily = 'fict'
  * - Fall back to `@fictjs/runtime` only for runtime-only modules.
  * - Default to `fict` when there is no signal in source imports.
  */
-export function detectRuntimeImportFamily(body: ReadonlyArray<unknown>): RuntimeImportFamily {
+export function detectRuntimeImportFamily(body: readonly unknown[]): RuntimeImportFamily {
   let sawFictFamily = false
   let sawStandaloneRuntimeFamily = false
 

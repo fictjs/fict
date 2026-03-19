@@ -1,5 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -1014,7 +1013,9 @@ function compileResumableModule(source: string): {
   code: string
   cleanup: () => void
 } {
-  const tempDir = mkdtempSync(path.join(tmpdir(), 'fict-ssr-'))
+  const tempBase = path.join(process.cwd(), '.tmp')
+  mkdirSync(tempBase, { recursive: true })
+  const tempDir = mkdtempSync(path.join(tempBase, 'fict-ssr-'))
   const entryPath = path.join(tempDir, 'entry.mjs')
 
   const options: FictCompilerOptions = {

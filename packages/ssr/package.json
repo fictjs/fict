@@ -40,6 +40,7 @@
     "linkedom": "^0.18.12"
   },
   "devDependencies": {
+    "fict": "workspace:*",
     "tsup": "^8.5.1"
   },
   "keywords": [
