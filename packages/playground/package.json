@@ -51,7 +51,7 @@
     "@fictjs/devtools": "workspace:*",
     "@fictjs/vite-plugin": "workspace:*",
     "typescript": "^5.9.3",
-    "vite": "^7.3.1"
+    "vite": "^8.0.1"
   },
   "devDependencies": {
     "tsup": "^8.5.1",
