@@ -46,7 +46,7 @@ const { count = 0 } = props
 
 ### FICT-P003: Computed property in props
 
-**Severity:** Warning
+**Severity:** Error (default)
 
 **Why:** Dynamic property names in destructuring (`{ [key]: value }`) cannot be statically tracked.
 
@@ -65,7 +65,7 @@ const { [key]: value } = props
 
 ### FICT-P004: Nested props destructuring fallback
 
-**Severity:** Warning
+**Severity:** Error (default)
 
 **Why:** Nested destructuring patterns require conservative handling.
 
@@ -83,7 +83,7 @@ const name = prop(() => props.user.name)
 
 ### FICT-P005: Dynamic props spread
 
-**Severity:** Warning
+**Severity:** Error (default)
 
 **Why:** Spreading a dynamic props object makes it hard to preserve reactivity for individual keys.
 
@@ -124,7 +124,7 @@ function CounterSafe() {
 
 ### FICT-S002: State escapes current scope
 
-**Severity:** Warning
+**Severity:** Error (default)
 
 **Why:** A `$state` variable is passed to an arbitrary function, which captures a snapshot value.
 
@@ -364,7 +364,7 @@ items.map(item => <Li key={item.id}>{item.name}</Li>)
 
 ### FICT-J003: Spread props may hide reactivity
 
-**Severity:** Info
+**Severity:** Error (default)
 
 **Why:** Spread props (`{...obj}`) make it harder to track which specific props are reactive.
 
@@ -386,7 +386,7 @@ items.map(item => <Li key={item.id}>{item.name}</Li>)
 
 ### FICT-R001: Region boundary crossed
 
-**Severity:** Info
+**Severity:** Error (default)
 
 **Why:** A reactive value is used across region boundaries in a way the compiler cannot optimize.
 
@@ -394,7 +394,7 @@ items.map(item => <Li key={item.id}>{item.name}</Li>)
 
 ### FICT-R002: Scope escape detected
 
-**Severity:** Warning
+**Severity:** Error (default)
 
 **Why:** A reactive binding escapes its declaration scope.
 
@@ -402,7 +402,7 @@ items.map(item => <Li key={item.id}>{item.name}</Li>)
 
 ### FICT-R003: Control-flow fallback lowering
 
-**Severity:** Info
+**Severity:** Error (default)
 
 **Why:** Reactive `if`/`switch` return lowering was skipped for a branch shape the compiler
 cannot safely lower into fine-grained branch bindings.
@@ -442,7 +442,7 @@ Non-escaping callbacks (for common iterator patterns like `map`/`filter`/`forEac
 
 ### FICT-R006: Reactive control-flow re-execution
 
-**Severity:** Info
+**Severity:** Error (default)
 
 **Why:** Reactive values are read in control-flow predicates in a way that forces region or
 branch re-execution.
@@ -517,7 +517,7 @@ These warnings are emitted by the compiler but are not part of the numbered FICT
 
 ### FICT-M: Direct mutation of nested `$state`
 
-**Severity:** Warning
+**Severity:** Error (default)
 
 **Why:** Mutating a nested property of a `$state` object is not tracked.
 
@@ -535,7 +535,7 @@ state = { ...state, user: { ...state.user, name: 'Alice' } }
 
 ### FICT-H: Dynamic property access
 
-**Severity:** Warning
+**Severity:** Error (default)
 
 **Why:** Dynamic property access (e.g., `obj[key]`) widens dependency tracking.
 
