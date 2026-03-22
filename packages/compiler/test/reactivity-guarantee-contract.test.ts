@@ -220,6 +220,29 @@ describe('reactivity guarantee contract', () => {
         `,
         error: /FICT-R006/,
       },
+      {
+        name: 'nested $state mutation loses reactivity guarantees',
+        source: `
+          import { $state } from 'fict'
+          function App() {
+            let user = $state({ name: 'Ada' })
+            user.name = 'Grace'
+            return <div>{user.name}</div>
+          }
+        `,
+        error: /FICT-M/,
+      },
+      {
+        name: 'dynamic property access widens tracking guarantees',
+        source: `
+          import { $state } from 'fict'
+          function App({ key = 'name' }) {
+            let user = $state({ name: 'Ada' })
+            return <div>{user[key]}</div>
+          }
+        `,
+        error: /FICT-H/,
+      },
     ]
 
     for (const testCase of fallbackCases) {

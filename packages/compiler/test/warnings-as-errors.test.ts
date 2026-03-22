@@ -146,6 +146,42 @@ describe('warnings as errors', () => {
     expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-P00[1-5]/)
   })
 
+  it('strictGuarantee escalates legacy non-guaranteed reactivity diagnostics', () => {
+    const mutationSource = `
+      import { $state } from 'fict'
+      function App() {
+        let state = $state({ count: 0 })
+        state.count = 1
+        return <div>{state.count}</div>
+      }
+    `
+    const dynamicAccessSource = `
+      import { $state } from 'fict'
+      function App({ key = 'count' }) {
+        let state = $state({ count: 0 })
+        return <div>{state[key]}</div>
+      }
+    `
+
+    expect(() => transform(mutationSource, { strictGuarantee: true, dev: false })).toThrow(/FICT-M/)
+    expect(() => transform(dynamicAccessSource, { strictGuarantee: true, dev: false })).toThrow(
+      /FICT-H/,
+    )
+  })
+
+  it('strictGuarantee is enabled by default and escalates legacy non-guaranteed reactivity diagnostics', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let state = $state({ count: 0 })
+        state.count = 1
+        return <div>{state.count}</div>
+      }
+    `
+
+    expect(() => transformWithCompilerDefaults(source, { dev: false })).toThrow(/FICT-M/)
+  })
+
   it('strictGuarantee is enabled by default and escalates props fallback diagnostics', () => {
     const source = `
       function App({ list: [first, ...rest] }) {
@@ -240,6 +276,25 @@ describe('warnings as errors', () => {
         warningLevels: { 'FICT-R006': 'warn' },
       }),
     ).toThrow(/strictGuarantee does not allow downgrading FICT-R006/)
+  })
+
+  it('strictGuarantee disallows warningLevels downgrades for legacy guarantee codes', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let state = $state({ count: 0 })
+        state.count = 1
+        return <div>{state.count}</div>
+      }
+    `
+
+    expect(() =>
+      transform(source, {
+        strictGuarantee: true,
+        dev: false,
+        warningLevels: { 'FICT-M': 'warn' },
+      }),
+    ).toThrow(/strictGuarantee does not allow downgrading FICT-M/)
   })
 
   it('strictGuarantee warning-level downgrade failures surface as SyntaxError', () => {
