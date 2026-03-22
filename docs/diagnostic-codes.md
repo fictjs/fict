@@ -576,7 +576,8 @@ const { value } = obj
 
 - Compiler emits additional internal codes during transformation that are not exposed as lint rules.
 - Keep lint and compiler versions in sync to ensure consistent warning surface in editor and build logs.
-- Some diagnostics can be suppressed with directive comments (feature planned).
+- Diagnostics can be suppressed with `fict-ignore` / `fict-ignore-next-line` when strict guarantee mode is disabled.
+- `strictGuarantee` blocks suppression for covered guarantee diagnostics.
 
 ## See Also
 
