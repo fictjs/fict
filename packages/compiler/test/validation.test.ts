@@ -37,6 +37,21 @@ describe('DiagnosticCode', () => {
       expect(Object.values(DiagnosticSeverity)).toContain(DiagnosticSeverities[code])
     }
   })
+
+  it('exposes strict-by-default severities for guarantee diagnostics', () => {
+    expect(DiagnosticSeverities[DiagnosticCode.FICT_P001]).toBe(DiagnosticSeverity.Error)
+    expect(DiagnosticSeverities[DiagnosticCode.FICT_S002]).toBe(DiagnosticSeverity.Error)
+    expect(DiagnosticSeverities[DiagnosticCode.FICT_J003]).toBe(DiagnosticSeverity.Error)
+    expect(DiagnosticSeverities[DiagnosticCode.FICT_R006]).toBe(DiagnosticSeverity.Error)
+    expect(DiagnosticSeverities[DiagnosticCode.FICT_M]).toBe(DiagnosticSeverity.Error)
+    expect(DiagnosticSeverities[DiagnosticCode.FICT_H]).toBe(DiagnosticSeverity.Error)
+  })
+
+  it('keeps non-guarantee defaults unchanged in exported severities', () => {
+    expect(DiagnosticSeverities[DiagnosticCode.FICT_C001]).toBe(DiagnosticSeverity.Error)
+    expect(DiagnosticSeverities[DiagnosticCode.FICT_E002]).toBe(DiagnosticSeverity.Info)
+    expect(DiagnosticSeverities[DiagnosticCode.FICT_X003]).toBe(DiagnosticSeverity.Hint)
+  })
 })
 
 describe('createDiagnostic', () => {

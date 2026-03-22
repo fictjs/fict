@@ -131,10 +131,7 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
   [DiagnosticCode.FICT_X003]: 'Inline function in JSX props may cause unnecessary re-renders.',
 }
 
-/**
- * Default severity for each diagnostic code
- */
-export const DiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = {
+const BaseDiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = {
   [DiagnosticCode.FICT_P001]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_P002]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_P003]: DiagnosticSeverity.Warning,
@@ -197,6 +194,15 @@ const STRICT_GUARANTEE_DIAGNOSTICS = new Set<DiagnosticCode>([
   DiagnosticCode.FICT_R006,
 ])
 
+export const DiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = Object.fromEntries(
+  (Object.values(DiagnosticCode) as DiagnosticCode[]).map(code => [
+    code,
+    STRICT_GUARANTEE_DIAGNOSTICS.has(code)
+      ? DiagnosticSeverity.Error
+      : BaseDiagnosticSeverities[code],
+  ]),
+) as Record<DiagnosticCode, DiagnosticSeverity>
+
 function readBooleanEnv(name: string): boolean | undefined {
   const raw = process.env[name]
   if (!raw) return undefined
@@ -235,7 +241,7 @@ export function resolveDiagnosticSeverity(
     return DiagnosticSeverity.Error
   }
 
-  return DiagnosticSeverities[code]
+  return BaseDiagnosticSeverities[code]
 }
 
 // ============================================================================
