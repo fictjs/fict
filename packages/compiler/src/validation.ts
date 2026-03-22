@@ -270,11 +270,12 @@ export function createDiagnostic(
   node: DiagnosticNode,
   fileName: string,
   context?: Record<string, unknown>,
+  options: Partial<FictCompilerOptions> = {},
 ): Diagnostic {
   const loc = node.loc
   return {
     code,
-    severity: DiagnosticSeverities[code],
+    severity: resolveDiagnosticSeverity(code, options),
     message: DiagnosticMessages[code],
     fileName,
     line: loc?.start.line ?? 0,
@@ -288,7 +289,16 @@ export function createDiagnostic(
 /** Context type for diagnostics - compatible with both TransformContext and CodegenContext */
 export interface DiagnosticContext {
   file?: { opts?: { filename?: string | null } }
-  options?: Pick<FictCompilerOptions, 'onWarn' | 'filename'>
+  options?: Pick<
+    FictCompilerOptions,
+    | 'dev'
+    | 'filename'
+    | 'onWarn'
+    | 'strictGuarantee'
+    | 'strictReactivity'
+    | 'warningLevels'
+    | 'warningsAsErrors'
+  >
 }
 
 /**
@@ -301,7 +311,7 @@ export function reportDiagnostic(
   context?: Record<string, unknown>,
 ): void {
   const fileName = ctx.file?.opts?.filename ?? ctx.options?.filename ?? '<unknown>'
-  const diagnostic = createDiagnostic(code, node, fileName, context)
+  const diagnostic = createDiagnostic(code, node, fileName, context, ctx.options)
 
   // Use existing warning mechanism
   if (ctx.options?.onWarn) {
@@ -479,10 +489,22 @@ export function validateNoConditionalHooks(
   const fileName = ctx.file.opts.filename || '<unknown>'
   const localAncestors = getAncestorsInsideCurrentFunction(ancestors, t)
   if (localAncestors.some(ancestor => isLoopNode(ancestor, t))) {
-    return createDiagnostic(DiagnosticCode.FICT_C002, node, fileName, { callee: calleeName })
+    return createDiagnostic(
+      DiagnosticCode.FICT_C002,
+      node,
+      fileName,
+      { callee: calleeName },
+      ctx.options,
+    )
   }
   if (isConditionalAncestorChain(node, localAncestors, t)) {
-    return createDiagnostic(DiagnosticCode.FICT_C001, node, fileName, { callee: calleeName })
+    return createDiagnostic(
+      DiagnosticCode.FICT_C001,
+      node,
+      fileName,
+      { callee: calleeName },
+      ctx.options,
+    )
   }
   return null
 }
@@ -509,7 +531,7 @@ export function validateListKeys(
 
   const fileName = ctx.file.opts.filename || '<unknown>'
   if (t.isJSXFragment(node)) {
-    return createDiagnostic(DiagnosticCode.FICT_J002, node, fileName)
+    return createDiagnostic(DiagnosticCode.FICT_J002, node, fileName, undefined, ctx.options)
   }
 
   let hasKey = false
@@ -520,7 +542,7 @@ export function validateListKeys(
     }
   }
   if (hasKey) return null
-  return createDiagnostic(DiagnosticCode.FICT_J002, node, fileName)
+  return createDiagnostic(DiagnosticCode.FICT_J002, node, fileName, undefined, ctx.options)
 }
 
 /**
@@ -534,7 +556,13 @@ export function validateNoInlineFunctions(
   if (!t.isJSXExpressionContainer(attr.value)) return null
   const expr = attr.value.expression
   if (t.isArrowFunctionExpression(expr) || t.isFunctionExpression(expr)) {
-    return createDiagnostic(DiagnosticCode.FICT_X003, attr, ctx.file.opts.filename || '<unknown>')
+    return createDiagnostic(
+      DiagnosticCode.FICT_X003,
+      attr,
+      ctx.file.opts.filename || '<unknown>',
+      undefined,
+      ctx.options,
+    )
   }
   return null
 }

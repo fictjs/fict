@@ -69,6 +69,22 @@ describe('createDiagnostic', () => {
     expect(diagnostic.context).toEqual({ propName: 'x' })
   })
 
+  it('uses effective compiler defaults for guarantee diagnostic severity', () => {
+    const node = t.identifier('value')
+    const diagnostic = createDiagnostic(DiagnosticCode.FICT_P001, node, 'test.tsx')
+
+    expect(diagnostic.severity).toBe(DiagnosticSeverity.Error)
+  })
+
+  it('respects strictGuarantee opt-out in created diagnostics', () => {
+    const node = t.identifier('value')
+    const diagnostic = createDiagnostic(DiagnosticCode.FICT_P001, node, 'test.tsx', undefined, {
+      strictGuarantee: false,
+    })
+
+    expect(diagnostic.severity).toBe(DiagnosticSeverity.Warning)
+  })
+
   it('reports diagnostics with 1-based warning columns', () => {
     const node = t.identifier('warn')
     node.loc = {
@@ -92,6 +108,40 @@ describe('createDiagnostic', () => {
     )
 
     expect(warnings).toEqual([{ line: 3, column: 3 }])
+  })
+
+  it('reports effective severity through diagnostic context options', () => {
+    const node = t.identifier('warn')
+    node.loc = {
+      start: { line: 4, column: 1, index: 0 },
+      end: { line: 4, column: 5, index: 4 },
+      filename: 'test.tsx',
+      identifierName: 'warn',
+    }
+
+    const warnings: Array<{ code: string; line: number; column: number }> = []
+    reportDiagnostic(
+      {
+        file: { opts: { filename: 'test.tsx' } },
+        options: {
+          filename: 'test.tsx',
+          strictGuarantee: true,
+          onWarn: warning => warnings.push(warning),
+        },
+      },
+      DiagnosticCode.FICT_P001,
+      node,
+    )
+
+    expect(warnings).toEqual([
+      {
+        code: 'FICT-P001',
+        message: 'Props destructuring falls back to non-reactive binding.',
+        fileName: 'test.tsx',
+        line: 4,
+        column: 2,
+      },
+    ])
   })
 })
 
