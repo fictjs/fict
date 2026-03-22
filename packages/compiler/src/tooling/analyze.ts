@@ -20,6 +20,40 @@ import type {
   RegionInfoSerializable,
 } from './types'
 
+const STRICT_REACTIVITY_WARNING_CODES = new Set(['FICT-R003', 'FICT-R006'])
+const STRICT_GUARANTEE_WARNING_CODES = new Set([
+  'FICT-P001',
+  'FICT-P002',
+  'FICT-P003',
+  'FICT-P004',
+  'FICT-P005',
+  'FICT-J003',
+  'FICT-M',
+  'FICT-S002',
+  'FICT-H',
+  'FICT-R001',
+  'FICT-R002',
+  'FICT-R003',
+  'FICT-R006',
+])
+
+function readBooleanEnv(name: string): boolean | undefined {
+  const raw = process.env[name]
+  if (!raw) return undefined
+  const normalized = raw.trim().toLowerCase()
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return true
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+    return false
+  }
+  return undefined
+}
+
+function isStrictGuaranteeEnabled(options?: Partial<FictCompilerOptions>): boolean {
+  return readBooleanEnv('FICT_STRICT_GUARANTEE') === true || options?.strictGuarantee !== false
+}
+
 function mergeLoc(
   a: BabelCore.types.SourceLocation | null | undefined,
   b: BabelCore.types.SourceLocation | null | undefined,
@@ -247,17 +281,29 @@ function regionToSerializable(region: Region, fn: HIRFunction): RegionInfoSerial
   }
 }
 
-function warningSeverity(code: string): AnalyzeDiagnostic['severity'] {
+function warningSeverity(
+  code: string,
+  compilerOptions?: Partial<FictCompilerOptions>,
+): AnalyzeDiagnostic['severity'] {
   const diagnosticCodes = new Set(getAllDiagnosticCodes())
   if (!diagnosticCodes.has(code as never)) return DiagnosticSeverity.Warning
+  if (isStrictGuaranteeEnabled(compilerOptions) && STRICT_GUARANTEE_WARNING_CODES.has(code)) {
+    return DiagnosticSeverity.Error
+  }
+  if (compilerOptions?.strictReactivity && STRICT_REACTIVITY_WARNING_CODES.has(code)) {
+    return DiagnosticSeverity.Error
+  }
   return getDiagnosticInfo(code as never).severity
 }
 
-function normalizeWarningToDiagnostic(warning: CompilerWarning): AnalyzeDiagnostic {
+function normalizeWarningToDiagnostic(
+  warning: CompilerWarning,
+  compilerOptions?: Partial<FictCompilerOptions>,
+): AnalyzeDiagnostic {
   return {
     code: warning.code,
     message: warning.message,
-    severity: warningSeverity(warning.code),
+    severity: warningSeverity(warning.code, compilerOptions),
     line: warning.line,
     column: warning.column,
   }
@@ -318,14 +364,16 @@ function analyzeDiagnostics(
       },
     })
   } catch (error) {
-    const diagnostics = warnings.map(normalizeWarningToDiagnostic)
+    const diagnostics = warnings.map(warning =>
+      normalizeWarningToDiagnostic(warning, options.compilerOptions),
+    )
     if (diagnostics.some(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)) {
       return diagnostics
     }
     return [...diagnostics, normalizeThrownError(error)]
   }
 
-  return warnings.map(normalizeWarningToDiagnostic)
+  return warnings.map(warning => normalizeWarningToDiagnostic(warning, options.compilerOptions))
 }
 
 function shouldIncludeFunction(fn: HIRFunction): boolean {

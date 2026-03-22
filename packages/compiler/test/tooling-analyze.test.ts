@@ -105,7 +105,7 @@ describe('analyzeFictFile', () => {
     expect(result.components).toEqual([])
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ code: 'FICT-M', severity: 'warning' }),
+        expect.objectContaining({ code: 'FICT-M', severity: 'error' }),
         expect.objectContaining({
           code: 'FICT-HIR-UNSUPPORTED',
           severity: 'error',
@@ -140,7 +140,7 @@ describe('analyzeFictFile', () => {
     expect(result.components).toEqual([])
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ code: 'FICT-M', severity: 'warning' }),
+        expect.objectContaining({ code: 'FICT-M', severity: 'error' }),
         expect.objectContaining({
           code: 'FICT-HIR-UNSUPPORTED',
           severity: 'error',
@@ -148,6 +148,47 @@ describe('analyzeFictFile', () => {
       ]),
     )
     expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
+  })
+
+  it('reports strictGuarantee fallback diagnostics as errors by default', () => {
+    const result = analyzeFictFile(
+      `
+        function App({ list: [first, ...rest] }) {
+          return <div>{first}</div>
+        }
+      `,
+      'strict-guarantee-default.tsx',
+      {
+        includeRegions: false,
+        includeDiagnostics: true,
+      },
+    )
+
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'FICT-P002', severity: 'error' })]),
+    )
+  })
+
+  it('downgrades strictGuarantee fallback diagnostics when strictGuarantee is disabled', () => {
+    const result = analyzeFictFile(
+      `
+        function App({ list: [first, ...rest] }) {
+          return <div>{first}</div>
+        }
+      `,
+      'strict-guarantee-disabled.tsx',
+      {
+        includeRegions: false,
+        includeDiagnostics: true,
+        compilerOptions: {
+          strictGuarantee: false,
+        },
+      },
+    )
+
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'FICT-P002', severity: 'warning' })]),
+    )
   })
 
   it('throws when unsupported HIR input is encountered and diagnostics are disabled', () => {
