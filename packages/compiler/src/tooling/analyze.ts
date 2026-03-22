@@ -9,7 +9,7 @@ import type { Region } from '../ir/regions'
 import { deSSAVarName, generateRegions } from '../ir/regions'
 import { analyzeReactiveScopesWithSSA } from '../ir/scopes'
 import type { CompilerWarning, FictCompilerOptions } from '../types'
-import { DiagnosticSeverity, getAllDiagnosticCodes, getDiagnosticInfo } from '../validation'
+import { DiagnosticSeverity, getDiagnosticInfo, resolveDiagnosticSeverity } from '../validation'
 
 import { inferTraceMarkersForComponent } from './trace-infer'
 import type {
@@ -19,40 +19,6 @@ import type {
   ComponentAnalysis,
   RegionInfoSerializable,
 } from './types'
-
-const STRICT_REACTIVITY_WARNING_CODES = new Set(['FICT-R003', 'FICT-R006'])
-const STRICT_GUARANTEE_WARNING_CODES = new Set([
-  'FICT-P001',
-  'FICT-P002',
-  'FICT-P003',
-  'FICT-P004',
-  'FICT-P005',
-  'FICT-J003',
-  'FICT-M',
-  'FICT-S002',
-  'FICT-H',
-  'FICT-R001',
-  'FICT-R002',
-  'FICT-R003',
-  'FICT-R006',
-])
-
-function readBooleanEnv(name: string): boolean | undefined {
-  const raw = process.env[name]
-  if (!raw) return undefined
-  const normalized = raw.trim().toLowerCase()
-  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
-    return true
-  }
-  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
-    return false
-  }
-  return undefined
-}
-
-function isStrictGuaranteeEnabled(options?: Partial<FictCompilerOptions>): boolean {
-  return readBooleanEnv('FICT_STRICT_GUARANTEE') === true || options?.strictGuarantee !== false
-}
 
 function mergeLoc(
   a: BabelCore.types.SourceLocation | null | undefined,
@@ -285,15 +251,11 @@ function warningSeverity(
   code: string,
   compilerOptions?: Partial<FictCompilerOptions>,
 ): AnalyzeDiagnostic['severity'] {
-  const diagnosticCodes = new Set(getAllDiagnosticCodes())
-  if (!diagnosticCodes.has(code as never)) return DiagnosticSeverity.Warning
-  if (isStrictGuaranteeEnabled(compilerOptions) && STRICT_GUARANTEE_WARNING_CODES.has(code)) {
-    return DiagnosticSeverity.Error
+  try {
+    return resolveDiagnosticSeverity(code as never, compilerOptions)
+  } catch {
+    return DiagnosticSeverity.Warning
   }
-  if (compilerOptions?.strictReactivity && STRICT_REACTIVITY_WARNING_CODES.has(code)) {
-    return DiagnosticSeverity.Error
-  }
-  return getDiagnosticInfo(code as never).severity
 }
 
 function normalizeWarningToDiagnostic(

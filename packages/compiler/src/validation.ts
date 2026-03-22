@@ -176,6 +176,68 @@ export const DiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = 
   [DiagnosticCode.FICT_X003]: DiagnosticSeverity.Hint,
 }
 
+const STRICT_REACTIVITY_DIAGNOSTICS = new Set<DiagnosticCode>([
+  DiagnosticCode.FICT_R003,
+  DiagnosticCode.FICT_R006,
+])
+
+const STRICT_GUARANTEE_DIAGNOSTICS = new Set<DiagnosticCode>([
+  DiagnosticCode.FICT_P001,
+  DiagnosticCode.FICT_P002,
+  DiagnosticCode.FICT_P003,
+  DiagnosticCode.FICT_P004,
+  DiagnosticCode.FICT_P005,
+  DiagnosticCode.FICT_J003,
+  DiagnosticCode.FICT_M,
+  DiagnosticCode.FICT_S002,
+  DiagnosticCode.FICT_H,
+  DiagnosticCode.FICT_R001,
+  DiagnosticCode.FICT_R002,
+  DiagnosticCode.FICT_R003,
+  DiagnosticCode.FICT_R006,
+])
+
+function readBooleanEnv(name: string): boolean | undefined {
+  const raw = process.env[name]
+  if (!raw) return undefined
+  const normalized = raw.trim().toLowerCase()
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return true
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+    return false
+  }
+  return undefined
+}
+
+export function resolveDiagnosticSeverity(
+  code: DiagnosticCode,
+  options: Partial<FictCompilerOptions> = {},
+): DiagnosticSeverity {
+  const strictGuaranteeEnabled =
+    readBooleanEnv('FICT_STRICT_GUARANTEE') === true || options.strictGuarantee !== false
+
+  if (strictGuaranteeEnabled && STRICT_GUARANTEE_DIAGNOSTICS.has(code)) {
+    return DiagnosticSeverity.Error
+  }
+
+  const override = options.warningLevels?.[code]
+  if (override === 'error') return DiagnosticSeverity.Error
+  if (override === 'warn') return DiagnosticSeverity.Warning
+  if (override === 'off') return DiagnosticSeverity.Hint
+
+  if (options.strictReactivity && STRICT_REACTIVITY_DIAGNOSTICS.has(code)) {
+    return DiagnosticSeverity.Error
+  }
+
+  if (options.warningsAsErrors === true) return DiagnosticSeverity.Error
+  if (Array.isArray(options.warningsAsErrors) && options.warningsAsErrors.includes(code)) {
+    return DiagnosticSeverity.Error
+  }
+
+  return DiagnosticSeverities[code]
+}
+
 // ============================================================================
 // Diagnostic Reporting
 // ============================================================================
@@ -554,14 +616,17 @@ export function getAllDiagnosticCodes(): DiagnosticCode[] {
 /**
  * Get diagnostic info for a code (for CLI/tooling)
  */
-export function getDiagnosticInfo(code: DiagnosticCode): {
+export function getDiagnosticInfo(
+  code: DiagnosticCode,
+  options: Partial<FictCompilerOptions> = {},
+): {
   code: DiagnosticCode
   severity: DiagnosticSeverity
   message: string
 } {
   return {
     code,
-    severity: DiagnosticSeverities[code],
+    severity: resolveDiagnosticSeverity(code, options),
     message: DiagnosticMessages[code],
   }
 }

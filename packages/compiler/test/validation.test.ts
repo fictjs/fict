@@ -108,7 +108,7 @@ describe('getDiagnosticInfo', () => {
     const info = getDiagnosticInfo(DiagnosticCode.FICT_R006)
 
     expect(info.code).toBe(DiagnosticCode.FICT_R006)
-    expect(info.severity).toBe(DiagnosticSeverity.Warning)
+    expect(info.severity).toBe(DiagnosticSeverity.Error)
     expect(info.message).toContain('control-flow')
     expect(info.message).toContain('region re-execution')
   })
@@ -118,14 +118,31 @@ describe('getDiagnosticInfo', () => {
     const dynamicAccessInfo = getDiagnosticInfo(DiagnosticCode.FICT_H)
     const hirUnsupportedInfo = getDiagnosticInfo(DiagnosticCode.FICT_HIR_UNSUPPORTED)
 
-    expect(mutationInfo.severity).toBe(DiagnosticSeverity.Warning)
+    expect(mutationInfo.severity).toBe(DiagnosticSeverity.Error)
     expect(mutationInfo.message).toContain('nested $state')
 
-    expect(dynamicAccessInfo.severity).toBe(DiagnosticSeverity.Warning)
+    expect(dynamicAccessInfo.severity).toBe(DiagnosticSeverity.Error)
     expect(dynamicAccessInfo.message).toContain('dependency tracking')
 
     expect(hirUnsupportedInfo.severity).toBe(DiagnosticSeverity.Error)
     expect(hirUnsupportedInfo.message).toContain('HIR conversion')
+  })
+
+  it('returns warning severity when strictGuarantee is disabled', () => {
+    const info = getDiagnosticInfo(DiagnosticCode.FICT_P002, { strictGuarantee: false })
+
+    expect(info.severity).toBe(DiagnosticSeverity.Warning)
+    expect(info.message).toContain('non-reactive binding')
+  })
+
+  it('returns error severity when strictReactivity is enabled', () => {
+    const info = getDiagnosticInfo(DiagnosticCode.FICT_R003, {
+      strictGuarantee: false,
+      strictReactivity: true,
+    })
+
+    expect(info.severity).toBe(DiagnosticSeverity.Error)
+    expect(info.message).toContain('memoized')
   })
 })
 
