@@ -465,6 +465,59 @@ export function App({ items }) {
     expect(actualLastErrorIndex).toBeLessThan(firstWarningIndex)
   })
 
+  it('maps legacy guarantee diagnostics to profile severity in fict-autofixer', async () => {
+    const { client } = await connectServer()
+
+    const source = `
+import { $state } from 'fict'
+
+export function App() {
+  let state = $state({ count: 0 })
+  state.count = 1
+  return <div>{state.count}</div>
+}
+`
+
+    const strictResult = await client.callTool({
+      name: 'fict-autofixer',
+      arguments: {
+        profile: 'app-default',
+        files: {
+          'src/App.tsx': source,
+        },
+      },
+    })
+    const relaxedResult = await client.callTool({
+      name: 'fict-autofixer',
+      arguments: {
+        profile: 'migration',
+        files: {
+          'src/App.tsx': source,
+        },
+      },
+    })
+
+    const strictIssues = Array.isArray(
+      (strictResult.structuredContent as { issues?: unknown })?.issues,
+    )
+      ? ((strictResult.structuredContent as { issues: Array<{ code: string; severity: string }> })
+          .issues ?? [])
+      : []
+    const relaxedIssues = Array.isArray(
+      (relaxedResult.structuredContent as { issues?: unknown })?.issues,
+    )
+      ? ((relaxedResult.structuredContent as { issues: Array<{ code: string; severity: string }> })
+          .issues ?? [])
+      : []
+
+    expect(strictIssues.some(issue => issue.code === 'FICT-M' && issue.severity === 'error')).toBe(
+      true,
+    )
+    expect(
+      relaxedIssues.some(issue => issue.code === 'FICT-M' && issue.severity === 'warning'),
+    ).toBe(true)
+  })
+
   it('creates a valid playground share link', async () => {
     const { client } = await connectServer()
 
