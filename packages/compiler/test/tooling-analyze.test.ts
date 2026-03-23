@@ -164,6 +164,32 @@ describe('analyzeFictFile', () => {
     )
   })
 
+  it('honors default FICT-R004 error behavior in tooling analysis', () => {
+    const result = analyzeFictFile(
+      `
+        import { $state, createEffect } from 'fict'
+
+        export function App() {
+          const count = $state(0)
+          if (count > 0) {
+            createEffect(() => console.log(count))
+          }
+          return <div>{count}</div>
+        }
+      `,
+      'strict-r004-default.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+      },
+    )
+
+    expect(result.components.length).toBeGreaterThan(0)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'FICT-R004', severity: 'error' })]),
+    )
+  })
+
   it('preserves structured diagnostics when strictGuarantee blocks compilation by default', () => {
     const result = analyzeFictFile(
       `
@@ -235,6 +261,35 @@ describe('analyzeFictFile', () => {
     expect(result.components.length).toBeGreaterThan(0)
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: 'FICT-M', severity: 'warning' })]),
+    )
+  })
+
+  it('allows explicitly downgrading FICT-R004 through compilerOptions.warningLevels', () => {
+    const result = analyzeFictFile(
+      `
+        import { $state, createEffect } from 'fict'
+
+        export function App() {
+          const count = $state(0)
+          if (count > 0) {
+            createEffect(() => console.log(count))
+          }
+          return <div>{count}</div>
+        }
+      `,
+      'strict-r004-downgraded.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+        compilerOptions: {
+          warningLevels: { 'FICT-R004': 'warn' },
+        },
+      },
+    )
+
+    expect(result.components.length).toBeGreaterThan(0)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'FICT-R004', severity: 'warning' })]),
     )
   })
 

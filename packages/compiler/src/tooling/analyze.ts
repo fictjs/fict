@@ -313,22 +313,11 @@ function analyzeDiagnostics(
   options: AnalyzeOptions,
 ): AnalyzeDiagnostic[] {
   const warnings: CompilerWarning[] = []
-  const warningLevels = Object.fromEntries(
-    Object.entries(options.compilerOptions?.warningLevels ?? {}).map(([code, level]) => [
-      code,
-      level === 'error' ? 'warn' : level,
-    ]),
-  ) as FictCompilerOptions['warningLevels']
   const pluginOptions: FictCompilerOptions = {
     ...options.compilerOptions,
     dev: true,
     filename: fileName,
     emitModuleMetadata: false,
-    warningsAsErrors: false,
-    warningLevels: {
-      ...warningLevels,
-      'FICT-R004': 'warn',
-    },
     onWarn: warning => warnings.push(warning),
   }
 
