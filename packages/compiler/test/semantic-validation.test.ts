@@ -39,9 +39,7 @@ describe('semantic validation', () => {
         }
       }
     `
-    expect(() => transform(source)).toThrow(
-      /component or hook function body|no nested functions|cannot be declared inside nested functions/,
-    )
+    expect(() => transform(source)).toThrow(/cannot be declared inside nested functions/)
   })
 
   it('allows $state inside reactive scope callback but rejects nested functions within it', () => {
@@ -67,7 +65,7 @@ describe('semantic validation', () => {
       })
     `
     expect(() => transform(badSource, { reactiveScopes: ['renderHook'] })).toThrow(
-      /component or hook function body|no nested functions|cannot be declared inside nested functions/,
+      /cannot be declared inside nested functions/,
     )
   })
 
@@ -97,7 +95,7 @@ describe('semantic validation', () => {
       })
     `
     expect(() => transform(source, { reactiveScopes: ['renderHook'] })).toThrow(
-      /component or hook function body|no nested functions|cannot be declared inside nested functions/,
+      /component or hook function body/,
     )
   })
 
@@ -111,7 +109,7 @@ describe('semantic validation', () => {
       })
     `
     expect(() => transform(source, { reactiveScopes: ['renderHook'] })).toThrow(
-      /component or hook function body|no nested functions|cannot be declared inside nested functions/,
+      /component or hook function body/,
     )
   })
 

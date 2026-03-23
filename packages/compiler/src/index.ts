@@ -1115,8 +1115,6 @@ function createHIREntrypointVisitor(
           while (current) {
             if (current.isFunction?.()) {
               depth++
-              // If this function is a reactive scope callback, treat it as the root boundary.
-              // Nested functions inside it should still be considered "nested".
               if (
                 isReactiveScopeCallbackNode(
                   current.node as BabelCore.types.Function,
@@ -1609,6 +1607,13 @@ function createHIREntrypointVisitor(
                     `For deep reactivity, consider using $store from 'fict'.`,
                 )
               }
+              if (isInsideNestedFunctionWithReactiveScopes(varPath)) {
+                throw varPath.buildCodeFrameError(
+                  `$state() cannot be declared inside nested functions.\n\n` +
+                    `Move the $state() declaration to the component's top level,\n` +
+                    `or extract the nested logic into a custom hook (useXxx).`,
+                )
+              }
               const ownerComponent = varPath.getFunctionParent()
               if (!ownerComponent || !isComponentOrHookDefinition(ownerComponent)) {
                 throw varPath.buildCodeFrameError(
@@ -1625,13 +1630,6 @@ function createHIREntrypointVisitor(
                   `$state() cannot be declared inside loops or conditionals.\n\n` +
                     `Signals must be created at the top level of components for stable identity.\n` +
                     `Move the $state() declaration before the loop/condition.`,
-                )
-              }
-              if (isInsideNestedFunctionWithReactiveScopes(varPath)) {
-                throw varPath.buildCodeFrameError(
-                  `$state() cannot be declared inside nested functions.\n\n` +
-                    `Move the $state() declaration to the component's top level,\n` +
-                    `or extract the nested logic into a custom hook (useXxx).`,
                 )
               }
             } else if (t.isIdentifier(varPath.node.id)) {
@@ -1706,6 +1704,13 @@ function createHIREntrypointVisitor(
                 )
               }
 
+              if (isInsideNestedFunctionWithReactiveScopes(callPath)) {
+                throw callPath.buildCodeFrameError(
+                  `$state() cannot be declared inside nested functions.\n\n` +
+                    `Move the declaration to the component's top level,\n` +
+                    `or extract the nested logic into a custom hook (useXxx).`,
+                )
+              }
               const ownerComponent = callPath.getFunctionParent()
               if (!ownerComponent || !isComponentOrHookDefinition(ownerComponent)) {
                 throw callPath.buildCodeFrameError(
@@ -1722,13 +1727,6 @@ function createHIREntrypointVisitor(
                     `For dynamic collections, consider using $store with an array/object.`,
                 )
               }
-              if (isInsideNestedFunctionWithReactiveScopes(callPath)) {
-                throw callPath.buildCodeFrameError(
-                  `$state() cannot be declared inside nested functions.\n\n` +
-                    `Move the declaration to the component's top level,\n` +
-                    `or extract the nested logic into a custom hook (useXxx).`,
-                )
-              }
             }
             if (isEffectCall(callPath.node, t, effectMacroNames)) {
               // Check if $effect is imported from fict
@@ -1739,19 +1737,19 @@ function createHIREntrypointVisitor(
                     `  import { $effect } from 'fict'`,
                 )
               }
+              if (isInsideNestedFunctionWithReactiveScopes(callPath)) {
+                throw callPath.buildCodeFrameError(
+                  `$effect() cannot be called inside nested functions.\n\n` +
+                    `Move the effect to the component's top level,\n` +
+                    `or extract the nested logic into a custom hook (useXxx).`,
+                )
+              }
               if (isInsideLoop(callPath) || isInsideConditional(callPath)) {
                 throw callPath.buildCodeFrameError(
                   `$effect() cannot be called inside loops or conditionals.\n\n` +
                     `Effects must be registered at the top level of components.\n` +
                     `For conditional effects, use a condition inside the effect body instead:\n` +
                     `  $effect(() => { if (condition) { /* ... */ } })`,
-                )
-              }
-              if (isInsideNestedFunctionWithReactiveScopes(callPath)) {
-                throw callPath.buildCodeFrameError(
-                  `$effect() cannot be called inside nested functions.\n\n` +
-                    `Move the effect to the component's top level,\n` +
-                    `or extract the nested logic into a custom hook (useXxx).`,
                 )
               }
             }

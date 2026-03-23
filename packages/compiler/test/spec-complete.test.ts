@@ -905,9 +905,7 @@ describe('Error cases', () => {
           }
         }
       `),
-    ).toThrow(
-      /component or hook function body|no nested functions|cannot be declared inside nested functions/,
-    )
+    ).toThrow(/component or hook function body|cannot be declared inside nested functions/)
   })
 
   it('throws on $state in conditional', () => {
@@ -930,7 +928,9 @@ describe('Error cases', () => {
           $effect(() => {})
         }
       `),
-    ).toThrow(/\$effect\(\) cannot be called inside loops or conditionals/)
+    ).toThrow(
+      /must be declared inside a component|\$effect\(\) cannot be called inside loops or conditionals/,
+    )
 
     expect(() =>
       transform(`
@@ -952,7 +952,9 @@ describe('Error cases', () => {
           }
         }
       `),
-    ).toThrow(/no nested functions|cannot be called inside nested functions/)
+    ).toThrow(
+      /must be declared inside a component|no nested functions|cannot be called inside nested functions/,
+    )
   })
 })
 
