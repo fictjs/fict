@@ -214,6 +214,18 @@ function fromCompilerWarning(rootDir: string, warning: CompilerWarning): Playgro
   return diagnostic
 }
 
+function parseEscalatedCompilerWarning(message: string): { code: string; message: string } | null {
+  const match = /Fict warning treated as error \(([^)]+)\): ([^\n]+)/.exec(message)
+  if (!match) return null
+  const code = match[1]
+  const warningMessage = match[2]
+  if (!code || !warningMessage) return null
+  return {
+    code,
+    message: warningMessage,
+  }
+}
+
 function fromCompilerError(
   rootDir: string,
   fileName: string,
@@ -237,11 +249,13 @@ function fromCompilerError(
     }
   }
 
+  const escalatedWarning = parseEscalatedCompilerWarning(message)
+
   const diagnostic: PlaygroundDiagnostic = {
     source: 'compiler',
     severity: 'error',
-    code: 'FICT-TRANSFORM',
-    message,
+    code: escalatedWarning?.code ?? 'FICT-TRANSFORM',
+    message: escalatedWarning?.message ?? message,
     filePath: toRelativeFilePath(rootDir, fileName),
   }
   if (line !== undefined) diagnostic.line = line

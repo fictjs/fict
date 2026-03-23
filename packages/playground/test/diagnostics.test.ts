@@ -61,4 +61,61 @@ describe('playground diagnostics', () => {
       await rm(rootDir, { recursive: true, force: true })
     }
   }, 20_000)
+
+  it('preserves compiler diagnostic codes when strict guarantee escalates warnings', async () => {
+    const sandboxRoot = path.join(process.cwd(), '.fict-playground-test')
+    await mkdir(sandboxRoot, { recursive: true })
+    const rootDir = await mkdtemp(path.join(sandboxRoot, 'diag-strict-'))
+
+    try {
+      await writeFile(
+        path.join(rootDir, 'tsconfig.json'),
+        JSON.stringify(
+          {
+            compilerOptions: {
+              target: 'ES2020',
+              module: 'ESNext',
+              moduleResolution: 'bundler',
+              jsx: 'preserve',
+              jsxImportSource: 'fict',
+              strict: true,
+              skipLibCheck: true,
+            },
+            include: ['src'],
+          },
+          null,
+          2,
+        ),
+      )
+
+      await mkdir(path.join(rootDir, 'src'), { recursive: true })
+      await writeFile(
+        path.join(rootDir, 'src/main.tsx'),
+        "import { $state } from 'fict'\n\nexport function App() {\n  let state = $state({ count: 0 })\n  state.count = 1\n  return <div>{state.count}</div>\n}\n",
+      )
+
+      const strictResult = await collectSessionDiagnostics({ rootDir, config })
+      const relaxedResult = await collectSessionDiagnostics({
+        rootDir,
+        config: {
+          ...config,
+          profile: 'migration',
+          strictGuarantee: false,
+        },
+      })
+
+      expect(strictResult.diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ source: 'compiler', code: 'FICT-M', severity: 'error' }),
+        ]),
+      )
+      expect(relaxedResult.diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ source: 'compiler', code: 'FICT-M', severity: 'warning' }),
+        ]),
+      )
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  }, 20_000)
 })
