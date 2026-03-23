@@ -518,6 +518,61 @@ export function App() {
     ).toBe(true)
   })
 
+  it('preserves default FICT-R004 severity by profile in fict-autofixer', async () => {
+    const { client } = await connectServer()
+
+    const source = `
+import { $state, createEffect } from 'fict'
+
+export function App() {
+  const count = $state(0)
+  if (count > 0) {
+    createEffect(() => console.log(count))
+  }
+  return <div>{count}</div>
+}
+`
+
+    const strictResult = await client.callTool({
+      name: 'fict-autofixer',
+      arguments: {
+        profile: 'app-default',
+        files: {
+          'src/App.tsx': source,
+        },
+      },
+    })
+    const relaxedResult = await client.callTool({
+      name: 'fict-autofixer',
+      arguments: {
+        profile: 'migration',
+        files: {
+          'src/App.tsx': source,
+        },
+      },
+    })
+
+    const strictIssues = Array.isArray(
+      (strictResult.structuredContent as { issues?: unknown })?.issues,
+    )
+      ? ((strictResult.structuredContent as { issues: Array<{ code: string; severity: string }> })
+          .issues ?? [])
+      : []
+    const relaxedIssues = Array.isArray(
+      (relaxedResult.structuredContent as { issues?: unknown })?.issues,
+    )
+      ? ((relaxedResult.structuredContent as { issues: Array<{ code: string; severity: string }> })
+          .issues ?? [])
+      : []
+
+    expect(
+      strictIssues.some(issue => issue.code === 'FICT-R004' && issue.severity === 'error'),
+    ).toBe(true)
+    expect(
+      relaxedIssues.some(issue => issue.code === 'FICT-R004' && issue.severity === 'warning'),
+    ).toBe(true)
+  })
+
   it('creates a valid playground share link', async () => {
     const { client } = await connectServer()
 
