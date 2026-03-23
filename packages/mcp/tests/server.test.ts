@@ -573,6 +573,42 @@ export function App() {
     ).toBe(true)
   })
 
+  it('preserves direct compiler hook-placement codes in fict-autofixer', async () => {
+    const { client } = await connectServer()
+
+    const source = `
+import { $state } from 'fict'
+
+export function App({ items }) {
+  for (const item of items) {
+    let count = $state(item)
+    console.log(count)
+  }
+  return <div />
+}
+`
+
+    const result = await client.callTool({
+      name: 'fict-autofixer',
+      arguments: {
+        profile: 'app-default',
+        files: {
+          'src/App.tsx': source,
+        },
+      },
+    })
+
+    const issues = Array.isArray((result.structuredContent as { issues?: unknown })?.issues)
+      ? ((result.structuredContent as { issues: Array<{ code: string; severity: string }> })
+          .issues ?? [])
+      : []
+
+    expect(issues.some(issue => issue.code === 'FICT-C002' && issue.severity === 'error')).toBe(
+      true,
+    )
+    expect(issues.some(issue => issue.code === 'FICT-COMPILER-CRASH')).toBe(false)
+  })
+
   it('creates a valid playground share link', async () => {
     const { client } = await connectServer()
 

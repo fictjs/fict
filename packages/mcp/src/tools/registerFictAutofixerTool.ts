@@ -1,6 +1,7 @@
 import { Buffer } from 'node:buffer'
 
-import { transformAsync } from '@babel/core'
+import { parseSync, transformAsync } from '@babel/core'
+import * as BabelTypes from '@babel/types'
 import { createFictPlugin, type CompilerWarning, type FictCompilerOptions } from '@fictjs/compiler'
 import fictEslintPlugin from '@fictjs/eslint-plugin'
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -194,6 +195,162 @@ function normalizeEscalatedCompilerIssue(error: unknown, filePath: string): Issu
   return issue
 }
 
+function containsPosition(
+  loc: BabelTypes.SourceLocation | null | undefined,
+  line: number,
+  column: number,
+): boolean {
+  if (!loc) return false
+  if (line < loc.start.line || line > loc.end.line) return false
+  if (line === loc.start.line && column < loc.start.column) return false
+  if (line === loc.end.line && column > loc.end.column) return false
+  return true
+}
+
+function extractLocationFromCompilerMessage(
+  message: string,
+): { line: number; column: number } | null {
+  const lineMatch = /^>\s+(\d+)\s+\|/m.exec(message)
+  const columnMatch = /^\s*\|\s+(\^+)/m.exec(message)
+  if (!lineMatch || !columnMatch) return null
+
+  const line = Number.parseInt(lineMatch[1] ?? '', 10)
+  const carets = columnMatch[1]
+  if (!Number.isFinite(line) || !carets) return null
+
+  const markerIndex = columnMatch.index + columnMatch[0].indexOf(carets)
+  const lineStart = message.lastIndexOf('\n', columnMatch.index) + 1
+  const column = markerIndex - lineStart
+
+  return { line, column }
+}
+
+function isLoopNode(node: BabelTypes.Node): boolean {
+  return (
+    BabelTypes.isForStatement(node) ||
+    BabelTypes.isForInStatement(node) ||
+    BabelTypes.isForOfStatement(node) ||
+    BabelTypes.isWhileStatement(node) ||
+    BabelTypes.isDoWhileStatement(node)
+  )
+}
+
+function isConditionalNode(node: BabelTypes.Node): boolean {
+  return (
+    BabelTypes.isIfStatement(node) ||
+    BabelTypes.isSwitchStatement(node) ||
+    BabelTypes.isSwitchCase(node) ||
+    BabelTypes.isConditionalExpression(node) ||
+    BabelTypes.isLogicalExpression(node)
+  )
+}
+
+function findAncestorsAtPosition(
+  node: BabelTypes.Node,
+  line: number,
+  column: number,
+  ancestors: BabelTypes.Node[] = [],
+): BabelTypes.Node[] | null {
+  if (!containsPosition(node.loc, line, column)) return null
+
+  const visitorKeys = BabelTypes.VISITOR_KEYS[node.type] ?? []
+  for (const key of visitorKeys) {
+    const value = (node as unknown as Record<string, unknown>)[key]
+
+    if (Array.isArray(value)) {
+      for (const child of value) {
+        if (!child || typeof child !== 'object' || !('type' in child)) continue
+        const found = findAncestorsAtPosition(child as BabelTypes.Node, line, column, [
+          ...ancestors,
+          node,
+        ])
+        if (found) return found
+      }
+      continue
+    }
+
+    if (!value || typeof value !== 'object' || !('type' in value)) continue
+    const found = findAncestorsAtPosition(value as BabelTypes.Node, line, column, [
+      ...ancestors,
+      node,
+    ])
+    if (found) return found
+  }
+
+  return [...ancestors, node]
+}
+
+function inferDirectCompilerIssueCode(sourceCode: string, filePath: string, message: string) {
+  if (!/\$state\(\) cannot be declared inside loops or conditionals\./.test(message)) {
+    return null
+  }
+
+  const location = extractLocationFromCompilerMessage(message)
+  if (!location) return null
+
+  const ast = parseSync(sourceCode, {
+    filename: filePath,
+    sourceType: 'module',
+    parserOpts: {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx'],
+      allowReturnOutsideFunction: true,
+    },
+  })
+  if (!ast || ast.type !== 'File') return null
+
+  const ancestors = findAncestorsAtPosition(ast, location.line, location.column)
+  if (!ancestors) return null
+
+  if (ancestors.some(isLoopNode)) {
+    return {
+      code: 'FICT-C002',
+      range: {
+        start: {
+          line: location.line,
+          col: location.column + 1,
+        },
+      },
+    }
+  }
+
+  if (ancestors.some(isConditionalNode)) {
+    return {
+      code: 'FICT-C001',
+      range: {
+        start: {
+          line: location.line,
+          col: location.column + 1,
+        },
+      },
+    }
+  }
+
+  return null
+}
+
+function normalizeKnownCompilerIssue(
+  error: unknown,
+  filePath: string,
+  sourceCode: string,
+): Issue | null {
+  if (!(error instanceof Error)) return null
+
+  const inferred = inferDirectCompilerIssueCode(sourceCode, filePath, error.message)
+  if (!inferred) return null
+
+  return {
+    source: 'compiler',
+    code: inferred.code,
+    severity: 'error',
+    message: error.message.split('\n')[0] ?? error.message,
+    file: filePath,
+    range: inferred.range,
+    doc_refs: ['diagnostic-codes'],
+    suggestion: suggestionForIssue('compiler', inferred.code, error.message),
+  }
+}
+
 const ESLINT_RULE_LEVELS: Linter.RulesRecord = {
   'fict/no-state-in-loop': 'error',
   'fict/no-direct-mutation': 'warn',
@@ -338,6 +495,11 @@ async function collectCompilerIssues(
       const escalatedIssue = normalizeEscalatedCompilerIssue(error, filePath)
       if (escalatedIssue) {
         issues.push(escalatedIssue)
+        continue
+      }
+      const knownIssue = normalizeKnownCompilerIssue(error, filePath, sourceCode)
+      if (knownIssue) {
+        issues.push(knownIssue)
         continue
       }
       issues.push({
