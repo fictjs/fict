@@ -28,7 +28,6 @@ export function compileDocumentSource(document: vscode.TextDocument): string {
           dev: true,
           filename: document.fileName,
           emitModuleMetadata: false,
-          strictGuarantee: false,
         },
       ],
     ],
