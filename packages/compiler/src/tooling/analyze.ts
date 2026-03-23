@@ -1,5 +1,6 @@
 import type * as BabelCore from '@babel/core'
 import { parseSync, transformSync } from '@babel/core'
+import * as BabelTypes from '@babel/types'
 
 import createFictPlugin from '../index'
 import { buildHIR } from '../ir/build-hir'
@@ -307,6 +308,147 @@ function normalizeEscalatedCompilerError(error: unknown): AnalyzeDiagnostic | nu
   }
 }
 
+function isLoopNode(node: BabelCore.types.Node): boolean {
+  return (
+    BabelTypes.isForStatement(node) ||
+    BabelTypes.isForInStatement(node) ||
+    BabelTypes.isForOfStatement(node) ||
+    BabelTypes.isWhileStatement(node) ||
+    BabelTypes.isDoWhileStatement(node)
+  )
+}
+
+function isConditionalNode(node: BabelCore.types.Node): boolean {
+  return (
+    BabelTypes.isIfStatement(node) ||
+    BabelTypes.isSwitchStatement(node) ||
+    BabelTypes.isSwitchCase(node) ||
+    BabelTypes.isConditionalExpression(node) ||
+    BabelTypes.isLogicalExpression(node)
+  )
+}
+
+function containsPosition(
+  loc: BabelCore.types.SourceLocation | null | undefined,
+  line: number,
+  column: number,
+): boolean {
+  if (!loc) return false
+  if (line < loc.start.line || line > loc.end.line) return false
+  if (line === loc.start.line && column < loc.start.column) return false
+  if (line === loc.end.line && column > loc.end.column) return false
+  return true
+}
+
+function extractLocationFromCompilerMessage(
+  message: string,
+): { line: number; column: number } | null {
+  const lineMatch = /^>\s+(\d+)\s+\|/m.exec(message)
+  const columnMatch = /^\s*\|\s+(\^+)/m.exec(message)
+  if (!lineMatch || !columnMatch) return null
+
+  const line = Number.parseInt(lineMatch[1] ?? '', 10)
+  const carets = columnMatch[1]
+  if (!Number.isFinite(line) || !carets) return null
+
+  const markerIndex = columnMatch.index + columnMatch[0].indexOf(carets)
+  const lineStart = message.lastIndexOf('\n', columnMatch.index) + 1
+  const column = markerIndex - lineStart
+
+  return { line, column }
+}
+
+function findAncestorsAtPosition(
+  node: BabelCore.types.Node,
+  line: number,
+  column: number,
+  ancestors: BabelCore.types.Node[] = [],
+): BabelCore.types.Node[] | null {
+  if (!containsPosition(node.loc, line, column)) return null
+
+  const visitorKeys = BabelTypes.VISITOR_KEYS[node.type] ?? []
+  for (const key of visitorKeys) {
+    const value = (node as unknown as Record<string, unknown>)[key]
+
+    if (Array.isArray(value)) {
+      for (const child of value) {
+        if (!child || typeof child !== 'object' || !('type' in child)) continue
+        const found = findAncestorsAtPosition(child as BabelCore.types.Node, line, column, [
+          ...ancestors,
+          node,
+        ])
+        if (found) return found
+      }
+      continue
+    }
+
+    if (!value || typeof value !== 'object' || !('type' in value)) continue
+    const found = findAncestorsAtPosition(value as BabelCore.types.Node, line, column, [
+      ...ancestors,
+      node,
+    ])
+    if (found) return found
+  }
+
+  return [...ancestors, node]
+}
+
+function inferDirectCompilerDiagnosticCode(
+  source: string,
+  fileName: string,
+  error: Error & { loc?: { line: number; column: number } },
+): string | null {
+  if (!/\$state\(\) cannot be declared inside loops or conditionals\./.test(error.message)) {
+    return null
+  }
+
+  const location = error.loc ?? extractLocationFromCompilerMessage(error.message)
+  if (!location) return null
+
+  const ast = parseSync(source, {
+    filename: fileName,
+    sourceType: 'module',
+    parserOpts: {
+      sourceType: 'module',
+      plugins: ['typescript', 'jsx'],
+      allowReturnOutsideFunction: true,
+    },
+  })
+
+  if (!ast || ast.type !== 'File') return null
+
+  const ancestors = findAncestorsAtPosition(ast, location.line, location.column)
+  if (!ancestors) return null
+  if (ancestors.some(isLoopNode)) return 'FICT-C002'
+  if (ancestors.some(isConditionalNode)) return 'FICT-C001'
+  return null
+}
+
+function normalizeKnownCompilerError(
+  source: string,
+  fileName: string,
+  error: unknown,
+): AnalyzeDiagnostic | null {
+  if (!(error instanceof Error)) return null
+
+  const errorWithLocation = error as Error & {
+    loc?: {
+      line: number
+      column: number
+    }
+  }
+  const code = inferDirectCompilerDiagnosticCode(source, fileName, errorWithLocation)
+  if (!code) return null
+
+  return {
+    code,
+    message: error.message.split('\n')[0] ?? error.message,
+    severity: DiagnosticSeverity.Error,
+    line: errorWithLocation.loc?.line ?? 0,
+    column: (errorWithLocation.loc?.column ?? -1) + 1,
+  }
+}
+
 function analyzeDiagnostics(
   code: string,
   fileName: string,
@@ -352,6 +494,18 @@ function analyzeDiagnostics(
       )
     ) {
       diagnostics.push(escalatedDiagnostic)
+    }
+    const knownDiagnostic = normalizeKnownCompilerError(code, fileName, error)
+    if (
+      knownDiagnostic &&
+      !diagnostics.some(
+        diagnostic =>
+          diagnostic.code === knownDiagnostic.code &&
+          diagnostic.line === knownDiagnostic.line &&
+          diagnostic.column === knownDiagnostic.column,
+      )
+    ) {
+      diagnostics.push(knownDiagnostic)
     }
     if (diagnostics.some(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)) {
       return diagnostics

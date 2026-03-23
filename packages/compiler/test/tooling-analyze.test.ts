@@ -293,6 +293,60 @@ describe('analyzeFictFile', () => {
     )
   })
 
+  it('preserves FICT-C002 for direct loop/conditional hook placement errors', () => {
+    const result = analyzeFictFile(
+      `
+        import { $state } from 'fict'
+
+        export function App({ items }) {
+          for (const item of items) {
+            let count = $state(item)
+            console.log(count)
+          }
+          return <div />
+        }
+      `,
+      'loop-hooks.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+      },
+    )
+
+    expect(result.components.length).toBeGreaterThan(0)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'FICT-C002', severity: 'error' })]),
+    )
+    expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
+  })
+
+  it('preserves FICT-C001 for direct conditional hook placement errors', () => {
+    const result = analyzeFictFile(
+      `
+        import { $state } from 'fict'
+
+        export function App({ ready }) {
+          if (ready) {
+            let count = $state(0)
+            return <div>{count}</div>
+          }
+          return <div>fallback</div>
+        }
+      `,
+      'conditional-hooks.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+      },
+    )
+
+    expect(result.components.length).toBeGreaterThan(0)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'FICT-C001', severity: 'error' })]),
+    )
+    expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
+  })
+
   it('throws when unsupported HIR input is encountered and diagnostics are disabled', () => {
     expect(() =>
       analyzeFictFile(
