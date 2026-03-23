@@ -82,7 +82,7 @@ describe('analyzeFictFile', () => {
     expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
   })
 
-  it('preserves compiler diagnostics when unsupported HIR stops component analysis', () => {
+  it('returns the strict compiler error before unsupported HIR recovery runs', () => {
     const result = analyzeFictFile(
       `
         import { $state } from 'fict'
@@ -103,18 +103,16 @@ describe('analyzeFictFile', () => {
     )
 
     expect(result.components).toEqual([])
-    expect(result.diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: 'FICT-M', severity: 'error' }),
-        expect.objectContaining({
-          code: 'FICT-HIR-UNSUPPORTED',
-          severity: 'error',
-        }),
-      ]),
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: 'FICT-M', severity: 'error' }),
+    ])
+    expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-HIR-UNSUPPORTED')).toBe(
+      false,
     )
+    expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
   })
 
-  it('preserves structured diagnostics during recovery even when warnings are escalated', () => {
+  it('preserves structured diagnostics when explicit escalation blocks before HIR recovery', () => {
     const result = analyzeFictFile(
       `
         import { $state } from 'fict'
@@ -138,14 +136,11 @@ describe('analyzeFictFile', () => {
     )
 
     expect(result.components).toEqual([])
-    expect(result.diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: 'FICT-M', severity: 'error' }),
-        expect.objectContaining({
-          code: 'FICT-HIR-UNSUPPORTED',
-          severity: 'error',
-        }),
-      ]),
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({ code: 'FICT-M', severity: 'error' }),
+    ])
+    expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-HIR-UNSUPPORTED')).toBe(
+      false,
     )
     expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
   })
@@ -169,6 +164,31 @@ describe('analyzeFictFile', () => {
     )
   })
 
+  it('preserves structured diagnostics when strictGuarantee blocks compilation by default', () => {
+    const result = analyzeFictFile(
+      `
+        import { $state } from 'fict'
+
+        export function App() {
+          let state = $state({ count: 0 })
+          state.count = 1
+          return <div>{state.count}</div>
+        }
+      `,
+      'strict-guarantee-blocked.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+      },
+    )
+
+    expect(result.components.length).toBeGreaterThan(0)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'FICT-M', severity: 'error' })]),
+    )
+    expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
+  })
+
   it('downgrades strictGuarantee fallback diagnostics when strictGuarantee is disabled', () => {
     const result = analyzeFictFile(
       `
@@ -188,6 +208,33 @@ describe('analyzeFictFile', () => {
 
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: 'FICT-P002', severity: 'warning' })]),
+    )
+  })
+
+  it('allows component analysis when strictGuarantee is explicitly disabled', () => {
+    const result = analyzeFictFile(
+      `
+        import { $state } from 'fict'
+
+        export function App() {
+          let state = $state({ count: 0 })
+          state.count = 1
+          return <div>{state.count}</div>
+        }
+      `,
+      'strict-guarantee-opt-out.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+        compilerOptions: {
+          strictGuarantee: false,
+        },
+      },
+    )
+
+    expect(result.components.length).toBeGreaterThan(0)
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ code: 'FICT-M', severity: 'warning' })]),
     )
   })
 

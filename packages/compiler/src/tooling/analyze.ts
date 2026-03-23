@@ -282,6 +282,31 @@ function normalizeThrownError(error: unknown): AnalyzeDiagnostic {
   }
 }
 
+function normalizeEscalatedCompilerError(error: unknown): AnalyzeDiagnostic | null {
+  if (!(error instanceof Error)) return null
+  const match = /Fict warning treated as error \(([^)]+)\): ([^\n]+)/.exec(error.message)
+  if (!match) return null
+
+  const code = match[1]
+  const message = match[2]
+  if (!code || !message) return null
+
+  const errorWithLocation = error as Error & {
+    loc?: {
+      line: number
+      column: number
+    }
+  }
+
+  return {
+    code,
+    message,
+    severity: DiagnosticSeverity.Error,
+    line: errorWithLocation.loc?.line ?? 0,
+    column: (errorWithLocation.loc?.column ?? -1) + 1,
+  }
+}
+
 function analyzeDiagnostics(
   code: string,
   fileName: string,
@@ -299,8 +324,6 @@ function analyzeDiagnostics(
     dev: true,
     filename: fileName,
     emitModuleMetadata: false,
-    strictGuarantee: false,
-    strictReactivity: false,
     warningsAsErrors: false,
     warningLevels: {
       ...warningLevels,
@@ -329,6 +352,18 @@ function analyzeDiagnostics(
     const diagnostics = warnings.map(warning =>
       normalizeWarningToDiagnostic(warning, options.compilerOptions),
     )
+    const escalatedDiagnostic = normalizeEscalatedCompilerError(error)
+    if (
+      escalatedDiagnostic &&
+      !diagnostics.some(
+        diagnostic =>
+          diagnostic.code === escalatedDiagnostic.code &&
+          diagnostic.line === escalatedDiagnostic.line &&
+          diagnostic.column === escalatedDiagnostic.column,
+      )
+    ) {
+      diagnostics.push(escalatedDiagnostic)
+    }
     if (diagnostics.some(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)) {
       return diagnostics
     }
