@@ -47,8 +47,8 @@
     "@fictjs/compiler": "workspace:^",
     "@fictjs/eslint-plugin": "workspace:^",
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "eslint": "^10.0.2",
-    "typescript": "^5.9.3",
+    "eslint": "^10.1.0",
+    "typescript": "^6.0.2",
     "zod": "^4.0.0"
   },
   "devDependencies": {
