@@ -156,6 +156,44 @@ function warningSeverity(code: string, profile: AutofixerProfile): IssueSeverity
   return 'warning'
 }
 
+function normalizeEscalatedCompilerIssue(error: unknown, filePath: string): Issue | null {
+  if (!(error instanceof Error)) return null
+
+  const match = /Fict warning treated as error \(([^)]+)\): ([^\n]+)/.exec(error.message)
+  if (!match) return null
+
+  const code = match[1]
+  const message = match[2]
+  if (!code || !message) return null
+
+  const issue: Issue = {
+    source: 'compiler',
+    code,
+    severity: 'error',
+    message,
+    file: filePath,
+    doc_refs: ['diagnostic-codes'],
+    suggestion: suggestionForIssue('compiler', code, message),
+  }
+
+  const errorWithLocation = error as Error & {
+    loc?: {
+      line: number
+      column: number
+    }
+  }
+  if (errorWithLocation.loc) {
+    issue.range = {
+      start: {
+        line: errorWithLocation.loc.line,
+        col: errorWithLocation.loc.column + 1,
+      },
+    }
+  }
+
+  return issue
+}
+
 const ESLINT_RULE_LEVELS: Linter.RulesRecord = {
   'fict/no-state-in-loop': 'error',
   'fict/no-direct-mutation': 'warn',
@@ -249,6 +287,7 @@ async function collectCompilerIssues(
   profile: AutofixerProfile,
 ): Promise<Issue[]> {
   const issues: Issue[] = []
+  const flags = profileFlags(profile)
 
   for (const [filePath, sourceCode] of Object.entries(files)) {
     const warnings: CompilerWarning[] = []
@@ -256,12 +295,14 @@ async function collectCompilerIssues(
     const pluginOptions: FictCompilerOptions = {
       filename: filePath,
       dev: true,
-      strictGuarantee: false,
-      strictReactivity: false,
+      strictGuarantee: flags.strictGuarantee,
+      strictReactivity: flags.strictReactivity,
       warningsAsErrors: false,
-      warningLevels: {
-        'FICT-R004': 'warn',
-      },
+      warningLevels: flags.strictGuarantee
+        ? undefined
+        : {
+            'FICT-R004': 'warn',
+          },
       onWarn(warning) {
         warnings.push(warning)
       },
@@ -294,6 +335,11 @@ async function collectCompilerIssues(
         ],
       })
     } catch (error) {
+      const escalatedIssue = normalizeEscalatedCompilerIssue(error, filePath)
+      if (escalatedIssue) {
+        issues.push(escalatedIssue)
+        continue
+      }
       issues.push({
         source: 'compiler',
         code: 'FICT-COMPILER-CRASH',
