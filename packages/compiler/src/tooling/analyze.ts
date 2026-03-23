@@ -9,7 +9,7 @@ import type { Region } from '../ir/regions'
 import { deSSAVarName, generateRegions } from '../ir/regions'
 import { analyzeReactiveScopesWithSSA } from '../ir/scopes'
 import type { CompilerWarning, FictCompilerOptions } from '../types'
-import { DiagnosticSeverity, getDiagnosticInfo, resolveDiagnosticSeverity } from '../validation'
+import { DiagnosticSeverity, resolveDiagnosticSeverity } from '../validation'
 
 import { inferTraceMarkersForComponent } from './trace-infer'
 import type {
