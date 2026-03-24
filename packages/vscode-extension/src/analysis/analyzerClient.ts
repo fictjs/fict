@@ -58,6 +58,24 @@ function shouldFallbackToStaticAnalysis(result: {
   return result.components.length === 0 && hasHIRFailure
 }
 
+function extractLocationFromCompilerMessage(
+  message: string,
+): { line: number; column: number } | null {
+  const lineMatch = /^>\s+(\d+)\s+\|/m.exec(message)
+  const columnMatch = /^\s*\|\s+(\^+)/m.exec(message)
+  if (!lineMatch || !columnMatch) return null
+
+  const line = Number.parseInt(lineMatch[1] ?? '', 10)
+  const carets = columnMatch[1]
+  if (!Number.isFinite(line) || !carets) return null
+
+  const markerIndex = columnMatch.index + columnMatch[0].indexOf(carets)
+  const lineStart = message.lastIndexOf('\n', columnMatch.index) + 1
+  const column = markerIndex - lineStart + 1
+
+  return { line, column }
+}
+
 export function mergeComponentTraces(
   analysis: FictDocumentAnalysis,
   cursorLine: number,
@@ -120,13 +138,14 @@ export async function analyzeDocument(
 
     if (settings.includeDiagnostics) {
       const message = error instanceof Error ? error.message : String(error)
+      const location = extractLocationFromCompilerMessage(message)
       fallback.diagnostics = [
         {
-          code: 'FICT-ANALYZE',
-          message,
+          code: 'FICT-COMPILE',
+          message: message.split('\n')[0] ?? message,
           severity: 'error',
-          line: 1,
-          column: 1,
+          line: location?.line ?? 1,
+          column: location?.column ?? 1,
         },
       ]
     }

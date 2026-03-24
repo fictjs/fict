@@ -29,6 +29,15 @@ export function Util() {
 }
 `
 
+const INVALID_SYNTAX_SOURCE = `
+import { $state } from 'fict'
+
+export function App() {
+  let count = $state(0)
+  return <div>{count}</div>
+
+`
+
 describe('analyzer client', () => {
   it('falls back to static components when compiler analysis hits unsupported HIR', async () => {
     const document = {
@@ -114,5 +123,32 @@ describe('analyzer client', () => {
         }),
       ]),
     )
+  })
+
+  it('returns structured compiler diagnostics when analysis throws before compiler diagnostics are available', async () => {
+    const document = {
+      languageId: 'typescriptreact',
+      fileName: '/tmp/invalid.tsx',
+      uri: { fsPath: '/tmp/invalid.tsx' },
+      getText: () => INVALID_SYNTAX_SOURCE,
+    } as const
+
+    const result = await analyzeDocument(document as never, {
+      mode: 'compiler',
+      verbosity: 'minimal',
+      includeRegions: true,
+      includeDiagnostics: true,
+    })
+
+    expect(result).not.toBeNull()
+    expect(result?.mode).toBe('compiler')
+    expect(result?.diagnostics).toEqual([
+      expect.objectContaining({
+        code: 'FICT-COMPILE',
+        severity: 'error',
+        line: 8,
+        column: 7,
+      }),
+    ])
   })
 })
