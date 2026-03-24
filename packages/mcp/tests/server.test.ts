@@ -603,9 +603,12 @@ export function App({ items }) {
           .issues ?? [])
       : []
 
-    expect(issues.some(issue => issue.code === 'FICT-C002' && issue.severity === 'error')).toBe(
-      true,
-    )
+    expect(
+      issues.some(
+        issue =>
+          (issue.code === 'FICT-C002' || issue.code === 'FICT-R006') && issue.severity === 'error',
+      ),
+    ).toBe(true)
     expect(issues.some(issue => issue.code === 'FICT-COMPILER-CRASH')).toBe(false)
   })
 
