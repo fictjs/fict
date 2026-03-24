@@ -609,6 +609,56 @@ export function App({ items }) {
     expect(issues.some(issue => issue.code === 'FICT-COMPILER-CRASH')).toBe(false)
   })
 
+  it('returns structured FICT-COMPILE issues for direct compiler errors without mapped codes', async () => {
+    const { client } = await connectServer()
+
+    const source = `
+import { $state } from 'fict'
+
+export function App() {
+  function inner() {
+    let count = $state(0)
+    return count
+  }
+  return <div>{inner()}</div>
+}
+`
+
+    const result = await client.callTool({
+      name: 'fict-autofixer',
+      arguments: {
+        profile: 'app-default',
+        files: {
+          'src/App.tsx': source,
+        },
+      },
+    })
+
+    const issues = Array.isArray((result.structuredContent as { issues?: unknown })?.issues)
+      ? ((
+          result.structuredContent as {
+            issues: Array<{
+              code: string
+              severity: string
+              line?: number
+              col?: number
+              message: string
+            }>
+          }
+        ).issues ?? [])
+      : []
+
+    expect(
+      issues.some(
+        issue =>
+          issue.code === 'FICT-COMPILE' &&
+          issue.severity === 'error' &&
+          issue.message.includes('$state() cannot be declared inside nested functions.'),
+      ),
+    ).toBe(true)
+    expect(issues.some(issue => issue.code === 'FICT-COMPILER-CRASH')).toBe(false)
+  })
+
   it('creates a valid playground share link', async () => {
     const { client } = await connectServer()
 

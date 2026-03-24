@@ -351,6 +351,29 @@ function normalizeKnownCompilerIssue(
   }
 }
 
+function normalizeThrownCompilerIssue(error: unknown, filePath: string): Issue | null {
+  if (!(error instanceof Error)) return null
+
+  const location = extractLocationFromCompilerMessage(error.message)
+  return {
+    source: 'compiler',
+    code: 'FICT-COMPILE',
+    severity: 'error',
+    message: error.message.split('\n')[0] ?? error.message,
+    file: filePath,
+    range: location
+      ? {
+          start: {
+            line: location.line,
+            col: location.column + 1,
+          },
+        }
+      : undefined,
+    suggestion:
+      'Check syntax/imports first, then rerun. If it persists, isolate a minimal repro for compiler bug reporting.',
+  }
+}
+
 const ESLINT_RULE_LEVELS: Linter.RulesRecord = {
   'fict/no-state-in-loop': 'error',
   'fict/no-direct-mutation': 'warn',
@@ -502,15 +525,17 @@ async function collectCompilerIssues(
         issues.push(knownIssue)
         continue
       }
-      issues.push({
-        source: 'compiler',
-        code: 'FICT-COMPILER-CRASH',
-        severity: 'error',
-        message: error instanceof Error ? error.message : String(error),
-        file: filePath,
-        suggestion:
-          'Check syntax/imports first, then rerun. If it persists, isolate a minimal repro for compiler bug reporting.',
-      })
+      issues.push(
+        normalizeThrownCompilerIssue(error, filePath) ?? {
+          source: 'compiler',
+          code: 'FICT-COMPILER-CRASH',
+          severity: 'error',
+          message: error instanceof Error ? error.message : String(error),
+          file: filePath,
+          suggestion:
+            'Check syntax/imports first, then rerun. If it persists, isolate a minimal repro for compiler bug reporting.',
+        },
+      )
       continue
     }
 
