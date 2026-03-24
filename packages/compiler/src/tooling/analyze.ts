@@ -275,6 +275,7 @@ function normalizeWarningToDiagnostic(
 function normalizeThrownError(error: unknown): AnalyzeDiagnostic {
   const message = error instanceof Error ? error.message : String(error)
   const location = extractLocationFromCompilerMessage(message)
+  // Use extracted location from message, preserving 1-based column
   return {
     code: 'FICT-COMPILE',
     message: message.split('\n')[0] ?? message,
@@ -441,12 +442,16 @@ function normalizeKnownCompilerError(
   const code = inferDirectCompilerDiagnosticCode(source, fileName, errorWithLocation)
   if (!code) return null
 
+  // Use error.loc if available, otherwise extract from message
+  const extractedLocation =
+    errorWithLocation.loc ?? extractLocationFromCompilerMessage(error.message)
+
   return {
     code,
     message: error.message.split('\n')[0] ?? error.message,
     severity: DiagnosticSeverity.Error,
-    line: errorWithLocation.loc?.line ?? 0,
-    column: (errorWithLocation.loc?.column ?? -1) + 1,
+    line: extractedLocation?.line ?? 0,
+    column: (extractedLocation?.column ?? -1) + 1,
   }
 }
 
