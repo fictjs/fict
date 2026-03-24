@@ -390,4 +390,37 @@ describe('analyzeFictFile', () => {
       }),
     ])
   })
+
+  it('returns a located generic compile diagnostic for direct compiler errors without mapped codes', () => {
+    const result = analyzeFictFile(
+      `
+        import { $state } from 'fict'
+
+        export function App() {
+          function inner() {
+            let count = $state(0)
+            return count
+          }
+
+          return <div>{inner()}</div>
+        }
+      `,
+      'nested-state.tsx',
+      {
+        includeRegions: true,
+        includeDiagnostics: true,
+      },
+    )
+
+    expect(result.components.length).toBeGreaterThan(0)
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        code: 'FICT-COMPILE',
+        severity: 'error',
+        message: expect.stringContaining('$state() cannot be declared inside nested functions.'),
+        line: 6,
+        column: 23,
+      }),
+    ])
+  })
 })

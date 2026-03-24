@@ -274,12 +274,13 @@ function normalizeWarningToDiagnostic(
 
 function normalizeThrownError(error: unknown): AnalyzeDiagnostic {
   const message = error instanceof Error ? error.message : String(error)
+  const location = extractLocationFromCompilerMessage(message)
   return {
     code: 'FICT-COMPILE',
-    message,
+    message: message.split('\n')[0] ?? message,
     severity: DiagnosticSeverity.Error,
-    line: 0,
-    column: 0,
+    line: location?.line ?? 0,
+    column: location ? location.column + 1 : 0,
   }
 }
 
