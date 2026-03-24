@@ -118,4 +118,59 @@ describe('playground diagnostics', () => {
       await rm(rootDir, { recursive: true, force: true })
     }
   }, 20_000)
+
+  it('returns structured FICT-COMPILE diagnostics for direct compiler failures', async () => {
+    const sandboxRoot = path.join(process.cwd(), '.fict-playground-test')
+    await mkdir(sandboxRoot, { recursive: true })
+    const rootDir = await mkdtemp(path.join(sandboxRoot, 'diag-direct-'))
+
+    try {
+      await writeFile(
+        path.join(rootDir, 'tsconfig.json'),
+        JSON.stringify(
+          {
+            compilerOptions: {
+              target: 'ES2020',
+              module: 'ESNext',
+              moduleResolution: 'bundler',
+              jsx: 'preserve',
+              jsxImportSource: 'fict',
+              strict: true,
+              skipLibCheck: true,
+            },
+            include: ['src'],
+          },
+          null,
+          2,
+        ),
+      )
+
+      await mkdir(path.join(rootDir, 'src'), { recursive: true })
+      await writeFile(
+        path.join(rootDir, 'src/main.tsx'),
+        "import { $state } from 'fict'\n\nexport function App() {\n  function inner() {\n    let count = $state(0)\n    return count\n  }\n  return <div>{inner()}</div>\n}\n",
+      )
+
+      const result = await collectSessionDiagnostics({ rootDir, config })
+
+      expect(result.diagnostics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            source: 'compiler',
+            code: 'FICT-COMPILE',
+            severity: 'error',
+            line: 5,
+            column: 15,
+          }),
+        ]),
+      )
+      expect(
+        result.diagnostics.some(diagnostic =>
+          diagnostic.message.includes('$state() cannot be declared inside nested functions.'),
+        ),
+      ).toBe(true)
+    } finally {
+      await rm(rootDir, { recursive: true, force: true })
+    }
+  }, 20_000)
 })

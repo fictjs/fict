@@ -226,6 +226,24 @@ function parseEscalatedCompilerWarning(message: string): { code: string; message
   }
 }
 
+function extractLocationFromCompilerMessage(
+  message: string,
+): { line: number; column: number } | null {
+  const lineMatch = /^>\s+(\d+)\s+\|/m.exec(message)
+  const columnMatch = /^\s*\|\s+(\^+)/m.exec(message)
+  if (!lineMatch || !columnMatch) return null
+
+  const line = Number.parseInt(lineMatch[1] ?? '', 10)
+  const carets = columnMatch[1]
+  if (!Number.isFinite(line) || !carets) return null
+
+  const markerIndex = columnMatch.index + columnMatch[0].indexOf(carets)
+  const lineStart = message.lastIndexOf('\n', columnMatch.index) + 1
+  const column = markerIndex - lineStart
+
+  return { line, column: column + 1 }
+}
+
 function fromCompilerError(
   rootDir: string,
   fileName: string,
@@ -237,6 +255,7 @@ function fromCompilerError(
 
   if (error instanceof Error) {
     message = error.message
+    const derivedLocation = extractLocationFromCompilerMessage(message)
     const errorWithLocation = error as Error & {
       loc?: {
         line: number
@@ -246,16 +265,20 @@ function fromCompilerError(
     if (errorWithLocation.loc) {
       line = errorWithLocation.loc.line
       column = errorWithLocation.loc.column + 1
+    } else if (derivedLocation) {
+      line = derivedLocation.line
+      column = derivedLocation.column
     }
   }
 
   const escalatedWarning = parseEscalatedCompilerWarning(message)
+  const conciseMessage = message.split('\n')[0] ?? message
 
   const diagnostic: PlaygroundDiagnostic = {
     source: 'compiler',
     severity: 'error',
-    code: escalatedWarning?.code ?? 'FICT-TRANSFORM',
-    message: escalatedWarning?.message ?? message,
+    code: escalatedWarning?.code ?? 'FICT-COMPILE',
+    message: escalatedWarning?.message ?? conciseMessage,
     filePath: toRelativeFilePath(rootDir, fileName),
   }
   if (line !== undefined) diagnostic.line = line
