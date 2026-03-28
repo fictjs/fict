@@ -8,7 +8,13 @@ import { lowerHIRWithRegions } from './ir/codegen'
 import { optimizeHIR } from './ir/optimize'
 import { resolveModuleMetadata } from './module-metadata'
 import type { CompilerWarning, FictCompilerOptions } from './types'
-import { getRootIdentifier, isEffectCall, isMemoCall, isStateCall } from './utils'
+import {
+  getRootIdentifier,
+  isComponentElement,
+  isEffectCall,
+  isMemoCall,
+  isStateCall,
+} from './utils'
 
 export type { FictCompilerOptions, CompilerWarning } from './types'
 
@@ -1405,6 +1411,23 @@ function createHIREntrypointVisitor(
                   importedReactiveBindingIds.add(binding.identifier as BabelCore.types.Identifier)
                 }
               }
+            }
+          },
+        })
+        path.traverse({
+          JSXElement(elementPath) {
+            if (isComponentElement(elementPath.node, t)) return
+            const attrPaths = elementPath.get('openingElement').get('attributes')
+            for (const attrPath of attrPaths) {
+              if (!attrPath.isJSXSpreadAttribute()) continue
+              emitWarning(
+                attrPath,
+                'FICT-J003',
+                'Spread on native element may include unknown props.',
+                warn,
+                fileName,
+              )
+              return
             }
           },
         })

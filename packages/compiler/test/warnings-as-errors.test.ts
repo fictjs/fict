@@ -146,6 +146,17 @@ describe('warnings as errors', () => {
     expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-P00[1-5]/)
   })
 
+  it('strictGuarantee is enabled by default and escalates native element spread diagnostics', () => {
+    const source = `
+      function App() {
+        const props = { id: 'demo', title: 'Demo' }
+        return <div {...props}>Hello</div>
+      }
+    `
+
+    expect(() => transformWithCompilerDefaults(source, { dev: false })).toThrow(/FICT-J003/)
+  })
+
   it('strictGuarantee escalates legacy non-guaranteed reactivity diagnostics', () => {
     const mutationSource = `
       import { $state } from 'fict'

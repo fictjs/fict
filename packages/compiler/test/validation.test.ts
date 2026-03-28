@@ -341,6 +341,54 @@ describe('rule validations', () => {
     expect(diagnostic?.code).toBe(DiagnosticCode.FICT_J002)
   })
 
+  it('reports native element spread diagnostics during function validation', () => {
+    const fn = t.functionDeclaration(
+      t.identifier('App'),
+      [],
+      t.blockStatement([
+        t.returnStatement(
+          t.jsxElement(
+            t.jsxOpeningElement(
+              t.jsxIdentifier('div'),
+              [t.jsxSpreadAttribute(t.identifier('props'))],
+              false,
+            ),
+            t.jsxClosingElement(t.jsxIdentifier('div')),
+            [],
+            false,
+          ),
+        ),
+      ]),
+    )
+
+    const diagnostics = validateFunction(fn, ctx, t)
+    expect(diagnostics.some(d => d.code === DiagnosticCode.FICT_J003)).toBe(true)
+  })
+
+  it('does not report native element spread diagnostics for component spreads', () => {
+    const fn = t.functionDeclaration(
+      t.identifier('App'),
+      [],
+      t.blockStatement([
+        t.returnStatement(
+          t.jsxElement(
+            t.jsxOpeningElement(
+              t.jsxIdentifier('Widget'),
+              [t.jsxSpreadAttribute(t.identifier('props'))],
+              true,
+            ),
+            null,
+            [],
+            true,
+          ),
+        ),
+      ]),
+    )
+
+    const diagnostics = validateFunction(fn, ctx, t)
+    expect(diagnostics.some(d => d.code === DiagnosticCode.FICT_J003)).toBe(false)
+  })
+
   it('collects diagnostics across function body validation', () => {
     const listItem = t.jsxElement(
       t.jsxOpeningElement(t.jsxIdentifier('li'), [], false),

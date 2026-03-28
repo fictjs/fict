@@ -8,6 +8,7 @@
 import type * as BabelCore from '@babel/core'
 
 import type { FictCompilerOptions, TransformContext } from './types'
+import { isComponentElement } from './utils'
 
 // ============================================================================
 // Diagnostic Codes
@@ -573,6 +574,25 @@ export function validateNoInlineFunctions(
   return null
 }
 
+function validateNativeElementSpread(
+  node: BabelCore.types.JSXElement,
+  ctx: TransformContext,
+  t: typeof BabelCore.types,
+): Diagnostic | null {
+  if (isComponentElement(node, t)) return null
+  for (const attr of node.openingElement.attributes) {
+    if (!t.isJSXSpreadAttribute(attr)) continue
+    return createDiagnostic(
+      DiagnosticCode.FICT_J003,
+      attr,
+      ctx.file.opts.filename || '<unknown>',
+      undefined,
+      ctx.options,
+    )
+  }
+  return null
+}
+
 function pushDiagnostic(diagnostics: Diagnostic[], diagnostic: Diagnostic | null): void {
   if (!diagnostic) return
   const duplicate = diagnostics.some(
@@ -603,6 +623,9 @@ function validateNode(
   }
   if (t.isJSXElement(node) || t.isJSXFragment(node)) {
     pushDiagnostic(diagnostics, validateListKeys(node, ctx, t, ancestors))
+    if (t.isJSXElement(node)) {
+      pushDiagnostic(diagnostics, validateNativeElementSpread(node, ctx, t))
+    }
   }
   if (t.isJSXAttribute(node)) {
     pushDiagnostic(diagnostics, validateNoInlineFunctions(node, ctx, t))

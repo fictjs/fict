@@ -252,6 +252,32 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-J002')).toBe(false)
   })
 
+  it('warns on native element spread props (FICT-J003)', () => {
+    const { warnings } = transformWithWarnings(`
+      function App() {
+        const props = { id: 'demo', title: 'Demo' }
+        return <div {...props}>Hello</div>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-J003')).toBe(true)
+  })
+
+  it('does not warn on component spread props', () => {
+    const { warnings } = transformWithWarnings(`
+      function Widget(props) {
+        return <div>{props.title}</div>
+      }
+
+      function App() {
+        const props = { title: 'Demo' }
+        return <Widget {...props} />
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-J003')).toBe(false)
+  })
+
   it('warns on nested component definitions (FICT-C003)', () => {
     const warnings: CompilerWarning[] = []
     const input = `
