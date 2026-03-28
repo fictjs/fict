@@ -41,12 +41,9 @@ export enum DiagnosticCode {
 
   // Effect-related (FICT-E*)
   FICT_E001 = 'FICT-E001', // Effect without dependencies
-  FICT_E002 = 'FICT-E002', // Effect with captured reactive value
-  FICT_E003 = 'FICT-E003', // Effect cleanup not tracked
 
   // Memo-related (FICT-M*)
   FICT_M001 = 'FICT-M001', // Memo without reactive dependencies
-  FICT_M002 = 'FICT-M002', // Unnecessary memo (constant value)
   FICT_M003 = 'FICT-M003', // Memo with side effects
 
   // Control flow (FICT-C*)
@@ -61,7 +58,6 @@ export enum DiagnosticCode {
   FICT_J003 = 'FICT-J003', // Spread on native element
 
   // Region/Scope (FICT-R*)
-  FICT_R001 = 'FICT-R001', // Region boundary crossing
   FICT_R002 = 'FICT-R002', // Scope escape detected
   FICT_R003 = 'FICT-R003', // Non-memoizable expression
   FICT_R004 = 'FICT-R004', // Reactive creation inside non-JSX control flow
@@ -73,8 +69,6 @@ export enum DiagnosticCode {
   FICT_HIR_UNSUPPORTED = 'FICT-HIR-UNSUPPORTED',
 
   // Performance (FICT-X*)
-  FICT_X001 = 'FICT-X001', // Object recreation on each render
-  FICT_X002 = 'FICT-X002', // Array recreation on each render
   FICT_X003 = 'FICT-X003', // Inline function in JSX props
 }
 
@@ -96,11 +90,8 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
 
   [DiagnosticCode.FICT_E001]:
     'Effect without reactive dependencies will run only once; consider adding state reads or removing the effect.',
-  [DiagnosticCode.FICT_E002]: 'Effect captures reactive value that may change.',
-  [DiagnosticCode.FICT_E003]: 'Effect cleanup function is not properly tracked.',
 
   [DiagnosticCode.FICT_M001]: 'Memo has no reactive dependencies and could be a constant.',
-  [DiagnosticCode.FICT_M002]: 'Unnecessary memo wrapping a constant value.',
   [DiagnosticCode.FICT_M003]: 'Memo should not contain side effects.',
 
   [DiagnosticCode.FICT_C001]: 'Hooks should not be called conditionally.',
@@ -112,7 +103,6 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
   [DiagnosticCode.FICT_J002]: 'Missing key prop in list rendering.',
   [DiagnosticCode.FICT_J003]: 'Spread on native element may include unknown props.',
 
-  [DiagnosticCode.FICT_R001]: 'Expression crosses reactive region boundary.',
   [DiagnosticCode.FICT_R002]: 'Scope escape detected, value may not be tracked.',
   [DiagnosticCode.FICT_R003]: 'Expression cannot be memoized automatically.',
   [DiagnosticCode.FICT_R004]:
@@ -127,8 +117,6 @@ export const DiagnosticMessages: Record<DiagnosticCode, string> = {
   [DiagnosticCode.FICT_HIR_UNSUPPORTED]:
     'The HIR conversion encountered syntax that it cannot faithfully represent.',
 
-  [DiagnosticCode.FICT_X001]: 'Object is recreated on each render, consider memoizing.',
-  [DiagnosticCode.FICT_X002]: 'Array is recreated on each render, consider memoizing.',
   [DiagnosticCode.FICT_X003]: 'Inline function in JSX props may cause unnecessary re-renders.',
 }
 
@@ -143,11 +131,8 @@ const BaseDiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = {
   [DiagnosticCode.FICT_S002]: DiagnosticSeverity.Warning,
 
   [DiagnosticCode.FICT_E001]: DiagnosticSeverity.Warning,
-  [DiagnosticCode.FICT_E002]: DiagnosticSeverity.Info,
-  [DiagnosticCode.FICT_E003]: DiagnosticSeverity.Warning,
 
   [DiagnosticCode.FICT_M001]: DiagnosticSeverity.Info,
-  [DiagnosticCode.FICT_M002]: DiagnosticSeverity.Hint,
   [DiagnosticCode.FICT_M003]: DiagnosticSeverity.Error,
 
   [DiagnosticCode.FICT_C001]: DiagnosticSeverity.Error,
@@ -159,7 +144,6 @@ const BaseDiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = {
   [DiagnosticCode.FICT_J002]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_J003]: DiagnosticSeverity.Info,
 
-  [DiagnosticCode.FICT_R001]: DiagnosticSeverity.Info,
   [DiagnosticCode.FICT_R002]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_R003]: DiagnosticSeverity.Info,
   [DiagnosticCode.FICT_R004]: DiagnosticSeverity.Error,
@@ -169,8 +153,6 @@ const BaseDiagnosticSeverities: Record<DiagnosticCode, DiagnosticSeverity> = {
   [DiagnosticCode.FICT_H]: DiagnosticSeverity.Warning,
   [DiagnosticCode.FICT_HIR_UNSUPPORTED]: DiagnosticSeverity.Error,
 
-  [DiagnosticCode.FICT_X001]: DiagnosticSeverity.Hint,
-  [DiagnosticCode.FICT_X002]: DiagnosticSeverity.Hint,
   [DiagnosticCode.FICT_X003]: DiagnosticSeverity.Hint,
 }
 
@@ -189,7 +171,6 @@ const STRICT_GUARANTEE_DIAGNOSTICS = new Set<DiagnosticCode>([
   DiagnosticCode.FICT_M,
   DiagnosticCode.FICT_S002,
   DiagnosticCode.FICT_H,
-  DiagnosticCode.FICT_R001,
   DiagnosticCode.FICT_R002,
   DiagnosticCode.FICT_R003,
   DiagnosticCode.FICT_R006,

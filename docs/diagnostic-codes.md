@@ -174,33 +174,6 @@ $effect(() => {
 })
 ```
 
-### FICT-E002: Effect captures reactive value
-
-**Severity:** Info
-
-**Why:** An effect callback captures a reactive value from outer scope.
-
-**Impact:** This is usually correct — the effect will re-run when the captured value changes. This diagnostic is informational.
-
-### FICT-E003: Effect cleanup tracking failed
-
-**Severity:** Warning
-
-**Why:** The compiler could not determine if the effect properly cleans up subscriptions or side effects.
-
-**Impact:** Potential memory leaks or stale subscriptions.
-
-**Fix:** Return a cleanup function from the effect:
-
-```js
-$effect(() => {
-  const subscription = eventSource.subscribe(handler)
-  return () => subscription.unsubscribe() // cleanup
-})
-```
-
----
-
 ## Memo (FICT-M\*)
 
 ### FICT-M001: Memo has no reactive dependencies
@@ -212,16 +185,6 @@ $effect(() => {
 **Impact:** The memo is effectively a constant. This may indicate a logic error.
 
 **Fix:** Verify the computation should depend on reactive values, or convert to a plain constant.
-
-### FICT-M002: Unnecessary memo
-
-**Severity:** Hint
-
-**Why:** A value is wrapped in `$memo` but Fict would automatically memoize it based on usage.
-
-**Impact:** No functional impact, but adds unnecessary code.
-
-**Fix:** Remove explicit `$memo` and let the compiler handle memoization.
 
 ### FICT-M003: Memo contains side effects
 
@@ -384,14 +347,6 @@ items.map(item => <Li key={item.id}>{item.name}</Li>)
 
 ## Regions/Scopes (FICT-R\*)
 
-### FICT-R001: Region boundary crossed
-
-**Severity:** Error (default)
-
-**Why:** A reactive value is used across region boundaries in a way the compiler cannot optimize.
-
-**Impact:** Reactivity preserved but may use less efficient update path.
-
 ### FICT-R002: Scope escape detected
 
 **Severity:** Error (default)
@@ -464,31 +419,6 @@ For the overall guarantee/fallback/unsupported map, see `docs/reactivity-guarant
 ---
 
 ## Performance (FICT-X\*)
-
-### FICT-X001: Object literal recreated
-
-**Severity:** Hint
-
-**Why:** An object literal in JSX props is recreated on every update.
-
-**Impact:** May cause unnecessary child re-renders if child uses reference equality checks.
-
-**Fix:** Extract to a constant or use `$memo`:
-
-```js
-// Recreated every time
-<Component style={{ color: 'red' }} />
-
-// Stable reference
-const style = { color: 'red' }
-<Component style={style} />
-```
-
-### FICT-X002: Array literal recreated
-
-**Severity:** Hint
-
-**Why:** Similar to FICT-X001 for arrays.
 
 ### FICT-X003: Inline function in JSX
 

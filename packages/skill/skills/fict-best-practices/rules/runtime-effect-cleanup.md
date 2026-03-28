@@ -55,4 +55,4 @@ function Search({ query }: { query: string }) {
 }
 ```
 
-Reference: [Diagnostic Codes - FICT-E003](https://github.com/fictjs/fict/blob/main/docs/diagnostic-codes.md)
+Reference: [API Reference](https://github.com/fictjs/fict/blob/main/docs/api-reference.md)

@@ -350,7 +350,7 @@ function Search({ query }: { query: string }) {
 }
 ```
 
-Reference: [https://github.com/fictjs/fict/blob/main/docs/diagnostic-codes.md](https://github.com/fictjs/fict/blob/main/docs/diagnostic-codes.md)
+Reference: [https://github.com/fictjs/fict/blob/main/docs/api-reference.md](https://github.com/fictjs/fict/blob/main/docs/api-reference.md)
 
 ### 3.2 Keep Memo Computations Pure
 

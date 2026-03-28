@@ -50,7 +50,7 @@ describe('DiagnosticCode', () => {
 
   it('keeps non-guarantee defaults unchanged in exported severities', () => {
     expect(DiagnosticSeverities[DiagnosticCode.FICT_C001]).toBe(DiagnosticSeverity.Error)
-    expect(DiagnosticSeverities[DiagnosticCode.FICT_E002]).toBe(DiagnosticSeverity.Info)
+    expect(DiagnosticSeverities[DiagnosticCode.FICT_M001]).toBe(DiagnosticSeverity.Info)
     expect(DiagnosticSeverities[DiagnosticCode.FICT_X003]).toBe(DiagnosticSeverity.Hint)
   })
 })

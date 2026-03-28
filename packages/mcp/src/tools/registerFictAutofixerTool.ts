@@ -47,7 +47,6 @@ const STRICT_GUARANTEE_WARNING_CODES = new Set([
   'FICT-M',
   'FICT-S002',
   'FICT-H',
-  'FICT-R001',
   'FICT-R002',
   'FICT-R003',
   'FICT-R006',
