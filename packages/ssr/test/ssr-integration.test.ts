@@ -1,6 +1,6 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { transformSync } from '@babel/core'
 // @ts-expect-error - CommonJS module without proper types
@@ -26,6 +26,15 @@ import createFictPlugin, { type FictCompilerOptions } from '../../compiler/src/i
 import { parseHTML } from 'linkedom'
 
 import { renderToDocument, renderToString } from '../src/index'
+
+const WORKSPACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+const FICT_PACKAGE_DIR = path.join(WORKSPACE_ROOT, 'packages/fict')
+
+function linkLocalFictPackage(tempDir: string): void {
+  const nodeModulesDir = path.join(tempDir, 'node_modules')
+  mkdirSync(nodeModulesDir, { recursive: true })
+  symlinkSync(FICT_PACKAGE_DIR, path.join(nodeModulesDir, 'fict'), 'junction')
+}
 
 // ============================================================================
 // Test Utilities
@@ -1017,6 +1026,7 @@ function compileResumableModule(source: string): {
   mkdirSync(tempBase, { recursive: true })
   const tempDir = mkdtempSync(path.join(tempBase, 'fict-ssr-'))
   const entryPath = path.join(tempDir, 'entry.mjs')
+  linkLocalFictPackage(tempDir)
 
   const options: FictCompilerOptions = {
     dev: false,

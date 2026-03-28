@@ -7,7 +7,7 @@
  * 3. Client loader triggers events
  * 4. Partial hydration updates DOM
  */
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { Worker } from 'node:worker_threads'
@@ -40,6 +40,15 @@ import { parseHTML } from 'linkedom'
 
 import { renderToString, renderToDocument, renderToStream } from '../src/index'
 
+const WORKSPACE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
+const FICT_PACKAGE_DIR = path.join(WORKSPACE_ROOT, 'packages/fict')
+
+function linkLocalFictPackage(tempDir: string): void {
+  const nodeModulesDir = path.join(tempDir, 'node_modules')
+  mkdirSync(nodeModulesDir, { recursive: true })
+  symlinkSync(FICT_PACKAGE_DIR, path.join(nodeModulesDir, 'fict'), 'junction')
+}
+
 // ============================================================================
 // Test Utilities
 // ============================================================================
@@ -59,6 +68,7 @@ function compileModule(
   mkdirSync(tempBase, { recursive: true })
   const tempDir = mkdtempSync(path.join(tempBase, 'fict-e2e-'))
   const entryPath = path.join(tempDir, 'entry.mjs')
+  linkLocalFictPackage(tempDir)
 
   const compilerOptions: FictCompilerOptions = {
     dev: false,
