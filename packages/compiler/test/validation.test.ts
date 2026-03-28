@@ -341,6 +341,26 @@ describe('rule validations', () => {
     expect(diagnostic?.code).toBe(DiagnosticCode.FICT_J002)
   })
 
+  it('reports index-based list keys inside map callbacks (FICT-J001)', () => {
+    const keyed = t.jsxElement(
+      t.jsxOpeningElement(
+        t.jsxIdentifier('li'),
+        [t.jsxAttribute(t.jsxIdentifier('key'), t.jsxExpressionContainer(t.identifier('index')))],
+        false,
+      ),
+      t.jsxClosingElement(t.jsxIdentifier('li')),
+      [t.jsxExpressionContainer(t.identifier('item'))],
+      false,
+    )
+    const callback = t.arrowFunctionExpression([t.identifier('item'), t.identifier('index')], keyed)
+    const mapCall = t.callExpression(
+      t.memberExpression(t.identifier('items'), t.identifier('map')),
+      [callback],
+    )
+    const diagnostic = validateListKeys(keyed, ctx, t, [mapCall, callback])
+    expect(diagnostic?.code).toBe(DiagnosticCode.FICT_J001)
+  })
+
   it('reports native element spread diagnostics during function validation', () => {
     const fn = t.functionDeclaration(
       t.identifier('App'),

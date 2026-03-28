@@ -252,6 +252,26 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-J002')).toBe(false)
   })
 
+  it('warns when list items use the map index as key (FICT-J001)', () => {
+    const { warnings } = transformWithWarnings(`
+      export function List({ items }) {
+        return <ul>{items.map((item, index) => <li key={index}>{item.name}</li>)}</ul>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-J001')).toBe(true)
+  })
+
+  it('does not warn when list items use a stable property key', () => {
+    const { warnings } = transformWithWarnings(`
+      export function List({ items }) {
+        return <ul>{items.map((item, index) => <li key={item.id}>{item.name}</li>)}</ul>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-J001')).toBe(false)
+  })
+
   it('warns on native element spread props (FICT-J003)', () => {
     const { warnings } = transformWithWarnings(`
       function App() {

@@ -1521,6 +1521,24 @@ function createHIREntrypointVisitor(
 
             const returnedJsx = getReturnedJsx(cbPath)
             if (returnedJsx.length === 0) return
+            const indexParam = cbPath.node.params[1]
+            const indexParamName = t.isIdentifier(indexParam) ? indexParam.name : null
+            const findIndexKeyAttr = (
+              jsx: BabelCore.types.JSXElement | BabelCore.types.JSXFragment,
+            ): BabelCore.types.JSXAttribute | null => {
+              if (!indexParamName || t.isJSXFragment(jsx)) return null
+              for (const attr of jsx.openingElement.attributes) {
+                if (
+                  t.isJSXAttribute(attr) &&
+                  t.isJSXIdentifier(attr.name, { name: 'key' }) &&
+                  t.isJSXExpressionContainer(attr.value) &&
+                  t.isIdentifier(attr.value.expression, { name: indexParamName })
+                ) {
+                  return attr
+                }
+              }
+              return null
+            }
 
             const hasMissingKeyBranch = returnedJsx.some(jsx => {
               if (t.isJSXFragment(jsx)) return true
@@ -1535,14 +1553,26 @@ function createHIREntrypointVisitor(
               return !hasKey
             })
 
-            if (!hasMissingKeyBranch) return
+            if (hasMissingKeyBranch) {
+              warn({
+                code: 'FICT-J002',
+                message: 'Missing key prop in list rendering.',
+                fileName,
+                line: expr.loc?.start.line ?? 0,
+                column: expr.loc ? expr.loc.start.column + 1 : 0,
+              })
+              return
+            }
+
+            const indexKeyAttr = returnedJsx.map(findIndexKeyAttr).find(Boolean) ?? null
+            if (!indexKeyAttr) return
 
             warn({
-              code: 'FICT-J002',
-              message: 'Missing key prop in list rendering.',
+              code: 'FICT-J001',
+              message: 'Dynamic key expression may impact performance.',
               fileName,
-              line: expr.loc?.start.line ?? 0,
-              column: expr.loc ? expr.loc.start.column + 1 : 0,
+              line: indexKeyAttr.loc?.start.line ?? 0,
+              column: indexKeyAttr.loc ? indexKeyAttr.loc.start.column + 1 : 0,
             })
           },
         })

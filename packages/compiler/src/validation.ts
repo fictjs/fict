@@ -441,6 +441,20 @@ function isMapCallbackContext(
   return -1
 }
 
+function getMapCallbackIndexParamName(
+  ancestors: readonly BabelCore.types.Node[],
+  t: typeof BabelCore.types,
+): string | null {
+  const callbackIndex = isMapCallbackContext(ancestors, t)
+  if (callbackIndex < 0) return null
+  const callback = ancestors[callbackIndex]
+  if (!t.isArrowFunctionExpression(callback) && !t.isFunctionExpression(callback)) {
+    return null
+  }
+  const indexParam = callback.params[1]
+  return t.isIdentifier(indexParam) ? indexParam.name : null
+}
+
 function isNode(value: unknown): value is BabelCore.types.Node {
   return !!value && typeof value === 'object' && 'type' in value
 }
@@ -541,15 +555,25 @@ export function validateListKeys(
     return createDiagnostic(DiagnosticCode.FICT_J002, node, fileName, undefined, ctx.options)
   }
 
-  let hasKey = false
+  const indexParamName = getMapCallbackIndexParamName(ancestors, t)
+  let keyAttr: BabelCore.types.JSXAttribute | null = null
   for (const attr of node.openingElement.attributes) {
     if (t.isJSXAttribute(attr) && t.isJSXIdentifier(attr.name, { name: 'key' })) {
-      hasKey = true
+      keyAttr = attr
       break
     }
   }
-  if (hasKey) return null
-  return createDiagnostic(DiagnosticCode.FICT_J002, node, fileName, undefined, ctx.options)
+  if (!keyAttr) {
+    return createDiagnostic(DiagnosticCode.FICT_J002, node, fileName, undefined, ctx.options)
+  }
+  if (
+    indexParamName &&
+    t.isJSXExpressionContainer(keyAttr.value) &&
+    t.isIdentifier(keyAttr.value.expression, { name: indexParamName })
+  ) {
+    return createDiagnostic(DiagnosticCode.FICT_J001, keyAttr, fileName, undefined, ctx.options)
+  }
+  return null
 }
 
 /**
