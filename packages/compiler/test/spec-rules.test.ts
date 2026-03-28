@@ -344,6 +344,28 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
   })
 
+  it('warns on non-event inline JSX function props (FICT-X003)', () => {
+    const { warnings } = transformWithWarnings(`
+      function Panel({ label }) {
+        return <MemoizedButton renderLabel={() => label} />
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-X003')).toBe(true)
+  })
+
+  it('does not warn on inline event handler props', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $state } from 'fict'
+      function Panel() {
+        const count = $state(0)
+        return <button onClick={() => count++}>{count}</button>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-X003')).toBe(false)
+  })
+
   it('warns when memo has no reactive dependencies (FICT-M001)', () => {
     const { warnings } = transformWithWarnings(`
       import { $memo } from 'fict'

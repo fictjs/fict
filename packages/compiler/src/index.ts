@@ -1435,6 +1435,22 @@ function createHIREntrypointVisitor(
             }
           },
         })
+        path.traverse({
+          JSXAttribute(attrPath) {
+            if (!t.isJSXIdentifier(attrPath.node.name)) return
+            if (/^on[A-Z]/.test(attrPath.node.name.name)) return
+            if (!t.isJSXExpressionContainer(attrPath.node.value)) return
+            const expr = attrPath.node.value.expression
+            if (!t.isArrowFunctionExpression(expr) && !t.isFunctionExpression(expr)) return
+            emitWarning(
+              attrPath,
+              'FICT-X003',
+              'Inline function in JSX props may cause unnecessary re-renders.',
+              warn,
+              fileName,
+            )
+          },
+        })
         // Warn on list rendering without key
         path.traverse({
           JSXExpressionContainer(exprPath) {

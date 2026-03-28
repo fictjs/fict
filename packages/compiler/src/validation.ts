@@ -584,6 +584,9 @@ export function validateNoInlineFunctions(
   ctx: TransformContext,
   t: typeof BabelCore.types,
 ): Diagnostic | null {
+  if (t.isJSXIdentifier(attr.name) && /^on[A-Z]/.test(attr.name.name)) {
+    return null
+  }
   if (!t.isJSXExpressionContainer(attr.value)) return null
   const expr = attr.value.expression
   if (t.isArrowFunctionExpression(expr) || t.isFunctionExpression(expr)) {

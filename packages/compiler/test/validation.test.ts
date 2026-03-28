@@ -10,6 +10,7 @@ import {
   reportDiagnostic,
   validateFunction,
   validateListKeys,
+  validateNoInlineFunctions,
   validateNoConditionalHooks,
 } from '../src/validation'
 import type { TransformContext } from '../src/types'
@@ -409,6 +410,26 @@ describe('rule validations', () => {
     expect(diagnostics.some(d => d.code === DiagnosticCode.FICT_J003)).toBe(false)
   })
 
+  it('reports non-event inline JSX function props', () => {
+    const attr = t.jsxAttribute(
+      t.jsxIdentifier('renderLabel'),
+      t.jsxExpressionContainer(t.arrowFunctionExpression([], t.identifier('label'))),
+    )
+
+    const diagnostic = validateNoInlineFunctions(attr, ctx, t)
+    expect(diagnostic?.code).toBe(DiagnosticCode.FICT_X003)
+  })
+
+  it('does not report inline DOM event handler props', () => {
+    const attr = t.jsxAttribute(
+      t.jsxIdentifier('onClick'),
+      t.jsxExpressionContainer(t.arrowFunctionExpression([], t.identifier('handleClick'))),
+    )
+
+    const diagnostic = validateNoInlineFunctions(attr, ctx, t)
+    expect(diagnostic).toBeNull()
+  })
+
   it('collects diagnostics across function body validation', () => {
     const listItem = t.jsxElement(
       t.jsxOpeningElement(t.jsxIdentifier('li'), [], false),
@@ -430,7 +451,7 @@ describe('rule validations', () => {
         t.jsxIdentifier('button'),
         [
           t.jsxAttribute(
-            t.jsxIdentifier('onClick'),
+            t.jsxIdentifier('renderLabel'),
             t.jsxExpressionContainer(
               t.arrowFunctionExpression(
                 [],
