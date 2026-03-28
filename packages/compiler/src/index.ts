@@ -786,7 +786,6 @@ function runWarningPass(
     })
     return found
   }
-
   programPath.traverse({
     AssignmentExpression(path) {
       const { left } = path.node
@@ -866,6 +865,40 @@ function runWarningPass(
     },
     CallExpression(path) {
       const callNode = path.node as BabelCore.types.CallExpression
+      const callbackHasReactiveDependency = (
+        callbackPath: BabelCore.NodePath<
+          BabelCore.types.FunctionExpression | BabelCore.types.ArrowFunctionExpression
+        >,
+      ): boolean => {
+        let hasReactiveDependency = false
+        callbackPath.traverse({
+          Identifier(idPath) {
+            if (
+              idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
+              !(idPath.parent as BabelCore.types.MemberExpression).computed
+            ) {
+              return
+            }
+            if (
+              idPath.parentPath.isObjectProperty({ key: idPath.node }) &&
+              !(idPath.parent as BabelCore.types.ObjectProperty).computed
+            ) {
+              return
+            }
+            const binding = idPath.scope.getBinding(idPath.node.name)
+            if (binding && binding.scope === callbackPath.scope) return
+
+            if (
+              binding &&
+              reactiveBindingIds.has(binding.identifier as BabelCore.types.Identifier)
+            ) {
+              hasReactiveDependency = true
+              idPath.stop()
+            }
+          },
+        })
+        return hasReactiveDependency
+      }
 
       if (isStateCall(callNode, t, stateMacroNames)) return
       if (isMemoCall(callNode, t, memoMacroNames)) return
@@ -874,36 +907,7 @@ function runWarningPass(
       if (isEffect) {
         const argPath = path.get('arguments.0')
         if (argPath?.isFunctionExpression() || argPath?.isArrowFunctionExpression()) {
-          let hasReactiveDependency = false
-          argPath.traverse({
-            Identifier(idPath) {
-              // Ignore property keys and non-computed member properties
-              if (
-                idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
-                !(idPath.parent as BabelCore.types.MemberExpression).computed
-              ) {
-                return
-              }
-              if (
-                idPath.parentPath.isObjectProperty({ key: idPath.node }) &&
-                !(idPath.parent as BabelCore.types.ObjectProperty).computed
-              ) {
-                return
-              }
-              const binding = idPath.scope.getBinding(idPath.node.name)
-              if (binding && binding.scope === argPath.scope) return
-
-              if (
-                binding &&
-                reactiveBindingIds.has(binding.identifier as BabelCore.types.Identifier)
-              ) {
-                hasReactiveDependency = true
-                idPath.stop()
-              }
-            },
-          })
-
-          if (!hasReactiveDependency) {
+          if (!callbackHasReactiveDependency(argPath)) {
             emitWarning(
               callNode,
               'FICT-E001',
@@ -1857,12 +1861,47 @@ function createHIREntrypointVisitor(
               isMemoCall(callPath.node, t, memoMacroNames) &&
               (fictImports.has('$memo') || fictImports.has('createMemo'))
             ) {
-              const firstArg = callPath.node.arguments[0]
+              const firstArgPath = callPath.get('arguments.0')
               if (
-                firstArg &&
-                (t.isArrowFunctionExpression(firstArg) || t.isFunctionExpression(firstArg)) &&
-                memoHasSideEffects(firstArg)
+                firstArgPath?.isArrowFunctionExpression() ||
+                firstArgPath?.isFunctionExpression()
               ) {
+                const firstArg = firstArgPath.node
+                let hasReactiveDependency = false
+                firstArgPath.traverse({
+                  Identifier(idPath) {
+                    if (
+                      idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
+                      !(idPath.parent as BabelCore.types.MemberExpression).computed
+                    ) {
+                      return
+                    }
+                    if (
+                      idPath.parentPath.isObjectProperty({ key: idPath.node }) &&
+                      !(idPath.parent as BabelCore.types.ObjectProperty).computed
+                    ) {
+                      return
+                    }
+                    const binding = idPath.scope.getBinding(idPath.node.name)
+                    if (binding && binding.scope === firstArgPath.scope) return
+
+                    if (binding && hasReactiveAliasSourceBinding(idPath, idPath.node.name)) {
+                      hasReactiveDependency = true
+                      idPath.stop()
+                    }
+                  },
+                })
+                const hasSideEffects = memoHasSideEffects(firstArg)
+                if (!hasReactiveDependency && !hasSideEffects) {
+                  emitWarning(
+                    callPath,
+                    'FICT-M001',
+                    'Memo has no reactive dependencies and could be a constant.',
+                    warn,
+                    fileName,
+                  )
+                }
+                if (!hasSideEffects) return
                 const loc = firstArg.loc?.start ?? callPath.node.loc?.start
                 warn({
                   code: 'FICT-M003',

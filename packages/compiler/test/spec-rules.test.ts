@@ -324,6 +324,31 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
   })
 
+  it('warns when memo has no reactive dependencies (FICT-M001)', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $memo } from 'fict'
+      function Demo() {
+        const value = $memo(() => 1)
+        return <div>{value}</div>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+  })
+
+  it('does not warn when memo depends on reactive values', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $state, $memo } from 'fict'
+      function Demo() {
+        const count = $state(0)
+        const value = $memo(() => count + 1)
+        return <div>{value}</div>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+  })
+
   it('warns when passing state as function argument (FICT-S002)', () => {
     const warnings: CompilerWarning[] = []
     const input = `
