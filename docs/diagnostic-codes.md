@@ -180,11 +180,11 @@ $effect(() => {
 
 **Severity:** Info
 
-**Why:** A memoized value (`$memo` or derived) doesn't depend on any reactive sources.
+**Why:** An explicit `$memo` callback doesn't depend on any reactive sources.
 
 **Impact:** The memo is effectively a constant. This may indicate a logic error.
 
-**Fix:** Verify the computation should depend on reactive values, or convert to a plain constant.
+**Fix:** Verify the computation should depend on reactive values, or replace the explicit `$memo` with a plain constant.
 
 ### FICT-M003: Memo contains side effects
 
@@ -325,22 +325,22 @@ items.map(item => <Li key={item.id} />)
 items.map(item => <Li key={item.id}>{item.name}</Li>)
 ```
 
-### FICT-J003: Spread props may hide reactivity
+### FICT-J003: Native element spread may hide unsupported props
 
 **Severity:** Error (default)
 
-**Why:** Spread props (`{...obj}`) make it harder to track which specific props are reactive.
+**Why:** Spreading props onto a native element (`<div {...props} />`) makes it harder to reason about which DOM attributes are being passed through.
 
-**Impact:** May result in coarser update granularity.
+**Impact:** Unknown or overly broad native props can slip through and may use a less explicit update path.
 
-**Fix:** Prefer explicit props when reactivity granularity matters:
+**Fix:** Prefer explicit native props when granularity or DOM safety matters:
 
 ```js
-// Less optimal
-<Component {...props} />
+// Less explicit for native DOM props
+<div {...props} />
 
 // More explicit
-<Component name={props.name} count={props.count} />
+<div id={props.id} title={props.title} />
 ```
 
 ---
@@ -424,19 +424,22 @@ For the overall guarantee/fallback/unsupported map, see `docs/reactivity-guarant
 
 **Severity:** Hint
 
-**Why:** An inline arrow function is passed as a prop.
+**Why:** A non-event inline function is passed as a JSX prop.
 
-**Impact:** In Fict, this is usually fine due to stable handler references. This hint is for cases where reference stability matters (e.g., memoized children).
+**Impact:** In Fict, normal DOM event handlers are usually fine because handler references stay stable. This hint is for non-event props where child components may care about reference identity (for example memoized render props).
 
 **Fix:** If needed, extract to a named function:
 
 ```js
-// Usually fine in Fict
-<Button onClick={() => count++} />
+// Triggers FICT-X003
+<MemoizedButton renderLabel={() => label} />
 
-// Extract if child uses reference equality
-const handleClick = () => count++
-<MemoizedButton onClick={handleClick} />
+// Usually fine in Fict
+<button onClick={() => count++} />
+
+// Extract if a non-event prop needs stable identity
+const renderLabel = () => label
+<MemoizedButton renderLabel={renderLabel} />
 ```
 
 ---
