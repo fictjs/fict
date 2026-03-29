@@ -272,9 +272,11 @@ function normalizeWarningToDiagnostic(
   }
 }
 
-function normalizeThrownError(error: unknown): AnalyzeDiagnostic {
+function normalizeThrownError(source: string, fileName: string, error: unknown): AnalyzeDiagnostic {
   const message = error instanceof Error ? error.message : String(error)
-  const location = extractLocationFromCompilerMessage(message)
+  const location =
+    extractLocationFromCompilerMessage(message) ??
+    inferCompilerDiagnosticFromSource(source, fileName, message)?.location
   // Use extracted location from message, preserving 1-based column
   return {
     code: 'FICT-COMPILE',
@@ -330,6 +332,17 @@ function isConditionalNode(node: BabelCore.types.Node): boolean {
   )
 }
 
+type CompilerErrorContext = 'loop-or-conditional' | 'nested-function'
+type CompilerMacroName = '$effect' | '$state'
+
+interface InferredCompilerDiagnostic {
+  code: string | null
+  location: {
+    line: number
+    column: number
+  }
+}
+
 function containsPosition(
   loc: BabelCore.types.SourceLocation | null | undefined,
   line: number,
@@ -347,17 +360,162 @@ function extractLocationFromCompilerMessage(
 ): { line: number; column: number } | null {
   const lineMatch = /^>\s+(\d+)\s+\|/m.exec(message)
   const columnMatch = /^\s*\|\s+(\^+)/m.exec(message)
-  if (!lineMatch || !columnMatch) return null
+  if (lineMatch && columnMatch) {
+    const line = Number.parseInt(lineMatch[1] ?? '', 10)
+    const carets = columnMatch[1]
+    if (!Number.isFinite(line) || !carets) return null
 
-  const line = Number.parseInt(lineMatch[1] ?? '', 10)
-  const carets = columnMatch[1]
-  if (!Number.isFinite(line) || !carets) return null
+    const markerIndex = columnMatch.index + columnMatch[0].indexOf(carets)
+    const lineStart = message.lastIndexOf('\n', columnMatch.index) + 1
+    const column = markerIndex - lineStart
 
-  const markerIndex = columnMatch.index + columnMatch[0].indexOf(carets)
-  const lineStart = message.lastIndexOf('\n', columnMatch.index) + 1
-  const column = markerIndex - lineStart
+    return { line, column }
+  }
+
+  const summaryMatch = /\((\d+):(\d+)\)(?:\s|$)/.exec(message)
+  if (!summaryMatch) return null
+
+  const line = Number.parseInt(summaryMatch[1] ?? '', 10)
+  const column = Number.parseInt(summaryMatch[2] ?? '', 10)
+  if (!Number.isFinite(line) || !Number.isFinite(column)) return null
 
   return { line, column }
+}
+
+function classifyCompilerPlacementError(
+  message: string,
+): { context: CompilerErrorContext; macroName: CompilerMacroName } | null {
+  if (/\$state\(\) cannot be declared inside loops or conditionals\./.test(message)) {
+    return {
+      context: 'loop-or-conditional',
+      macroName: '$state',
+    }
+  }
+
+  if (/\$state\(\) cannot be declared inside nested functions\./.test(message)) {
+    return {
+      context: 'nested-function',
+      macroName: '$state',
+    }
+  }
+
+  if (/\$effect\(\) cannot be called inside loops or conditionals\./.test(message)) {
+    return {
+      context: 'loop-or-conditional',
+      macroName: '$effect',
+    }
+  }
+
+  if (/\$effect\(\) cannot be called inside nested functions\./.test(message)) {
+    return {
+      context: 'nested-function',
+      macroName: '$effect',
+    }
+  }
+
+  return null
+}
+
+function parseSourceAstSafely(source: string, fileName: string): BabelCore.types.File | null {
+  try {
+    const ast = parseSync(source, {
+      filename: fileName,
+      sourceType: 'module',
+      parserOpts: {
+        sourceType: 'module',
+        plugins: ['typescript', 'jsx'],
+        allowReturnOutsideFunction: true,
+      },
+    })
+
+    return ast && ast.type === 'File' ? ast : null
+  } catch {
+    return null
+  }
+}
+
+function findFirstMacroCallInContext(
+  node: BabelCore.types.Node,
+  macroName: CompilerMacroName,
+  context: CompilerErrorContext,
+  ancestors: BabelCore.types.Node[] = [],
+): InferredCompilerDiagnostic | null {
+  const nextAncestors = [...ancestors, node]
+
+  if (
+    BabelTypes.isCallExpression(node) &&
+    BabelTypes.isIdentifier(node.callee) &&
+    deSSAVarName(node.callee.name) === macroName &&
+    node.loc
+  ) {
+    const hasLoop = nextAncestors.some(isLoopNode)
+    const hasConditional = nextAncestors.some(isConditionalNode)
+    const functionDepth = nextAncestors.filter(ancestor => BabelTypes.isFunction(ancestor)).length
+
+    if (context === 'loop-or-conditional' && (hasLoop || hasConditional)) {
+      return {
+        code: macroName === '$state' ? (hasLoop ? 'FICT-C002' : 'FICT-C001') : null,
+        location: {
+          line: node.loc.start.line,
+          column: node.loc.start.column,
+        },
+      }
+    }
+
+    if (context === 'nested-function' && functionDepth > 1) {
+      return {
+        code: null,
+        location: {
+          line: node.loc.start.line,
+          column: node.loc.start.column,
+        },
+      }
+    }
+  }
+
+  const visitorKeys = BabelTypes.VISITOR_KEYS[node.type] ?? []
+  for (const key of visitorKeys) {
+    const value = (node as unknown as Record<string, unknown>)[key]
+
+    if (Array.isArray(value)) {
+      for (const child of value) {
+        if (!child || typeof child !== 'object' || !('type' in child)) continue
+        const found = findFirstMacroCallInContext(
+          child as BabelCore.types.Node,
+          macroName,
+          context,
+          nextAncestors,
+        )
+        if (found) return found
+      }
+      continue
+    }
+
+    if (!value || typeof value !== 'object' || !('type' in value)) continue
+    const found = findFirstMacroCallInContext(
+      value as BabelCore.types.Node,
+      macroName,
+      context,
+      nextAncestors,
+    )
+    if (found) return found
+  }
+
+  return null
+}
+
+export function inferCompilerDiagnosticFromSource(
+  source: string,
+  fileName: string,
+  message: string,
+): InferredCompilerDiagnostic | null {
+  const classification = classifyCompilerPlacementError(message)
+  if (!classification) return null
+
+  const ast = parseSourceAstSafely(source, fileName)
+  if (!ast) return null
+
+  return findFirstMacroCallInContext(ast, classification.macroName, classification.context)
 }
 
 function findAncestorsAtPosition(
@@ -405,19 +563,12 @@ function inferDirectCompilerDiagnosticCode(
   }
 
   const location = error.loc ?? extractLocationFromCompilerMessage(error.message)
-  if (!location) return null
+  if (!location) {
+    return inferCompilerDiagnosticFromSource(source, fileName, error.message)?.code ?? null
+  }
 
-  const ast = parseSync(source, {
-    filename: fileName,
-    sourceType: 'module',
-    parserOpts: {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx'],
-      allowReturnOutsideFunction: true,
-    },
-  })
-
-  if (!ast || ast.type !== 'File') return null
+  const ast = parseSourceAstSafely(source, fileName)
+  if (!ast) return null
 
   const ancestors = findAncestorsAtPosition(ast, location.line, location.column)
   if (!ancestors) return null
@@ -445,13 +596,21 @@ function normalizeKnownCompilerError(
   // Use error.loc if available, otherwise extract from message
   const extractedLocation =
     errorWithLocation.loc ?? extractLocationFromCompilerMessage(error.message)
+  const inferredDiagnostic = extractedLocation
+    ? null
+    : inferCompilerDiagnosticFromSource(source, fileName, error.message)
 
   return {
     code,
     message: error.message.split('\n')[0] ?? error.message,
     severity: DiagnosticSeverity.Error,
-    line: extractedLocation?.line ?? 0,
-    column: (extractedLocation?.column ?? -1) + 1,
+    line: extractedLocation?.line ?? inferredDiagnostic?.location.line ?? 0,
+    column:
+      extractedLocation != null
+        ? extractedLocation.column + 1
+        : inferredDiagnostic
+          ? inferredDiagnostic.location.column + 1
+          : 0,
   }
 }
 
@@ -516,7 +675,7 @@ function analyzeDiagnostics(
     if (diagnostics.some(diagnostic => diagnostic.severity === DiagnosticSeverity.Error)) {
       return diagnostics
     }
-    return [...diagnostics, normalizeThrownError(error)]
+    return [...diagnostics, normalizeThrownError(code, fileName, error)]
   }
 
   return warnings.map(warning => normalizeWarningToDiagnostic(warning, options.compilerOptions))

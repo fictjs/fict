@@ -206,22 +206,94 @@ function containsPosition(
   return true
 }
 
+type CompilerErrorContext = 'loop-or-conditional' | 'nested-function'
+type CompilerMacroName = '$effect' | '$state'
+
+interface InferredCompilerIssue {
+  code: string | null
+  location: {
+    line: number
+    column: number
+  }
+}
+
 function extractLocationFromCompilerMessage(
   message: string,
 ): { line: number; column: number } | null {
   const lineMatch = /^>\s+(\d+)\s+\|/m.exec(message)
   const columnMatch = /^\s*\|\s+(\^+)/m.exec(message)
-  if (!lineMatch || !columnMatch) return null
+  if (lineMatch && columnMatch) {
+    const line = Number.parseInt(lineMatch[1] ?? '', 10)
+    const carets = columnMatch[1]
+    if (!Number.isFinite(line) || !carets) return null
 
-  const line = Number.parseInt(lineMatch[1] ?? '', 10)
-  const carets = columnMatch[1]
-  if (!Number.isFinite(line) || !carets) return null
+    const markerIndex = columnMatch.index + columnMatch[0].indexOf(carets)
+    const lineStart = message.lastIndexOf('\n', columnMatch.index) + 1
+    const column = markerIndex - lineStart
 
-  const markerIndex = columnMatch.index + columnMatch[0].indexOf(carets)
-  const lineStart = message.lastIndexOf('\n', columnMatch.index) + 1
-  const column = markerIndex - lineStart
+    return { line, column }
+  }
+
+  const summaryMatch = /\((\d+):(\d+)\)(?:\s|$)/.exec(message)
+  if (!summaryMatch) return null
+
+  const line = Number.parseInt(summaryMatch[1] ?? '', 10)
+  const column = Number.parseInt(summaryMatch[2] ?? '', 10)
+  if (!Number.isFinite(line) || !Number.isFinite(column)) return null
 
   return { line, column }
+}
+
+function classifyCompilerPlacementError(
+  message: string,
+): { context: CompilerErrorContext; macroName: CompilerMacroName } | null {
+  if (/\$state\(\) cannot be declared inside loops or conditionals\./.test(message)) {
+    return {
+      context: 'loop-or-conditional',
+      macroName: '$state',
+    }
+  }
+
+  if (/\$state\(\) cannot be declared inside nested functions\./.test(message)) {
+    return {
+      context: 'nested-function',
+      macroName: '$state',
+    }
+  }
+
+  if (/\$effect\(\) cannot be called inside loops or conditionals\./.test(message)) {
+    return {
+      context: 'loop-or-conditional',
+      macroName: '$effect',
+    }
+  }
+
+  if (/\$effect\(\) cannot be called inside nested functions\./.test(message)) {
+    return {
+      context: 'nested-function',
+      macroName: '$effect',
+    }
+  }
+
+  return null
+}
+
+function parseSourceAstSafely(sourceCode: string, filePath: string): BabelTypes.File | null {
+  try {
+    const ast = parseSync(sourceCode, {
+      filename: filePath,
+      sourceType: 'module',
+      parserOpts: {
+        sourceType: 'module',
+        plugins: ['typescript', 'jsx'],
+        allowReturnOutsideFunction: true,
+      },
+    })
+
+    return ast && ast.type === 'File' ? ast : null
+  } catch {
+    return null
+  }
 }
 
 function isLoopNode(node: BabelTypes.Node): boolean {
@@ -279,23 +351,119 @@ function findAncestorsAtPosition(
   return [...ancestors, node]
 }
 
-function inferDirectCompilerIssueCode(sourceCode: string, filePath: string, message: string) {
+function findFirstMacroCallInContext(
+  node: BabelTypes.Node,
+  macroName: CompilerMacroName,
+  context: CompilerErrorContext,
+  ancestors: BabelTypes.Node[] = [],
+): InferredCompilerIssue | null {
+  const nextAncestors = [...ancestors, node]
+
+  if (
+    BabelTypes.isCallExpression(node) &&
+    BabelTypes.isIdentifier(node.callee) &&
+    node.callee.name === macroName &&
+    node.loc
+  ) {
+    const hasLoop = nextAncestors.some(isLoopNode)
+    const hasConditional = nextAncestors.some(isConditionalNode)
+    const functionDepth = nextAncestors.filter(ancestor => BabelTypes.isFunction(ancestor)).length
+
+    if (context === 'loop-or-conditional' && (hasLoop || hasConditional)) {
+      return {
+        code: macroName === '$state' ? (hasLoop ? 'FICT-C002' : 'FICT-C001') : null,
+        location: {
+          line: node.loc.start.line,
+          column: node.loc.start.column,
+        },
+      }
+    }
+
+    if (context === 'nested-function' && functionDepth > 1) {
+      return {
+        code: null,
+        location: {
+          line: node.loc.start.line,
+          column: node.loc.start.column,
+        },
+      }
+    }
+  }
+
+  const visitorKeys = BabelTypes.VISITOR_KEYS[node.type] ?? []
+  for (const key of visitorKeys) {
+    const value = (node as unknown as Record<string, unknown>)[key]
+
+    if (Array.isArray(value)) {
+      for (const child of value) {
+        if (!child || typeof child !== 'object' || !('type' in child)) continue
+        const found = findFirstMacroCallInContext(
+          child as BabelTypes.Node,
+          macroName,
+          context,
+          nextAncestors,
+        )
+        if (found) return found
+      }
+      continue
+    }
+
+    if (!value || typeof value !== 'object' || !('type' in value)) continue
+    const found = findFirstMacroCallInContext(
+      value as BabelTypes.Node,
+      macroName,
+      context,
+      nextAncestors,
+    )
+    if (found) return found
+  }
+
+  return null
+}
+
+function inferCompilerIssueFromSource(
+  sourceCode: string,
+  filePath: string,
+  message: string,
+): InferredCompilerIssue | null {
+  const classification = classifyCompilerPlacementError(message)
+  if (!classification) return null
+
+  const ast = parseSourceAstSafely(sourceCode, filePath)
+  if (!ast) return null
+
+  return findFirstMacroCallInContext(ast, classification.macroName, classification.context)
+}
+
+function inferDirectCompilerIssueCode(
+  sourceCode: string,
+  filePath: string,
+  message: string,
+): {
+  code: 'FICT-C001' | 'FICT-C002'
+  location: {
+    line: number
+    column: number
+  }
+} | null {
   if (!/\$state\(\) cannot be declared inside loops or conditionals\./.test(message)) {
     return null
   }
 
   const location = extractLocationFromCompilerMessage(message)
-  if (!location) return null
+  if (!location) {
+    const inferred = inferCompilerIssueFromSource(sourceCode, filePath, message)
+    if (inferred?.code !== 'FICT-C001' && inferred?.code !== 'FICT-C002') {
+      return null
+    }
 
-  const ast = parseSync(sourceCode, {
-    filename: filePath,
-    sourceType: 'module',
-    parserOpts: {
-      sourceType: 'module',
-      plugins: ['typescript', 'jsx'],
-      allowReturnOutsideFunction: true,
-    },
-  })
+    return {
+      code: inferred.code,
+      location: inferred.location,
+    }
+  }
+
+  const ast = parseSourceAstSafely(sourceCode, filePath)
   if (!ast || ast.type !== 'File') return null
 
   const ancestors = findAncestorsAtPosition(ast, location.line, location.column)
@@ -304,11 +472,9 @@ function inferDirectCompilerIssueCode(sourceCode: string, filePath: string, mess
   if (ancestors.some(isLoopNode)) {
     return {
       code: 'FICT-C002',
-      range: {
-        start: {
-          line: location.line,
-          col: location.column + 1,
-        },
+      location: {
+        line: location.line,
+        column: location.column,
       },
     }
   }
@@ -316,11 +482,9 @@ function inferDirectCompilerIssueCode(sourceCode: string, filePath: string, mess
   if (ancestors.some(isConditionalNode)) {
     return {
       code: 'FICT-C001',
-      range: {
-        start: {
-          line: location.line,
-          col: location.column + 1,
-        },
+      location: {
+        line: location.line,
+        column: location.column,
       },
     }
   }
@@ -338,22 +502,36 @@ function normalizeKnownCompilerIssue(
   const inferred = inferDirectCompilerIssueCode(sourceCode, filePath, error.message)
   if (!inferred) return null
 
+  const extractedLocation = extractLocationFromCompilerMessage(error.message)
+  const location = extractedLocation ?? inferred.location
+
   return {
     source: 'compiler',
     code: inferred.code,
     severity: 'error',
     message: error.message.split('\n')[0] ?? error.message,
     file: filePath,
-    range: inferred.range,
+    range: {
+      start: {
+        line: location.line,
+        col: location.column + 1,
+      },
+    },
     doc_refs: ['diagnostic-codes'],
     suggestion: suggestionForIssue('compiler', inferred.code, error.message),
   }
 }
 
-function normalizeThrownCompilerIssue(error: unknown, filePath: string): Issue | null {
+function normalizeThrownCompilerIssue(
+  error: unknown,
+  filePath: string,
+  sourceCode: string,
+): Issue | null {
   if (!(error instanceof Error)) return null
 
-  const location = extractLocationFromCompilerMessage(error.message)
+  const location =
+    extractLocationFromCompilerMessage(error.message) ??
+    inferCompilerIssueFromSource(sourceCode, filePath, error.message)?.location
   return {
     source: 'compiler',
     code: 'FICT-COMPILE',
@@ -525,7 +703,7 @@ async function collectCompilerIssues(
         continue
       }
       issues.push(
-        normalizeThrownCompilerIssue(error, filePath) ?? {
+        normalizeThrownCompilerIssue(error, filePath, sourceCode) ?? {
           source: 'compiler',
           code: 'FICT-COMPILER-CRASH',
           severity: 'error',

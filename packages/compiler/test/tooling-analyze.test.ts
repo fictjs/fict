@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { analyzeFictFile } from '../src/index'
+import { inferCompilerDiagnosticFromSource } from '../src/tooling/analyze'
 
 const SAMPLE_COMPONENT = `
 import { $effect, $state } from 'fict'
@@ -345,6 +346,63 @@ describe('analyzeFictFile', () => {
       expect.arrayContaining([expect.objectContaining({ code: 'FICT-C001', severity: 'error' })]),
     )
     expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
+  })
+
+  it('infers direct hook placement codes from summary-only compiler messages', () => {
+    const inferred = inferCompilerDiagnosticFromSource(
+      `
+        import { $state } from 'fict'
+
+        export function App({ items }) {
+          for (const item of items) {
+            let count = $state(item)
+            console.log(count)
+          }
+          return <div />
+        }
+      `,
+      'loop-hooks.tsx',
+      '/home/runner/work/fict/fict/packages/compiler/loop-hooks.tsx: $state() cannot be declared inside loops or conditionals.',
+    )
+
+    expect(inferred).toEqual(
+      expect.objectContaining({
+        code: 'FICT-C002',
+        location: expect.objectContaining({
+          line: 6,
+        }),
+      }),
+    )
+    expect(inferred?.location.column ?? 0).toBeGreaterThan(0)
+  })
+
+  it('infers nested hook locations from summary-only compiler messages', () => {
+    const inferred = inferCompilerDiagnosticFromSource(
+      `
+        import { $state } from 'fict'
+
+        export function App() {
+          function inner() {
+            let count = $state(0)
+            return count
+          }
+
+          return <div>{inner()}</div>
+        }
+      `,
+      'nested-state.tsx',
+      '/home/runner/work/fict/fict/packages/compiler/nested-state.tsx: $state() cannot be declared inside nested functions.',
+    )
+
+    expect(inferred).toEqual(
+      expect.objectContaining({
+        code: null,
+        location: expect.objectContaining({
+          line: 6,
+        }),
+      }),
+    )
+    expect(inferred?.location.column ?? 0).toBeGreaterThan(0)
   })
 
   it('throws when unsupported HIR input is encountered and diagnostics are disabled', () => {
