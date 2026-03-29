@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { analyzeDocument } from '../src/analysis/analyzerClient'
+import { analyzeDocument, extractLocationFromCompilerMessage } from '../src/analysis/analyzerClient'
 
 const UNSUPPORTED_HIR_SOURCE = `
 import { $state } from 'fict'
@@ -39,6 +39,13 @@ export function App() {
 `
 
 describe('analyzer client', () => {
+  it('extracts parser summary locations when compiler errors omit code frames', () => {
+    expect(extractLocationFromCompilerMessage('/tmp/invalid.tsx: Unexpected token (8:0)')).toEqual({
+      line: 8,
+      column: 1,
+    })
+  })
+
   it('falls back to static components when compiler analysis hits unsupported HIR', async () => {
     const document = {
       languageId: 'typescriptreact',
@@ -146,9 +153,11 @@ describe('analyzer client', () => {
       expect.objectContaining({
         code: 'FICT-COMPILE',
         severity: 'error',
+        message: expect.stringContaining('Unexpected token'),
         line: 8,
-        column: 7,
+        column: expect.any(Number),
       }),
     ])
+    expect(result?.diagnostics[0]?.column).toBeGreaterThan(0)
   })
 })

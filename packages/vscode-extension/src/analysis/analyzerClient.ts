@@ -58,9 +58,23 @@ function shouldFallbackToStaticAnalysis(result: {
   return result.components.length === 0 && hasHIRFailure
 }
 
-function extractLocationFromCompilerMessage(
+export function extractLocationFromCompilerMessage(
   message: string,
 ): { line: number; column: number } | null {
+  // Some Babel/parser builds only include a trailing `(line:column)` location
+  // on the summary line and omit the code frame entirely.
+  const summaryLocationMatch = /\((\d+):(\d+)\)\s*$/.exec(message.split('\n')[0] ?? message)
+  if (summaryLocationMatch) {
+    const line = Number.parseInt(summaryLocationMatch[1] ?? '', 10)
+    const column = Number.parseInt(summaryLocationMatch[2] ?? '', 10)
+    if (Number.isFinite(line) && Number.isFinite(column)) {
+      return {
+        line,
+        column: column + 1,
+      }
+    }
+  }
+
   const lineMatch = /^>\s+(\d+)\s+\|/m.exec(message)
   const columnMatch = /^\s*\|\s+(\^+)/m.exec(message)
   if (!lineMatch || !columnMatch) return null
