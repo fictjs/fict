@@ -3,7 +3,10 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { collectSessionDiagnostics } from '../src/server/diagnostics'
+import {
+  collectSessionDiagnostics,
+  inferCompilerLocationFromSource,
+} from '../src/server/diagnostics'
 import type { PlaygroundConfig } from '../src/server/types'
 
 const config: PlaygroundConfig = {
@@ -160,10 +163,16 @@ describe('playground diagnostics', () => {
             code: 'FICT-COMPILE',
             severity: 'error',
             line: 5,
-            column: 15,
           }),
         ]),
       )
+      const compilerDiagnostic = result.diagnostics.find(
+        diagnostic =>
+          diagnostic.source === 'compiler' &&
+          diagnostic.code === 'FICT-COMPILE' &&
+          diagnostic.severity === 'error',
+      )
+      expect(compilerDiagnostic?.column ?? 0).toBeGreaterThan(0)
       expect(
         result.diagnostics.some(diagnostic =>
           diagnostic.message.includes('$state() cannot be declared inside nested functions.'),
@@ -173,4 +182,20 @@ describe('playground diagnostics', () => {
       await rm(rootDir, { recursive: true, force: true })
     }
   }, 20_000)
+
+  it('infers compiler locations from summary-only nested-function failures', () => {
+    const sourceCode =
+      "import { $state } from 'fict'\n\nexport function App() {\n  function inner() {\n    let count = $state(0)\n    return count\n  }\n  return <div>{inner()}</div>\n}\n"
+
+    expect(
+      inferCompilerLocationFromSource(
+        sourceCode,
+        '/tmp/src/main.tsx',
+        '/tmp/src/main.tsx: $state() cannot be declared inside nested functions.',
+      ),
+    ).toEqual({
+      line: 5,
+      column: 17,
+    })
+  })
 })

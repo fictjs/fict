@@ -1,7 +1,8 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
-import { transformAsync } from '@babel/core'
+import { parseSync, transformAsync } from '@babel/core'
+import * as BabelTypes from '@babel/types'
 import { createFictPlugin, type CompilerWarning, type FictCompilerOptions } from '@fictjs/compiler'
 import type * as TypeScriptApi from 'typescript'
 
@@ -17,6 +18,9 @@ interface DiagnosticsInput {
   rootDir: string
   config: PlaygroundConfig
 }
+
+type CompilerErrorContext = 'loop-or-conditional' | 'nested-function'
+type CompilerMacroName = '$effect' | '$state'
 
 export async function collectSessionDiagnostics(
   input: DiagnosticsInput,
@@ -97,7 +101,7 @@ async function collectCompilerDiagnostics(
         })
       }
     } catch (error) {
-      diagnostics.push(fromCompilerError(input.rootDir, absolutePath, error))
+      diagnostics.push(fromCompilerError(input.rootDir, absolutePath, sourceCode, error))
     }
   }
 
@@ -231,22 +235,182 @@ function extractLocationFromCompilerMessage(
 ): { line: number; column: number } | null {
   const lineMatch = /^>\s+(\d+)\s+\|/m.exec(message)
   const columnMatch = /^\s*\|\s+(\^+)/m.exec(message)
-  if (!lineMatch || !columnMatch) return null
+  if (lineMatch && columnMatch) {
+    const line = Number.parseInt(lineMatch[1] ?? '', 10)
+    const carets = columnMatch[1]
+    if (!Number.isFinite(line) || !carets) return null
 
-  const line = Number.parseInt(lineMatch[1] ?? '', 10)
-  const carets = columnMatch[1]
-  if (!Number.isFinite(line) || !carets) return null
+    const markerIndex = columnMatch.index + columnMatch[0].indexOf(carets)
+    const lineStart = message.lastIndexOf('\n', columnMatch.index) + 1
+    const column = markerIndex - lineStart
 
-  const markerIndex = columnMatch.index + columnMatch[0].indexOf(carets)
-  const lineStart = message.lastIndexOf('\n', columnMatch.index) + 1
-  const column = markerIndex - lineStart
+    return { line, column: column + 1 }
+  }
+
+  const summaryMatch = /\((\d+):(\d+)\)(?:\s|$)/.exec(message)
+  if (!summaryMatch) return null
+
+  const line = Number.parseInt(summaryMatch[1] ?? '', 10)
+  const column = Number.parseInt(summaryMatch[2] ?? '', 10)
+  if (!Number.isFinite(line) || !Number.isFinite(column)) return null
 
   return { line, column: column + 1 }
+}
+
+function classifyCompilerPlacementError(
+  message: string,
+): { context: CompilerErrorContext; macroName: CompilerMacroName } | null {
+  if (/\$state\(\) cannot be declared inside loops or conditionals\./.test(message)) {
+    return {
+      context: 'loop-or-conditional',
+      macroName: '$state',
+    }
+  }
+
+  if (/\$state\(\) cannot be declared inside nested functions\./.test(message)) {
+    return {
+      context: 'nested-function',
+      macroName: '$state',
+    }
+  }
+
+  if (/\$effect\(\) cannot be called inside loops or conditionals\./.test(message)) {
+    return {
+      context: 'loop-or-conditional',
+      macroName: '$effect',
+    }
+  }
+
+  if (/\$effect\(\) cannot be called inside nested functions\./.test(message)) {
+    return {
+      context: 'nested-function',
+      macroName: '$effect',
+    }
+  }
+
+  return null
+}
+
+function parseSourceAstSafely(sourceCode: string, filePath: string): BabelTypes.File | null {
+  try {
+    const ast = parseSync(sourceCode, {
+      filename: filePath,
+      sourceType: 'module',
+      parserOpts: {
+        sourceType: 'module',
+        plugins: ['typescript', 'jsx'],
+        allowReturnOutsideFunction: true,
+      },
+    })
+
+    return ast && ast.type === 'File' ? ast : null
+  } catch {
+    return null
+  }
+}
+
+function isLoopNode(node: BabelTypes.Node): boolean {
+  return (
+    BabelTypes.isForStatement(node) ||
+    BabelTypes.isForInStatement(node) ||
+    BabelTypes.isForOfStatement(node) ||
+    BabelTypes.isWhileStatement(node) ||
+    BabelTypes.isDoWhileStatement(node)
+  )
+}
+
+function isConditionalNode(node: BabelTypes.Node): boolean {
+  return (
+    BabelTypes.isIfStatement(node) ||
+    BabelTypes.isSwitchStatement(node) ||
+    BabelTypes.isSwitchCase(node) ||
+    BabelTypes.isConditionalExpression(node) ||
+    BabelTypes.isLogicalExpression(node)
+  )
+}
+
+function findFirstMacroCallInContext(
+  node: BabelTypes.Node,
+  macroName: CompilerMacroName,
+  context: CompilerErrorContext,
+  ancestors: BabelTypes.Node[] = [],
+): { line: number; column: number } | null {
+  const nextAncestors = [...ancestors, node]
+
+  if (
+    BabelTypes.isCallExpression(node) &&
+    BabelTypes.isIdentifier(node.callee) &&
+    node.callee.name === macroName &&
+    node.loc
+  ) {
+    const hasLoop = nextAncestors.some(isLoopNode)
+    const hasConditional = nextAncestors.some(isConditionalNode)
+    const functionDepth = nextAncestors.filter(ancestor => BabelTypes.isFunction(ancestor)).length
+
+    if (context === 'loop-or-conditional' && (hasLoop || hasConditional)) {
+      return {
+        line: node.loc.start.line,
+        column: node.loc.start.column + 1,
+      }
+    }
+
+    if (context === 'nested-function' && functionDepth > 1) {
+      return {
+        line: node.loc.start.line,
+        column: node.loc.start.column + 1,
+      }
+    }
+  }
+
+  const visitorKeys = BabelTypes.VISITOR_KEYS[node.type] ?? []
+  for (const key of visitorKeys) {
+    const value = (node as unknown as Record<string, unknown>)[key]
+
+    if (Array.isArray(value)) {
+      for (const child of value) {
+        if (!child || typeof child !== 'object' || !('type' in child)) continue
+        const found = findFirstMacroCallInContext(
+          child as BabelTypes.Node,
+          macroName,
+          context,
+          nextAncestors,
+        )
+        if (found) return found
+      }
+      continue
+    }
+
+    if (!value || typeof value !== 'object' || !('type' in value)) continue
+    const found = findFirstMacroCallInContext(
+      value as BabelTypes.Node,
+      macroName,
+      context,
+      nextAncestors,
+    )
+    if (found) return found
+  }
+
+  return null
+}
+
+export function inferCompilerLocationFromSource(
+  sourceCode: string,
+  filePath: string,
+  message: string,
+): { line: number; column: number } | null {
+  const classification = classifyCompilerPlacementError(message)
+  if (!classification) return null
+
+  const ast = parseSourceAstSafely(sourceCode, filePath)
+  if (!ast) return null
+
+  return findFirstMacroCallInContext(ast, classification.macroName, classification.context)
 }
 
 function fromCompilerError(
   rootDir: string,
   fileName: string,
+  sourceCode: string,
   error: unknown,
 ): PlaygroundDiagnostic {
   let message = 'Unknown compiler transform failure'
@@ -256,6 +420,7 @@ function fromCompilerError(
   if (error instanceof Error) {
     message = error.message
     const derivedLocation = extractLocationFromCompilerMessage(message)
+    const inferredLocation = inferCompilerLocationFromSource(sourceCode, fileName, message)
     const errorWithLocation = error as Error & {
       loc?: {
         line: number
@@ -268,6 +433,9 @@ function fromCompilerError(
     } else if (derivedLocation) {
       line = derivedLocation.line
       column = derivedLocation.column
+    } else if (inferredLocation) {
+      line = inferredLocation.line
+      column = inferredLocation.column
     }
   }
 
