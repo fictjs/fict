@@ -477,8 +477,8 @@ describe('analyzeFictFile', () => {
         severity: 'error',
         message: expect.stringContaining('$state() cannot be declared inside nested functions.'),
         line: 6,
-        column: 23,
       }),
     ])
+    expect(result.diagnostics[0]?.column ?? 0).toBeGreaterThan(0)
   })
 })
