@@ -1,5 +1,16 @@
 # @fictjs/vscode-extension
 
+## 0.18.0
+
+### Minor Changes
+
+- Preserve compiler diagnostic locations, structured fallback errors, and strict-guarantee behavior in analyzer and compile preview output.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/compiler@0.18.0
+
 ## 0.17.1
 
 ### Patch Changes

@@ -1,5 +1,11 @@
 # @fictjs/skill
 
+## 0.18.0
+
+### Minor Changes
+
+- Refresh the bundled `fict-best-practices` references so API and runtime cleanup guidance now points at the current API reference.
+
 ## 0.17.0
 
 ### Minor Changes

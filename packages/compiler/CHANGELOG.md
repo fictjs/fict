@@ -1,5 +1,12 @@
 # @fictjs/compiler
 
+## 0.18.0
+
+### Minor Changes
+
+- Improve compiler diagnostics so strict defaults, fallback analysis, diagnostic codes, and source locations stay consistent across direct compiler errors and tooling consumers.
+- Add new validation warnings for nested hook and state placement, inline JSX function props, native element spreads, index-based list keys, and memo constants without reactive dependencies.
+
 ## 0.17.1
 
 ### Patch Changes

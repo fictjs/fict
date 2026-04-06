@@ -1,5 +1,17 @@
 # @fictjs/mcp
 
+## 0.18.0
+
+### Minor Changes
+
+- Preserve compiler diagnostic codes, strict-guarantee severities, source locations, and structured fallback errors in MCP autofixer output.
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/compiler@0.18.0
+  - @fictjs/eslint-plugin@0.18.0
+
 ## 0.17.0
 
 ### Minor Changes
