@@ -15,6 +15,8 @@ import {
 } from '@fictjs/compiler'
 import type { Plugin, ResolvedConfig, TransformResult } from 'vite'
 
+import { createVitePluginCacheFingerprint } from './cache-fingerprint'
+
 // Handle ESM/CJS interop for Babel packages
 const traverse = (
   typeof _traverse === 'function' ? _traverse : (_traverse as { default: typeof _traverse }).default
@@ -167,8 +169,11 @@ interface TypeScriptApi {
 }
 
 const CACHE_VERSION = 3
+const VITE_PLUGIN_CACHE_FINGERPRINT = createVitePluginCacheFingerprint([
+  String(extractAndRewriteHandlers),
+])
 const TRANSFORM_CACHE_FINGERPRINT = hashString(
-  [getCompilerCacheFingerprint(), String(extractAndRewriteHandlers)].join('|'),
+  [getCompilerCacheFingerprint(), VITE_PLUGIN_CACHE_FINGERPRINT].join('|'),
 )
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
 

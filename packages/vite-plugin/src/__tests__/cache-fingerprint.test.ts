@@ -19,6 +19,7 @@ const fileName = '/project/src/Plain.tsx'
 
 afterEach(() => {
   vi.doUnmock('@fictjs/compiler')
+  vi.doUnmock('../cache-fingerprint')
   vi.resetModules()
 })
 
@@ -27,11 +28,28 @@ describe('vite-plugin transform cache fingerprint', () => {
     const cacheDir = await mkdtemp(path.join(tmpdir(), 'fict-vite-cache-'))
 
     try {
-      await transformWithCompilerFingerprint('compiler-a', cacheDir)
+      await transformWithFingerprints('compiler-a', 'plugin-a', cacheDir)
       const firstEntries = await readdir(cacheDir)
       expect(firstEntries).toHaveLength(1)
 
-      await transformWithCompilerFingerprint('compiler-b', cacheDir)
+      await transformWithFingerprints('compiler-b', 'plugin-a', cacheDir)
+      const secondEntries = await readdir(cacheDir)
+      expect(secondEntries).toHaveLength(2)
+      expect(new Set(secondEntries).size).toBe(2)
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true })
+    }
+  })
+
+  it('invalidates persistent cache entries when the plugin fingerprint changes', async () => {
+    const cacheDir = await mkdtemp(path.join(tmpdir(), 'fict-vite-cache-'))
+
+    try {
+      await transformWithFingerprints('compiler-a', 'plugin-a', cacheDir)
+      const firstEntries = await readdir(cacheDir)
+      expect(firstEntries).toHaveLength(1)
+
+      await transformWithFingerprints('compiler-a', 'plugin-b', cacheDir)
       const secondEntries = await readdir(cacheDir)
       expect(secondEntries).toHaveLength(2)
       expect(new Set(secondEntries).size).toBe(2)
@@ -41,14 +59,21 @@ describe('vite-plugin transform cache fingerprint', () => {
   })
 })
 
-async function transformWithCompilerFingerprint(fingerprint: string, cacheDir: string) {
+async function transformWithFingerprints(
+  compilerFingerprint: string,
+  pluginFingerprint: string,
+  cacheDir: string,
+) {
   vi.resetModules()
   vi.doMock('@fictjs/compiler', () => ({
-    COMPILER_CACHE_FINGERPRINT: fingerprint,
+    COMPILER_CACHE_FINGERPRINT: compilerFingerprint,
     createFictPlugin: () => ({
       name: 'mock-fict-compiler',
       visitor: {},
     }),
+  }))
+  vi.doMock('../cache-fingerprint', () => ({
+    createVitePluginCacheFingerprint: () => pluginFingerprint,
   }))
 
   const { default: fict } = await import('..')
