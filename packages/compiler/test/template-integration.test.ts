@@ -811,9 +811,7 @@ describe('compiled templates DOM integration', () => {
           rotate() {
             if (todos.length < 2) return
             const [first, ...rest] = todos
-            console.log('rotate before', todos())
             todos = [...rest, first]
-            console.log('rotate after', todos())
           },
           prepend() {
             todos = [
