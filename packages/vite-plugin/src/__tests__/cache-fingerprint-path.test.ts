@@ -13,7 +13,7 @@ afterEach(async () => {
 })
 
 describe('vite plugin cache fingerprint artifact resolution', () => {
-  it('reads dist artifacts for source-map-remapped source frames', async () => {
+  it('reads source and dist artifacts for source-map-remapped source frames', async () => {
     const root = await makePackageFixture({
       source: 'source cache helper should not be fingerprinted',
       esm: 'esm plugin artifact v1',
@@ -28,7 +28,24 @@ describe('vite plugin cache fingerprint artifact resolution', () => {
 
     expect(artifact).toContain('esm plugin artifact v1')
     expect(artifact).toContain('cjs plugin artifact v1')
-    expect(artifact).not.toContain('source cache helper should not be fingerprinted')
+    expect(artifact).toContain('source cache helper should not be fingerprinted')
+  })
+
+  it('reads dist artifacts when remapped source files are not shipped', async () => {
+    const root = await makePackageFixture({
+      source: null,
+      esm: 'esm plugin artifact v1',
+      cjs: 'cjs plugin artifact v1',
+    })
+    const stack = [
+      'Error',
+      `    at readLoadedPluginArtifact (${path.join(root, 'src', 'cache-fingerprint.ts')}:10:5)`,
+    ].join('\n')
+
+    const artifact = readLoadedPluginArtifact(stack)
+
+    expect(artifact).toContain('esm plugin artifact v1')
+    expect(artifact).toContain('cjs plugin artifact v1')
   })
 
   it('changes when remapped dist artifacts change', async () => {
@@ -51,7 +68,7 @@ describe('vite plugin cache fingerprint artifact resolution', () => {
 })
 
 async function makePackageFixture(files: {
-  source: string
+  source: string | null
   esm: string
   cjs: string
 }): Promise<string> {
@@ -59,7 +76,9 @@ async function makePackageFixture(files: {
   tempRoots.push(root)
   await mkdir(path.join(root, 'src'), { recursive: true })
   await mkdir(path.join(root, 'dist'), { recursive: true })
-  await writeFile(path.join(root, 'src', 'cache-fingerprint.ts'), files.source)
+  if (files.source !== null) {
+    await writeFile(path.join(root, 'src', 'cache-fingerprint.ts'), files.source)
+  }
   await writeFile(path.join(root, 'dist', 'index.js'), files.esm)
   await writeFile(path.join(root, 'dist', 'index.cjs'), files.cjs)
   return root

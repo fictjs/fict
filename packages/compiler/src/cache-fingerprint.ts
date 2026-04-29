@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export function createCompilerCacheFingerprint(fallbackParts: readonly string[]): string {
@@ -17,11 +18,42 @@ export function readLoadedCompilerArtifact(stack = new Error().stack): string | 
   const modulePath = getLoadedModulePathFromStack(stack)
   if (!modulePath) return null
 
+  const remappedArtifact = readSourceMapRemappedDistArtifacts(modulePath)
+  if (remappedArtifact) return remappedArtifact
+
+  return readText(modulePath)
+}
+
+function readText(filePath: string): string | null {
   try {
-    return readFileSync(modulePath, 'utf8')
+    return readFileSync(filePath, 'utf8')
   } catch {
     return null
   }
+}
+
+function readSourceMapRemappedDistArtifacts(modulePath: string): string | null {
+  const normalized = modulePath.replace(/\\/g, '/')
+  const srcMarker = '/src/'
+  const srcIndex = normalized.lastIndexOf(srcMarker)
+  if (srcIndex === -1) return null
+
+  const sourceFile = normalized.slice(srcIndex + srcMarker.length)
+  if (sourceFile !== 'cache-fingerprint.ts' && sourceFile !== 'index.ts') return null
+
+  const packageRoot = modulePath.slice(0, srcIndex)
+  const artifacts = [
+    modulePath,
+    path.join(packageRoot, 'dist', 'index.js'),
+    path.join(packageRoot, 'dist', 'index.cjs'),
+  ]
+    .map(filePath => {
+      const content = readText(filePath)
+      return content ? `${path.basename(filePath)}\n${content}` : null
+    })
+    .filter((content): content is string => content !== null)
+
+  return artifacts.length > 0 ? artifacts.join('\n') : null
 }
 
 export function getLoadedModulePathFromStack(stack: string | undefined): string | null {
