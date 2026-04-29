@@ -1,10 +1,7 @@
-import { createHash } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-
 import type * as BabelCore from '@babel/core'
 import { declare } from '@babel/helper-plugin-utils'
 
+import { createCompilerCacheFingerprint } from './cache-fingerprint'
 import { SAFE_FUNCTIONS } from './constants'
 import { debugLog } from './debug'
 import { buildHIR } from './ir/build-hir'
@@ -2270,63 +2267,15 @@ export const createFictPlugin = declare(
   },
 )
 
-export const COMPILER_CACHE_FINGERPRINT = createCompilerCacheFingerprint()
-
-function createCompilerCacheFingerprint(): string {
-  const artifact = readLoadedCompilerArtifact()
-  if (artifact) {
-    return hashCompilerFingerprint(['fict-compiler-cache-v2', artifact].join('|'))
-  }
-
-  return hashCompilerFingerprint(
-    [
-      'fict-compiler-cache-v2',
-      'artifact-unavailable',
-      String(createFictPlugin),
-      String(createHIREntrypointVisitor),
-      String(buildHIR),
-      String(optimizeHIR),
-      String(lowerHIRWithRegions),
-      String(resolveModuleMetadata),
-      JSON.stringify(Array.from(SAFE_FUNCTIONS).sort()),
-    ].join('|'),
-  )
-}
-
-function readLoadedCompilerArtifact(): string | null {
-  const modulePath = getLoadedModulePathFromStack()
-  if (!modulePath) return null
-
-  try {
-    return readFileSync(modulePath, 'utf8')
-  } catch {
-    return null
-  }
-}
-
-function getLoadedModulePathFromStack(): string | null {
-  const stack = new Error().stack
-  if (!stack) return null
-
-  for (const line of stack.split('\n')) {
-    const match = line.match(/(?:\(|\s)(file:\/\/\/[^:)]+|\/?[^():\s]+):\d+:\d+(?:\)|$)/)
-    if (!match?.[1]) continue
-    const candidate = match[1]
-    if (candidate.startsWith('node:')) continue
-
-    try {
-      return candidate.startsWith('file://') ? fileURLToPath(candidate) : candidate
-    } catch {
-      return null
-    }
-  }
-
-  return null
-}
-
-function hashCompilerFingerprint(value: string): string {
-  return createHash('sha256').update(value).digest('hex')
-}
+export const COMPILER_CACHE_FINGERPRINT = createCompilerCacheFingerprint([
+  String(createFictPlugin),
+  String(createHIREntrypointVisitor),
+  String(buildHIR),
+  String(optimizeHIR),
+  String(lowerHIRWithRegions),
+  String(resolveModuleMetadata),
+  JSON.stringify(Array.from(SAFE_FUNCTIONS).sort()),
+])
 
 export { clearModuleMetadata, resolveModuleMetadata, setModuleMetadata } from './module-metadata'
 export type {
