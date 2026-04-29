@@ -2266,6 +2266,17 @@ export const createFictPlugin = declare(
   },
 )
 
+export const COMPILER_CACHE_FINGERPRINT = [
+  'fict-compiler-cache-v1',
+  String(createFictPlugin),
+  String(createHIREntrypointVisitor),
+  String(buildHIR),
+  String(optimizeHIR),
+  String(lowerHIRWithRegions),
+  String(resolveModuleMetadata),
+  JSON.stringify(Array.from(SAFE_FUNCTIONS).sort()),
+].join('|')
+
 export { clearModuleMetadata, resolveModuleMetadata, setModuleMetadata } from './module-metadata'
 export type {
   HookReturnInfoSerializable,

@@ -8,7 +8,11 @@ import _generate from '@babel/generator'
 import { parse } from '@babel/parser'
 import _traverse from '@babel/traverse'
 import * as t from '@babel/types'
-import { createFictPlugin, type FictCompilerOptions } from '@fictjs/compiler'
+import {
+  COMPILER_CACHE_FINGERPRINT,
+  createFictPlugin,
+  type FictCompilerOptions,
+} from '@fictjs/compiler'
 import type { Plugin, ResolvedConfig, TransformResult } from 'vite'
 
 // Handle ESM/CJS interop for Babel packages
@@ -891,7 +895,7 @@ function hashString(value: string): string {
 }
 
 function getCompilerCacheFingerprint(): string {
-  return hashString(String(createFictPlugin))
+  return hashString(COMPILER_CACHE_FINGERPRINT)
 }
 
 function stableStringify(value: unknown): string {
