@@ -1,4 +1,4 @@
-import { describe, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { transform } from './test-utils'
 
 describe('debug output', () => {
@@ -45,8 +45,8 @@ describe('debug output', () => {
     `
 
     const output = transform(source)
-    console.log('=== COMPILED OUTPUT ===')
-    console.log(output)
-    console.log('=== END OUTPUT ===')
+    expect(output).toContain('createConditional')
+    expect(output).toContain('count() % 2')
+    expect(output).toContain('insertBetween')
   })
 })
