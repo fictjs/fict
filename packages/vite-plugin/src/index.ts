@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto'
-import { promises as fs, readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
+import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -164,7 +163,6 @@ interface TypeScriptApi {
 }
 
 const CACHE_VERSION = 3
-const require = createRequire(import.meta.url)
 const TRANSFORM_CACHE_FINGERPRINT = hashString(
   [getCompilerCacheFingerprint(), String(extractAndRewriteHandlers)].join('|'),
 )
@@ -893,12 +891,7 @@ function hashString(value: string): string {
 }
 
 function getCompilerCacheFingerprint(): string {
-  try {
-    const compilerEntry = require.resolve('@fictjs/compiler')
-    return hashString(readFileSync(compilerEntry, 'utf8'))
-  } catch {
-    return hashString(String(createFictPlugin))
-  }
+  return hashString(String(createFictPlugin))
 }
 
 function stableStringify(value: unknown): string {
