@@ -530,13 +530,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
 
       const cacheStore = ensureCache()
-      const cacheKey = cacheStore.enabled
-        ? buildCacheKey(filename, code, fictOptions, tsProject)
-        : null
-
       const shouldSplit =
         options.functionSplitting ??
         (config?.command === 'build' && (compilerOptions.resumable || !config?.build?.ssr))
+      const cacheKey = cacheStore.enabled
+        ? buildCacheKey(filename, code, fictOptions, tsProject, shouldSplit)
+        : null
 
       if (cacheKey) {
         const cached = await cacheStore.get(cacheKey)
@@ -948,12 +947,21 @@ function buildCacheKey(
   code: string,
   options: FictCompilerOptions,
   tsProject: TypeScriptProject | null,
+  shouldSplit: boolean,
 ): string {
   const codeHash = hashString(code)
   const optionsHash = hashString(stableStringify(normalizeOptionsForCache(options)))
   const tsKey = tsProject ? `${tsProject.configHash}:${tsProject.projectVersion}` : ''
   return hashString(
-    [CACHE_VERSION, TRANSFORM_CACHE_FINGERPRINT, filename, codeHash, optionsHash, tsKey].join('|'),
+    [
+      CACHE_VERSION,
+      TRANSFORM_CACHE_FINGERPRINT,
+      filename,
+      codeHash,
+      optionsHash,
+      tsKey,
+      shouldSplit ? 'split' : 'inline',
+    ].join('|'),
   )
 }
 

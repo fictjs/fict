@@ -16,6 +16,20 @@ const mockBuildConfig = {
 
 const sample = 'export const value: number = 1'
 const fileName = '/project/src/Plain.tsx'
+const splitFileName = '/project/src/Counter.tsx'
+const compiledHandlerModule = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const [count] = __fictUseLexicalScope(scopeId, ['count']);
+  const __handler = () => count(count() + 1);
+  return __handler.call(el, event);
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+`
 
 afterEach(() => {
   vi.doUnmock('@fictjs/compiler')
@@ -57,6 +71,38 @@ describe('vite-plugin transform cache fingerprint', () => {
       await rm(cacheDir, { recursive: true, force: true })
     }
   })
+
+  it('does not reuse split cache entries for non-split transforms', async () => {
+    const cacheDir = await mkdtemp(path.join(tmpdir(), 'fict-vite-cache-'))
+
+    try {
+      const split = await transformWithSplitMode(true, cacheDir)
+      const inline = await transformWithSplitMode(false, cacheDir)
+      const entries = await readdir(cacheDir)
+
+      expect(split.code).toContain('virtual:fict-handler:')
+      expect(inline.code).toContain("__fictQrl(import.meta.url, '__fict_e0')")
+      expect(entries).toHaveLength(2)
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not reuse non-split cache entries for split transforms', async () => {
+    const cacheDir = await mkdtemp(path.join(tmpdir(), 'fict-vite-cache-'))
+
+    try {
+      const inline = await transformWithSplitMode(false, cacheDir)
+      const split = await transformWithSplitMode(true, cacheDir)
+      const entries = await readdir(cacheDir)
+
+      expect(inline.code).toContain("__fictQrl(import.meta.url, '__fict_e0')")
+      expect(split.code).toContain('virtual:fict-handler:')
+      expect(entries).toHaveLength(2)
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true })
+    }
+  })
 })
 
 async function transformWithFingerprints(
@@ -87,6 +133,29 @@ async function transformWithFingerprints(
   runConfigResolved(plugin)
   const result = await runTransform(plugin, sample, fileName)
   expectTransformResult(result)
+}
+
+async function transformWithSplitMode(
+  shouldSplit: boolean,
+  cacheDir: string,
+): Promise<TransformResult> {
+  vi.resetModules()
+  vi.doUnmock('@fictjs/compiler')
+  vi.doUnmock('../cache-fingerprint')
+
+  const { default: fict } = await import('..')
+  const plugin = fict({
+    functionSplitting: shouldSplit,
+    cache: {
+      persistent: true,
+      dir: cacheDir,
+    },
+  })
+
+  runConfigResolved(plugin)
+  const result = await runTransform(plugin, compiledHandlerModule, splitFileName)
+  expectTransformResult(result)
+  return result
 }
 
 function runConfigResolved(plugin: Plugin): void {
