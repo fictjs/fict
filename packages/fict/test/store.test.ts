@@ -200,6 +200,7 @@ describe('$store', () => {
     })
 
     it('should not return stale bound methods after external deletion', () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       const raw: any = {
         value: 'original',
         getValue() {
@@ -220,6 +221,9 @@ describe('$store', () => {
         return this.value + '!'
       }
       expect(state.getValue()).toBe('original!')
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[fict] Direct mutation detected for "getValue"; mutate via $store proxy.',
+      )
     })
 
     it('should maintain correct this binding after reassignment', () => {
