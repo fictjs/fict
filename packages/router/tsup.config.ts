@@ -11,5 +11,9 @@ export default defineConfig({
   esbuildOptions(options) {
     options.jsx = 'automatic'
     options.jsxImportSource = '@fictjs/runtime'
+    options.logOverride = {
+      ...options.logOverride,
+      'empty-import-meta': 'silent',
+    }
   },
 })
