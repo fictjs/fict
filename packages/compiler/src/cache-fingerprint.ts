@@ -43,7 +43,8 @@ function readSourceMapRemappedDistArtifacts(modulePath: string): string | null {
 
   const packageRoot = modulePath.slice(0, srcIndex)
   const artifacts = [
-    modulePath,
+    path.join(packageRoot, 'src', 'index.ts'),
+    path.join(packageRoot, 'src', 'cache-fingerprint.ts'),
     path.join(packageRoot, 'dist', 'index.js'),
     path.join(packageRoot, 'dist', 'index.cjs'),
   ]

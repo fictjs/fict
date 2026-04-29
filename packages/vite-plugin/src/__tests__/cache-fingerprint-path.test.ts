@@ -65,10 +65,52 @@ describe('vite plugin cache fingerprint artifact resolution', () => {
 
     expect(first).not.toBe(second)
   })
+
+  it('changes when sibling source artifacts change while dist is stale', async () => {
+    const firstRoot = await makePackageFixture({
+      cacheSource: 'same cache helper',
+      indexSource: 'index source v1',
+      esm: 'same esm plugin artifact',
+      cjs: 'same cjs plugin artifact',
+    })
+    const secondRoot = await makePackageFixture({
+      cacheSource: 'same cache helper',
+      indexSource: 'index source v2',
+      esm: 'same esm plugin artifact',
+      cjs: 'same cjs plugin artifact',
+    })
+
+    const first = readLoadedPluginArtifact(cacheHelperStack(firstRoot))
+    const second = readLoadedPluginArtifact(cacheHelperStack(secondRoot))
+
+    expect(first).not.toBe(second)
+  })
+
+  it('changes when cache helper source changes from index remapped frames', async () => {
+    const firstRoot = await makePackageFixture({
+      cacheSource: 'cache helper v1',
+      indexSource: 'same index source',
+      esm: 'same esm plugin artifact',
+      cjs: 'same cjs plugin artifact',
+    })
+    const secondRoot = await makePackageFixture({
+      cacheSource: 'cache helper v2',
+      indexSource: 'same index source',
+      esm: 'same esm plugin artifact',
+      cjs: 'same cjs plugin artifact',
+    })
+
+    const first = readLoadedPluginArtifact(remappedStack(firstRoot))
+    const second = readLoadedPluginArtifact(remappedStack(secondRoot))
+
+    expect(first).not.toBe(second)
+  })
 })
 
 async function makePackageFixture(files: {
   source: string | null
+  cacheSource?: string | null
+  indexSource?: string | null
   esm: string
   cjs: string
 }): Promise<string> {
@@ -76,12 +118,24 @@ async function makePackageFixture(files: {
   tempRoots.push(root)
   await mkdir(path.join(root, 'src'), { recursive: true })
   await mkdir(path.join(root, 'dist'), { recursive: true })
-  if (files.source !== null) {
-    await writeFile(path.join(root, 'src', 'cache-fingerprint.ts'), files.source)
+  const cacheSource = files.cacheSource ?? files.source
+  const indexSource = files.indexSource ?? null
+  if (cacheSource !== null) {
+    await writeFile(path.join(root, 'src', 'cache-fingerprint.ts'), cacheSource)
+  }
+  if (indexSource !== null) {
+    await writeFile(path.join(root, 'src', 'index.ts'), indexSource)
   }
   await writeFile(path.join(root, 'dist', 'index.js'), files.esm)
   await writeFile(path.join(root, 'dist', 'index.cjs'), files.cjs)
   return root
+}
+
+function cacheHelperStack(root: string): string {
+  return [
+    'Error',
+    `    at readLoadedPluginArtifact (${path.join(root, 'src', 'cache-fingerprint.ts')}:10:5)`,
+  ].join('\n')
 }
 
 function remappedStack(root: string): string {

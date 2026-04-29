@@ -98,10 +98,52 @@ describe('compiler cache fingerprint stack parsing', () => {
     expect(artifact).toContain('esm compiler artifact v1')
     expect(artifact).toContain('cjs compiler artifact v1')
   })
+
+  it('changes when sibling compiler source artifacts change while dist is stale', async () => {
+    const firstRoot = await makePackageFixture({
+      cacheSource: 'same compiler cache helper',
+      indexSource: 'compiler index source v1',
+      esm: 'same esm compiler artifact',
+      cjs: 'same cjs compiler artifact',
+    })
+    const secondRoot = await makePackageFixture({
+      cacheSource: 'same compiler cache helper',
+      indexSource: 'compiler index source v2',
+      esm: 'same esm compiler artifact',
+      cjs: 'same cjs compiler artifact',
+    })
+
+    const first = readLoadedCompilerArtifact(cacheHelperStack(firstRoot))
+    const second = readLoadedCompilerArtifact(cacheHelperStack(secondRoot))
+
+    expect(first).not.toBe(second)
+  })
+
+  it('changes when compiler cache helper source changes from index remapped frames', async () => {
+    const firstRoot = await makePackageFixture({
+      cacheSource: 'compiler cache helper v1',
+      indexSource: 'same compiler index source',
+      esm: 'same esm compiler artifact',
+      cjs: 'same cjs compiler artifact',
+    })
+    const secondRoot = await makePackageFixture({
+      cacheSource: 'compiler cache helper v2',
+      indexSource: 'same compiler index source',
+      esm: 'same esm compiler artifact',
+      cjs: 'same cjs compiler artifact',
+    })
+
+    const first = readLoadedCompilerArtifact(indexStack(firstRoot))
+    const second = readLoadedCompilerArtifact(indexStack(secondRoot))
+
+    expect(first).not.toBe(second)
+  })
 })
 
 async function makePackageFixture(files: {
   source: string | null
+  cacheSource?: string | null
+  indexSource?: string | null
   esm: string
   cjs: string
 }): Promise<string> {
@@ -109,10 +151,29 @@ async function makePackageFixture(files: {
   tempRoots.push(root)
   await mkdir(path.join(root, 'src'), { recursive: true })
   await mkdir(path.join(root, 'dist'), { recursive: true })
-  if (files.source !== null) {
-    await writeFile(path.join(root, 'src', 'cache-fingerprint.ts'), files.source)
+  const cacheSource = files.cacheSource ?? files.source
+  const indexSource = files.indexSource ?? null
+  if (cacheSource !== null) {
+    await writeFile(path.join(root, 'src', 'cache-fingerprint.ts'), cacheSource)
+  }
+  if (indexSource !== null) {
+    await writeFile(path.join(root, 'src', 'index.ts'), indexSource)
   }
   await writeFile(path.join(root, 'dist', 'index.js'), files.esm)
   await writeFile(path.join(root, 'dist', 'index.cjs'), files.cjs)
   return root
+}
+
+function cacheHelperStack(root: string): string {
+  return [
+    'Error',
+    `    at readLoadedCompilerArtifact (${path.join(root, 'src', 'cache-fingerprint.ts')}:10:5)`,
+  ].join('\n')
+}
+
+function indexStack(root: string): string {
+  return [
+    'Error',
+    `    at readLoadedCompilerArtifact (${path.join(root, 'src', 'index.ts')}:10:5)`,
+  ].join('\n')
 }
