@@ -209,9 +209,9 @@ describe('optimizer equivalence (optimize on/off)', () => {
           $effect(() => {
             effectRuns++
             if (show) {
-              console.log('showing:', count)
+              effectRuns += count >= 0 ? 0 : 0
             } else {
-              console.log('hidden')
+              effectRuns += 0
             }
           })
 
