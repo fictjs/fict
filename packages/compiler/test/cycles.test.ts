@@ -1,6 +1,6 @@
 import { parseSync } from '@babel/core'
 import * as t from '@babel/types'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { buildHIR } from '../src/ir/build-hir'
 import { lowerHIRWithRegions } from '../src/ir/codegen'
@@ -73,12 +73,14 @@ describe('Error/Cycle Protection', () => {
       }
     `
     const prevFictDebug = process.env.FICT_DEBUG
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
 
     process.env.FICT_DEBUG = 'all'
     try {
       expect(() => run(source)).toThrow(/Detected cyclic derived dependency/)
       expect(() => run(source)).not.toThrow(/cycle check invoked/)
     } finally {
+      logSpy.mockRestore()
       if (prevFictDebug === undefined) {
         delete process.env.FICT_DEBUG
       } else {

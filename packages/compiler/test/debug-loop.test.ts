@@ -13,8 +13,8 @@ describe('Debug loop lowering', () => {
       }
     `
     const output = transform(source, { optimize: true })
-    console.log('OUTPUT:', output)
-    // Should contain the for loop with i declared
     expect(output).toContain('let i')
+    expect(output).toContain('i < n')
+    expect(output).toContain('total += i')
   })
 })
