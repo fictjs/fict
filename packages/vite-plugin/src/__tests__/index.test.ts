@@ -211,6 +211,130 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('emits library metadata assets for TypeScript entry chunks', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-meta-'))
+
+    try {
+      const sourcePath = path.join(root, 'src', 'index.ts')
+      const plugin = fict({ library: true, useTypeScriptProject: false }) as any
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved({ ...mockBuildConfig, root } as any)
+      }
+
+      const source = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { directAccessor: "signal" } */
+        export function useCounter() {
+          const count = $state(0)
+          return count
+        }
+      `
+
+      const transform = plugin.transform as any
+      const result =
+        typeof transform === 'function'
+          ? await transform.call(
+              { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+              source,
+              sourcePath,
+            )
+          : await transform?.handler.call(
+              { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+              source,
+              sourcePath,
+            )
+
+      expect(result && typeof result === 'object').toBe(true)
+
+      const emitFile = vi.fn(() => 'asset-id')
+      plugin.generateBundle.call(
+        { emitFile },
+        {},
+        {
+          'index.js': {
+            type: 'chunk',
+            fileName: 'index.js',
+            isEntry: true,
+            facadeModuleId: sourcePath,
+            modules: { [sourcePath]: {} },
+            exports: ['useCounter'],
+          },
+        },
+      )
+
+      const metadataCall = emitFile.mock.calls.find(
+        ([asset]) => asset.type === 'asset' && asset.fileName === 'index.fict.meta.json',
+      )
+      expect(metadataCall).toBeDefined()
+      expect(JSON.parse(metadataCall?.[0].source as string)).toEqual({
+        exports: {},
+        hooks: { useCounter: { directAccessor: 'signal' } },
+      })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('restores library metadata assets from transform cache hits', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-meta-cache-'))
+
+    try {
+      const sourcePath = path.join(root, 'src', 'index.ts')
+      const plugin = fict({ library: true, useTypeScriptProject: false }) as any
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved({ ...mockBuildConfig, root } as any)
+      }
+
+      const source = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { directAccessor: "signal" } */
+        export function useCounter() {
+          const count = $state(0)
+          return count
+        }
+      `
+      const context = { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() }
+      const transform = plugin.transform as any
+
+      await (typeof transform === 'function'
+        ? transform.call(context, source, sourcePath)
+        : transform?.handler.call(context, source, sourcePath))
+
+      if (typeof plugin.buildStart === 'function') {
+        plugin.buildStart.call({})
+      }
+
+      await (typeof transform === 'function'
+        ? transform.call(context, source, sourcePath)
+        : transform?.handler.call(context, source, sourcePath))
+
+      const emitFile = vi.fn(() => 'asset-id')
+      plugin.generateBundle.call(
+        { emitFile },
+        {},
+        {
+          'index.js': {
+            type: 'chunk',
+            fileName: 'index.js',
+            isEntry: true,
+            facadeModuleId: sourcePath,
+            modules: { [sourcePath]: {} },
+            exports: ['useCounter'],
+          },
+        },
+      )
+
+      const metadataCall = emitFile.mock.calls.find(
+        ([asset]) => asset.type === 'asset' && asset.fileName === 'index.fict.meta.json',
+      )
+      expect(metadataCall).toBeDefined()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('registers resumable component resumes with runtime module URLs', async () => {
     const plugin = fict({ resumable: true }) as any
     const sample = `

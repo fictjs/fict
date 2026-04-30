@@ -72,6 +72,20 @@ export interface FictPluginOptions extends FictCompilerOptions {
    * @default false
    */
   debug?: boolean
+  /**
+   * Enable library publishing helpers.
+   * Library mode expands the default transform include list to non-JSX source files
+   * and emits package-consumable Fict metadata assets for public entry chunks.
+   */
+  library?: boolean | FictLibraryOptions
+}
+
+export interface FictLibraryOptions {
+  /**
+   * Directory inside the build output where generated metadata files are emitted.
+   * Defaults to the same directory as each emitted entry chunk.
+   */
+  metadataDir?: string
 }
 
 interface NormalizedCacheOptions {
@@ -84,6 +98,12 @@ interface CachedTransform {
   code: string
   map: TransformResult['map']
   extractedHandlers?: ExtractedHandler[]
+  moduleMetadata?: ModuleReactiveMetadata
+}
+
+interface NormalizedLibraryOptions {
+  enabled: boolean
+  metadataDir: string
 }
 
 interface TypeScriptProject {
@@ -178,6 +198,8 @@ const TRANSFORM_CACHE_FINGERPRINT = hashString(
   [getCompilerCacheFingerprint(), VITE_PLUGIN_CACHE_FINGERPRINT].join('|'),
 )
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
+const DEFAULT_APP_INCLUDE = ['**/*.tsx', '**/*.jsx']
+const DEFAULT_LIBRARY_INCLUDE = ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx']
 
 // Virtual module prefix for extracted handlers
 const VIRTUAL_HANDLER_PREFIX = '\0fict-handler:'
@@ -225,14 +247,18 @@ const manuallyRegisteredHandlers = new Map<string, ExtractedHandler>()
  */
 export default function fict(options: FictPluginOptions = {}): Plugin {
   const {
-    include = ['**/*.tsx', '**/*.jsx'],
+    include,
     exclude = ['**/node_modules/**'],
     cache: cacheOption,
     tsconfigPath,
     useTypeScriptProject = true,
     debug: debugOption,
+    library: libraryOption,
     ...compilerOptions
   } = options
+  const libraryOptions = normalizeLibraryOptions(libraryOption)
+  const includePatterns =
+    include ?? (libraryOptions.enabled ? DEFAULT_LIBRARY_INCLUDE : DEFAULT_APP_INCLUDE)
 
   let config: ResolvedConfig | undefined
   let isDev = false
@@ -446,16 +472,17 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       const filename = stripQuery(id)
 
       // Skip non-matching files
-      if (!shouldTransform(filename, include, exclude)) {
+      if (!shouldTransform(filename, includePatterns, exclude)) {
         return null
       }
 
+      const normalizedFilename = normalizeFileName(filename, config?.root)
       const aliasEntries = normalizeAliases(config?.resolve?.alias)
       const fictOptions: FictCompilerOptions = {
         ...compilerOptions,
         dev: compilerOptions.dev ?? isDev,
         sourcemap: compilerOptions.sourcemap ?? true,
-        filename,
+        filename: normalizedFilename,
         moduleMetadata,
         resolveModuleMetadata: (source, importer) => {
           const userResolved = compilerOptions.resolveModuleMetadata?.(source, importer)
@@ -523,8 +550,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
       const tsProject = await ensureTypeScriptProject()
       if (tsProject) {
-        const resolvedName = normalizeFileName(filename, config?.root)
-        tsProject.updateFile(resolvedName, code)
+        tsProject.updateFile(normalizedFilename, code)
         const program = tsProject.getProgram()
         const checker =
           program && typeof program.getTypeChecker === 'function'
@@ -551,7 +577,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             shouldSplit,
             computePackageMetadataCacheFingerprint(
               code,
-              normalizeFileName(filename, config?.root),
+              normalizedFilename,
               compilerOptions,
               moduleMetadata,
             ),
@@ -574,6 +600,9 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               }
             }
           }
+          if (cached.moduleMetadata) {
+            moduleMetadata.set(normalizedFilename, cached.moduleMetadata)
+          }
           return {
             code: cached.code,
             map: cached.map,
@@ -594,7 +623,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           const isTypeScript = filename.endsWith('.tsx') || filename.endsWith('.ts')
 
           const result = await transformAsync(code, {
-            filename,
+            filename: normalizedFilename,
             sourceMaps: fictOptions.sourcemap,
             sourceFileName: filename,
             presets: isTypeScript
@@ -668,6 +697,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             code: finalCode,
             map: finalMap,
           }
+          const generatedModuleMetadata = moduleMetadata.get(normalizedFilename)
+          if (generatedModuleMetadata) {
+            cachedTransform.moduleMetadata = generatedModuleMetadata
+          }
 
           if (shouldSplit && splitResult?.handlers.length) {
             cachedTransform.extractedHandlers = splitResult.handlers
@@ -700,7 +733,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
       }
 
       // Force full reload for .tsx/.jsx files to ensure reactive graph is rebuilt
-      if (shouldTransform(file, include, exclude)) {
+      if (shouldTransform(file, includePatterns, exclude)) {
         server.ws.send({
           type: 'full-reload',
           path: '*',
@@ -710,6 +743,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
 
     generateBundle(_options, bundle) {
       if (!config || config.command !== 'build') return
+      if (libraryOptions.enabled) {
+        emitLibraryMetadataAssets(this.emitFile.bind(this), bundle, moduleMetadata, {
+          root: config.root,
+          metadataDir: libraryOptions.metadataDir,
+        })
+      }
       if (config.build.ssr) return
 
       const base = config.base ?? '/'
@@ -836,6 +875,15 @@ function normalizeCacheOptions(
   }
 }
 
+function normalizeLibraryOptions(library: FictPluginOptions['library']): NormalizedLibraryOptions {
+  if (!library) return { enabled: false, metadataDir: '' }
+  if (library === true) return { enabled: true, metadataDir: '' }
+  return {
+    enabled: true,
+    metadataDir: normalizeAssetDir(library.metadataDir),
+  }
+}
+
 function normalizeFileName(id: string, root?: string): string {
   let clean = stripQuery(id)
   if (clean.startsWith('/@fs/')) {
@@ -851,6 +899,128 @@ function normalizeFileName(id: string, root?: string): string {
   if (path.isAbsolute(clean)) return path.normalize(clean)
   if (root) return path.normalize(path.resolve(root, clean))
   return path.normalize(path.resolve(clean))
+}
+
+type EmitAsset = (asset: { type: 'asset'; fileName: string; source: string }) => string
+
+interface BundleChunkLike {
+  type: string
+  fileName: string
+  isEntry?: boolean
+  facadeModuleId?: string | null
+  modules?: Record<string, unknown>
+  exports?: string[]
+}
+
+interface BundleLike {
+  [fileName: string]: BundleChunkLike | { type: string }
+}
+
+function normalizeAssetDir(dir: string | undefined): string {
+  if (!dir) return ''
+  const normalized = dir
+    .replace(/\\/g, '/')
+    .replace(/^\.\/+/, '')
+    .replace(/\/+$/, '')
+  if (!normalized || normalized === '.') return ''
+  if (normalized.startsWith('/') || normalized.includes('\0')) return ''
+  if (normalized.split('/').includes('..')) return ''
+  return normalized
+}
+
+function joinAssetPath(...parts: Array<string | undefined>): string {
+  return parts
+    .filter((part): part is string => !!part)
+    .join('/')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/^\/+/, '')
+}
+
+function metadataFileNameForChunk(chunkFileName: string, metadataDir: string): string {
+  const normalized = chunkFileName.replace(/\\/g, '/')
+  const chunkDir = path.posix.dirname(normalized)
+  const baseName = path.posix.basename(normalized).replace(/\.(?:mjs|cjs|js)$/, '')
+  const defaultDir = chunkDir === '.' ? '' : chunkDir
+  return joinAssetPath(metadataDir || defaultDir, `${baseName}.fict.meta.json`)
+}
+
+function getStoredModuleMetadata(
+  store: Map<string, ModuleReactiveMetadata>,
+  moduleId: string | undefined | null,
+  root: string,
+): ModuleReactiveMetadata | undefined {
+  if (!moduleId || moduleId.startsWith('\0')) return undefined
+  const normalized = normalizeFileName(moduleId, root)
+  return store.get(normalized) ?? store.get(moduleId)
+}
+
+function mergeMetadata(
+  target: ModuleReactiveMetadata,
+  source: ModuleReactiveMetadata | undefined,
+  allowedExports: Set<string> | null,
+): void {
+  if (!source) return
+  for (const [name, kind] of Object.entries(source.exports)) {
+    if (allowedExports && !allowedExports.has(name)) continue
+    target.exports[name] = kind
+  }
+  if (source.hooks) {
+    for (const [name, info] of Object.entries(source.hooks)) {
+      if (allowedExports && !allowedExports.has(name)) continue
+      target.hooks ??= {}
+      target.hooks[name] = info
+    }
+  }
+}
+
+function hasMetadata(metadata: ModuleReactiveMetadata): boolean {
+  return Object.keys(metadata.exports).length > 0 || Object.keys(metadata.hooks ?? {}).length > 0
+}
+
+function buildEntryChunkMetadata(
+  chunk: BundleChunkLike,
+  store: Map<string, ModuleReactiveMetadata>,
+  root: string,
+): ModuleReactiveMetadata | null {
+  const allowedExports = chunk.exports && chunk.exports.length > 0 ? new Set(chunk.exports) : null
+  const metadata: ModuleReactiveMetadata = { exports: {} }
+
+  mergeMetadata(
+    metadata,
+    getStoredModuleMetadata(store, chunk.facadeModuleId, root),
+    allowedExports,
+  )
+  for (const moduleId of Object.keys(chunk.modules ?? {})) {
+    mergeMetadata(metadata, getStoredModuleMetadata(store, moduleId, root), allowedExports)
+  }
+
+  return hasMetadata(metadata) ? metadata : null
+}
+
+function emitLibraryMetadataAssets(
+  emitFile: EmitAsset,
+  bundle: BundleLike,
+  store: Map<string, ModuleReactiveMetadata>,
+  options: { root: string; metadataDir: string },
+): void {
+  const emitted = new Set<string>()
+  for (const output of Object.values(bundle)) {
+    if (output.type !== 'chunk') continue
+    const chunk = output as BundleChunkLike
+    if (!chunk.isEntry) continue
+    const metadata = buildEntryChunkMetadata(chunk, store, options.root)
+    if (!metadata) continue
+
+    const fileName = metadataFileNameForChunk(chunk.fileName, options.metadataDir)
+    if (emitted.has(fileName)) continue
+    emitted.add(fileName)
+    emitFile({
+      type: 'asset',
+      fileName,
+      source: JSON.stringify(metadata),
+    })
+  }
 }
 
 /**
