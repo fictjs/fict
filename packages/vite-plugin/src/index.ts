@@ -1149,11 +1149,13 @@ function buildFictPackageMappings(
   }
 
   if (mappings.size === 0 && assetList.length === 1) {
-    const [asset] = assetList
-    mappings.set(
-      '.',
-      toPackageJsonRelativePath(packageDir, path.resolve(outDir, asset.metadataFileName)),
-    )
+    const asset = assetList[0]
+    if (asset) {
+      mappings.set(
+        '.',
+        toPackageJsonRelativePath(packageDir, path.resolve(outDir, asset.metadataFileName)),
+      )
+    }
   }
 
   return mappings
