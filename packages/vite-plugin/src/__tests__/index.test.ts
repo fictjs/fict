@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -330,6 +330,182 @@ describe('fict vite-plugin', () => {
         ([asset]) => asset.type === 'asset' && asset.fileName === 'index.fict.meta.json',
       )
       expect(metadataCall).toBeDefined()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('writes fict.metadata to package.json for single-entry library builds', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-package-'))
+
+    try {
+      const sourcePath = path.join(root, 'src', 'index.ts')
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          type: 'module',
+          exports: {
+            '.': {
+              import: './dist/index.js',
+              require: './dist/index.cjs',
+            },
+          },
+        }),
+      )
+
+      const plugin = fict({ library: true, useTypeScriptProject: false }) as any
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved({ ...mockBuildConfig, root } as any)
+      }
+
+      const source = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { directAccessor: "signal" } */
+        export function useCounter() {
+          const count = $state(0)
+          return count
+        }
+      `
+      const transform = plugin.transform as any
+      await (typeof transform === 'function'
+        ? transform.call({ error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() }, source, sourcePath)
+        : transform?.handler.call(
+            { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+            source,
+            sourcePath,
+          ))
+
+      plugin.generateBundle.call(
+        { emitFile: vi.fn(() => 'asset-id') },
+        {},
+        {
+          'index.js': {
+            type: 'chunk',
+            fileName: 'index.js',
+            isEntry: true,
+            facadeModuleId: sourcePath,
+            modules: { [sourcePath]: {} },
+            exports: ['useCounter'],
+          },
+        },
+      )
+      await plugin.writeBundle.call({}, {}, {})
+
+      const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
+      expect(pkg.fict).toEqual({ metadata: './dist/index.fict.meta.json' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('writes fict.exports to package.json for multi-entry library builds', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-package-subpaths-'))
+
+    try {
+      const indexPath = path.join(root, 'src', 'index.ts')
+      const hooksPath = path.join(root, 'src', 'hooks.ts')
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          type: 'module',
+          exports: {
+            '.': './dist/index.js',
+            './hooks': './dist/hooks.js',
+          },
+        }),
+      )
+
+      const plugin = fict({ library: true, useTypeScriptProject: false }) as any
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved({ ...mockBuildConfig, root } as any)
+      }
+
+      const transform = plugin.transform as any
+      await (typeof transform === 'function'
+        ? transform.call(
+            { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+            `
+              import { $state } from 'fict'
+              /** @fictReturn { directAccessor: "signal" } */
+              export function useCounter() {
+                const count = $state(0)
+                return count
+              }
+            `,
+            indexPath,
+          )
+        : transform?.handler.call(
+            { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+            `
+              import { $state } from 'fict'
+              /** @fictReturn { directAccessor: "signal" } */
+              export function useCounter() {
+                const count = $state(0)
+                return count
+              }
+            `,
+            indexPath,
+          ))
+      await (typeof transform === 'function'
+        ? transform.call(
+            { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+            `
+              import { $state } from 'fict'
+              /** @fictReturn { directAccessor: "signal" } */
+              export function useToggle() {
+                const on = $state(false)
+                return on
+              }
+            `,
+            hooksPath,
+          )
+        : transform?.handler.call(
+            { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+            `
+              import { $state } from 'fict'
+              /** @fictReturn { directAccessor: "signal" } */
+              export function useToggle() {
+                const on = $state(false)
+                return on
+              }
+            `,
+            hooksPath,
+          ))
+
+      plugin.generateBundle.call(
+        { emitFile: vi.fn(() => 'asset-id') },
+        {},
+        {
+          'index.js': {
+            type: 'chunk',
+            fileName: 'index.js',
+            isEntry: true,
+            facadeModuleId: indexPath,
+            modules: { [indexPath]: {} },
+            exports: ['useCounter'],
+          },
+          'hooks.js': {
+            type: 'chunk',
+            fileName: 'hooks.js',
+            isEntry: true,
+            facadeModuleId: hooksPath,
+            modules: { [hooksPath]: {} },
+            exports: ['useToggle'],
+          },
+        },
+      )
+      await plugin.writeBundle.call({}, {}, {})
+
+      const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
+      expect(pkg.fict).toEqual({
+        exports: {
+          '.': './dist/index.fict.meta.json',
+          './hooks': './dist/hooks.fict.meta.json',
+        },
+      })
     } finally {
       await rm(root, { recursive: true, force: true })
     }

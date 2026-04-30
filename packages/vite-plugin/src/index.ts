@@ -86,6 +86,12 @@ export interface FictLibraryOptions {
    * Defaults to the same directory as each emitted entry chunk.
    */
   metadataDir?: string
+  /**
+   * package.json file to update with `fict.metadata` / `fict.exports`.
+   * Pass `false` to emit metadata files without modifying package.json.
+   * @default 'package.json'
+   */
+  packageJson?: string | false
 }
 
 interface NormalizedCacheOptions {
@@ -104,6 +110,12 @@ interface CachedTransform {
 interface NormalizedLibraryOptions {
   enabled: boolean
   metadataDir: string
+  packageJson: string | false
+}
+
+interface LibraryMetadataAsset {
+  chunkFileName: string
+  metadataFileName: string
 }
 
 interface TypeScriptProject {
@@ -267,6 +279,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   let tsProjectInit: Promise<TypeScriptProject | null> | null = null
   const moduleMetadata: FictCompilerOptions['moduleMetadata'] = new Map()
   const extractedHandlers = new Map<string, ExtractedHandler>()
+  const libraryMetadataAssets = new Map<string, LibraryMetadataAsset>()
   const debugEnabled =
     debugOption === true ||
     process.env.FICT_VITE_PLUGIN_DEBUG === '1' ||
@@ -318,6 +331,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
   const resetTransformState = () => {
     moduleMetadata.clear()
     extractedHandlers.clear()
+    libraryMetadataAssets.clear()
   }
 
   return {
@@ -744,10 +758,18 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
     generateBundle(_options, bundle) {
       if (!config || config.command !== 'build') return
       if (libraryOptions.enabled) {
-        emitLibraryMetadataAssets(this.emitFile.bind(this), bundle, moduleMetadata, {
-          root: config.root,
-          metadataDir: libraryOptions.metadataDir,
-        })
+        const emittedMetadataAssets = emitLibraryMetadataAssets(
+          this.emitFile.bind(this),
+          bundle,
+          moduleMetadata,
+          {
+            root: config.root,
+            metadataDir: libraryOptions.metadataDir,
+          },
+        )
+        for (const asset of emittedMetadataAssets) {
+          libraryMetadataAssets.set(asset.chunkFileName, asset)
+        }
       }
       if (config.build.ssr) return
 
@@ -788,6 +810,15 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         type: 'asset',
         fileName: 'fict.manifest.json',
         source: JSON.stringify(manifest),
+      })
+    },
+
+    async writeBundle() {
+      if (!config || !libraryOptions.enabled || libraryOptions.packageJson === false) return
+      await writeLibraryPackageJson(libraryMetadataAssets, {
+        root: config.root,
+        outDir: resolveBuildOutDir(config),
+        packageJson: libraryOptions.packageJson,
       })
     },
   }
@@ -876,11 +907,12 @@ function normalizeCacheOptions(
 }
 
 function normalizeLibraryOptions(library: FictPluginOptions['library']): NormalizedLibraryOptions {
-  if (!library) return { enabled: false, metadataDir: '' }
-  if (library === true) return { enabled: true, metadataDir: '' }
+  if (!library) return { enabled: false, metadataDir: '', packageJson: false }
+  if (library === true) return { enabled: true, metadataDir: '', packageJson: 'package.json' }
   return {
     enabled: true,
     metadataDir: normalizeAssetDir(library.metadataDir),
+    packageJson: library.packageJson ?? 'package.json',
   }
 }
 
@@ -1003,8 +1035,9 @@ function emitLibraryMetadataAssets(
   bundle: BundleLike,
   store: Map<string, ModuleReactiveMetadata>,
   options: { root: string; metadataDir: string },
-): void {
+): LibraryMetadataAsset[] {
   const emitted = new Set<string>()
+  const assets: LibraryMetadataAsset[] = []
   for (const output of Object.values(bundle)) {
     if (output.type !== 'chunk') continue
     const chunk = output as BundleChunkLike
@@ -1015,12 +1048,161 @@ function emitLibraryMetadataAssets(
     const fileName = metadataFileNameForChunk(chunk.fileName, options.metadataDir)
     if (emitted.has(fileName)) continue
     emitted.add(fileName)
+    assets.push({
+      chunkFileName: chunk.fileName,
+      metadataFileName: fileName,
+    })
     emitFile({
       type: 'asset',
       fileName,
       source: JSON.stringify(metadata),
     })
   }
+  return assets
+}
+
+function resolveBuildOutDir(config: ResolvedConfig): string {
+  const configuredOutDir = config.build?.outDir ?? 'dist'
+  return path.isAbsolute(configuredOutDir)
+    ? configuredOutDir
+    : path.resolve(config.root, configuredOutDir)
+}
+
+function resolvePackageJsonPath(root: string, packageJson: string): string {
+  return path.isAbsolute(packageJson) ? packageJson : path.resolve(root, packageJson)
+}
+
+function toPackageJsonRelativePath(packageDir: string, absoluteFilePath: string): string {
+  const relative = path.relative(packageDir, absoluteFilePath).replace(/\\/g, '/')
+  return relative.startsWith('.') ? relative : `./${relative}`
+}
+
+function normalizePackageJsonTarget(value: string): string | null {
+  if (!value.startsWith('./')) return null
+  return `./${value.slice(2).replace(/\\/g, '/')}`
+}
+
+function collectExportTargets(
+  value: unknown,
+  subpath = '.',
+): Array<{ subpath: string; target: string }> {
+  if (typeof value === 'string') {
+    return [{ subpath, target: value }]
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap(item => collectExportTargets(item, subpath))
+  }
+  if (!value || typeof value !== 'object') {
+    return []
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+  const hasSubpathKeys = entries.some(([key]) => key === '.' || key.startsWith('./'))
+  if (hasSubpathKeys) {
+    return entries.flatMap(([key, nested]) => collectExportTargets(nested, key))
+  }
+  return entries.flatMap(([, nested]) => collectExportTargets(nested, subpath))
+}
+
+function collectPackageTargets(
+  pkg: Record<string, unknown>,
+): Array<{ subpath: string; target: string }> {
+  const targets = collectExportTargets(pkg.exports)
+  for (const field of ['module', 'main'] as const) {
+    if (typeof pkg[field] === 'string') {
+      targets.push({ subpath: '.', target: pkg[field] })
+    }
+  }
+  return targets
+}
+
+function buildFictPackageMappings(
+  assets: Iterable<LibraryMetadataAsset>,
+  pkg: Record<string, unknown>,
+  packageDir: string,
+  outDir: string,
+): Map<string, string> {
+  const packageTargets = collectPackageTargets(pkg)
+  const targetToSubpath = new Map<string, string>()
+  for (const { subpath, target } of packageTargets) {
+    const normalizedTarget = normalizePackageJsonTarget(target)
+    if (normalizedTarget && !targetToSubpath.has(normalizedTarget)) {
+      targetToSubpath.set(normalizedTarget, subpath)
+    }
+  }
+
+  const mappings = new Map<string, string>()
+  const assetList = Array.from(assets)
+  for (const asset of assetList) {
+    const chunkPackagePath = toPackageJsonRelativePath(
+      packageDir,
+      path.resolve(outDir, asset.chunkFileName),
+    )
+    const metadataPackagePath = toPackageJsonRelativePath(
+      packageDir,
+      path.resolve(outDir, asset.metadataFileName),
+    )
+    const subpath = targetToSubpath.get(chunkPackagePath)
+    if (subpath) {
+      mappings.set(subpath, metadataPackagePath)
+    }
+  }
+
+  if (mappings.size === 0 && assetList.length === 1) {
+    const [asset] = assetList
+    mappings.set(
+      '.',
+      toPackageJsonRelativePath(packageDir, path.resolve(outDir, asset.metadataFileName)),
+    )
+  }
+
+  return mappings
+}
+
+function applyFictPackageMappings(
+  pkg: Record<string, unknown>,
+  mappings: Map<string, string>,
+): boolean {
+  if (mappings.size === 0) return false
+
+  const existingFict =
+    pkg.fict && typeof pkg.fict === 'object' && !Array.isArray(pkg.fict)
+      ? { ...(pkg.fict as Record<string, unknown>) }
+      : {}
+
+  if (mappings.size === 1 && mappings.has('.')) {
+    existingFict.metadata = mappings.get('.')
+    delete existingFict.exports
+  } else {
+    existingFict.exports = Object.fromEntries(
+      Array.from(mappings.entries()).sort(([a], [b]) => a.localeCompare(b)),
+    )
+    delete existingFict.metadata
+  }
+
+  pkg.fict = existingFict
+  delete pkg.fictMetadata
+  return true
+}
+
+async function writeLibraryPackageJson(
+  assets: Map<string, LibraryMetadataAsset>,
+  options: { root: string; outDir: string; packageJson: string },
+): Promise<void> {
+  if (assets.size === 0) return
+
+  const packageJsonPath = resolvePackageJsonPath(options.root, options.packageJson)
+  const raw = await fs.readFile(packageJsonPath, 'utf8')
+  const pkg = JSON.parse(raw) as Record<string, unknown>
+  const mappings = buildFictPackageMappings(
+    assets.values(),
+    pkg,
+    path.dirname(packageJsonPath),
+    options.outDir,
+  )
+  if (!applyFictPackageMappings(pkg, mappings)) return
+
+  await fs.writeFile(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`, 'utf8')
 }
 
 /**
