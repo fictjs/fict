@@ -103,6 +103,32 @@ export function useCounter() {
 
 The annotation is especially useful when build steps minify, wrap, or re-export hooks.
 
+## Vite library publishing
+
+`@fictjs/vite-plugin` can generate and package metadata automatically for Vite library builds:
+
+```ts
+import { defineConfig } from 'vite'
+import fict from '@fictjs/vite-plugin'
+
+export default defineConfig({
+  build: {
+    lib: {
+      entry: {
+        index: 'src/index.ts',
+        hooks: 'src/hooks.ts',
+      },
+      formats: ['es', 'cjs'],
+    },
+  },
+  plugins: [fict({ library: true })],
+})
+```
+
+When `library: true` is enabled, the plugin compiles TypeScript and JSX source, collects compiler metadata for entry chunks, emits `*.fict.meta.json` files into `dist`, and updates the package `package.json` with `fict.metadata` or `fict.exports`.
+
+The package should already declare its public JavaScript entries through `exports`, `module`, or `main`; the plugin uses those fields to choose the public metadata subpaths. Set `library.packageJson: false` if a separate release script should handle package.json updates.
+
 ## ESM and CJS behavior
 
 The metadata ABI is independent of the JavaScript module format. A precompiled ESM package and a precompiled CJS package can point to the same metadata file as long as they expose the same public hook names and return shapes.

@@ -45,12 +45,82 @@ export default defineConfig({
 Core defaults:
 
 - `include`: `['**/*.tsx', '**/*.jsx']`
+  - with `library: true`: `['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx']`
 - `exclude`: `['**/node_modules/**']`
 - `useTypeScriptProject`: `true`
 - `cache`:
   - enabled by default
   - memory cache always on
   - persistent cache defaults to `true` during `vite build`, otherwise in-memory only
+
+## Library Publishing
+
+Use `library: true` when building a third-party Fict hook library with Vite library mode:
+
+```ts
+import { defineConfig } from 'vite'
+import fict from '@fictjs/vite-plugin'
+
+export default defineConfig({
+  build: {
+    lib: {
+      entry: {
+        index: 'src/index.ts',
+        hooks: 'src/hooks.ts',
+      },
+      formats: ['es', 'cjs'],
+    },
+  },
+  plugins: [fict({ library: true })],
+})
+```
+
+Library mode:
+
+- compiles `.ts`, `.tsx`, `.js`, and `.jsx` source by default;
+- collects compiler-generated module metadata from transformed entry chunks;
+- emits `*.fict.meta.json` files into the build output;
+- updates the package `package.json` with `fict.metadata` for one public entry or `fict.exports` for multiple public entries.
+
+The package mapping is inferred from existing `package.json#exports`, `module`, and `main` fields. For example:
+
+```json
+{
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./hooks": "./dist/hooks.js"
+  }
+}
+```
+
+after `vite build` becomes:
+
+```json
+{
+  "fict": {
+    "exports": {
+      ".": "./dist/index.fict.meta.json",
+      "./hooks": "./dist/hooks.fict.meta.json"
+    }
+  }
+}
+```
+
+Options:
+
+```ts
+fict({
+  library: {
+    // Emit metadata files under dist/fict-meta instead of next to each entry chunk.
+    metadataDir: 'fict-meta',
+    // Set false when another release script owns package.json mutation.
+    packageJson: false,
+  },
+})
+```
 
 Compiler option passthrough:
 

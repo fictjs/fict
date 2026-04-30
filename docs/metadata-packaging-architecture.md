@@ -169,20 +169,27 @@ fict build-lib
 or:
 
 ```ts
-fict({ library: true, metadata: true })
+fict({ library: true })
 ```
 
-The integration should generate the metadata file and package declarations automatically.
+The integration generates metadata files and package declarations automatically.
 
 ## Current status
 
 The compiler can generate and consume module metadata, and consumers can resolve package-level metadata declared through `package.json#fict`.
 
+The Vite plugin now provides a library publishing mode:
+
+- `fict({ library: true })` expands source transforms to `.ts`, `.tsx`, `.js`, and `.jsx`;
+- entry chunk metadata is emitted as `*.fict.meta.json` build assets;
+- root package declarations are updated as `fict.metadata` for single-entry packages or `fict.exports` for multi-entry packages;
+- package mapping is inferred from existing `exports`, `module`, and `main` fields.
+
 What is still future work:
 
-- first-class library build command;
-- automatic `package.json#fict` writing or validation;
-- bundler-specific adapters for Rollup/Webpack/tsup/esbuild beyond the current Vite integration;
+- first-class standalone library build command;
+- pack-time validation command for package contents;
+- bundler-specific adapters for Webpack/tsup/esbuild beyond the current Vite/Rollup integration;
 - pack-time checks that metadata files are included in the published artifact.
 
 ## Summary
