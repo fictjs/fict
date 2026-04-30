@@ -2277,7 +2277,12 @@ export const COMPILER_CACHE_FINGERPRINT = createCompilerCacheFingerprint([
   JSON.stringify(Array.from(SAFE_FUNCTIONS).sort()),
 ])
 
-export { clearModuleMetadata, resolveModuleMetadata, setModuleMetadata } from './module-metadata'
+export {
+  clearModuleMetadata,
+  resolveModuleMetadata,
+  resolvePackageModuleMetadata,
+  setModuleMetadata,
+} from './module-metadata'
 export type {
   HookReturnInfoSerializable,
   ModuleReactiveMetadata,

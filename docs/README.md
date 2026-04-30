@@ -18,6 +18,8 @@ This folder holds documentation for the Fict project.
 - `fiction-ui.md` — Product/design philosophy around the fiction layer
 - `framework-comparison.md` — Comparison with React, Solid, Vue, Svelte
 - `config-profiles.md` — Recommended dev/CI/prod compiler + runtime profiles
+- `third-party-libraries.md` — Package metadata ABI for third-party Fict hook libraries
+- `metadata-packaging-architecture.md` — Architecture decision for compiler-generated metadata and build-time packaging
 - `strict-guarantee-test-policy.md` — Policy for test suites that intentionally opt out of strict guarantee diagnostics
 - `ssr-resume-stability-contract.md` — Production stability contract for SSR/streaming/resume (behavior, compatibility, security, budgets)
 - `ssr-seo.md` — SEO best practices for SSR/streaming apps

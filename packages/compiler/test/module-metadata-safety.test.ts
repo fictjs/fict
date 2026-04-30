@@ -227,6 +227,79 @@ describe('module metadata safety', () => {
     }
   })
 
+  it('rejects package metadata paths that escape the package root', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_package_metadata_escape__')
+    const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+    const importer = path.join(baseDir, 'src', 'consumer.tsx')
+    const escapedMetaPath = path.join(baseDir, 'escaped.fict.meta.json')
+
+    try {
+      mkdirSync(packageDir, { recursive: true })
+      mkdirSync(path.dirname(importer), { recursive: true })
+      writeFileSync(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          fict: { metadata: '../../escaped.fict.meta.json' },
+        }),
+        'utf8',
+      )
+      writeFileSync(
+        escapedMetaPath,
+        JSON.stringify({
+          exports: {},
+          hooks: { useCounter: { directAccessor: 'signal' } },
+        }),
+        'utf8',
+      )
+
+      const resolved = resolveModuleMetadata('fict-hook-lib', importer, {
+        emitModuleMetadata: false,
+      })
+
+      expect(resolved).toBeUndefined()
+    } finally {
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
+  it('ignores package metadata files with invalid shapes', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_package_metadata_shape__')
+    const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+    const importer = path.join(baseDir, 'src', 'consumer.tsx')
+    const metaPath = path.join(packageDir, 'dist', 'index.fict.meta.json')
+
+    try {
+      mkdirSync(path.dirname(metaPath), { recursive: true })
+      mkdirSync(path.dirname(importer), { recursive: true })
+      writeFileSync(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          fict: { metadata: './dist/index.fict.meta.json' },
+        }),
+        'utf8',
+      )
+      writeFileSync(metaPath, JSON.stringify({ exports: null }), 'utf8')
+
+      const resolved = resolveModuleMetadata('fict-hook-lib', importer, {
+        emitModuleMetadata: false,
+      })
+
+      expect(resolved).toBeUndefined()
+    } finally {
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
   it('does not read disk sidecars when moduleMetadata store is explicitly provided', () => {
     clearModuleMetadata()
     const baseDir = path.join(process.cwd(), '__fict_metadata_store_only__')

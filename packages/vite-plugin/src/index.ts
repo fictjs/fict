@@ -11,7 +11,9 @@ import * as t from '@babel/types'
 import {
   COMPILER_CACHE_FINGERPRINT,
   createFictPlugin,
+  resolvePackageModuleMetadata,
   type FictCompilerOptions,
+  type ModuleReactiveMetadata,
 } from '@fictjs/compiler'
 import type { Plugin, ResolvedConfig, TransformResult } from 'vite'
 
@@ -507,8 +509,15 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
             }
           }
 
-          if (!resolvedSource) return undefined
-          return lookupMetadata(resolvedSource)
+          if (resolvedSource) {
+            const resolvedMetadata = lookupMetadata(resolvedSource)
+            if (resolvedMetadata) return resolvedMetadata
+          }
+
+          return resolvePackageModuleMetadata(source, importerFile, {
+            ...compilerOptions,
+            moduleMetadata,
+          })
         },
       }
 
@@ -534,7 +543,19 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         options.functionSplitting ??
         (config?.command === 'build' && (compilerOptions.resumable || !config?.build?.ssr))
       const cacheKey = cacheStore.enabled
-        ? buildCacheKey(filename, code, fictOptions, tsProject, shouldSplit)
+        ? buildCacheKey(
+            filename,
+            code,
+            fictOptions,
+            tsProject,
+            shouldSplit,
+            computePackageMetadataCacheFingerprint(
+              code,
+              normalizeFileName(filename, config?.root),
+              compilerOptions,
+              moduleMetadata,
+            ),
+          )
         : null
 
       if (cacheKey) {
@@ -894,6 +915,56 @@ function applyAlias(source: string, aliases: AliasEntry[]): string | null {
   return null
 }
 
+function isBarePackageSource(source: string): boolean {
+  return !path.isAbsolute(source) && !source.startsWith('.') && !source.startsWith('/@fs/')
+}
+
+function collectStaticModuleSources(code: string): string[] {
+  let ast: ReturnType<typeof parse>
+  try {
+    ast = parse(code, {
+      sourceType: 'module',
+      plugins: ['jsx', 'typescript'],
+    })
+  } catch {
+    return []
+  }
+
+  const sources = new Set<string>()
+  for (const node of ast.program.body) {
+    if (t.isImportDeclaration(node)) {
+      sources.add(node.source.value)
+      continue
+    }
+    if (t.isExportNamedDeclaration(node) && node.source) {
+      sources.add(node.source.value)
+      continue
+    }
+    if (t.isExportAllDeclaration(node)) {
+      sources.add(node.source.value)
+    }
+  }
+  return Array.from(sources).sort()
+}
+
+function computePackageMetadataCacheFingerprint(
+  code: string,
+  filename: string,
+  compilerOptions: FictCompilerOptions,
+  moduleMetadata: Map<string, ModuleReactiveMetadata>,
+): string {
+  const entries: Array<[string, string | null]> = []
+  for (const source of collectStaticModuleSources(code)) {
+    if (!isBarePackageSource(source)) continue
+    const metadata = resolvePackageModuleMetadata(source, filename, {
+      ...compilerOptions,
+      moduleMetadata,
+    })
+    entries.push([source, metadata ? stableStringify(metadata) : null])
+  }
+  return stableStringify(entries)
+}
+
 function hashString(value: string): string {
   return createHash('sha256').update(value).digest('hex')
 }
@@ -948,6 +1019,7 @@ function buildCacheKey(
   options: FictCompilerOptions,
   tsProject: TypeScriptProject | null,
   shouldSplit: boolean,
+  packageMetadataFingerprint: string,
 ): string {
   const codeHash = hashString(code)
   const optionsHash = hashString(stableStringify(normalizeOptionsForCache(options)))
@@ -961,6 +1033,7 @@ function buildCacheKey(
       optionsHash,
       tsKey,
       shouldSplit ? 'split' : 'inline',
+      packageMetadataFingerprint,
     ].join('|'),
   )
 }

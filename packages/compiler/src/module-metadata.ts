@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto'
-import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -41,6 +49,11 @@ interface FsProbeCacheEntry {
 }
 
 type FsProbeCache = Map<string, FsProbeCacheEntry>
+
+interface FictPackageConfig {
+  metadata?: string
+  exports?: Record<string, string>
+}
 
 const sharedFsProbeCache: FsProbeCache = new Map()
 
@@ -239,7 +252,8 @@ function readMetadataFromDisk(
     if (!pathIsFile(metaPath, fsCache)) continue
     try {
       const raw = readFileSync(metaPath, 'utf8')
-      const parsed = JSON.parse(raw) as ModuleReactiveMetadata
+      const parsed = parseModuleReactiveMetadata(raw)
+      if (!parsed) continue
       store.set(normalized, parsed)
       diskLoadedMetadataKeys.add(normalized)
       return parsed
@@ -252,6 +266,191 @@ function readMetadataFromDisk(
     diskLoadedMetadataKeys.delete(normalized)
   }
   return undefined
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isReactiveExportKind(value: unknown): value is ModuleReactiveMetadata['exports'][string] {
+  return value === 'signal' || value === 'memo' || value === 'store'
+}
+
+function isHookAccessorKind(value: unknown): value is 'signal' | 'memo' {
+  return value === 'signal' || value === 'memo'
+}
+
+function isHookReturnInfo(value: unknown): boolean {
+  if (!isPlainObject(value)) return false
+
+  if ('directAccessor' in value && !isHookAccessorKind(value.directAccessor)) {
+    return false
+  }
+
+  if ('objectProps' in value) {
+    if (!isPlainObject(value.objectProps)) return false
+    if (!Object.values(value.objectProps).every(isHookAccessorKind)) return false
+  }
+
+  if ('arrayProps' in value) {
+    if (!isPlainObject(value.arrayProps)) return false
+    if (!Object.keys(value.arrayProps).every(key => /^\d+$/.test(key))) return false
+    if (!Object.values(value.arrayProps).every(isHookAccessorKind)) return false
+  }
+
+  return true
+}
+
+function parseModuleReactiveMetadata(raw: string): ModuleReactiveMetadata | null {
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!isPlainObject(parsed)) return null
+    if (!isPlainObject(parsed.exports)) return null
+    if (!Object.values(parsed.exports).every(isReactiveExportKind)) return null
+
+    if ('hooks' in parsed) {
+      if (!isPlainObject(parsed.hooks)) return null
+      if (!Object.values(parsed.hooks).every(isHookReturnInfo)) return null
+    }
+
+    return parsed as unknown as ModuleReactiveMetadata
+  } catch {
+    return null
+  }
+}
+
+function isBarePackageSource(source: string): boolean {
+  return !path.isAbsolute(source) && !source.startsWith('.') && !source.startsWith('/@fs/')
+}
+
+function splitPackageSource(source: string): { packageName: string; subpath: string } | null {
+  if (!isBarePackageSource(source)) return null
+  const parts = source.split('/')
+  if (source.startsWith('@')) {
+    if (parts.length < 2 || !parts[0] || !parts[1]) return null
+    const packageName = `${parts[0]}/${parts[1]}`
+    const rest = parts.slice(2).join('/')
+    return { packageName, subpath: rest ? `./${rest}` : '.' }
+  }
+  if (!parts[0]) return null
+  const rest = parts.slice(1).join('/')
+  return { packageName: parts[0], subpath: rest ? `./${rest}` : '.' }
+}
+
+function findPackageJsonPath(packageName: string, importer: string | undefined): string | null {
+  const normalizedImporter = normalizeConcreteFileName(importer)
+  if (!normalizedImporter) return null
+
+  let current = path.dirname(normalizedImporter)
+  while (true) {
+    const candidate = path.join(current, 'node_modules', packageName, 'package.json')
+    if (pathIsFile(candidate, sharedFsProbeCache)) return candidate
+
+    const parent = path.dirname(current)
+    if (parent === current) return null
+    current = parent
+  }
+}
+
+function readPackageConfig(packageJsonPath: string): FictPackageConfig | null {
+  try {
+    const raw = readFileSync(packageJsonPath, 'utf8')
+    const pkg = JSON.parse(raw) as {
+      fict?: unknown
+      fictMetadata?: unknown
+    }
+    if (typeof pkg.fictMetadata === 'string') {
+      return { metadata: pkg.fictMetadata }
+    }
+    if (pkg.fict && typeof pkg.fict === 'object') {
+      const fict = pkg.fict as { metadata?: unknown; exports?: unknown }
+      const config: FictPackageConfig = {}
+      if (typeof fict.metadata === 'string') {
+        config.metadata = fict.metadata
+      }
+      if (fict.exports && typeof fict.exports === 'object') {
+        const exportsConfig: Record<string, string> = {}
+        for (const [key, value] of Object.entries(fict.exports as Record<string, unknown>)) {
+          if (typeof value === 'string') exportsConfig[key] = value
+        }
+        if (Object.keys(exportsConfig).length > 0) {
+          config.exports = exportsConfig
+        }
+      }
+      if (config.metadata || config.exports) return config
+    }
+  } catch {
+    // Malformed package metadata is ignored so package resolution stays best-effort.
+  }
+  return null
+}
+
+function isPathInside(parent: string, child: string): boolean {
+  const relative = path.relative(parent, child)
+  return relative === '' || (!!relative && !relative.startsWith('..') && !path.isAbsolute(relative))
+}
+
+function normalizePackageMetadataPath(packageDir: string, metadataPath: string): string | null {
+  if (!metadataPath || metadataPath.includes('\0')) return null
+  if (path.isAbsolute(metadataPath) || metadataPath.startsWith('file://')) return null
+  if (metadataPath.startsWith('/@fs/')) return null
+
+  const normalizedPackageDir = normalizeFileName(packageDir)
+  const resolved = normalizeFileName(path.resolve(normalizedPackageDir, metadataPath))
+  if (!isPathInside(normalizedPackageDir, resolved)) return null
+  return resolved
+}
+
+function readPackageMetadataFile(
+  metaPath: string,
+  packageDir: string,
+  store: Map<string, ModuleReactiveMetadata>,
+  fsCache?: FsProbeCache,
+): ModuleReactiveMetadata | undefined {
+  if (!pathIsFile(metaPath, fsCache)) return undefined
+  try {
+    const packageRoot = realpathSync(packageDir)
+    const realMetaPath = realpathSync(metaPath)
+    if (!isPathInside(packageRoot, realMetaPath)) return undefined
+
+    const parsed = parseModuleReactiveMetadata(readFileSync(realMetaPath, 'utf8'))
+    if (!parsed) return undefined
+    store.set(metaPath, parsed)
+    diskLoadedMetadataKeys.add(metaPath)
+    return parsed
+  } catch {
+    return undefined
+  }
+}
+
+export function resolvePackageModuleMetadata(
+  source: string,
+  importer: string | undefined,
+  options?: FictCompilerOptions,
+): ModuleReactiveMetadata | undefined {
+  const parsedSource = splitPackageSource(source)
+  if (!parsedSource) return undefined
+
+  const packageJsonPath = findPackageJsonPath(parsedSource.packageName, importer)
+  if (!packageJsonPath) return undefined
+
+  const packageConfig = readPackageConfig(packageJsonPath)
+  if (!packageConfig) return undefined
+
+  const packageDir = path.dirname(packageJsonPath)
+  const metadataPath =
+    packageConfig.exports?.[parsedSource.subpath] ??
+    (parsedSource.subpath === '.' ? packageConfig.metadata : undefined)
+  if (!metadataPath) return undefined
+
+  const normalizedMetaPath = normalizePackageMetadataPath(packageDir, metadataPath)
+  if (!normalizedMetaPath) return undefined
+
+  const store = getMetadataStore(options)
+  const existing = store.get(normalizedMetaPath)
+  if (existing && canReuseStoredMetadata(normalizedMetaPath)) return existing
+
+  return readPackageMetadataFile(normalizedMetaPath, packageDir, store, sharedFsProbeCache)
 }
 
 function resolveImportSource(
@@ -390,6 +589,11 @@ export function resolveModuleMetadata(
     if (!resolvedMetadata && store.has(source) && canReuseStoredMetadata(source)) {
       resolvedMetadata = store.get(source)
     }
+  }
+
+  if (!resolvedMetadata && shouldProbeFs && isBarePackageSource(source)) {
+    resolvedMetadata = resolvePackageModuleMetadata(source, importer, options)
+    if (resolvedMetadata) resolvedFromDisk = true
   }
 
   if (useResolutionCache) {

@@ -1,3 +1,7 @@
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
 import { describe, it, expect, vi } from 'vitest'
 
 import fict from '..'
@@ -75,6 +79,135 @@ describe('fict vite-plugin', () => {
       const hasHIRMarker = code.includes('__fict_hir_codegen__')
       const hasRuntimeImport = code.includes('@fictjs/runtime') || code.includes('fict/internal')
       expect(hasHIRMarker || hasRuntimeImport).toBe(true)
+    }
+  })
+
+  it('resolves Fict hook metadata from bare package imports', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-package-meta-'))
+    const packageDir = path.join(root, 'node_modules', 'fict-hook-lib')
+
+    try {
+      await mkdir(path.join(packageDir, 'dist'), { recursive: true })
+      await writeFile(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          type: 'module',
+          exports: './dist/index.js',
+          fict: { metadata: './dist/index.fict.meta.json' },
+        }),
+      )
+      await writeFile(
+        path.join(packageDir, 'dist', 'index.fict.meta.json'),
+        JSON.stringify({
+          exports: {},
+          hooks: { useCounter: { directAccessor: 'signal' } },
+        }),
+      )
+
+      const plugin = fict({ useTypeScriptProject: false }) as any
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved({ ...mockBuildConfig, root } as any)
+      }
+
+      const sample = `
+        import { useCounter } from 'fict-hook-lib'
+
+        export function App() {
+          const count = useCounter()
+          const doubled = count * 2
+          return <div>{doubled}</div>
+        }
+      `
+
+      const mockContext = {
+        error: vi.fn(),
+        warn: vi.fn(),
+        emitFile: vi.fn(),
+      }
+      const transform = plugin.transform as any
+      const result =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, sample, path.join(root, 'src', 'App.tsx'))
+          : await transform?.handler.call(mockContext, sample, path.join(root, 'src', 'App.tsx'))
+
+      expect(result && typeof result === 'object').toBe(true)
+      expect(result.code as string).toMatch(/count\(\) \* 2/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('invalidates transform cache when bare package metadata changes', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-package-meta-cache-'))
+    const packageDir = path.join(root, 'node_modules', 'fict-hook-lib')
+    const metaPath = path.join(packageDir, 'dist', 'index.fict.meta.json')
+
+    try {
+      await mkdir(path.dirname(metaPath), { recursive: true })
+      await writeFile(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          type: 'module',
+          exports: './dist/index.js',
+          fict: { metadata: './dist/index.fict.meta.json' },
+        }),
+      )
+      await writeFile(
+        metaPath,
+        JSON.stringify({
+          exports: {},
+          hooks: { useCounter: { directAccessor: 'signal' } },
+        }),
+      )
+
+      const plugin = fict({ useTypeScriptProject: false }) as any
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved({ ...mockBuildConfig, root } as any)
+      }
+
+      const sample = `
+        import { useCounter } from 'fict-hook-lib'
+
+        export function App() {
+          const count = useCounter()
+          const doubled = count * 2
+          return <div>{doubled}</div>
+        }
+      `
+      const appPath = path.join(root, 'src', 'App.tsx')
+      const mockContext = {
+        error: vi.fn(),
+        warn: vi.fn(),
+        emitFile: vi.fn(),
+      }
+      const transform = plugin.transform as any
+      const first =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, sample, appPath)
+          : await transform?.handler.call(mockContext, sample, appPath)
+
+      expect(first && typeof first === 'object').toBe(true)
+      expect(first.code as string).toMatch(/count\(\) \* 2/)
+
+      await writeFile(
+        metaPath,
+        JSON.stringify({
+          exports: {},
+          hooks: {},
+        }),
+      )
+
+      const second =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, sample, appPath)
+          : await transform?.handler.call(mockContext, sample, appPath)
+
+      expect(second && typeof second === 'object').toBe(true)
+      expect(second.code as string).not.toMatch(/count\(\) \* 2/)
+    } finally {
+      await rm(root, { recursive: true, force: true })
     }
   })
 

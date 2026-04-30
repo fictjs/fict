@@ -60,8 +60,8 @@ createFictPlugin({
   - `'auto'` (default): writes metadata to cache directory (not source tree) only when no external metadata store/resolver is provided.
 - `moduleMetadataCacheDir` (default: `<cwd>/.fict-cache/metadata`): cache directory used by `emitModuleMetadata: 'auto'`.
 - `moduleMetadata` / `resolveModuleMetadata`: external metadata integration hooks. When provided, `'auto'` does not write metadata files.
-  - Built-in metadata resolution only covers local filesystem modules (relative/absolute paths + configured alias/ts resolution from the caller).
-  - Bare package imports are treated as opaque unless your `resolveModuleMetadata` hook provides metadata.
+  - Built-in metadata resolution covers local filesystem modules (relative/absolute paths + configured alias/ts resolution from the caller).
+  - Bare package imports can opt in by publishing Fict package metadata in `package.json` (see `docs/third-party-libraries.md`).
   - Cross-module metadata lookup does not perform cycle detection; cyclical hook metadata chains should be handled by a custom resolver if needed.
 - `reactiveScopes`: function names whose **first callback argument** is treated as a component-like reactive scope.
   - Only **direct calls** are recognized (e.g., `renderHook(() => ...)` or `utils.renderHook(() => ...)`).
