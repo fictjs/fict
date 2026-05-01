@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { promises as fs } from 'node:fs'
+import { existsSync, promises as fs, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -599,6 +599,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               normalizedFilename,
               compilerOptions,
               moduleMetadata,
+              config?.root,
+              aliasEntries,
             ),
           )
         : null
@@ -1163,7 +1165,7 @@ function buildFictPackageMappingResult(
     }
   }
 
-  if (mappings.size === 0 && assetList.length === 1) {
+  if (packageTargets.length === 0 && mappings.size === 0 && assetList.length === 1) {
     const asset = assetList[0]
     if (asset) {
       mappings.set(
@@ -1356,22 +1358,99 @@ function collectStaticModuleSources(code: string): string[] {
   return Array.from(sources).sort()
 }
 
+function resolveExistingModuleFile(base: string): string | null {
+  const normalized = normalizeFileName(base)
+  if (existsSync(normalized)) return normalized
+
+  const ext = path.extname(normalized)
+  if (!ext) {
+    for (const suffix of MODULE_EXTENSIONS) {
+      const withExt = `${normalized}${suffix}`
+      if (existsSync(withExt)) return withExt
+    }
+    for (const suffix of MODULE_EXTENSIONS) {
+      const indexFile = path.join(normalized, `index${suffix}`)
+      if (existsSync(indexFile)) return indexFile
+    }
+  }
+
+  return null
+}
+
+function resolveLocalModuleSource(
+  source: string,
+  importer: string,
+  root: string | undefined,
+  aliases: AliasEntry[],
+): string | null {
+  const importerFile = normalizeFileName(importer, root)
+  if (path.isAbsolute(source)) return resolveExistingModuleFile(source)
+  if (source.startsWith('.')) {
+    return resolveExistingModuleFile(path.resolve(path.dirname(importerFile), source))
+  }
+
+  const aliased = applyAlias(source, aliases)
+  if (!aliased) return null
+  if (path.isAbsolute(aliased)) return resolveExistingModuleFile(aliased)
+  if (aliased.startsWith('.')) {
+    return resolveExistingModuleFile(path.resolve(path.dirname(importerFile), aliased))
+  }
+  if (root) return resolveExistingModuleFile(path.resolve(root, aliased))
+  return null
+}
+
 function computePackageMetadataCacheFingerprint(
   code: string,
   filename: string,
   compilerOptions: FictCompilerOptions,
   moduleMetadata: Map<string, ModuleReactiveMetadata>,
+  root?: string,
+  aliases: AliasEntry[] = [],
+  visited = new Set<string>(),
 ): string {
-  const entries: [string, string | null][] = []
+  const normalizedFilename = normalizeFileName(filename, root)
+  if (visited.has(normalizedFilename)) return '[]'
+  visited.add(normalizedFilename)
+
+  const entries: [string, string | null, string?][] = []
   for (const source of collectStaticModuleSources(code)) {
-    if (!isBarePackageSource(source)) continue
-    const metadata = resolvePackageModuleMetadata(source, filename, {
-      ...compilerOptions,
-      moduleMetadata,
-    })
-    entries.push([source, metadata ? stableStringify(metadata) : null])
+    if (isBarePackageSource(source)) {
+      const metadata = resolvePackageModuleMetadata(source, normalizedFilename, {
+        ...compilerOptions,
+        moduleMetadata,
+      })
+      entries.push([source, metadata ? stableStringify(metadata) : null])
+      continue
+    }
+
+    const localFile = resolveLocalModuleSource(source, normalizedFilename, root, aliases)
+    if (!localFile) continue
+    try {
+      const localCode = readFileSync(localFile, 'utf8')
+      const storedMetadata = moduleMetadata.get(localFile)
+      const nestedFingerprint = computePackageMetadataCacheFingerprint(
+        localCode,
+        localFile,
+        compilerOptions,
+        moduleMetadata,
+        root,
+        aliases,
+        visited,
+      )
+      entries.push([
+        source,
+        storedMetadata ? stableStringify(storedMetadata) : null,
+        `${hashString(localCode)}:${nestedFingerprint}`,
+      ])
+    } catch {
+      entries.push([source, null, 'unreadable'])
+    }
   }
   return stableStringify(entries)
+}
+
+export const __fictVitePluginInternals = {
+  computePackageMetadataCacheFingerprint,
 }
 
 function hashString(value: string): string {

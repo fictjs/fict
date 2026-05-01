@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { describe, it, expect, vi } from 'vitest'
 
-import fict from '..'
+import fict, { __fictVitePluginInternals } from '..'
 
 // Mock Vite config for testing
 const mockBuildConfig = {
@@ -420,7 +420,7 @@ describe('fict vite-plugin', () => {
 
     try {
       const indexPath = path.join(root, 'src', 'index.ts')
-      const hooksPath = path.join(root, 'src', 'hooks.ts')
+      const hooksPath = path.join(root, 'src', 'hooks.tsx')
       await writeFile(
         path.join(root, 'package.json'),
         JSON.stringify({
@@ -758,6 +758,192 @@ describe('fict vite-plugin', () => {
           {},
         ),
       ).rejects.toThrow('could not be declared in package.json')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails single-entry package publishing when declared targets do not match emitted metadata', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-single-mismatch-'))
+
+    try {
+      const sourcePath = path.join(root, 'src', 'index.ts')
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          type: 'module',
+          exports: './dist/other.js',
+        }),
+      )
+
+      const plugin = getTestPlugin({ library: true, useTypeScriptProject: false })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+
+      await plugin.transform?.call(
+        { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+        `
+          import { $state } from 'fict'
+          /** @fictReturn { directAccessor: "signal" } */
+          export function useCounter() {
+            const count = $state(0)
+            return count
+          }
+        `,
+        sourcePath,
+      )
+
+      plugin.generateBundle?.call(
+        { emitFile: vi.fn(() => 'asset-id'), warn: vi.fn() },
+        {},
+        {
+          'index.js': {
+            type: 'chunk',
+            fileName: 'index.js',
+            isEntry: true,
+            facadeModuleId: sourcePath,
+            modules: { [sourcePath]: {} },
+            exports: ['useCounter'],
+          },
+        },
+      )
+
+      await expect(
+        plugin.writeBundle?.call(
+          {
+            warn: vi.fn(),
+            error: (message: string) => {
+              throw new Error(message)
+            },
+          },
+          {},
+          {},
+        ),
+      ).rejects.toThrow('no package.json exports/module/main target matched')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('uses root metadata fallback only when package.json has no public targets', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-default-fallback-'))
+
+    try {
+      const sourcePath = path.join(root, 'src', 'index.ts')
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          type: 'module',
+        }),
+      )
+
+      const plugin = getTestPlugin({ library: true, useTypeScriptProject: false })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+
+      await plugin.transform?.call(
+        { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+        `
+          import { $state } from 'fict'
+          /** @fictReturn { directAccessor: "signal" } */
+          export function useCounter() {
+            const count = $state(0)
+            return count
+          }
+        `,
+        sourcePath,
+      )
+
+      plugin.generateBundle?.call(
+        { emitFile: vi.fn(() => 'asset-id'), warn: vi.fn() },
+        {},
+        {
+          'index.js': {
+            type: 'chunk',
+            fileName: 'index.js',
+            isEntry: true,
+            facadeModuleId: sourcePath,
+            modules: { [sourcePath]: {} },
+            exports: ['useCounter'],
+          },
+        },
+      )
+      await plugin.writeBundle?.call({ warn: vi.fn(), error: vi.fn() }, {}, {})
+
+      const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
+      expect(pkg.fict).toEqual({ metadata: './dist/index.fict.meta.json' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('invalidates cached consumers when indirect local package metadata changes', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-package-meta-indirect-cache-'))
+    const packageDir = path.join(root, 'node_modules', 'fict-hook-lib')
+    const metaPath = path.join(packageDir, 'dist', 'index.fict.meta.json')
+
+    try {
+      await mkdir(path.dirname(metaPath), { recursive: true })
+      await mkdir(path.join(root, 'src'), { recursive: true })
+      await writeFile(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          type: 'module',
+          exports: './dist/index.js',
+          fict: { metadata: './dist/index.fict.meta.json' },
+        }),
+      )
+      await writeFile(
+        metaPath,
+        JSON.stringify({
+          exports: {},
+          hooks: { useCounter: { directAccessor: 'signal' } },
+        }),
+      )
+
+      const hooksPath = path.join(root, 'src', 'hooks.ts')
+      const hooksSource = `
+        import { useCounter } from 'fict-hook-lib'
+        export function useWrappedCounter() {
+          return useCounter()
+        }
+      `
+      await writeFile(hooksPath, hooksSource)
+      const appSource = `
+        import { useWrappedCounter } from './hooks'
+        export function App() {
+          const count = useWrappedCounter()
+          const doubled = count * 2
+          return <div>{doubled}</div>
+        }
+      `
+
+      const appPath = path.join(root, 'src', 'App.tsx')
+      const firstFingerprint = __fictVitePluginInternals.computePackageMetadataCacheFingerprint(
+        appSource,
+        appPath,
+        { emitModuleMetadata: false },
+        new Map(),
+        root,
+      )
+
+      await writeFile(
+        metaPath,
+        JSON.stringify({
+          exports: {},
+          hooks: {},
+        }),
+      )
+      const secondFingerprint = __fictVitePluginInternals.computePackageMetadataCacheFingerprint(
+        appSource,
+        appPath,
+        { emitModuleMetadata: false },
+        new Map(),
+        root,
+      )
+
+      expect(secondFingerprint).not.toBe(firstFingerprint)
     } finally {
       await rm(root, { recursive: true, force: true })
     }
