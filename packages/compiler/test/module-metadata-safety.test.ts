@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import { transformSync } from '@babel/core'
@@ -292,6 +292,93 @@ describe('module metadata safety', () => {
       })
 
       expect(resolved).toBeUndefined()
+    } finally {
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
+  it('rejects package metadata paths that resolve through symlinks outside the package root', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_package_metadata_symlink__')
+    const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+    const importer = path.join(baseDir, 'src', 'consumer.tsx')
+    const externalDir = path.join(baseDir, 'external')
+    const externalMetaPath = path.join(externalDir, 'index.fict.meta.json')
+    const linkedMetaPath = path.join(packageDir, 'dist', 'linked.fict.meta.json')
+
+    try {
+      mkdirSync(path.dirname(linkedMetaPath), { recursive: true })
+      mkdirSync(path.dirname(importer), { recursive: true })
+      mkdirSync(externalDir, { recursive: true })
+      writeFileSync(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          fict: { metadata: './dist/linked.fict.meta.json' },
+        }),
+        'utf8',
+      )
+      writeFileSync(
+        externalMetaPath,
+        JSON.stringify({
+          exports: {},
+          hooks: { useCounter: { directAccessor: 'signal' } },
+        }),
+        'utf8',
+      )
+      symlinkSync(externalMetaPath, linkedMetaPath)
+
+      const resolved = resolveModuleMetadata('fict-hook-lib', importer, {
+        emitModuleMetadata: false,
+      })
+
+      expect(resolved).toBeUndefined()
+    } finally {
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
+  it('resolves legacy package fictMetadata declarations', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_package_legacy_metadata__')
+    const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+    const importer = path.join(baseDir, 'src', 'consumer.tsx')
+    const metaPath = path.join(packageDir, 'dist', 'index.fict.meta.json')
+
+    try {
+      mkdirSync(path.dirname(metaPath), { recursive: true })
+      mkdirSync(path.dirname(importer), { recursive: true })
+      writeFileSync(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          fictMetadata: './dist/index.fict.meta.json',
+        }),
+        'utf8',
+      )
+      writeFileSync(
+        metaPath,
+        JSON.stringify({
+          exports: {},
+          hooks: { useCounter: { directAccessor: 'signal' } },
+        }),
+        'utf8',
+      )
+
+      const resolved = resolveModuleMetadata('fict-hook-lib', importer, {
+        emitModuleMetadata: false,
+      })
+
+      expect(resolved).toEqual({
+        exports: {},
+        hooks: { useCounter: { directAccessor: 'signal' } },
+      })
     } finally {
       if (existsSync(baseDir)) {
         rmSync(baseDir, { recursive: true, force: true })
