@@ -183,17 +183,17 @@ The Vite plugin now provides a library publishing mode:
 - `fict({ library: true })` expands source transforms to `.ts`, `.tsx`, `.js`, and `.jsx`;
 - entry chunk metadata is emitted as `*.fict.meta.json` build assets;
 - root package declarations are updated as `fict.metadata` for single-entry packages or `fict.exports` for multi-entry packages;
-- package mapping is inferred from existing `exports`, `module`, and `main` fields.
+- package mapping is inferred from existing `exports`, `module`, and `main` fields;
+- missing entry metadata is reported during bundle generation, and metadata assets that cannot be mapped to public package entries fail package declaration writing instead of publishing an incomplete contract.
 
 What is still future work:
 
 - first-class standalone library build command;
-- pack-time validation command for package contents;
 - bundler-specific adapters for Webpack/tsup/esbuild beyond the current Vite/Rollup integration;
-- pack-time checks that metadata files are included in the published artifact.
+- standalone pack-time validation for release pipelines that do not use the Vite/Rollup library publishing mode.
 
 ## Summary
 
 Metadata generation belongs in the compiler. Metadata packaging belongs in official library build tooling and bundler adapters.
 
-This keeps the compiler small and portable while still allowing third-party Fict hook libraries to offer near-zero-manual-work publishing in the future.
+This keeps the compiler small and portable while allowing third-party Fict hook libraries built with the Vite/Rollup integration to publish package metadata without hand-writing metadata files or package declarations.
