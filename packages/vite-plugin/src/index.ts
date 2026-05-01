@@ -944,9 +944,7 @@ interface BundleChunkLike {
   exports?: string[]
 }
 
-interface BundleLike {
-  [fileName: string]: BundleChunkLike | { type: string }
-}
+type BundleLike = Record<string, BundleChunkLike | { type: string }>
 
 function normalizeAssetDir(dir: string | undefined): string {
   if (!dir) return ''
@@ -960,7 +958,7 @@ function normalizeAssetDir(dir: string | undefined): string {
   return normalized
 }
 
-function joinAssetPath(...parts: Array<string | undefined>): string {
+function joinAssetPath(...parts: (string | undefined)[]): string {
   return parts
     .filter((part): part is string => !!part)
     .join('/')
@@ -1085,7 +1083,7 @@ function normalizePackageJsonTarget(value: string): string | null {
 function collectExportTargets(
   value: unknown,
   subpath = '.',
-): Array<{ subpath: string; target: string }> {
+): { subpath: string; target: string }[] {
   if (typeof value === 'string') {
     return [{ subpath, target: value }]
   }
@@ -1106,7 +1104,7 @@ function collectExportTargets(
 
 function collectPackageTargets(
   pkg: Record<string, unknown>,
-): Array<{ subpath: string; target: string }> {
+): { subpath: string; target: string }[] {
   const targets = collectExportTargets(pkg.exports)
   for (const field of ['module', 'main'] as const) {
     if (typeof pkg[field] === 'string') {
@@ -1307,7 +1305,7 @@ function computePackageMetadataCacheFingerprint(
   compilerOptions: FictCompilerOptions,
   moduleMetadata: Map<string, ModuleReactiveMetadata>,
 ): string {
-  const entries: Array<[string, string | null]> = []
+  const entries: [string, string | null][] = []
   for (const source of collectStaticModuleSources(code)) {
     if (!isBarePackageSource(source)) continue
     const metadata = resolvePackageModuleMetadata(source, filename, {
