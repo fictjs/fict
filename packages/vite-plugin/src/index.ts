@@ -118,6 +118,11 @@ interface LibraryMetadataAsset {
   metadataFileName: string
 }
 
+interface FictPackageMappingResult {
+  mappings: Map<string, string>
+  unmappedAssets: LibraryMetadataAsset[]
+}
+
 interface TypeScriptProject {
   configPath: string
   configHash: string
@@ -765,6 +770,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           {
             root: config.root,
             metadataDir: libraryOptions.metadataDir,
+            onMissingMetadata: message => this.warn(message),
           },
         )
         for (const asset of emittedMetadataAssets) {
@@ -819,6 +825,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         root: config.root,
         outDir: resolveBuildOutDir(config),
         packageJson: libraryOptions.packageJson,
+        onWarning: message => this.warn(message),
+        onError: message => this.error(message),
       })
     },
   }
@@ -1032,7 +1040,7 @@ function emitLibraryMetadataAssets(
   emitFile: EmitAsset,
   bundle: BundleLike,
   store: Map<string, ModuleReactiveMetadata>,
-  options: { root: string; metadataDir: string },
+  options: { root: string; metadataDir: string; onMissingMetadata?: (message: string) => void },
 ): LibraryMetadataAsset[] {
   const emitted = new Set<string>()
   const assets: LibraryMetadataAsset[] = []
@@ -1041,7 +1049,13 @@ function emitLibraryMetadataAssets(
     const chunk = output as BundleChunkLike
     if (!chunk.isEntry) continue
     const metadata = buildEntryChunkMetadata(chunk, store, options.root)
-    if (!metadata) continue
+    if (!metadata) {
+      options.onMissingMetadata?.(
+        `[fict] Library entry "${chunk.fileName}" did not produce Fict metadata. ` +
+          'If this entry exports Fict hooks, ensure it is transformed by the Fict Vite plugin or annotate complex returns with @fictReturn.',
+      )
+      continue
+    }
 
     const fileName = metadataFileNameForChunk(chunk.fileName, options.metadataDir)
     if (emitted.has(fileName)) continue
@@ -1114,12 +1128,12 @@ function collectPackageTargets(
   return targets
 }
 
-function buildFictPackageMappings(
+function buildFictPackageMappingResult(
   assets: Iterable<LibraryMetadataAsset>,
   pkg: Record<string, unknown>,
   packageDir: string,
   outDir: string,
-): Map<string, string> {
+): FictPackageMappingResult {
   const packageTargets = collectPackageTargets(pkg)
   const targetToSubpath = new Map<string, string>()
   for (const { subpath, target } of packageTargets) {
@@ -1130,6 +1144,7 @@ function buildFictPackageMappings(
   }
 
   const mappings = new Map<string, string>()
+  const unmappedAssets: LibraryMetadataAsset[] = []
   const assetList = Array.from(assets)
   for (const asset of assetList) {
     const chunkPackagePath = toPackageJsonRelativePath(
@@ -1143,6 +1158,8 @@ function buildFictPackageMappings(
     const subpath = targetToSubpath.get(chunkPackagePath)
     if (subpath) {
       mappings.set(subpath, metadataPackagePath)
+    } else {
+      unmappedAssets.push(asset)
     }
   }
 
@@ -1153,10 +1170,21 @@ function buildFictPackageMappings(
         '.',
         toPackageJsonRelativePath(packageDir, path.resolve(outDir, asset.metadataFileName)),
       )
+      return { mappings, unmappedAssets: [] }
     }
   }
 
-  return mappings
+  const mappedMetadataPaths = new Set(mappings.values())
+  return {
+    mappings,
+    unmappedAssets: unmappedAssets.filter(asset => {
+      const metadataPackagePath = toPackageJsonRelativePath(
+        packageDir,
+        path.resolve(outDir, asset.metadataFileName),
+      )
+      return !mappedMetadataPaths.has(metadataPackagePath)
+    }),
+  }
 }
 
 function applyFictPackageMappings(
@@ -1187,19 +1215,48 @@ function applyFictPackageMappings(
 
 async function writeLibraryPackageJson(
   assets: Map<string, LibraryMetadataAsset>,
-  options: { root: string; outDir: string; packageJson: string },
+  options: {
+    root: string
+    outDir: string
+    packageJson: string
+    onWarning?: (message: string) => void
+    onError?: (message: string) => never
+  },
 ): Promise<void> {
-  if (assets.size === 0) return
+  if (assets.size === 0) {
+    options.onWarning?.(
+      '[fict] Library mode did not emit any Fict metadata assets. If this package exports Fict hooks, consumers will not receive package metadata.',
+    )
+    return
+  }
 
   const packageJsonPath = resolvePackageJsonPath(options.root, options.packageJson)
   const raw = await fs.readFile(packageJsonPath, 'utf8')
   const pkg = JSON.parse(raw) as Record<string, unknown>
-  const mappings = buildFictPackageMappings(
+  const { mappings, unmappedAssets } = buildFictPackageMappingResult(
     assets.values(),
     pkg,
     path.dirname(packageJsonPath),
     options.outDir,
   )
+  if (mappings.size === 0) {
+    const message =
+      '[fict] Library metadata was emitted, but no package.json exports/module/main target matched the generated entry chunks. ' +
+      'Add package.json#exports, module, or main entries that point at the built library entry files, or set library.packageJson to false and declare metadata yourself.'
+    if (options.onError) options.onError(message)
+    throw new Error(message)
+  }
+  if (unmappedAssets.length > 0) {
+    const files = unmappedAssets
+      .map(asset => asset.chunkFileName)
+      .sort()
+      .join(', ')
+    const message =
+      `[fict] Library metadata for ${files} could not be declared in package.json. ` +
+      'Every metadata-producing public entry must be listed in package.json#exports, module, or main.'
+    if (options.onError) options.onError(message)
+    throw new Error(message)
+  }
   if (!applyFictPackageMappings(pkg, mappings)) return
 
   await fs.writeFile(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`, 'utf8')

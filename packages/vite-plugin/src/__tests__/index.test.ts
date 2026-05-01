@@ -21,6 +21,21 @@ const mockSsrBuildConfig = {
   build: { ssr: true },
 }
 
+type TestPlugin = ReturnType<typeof fict> & {
+  configResolved?: (config: unknown) => void
+  transform?: (this: unknown, code: string, id: string) => unknown | Promise<unknown>
+  generateBundle?: {
+    call: (context: unknown, options: unknown, bundle: unknown) => unknown
+  }
+  writeBundle?: {
+    call: (context: unknown, options: unknown, bundle: unknown) => unknown | Promise<unknown>
+  }
+}
+
+function getTestPlugin(options?: Parameters<typeof fict>[0]): TestPlugin {
+  return fict(options) as TestPlugin
+}
+
 describe('fict vite-plugin', () => {
   it('applies the Babel transformer', async () => {
     const plugin = fict() as any
@@ -506,6 +521,243 @@ describe('fict vite-plugin', () => {
           './hooks': './dist/hooks.fict.meta.json',
         },
       })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('emits metadata under metadataDir without mutating package.json when packageJson is false', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-package-json-false-'))
+
+    try {
+      const sourcePath = path.join(root, 'src', 'index.ts')
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          type: 'module',
+          exports: './dist/index.js',
+        }),
+      )
+
+      const plugin = getTestPlugin({
+        library: { metadataDir: 'fict-meta', packageJson: false },
+        useTypeScriptProject: false,
+      })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+
+      await plugin.transform?.call(
+        { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+        `
+          import { $state } from 'fict'
+          /** @fictReturn { directAccessor: "signal" } */
+          export function useCounter() {
+            const count = $state(0)
+            return count
+          }
+        `,
+        sourcePath,
+      )
+
+      const emitFile = vi.fn(() => 'asset-id')
+      plugin.generateBundle?.call(
+        { emitFile, warn: vi.fn() },
+        {},
+        {
+          'index.js': {
+            type: 'chunk',
+            fileName: 'index.js',
+            isEntry: true,
+            facadeModuleId: sourcePath,
+            modules: { [sourcePath]: {} },
+            exports: ['useCounter'],
+          },
+        },
+      )
+      await plugin.writeBundle?.call({ warn: vi.fn(), error: vi.fn() }, {}, {})
+
+      expect(emitFile).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'asset',
+          fileName: 'fict-meta/index.fict.meta.json',
+        }),
+      )
+      const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
+      expect(pkg.fict).toBeUndefined()
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('maps multi-format library metadata through module and main package targets', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-main-module-'))
+
+    try {
+      const sourcePath = path.join(root, 'src', 'index.ts')
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          type: 'module',
+          module: './dist/index.js',
+          main: './dist/index.cjs',
+        }),
+      )
+
+      const plugin = getTestPlugin({ library: true, useTypeScriptProject: false })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+
+      await plugin.transform?.call(
+        { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+        `
+          import { $state } from 'fict'
+          /** @fictReturn { directAccessor: "signal" } */
+          export function useCounter() {
+            const count = $state(0)
+            return count
+          }
+        `,
+        sourcePath,
+      )
+
+      const bundle = {
+        'index.js': {
+          type: 'chunk',
+          fileName: 'index.js',
+          isEntry: true,
+          facadeModuleId: sourcePath,
+          modules: { [sourcePath]: {} },
+          exports: ['useCounter'],
+        },
+        'index.cjs': {
+          type: 'chunk',
+          fileName: 'index.cjs',
+          isEntry: true,
+          facadeModuleId: sourcePath,
+          modules: { [sourcePath]: {} },
+          exports: ['useCounter'],
+        },
+      }
+      plugin.generateBundle?.call({ emitFile: vi.fn(() => 'asset-id'), warn: vi.fn() }, {}, bundle)
+      await plugin.writeBundle?.call({ warn: vi.fn(), error: vi.fn() }, {}, {})
+
+      const pkg = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'))
+      expect(pkg.fict).toEqual({ metadata: './dist/index.fict.meta.json' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('warns when a library entry emits no Fict metadata', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-missing-meta-'))
+
+    try {
+      const sourcePath = path.join(root, 'src', 'index.ts')
+      const plugin = getTestPlugin({ library: true, useTypeScriptProject: false })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+
+      const warn = vi.fn()
+      plugin.generateBundle?.call(
+        { emitFile: vi.fn(() => 'asset-id'), warn },
+        {},
+        {
+          'index.js': {
+            type: 'chunk',
+            fileName: 'index.js',
+            isEntry: true,
+            facadeModuleId: sourcePath,
+            modules: { [sourcePath]: {} },
+            exports: ['plainUtility'],
+          },
+        },
+      )
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('did not produce Fict metadata'))
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('fails package.json publishing when metadata assets cannot be mapped to public entries', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-library-unmapped-meta-'))
+
+    try {
+      const indexPath = path.join(root, 'src', 'index.ts')
+      const hooksPath = path.join(root, 'src', 'hooks.ts')
+      await writeFile(
+        path.join(root, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          type: 'module',
+          exports: {
+            '.': './dist/index.js',
+          },
+        }),
+      )
+
+      const plugin = getTestPlugin({ library: true, useTypeScriptProject: false })
+      plugin.configResolved?.({ ...mockBuildConfig, root })
+
+      await plugin.transform?.call(
+        { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+        `
+          import { $state } from 'fict'
+          /** @fictReturn { directAccessor: "signal" } */
+          export function useCounter() {
+            const count = $state(0)
+            return count
+          }
+        `,
+        indexPath,
+      )
+      await plugin.transform?.call(
+        { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() },
+        `
+          import { $state } from 'fict'
+          /** @fictReturn { directAccessor: "signal" } */
+          export function useToggle() {
+            const on = $state(false)
+            return on
+          }
+        `,
+        hooksPath,
+      )
+
+      plugin.generateBundle?.call(
+        { emitFile: vi.fn(() => 'asset-id'), warn: vi.fn() },
+        {},
+        {
+          'index.js': {
+            type: 'chunk',
+            fileName: 'index.js',
+            isEntry: true,
+            facadeModuleId: indexPath,
+            modules: { [indexPath]: {} },
+            exports: ['useCounter'],
+          },
+          'hooks.js': {
+            type: 'chunk',
+            fileName: 'hooks.js',
+            isEntry: true,
+            facadeModuleId: hooksPath,
+            modules: { [hooksPath]: {} },
+            exports: ['useToggle'],
+          },
+        },
+      )
+
+      await expect(
+        plugin.writeBundle?.call(
+          {
+            warn: vi.fn(),
+            error: (message: string) => {
+              throw new Error(message)
+            },
+          },
+          {},
+          {},
+        ),
+      ).rejects.toThrow('could not be declared in package.json')
     } finally {
       await rm(root, { recursive: true, force: true })
     }

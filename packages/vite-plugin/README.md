@@ -81,6 +81,7 @@ Library mode:
 - collects compiler-generated module metadata from transformed entry chunks;
 - emits `*.fict.meta.json` files into the build output;
 - updates the package `package.json` with `fict.metadata` for one public entry or `fict.exports` for multiple public entries.
+- warns when a public entry emits no Fict metadata and fails package declaration writing when generated metadata cannot be mapped to `exports`, `module`, or `main`.
 
 The package mapping is inferred from existing `package.json#exports`, `module`, and `main` fields. For example:
 
