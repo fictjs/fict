@@ -1,5 +1,11 @@
 # @fictjs/skill
 
+## 0.19.0
+
+### Minor Changes
+
+- fix
+
 ## 0.18.0
 
 ### Minor Changes
