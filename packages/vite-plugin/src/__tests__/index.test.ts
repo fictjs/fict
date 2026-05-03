@@ -283,6 +283,7 @@ describe('fict vite-plugin', () => {
       )
       expect(metadataCall).toBeDefined()
       expect(JSON.parse(metadataCall?.[0].source as string)).toEqual({
+        version: 1,
         exports: {},
         hooks: { useCounter: { directAccessor: 'signal' } },
       })

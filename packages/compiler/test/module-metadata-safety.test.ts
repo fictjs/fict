@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
 
 import { transformSync } from '@babel/core'
@@ -107,6 +115,36 @@ describe('module metadata safety', () => {
       if (existsSync(metaPath)) {
         rmSync(metaPath, { force: true })
       }
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+    }
+  })
+
+  it('emits versioned module metadata sidecars', () => {
+    const baseDir = path.join(process.cwd(), '__fict_metadata_versioned__')
+    mkdirSync(baseDir, { recursive: true })
+    const filePath = path.join(baseDir, 'module.ts')
+    const metaPath = `${filePath}.fict.meta.json`
+
+    try {
+      transformSync('export const value = 1', {
+        filename: filePath,
+        configFile: false,
+        babelrc: false,
+        sourceType: 'module',
+        parserOpts: {
+          sourceType: 'module',
+          plugins: ['typescript'],
+        },
+        plugins: [[createFictPlugin, { emitModuleMetadata: true, dev: false }]],
+      })
+
+      expect(JSON.parse(readFileSync(metaPath, 'utf8'))).toEqual({
+        version: 1,
+        exports: {},
+      })
+    } finally {
       if (existsSync(baseDir)) {
         rmSync(baseDir, { recursive: true, force: true })
       }
@@ -286,6 +324,47 @@ describe('module metadata safety', () => {
         'utf8',
       )
       writeFileSync(metaPath, JSON.stringify({ exports: null }), 'utf8')
+
+      const resolved = resolveModuleMetadata('fict-hook-lib', importer, {
+        emitModuleMetadata: false,
+      })
+
+      expect(resolved).toBeUndefined()
+    } finally {
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
+  it('rejects package metadata files with unsupported versions', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_package_metadata_unsupported_version__')
+    const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+    const importer = path.join(baseDir, 'src', 'consumer.tsx')
+    const metaPath = path.join(packageDir, 'dist', 'index.fict.meta.json')
+
+    try {
+      mkdirSync(path.dirname(metaPath), { recursive: true })
+      mkdirSync(path.dirname(importer), { recursive: true })
+      writeFileSync(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          fict: { metadata: './dist/index.fict.meta.json' },
+        }),
+        'utf8',
+      )
+      writeFileSync(
+        metaPath,
+        JSON.stringify({
+          version: 2,
+          exports: {},
+          hooks: { useCounter: { directAccessor: 'signal' } },
+        }),
+        'utf8',
+      )
 
       const resolved = resolveModuleMetadata('fict-hook-lib', importer, {
         emitModuleMetadata: false,

@@ -8,6 +8,7 @@ import { buildHIR } from './ir/build-hir'
 import { lowerHIRWithRegions } from './ir/codegen'
 import { optimizeHIR } from './ir/optimize'
 import { resolveModuleMetadata } from './module-metadata'
+import { MODULE_REACTIVE_METADATA_VERSION } from './types'
 import type { CompilerWarning, FictCompilerOptions } from './types'
 import {
   getRootIdentifier,
@@ -2274,6 +2275,7 @@ export const COMPILER_CACHE_FINGERPRINT = createCompilerCacheFingerprint([
   String(optimizeHIR),
   String(lowerHIRWithRegions),
   String(resolveModuleMetadata),
+  String(MODULE_REACTIVE_METADATA_VERSION),
   JSON.stringify(Array.from(SAFE_FUNCTIONS).sort()),
 ])
 
@@ -2286,8 +2288,10 @@ export {
 export type {
   HookReturnInfoSerializable,
   ModuleReactiveMetadata,
+  ModuleReactiveMetadataVersion,
   ReactiveExportKind,
 } from './types'
+export { MODULE_REACTIVE_METADATA_VERSION } from './types'
 export { analyzeFictFile, inferTraceMarkersForComponent } from './tooling'
 export type {
   AnalyzeDiagnostic,

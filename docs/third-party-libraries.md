@@ -24,6 +24,7 @@ Publish a JSON metadata file containing the same shape used by the compiler:
 
 ```json
 {
+  "version": 1,
   "exports": {},
   "hooks": {
     "useCounter": {
@@ -38,6 +39,8 @@ Publish a JSON metadata file containing the same shape used by the compiler:
   }
 }
 ```
+
+`version: 1` is the current metadata ABI version. Consumers also accept older metadata files without a `version` field, but unsupported future versions are ignored instead of being guessed.
 
 Then point to it from `package.json`:
 

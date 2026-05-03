@@ -1,6 +1,7 @@
 import type * as BabelCore from '@babel/core'
 
 import { resolveModuleMetadata } from '../module-metadata'
+import { MODULE_REACTIVE_METADATA_VERSION } from '../types'
 import type {
   FictCompilerOptions,
   HookReturnInfoSerializable,
@@ -102,7 +103,10 @@ export function buildModuleReactiveMetadata(
     getLocalHookInfo?: (localName: string) => HookReturnInfoSerializable | undefined
   },
 ): ModuleReactiveMetadata {
-  const metadata: ModuleReactiveMetadata = { exports: {} }
+  const metadata: ModuleReactiveMetadata = {
+    version: MODULE_REACTIVE_METADATA_VERSION,
+    exports: {},
+  }
   const hookExports: Record<string, HookReturnInfoSerializable> = {}
   const addExport = (exportName: string, localName: string) => {
     const kind = classifyReactiveExport(localName, ctx)

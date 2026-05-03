@@ -75,6 +75,10 @@ export interface CompilerWarning {
 
 export type ReactiveExportKind = 'signal' | 'memo' | 'store'
 
+export const MODULE_REACTIVE_METADATA_VERSION = 1
+
+export type ModuleReactiveMetadataVersion = typeof MODULE_REACTIVE_METADATA_VERSION
+
 export interface HookReturnInfoSerializable {
   objectProps?: Record<string, 'signal' | 'memo'>
   arrayProps?: Record<string, 'signal' | 'memo'>
@@ -82,6 +86,7 @@ export interface HookReturnInfoSerializable {
 }
 
 export interface ModuleReactiveMetadata {
+  version?: ModuleReactiveMetadataVersion
   exports: Record<string, ReactiveExportKind>
   hooks?: Record<string, HookReturnInfoSerializable>
 }

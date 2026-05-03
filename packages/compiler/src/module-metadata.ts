@@ -11,6 +11,7 @@ import {
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { MODULE_REACTIVE_METADATA_VERSION } from './types'
 import type { FictCompilerOptions, ModuleReactiveMetadata } from './types'
 
 const globalMetadata = new Map<string, ModuleReactiveMetadata>()
@@ -305,6 +306,7 @@ function parseModuleReactiveMetadata(raw: string): ModuleReactiveMetadata | null
   try {
     const parsed = JSON.parse(raw) as unknown
     if (!isPlainObject(parsed)) return null
+    if ('version' in parsed && parsed.version !== MODULE_REACTIVE_METADATA_VERSION) return null
     if (!isPlainObject(parsed.exports)) return null
     if (!Object.values(parsed.exports).every(isReactiveExportKind)) return null
 

@@ -136,6 +136,7 @@ The metadata file itself uses the compiler-owned `ModuleReactiveMetadata` shape:
 
 ```json
 {
+  "version": 1,
   "exports": {},
   "hooks": {
     "useCounter": {
@@ -150,6 +151,8 @@ The metadata file itself uses the compiler-owned `ModuleReactiveMetadata` shape:
   }
 }
 ```
+
+`version: 1` is the current package metadata ABI. Metadata without a version remains accepted for backwards compatibility; unsupported future versions are rejected.
 
 ## Desired author experience
 

@@ -217,6 +217,7 @@ const TRANSFORM_CACHE_FINGERPRINT = hashString(
 const MODULE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts']
 const DEFAULT_APP_INCLUDE = ['**/*.tsx', '**/*.jsx']
 const DEFAULT_LIBRARY_INCLUDE = ['**/*.ts', '**/*.tsx', '**/*.js', '**/*.jsx']
+const LIBRARY_METADATA_VERSION = 1 satisfies ModuleReactiveMetadata['version']
 
 // Virtual module prefix for extracted handlers
 const VIRTUAL_HANDLER_PREFIX = '\0fict-handler:'
@@ -1024,7 +1025,10 @@ function buildEntryChunkMetadata(
   root: string,
 ): ModuleReactiveMetadata | null {
   const allowedExports = chunk.exports && chunk.exports.length > 0 ? new Set(chunk.exports) : null
-  const metadata: ModuleReactiveMetadata = { exports: {} }
+  const metadata: ModuleReactiveMetadata = {
+    version: LIBRARY_METADATA_VERSION,
+    exports: {},
+  }
 
   mergeMetadata(
     metadata,
