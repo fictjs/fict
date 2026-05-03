@@ -183,6 +183,21 @@ importers:
         specifier: ^5.2.3
         version: 5.2.3(tslib@2.8.1)(webpack-cli@6.0.1)(webpack@5.105.2)
 
+  examples/fict-library:
+    devDependencies:
+      '@fictjs/vite-plugin':
+        specifier: workspace:*
+        version: link:../../packages/vite-plugin
+      fict:
+        specifier: workspace:*
+        version: link:../../packages/fict
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.1
+        version: 7.3.1(@types/node@25.3.0)(jiti@2.6.1)(terser@5.46.0)(yaml@2.8.2)
+
   examples/forms:
     dependencies:
       '@fictjs/runtime':
