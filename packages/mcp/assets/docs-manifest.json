@@ -79,6 +79,11 @@
       "path": "framework-comparison.md"
     },
     {
+      "id": "metadata-packaging-architecture",
+      "title": "Metadata Packaging Architecture",
+      "path": "metadata-packaging-architecture.md"
+    },
+    {
       "id": "reactivity-guarantee-matrix",
       "title": "Reactivity Guarantee Matrix",
       "path": "reactivity-guarantee-matrix.md"
@@ -126,6 +131,11 @@
       "id": "strict-guarantee-test-policy",
       "title": "Strict Guarantee Test Policy",
       "path": "strict-guarantee-test-policy.md"
+    },
+    {
+      "id": "third-party-libraries",
+      "title": "Third-Party Fict Libraries",
+      "path": "third-party-libraries.md"
     }
   ]
 }
