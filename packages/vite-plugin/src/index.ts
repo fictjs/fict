@@ -840,7 +840,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
  */
 function shouldTransform(id: string, include: string[], exclude: string[]): boolean {
   // Normalize path separators
-  const normalizedId = stripQuery(id).replace(/\\/g, '/')
+  const withoutQuery = stripQuery(id)
+  if (isInternalModuleId(withoutQuery)) {
+    return false
+  }
+
+  const normalizedId = withoutQuery.replace(/\\/g, '/')
 
   // Check exclude patterns first
   for (const pattern of exclude) {
@@ -857,6 +862,16 @@ function shouldTransform(id: string, include: string[], exclude: string[]): bool
   }
 
   return false
+}
+
+function isInternalModuleId(id: string): boolean {
+  return (
+    id.includes('\0') ||
+    id.startsWith('virtual:') ||
+    id.startsWith('/@id/') ||
+    id.startsWith('/@vite/') ||
+    id.startsWith('@vite/')
+  )
 }
 
 /**

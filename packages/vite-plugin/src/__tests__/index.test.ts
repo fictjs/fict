@@ -97,6 +97,25 @@ describe('fict vite-plugin', () => {
     }
   })
 
+  it('skips bundler virtual runtime modules in library mode', async () => {
+    const plugin = fict({ library: true, useTypeScriptProject: false }) as any
+    const transform = plugin.transform as any
+    const result =
+      typeof transform === 'function'
+        ? await transform.call(
+            { error: vi.fn() },
+            'export var __name = () => {}',
+            '\0rolldown/runtime.js',
+          )
+        : await transform?.handler.call(
+            { error: vi.fn() },
+            'export var __name = () => {}',
+            '\0rolldown/runtime.js',
+          )
+
+    expect(result).toBeNull()
+  })
+
   it('resolves Fict hook metadata from bare package imports', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'fict-vite-package-meta-'))
     const packageDir = path.join(root, 'node_modules', 'fict-hook-lib')
