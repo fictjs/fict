@@ -14,16 +14,16 @@ import {
 } from '../core/plugin'
 import { MessageSource } from '../core/types'
 import type {
+  ComponentState,
+  ComputedState,
   DependencyGraph,
-  type ComponentState,
-  type ComputedState,
-  type DevToolsSettings,
-  type EffectState,
-  type NodeType,
-  type PanelTab,
-  type RootState,
-  type SignalState,
-  type TimelineEvent,
+  DevToolsSettings,
+  EffectState,
+  NodeType,
+  PanelTab,
+  RootState,
+  SignalState,
+  TimelineEvent,
 } from '../core/types'
 
 import { GraphRenderer } from './graph-renderer'
