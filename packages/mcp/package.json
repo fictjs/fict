@@ -46,10 +46,10 @@
     "@babel/preset-typescript": "^7.26.0",
     "@fictjs/compiler": "workspace:^",
     "@fictjs/eslint-plugin": "workspace:^",
-    "@modelcontextprotocol/sdk": "^1.27.1",
-    "eslint": "^10.0.2",
-    "typescript": "^5.9.3",
-    "zod": "^4.0.0"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "eslint": "^10.3.0",
+    "typescript": "^6.0.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "tsup": "^8.5.1",

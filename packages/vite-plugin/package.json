@@ -40,7 +40,7 @@
   "dependencies": {
     "@babel/core": "^7.29.0",
     "@babel/generator": "^7.29.1",
-    "@babel/parser": "^7.29.0",
+    "@babel/parser": "^7.29.3",
     "@babel/plugin-syntax-jsx": "^7.28.6",
     "@babel/plugin-transform-react-jsx": "^7.28.6",
     "@babel/preset-typescript": "^7.26.0",
@@ -53,7 +53,7 @@
     "@types/babel__generator": "^7.6.8",
     "@types/babel__traverse": "^7.20.6",
     "tsup": "^8.5.1",
-    "vite": "^7.3.1"
+    "vite": "^8.0.10"
   },
   "keywords": [
     "fict",
