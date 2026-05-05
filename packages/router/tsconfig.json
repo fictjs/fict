@@ -3,6 +3,7 @@
   "compilerOptions": {
     "outDir": "dist",
     "noEmit": true,
+    "rootDir": "../..",
     "skipLibCheck": true
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "test/**/*.ts", "../runtime/src/dev.d.ts"]
