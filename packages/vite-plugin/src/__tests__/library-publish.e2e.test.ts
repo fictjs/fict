@@ -89,10 +89,10 @@ describe('vite-plugin library publishing e2e', () => {
         '--pack-destination',
         packDir,
       ])
-      const packed = JSON.parse(packResult.stdout) as Array<{
+      const packed = JSON.parse(packResult.stdout) as {
         filename: string
-        files: Array<{ path: string }>
-      }>
+        files: { path: string }[]
+      }[]
       const packedPackage = packed[0]
       expect(packedPackage?.files.map(file => file.path).sort()).toEqual(
         expect.arrayContaining([
