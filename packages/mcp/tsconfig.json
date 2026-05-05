@@ -3,6 +3,7 @@
   "compilerOptions": {
     "outDir": "dist",
     "exactOptionalPropertyTypes": false,
+    "types": ["node"],
     "baseUrl": ".",
     "paths": {
       "@fictjs/compiler": ["../compiler/dist/index.d.ts"],

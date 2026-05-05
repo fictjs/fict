@@ -25,6 +25,7 @@
     "skipLibCheck": true,
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
+    "rootDir": ".",
     "paths": {
       "fict": ["packages/fict/src"],
       "fict/*": ["packages/fict/src/*"],
