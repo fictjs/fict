@@ -419,6 +419,42 @@ describe('Cross-Module Reactivity', () => {
       }
     })
 
+    it('keeps bare package hook returns opaque when package metadata is missing', () => {
+      clearModuleMetadata()
+      const appSource = `
+        import { useCounter } from 'fict-hook-lib'
+
+        export function App() {
+          const count = useCounter()
+          const doubled = count * 2
+          return <div>{doubled}</div>
+        }
+      `
+      const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+      const appPath = path.join(baseDir, 'app-package-no-metadata.tsx')
+
+      try {
+        mkdirSync(packageDir, { recursive: true })
+        writeFileSync(
+          path.join(packageDir, 'package.json'),
+          JSON.stringify({
+            name: 'fict-hook-lib',
+            type: 'module',
+            exports: './dist/index.js',
+          }),
+        )
+
+        const output = transform(appSource, { fineGrainedDom: true }, appPath)
+        expect(output).not.toMatch(/count\(\) \* 2/)
+        expect(output).toMatch(/count \* 2/)
+      } finally {
+        clearModuleMetadata()
+        if (existsSync(path.join(baseDir, 'node_modules'))) {
+          rmSync(path.join(baseDir, 'node_modules'), { recursive: true, force: true })
+        }
+      }
+    })
+
     it('resolves hook metadata for package subpaths used by CommonJS builds', () => {
       clearModuleMetadata()
       const appSource = `

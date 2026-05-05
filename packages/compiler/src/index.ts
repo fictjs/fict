@@ -627,6 +627,10 @@ function runWarningPass(
     'runInScope',
   ])
   const capturedClosureByBinding = new Map<BabelCore.types.Identifier, Set<string>>()
+  const capturedClosureByObjectProperty = new Map<
+    BabelCore.types.Identifier,
+    Map<string, Set<string>>
+  >()
   const shouldIgnoreIdentifierReference = (
     idPath: BabelCore.NodePath<BabelCore.types.Identifier>,
   ): boolean => {
@@ -664,6 +668,46 @@ function runWarningPass(
     })
     return captured
   }
+  const getStaticPropertyName = (
+    property: BabelCore.types.Expression | BabelCore.types.PrivateName,
+    computed: boolean,
+  ): string | null => {
+    if (t.isPrivateName(property)) return null
+    if (!computed && t.isIdentifier(property)) return property.name
+    if (t.isStringLiteral(property) || t.isNumericLiteral(property)) return String(property.value)
+    return null
+  }
+  const registerObjectPropertyCapture = (
+    objectName: string,
+    propertyName: string,
+    scopePath: BabelCore.NodePath,
+    captured: Set<string>,
+  ): void => {
+    const binding = scopePath.scope.getBinding(objectName)
+    if (!binding) return
+    const objectBindingId = binding.identifier as BabelCore.types.Identifier
+    let propertyCaptures = capturedClosureByObjectProperty.get(objectBindingId)
+    if (!propertyCaptures) {
+      propertyCaptures = new Map()
+      capturedClosureByObjectProperty.set(objectBindingId, propertyCaptures)
+    }
+    propertyCaptures.set(propertyName, captured)
+  }
+  const getCapturedFromMemberExpression = (
+    member: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
+    scopePath: BabelCore.NodePath,
+  ): Set<string> | null => {
+    if (!t.isIdentifier(member.object)) return null
+    const propertyName = getStaticPropertyName(member.property, member.computed)
+    if (!propertyName) return null
+    const binding = scopePath.scope.getBinding(member.object.name)
+    if (!binding) return null
+    const propertyCaptures = capturedClosureByObjectProperty.get(
+      binding.identifier as BabelCore.types.Identifier,
+    )
+    const captured = propertyCaptures?.get(propertyName)
+    return captured && captured.size > 0 ? captured : null
+  }
   const registerClosureCaptureBinding = (
     fnPath: BabelCore.NodePath<
       | BabelCore.types.Function
@@ -692,12 +736,52 @@ function runWarningPass(
       }
       return
     }
+    if (
+      (fnPath.isFunctionExpression() || fnPath.isArrowFunctionExpression()) &&
+      fnPath.parentPath.isObjectProperty({ value: fnPath.node })
+    ) {
+      const propertyName = getStaticPropertyName(
+        fnPath.parentPath.node.key as BabelCore.types.Expression,
+        fnPath.parentPath.node.computed,
+      )
+      const objectPath = fnPath.parentPath.parentPath
+      const containerPath = objectPath?.parentPath
+      if (propertyName && objectPath?.isObjectExpression()) {
+        if (containerPath?.isVariableDeclarator() && t.isIdentifier(containerPath.node.id)) {
+          registerObjectPropertyCapture(
+            containerPath.node.id.name,
+            propertyName,
+            containerPath,
+            captured,
+          )
+          return
+        }
+        if (containerPath?.isAssignmentExpression({ right: objectPath.node })) {
+          const left = containerPath.node.left
+          if (t.isIdentifier(left)) {
+            registerObjectPropertyCapture(left.name, propertyName, containerPath, captured)
+            return
+          }
+        }
+      }
+    }
     if (fnPath.parentPath.isAssignmentExpression({ right: fnPath.node })) {
       const left = fnPath.parentPath.node.left
-      if (!t.isIdentifier(left)) return
-      const binding = fnPath.parentPath.scope.getBinding(left.name)
-      if (binding) {
-        capturedClosureByBinding.set(binding.identifier as BabelCore.types.Identifier, captured)
+      if (t.isIdentifier(left)) {
+        const binding = fnPath.parentPath.scope.getBinding(left.name)
+        if (binding) {
+          capturedClosureByBinding.set(binding.identifier as BabelCore.types.Identifier, captured)
+        }
+        return
+      }
+      if (
+        (t.isMemberExpression(left) || t.isOptionalMemberExpression(left)) &&
+        t.isIdentifier(left.object)
+      ) {
+        const propertyName = getStaticPropertyName(left.property, left.computed)
+        if (propertyName) {
+          registerObjectPropertyCapture(left.object.name, propertyName, fnPath.parentPath, captured)
+        }
       }
     }
   }
@@ -706,9 +790,19 @@ function runWarningPass(
       const captured = collectCapturedReactiveNames(argPath)
       return captured.size > 0 ? captured : null
     }
+    if (argPath.isMemberExpression() || argPath.isOptionalMemberExpression()) {
+      return getCapturedFromMemberExpression(argPath.node, argPath)
+    }
     if (!argPath.isIdentifier()) return null
     const binding = argPath.scope.getBinding(argPath.node.name)
     if (!binding) return null
+    const initPath = binding.path.isVariableDeclarator()
+      ? (binding.path.get('init') as BabelCore.NodePath | null)
+      : null
+    if (initPath?.isMemberExpression() || initPath?.isOptionalMemberExpression()) {
+      const captured = getCapturedFromMemberExpression(initPath.node, initPath)
+      if (captured) return captured
+    }
     const captured = capturedClosureByBinding.get(binding.identifier as BabelCore.types.Identifier)
     return captured && captured.size > 0 ? captured : null
   }

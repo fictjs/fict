@@ -223,6 +223,39 @@ describe('reactivity guarantee contract', () => {
         error: /FICT-R002/,
       },
       {
+        name: 'object-property reactive closure escaping through unknown boundary',
+        source: `
+          import { $state } from 'fict'
+          function consume(fn) {
+            return fn()
+          }
+          function App() {
+            let count = $state(0)
+            const callbacks = { read: () => count }
+            consume(callbacks.read)
+            return <div />
+          }
+        `,
+        error: /FICT-R002/,
+      },
+      {
+        name: 'aliased object-property reactive closure escaping through unknown boundary',
+        source: `
+          import { $state } from 'fict'
+          function consume(fn) {
+            return fn()
+          }
+          function App() {
+            let count = $state(0)
+            const callbacks = { read: () => count }
+            const read = callbacks.read
+            consume(read)
+            return <div />
+          }
+        `,
+        error: /FICT-R005/,
+      },
+      {
         name: 'async promise callback captures reactive value across boundary',
         source: `
           import { $state } from 'fict'
@@ -324,6 +357,25 @@ describe('reactivity guarantee contract', () => {
             let count = $state(0)
             const bus = { subscribe(fn) { return fn() } }
             bus.subscribe(() => count)
+            return <div />
+          }
+        `,
+      )
+      expect(warningCodes).toContain('FICT-R005')
+    })
+
+    it('warns FICT-R005 for object-property callback aliases', () => {
+      const warningCodes = collectWarningCodes(
+        `
+          import { $state } from 'fict'
+          function consume(fn) {
+            return fn()
+          }
+          function App() {
+            let count = $state(0)
+            const callbacks = { read: () => count }
+            const read = callbacks.read
+            consume(read)
             return <div />
           }
         `,
