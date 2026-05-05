@@ -1,5 +1,8 @@
 {
   "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "../.."
+  },
   "include": ["src", "../runtime/src/dev.d.ts"],
   "exclude": ["node_modules", "dist", "coverage", "e2e"]
 }
