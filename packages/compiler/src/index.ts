@@ -183,6 +183,7 @@ const STRICT_GUARANTEE_WARNING_CODES = new Set([
   'FICT-H',
   'FICT-R002',
   'FICT-R003',
+  'FICT-R005',
   'FICT-R006',
 ])
 
@@ -615,9 +616,6 @@ function runWarningPass(
     'reduceRight',
     'sort',
     'toSorted',
-    'then',
-    'catch',
-    'finally',
   ])
   const NON_ESCAPING_CALLBACK_FUNCTION_IMPORTS = new Set([
     'untrack',

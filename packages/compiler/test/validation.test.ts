@@ -43,6 +43,7 @@ describe('DiagnosticCode', () => {
     expect(DiagnosticSeverities[DiagnosticCode.FICT_P001]).toBe(DiagnosticSeverity.Error)
     expect(DiagnosticSeverities[DiagnosticCode.FICT_S002]).toBe(DiagnosticSeverity.Error)
     expect(DiagnosticSeverities[DiagnosticCode.FICT_J003]).toBe(DiagnosticSeverity.Error)
+    expect(DiagnosticSeverities[DiagnosticCode.FICT_R005]).toBe(DiagnosticSeverity.Error)
     expect(DiagnosticSeverities[DiagnosticCode.FICT_R006]).toBe(DiagnosticSeverity.Error)
     expect(DiagnosticSeverities[DiagnosticCode.FICT_M]).toBe(DiagnosticSeverity.Error)
     expect(DiagnosticSeverities[DiagnosticCode.FICT_H]).toBe(DiagnosticSeverity.Error)

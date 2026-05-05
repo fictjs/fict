@@ -207,6 +207,34 @@ describe('reactivity guarantee contract', () => {
         error: /FICT-R002/,
       },
       {
+        name: 'named reactive closure escaping through unknown function boundary',
+        source: `
+          import { $state } from 'fict'
+          function consume(fn) {
+            return fn()
+          }
+          function App() {
+            let count = $state(0)
+            const readCount = () => count
+            consume(readCount)
+            return <div />
+          }
+        `,
+        error: /FICT-R002/,
+      },
+      {
+        name: 'async promise callback captures reactive value across boundary',
+        source: `
+          import { $state } from 'fict'
+          function App() {
+            let count = $state(0)
+            Promise.resolve(1).then(() => count)
+            return <div>{count}</div>
+          }
+        `,
+        error: /FICT-R002/,
+      },
+      {
         name: 'control-flow fallback diagnostics',
         source: `
           import { $state } from 'fict'
@@ -252,7 +280,7 @@ describe('reactivity guarantee contract', () => {
     }
   })
 
-  describe('Warning-only boundary signals', () => {
+  describe('Non-strict callback boundary warnings', () => {
     it('warns FICT-R005 for inline closure escaping unknown callback boundary', () => {
       const warningCodes = collectWarningCodes(
         `
@@ -318,7 +346,7 @@ describe('reactivity guarantee contract', () => {
       expect(warningCodes).not.toContain('FICT-R005')
     })
 
-    it('does not warn FICT-R005 for promise then callback host', () => {
+    it('warns FICT-R005 for promise then callback host', () => {
       const warningCodes = collectWarningCodes(
         `
           import { $state } from 'fict'
@@ -329,7 +357,7 @@ describe('reactivity guarantee contract', () => {
           }
         `,
       )
-      expect(warningCodes).not.toContain('FICT-R005')
+      expect(warningCodes).toContain('FICT-R005')
     })
   })
 

@@ -173,6 +173,7 @@ const STRICT_GUARANTEE_DIAGNOSTICS = new Set<DiagnosticCode>([
   DiagnosticCode.FICT_H,
   DiagnosticCode.FICT_R002,
   DiagnosticCode.FICT_R003,
+  DiagnosticCode.FICT_R005,
   DiagnosticCode.FICT_R006,
 ])
 

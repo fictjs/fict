@@ -289,6 +289,28 @@ describe('warnings as errors', () => {
     ).toThrow(/strictGuarantee does not allow downgrading FICT-R006/)
   })
 
+  it('strictGuarantee disallows warningLevels downgrades for callback escape diagnostics', () => {
+    const source = `
+      import { $state } from 'fict'
+      function consume(fn) {
+        return fn()
+      }
+      function App() {
+        let count = $state(0)
+        const readCount = () => count
+        consume(readCount)
+        return <div />
+      }
+    `
+    expect(() =>
+      transform(source, {
+        strictGuarantee: true,
+        dev: false,
+        warningLevels: { 'FICT-R005': 'warn' },
+      }),
+    ).toThrow(/strictGuarantee does not allow downgrading FICT-R005/)
+  })
+
   it('strictGuarantee disallows warningLevels downgrades for legacy guarantee codes', () => {
     const source = `
       import { $state } from 'fict'
