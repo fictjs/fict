@@ -388,12 +388,18 @@ warningLevels: {
 
 ### FICT-R005: Closure capture issue
 
-**Severity:** Warning
+**Severity:** Error (default)
 
-**Why:** A closure that captures reactive values escapes through an unknown callback boundary.
+**Why:** A closure that captures reactive values escapes through an unknown or async callback boundary.
 
 **Impact:** Dependency boundaries may become implicit and harder to reason about.
-Non-escaping callbacks (for common iterator patterns like `map`/`filter`/`forEach`) are not flagged.
+Non-escaping callbacks for common synchronous iterator patterns like `map`/`filter`/`forEach` are not flagged.
+Async hosts such as `Promise.then` / `catch` / `finally` are treated as boundary crossings.
+
+**Fix:** Keep the closure local to JSX/events/synchronous iterator callbacks, pass an explicit snapshot,
+or route reactive work through a known Fict scheduling primitive such as `batch`, `untrack`, or
+`startTransition`. If an external callback host is intentionally responsible for reactivity, disable
+`strictGuarantee` only for that compilation boundary and cover the integration with tests.
 
 ### FICT-R006: Reactive control-flow re-execution
 

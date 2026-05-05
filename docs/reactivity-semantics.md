@@ -87,6 +87,9 @@ const onClick = () => console.log(count()) // reads latest value each call
 - Event handlers are stable references
 - No need for `useCallback` or `stableCallback`
 - Each handler invocation reads the current value
+- Unknown callback hosts and async boundaries are not part of this guarantee. Passing a reactive
+  closure to an arbitrary function, object callback slot, or `Promise.then` / `catch` / `finally`
+  surfaces `FICT-R002` / `FICT-R005` under default `strictGuarantee: true`.
 
 ---
 
@@ -112,6 +115,11 @@ const result = compute(count()) // getter called at call site
 ### Why This Works
 
 The callee receives a plain value. Reactivity is handled by the caller expanding the getter. This is simpler and more predictable than trying to infer purity across function boundaries.
+
+With default `strictGuarantee: true`, arbitrary call-site expansion is fail-closed when the compiler
+cannot prove the boundary is safe. Passing reactive state or derived values to an unknown function
+surfaces `FICT-S002` / `FICT-R002`; pass an explicit snapshot (`count()`) or keep the call inside a
+known Fict/iterator boundary when that is the intended behavior.
 
 ---
 
