@@ -15,6 +15,8 @@ function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
 }
 
 describe('compiler API type contract', () => {
+  // TypeScript program construction is CPU-bound and can be heavily delayed
+  // when the full workspace test/coverage suite runs packages in parallel.
   it('typechecks public explain and minimizer APIs', () => {
     const fixture = path.join(dirname, 'fixtures/api-type-contract.ts')
     const compilerTypeDeclarations = [
@@ -40,5 +42,5 @@ describe('compiler API type contract', () => {
 
     const diagnostics = ts.getPreEmitDiagnostics(program)
     expect(formatDiagnostics(diagnostics)).toBe('')
-  }, 20_000)
+  }, 120_000)
 })
