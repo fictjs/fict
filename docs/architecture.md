@@ -687,7 +687,7 @@ This provides the same DX as `$state` while leveraging path-level Proxy tracking
 ### 9.2 resource: Async Data
 
 ```ts
-import { reactive } from 'fict'
+import { reactive } from 'fict/advanced'
 import { resource } from 'fict/plus'
 
 const userResource = resource({

@@ -3778,7 +3778,8 @@ describe('compiler + fict integration', () => {
     window.addEventListener('error', onError)
     window.addEventListener('unhandledrejection', onRejection)
     const source = `
-        import { $state, render, Suspense, ErrorBoundary, reactive } from 'fict'
+        import { $state, render, Suspense, ErrorBoundary } from 'fict'
+        import { reactive } from 'fict/advanced'
         import { resource } from 'fict/plus'
 
         const fetchUsers = async ({ signal }) => {
@@ -5820,7 +5821,8 @@ describe('compiler + fict integration', () => {
 
     it('disposes reactive work in plain control flow via runInScope', async () => {
       const source = `
-        import { $state, render, runInScope, createEffect, onCleanup, reactive } from 'fict'
+        import { $state, render, runInScope, createEffect, onCleanup } from 'fict'
+        import { reactive } from 'fict/advanced'
 
         export const events: string[] = []
 
@@ -7257,7 +7259,8 @@ describe('compiler + fict integration', () => {
      */
     it('handles multiple resources in parallel', async () => {
       const source = `
-        import { render, Suspense, reactive } from 'fict'
+        import { render, Suspense } from 'fict'
+        import { reactive } from 'fict/advanced'
         import { resource } from 'fict/plus'
 
         const userResource = resource({

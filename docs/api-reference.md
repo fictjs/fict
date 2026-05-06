@@ -873,7 +873,8 @@ function Suspense(props: {
 **Example:**
 
 ```tsx
-import { Suspense, reactive } from 'fict'
+import { Suspense } from 'fict'
+import { reactive } from 'fict/advanced'
 import { lazy, resource } from 'fict/plus'
 
 // Lazy component
@@ -1229,7 +1230,7 @@ APIs imported from `fict/plus` for async resource management and lazy loading.
 Create an async resource with caching, refreshing, and Suspense support.
 
 ```typescript
-import { reactive } from 'fict'
+import { reactive } from 'fict/advanced'
 import { resource } from 'fict/plus'
 
 interface ResourceResult<T> {

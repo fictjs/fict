@@ -208,7 +208,7 @@ const defaultCacheOptions: Required<ResourceCacheOptions> = {
  *
  * @example
  * ```tsx
- * import { reactive } from 'fict'
+ * import { reactive } from 'fict/advanced'
  * import { resource } from 'fict/plus'
  *
  * // Simple fetcher

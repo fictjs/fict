@@ -35,8 +35,9 @@
 // Re-export everything from runtime
 export * from '@fictjs/runtime'
 
-// Re-export commonly used advanced APIs for convenience
-export { createSelector, createScope, reactive, runInScope } from '@fictjs/runtime/advanced'
+// Re-export commonly used advanced APIs for convenience. Manual reactive getter
+// markers stay in `fict/advanced` so the main entrypoint remains user-facing.
+export { createSelector, createScope, runInScope } from '@fictjs/runtime/advanced'
 
 // ============================================================================
 // Convenience Aliases
