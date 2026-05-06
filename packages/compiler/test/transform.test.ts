@@ -369,6 +369,20 @@ describe('Fict Compiler - Basic Transforms', () => {
       const output = transform(input)
       expect(output).toContain('children: nonReactive(() =>')
     })
+
+    it('marks vnode-mode reactive intrinsic values with compiler getter markers', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let count = $state(0)
+          return <div title={count}>{count}</div>
+        }
+      `
+      const output = transform(input)
+      expect(output).toContain('__fictReactive')
+      expect(output).toContain('title: __fictReactive(() => count())')
+      expect(output).toContain('children: __fictReactive(() => count())')
+    })
   })
 
   describe('Fine-grained DOM lowering (default)', () => {

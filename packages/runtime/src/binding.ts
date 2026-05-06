@@ -6,7 +6,7 @@
  * and the DOM, enabling fine-grained updates without a virtual DOM.
  *
  * Design Philosophy:
- * - Values wrapped in functions `() => T` are treated as reactive
+ * - Explicitly marked getter functions are treated as reactive
  * - Static values are applied once without tracking
  * - The compiler transforms JSX expressions to use these primitives
  */
@@ -267,6 +267,14 @@ export function reactive<T>(fn: () => T): () => T {
     }
   }
   return fn
+}
+
+/**
+ * Mark a compiler-generated getter as reactive.
+ * @internal Compiler/runtime ABI helper; use reactive(fn) in user-authored code.
+ */
+export function __fictReactive<T>(fn: () => T): () => T {
+  return reactive(fn)
 }
 
 /**

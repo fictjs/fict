@@ -92,6 +92,7 @@ export {
   callEventHandler,
   bindProperty,
   bindRef,
+  __fictReactive,
   nonReactive,
   reactive,
   insert,

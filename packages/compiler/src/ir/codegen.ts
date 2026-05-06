@@ -35,6 +35,7 @@ import {
   resolveHIRBindingPath,
   type HIRChildBindingOps,
 } from './codegen-hir-bindings'
+import { markCompilerReactiveGetter } from './codegen-reactive-getter'
 import {
   analyzeHookReturnInfo as analyzeHookReturnInfoWithOps,
   deserializeHookReturnInfo,
@@ -2213,7 +2214,7 @@ function lowerJSXChildNonFineGrained(
   const expr = child.value
   const lowered = lowerDomExpression(expr, ctx)
   if (isExpressionReactive(expr, ctx)) {
-    return t.arrowFunctionExpression([], lowered)
+    return markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], lowered))
   }
   return lowered
 }
@@ -2252,10 +2253,10 @@ function lowerIntrinsicElementAsVNode(
     if (attr.value) {
       if (isEvent) {
         if (!(t.isArrowFunctionExpression(rawExpr) || t.isFunctionExpression(rawExpr))) {
-          valueExpr = t.arrowFunctionExpression([], rawExpr)
+          valueExpr = markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], rawExpr))
         }
       } else if (isExpressionReactive(attr.value, ctx)) {
-        valueExpr = t.arrowFunctionExpression([], rawExpr)
+        valueExpr = markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], rawExpr))
       }
     }
 
@@ -2786,7 +2787,10 @@ function lowerIntrinsicElement(
       const spreadValueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
       // Always wrap spread expressions so function-valued expressions are treated
       // as values, not invoked as runtime spread getters.
-      const spreadGetter = t.arrowFunctionExpression([], spreadValueExpr)
+      const spreadGetter = markCompilerReactiveGetter(
+        ctx,
+        t.arrowFunctionExpression([], spreadValueExpr),
+      )
       const spreadArgs: BabelCore.types.Expression[] = [
         targetId,
         spreadGetter,
@@ -2849,7 +2853,7 @@ function lowerIntrinsicElement(
 
         const dataValue = isStaticDelegatedDataExpression(hirDataBinding.data, ctx)
           ? dataExpr
-          : t.arrowFunctionExpression([], dataExpr)
+          : markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], dataExpr))
         ctx.helpersUsed.add('addEventListener')
         statements.push(
           t.expressionStatement(
@@ -2897,7 +2901,7 @@ function lowerIntrinsicElement(
         }
         const handlerExpr =
           !isFn && shouldWrapHandler
-            ? t.arrowFunctionExpression([], valueExpr)
+            ? markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], valueExpr))
             : ensureHandlerParam(valueExpr)
 
         let dataBinding =
@@ -2980,7 +2984,7 @@ function lowerIntrinsicElement(
               ? dataBinding.data
               : isStaticDelegatedDataAst(dataBinding.data, ctx)
                 ? dataBinding.data
-                : t.arrowFunctionExpression([], dataBinding.data))
+                : markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], dataBinding.data)))
 
           const handlerForDelegate =
             normalizedDataHandler ??
