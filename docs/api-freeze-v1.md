@@ -425,6 +425,10 @@ export function effectScope(fn: () => void): () => void
 
 // Render effect - synchronous effect for DOM updates
 export function createRenderEffect(fn: () => void | Cleanup): () => void
+
+// Mark manual low-level getter/callback intent
+export function reactive<T>(fn: () => T): () => T
+export function nonReactive<T extends (...args: unknown[]) => unknown>(fn: T): T
 ```
 
 > **Note**: `createSignal` is an escape-hatch API, only for:
@@ -465,10 +469,10 @@ export function createClassBinding(el: Element, accessor: MaybeReactive<ClassPro
 ### 3.2 Utility Functions
 
 ```typescript
-// Check if a value is reactive (getter function)
+// Check if a value is an explicitly marked reactive getter or runtime accessor
 export function isReactive(value: unknown): value is () => unknown
 
-// Unwrap reactive value
+// Unwrap explicit reactive values; plain functions are returned as values
 export function unwrap<T>(value: MaybeReactive<T>): T
 
 // Array reconciliation algorithm
@@ -735,34 +739,38 @@ export const $memo = createMemo
 | `createClassBinding`        | Binding    | 3    | No                 |
 | `createShow`                | Binding    | 3    | No                 |
 | `isReactive`                | Utility    | 3    | No                 |
+| `reactive`                  | Utility    | 3    | No                 |
+| `nonReactive`               | Utility    | 3    | No                 |
 | `unwrap`                    | Utility    | 3    | No                 |
 | `getDevtoolsHook`           | Debug      | 3    | No                 |
 | `setCycleProtectionOptions` | Debug      | 3    | No                 |
 
 ### `@fictjs/runtime/advanced` (Advanced API)
 
-| Export                      | Category   | Tier | Notes                        |
-| --------------------------- | ---------- | ---- | ---------------------------- |
-| `createSignal`              | Reactivity | 3    | Cross-component escape hatch |
-| `createSelector`            | Reactivity | 3    | Fine-grained subscription    |
-| `createScope`               | Scope      | 3    | Reactive scope management    |
-| `runInScope`                | Scope      | 3    | Flag-driven scope (void)     |
-| `effectScope`               | Scope      | 3    | Returns disposer             |
-| `createContext`             | Context    | 3    | Also in main entry           |
-| `useContext`                | Context    | 3    | Also in main entry           |
-| `hasContext`                | Context    | 3    | Also in main entry           |
-| `createVersionedSignal`     | Reactivity | 3    | Versioned signal             |
-| `createTextBinding`         | Binding    | 3    | Advanced binding             |
-| `createChildBinding`        | Binding    | 3    | Advanced binding             |
-| `createAttributeBinding`    | Binding    | 3    | Advanced binding             |
-| `createStyleBinding`        | Binding    | 3    | Advanced binding             |
-| `createClassBinding`        | Binding    | 3    | Advanced binding             |
-| `createShow`                | Binding    | 3    | Advanced binding             |
-| `isReactive`                | Utility    | 3    | Detect reactive value        |
-| `unwrap`                    | Utility    | 3    | Unwrap reactive value        |
-| `getDevtoolsHook`           | Debug      | 3    | DevTools hook                |
-| `setCycleProtectionOptions` | Debug      | 3    | Cycle protection config      |
-| `createRenderEffect`        | Effect     | 3    | Render effect                |
+| Export                      | Category   | Tier | Notes                           |
+| --------------------------- | ---------- | ---- | ------------------------------- |
+| `createSignal`              | Reactivity | 3    | Cross-component escape hatch    |
+| `createSelector`            | Reactivity | 3    | Fine-grained subscription       |
+| `createScope`               | Scope      | 3    | Reactive scope management       |
+| `runInScope`                | Scope      | 3    | Flag-driven scope (void)        |
+| `effectScope`               | Scope      | 3    | Returns disposer                |
+| `createContext`             | Context    | 3    | Also in main entry              |
+| `useContext`                | Context    | 3    | Also in main entry              |
+| `hasContext`                | Context    | 3    | Also in main entry              |
+| `createVersionedSignal`     | Reactivity | 3    | Versioned signal                |
+| `createTextBinding`         | Binding    | 3    | Advanced binding                |
+| `createChildBinding`        | Binding    | 3    | Advanced binding                |
+| `createAttributeBinding`    | Binding    | 3    | Advanced binding                |
+| `createStyleBinding`        | Binding    | 3    | Advanced binding                |
+| `createClassBinding`        | Binding    | 3    | Advanced binding                |
+| `createShow`                | Binding    | 3    | Advanced binding                |
+| `isReactive`                | Utility    | 3    | Detect explicit reactive getter |
+| `reactive`                  | Utility    | 3    | Mark manual reactive getter     |
+| `nonReactive`               | Utility    | 3    | Advanced callback marker        |
+| `unwrap`                    | Utility    | 3    | Unwrap explicit reactive value  |
+| `getDevtoolsHook`           | Debug      | 3    | DevTools hook                   |
+| `setCycleProtectionOptions` | Debug      | 3    | Cycle protection config         |
+| `createRenderEffect`        | Effect     | 3    | Render effect                   |
 
 ### `@fictjs/runtime/internal` (Compiler/Internal Use)
 
@@ -861,12 +869,12 @@ export interface ResourceOptions<T, Args> {
   suspense?: boolean
   /** Cache config */
   cache?: ResourceCacheOptions
-  /** Reset token (forces refresh on change) */
+  /** Reset token value or explicitly marked getter (forces refresh on change) */
   reset?: unknown | (() => unknown)
 }
 
 export interface Resource<T, Args> {
-  /** Read resource (reactive) */
+  /** Read resource with static args or an explicitly marked reactive getter */
   read(args: (() => Args) | Args): ResourceResult<T>
   /** Invalidate cache */
   invalidate(key?: unknown): void

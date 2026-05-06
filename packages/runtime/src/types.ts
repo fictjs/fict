@@ -32,10 +32,10 @@ export type FictNode = FictVNode | FictNode[] | Node | string | number | boolean
 // Reactive Types
 // ============================================================================
 
-/** A value that may be either static or reactive (wrapped in a getter function) */
+/** A value that may be either static or explicitly reactive */
 export type MaybeReactive<T> = T | (() => T)
 
-/** A reactive getter function */
+/** An explicitly marked reactive getter function */
 export type Reactive<T> = () => T
 
 // ============================================================================

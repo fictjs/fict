@@ -20,6 +20,11 @@ You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
 
 For typical apps, install `fict` as the runtime dependency and let compiler output target the same package family. Direct `@fictjs/runtime` usage remains supported for lower-level integrations, but your source imports should stay on one package family.
 
+Compiler-generated getters are marked explicitly for the runtime. Runtime no
+longer relies on zero-argument function arity to infer reactivity, so user
+callbacks such as `() => start()` stay callbacks unless code explicitly wraps
+them with `reactive(fn)`.
+
 ## Options
 
 ```ts

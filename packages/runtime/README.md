@@ -16,6 +16,13 @@ yarn add @fictjs/runtime
 
 You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
 
+## Reactive Getter Contract
+
+Runtime value paths do not infer reactivity from function arity. A plain
+zero-argument function is treated as a function value/callback. Use `reactive(fn)`
+from `@fictjs/runtime/advanced` when manually authoring a low-level reactive
+getter; compiler-generated getters are marked automatically.
+
 ## Dev/Prod Mode Contract (`__DEV__`)
 
 Runtime dev-only branches use this precedence:

@@ -687,18 +687,19 @@ This provides the same DX as `$state` while leveraging path-level Proxy tracking
 ### 9.2 resource: Async Data
 
 ```ts
+import { reactive } from 'fict'
 import { resource } from 'fict/plus'
 
 const userResource = resource({
   key: (id: string) => ['user', id], // if omitted, args value is the key
   suspense: true,
   cache: { mode: 'memory', ttlMs: 10_000, staleWhileRevalidate: true },
-  reset: () => sessionVersion(), // reset token changes will invalidate/refetch
+  reset: reactive(() => sessionVersion()), // reset token changes will invalidate/refetch
   fetch: ({ signal }, id: string) => fetch(`/api/user/${id}`, { signal }).then(r => r.json()),
 })
 
 function User({ id }: { id: string }) {
-  const user = userResource.read(() => id)
+  const user = userResource.read(reactive(() => id))
   return <div>{user.data?.name}</div>
 }
 

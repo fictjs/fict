@@ -849,7 +849,7 @@ function RiskyComponent() {
 - `fallback` can be a node or a function. If a function is provided, it receives the error
   and a `reset()` callback to retry rendering the children.
 - `onError` runs when the boundary captures an error.
-- `resetKeys` can be a value or a getter; when it changes, the boundary resets.
+- `resetKeys` can be a value or an explicitly marked getter; when it changes, the boundary resets. JSX source getters are marked by the compiler, while hand-authored runtime objects should use `reactive(fn)`.
 - SSR behavior:
   - `renderToString`: fallback HTML is rendered when errors are captured.
   - Streaming (`mode: 'shell'`): handled errors continue the stream; unhandled async errors call `onError` and abort.
@@ -873,7 +873,7 @@ function Suspense(props: {
 **Example:**
 
 ```tsx
-import { Suspense } from 'fict'
+import { Suspense, reactive } from 'fict'
 import { lazy, resource } from 'fict/plus'
 
 // Lazy component
@@ -898,7 +898,7 @@ function App() {
 }
 
 function UserProfile(props: { id: string }) {
-  const user = userResource.read(() => props.id)
+  const user = userResource.read(reactive(() => props.id))
 
   return (
     <div>
@@ -1229,6 +1229,7 @@ APIs imported from `fict/plus` for async resource management and lazy loading.
 Create an async resource with caching, refreshing, and Suspense support.
 
 ```typescript
+import { reactive } from 'fict'
 import { resource } from 'fict/plus'
 
 interface ResourceResult<T> {
@@ -1253,6 +1254,8 @@ function resource<T, Args = void>(
   ): void
 }
 ```
+
+Function args are treated as ordinary values unless they are explicitly marked with `reactive(fn)`. This lets resources accept callback/function arguments without invoking them accidentally.
 
 **Basic example:**
 
@@ -1300,8 +1303,8 @@ const userResource = resource({
 })
 
 function UserCard(props: { userId: string }) {
-  // Reactive parameter
-  const user = userResource.read(() => props.userId)
+  // Explicit reactive parameter
+  const user = userResource.read(reactive(() => props.userId))
 
   return (
     <div>
@@ -1404,6 +1407,34 @@ function App() {
 
 These APIs are for power users and library authors. They provide lower-level control over Fict's internals.
 
+### reactive
+
+Mark a manual zero-argument getter as reactive. Plain zero-argument functions are treated as function values/callbacks, not reactive getters.
+
+```typescript
+import { isReactive, nonReactive, reactive, unwrap } from 'fict/advanced'
+
+function reactive<T>(fn: () => T): () => T
+function nonReactive<T extends (...args: unknown[]) => unknown>(fn: T): T
+function isReactive(value: unknown): value is () => unknown
+function unwrap<T>(value: T | (() => T)): T
+```
+
+**Example:**
+
+```tsx
+const value = reactive(() => source())
+
+isReactive(value) // true
+isReactive(() => source()) // false
+unwrap(value) // source()
+```
+
+The compiler marks generated getters automatically. Use `reactive(fn)` only when hand-authoring low-level runtime objects or advanced bindings.
+`nonReactive(fn)` remains available for advanced interop, but ordinary component callback props should not need it.
+
+---
+
 ### createScope
 
 Create an explicit reactive scope that can be re-run and disposed manually.
@@ -1441,7 +1472,7 @@ scope.stop()
 Run a block of reactive code behind a boolean flag. When the flag becomes false, the scope is disposed and all effects/memos created inside are cleaned up.
 
 ```typescript
-import { runInScope } from 'fict/advanced'
+import { reactive, runInScope } from 'fict/advanced'
 
 function runInScope(flag: boolean | (() => boolean), fn: () => void): void
 ```
@@ -1450,7 +1481,7 @@ function runInScope(flag: boolean | (() => boolean), fn: () => void): void
 
 ```tsx
 runInScope(
-  () => show,
+  reactive(() => show),
   () => {
     createEffect(() => {
       /* ... */

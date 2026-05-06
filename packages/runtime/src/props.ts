@@ -25,7 +25,7 @@ function getNonReactiveFnRegistry(): WeakSet<(...args: unknown[]) => unknown> {
 
 /**
  * @internal
- * Marks a zero-arg getter so props proxy can lazily evaluate it.
+ * Marks a prop getter so props proxy and runtime value paths can lazily evaluate it.
  * Users normally never call this directly; the compiler injects it.
  */
 export function __fictProp<T>(getter: () => T): () => T {

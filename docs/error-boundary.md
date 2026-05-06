@@ -33,7 +33,7 @@ If no boundary handles the error (handler returns `false` or there is no boundar
 
 - `fallback`: node or `(err) => node` shown after first captured error.
 - `onError`: optional hook invoked when an error is captured.
-- `resetKeys`: value or getter; change triggers error reset and subtree rebuild.
+- `resetKeys`: value or explicit getter; change triggers error reset and subtree rebuild. JSX source getters are compiler-marked; hand-authored runtime objects should use `reactive(fn)`.
 - Nearest boundary wins; errors do not bubble past a boundary that returns `true`.
 
 ## Notes for compiler/runtime
