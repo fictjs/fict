@@ -267,12 +267,39 @@ export function renderToStream(
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null
+  let abortRender: ((reason?: unknown) => void) | null = null
   const readyResolvers: (() => void)[] = []
+
+  const drainBackpressure = () => {
+    while (readyResolvers.length > 0) {
+      readyResolvers.shift()?.()
+    }
+  }
 
   const resolveBackpressure = () => {
     if (!controller || (controller.desiredSize ?? 1) <= 0) return
-    while (readyResolvers.length > 0) {
-      readyResolvers.shift()?.()
+    drainBackpressure()
+  }
+
+  const closeController = () => {
+    abortRender = null
+    drainBackpressure()
+    if (!controller) return
+    try {
+      controller.close()
+    } finally {
+      controller = null
+    }
+  }
+
+  const errorController = (reason?: unknown) => {
+    abortRender = null
+    drainBackpressure()
+    if (!controller) return
+    try {
+      controller.error(reason)
+    } finally {
+      controller = null
     }
   }
 
@@ -291,18 +318,13 @@ export function renderToStream(
           return undefined
         },
         close() {
-          while (readyResolvers.length > 0) {
-            readyResolvers.shift()?.()
-          }
-          controller?.close()
+          closeController()
         },
         abort(reason?: unknown) {
-          while (readyResolvers.length > 0) {
-            readyResolvers.shift()?.()
-          }
-          controller?.error(reason)
+          errorController(reason)
         },
       })
+      abortRender = started.abort
       // renderToStream doesn't expose readiness promises, so consume rejections
       // to avoid unhandled promise noise when streaming aborts.
       started.shellReady.catch(() => undefined)
@@ -310,6 +332,12 @@ export function renderToStream(
     },
     pull() {
       resolveBackpressure()
+    },
+    cancel(reason?: unknown) {
+      const abort = abortRender
+      controller = null
+      drainBackpressure()
+      abort?.(reason ?? new Error('Stream canceled'))
     },
   })
 
@@ -355,7 +383,12 @@ export function renderToPartial(
 
   let shell = ''
   let shellPhase = true
-  const queued = createQueuedTextStream()
+  let abortPartial: ((reason?: unknown) => void) | null = null
+  const queued = createQueuedTextStream({
+    onCancel(reason) {
+      abortPartial?.(reason ?? new Error('Stream canceled'))
+    },
+  })
 
   const { shellReady, allReady, abort } = startStreamingRender(
     view,
@@ -382,6 +415,7 @@ export function renderToPartial(
       },
     },
   )
+  abortPartial = abort
 
   return {
     shell,

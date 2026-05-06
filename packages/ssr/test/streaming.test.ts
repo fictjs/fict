@@ -713,6 +713,85 @@ describe('@fictjs/ssr streaming', () => {
     await expect(readAll).rejects.toThrow('abort-shell')
   })
 
+  it('aborts shell streaming work when the reader cancels', async () => {
+    const previousDocument = (globalThis as { document?: Document }).document
+    const hadDocument = 'document' in globalThis
+    const token = createSuspenseToken()
+
+    function AsyncChild(): FictNode {
+      throw token.token
+    }
+
+    function App(): FictNode {
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'ReaderCancelLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    try {
+      const stream = renderToStream(() => ({ type: App, props: {} }), { mode: 'shell' })
+      const reader = stream.getReader()
+      const first = await reader.read()
+
+      expect(first.done).toBe(false)
+      expect(first.value ? decoder.decode(first.value) : '').toContain('ReaderCancelLoading')
+
+      await reader.cancel(new Error('reader-cancel'))
+
+      expect((globalThis as { document?: Document }).document).toBe(previousDocument)
+      expect('document' in globalThis).toBe(hadDocument)
+    } finally {
+      if (!hadDocument) {
+        delete (globalThis as { document?: Document }).document
+      }
+    }
+  })
+
+  it('aborts partial patch rendering when the patch reader cancels', async () => {
+    const previousDocument = (globalThis as { document?: Document }).document
+    const hadDocument = 'document' in globalThis
+    const token = createSuspenseToken()
+
+    function AsyncChild(): FictNode {
+      throw token.token
+    }
+
+    function App(): FictNode {
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'PartialCancelLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    try {
+      const partial = renderToPartial(() => ({ type: App, props: {} }), {
+        fullDocument: true,
+        mode: 'shell',
+      })
+      const allReady = expect(partial.allReady).rejects.toThrow('partial-cancel')
+      const reader = partial.stream.getReader()
+
+      expect(partial.shell).toContain('PartialCancelLoading')
+
+      await reader.cancel(new Error('partial-cancel'))
+      await allReady
+
+      expect((globalThis as { document?: Document }).document).toBe(previousDocument)
+      expect('document' in globalThis).toBe(hadDocument)
+    } finally {
+      if (!hadDocument) {
+        delete (globalThis as { document?: Document }).document
+      }
+    }
+  })
+
   it('does not render or leak globals when a web stream signal is already aborted', async () => {
     const previousDocument = (globalThis as { document?: Document }).document
     const hadDocument = 'document' in globalThis

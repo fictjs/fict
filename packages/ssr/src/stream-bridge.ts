@@ -16,7 +16,11 @@ export interface QueuedTextStream {
   writer: StreamWriter
 }
 
-export function createQueuedTextStream(): QueuedTextStream {
+export interface QueuedTextStreamOptions {
+  onCancel?: (reason?: unknown) => void
+}
+
+export function createQueuedTextStream(options: QueuedTextStreamOptions = {}): QueuedTextStream {
   const encoder = new TextEncoder()
   const queue: Uint8Array[] = []
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null
@@ -28,6 +32,22 @@ export function createQueuedTextStream(): QueuedTextStream {
     if (!controller || (controller.desiredSize ?? 1) <= 0) return
     while (readyResolvers.length > 0) {
       readyResolvers.shift()?.()
+    }
+  }
+
+  const drainReady = () => {
+    while (readyResolvers.length > 0) {
+      readyResolvers.shift()?.()
+    }
+  }
+
+  const abortQueue = (reason?: unknown, notifyController = true) => {
+    if (closed || aborted !== undefined) return
+    aborted = reason ?? new Error('Stream aborted')
+    queue.length = 0
+    drainReady()
+    if (notifyController) {
+      controller?.error(aborted)
     }
   }
 
@@ -48,6 +68,10 @@ export function createQueuedTextStream(): QueuedTextStream {
     },
     pull() {
       resolveReady()
+    },
+    cancel(reason?: unknown) {
+      abortQueue(reason, false)
+      options.onCancel?.(reason)
     },
   })
 
@@ -70,18 +94,11 @@ export function createQueuedTextStream(): QueuedTextStream {
     close() {
       if (closed || aborted !== undefined) return
       closed = true
-      while (readyResolvers.length > 0) {
-        readyResolvers.shift()?.()
-      }
+      drainReady()
       controller?.close()
     },
     abort(reason?: unknown) {
-      if (closed || aborted !== undefined) return
-      aborted = reason ?? new Error('Stream aborted')
-      while (readyResolvers.length > 0) {
-        readyResolvers.shift()?.()
-      }
-      controller?.error(aborted)
+      abortQueue(reason)
     },
   }
 
