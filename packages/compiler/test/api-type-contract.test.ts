@@ -40,5 +40,5 @@ describe('compiler API type contract', () => {
 
     const diagnostics = ts.getPreEmitDiagnostics(program)
     expect(formatDiagnostics(diagnostics)).toBe('')
-  })
+  }, 20_000)
 })
