@@ -201,12 +201,14 @@ describe('DOM Module', () => {
     it('reports node mismatches during hydration', () => {
       container.innerHTML = '<span>server</span>'
       const issues: HydrationIssue[] = []
+      let hydratedNode: Node | null = null
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
       const teardown = hydrateComponent(
         () => {
           const factory = template('<div></div>')
-          return factory()
+          hydratedNode = factory()
+          return hydratedNode
         },
         container,
         {
@@ -221,6 +223,10 @@ describe('DOM Module', () => {
           actual: 'span',
         }),
       )
+      expect(hydratedNode).toBe(container.firstChild)
+      expect(hydratedNode?.isConnected).toBe(true)
+      expect((container.firstChild as HTMLElement).tagName).toBe('DIV')
+      expect(container.querySelector('span')).toBeNull()
 
       teardown()
       warnSpy.mockRestore()
@@ -229,12 +235,14 @@ describe('DOM Module', () => {
     it('reports missing nodes during hydration', () => {
       container.innerHTML = ''
       const issues: HydrationIssue[] = []
+      let hydratedNode: Node | null = null
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
       const teardown = hydrateComponent(
         () => {
           const factory = template('<div></div>')
-          return factory()
+          hydratedNode = factory()
+          return hydratedNode
         },
         container,
         {
@@ -248,6 +256,33 @@ describe('DOM Module', () => {
           expected: 'div',
         }),
       )
+      expect(hydratedNode).toBe(container.firstChild)
+      expect(hydratedNode?.isConnected).toBe(true)
+      expect((container.firstChild as HTMLElement).tagName).toBe('DIV')
+
+      teardown()
+      warnSpy.mockRestore()
+    })
+
+    it('replaces non-text hydrated nodes when hydrating text output', () => {
+      container.innerHTML = '<span>server</span>'
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const teardown = hydrateComponent(() => createElement('client'), container, {
+        onHydrationIssue: issue => issues.push(issue),
+      })
+
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'node_type_mismatch',
+          expected: '#text',
+          actual: 'span',
+        }),
+      )
+      expect(container.childNodes).toHaveLength(1)
+      expect(container.firstChild?.nodeType).toBe(Node.TEXT_NODE)
+      expect(container.textContent).toBe('client')
 
       teardown()
       warnSpy.mockRestore()

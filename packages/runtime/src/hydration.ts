@@ -2,6 +2,7 @@ interface HydrationContext {
   cursor: Node | null
   boundary: Node | null
   owner: Document
+  parent: ParentNode & Node
   onIssue?: HydrationIssueHandler | undefined
 }
 
@@ -33,6 +34,7 @@ export function withHydration<T>(
     cursor: root.firstChild,
     boundary: null,
     owner,
+    parent: root,
     onIssue: options.onHydrationIssue,
   })
   try {
@@ -50,10 +52,14 @@ export function withHydrationRange<T>(
   options: HydrationOptions = {},
 ): T {
   const parent = hydrationStack[hydrationStack.length - 1]
+  const rangeParent =
+    ((end?.parentNode ?? start?.parentNode ?? parent?.parent) as (ParentNode & Node) | null) ??
+    owner.createDocumentFragment()
   hydrationStack.push({
     cursor: start,
     boundary: end,
     owner,
+    parent: rangeParent,
     onIssue: options.onHydrationIssue ?? parent?.onIssue,
   })
   try {
@@ -65,17 +71,18 @@ export function withHydrationRange<T>(
 
 export function claimNodes(templateRoot: Node, fallback: () => Node): Node {
   const ctx = hydrationStack[hydrationStack.length - 1]
-  if (!ctx || !ctx.cursor) {
-    if (ctx) {
-      emitHydrationIssue(ctx, {
-        code: 'node_missing',
-        message: '[fict/hydration] Missing DOM node while claiming hydrated template output.',
-        expected: describeNode(templateRoot),
-        actual: null,
-        node: null,
-      })
-    }
+  if (!ctx) {
     return fallback()
+  }
+  if (!ctx.cursor) {
+    emitHydrationIssue(ctx, {
+      code: 'node_missing',
+      message: '[fict/hydration] Missing DOM node while claiming hydrated template output.',
+      expected: describeNode(templateRoot),
+      actual: null,
+      node: null,
+    })
+    return mountFallback(ctx, fallback(), null, 0)
   }
 
   const count = templateRoot.nodeType === 11 ? templateRoot.childNodes.length : 1
@@ -93,7 +100,7 @@ export function claimNodes(templateRoot: Node, fallback: () => Node): Node {
         actual: null,
         node: null,
       })
-      return fallback()
+      return mountFallback(ctx, fallback(), claimed[0] ?? null, claimed.length)
     }
     if (expected && !isCompatibleNode(expected, cursor)) {
       emitHydrationIssue(ctx, {
@@ -103,7 +110,7 @@ export function claimNodes(templateRoot: Node, fallback: () => Node): Node {
         actual: describeNode(cursor),
         node: cursor,
       })
-      return fallback()
+      return mountFallback(ctx, fallback(), claimed[0] ?? cursor, count)
     }
     claimed.push(cursor)
     cursor = cursor.nextSibling
@@ -135,7 +142,7 @@ export function claimText(value: string, fallback: () => Text): Text {
       actual: null,
       node: null,
     })
-    return fallback()
+    return mountFallback(ctx, fallback(), null, 0) as Text
   }
   if (ctx.cursor.nodeType !== Node.TEXT_NODE) {
     emitHydrationIssue(ctx, {
@@ -145,7 +152,7 @@ export function claimText(value: string, fallback: () => Text): Text {
       actual: describeNode(ctx.cursor),
       node: ctx.cursor,
     })
-    return fallback()
+    return mountFallback(ctx, fallback(), ctx.cursor, 1) as Text
   }
 
   const text = ctx.cursor as Text
@@ -165,6 +172,35 @@ export function claimText(value: string, fallback: () => Text): Text {
 
 export function isHydratingActive(): boolean {
   return hydrationStack.length > 0
+}
+
+function mountFallback(
+  ctx: HydrationContext,
+  fallbackNode: Node,
+  replaceStart: Node | null,
+  removeCount: number,
+): Node {
+  const parent =
+    ((replaceStart?.parentNode ?? ctx.boundary?.parentNode ?? ctx.parent) as
+      | (ParentNode & Node)
+      | null) ?? null
+  if (!parent) {
+    return fallbackNode
+  }
+
+  let cursor = replaceStart
+  let removed = 0
+  while (cursor && cursor !== ctx.boundary && removed < removeCount) {
+    const next = cursor.nextSibling
+    parent.removeChild(cursor)
+    cursor = next
+    removed += 1
+  }
+
+  const anchor = replaceStart ? cursor : ctx.boundary
+  parent.insertBefore(fallbackNode, anchor)
+  ctx.cursor = anchor
+  return fallbackNode
 }
 
 function emitHydrationIssue(
