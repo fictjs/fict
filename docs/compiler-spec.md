@@ -172,6 +172,11 @@ The compiler lowers this shape to reactive branch bindings when supported (e.g. 
 `if-return` / `switch-return` and equivalent `try` branch returns), so branch output updates
 without re-running the full component body.
 
+When branch reads force the `trackBranchReads` fallback path, updates are semantic-first:
+the active branch output is fully remounted rather than partially patched. This preserves
+event handlers, refs, style/class object handling, prop removal, and branch-local cleanup,
+but it does not preserve DOM node identity within that fallback branch.
+
 **Contrast with JSX-only usage**:
 
 ```ts
@@ -723,7 +728,7 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
     - **Rule**: A closure created in the component body that reads `$state` (e.g., `const onClick = () => console.log(count)`) always reads the **live** value.
     - **Implementation**: The compiler ensures `count` inside the closure becomes `count()` (getter), not a captured variable.
     - **Snapshot**: Use an explicit snapshot: `const snap = count(); const fn = () => snap`.
-4.  **Control Flow Branch Reactivity**: When a signal or derived value is **read at runtime** in supported control-flow return shapes (e.g. sequential `if-return`, `switch-return`, and equivalent `try` return branches), the compiler emits reactive branch bindings so branch output updates without full component re-execution. Note: simply defining a derived (`const x = signal * 2`) does not trigger this; runtime reads in control flow do.
+4.  **Control Flow Branch Reactivity**: When a signal or derived value is **read at runtime** in supported control-flow return shapes (e.g. sequential `if-return`, `switch-return`, and equivalent `try` return branches), the compiler emits reactive branch bindings so branch output updates without full component re-execution. If the branch body itself must be re-executed because of active branch reads, the runtime remounts that branch output instead of performing a partial DOM patch. Note: simply defining a derived (`const x = signal * 2`) does not trigger this; runtime reads in control flow do.
 5.  **Control Flow Regions**: Derived values defined across `if`/`switch`/early-return paths are grouped into a single region memo that returns the outward-facing values, ensuring consistent dependency tracking and avoiding duplicated condition evaluation.
 6.  **DX Notes (control flow + closures)**:
     - Branch-local bindings stay branch-local: SSA + structurize restore `let`/assignments at merge points, so JSX/effects read the live value for the active path; no “wrong branch” capture.

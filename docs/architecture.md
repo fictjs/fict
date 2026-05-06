@@ -89,6 +89,10 @@ return <>{count}</>
 ```
 
 When `count` changes, branch output is re-evaluated without re-running the entire component body.
+If the active branch itself must be re-executed because it reads reactive values outside the
+fine-grained JSX binding path, Fict remounts that branch output. This is intentionally conservative:
+event handlers, refs, style/class objects, removed props, and branch-local cleanup stay correct, but
+DOM identity inside that fallback branch is not preserved.
 Note: simply defining `const doubled = count * 2` doesn't trigger branch bindings by itself.
 
 #### JSX-Only Usage Triggers Fine-Grained Updates

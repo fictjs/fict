@@ -363,7 +363,8 @@ items.map(item => <Li key={item.id}>{item.name}</Li>)
 cannot safely lower into fine-grained branch bindings.
 
 **Impact:** Branch structure may rely on a fallback path instead of strict fine-grained lowering.
-Reactivity is preserved, but updates can be coarser than expected.
+Reactivity is preserved, but updates can be coarser than expected. If active branch reads must be
+tracked, the runtime remounts that branch output rather than partially patching it.
 
 **Fix:** Refactor to supported return-branch control flow, or keep fallback behavior and
 monitor/update performance with tests.
@@ -409,7 +410,9 @@ or route reactive work through a known Fict scheduling primitive such as `batch`
 branch re-execution.
 
 **Impact:** Reactivity remains correct, but updates may execute broader code paths than pure
-expression-level branching.
+expression-level branching. For active branch reads, branch output is remounted to keep events,
+refs, style/class object handling, prop removal, and cleanup semantics correct. DOM identity inside
+that remounted branch is not guaranteed.
 
 **Fix:** Prefer expression-only branching in JSX (`cond ? <A/> : <B/>`, logical expressions)
 when you need tighter update granularity.
