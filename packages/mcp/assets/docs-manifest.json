@@ -123,6 +123,11 @@
       "path": "ssr-resume-stability-contract.md"
     },
     {
+      "id": "ssr-runtime-matrix",
+      "title": "SSR Runtime Matrix",
+      "path": "ssr-runtime-matrix.md"
+    },
+    {
       "id": "ssr-seo",
       "title": "SSR SEO Guide",
       "path": "ssr-seo.md"
