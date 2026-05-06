@@ -3,6 +3,21 @@
  * Keep this file dependency-free to avoid module cycles.
  */
 
+const HYDRATED_FRAGMENT_NODES = Symbol.for('fict:hydration-fragment-nodes')
+const DOCUMENT_FRAGMENT_NODE = 11
+
+type HydratedFragment = DocumentFragment & { [HYDRATED_FRAGMENT_NODES]?: Node[] }
+
+function getHydratedFragmentNodes(node: Node): Node[] | undefined {
+  if (node.nodeType !== DOCUMENT_FRAGMENT_NODE) return undefined
+  const nodes = (node as HydratedFragment)[HYDRATED_FRAGMENT_NODES]
+  return Array.isArray(nodes) ? nodes : undefined
+}
+
+function getFragmentChildNodes(node: Node): Node[] {
+  return getHydratedFragmentNodes(node) ?? Array.from(node.childNodes)
+}
+
 /**
  * Convert a value to a flat array of DOM nodes.
  * Defensively handles proxies and non-DOM values.
@@ -53,8 +68,8 @@ export function toNodeArray(
 
   if (isNode) {
     try {
-      if (node instanceof DocumentFragment) {
-        return Array.from(node.childNodes)
+      if ((node as Node).nodeType === DOCUMENT_FRAGMENT_NODE) {
+        return getFragmentChildNodes(node as Node)
       }
     } catch {
       // Ignore fragment check error
@@ -94,6 +109,10 @@ export function insertNodesBefore(
   if (nodes.length === 1) {
     const node = nodes[0]!
     if (node === undefined || node === null) return
+    if (node.nodeType === DOCUMENT_FRAGMENT_NODE) {
+      insertNodesBefore(parent, getFragmentChildNodes(node), anchor)
+      return
+    }
     if (node.ownerDocument !== parent.ownerDocument && parent.ownerDocument) {
       parent.ownerDocument.adoptNode(node)
     }
@@ -122,8 +141,8 @@ export function insertNodesBefore(
       const node = nodes[i]!
       if (node === undefined || node === null) continue
       // Handle DocumentFragment - append children
-      if (node.nodeType === 11) {
-        const childrenArr = Array.from(node.childNodes)
+      if (node.nodeType === DOCUMENT_FRAGMENT_NODE) {
+        const childrenArr = getFragmentChildNodes(node)
         for (let j = 0; j < childrenArr.length; j++) {
           frag.appendChild(childrenArr[j]!)
         }
@@ -165,9 +184,9 @@ export function insertNodesBefore(
     if (node === undefined || node === null) continue
 
     // Handle DocumentFragment - insert children in reverse order
-    const isFrag = node.nodeType === 11
+    const isFrag = node.nodeType === DOCUMENT_FRAGMENT_NODE
     if (isFrag) {
-      const childrenArr = Array.from(node.childNodes)
+      const childrenArr = getFragmentChildNodes(node)
       for (let j = childrenArr.length - 1; j >= 0; j--) {
         const child = childrenArr[j]!
         anchor = insertSingle(child, anchor)
@@ -225,29 +244,49 @@ export function resolvePath(root: Node, path: number[]): Node | null {
   let current: Node | null = root
   for (const index of path) {
     if (!current) return null
-    let child: Node | null = current.firstChild
-    let currentIndex = 0
-    while (child) {
-      if (isSlotStart(child)) {
-        if (currentIndex === index) {
-          current = child
-          break
-        }
-        const end = getSlotEnd(child as Comment)
-        child = end.nextSibling
-        currentIndex++
-        continue
-      }
-      if (currentIndex === index) {
-        current = child
-        break
-      }
-      currentIndex++
-      child = child.nextSibling
-    }
-    if (!child) {
+    current = getChildAtPathIndex(current, index)
+    if (!current) {
       return null
     }
   }
   return current
+}
+
+function getChildAtPathIndex(current: Node, index: number): Node | null {
+  const hydratedNodes = getHydratedFragmentNodes(current)
+  if (hydratedNodes) {
+    let currentIndex = 0
+    for (let offset = 0; offset < hydratedNodes.length; offset += 1) {
+      const child = hydratedNodes[offset]!
+      if (isSlotStart(child)) {
+        if (currentIndex === index) return child
+        const end = getSlotEnd(child)
+        const endOffset = hydratedNodes.indexOf(end, offset + 1)
+        if (endOffset !== -1) {
+          offset = endOffset
+        }
+        currentIndex += 1
+        continue
+      }
+      if (currentIndex === index) return child
+      currentIndex += 1
+    }
+    return null
+  }
+
+  let child: Node | null = current.firstChild
+  let currentIndex = 0
+  while (child) {
+    if (isSlotStart(child)) {
+      if (currentIndex === index) return child
+      const end = getSlotEnd(child as Comment)
+      child = end.nextSibling
+      currentIndex++
+      continue
+    }
+    if (currentIndex === index) return child
+    currentIndex++
+    child = child.nextSibling
+  }
+  return null
 }

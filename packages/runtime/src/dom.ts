@@ -50,6 +50,7 @@ import {
   onMount,
   onCleanup,
 } from './lifecycle'
+import { toNodeArray } from './node-ops'
 import { createPropsProxy, unwrapProps } from './props'
 import {
   __fictIsHydrating,
@@ -82,10 +83,8 @@ type DevtoolsAnnotatedElement = HTMLElement & {
 }
 
 function collectComponentMountElements(node: Node): HTMLElement[] {
-  if (node instanceof DocumentFragment) {
-    return Array.from(node.childNodes).filter(
-      (child): child is HTMLElement => child instanceof HTMLElement,
-    )
+  if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+    return toNodeArray(node).filter((child): child is HTMLElement => child instanceof HTMLElement)
   }
 
   if (node instanceof HTMLElement) {

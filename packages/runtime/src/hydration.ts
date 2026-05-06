@@ -23,6 +23,9 @@ export interface HydrationOptions {
 }
 
 const hydrationStack: HydrationContext[] = []
+const HYDRATED_FRAGMENT_NODES = Symbol.for('fict:hydration-fragment-nodes')
+
+type HydratedFragment = DocumentFragment & { [HYDRATED_FRAGMENT_NODES]?: Node[] }
 
 export function withHydration<T>(
   root: ParentNode & Node,
@@ -122,11 +125,7 @@ export function claimNodes(templateRoot: Node, fallback: () => Node): Node {
     return claimed[0]!
   }
 
-  const frag = ctx.owner.createDocumentFragment()
-  for (const node of claimed) {
-    frag.appendChild(node)
-  }
-  return frag
+  return createHydratedFragment(ctx.owner, claimed)
 }
 
 export function claimText(value: string, fallback: () => Text): Text {
@@ -180,6 +179,10 @@ function mountFallback(
   replaceStart: Node | null,
   removeCount: number,
 ): Node {
+  const fallbackFragmentNodes =
+    fallbackNode.nodeType === Node.DOCUMENT_FRAGMENT_NODE
+      ? Array.from(fallbackNode.childNodes)
+      : null
   const parent =
     ((replaceStart?.parentNode ?? ctx.boundary?.parentNode ?? ctx.parent) as
       | (ParentNode & Node)
@@ -200,7 +203,19 @@ function mountFallback(
   const anchor = replaceStart ? cursor : ctx.boundary
   parent.insertBefore(fallbackNode, anchor)
   ctx.cursor = anchor
+  if (fallbackFragmentNodes) {
+    return createHydratedFragment(ctx.owner, fallbackFragmentNodes)
+  }
   return fallbackNode
+}
+
+function createHydratedFragment(owner: Document, nodes: Node[]): DocumentFragment {
+  const fragment = owner.createDocumentFragment() as HydratedFragment
+  Object.defineProperty(fragment, HYDRATED_FRAGMENT_NODES, {
+    configurable: true,
+    value: nodes,
+  })
+  return fragment
 }
 
 function emitHydrationIssue(

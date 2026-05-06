@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 import { render, createElement, Fragment, createRoot, onDestroy, onMount } from '../src/index'
 import { createSignal, reactive } from '../src/advanced'
-import { clearDelegatedEvents, hydrateComponent, spread, template } from '../src/internal'
+import {
+  clearDelegatedEvents,
+  hydrateComponent,
+  resolvePath,
+  spread,
+  template,
+  toNodeArray,
+} from '../src/internal'
 import type { HydrationIssue } from '../src/internal'
 
 const tick = () =>
@@ -259,6 +266,70 @@ describe('DOM Module', () => {
       expect(hydratedNode).toBe(container.firstChild)
       expect(hydratedNode?.isConnected).toBe(true)
       expect((container.firstChild as HTMLElement).tagName).toBe('DIV')
+
+      teardown()
+      warnSpy.mockRestore()
+    })
+
+    it('preserves claimed multi-root template nodes during hydration', () => {
+      container.innerHTML = '<div>one</div><p>two</p>'
+      const first = container.firstChild
+      const second = container.lastChild
+      let hydratedNode: Node | null = null
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const teardown = hydrateComponent(() => {
+        const factory = template('<div>one</div><p>two</p>')
+        hydratedNode = factory()
+        return hydratedNode
+      }, container)
+
+      expect(container.childNodes).toHaveLength(2)
+      expect(container.firstChild).toBe(first)
+      expect(container.lastChild).toBe(second)
+      expect(hydratedNode).toBeInstanceOf(DocumentFragment)
+      expect(toNodeArray(hydratedNode)).toEqual([first, second])
+      expect(resolvePath(hydratedNode as Node, [1])).toBe(second)
+      expect(first?.parentNode).toBe(container)
+      expect(second?.parentNode).toBe(container)
+
+      teardown()
+      warnSpy.mockRestore()
+    })
+
+    it('preserves mounted multi-root fallback nodes after hydration mismatch', () => {
+      container.innerHTML = '<span>server</span>'
+      const issues: HydrationIssue[] = []
+      let hydratedNode: Node | null = null
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const teardown = hydrateComponent(
+        () => {
+          const factory = template('<div>one</div><p>two</p>')
+          hydratedNode = factory()
+          return hydratedNode
+        },
+        container,
+        {
+          onHydrationIssue: issue => issues.push(issue),
+        },
+      )
+
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'node_type_mismatch',
+          expected: 'div',
+          actual: 'span',
+        }),
+      )
+      expect(container.childNodes).toHaveLength(2)
+      expect(container.querySelector('span')).toBeNull()
+
+      const nodes = toNodeArray(hydratedNode)
+      expect(nodes.map(node => (node as Element).tagName)).toEqual(['DIV', 'P'])
+      expect(nodes.map(node => node.textContent)).toEqual(['one', 'two'])
+      expect(nodes.every(node => node.isConnected)).toBe(true)
+      expect(resolvePath(hydratedNode as Node, [1])).toBe(nodes[1])
 
       teardown()
       warnSpy.mockRestore()
