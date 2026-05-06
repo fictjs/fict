@@ -22,7 +22,7 @@ export function createQueuedTextStream(): QueuedTextStream {
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null
   let closed = false
   let aborted: unknown
-  const readyResolvers: Array<() => void> = []
+  const readyResolvers: (() => void)[] = []
 
   const resolveReady = () => {
     if (!controller || (controller.desiredSize ?? 1) <= 0) return

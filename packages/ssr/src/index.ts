@@ -266,7 +266,7 @@ export function renderToStream(
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null
-  const readyResolvers: Array<() => void> = []
+  const readyResolvers: (() => void)[] = []
 
   const resolveBackpressure = () => {
     if (!controller || (controller.desiredSize ?? 1) <= 0) return
