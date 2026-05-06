@@ -4,6 +4,7 @@ import { declare } from '@babel/helper-plugin-utils'
 import { createCompilerCacheFingerprint } from './cache-fingerprint'
 import { SAFE_FUNCTIONS } from './constants'
 import { debugLog } from './debug'
+import { createCompilerExplainArtifact, emitCompilerExplainArtifact } from './explain'
 import { buildHIR } from './ir/build-hir'
 import { lowerHIRWithRegions } from './ir/codegen'
 import { optimizeHIR } from './ir/optimize'
@@ -1241,14 +1242,29 @@ function createHIREntrypointVisitor(
     Program: {
       exit(path) {
         const hub = path.hub as unknown as {
-          file?: { opts?: { filename?: string }; ast?: BabelCore.types.File; code?: string }
+          file?: BabelCore.BabelFile & {
+            opts?: { filename?: string }
+            ast?: BabelCore.types.File
+            code?: string
+          }
         }
+        const sourceProgram = t.cloneNode(path.node, true)
         const fileName = hub.file?.opts?.filename ?? '<unknown>'
         const sourceCode = hub.file?.code
         const comments = hub.file?.ast?.comments ?? []
         const suppressions = parseSuppressions(comments)
         const dev = options.dev !== false
-        const warn = createWarningDispatcher(options.onWarn, suppressions, options, dev, sourceCode)
+        const explainDiagnostics: CompilerWarning[] = []
+        const warn = createWarningDispatcher(
+          warning => {
+            explainDiagnostics.push(warning)
+            options.onWarn?.(warning)
+          },
+          suppressions,
+          options,
+          dev,
+          sourceCode,
+        )
         const optionsWithWarnings: FictCompilerOptions = {
           ...options,
           onWarn: warn,
@@ -2440,6 +2456,20 @@ function createHIREntrypointVisitor(
         path.node.directives = lowered.program.directives
 
         stripMacroImports(path, t)
+        if (options.explain) {
+          const artifact = createCompilerExplainArtifact({
+            sourceProgram,
+            outputProgram: path.node,
+            fileName,
+            diagnostics: explainDiagnostics,
+            macroNames: {
+              state: stateMacroNames,
+              effect: effectMacroNames,
+              memo: memoMacroNames,
+            },
+          })
+          emitCompilerExplainArtifact(hub.file, options, artifact)
+        }
         if (!process.env.FICT_SKIP_SCOPE_CRAWL) {
           path.scope.crawl()
         }
@@ -2492,6 +2522,9 @@ export {
   setModuleMetadata,
 } from './module-metadata'
 export type {
+  CompilerExplainArtifact,
+  CompilerExplainEvent,
+  CompilerExplainEventKind,
   HookReturnInfoSerializable,
   ModuleReactiveMetadata,
   ModuleReactiveMetadataVersion,

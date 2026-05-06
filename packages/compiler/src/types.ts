@@ -73,6 +73,32 @@ export interface CompilerWarning {
   column: number
 }
 
+export type CompilerExplainEventKind =
+  | 'source-signal'
+  | 'source-effect'
+  | 'source-memo'
+  | 'source-jsx'
+  | 'source-control-flow'
+  | 'runtime-helper'
+  | 'diagnostic'
+
+export interface CompilerExplainEvent {
+  kind: CompilerExplainEventKind
+  message: string
+  name?: string
+  code?: string
+  line?: number
+  column?: number
+}
+
+export interface CompilerExplainArtifact {
+  version: 1
+  fileName: string
+  helpers: string[]
+  diagnostics: CompilerWarning[]
+  events: CompilerExplainEvent[]
+}
+
 export type ReactiveExportKind = 'signal' | 'memo' | 'store'
 
 export const MODULE_REACTIVE_METADATA_VERSION = 1
@@ -95,6 +121,12 @@ export interface FictCompilerOptions {
   dev?: boolean
   sourcemap?: boolean
   onWarn?: (warning: CompilerWarning) => void
+  /**
+   * Emit a structured explanation artifact for compiler decisions.
+   * When true, the artifact is attached to Babel result metadata as `fictExplain`.
+   * When a callback is provided, it is also called with the artifact.
+   */
+  explain?: boolean | ((artifact: CompilerExplainArtifact) => void)
   /** Internal: filename of the module being compiled. */
   filename?: string
   /** Enable lazy evaluation of conditional derived values (Rule J optimization). Default: true. */
