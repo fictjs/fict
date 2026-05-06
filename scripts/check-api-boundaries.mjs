@@ -18,6 +18,25 @@ function readJson(path) {
   return JSON.parse(readText(path))
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function containsStandaloneToken(text, token) {
+  return new RegExp(`(^|[^\\w$])${escapeRegExp(token)}(?=$|[^\\w$])`).test(text)
+}
+
+for (const [text, token, expected] of [
+  ['export { $state }', '$state', true],
+  ['const value = $effect(() => {})', '$effect', true],
+  ['const value = use$statefulName()', '$state', false],
+  ['const value = $statefulName()', '$state', false],
+]) {
+  if (containsStandaloneToken(text, token) !== expected) {
+    fail(`API boundary token matcher regression for ${token}: ${text}`)
+  }
+}
+
 function assertEqualSet(label, actual, expected) {
   const actualSorted = [...actual].sort()
   const expectedSorted = [...expected].sort()
@@ -93,7 +112,7 @@ if (/export\s+\*\s+from\s+['"]@fictjs\/runtime\/advanced['"]/.test(fictMain)) {
 
 const runtimeMain = readText('packages/runtime/src/index.ts')
 for (const macro of ['$state', '$effect']) {
-  if (new RegExp(`\\b${macro.replace('$', '\\$')}\\b`).test(runtimeMain)) {
+  if (containsStandaloneToken(runtimeMain, macro)) {
     fail(`@fictjs/runtime main entrypoint must not export or document ${macro}`)
   }
 }
