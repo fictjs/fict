@@ -30,3 +30,11 @@ yarn add fict
 ```
 
 You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
+
+## Package Surfaces
+
+- `fict`: application-facing API and compiler macros (`$state`, `$effect`).
+- `fict/plus`: async resource and lazy component helpers.
+- `fict/advanced`: escape hatches for library authors and low-level reactive integration.
+- `fict/loader`: SSR/resume loader entrypoint.
+- `fict/internal`: compiler ABI for generated code only; do not import by hand.

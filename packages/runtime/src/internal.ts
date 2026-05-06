@@ -1,8 +1,12 @@
 /**
- * @fileoverview Internal APIs for Fict Compiler
+ * @fileoverview Compiler ABI for Fict-generated code
  *
- * This module exports internal APIs used by compiler-generated code.
- * These APIs are NOT part of the public API and should NOT be used directly.
+ * This subpath is exported so compiler-generated code and first-party packages
+ * can share runtime helpers. It is not a user-facing public API:
+ *
+ * - signatures are kept compatible for supported compiler output;
+ * - implementations may change in minor/patch releases;
+ * - application and library code should not import this subpath directly.
  *
  * @internal
  * @packageDocumentation

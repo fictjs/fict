@@ -26,6 +26,40 @@ This document explicitly defines the Fict v1.0 public API surface, including run
 
 ---
 
+## Package Surface Ownership
+
+Fict exposes multiple package subpaths because compiler output, library authors,
+and application code have different stability needs. v1.0 treats these as
+separate surfaces:
+
+| Surface                                          | Owner / Audience                | Stability                             |
+| ------------------------------------------------ | ------------------------------- | ------------------------------------- |
+| `fict`                                           | Application authors             | Tier 1 public API                     |
+| `fict/plus`                                      | Application authors             | Tier 1 extended API                   |
+| `fict/advanced`                                  | Power users and library authors | Tier 3 advanced API                   |
+| `fict/loader`                                    | SSR/resume app entrypoints      | Tier 3/Preview where noted            |
+| `fict/jsx-runtime`, `fict/jsx-dev-runtime`       | JSX transform                   | Tier 1 JSX ABI                        |
+| `fict/internal`, `fict/internal/list`            | Compiler-generated code         | Tier 2 compiler ABI, not user API     |
+| `@fictjs/runtime`                                | Low-level runtime integrators   | Tier 1 runtime API, no compiler macro |
+| `@fictjs/runtime/advanced`                       | Runtime integrators             | Tier 3 advanced runtime API           |
+| `@fictjs/runtime/internal`, `./internal/list`    | Compiler/generated runtime code | Tier 2 compiler ABI, not user API     |
+| `@fictjs/devtools`, `@fictjs/devtools/core/vite` | Development tooling             | Follows the DevTools protocol         |
+
+Rules:
+
+1. `$state` and `$effect` are compiler macros owned by `fict` and `fict/slim`.
+   They are not exported from `@fictjs/runtime`.
+2. Manual getter markers such as `reactive`, `nonReactive`, `isReactive`, and
+   `unwrap` live in `fict/advanced` and `@fictjs/runtime/advanced`; they are not
+   part of the `fict` main entrypoint.
+3. Internal subpaths are exported for module resolution, not for user source
+   compatibility. They are a compiler ABI: generated output may import them, but
+   hand-written application/library code must not.
+4. The compiler should emit `fict/internal` when the source imports from `fict`,
+   and `@fictjs/runtime/internal` when targeting the standalone runtime family.
+
+---
+
 ## 1. Public User API (Tier 1 - Must Freeze)
 
 These APIs are core interfaces used directly by users and must remain fully backward compatible across v1.x.
@@ -210,10 +244,15 @@ export interface VersionedSignalOptions<T> {
 
 These APIs are invoked by compiler-generated code. Although marked as internal, their **signatures and behavior must remain stable** because compiled user code depends on them. Implementation details may change, but interfaces may not.
 
+Tier 2 is an ABI commitment for generated code, not an invitation to import
+internal helpers by hand. User-written imports from `fict/internal` or
+`@fictjs/runtime/internal` are outside the public API contract and may require
+source changes on any minor version.
+
 ### 2.1 Compiler Helper Functions
 
 ```typescript
-// Module: @fictjs/runtime
+// Module: fict/internal or @fictjs/runtime/internal
 // Note: These functions use a __ prefix to mark internal API
 
 // ============================================================================
@@ -773,6 +812,10 @@ export const $memo = createMemo
 | `createRenderEffect`        | Effect     | 3    | Render effect                   |
 
 ### `@fictjs/runtime/internal` (Compiler/Internal Use)
+
+`fict/internal` mirrors this surface for applications that depend on the main
+`fict` package. It is the canonical helper target for compiler output generated
+from source that imports `fict`.
 
 | Export              | Category   | Tier | Notes                                               |
 | ------------------- | ---------- | ---- | --------------------------------------------------- |

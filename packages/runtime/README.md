@@ -16,6 +16,13 @@ yarn add @fictjs/runtime
 
 You can visit [Fict](https://github.com/fictjs/fict) for more documentation.
 
+## Package Surfaces
+
+- `@fictjs/runtime`: low-level public runtime API. It does not export compiler macros.
+- `@fictjs/runtime/advanced`: advanced reactive primitives and escape hatches.
+- `@fictjs/runtime/loader`: SSR/resume loader entrypoint.
+- `@fictjs/runtime/internal`: compiler ABI for generated code only; do not import by hand.
+
 ## Reactive Getter Contract
 
 Runtime value paths do not infer reactivity from function arity. A plain

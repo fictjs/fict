@@ -1,9 +1,13 @@
 /**
- * @fileoverview Internal compiler/runtime bridge for the main `fict` package.
+ * @fileoverview Compiler ABI bridge for the main `fict` package.
  *
- * This subpath is intentionally not documented as a public user API. It exists
- * so compiler-generated code can resolve helpers through `fict` without forcing
- * applications to install `@fictjs/runtime` separately.
+ * This subpath is exported so compiler-generated code can resolve helpers
+ * through `fict` without forcing applications to install `@fictjs/runtime`
+ * separately. It is not a public user API and should not be imported by
+ * application or library source by hand.
+ *
+ * @internal
+ * @packageDocumentation
  */
 
 export * from '@fictjs/runtime/internal'
