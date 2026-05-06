@@ -5,6 +5,7 @@ import { Suspense, createSuspenseToken } from '@fictjs/runtime'
 import { __fictUseContext, __fictUseSignal } from '@fictjs/runtime/internal'
 
 import { renderToPartial, renderToPipeableStream, renderToStream } from '../src/index'
+import { createQueuedTextStream } from '../src/stream-bridge'
 
 const decoder = new TextDecoder()
 
@@ -21,6 +22,27 @@ async function readReadableStream(stream: ReadableStream<Uint8Array>): Promise<s
 }
 
 describe('@fictjs/ssr streaming', () => {
+  it('waits for queued text stream pulls under backpressure', async () => {
+    const { stream, writer } = createQueuedTextStream()
+    let released = false
+
+    const writeReady = Promise.resolve(writer.write('blocked')).then(() => {
+      released = true
+    })
+    await Promise.resolve()
+    expect(released).toBe(false)
+
+    const reader = stream.getReader()
+    const first = await reader.read()
+    expect(first.done).toBe(false)
+    expect(first.value ? decoder.decode(first.value) : '').toBe('blocked')
+
+    await writeReady
+    expect(released).toBe(true)
+    writer.close()
+    await expect(reader.read()).resolves.toEqual({ done: true, value: undefined })
+  })
+
   it('escapes incremental snapshot payloads in shell mode', async () => {
     const attack = '</script><script>globalThis.__fict_stream_xss=1</script>'
 

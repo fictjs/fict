@@ -266,6 +266,14 @@ export function renderToStream(
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null
+  const readyResolvers: Array<() => void> = []
+
+  const resolveBackpressure = () => {
+    if (!controller || (controller.desiredSize ?? 1) <= 0) return
+    while (readyResolvers.length > 0) {
+      readyResolvers.shift()?.()
+    }
+  }
 
   const stream = new ReadableStream<Uint8Array>({
     start(ctrl) {
@@ -274,17 +282,32 @@ export function renderToStream(
         write(chunk) {
           if (!controller) return
           controller.enqueue(encoder.encode(chunk))
+          if ((controller.desiredSize ?? 1) <= 0) {
+            return new Promise<void>(resolve => {
+              readyResolvers.push(resolve)
+            })
+          }
+          return undefined
         },
         close() {
+          while (readyResolvers.length > 0) {
+            readyResolvers.shift()?.()
+          }
           controller?.close()
         },
         abort(reason?: unknown) {
+          while (readyResolvers.length > 0) {
+            readyResolvers.shift()?.()
+          }
           controller?.error(reason)
         },
       })
       // renderToStream doesn't expose readiness promises, so consume rejections
       // to avoid unhandled promise noise when streaming aborts.
       started.allReady.catch(() => undefined)
+    },
+    pull() {
+      resolveBackpressure()
     },
   })
 
@@ -298,7 +321,7 @@ export function renderToPipeableStream(
   const bridge = createPipeBridge()
   const { shellReady, allReady, abort } = startStreamingRender(view, options, {
     write(chunk) {
-      bridge.write(chunk)
+      return bridge.write(chunk)
     },
     close() {
       bridge.close()
@@ -341,7 +364,7 @@ export function renderToPartial(
           shell += chunk
           return
         }
-        queued.writer.write(chunk)
+        return queued.writer.write(chunk)
       },
       close() {
         queued.writer.close()
@@ -397,6 +420,14 @@ function resolveDom(options: RenderToStringOptions): SSRDom {
   return createSSRDocument(options.html)
 }
 
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as PromiseLike<unknown>).then === 'function'
+  )
+}
+
 function startStreamingRender(
   view: () => FictNode,
   options: RenderToStreamOptions,
@@ -446,6 +477,8 @@ function startStreamingRenderInSession(
   let tailHtml = ''
   let wroteShell = false
   let shellCarriesTail = false
+  let writeChain: Promise<void> | null = null
+  let writeFailed = false
 
   const mode = options.mode ?? 'shell'
   const includeSnapshot = options.includeSnapshot !== false
@@ -454,6 +487,80 @@ function startStreamingRenderInSession(
   const boundaryMap = new Map<string, { start: Comment; end: Comment; pending: boolean }>()
   let boundaryId = 0
   let pendingCount = 0
+
+  const handleWriteError = (error: unknown) => {
+    if (writeFailed) return
+    writeFailed = true
+    options.onError?.(error)
+    writer.abort(error)
+    cleanup()
+    rejectAll(error)
+  }
+
+  const enqueueWrite = (chunk: string): void => {
+    if (writeFailed) return
+    const trackWrite = (promise: Promise<void>) => {
+      const tracked = promise.then(
+        () => {
+          if (writeChain === tracked) {
+            writeChain = null
+          }
+        },
+        error => {
+          if (writeChain === tracked) {
+            writeChain = null
+          }
+          handleWriteError(error)
+        },
+      )
+      writeChain = tracked
+    }
+    const writeAsync = () => Promise.resolve(writer.write(chunk)).then(() => undefined)
+
+    if (writeChain) {
+      trackWrite(writeChain.then(writeAsync))
+      return
+    }
+
+    try {
+      const result = writer.write(chunk)
+      if (isPromiseLike(result)) {
+        trackWrite(
+          result.then(
+            () => undefined,
+            error => {
+              throw error
+            },
+          ),
+        )
+      }
+    } catch (error) {
+      handleWriteError(error)
+    }
+  }
+
+  const afterWrites = (fn: () => void): void => {
+    const pending = writeChain
+    if (!pending) {
+      if (!writeFailed) {
+        fn()
+      }
+      return
+    }
+    void pending.then(() => {
+      if (!writeFailed) {
+        fn()
+      }
+    })
+  }
+
+  const markShellReady = (): void => {
+    afterWrites(() => {
+      control.onShellFlushed?.()
+      resolveShell()
+      options.onShellReady?.()
+    })
+  }
 
   const writeSnapshotForScopes = (scopeIds: string[]): void => {
     runInSession(() => {
@@ -466,7 +573,7 @@ function startStreamingRenderInSession(
       if (ids.length === 0) return
       const chunk = buildIncrementalSnapshotChunk(snapshot, resolvedOptions)
       if (chunk) {
-        writer.write(chunk)
+        enqueueWrite(chunk)
       }
       for (const id of ids) {
         sentScopes.add(id)
@@ -512,26 +619,30 @@ function startStreamingRenderInSession(
         injectSnapshot(dom.document, container, snapshot, resolvedOptions)
       }
       const fullHtml = serializeOutput(dom.document, container, resolvedOptions)
-      writer.write(fullHtml)
-      writer.close()
-      cleanup()
-      resolveShell()
-      resolveAll()
-      options.onShellReady?.()
-      options.onAllReady?.()
+      enqueueWrite(fullHtml)
+      afterWrites(() => {
+        writer.close()
+        cleanup()
+        resolveShell()
+        resolveAll()
+        options.onShellReady?.()
+        options.onAllReady?.()
+      })
       return
     }
 
     writeRemainingSnapshots()
 
     if (tailHtml) {
-      writer.write(tailHtml)
+      enqueueWrite(tailHtml)
     }
 
-    writer.close()
-    cleanup()
-    resolveAll()
-    options.onAllReady?.()
+    afterWrites(() => {
+      writer.close()
+      cleanup()
+      resolveAll()
+      options.onAllReady?.()
+    })
   }
 
   const maybeFinalize = () => {
@@ -563,7 +674,7 @@ function startStreamingRenderInSession(
         writeSnapshotForBoundary(id)
         if (dom) {
           const html = serializeBetween(dom.document, entry.start, entry.end)
-          writer.write(buildPatchChunk(id, html, resolvedOptions))
+          enqueueWrite(buildPatchChunk(id, html, resolvedOptions))
         }
       }
       maybeFinalize()
@@ -577,6 +688,7 @@ function startStreamingRenderInSession(
   const abort = (reason?: unknown) => {
     if (closed) return
     closed = true
+    writeFailed = true
     writer.abort(reason)
     cleanup()
     rejectAll(reason ?? new Error('Stream aborted'))
@@ -618,26 +730,24 @@ function startStreamingRenderInSession(
         throw new Error('[fict/ssr] Failed to locate </body> for streaming output.')
       }
       if (control.includeTailInShell) {
-        writer.write(split.head + streamRuntime)
+        enqueueWrite(split.head + streamRuntime)
         tailHtml = split.tail
         shellCarriesTail = true
       } else {
-        writer.write(split.head + streamRuntime)
+        enqueueWrite(split.head + streamRuntime)
         tailHtml = split.tail
       }
     } else {
-      writer.write(shellHtml + streamRuntime)
+      enqueueWrite(shellHtml + streamRuntime)
     }
     wroteShell = true
     writeSnapshotForScopes(Array.from(__fictGetScopeRegistry().keys()))
     if (shellCarriesTail && tailHtml) {
-      writer.write(tailHtml)
+      enqueueWrite(tailHtml)
       tailHtml = ''
       shellCarriesTail = false
     }
-    control.onShellFlushed?.()
-    resolveShell()
-    options.onShellReady?.()
+    markShellReady()
 
     // If no pending boundaries, finalize immediately.
     maybeFinalize()

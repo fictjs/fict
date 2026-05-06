@@ -6,7 +6,7 @@ interface NodePassThroughLike {
 }
 
 export interface StreamWriter {
-  write: (chunk: string) => void
+  write: (chunk: string) => void | Promise<void>
   close: () => void
   abort: (reason?: unknown) => void
 }
@@ -22,6 +22,14 @@ export function createQueuedTextStream(): QueuedTextStream {
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null
   let closed = false
   let aborted: unknown
+  const readyResolvers: Array<() => void> = []
+
+  const resolveReady = () => {
+    if (!controller || (controller.desiredSize ?? 1) <= 0) return
+    while (readyResolvers.length > 0) {
+      readyResolvers.shift()?.()
+    }
+  }
 
   const stream = new ReadableStream<Uint8Array>({
     start(ctrl) {
@@ -38,6 +46,9 @@ export function createQueuedTextStream(): QueuedTextStream {
         ctrl.close()
       }
     },
+    pull() {
+      resolveReady()
+    },
   })
 
   const writer: StreamWriter = {
@@ -46,18 +57,30 @@ export function createQueuedTextStream(): QueuedTextStream {
       const data = encoder.encode(chunk)
       if (controller) {
         controller.enqueue(data)
+        if ((controller.desiredSize ?? 1) <= 0) {
+          return new Promise<void>(resolve => {
+            readyResolvers.push(resolve)
+          })
+        }
       } else {
         queue.push(data)
       }
+      return undefined
     },
     close() {
       if (closed || aborted !== undefined) return
       closed = true
+      while (readyResolvers.length > 0) {
+        readyResolvers.shift()?.()
+      }
       controller?.close()
     },
     abort(reason?: unknown) {
       if (closed || aborted !== undefined) return
       aborted = reason ?? new Error('Stream aborted')
+      while (readyResolvers.length > 0) {
+        readyResolvers.shift()?.()
+      }
       controller?.error(aborted)
     },
   }
@@ -67,7 +90,7 @@ export function createQueuedTextStream(): QueuedTextStream {
 
 export interface PipeBridge {
   pipe: (writable: NodeJS.WritableStream) => void
-  write: (chunk: string) => void
+  write: (chunk: string) => void | Promise<void>
   close: () => void
   abort: (reason?: unknown) => void
 }
@@ -81,12 +104,25 @@ export function createPipeBridge(): PipeBridge {
   let state: 'open' | 'closed' | 'aborted' = 'open'
   let abortReason: Error | null = null
 
-  const safeWrite = (target: NodeJS.WritableStream, chunk: string) => {
+  const safeWrite = (target: NodeJS.WritableStream, chunk: string): void | Promise<void> => {
     try {
-      target.write(chunk)
+      const ready = target.write(chunk)
+      if (ready === false) {
+        return new Promise(resolve => {
+          const withOnce = target as NodeJS.WritableStream & {
+            once?: (event: 'drain', listener: () => void) => unknown
+          }
+          if (typeof withOnce.once === 'function') {
+            withOnce.once('drain', resolve)
+          } else {
+            resolve()
+          }
+        })
+      }
     } catch {
       // Ignore target write errors to keep stream lifecycle deterministic.
     }
+    return undefined
   }
 
   const safeEnd = (target: NodeJS.WritableStream) => {
@@ -131,9 +167,12 @@ export function createPipeBridge(): PipeBridge {
         buffer.push(chunk)
         return
       }
+      const pending: Promise<void>[] = []
       for (const target of targets) {
-        safeWrite(target, chunk)
+        const result = safeWrite(target, chunk)
+        if (result) pending.push(result)
       }
+      return pending.length > 0 ? Promise.all(pending).then(() => undefined) : undefined
     },
     close() {
       if (state !== 'open') return
@@ -172,7 +211,19 @@ function createNodePipeBridge(): PipeBridge | null {
         passThrough.pipe(writable)
       },
       write(chunk) {
-        passThrough.write(chunk)
+        if (passThrough.write(chunk) === false) {
+          return new Promise<void>(resolve => {
+            const withOnce = passThrough as NodePassThroughLike & {
+              once?: (event: 'drain', listener: () => void) => unknown
+            }
+            if (typeof withOnce.once === 'function') {
+              withOnce.once('drain', resolve)
+            } else {
+              resolve()
+            }
+          })
+        }
+        return undefined
       },
       close() {
         passThrough.end()
