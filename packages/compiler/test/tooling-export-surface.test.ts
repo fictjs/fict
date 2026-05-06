@@ -6,5 +6,6 @@ describe('compiler tooling export surface', () => {
   it('exports analyze and trace helpers from compiler root', () => {
     expect(typeof compiler.analyzeFictFile).toBe('function')
     expect(typeof compiler.inferTraceMarkersForComponent).toBe('function')
+    expect(typeof compiler.minimizeSourceByLines).toBe('function')
   })
 })

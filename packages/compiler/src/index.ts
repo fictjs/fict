@@ -2531,7 +2531,7 @@ export type {
   ReactiveExportKind,
 } from './types'
 export { MODULE_REACTIVE_METADATA_VERSION } from './types'
-export { analyzeFictFile, inferTraceMarkersForComponent } from './tooling'
+export { analyzeFictFile, inferTraceMarkersForComponent, minimizeSourceByLines } from './tooling'
 export type {
   AnalyzeDiagnostic,
   AnalyzeOptions,
@@ -2541,6 +2541,9 @@ export type {
   RegionInfoSerializable,
   TraceMarker,
   TraceMarkerKind,
+  SourceMinimizerOptions,
+  SourceMinimizerPredicate,
+  SourceMinimizerResult,
 } from './tooling'
 
 export default createFictPlugin
