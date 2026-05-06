@@ -22,7 +22,6 @@ import {
 } from './constants'
 import { createRenderEffect } from './effect'
 import { withHydration, withHydrationRange, isHydratingActive } from './hydration'
-import { Fragment } from './jsx'
 import {
   createRootContext,
   destroyRoot,
@@ -2358,44 +2357,26 @@ export function createConditional(
         return
       }
 
-      let patched = false
-      const scratchRoot = createRootContext(hostRoot)
-      const prevScratch = pushRoot(scratchRoot)
-      let handledPatchError = false
-      let scratchOutput: FictNode | undefined
+      const nextRoot = createRootContext(hostRoot)
+      const prevNext = pushRoot(nextRoot)
+      let handledRenderError = false
+      let nextOutput: FictNode | undefined
       try {
-        const output = render()
-        scratchOutput = output
-        if (output != null && output !== false) {
-          if (currentNodes.length === 1) {
-            patched = patchNode(currentNodes[0] ?? null, output)
-          }
-          if (!patched && Array.isArray(output)) {
-            patched = _patchFragmentChildren(currentNodes, output)
-          }
-          if (!patched && _isFragmentVNode(output)) {
-            patched = _patchFragmentChildren(currentNodes, output.props?.children)
-          }
-        }
+        nextOutput = render()
       } catch (err) {
-        if (handleSuspend(err as any, scratchRoot)) {
-          handledPatchError = true
-        } else if (handleError(err, { source: 'renderChild' }, scratchRoot)) {
-          handledPatchError = true
+        if (handleSuspend(err as any, nextRoot)) {
+          handledRenderError = true
+        } else if (handleError(err, { source: 'renderChild' }, nextRoot)) {
+          handledRenderError = true
         } else {
           throw err
         }
       } finally {
-        popRoot(prevScratch)
+        popRoot(prevNext)
       }
 
-      if (handledPatchError) {
-        destroyRoot(scratchRoot)
-        return
-      }
-
-      if (patched) {
-        destroyRoot(scratchRoot)
+      if (handledRenderError) {
+        destroyRoot(nextRoot)
         return
       }
 
@@ -2408,33 +2389,33 @@ export function createConditional(
       removeNodes(currentNodes)
       currentNodes = []
 
-      const prev = pushRoot(scratchRoot)
+      const prev = pushRoot(nextRoot)
       let handledError = false
       try {
-        if (scratchOutput == null || scratchOutput === false) {
+        if (nextOutput == null || nextOutput === false) {
           return
         }
-        const el = createElementFn(scratchOutput)
+        const el = createElementFn(nextOutput)
         const nodes = toNodeArray(el, parent.ownerDocument ?? markerOwnerDocument)
         insertNodesBefore(parent, nodes, endMarker)
         currentNodes = nodes
       } catch (err) {
-        if (handleSuspend(err as any, scratchRoot)) {
+        if (handleSuspend(err as any, nextRoot)) {
           handledError = true
-          destroyRoot(scratchRoot)
+          destroyRoot(nextRoot)
           return
         }
-        if (handleError(err, { source: 'renderChild' }, scratchRoot)) {
+        if (handleError(err, { source: 'renderChild' }, nextRoot)) {
           handledError = true
-          destroyRoot(scratchRoot)
+          destroyRoot(nextRoot)
           return
         }
         throw err
       } finally {
         popRoot(prev)
         if (!handledError) {
-          flushOnMount(scratchRoot)
-          currentRoot = scratchRoot
+          flushOnMount(nextRoot)
+          currentRoot = nextRoot
         } else {
           currentRoot = null
         }
@@ -2647,157 +2628,6 @@ export function createPortal(
     marker,
     dispose: portalDispose,
   }
-}
-
-function patchElement(el: Element, output: FictNode): boolean {
-  if (output && typeof output === 'object' && !(output instanceof Node)) {
-    const vnode = output as { type?: unknown; props?: Record<string, unknown> }
-    if (typeof vnode.type === 'string' && vnode.type.toLowerCase() === el.tagName.toLowerCase()) {
-      const children = vnode.props?.children
-      const props = vnode.props ?? {}
-
-      // Update props (except children and key)
-      for (const [key, value] of Object.entries(props)) {
-        if (key === 'children' || key === 'key') continue
-        if (
-          typeof value === 'string' ||
-          typeof value === 'number' ||
-          typeof value === 'boolean' ||
-          value === null ||
-          value === undefined
-        ) {
-          if (key === 'class' || key === 'className') {
-            el.setAttribute('class', value === false || value === null ? '' : String(value))
-          } else if (key === 'style' && typeof value === 'string') {
-            ;(el as Element & { style: CSSStyleDeclaration }).style.cssText = value
-          } else if (value === false || value === null || value === undefined) {
-            el.removeAttribute(key)
-          } else if (value === true) {
-            el.setAttribute(key, '')
-          } else {
-            el.setAttribute(key, String(value))
-          }
-        }
-      }
-
-      // Handle primitive children
-      if (
-        typeof children === 'string' ||
-        typeof children === 'number' ||
-        children === null ||
-        children === undefined ||
-        children === false
-      ) {
-        el.textContent =
-          children === null || children === undefined || children === false ? '' : String(children)
-        return true
-      }
-
-      // Handle single nested VNode child - recursively patch
-      if (
-        children &&
-        typeof children === 'object' &&
-        !Array.isArray(children) &&
-        !(children instanceof Node)
-      ) {
-        const childVNode = children as { type?: unknown; props?: Record<string, unknown> }
-        if (typeof childVNode.type === 'string') {
-          // Find matching child element in the DOM
-          const childEl = el.querySelector(childVNode.type)
-          if (childEl && patchElement(childEl, children as FictNode)) {
-            return true
-          }
-        }
-      }
-
-      return false
-    }
-  }
-
-  return false
-}
-
-function patchNode(currentNode: Node | null, nextOutput: FictNode): boolean {
-  if (!currentNode) return false
-
-  if (
-    currentNode instanceof Text &&
-    (nextOutput === null ||
-      nextOutput === undefined ||
-      nextOutput === false ||
-      typeof nextOutput === 'string' ||
-      typeof nextOutput === 'number' ||
-      nextOutput instanceof Text)
-  ) {
-    const nextText =
-      nextOutput instanceof Text
-        ? nextOutput.data
-        : nextOutput === null || nextOutput === undefined || nextOutput === false
-          ? ''
-          : String(nextOutput)
-    currentNode.data = nextText
-    return true
-  }
-
-  if (currentNode instanceof Element && patchElement(currentNode, nextOutput)) {
-    return true
-  }
-
-  if (nextOutput instanceof Node && currentNode === nextOutput) {
-    return true
-  }
-
-  return false
-}
-
-function _isFragmentVNode(
-  value: unknown,
-): value is { type: typeof Fragment; props?: { children?: FictNode | FictNode[] } } {
-  return (
-    value != null &&
-    typeof value === 'object' &&
-    !(value instanceof Node) &&
-    (value as { type?: unknown }).type === Fragment
-  )
-}
-
-function normalizeChildren(
-  children: FictNode | FictNode[] | undefined,
-  result: FictNode[] = [],
-): FictNode[] {
-  if (children === undefined) {
-    return result
-  }
-  if (Array.isArray(children)) {
-    for (const child of children) {
-      normalizeChildren(child, result)
-    }
-    return result
-  }
-  if (children === null || children === false) {
-    return result
-  }
-  if (_isFragmentVNode(children)) {
-    return normalizeChildren(children.props?.children, result)
-  }
-  result.push(children)
-  return result
-}
-
-function _patchFragmentChildren(
-  nodes: Node[],
-  children: FictNode | FictNode[] | undefined,
-): boolean {
-  const normalized = normalizeChildren(children)
-  if (normalized.length !== nodes.length) {
-    return false
-  }
-  for (let i = 0; i < normalized.length; i++) {
-    if (!patchNode(nodes[i]!, normalized[i]!)) {
-      return false
-    }
-  }
-  return true
 }
 
 // DOM utility functions are imported from './node-ops' to avoid duplication

@@ -1372,18 +1372,18 @@ describe('Binding Edge Cases', () => {
       await tick()
       expect(container.textContent).toBe('O')
       expect(logs).toEqual(['even', 'odd'])
-      expect(container.querySelector('div')).toBe(firstDiv)
+      expect(container.querySelector('div')).not.toBe(firstDiv)
 
       counter(2)
       await tick()
       expect(container.textContent).toBe('E')
       expect(logs).toEqual(['even', 'odd', 'even'])
-      expect(container.querySelector('div')).toBe(firstDiv)
+      expect(container.querySelector('div')).not.toBe(firstDiv)
 
       dispose()
     })
 
-    it('does not double-run side effects when patch fallback is needed', async () => {
+    it('does not double-run side effects when remount fallback is needed', async () => {
       const condition = createSignal(true)
       const counter = createSignal(0)
       const renders: number[] = []
@@ -1432,7 +1432,7 @@ describe('Binding Edge Cases', () => {
       dispose()
     })
 
-    it('reuses dom nodes for nested fragment arrays in tracked branch patching', async () => {
+    it('remounts nested fragment arrays for tracked branch reads', async () => {
       const condition = createSignal(true)
       const counter = createSignal(0)
 
@@ -1483,10 +1483,219 @@ describe('Binding Edge Cases', () => {
       expect(container.textContent).toBe('A1')
       const spansAfter = Array.from(container.querySelectorAll('span'))
       expect(spansAfter).toHaveLength(2)
-      expect(spansAfter[0]).toBe(spansBefore[0])
-      expect(spansAfter[1]).toBe(spansBefore[1])
+      expect(spansAfter[0]).not.toBe(spansBefore[0])
+      expect(spansAfter[1]).not.toBe(spansBefore[1])
 
       dispose()
+    })
+
+    it('remounts event handlers so tracked branch callbacks see current closures', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+      const clicks: number[] = []
+
+      const { marker, dispose, flush } = createConditional(
+        () => condition(),
+        () => {
+          const value = counter()
+          return {
+            type: 'button',
+            props: {
+              onClick: () => clicks.push(value),
+              children: String(value),
+            },
+            key: undefined,
+          }
+        },
+        createElement,
+        () => 'OFF',
+        undefined,
+        undefined,
+        { trackBranchReads: true },
+      )
+      container.appendChild(marker)
+      flush?.()
+
+      const firstButton = container.querySelector('button')
+      expect(firstButton).not.toBeNull()
+      firstButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(clicks).toEqual([0])
+
+      counter(1)
+      await tick()
+
+      const secondButton = container.querySelector('button')
+      expect(secondButton).not.toBeNull()
+      expect(secondButton).not.toBe(firstButton)
+      expect(secondButton!.textContent).toBe('1')
+      secondButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(clicks).toEqual([0, 1])
+
+      dispose()
+    })
+
+    it('clears old refs and assigns new refs on tracked branch remount', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+      const refCalls: Array<Element | null> = []
+
+      const { marker, dispose, flush } = createConditional(
+        () => condition(),
+        () => {
+          const value = counter()
+          return {
+            type: 'div',
+            props: {
+              ref: (el: Element | null) => refCalls.push(el),
+              children: String(value),
+            },
+            key: undefined,
+          }
+        },
+        createElement,
+        () => 'OFF',
+        undefined,
+        undefined,
+        { trackBranchReads: true },
+      )
+      container.appendChild(marker)
+      flush?.()
+
+      const firstDiv = container.querySelector('div')
+      expect(refCalls).toEqual([firstDiv])
+
+      counter(1)
+      await tick()
+
+      const secondDiv = container.querySelector('div')
+      expect(secondDiv).not.toBeNull()
+      expect(secondDiv).not.toBe(firstDiv)
+      expect(refCalls).toEqual([firstDiv, null, secondDiv])
+
+      dispose()
+      expect(refCalls).toEqual([firstDiv, null, secondDiv, null])
+    })
+
+    it('applies object style and classList from remounted tracked branches', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+
+      const { marker, dispose, flush } = createConditional(
+        () => condition(),
+        () => {
+          const value = counter()
+          return {
+            type: 'div',
+            props: {
+              style: { color: value % 2 === 0 ? 'blue' : 'red' },
+              classList: { active: value % 2 === 1 },
+              children: String(value),
+            },
+            key: undefined,
+          }
+        },
+        createElement,
+        () => 'OFF',
+        undefined,
+        undefined,
+        { trackBranchReads: true },
+      )
+      container.appendChild(marker)
+      flush?.()
+
+      const firstDiv = container.querySelector('div') as HTMLElement | null
+      expect(firstDiv).not.toBeNull()
+      expect(firstDiv!.style.color).toBe('blue')
+      expect(firstDiv!.classList.contains('active')).toBe(false)
+
+      counter(1)
+      await tick()
+
+      const secondDiv = container.querySelector('div') as HTMLElement | null
+      expect(secondDiv).not.toBeNull()
+      expect(secondDiv).not.toBe(firstDiv)
+      expect(secondDiv!.style.color).toBe('red')
+      expect(secondDiv!.classList.contains('active')).toBe(true)
+
+      dispose()
+    })
+
+    it('removes omitted props when tracked branches remount', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+
+      const { marker, dispose, flush } = createConditional(
+        () => condition(),
+        () => {
+          const value = counter()
+          return {
+            type: 'button',
+            props: value === 0 ? { disabled: true, children: 'off' } : { children: 'on' },
+            key: undefined,
+          }
+        },
+        createElement,
+        () => 'OFF',
+        undefined,
+        undefined,
+        { trackBranchReads: true },
+      )
+      container.appendChild(marker)
+      flush?.()
+
+      const firstButton = container.querySelector('button') as HTMLButtonElement | null
+      expect(firstButton).not.toBeNull()
+      expect(firstButton!.disabled).toBe(true)
+
+      counter(1)
+      await tick()
+
+      const secondButton = container.querySelector('button') as HTMLButtonElement | null
+      expect(secondButton).not.toBeNull()
+      expect(secondButton).not.toBe(firstButton)
+      expect(secondButton!.disabled).toBe(false)
+      expect(secondButton!.textContent).toBe('on')
+
+      dispose()
+    })
+
+    it('runs branch-local cleanup before tracked branch remount', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+      const cleanupLog: number[] = []
+
+      const { marker, dispose, flush } = createConditional(
+        () => condition(),
+        () => {
+          const value = counter()
+          onDestroy(() => cleanupLog.push(value))
+          return {
+            type: 'div',
+            props: { children: String(value) },
+            key: undefined,
+          }
+        },
+        createElement,
+        () => 'OFF',
+        undefined,
+        undefined,
+        { trackBranchReads: true },
+      )
+      container.appendChild(marker)
+      flush?.()
+
+      expect(cleanupLog).toEqual([])
+
+      counter(1)
+      await tick()
+      expect(cleanupLog).toEqual([0])
+
+      counter(2)
+      await tick()
+      expect(cleanupLog).toEqual([0, 1])
+
+      dispose()
+      expect(cleanupLog).toEqual([0, 1, 2])
     })
 
     it('falls back to structural replace when node kind changes', async () => {
