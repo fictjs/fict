@@ -1,0 +1,78 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`compiler output golden snapshots > stabilizes control-flow fallback output shape 1`] = `
+"import { __fictUseSignal, template, resolvePath, addEventListener, getSlotEnd, insertBetween, createElement, __fictUseContext, createConditional, onDestroy } from "fict/internal";
+export function Branch() {
+  const __fictCtx = __fictUseContext();
+  const count = __fictUseSignal(__fictCtx, 0, {
+    name: "count"
+  });
+  return (() => {
+    const __cond_10 = createConditional(() => count() > 1, () => {
+      return (() => {
+        const __tmpl_1 = template("<button>High <!--fict:slot:start--><!--fict:slot:end--></button>");
+        const __root_0 = __tmpl_1();
+        const __el_2 = resolvePath(__root_0, [1]);
+        addEventListener(__root_0, "click", () => (__prev_3 => (count(__prev_3 + (typeof __prev_3 === "bigint" ? 1n : 1)), __prev_3))(count()), true);
+        const __end_4 = getSlotEnd(__el_2);
+        insertBetween(__el_2, __end_4, () => count(), createElement);
+        return __root_0;
+      })();
+    }, createElement, () => {
+      return (() => {
+        const __tmpl_6 = template("<button>Low <!--fict:slot:start--><!--fict:slot:end--></button>");
+        const __root_5 = __tmpl_6();
+        const __el_7 = resolvePath(__root_5, [1]);
+        addEventListener(__root_5, "click", () => (__prev_8 => (count(__prev_8 + (typeof __prev_8 === "bigint" ? 1n : 1)), __prev_8))(count()), true);
+        const __end_9 = getSlotEnd(__el_7);
+        insertBetween(__el_7, __end_9, () => count(), createElement);
+        return __root_5;
+      })();
+    });
+    onDestroy(__cond_10.dispose);
+    return __cond_10;
+  })();
+}"
+`;
+
+exports[`compiler output golden snapshots > stabilizes cross-module direct accessor metadata output 1`] = `
+"import { __fictUseMemo, template, resolvePath, bindText, __fictUseContext } from "fict/internal";
+import { useCounter } from 'counter-lib';
+export function App() {
+  const __fictCtx = __fictUseContext();
+  const count = useCounter();
+  return __fictUseMemo(__fictCtx, () => {
+    const __tmpl_1 = template("<div> </div>");
+    const __root_0 = __tmpl_1();
+    const __el_2 = resolvePath(__root_0, [0]);
+    bindText(__el_2, () => count());
+    return __root_0;
+  }, 1000)();
+}"
+`;
+
+exports[`compiler output golden snapshots > stabilizes reactive prop getter marker output 1`] = `
+"import { __fictUseSignal, createElement, prop, __fictUseContext, __fictUseMemo, template, resolvePath, bindText } from "fict/internal";
+export function Parent() {
+  const __fictCtx = __fictUseContext();
+  const count = __fictUseSignal(__fictCtx, 0, {
+    name: "count"
+  });
+  return {
+    type: Child,
+    props: {
+      value: prop(() => count() * 2)
+    }
+  };
+}
+function Child(props) {
+  const __fictCtx = __fictUseContext();
+  return __fictUseMemo(__fictCtx, () => {
+    const __tmpl_1 = template("<span> </span>");
+    const __root_0 = __tmpl_1();
+    const __el_2 = resolvePath(__root_0, [0]);
+    bindText(__el_2, () => props.value);
+    return __root_0;
+  }, 1000)();
+}"
+`;
