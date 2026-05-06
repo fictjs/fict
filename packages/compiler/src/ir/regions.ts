@@ -13,6 +13,7 @@ import { debugLog, debugWarn } from '../debug'
 import type { RegionMetadata } from '../fine-grained-dom'
 
 import type { CodegenContext, RegionInfo, RegionLoweringOps } from './codegen'
+import { markCompilerReactiveGetter } from './codegen-reactive-getter'
 import type {
   BlockId,
   HIRFunction,
@@ -1428,7 +1429,7 @@ function lowerNodeWithRegionContext(
           stmts.push(
             t.expressionStatement(
               t.callExpression(runInScopeId, [
-                flagExpr,
+                markCompilerReactiveGetter(ctx, flagExpr),
                 t.arrowFunctionExpression([], t.blockStatement(body)),
               ]),
             ),
