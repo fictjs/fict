@@ -237,6 +237,7 @@ describe('resumable loader snapshot validation', () => {
   })
 
   it('handles resumable handler failures without unhandled promise rejections', async () => {
+    const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots(
       JSON.stringify({
         v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
@@ -254,17 +255,160 @@ describe('resumable loader snapshot validation', () => {
     doc.body.appendChild(host)
 
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    installResumableLoader({ document: doc, events: ['click'], prefetch: false })
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installResumableLoader({
+      document: doc,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
 
     const ev = new Event('click', { bubbles: true, cancelable: true })
     button.dispatchEvent(ev)
     await waitForPendingHandlers()
 
-    expect(errorSpy).toHaveBeenCalledWith(
-      '[fict/loader] Failed to handle resumable event.',
-      expect.anything(),
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'handler_import_failed',
+        scopeId: 's1',
+        qrl: '/__fict_missing_module__.js#default',
+        eventType: 'click',
+      }),
     )
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to import handler module'))
     errorSpy.mockRestore()
+    warnSpy.mockRestore()
+  })
+
+  it('reports missing and thrown resumable handlers', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      }),
+    )
+
+    const host = doc.createElement('div')
+    host.setAttribute('data-fict-s', 's1')
+    const missingButton = doc.createElement('button')
+    missingButton.setAttribute('on:click', 'data:text/javascript,export const present=1#missing')
+    const throwingButton = doc.createElement('button')
+    throwingButton.setAttribute(
+      'on:click',
+      'data:text/javascript,export function boom(){throw new Error("handler boom")}#boom',
+    )
+    host.append(missingButton, throwingButton)
+    doc.body.appendChild(host)
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installResumableLoader({
+      document: doc,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+
+    missingButton.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    throwingButton.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'handler_missing',
+        exportName: 'missing',
+      }),
+    )
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'handler_failed',
+        exportName: 'boom',
+      }),
+    )
+    warnSpy.mockRestore()
+  })
+
+  it('reports resume import and resume function failures', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+          s2: { id: 's2', slots: [] },
+          s3: { id: 's3', slots: [] },
+        },
+      }),
+    )
+
+    const missingResumeHost = doc.createElement('div')
+    missingResumeHost.setAttribute('data-fict-s', 's1')
+    missingResumeHost.setAttribute('data-fict-h', '/__fict_missing_resume__.js#resume')
+    const missingResumeButton = doc.createElement('button')
+    missingResumeButton.setAttribute('on:click', 'data:text/javascript,export function ok(){}#ok')
+    missingResumeHost.appendChild(missingResumeButton)
+
+    const throwingResumeHost = doc.createElement('div')
+    throwingResumeHost.setAttribute('data-fict-s', 's2')
+    throwingResumeHost.setAttribute(
+      'data-fict-h',
+      'data:text/javascript,export default null#__fict_throwing_resume',
+    )
+    __fictRegisterResume('__fict_throwing_resume', () => {
+      throw new Error('resume boom')
+    })
+    const throwingResumeButton = doc.createElement('button')
+    throwingResumeButton.setAttribute('on:click', 'data:text/javascript,export function ok(){}#ok')
+    throwingResumeHost.appendChild(throwingResumeButton)
+
+    const missingFunctionHost = doc.createElement('div')
+    missingFunctionHost.setAttribute('data-fict-s', 's3')
+    missingFunctionHost.setAttribute(
+      'data-fict-h',
+      'data:text/javascript,export default null#__fict_missing_registry',
+    )
+    const missingFunctionButton = doc.createElement('button')
+    missingFunctionButton.setAttribute('on:click', 'data:text/javascript,export function ok(){}#ok')
+    missingFunctionHost.appendChild(missingFunctionButton)
+    doc.body.append(missingResumeHost, throwingResumeHost, missingFunctionHost)
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installResumableLoader({
+      document: doc,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+
+    missingResumeButton.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    throwingResumeButton.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    missingFunctionButton.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'resume_import_failed',
+        scopeId: 's1',
+      }),
+    )
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'resume_failed',
+        scopeId: 's2',
+        exportName: '__fict_throwing_resume',
+      }),
+    )
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'resume_function_missing',
+        scopeId: 's3',
+        exportName: '__fict_missing_registry',
+      }),
+    )
+    warnSpy.mockRestore()
   })
 
   it('resolves resume registry keys when hosts use relative asset QRLs', async () => {

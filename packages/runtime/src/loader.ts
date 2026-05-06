@@ -196,14 +196,25 @@ export type SnapshotIssueCode =
   | 'snapshot_invalid_shape'
   | 'snapshot_unsupported_version'
   | 'scope_snapshot_missing'
+  | 'resume_import_failed'
+  | 'resume_function_missing'
+  | 'resume_failed'
+  | 'handler_import_failed'
+  | 'handler_missing'
+  | 'handler_failed'
 
 export interface SnapshotIssue {
   code: SnapshotIssueCode
   message: string
   source: string
   expectedVersion: number
-  actualVersion?: number
-  scopeId?: string
+  actualVersion?: number | undefined
+  scopeId?: string | undefined
+  qrl?: string | undefined
+  url?: string | undefined
+  exportName?: string | undefined
+  eventType?: string | undefined
+  error?: unknown
 }
 
 // ============================================================================
@@ -432,7 +443,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function emitSnapshotIssue(issue: SnapshotIssue): void {
   const key =
     `${issue.code}|${issue.source}|${issue.scopeId ?? ''}|` +
-    `${issue.actualVersion ?? ''}|${issue.expectedVersion}`
+    `${issue.actualVersion ?? ''}|${issue.expectedVersion}|${issue.qrl ?? ''}|` +
+    `${issue.eventType ?? ''}|${issue.exportName ?? ''}`
   if (emittedIssueKeys.has(key)) return
   emittedIssueKeys.add(key)
 
@@ -441,6 +453,10 @@ function emitSnapshotIssue(issue: SnapshotIssue): void {
   if (typeof console !== 'undefined' && typeof console.warn === 'function') {
     console.warn(issue.message)
   }
+}
+
+function formatImportError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 // ============================================================================
@@ -683,7 +699,23 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
         const resolvedAbsoluteResumeQrl = `${resolvedAbsoluteResumeUrl}#${resumeExport}`
         const normalizedResumeImportUrl = normalizeImportUrl(resolvedResumeUrl)
         // Load the module to ensure resume functions are registered
-        await import(/* @vite-ignore */ normalizedResumeImportUrl)
+        try {
+          await import(/* @vite-ignore */ normalizedResumeImportUrl)
+        } catch (error) {
+          emitSnapshotIssue({
+            code: 'resume_import_failed',
+            message: `[fict/loader] Failed to import resume module ${resolvedResumeUrl}: ${formatImportError(error)}`,
+            source: 'event',
+            expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+            scopeId,
+            qrl: resumeQrl,
+            url: resolvedResumeUrl,
+            exportName: resumeExport,
+            eventType: event.type,
+            error,
+          })
+          return
+        }
         // Get resume function from registry (not module exports)
         const resumeFn =
           __fictGetResume(resumeQrl) ??
@@ -691,9 +723,37 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
           __fictGetResume(resolvedAbsoluteResumeQrl) ??
           __fictGetResume(resumeExport)
         if (typeof resumeFn === 'function') {
-          await (resumeFn as (scopeId: string, host: Element) => unknown)(scopeId, host)
+          try {
+            await (resumeFn as (scopeId: string, host: Element) => unknown)(scopeId, host)
+          } catch (error) {
+            emitSnapshotIssue({
+              code: 'resume_failed',
+              message: `[fict/loader] Resume function ${resumeExport} failed for scope ${scopeId}: ${formatImportError(error)}`,
+              source: 'event',
+              expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+              scopeId,
+              qrl: resumeQrl,
+              url: resolvedResumeUrl,
+              exportName: resumeExport,
+              eventType: event.type,
+              error,
+            })
+            return
+          }
           hydratedScopes.add(scopeId)
           resumedDuringEvent = true
+        } else {
+          emitSnapshotIssue({
+            code: 'resume_function_missing',
+            message: `[fict/loader] Resume function ${resumeExport} was not registered for scope ${scopeId}.`,
+            source: 'event',
+            expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+            scopeId,
+            qrl: resumeQrl,
+            url: resolvedResumeUrl,
+            exportName: resumeExport,
+            eventType: event.type,
+          })
         }
       }
     }
@@ -705,7 +765,24 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
     // THEN run the handler - now signal updates will trigger DOM updates
     const resolvedUrl = resolveModuleUrl(url)
     const normalizedImportUrl = normalizeImportUrl(resolvedUrl)
-    const mod = await import(/* @vite-ignore */ normalizedImportUrl)
+    let mod: Record<string, unknown>
+    try {
+      mod = (await import(/* @vite-ignore */ normalizedImportUrl)) as Record<string, unknown>
+    } catch (error) {
+      emitSnapshotIssue({
+        code: 'handler_import_failed',
+        message: `[fict/loader] Failed to import handler module ${resolvedUrl}: ${formatImportError(error)}`,
+        source: 'event',
+        expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopeId,
+        qrl,
+        url: resolvedUrl,
+        exportName,
+        eventType: event.type,
+        error,
+      })
+      return
+    }
     const handler = (mod as Record<string, unknown>)[exportName]
     if (typeof handler === 'function') {
       const originalCurrentTarget = event.currentTarget
@@ -721,6 +798,19 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
           event,
           node,
         )
+      } catch (error) {
+        emitSnapshotIssue({
+          code: 'handler_failed',
+          message: `[fict/loader] Resumable handler ${exportName} failed for scope ${scopeId}: ${formatImportError(error)}`,
+          source: 'event',
+          expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+          scopeId,
+          qrl,
+          url: resolvedUrl,
+          exportName,
+          eventType: event.type,
+          error,
+        })
       } finally {
         Object.defineProperty(event, 'currentTarget', {
           configurable: true,
@@ -729,6 +819,18 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
           },
         })
       }
+    } else {
+      emitSnapshotIssue({
+        code: 'handler_missing',
+        message: `[fict/loader] Resumable handler export ${exportName} was not found in ${resolvedUrl}.`,
+        source: 'event',
+        expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopeId,
+        qrl,
+        url: resolvedUrl,
+        exportName,
+        eventType: event.type,
+      })
     }
 
     return
