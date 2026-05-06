@@ -1518,6 +1518,34 @@ dispose()
 
 ---
 
+### DevTools protocol helpers
+
+Expose the runtime hook protocol contract used by DevTools and third-party inspectors.
+
+```typescript
+import {
+  FICT_DEVTOOLS_MIN_PROTOCOL_VERSION,
+  FICT_DEVTOOLS_PROTOCOL_VERSION,
+  getDevtoolsHook,
+  isDevtoolsHookCompatible,
+  type FictDevtoolsCompatibility,
+  type FictDevtoolsHook,
+} from 'fict/advanced'
+
+interface FictDevtoolsCompatibility {
+  protocolVersion: number
+  minRuntimeProtocol: number
+  maxRuntimeProtocol: number
+}
+
+function getDevtoolsHook(): FictDevtoolsHook | undefined
+function isDevtoolsHookCompatible(hook: FictDevtoolsHook): boolean
+```
+
+`getDevtoolsHook()` only returns hooks compatible with the current runtime protocol.
+
+---
+
 ### setCycleProtectionOptions
 
 Configure cycle protection thresholds and enablement. This helps tune cycle detection sensitivity for your application.

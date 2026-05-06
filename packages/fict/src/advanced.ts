@@ -39,8 +39,12 @@ export {
   unwrap,
 
   // Debugging & DevTools
+  FICT_DEVTOOLS_MIN_PROTOCOL_VERSION,
+  FICT_DEVTOOLS_PROTOCOL_VERSION,
   getDevtoolsHook,
+  isDevtoolsHookCompatible,
   setCycleProtectionOptions,
+  type FictDevtoolsCompatibility,
   type FictDevtoolsHook,
 
   // Low-level Primitives

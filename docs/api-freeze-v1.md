@@ -528,9 +528,20 @@ export function reconcileArrays<T>(
 
 ```typescript
 // DevTools hook (dev mode only)
+export const FICT_DEVTOOLS_PROTOCOL_VERSION: number
+export const FICT_DEVTOOLS_MIN_PROTOCOL_VERSION: number
+
 export function getDevtoolsHook(): FictDevtoolsHook | undefined
+export function isDevtoolsHookCompatible(hook: FictDevtoolsHook): boolean
+
+export interface FictDevtoolsCompatibility {
+  protocolVersion: number
+  minRuntimeProtocol: number
+  maxRuntimeProtocol: number
+}
 
 export interface FictDevtoolsHook {
+  readonly devtools?: FictDevtoolsCompatibility
   onSignalCreate?(signal: SignalNode): void
   onSignalUpdate?(signal: SignalNode, oldValue: unknown, newValue: unknown): void
   onEffectCreate?(effect: EffectNode): void
@@ -746,97 +757,103 @@ export const $memo = createMemo
 > It is **not** the literal main-entry export list. Use the subpath tables below
 > for exact package/export boundaries.
 
-| Export                      | Category   | Tier | Compiler Dependent |
-| --------------------------- | ---------- | ---- | ------------------ |
-| `createMemo`                | Reactivity | 1    | Yes                |
-| `createEffect`              | Reactivity | 1    | Yes                |
-| `batch`                     | Scheduling | 1    | No                 |
-| `untrack`                   | Scheduling | 1    | No                 |
-| `startTransition`           | Scheduling | 1    | No                 |
-| `useTransition`             | Scheduling | 1    | No                 |
-| `useDeferredValue`          | Scheduling | 1    | No                 |
-| `onMount`                   | Lifecycle  | 1    | No                 |
-| `onDestroy`                 | Lifecycle  | 1    | Yes                |
-| `onCleanup`                 | Lifecycle  | 1    | No                 |
-| `createRoot`                | Lifecycle  | 1    | No                 |
-| `createRef`                 | Ref        | 1    | No                 |
-| `render`                    | DOM        | 1    | No                 |
-| `createElement`             | DOM        | 1    | Yes                |
-| `createPortal`              | DOM        | 1    | No                 |
-| `Fragment`                  | JSX        | 1    | Yes                |
-| `ErrorBoundary`             | Component  | 1    | No                 |
-| `Suspense`                  | Component  | 1    | No                 |
-| `createSuspenseToken`       | Component  | 1    | No                 |
-| `createContext`             | Context    | 1    | No                 |
-| `useContext`                | Context    | 1    | No                 |
-| `hasContext`                | Context    | 1    | No                 |
-| `mergeProps`                | Props      | 1    | Yes                |
-| `prop`                      | Props      | 1    | Yes                |
-| `__fictProp`                | Internal   | 2    | Yes                |
-| `__fictPropsRest`           | Internal   | 2    | Yes                |
-| `__fictUseContext`          | Internal   | 2    | Yes                |
-| `__fictPushContext`         | Internal   | 2    | Yes                |
-| `__fictPopContext`          | Internal   | 2    | Yes                |
-| `__fictUseSignal`           | Internal   | 2    | Yes                |
-| `__fictUseMemo`             | Internal   | 2    | Yes                |
-| `__fictUseEffect`           | Internal   | 2    | Yes                |
-| `__fictRender`              | Internal   | 2    | Yes                |
-| `__fictResetContext`        | Internal   | 2    | Yes                |
-| `bindText`                  | Binding    | 2    | Yes                |
-| `bindAttribute`             | Binding    | 2    | Yes                |
-| `bindProperty`              | Binding    | 2    | Yes                |
-| `bindClass`                 | Binding    | 2    | Yes                |
-| `bindStyle`                 | Binding    | 2    | Yes                |
-| `bindEvent`                 | Binding    | 2    | Yes                |
-| `bindRef`                   | Binding    | 2    | Yes                |
-| `callEventHandler`          | Binding    | 2    | Yes                |
-| `insert`                    | Binding    | 2    | Yes                |
-| `createConditional`         | Binding    | 2    | Yes                |
-| `createKeyedList`           | List       | 2    | Yes                |
-| `toNodeArray`               | List       | 2    | Yes                |
-| `delegateEvents`            | Events     | 2    | Yes                |
-| `spread`                    | Props      | 2    | No                 |
-| `assign`                    | Props      | 2    | No                 |
-| `classList`                 | Binding    | 2    | No                 |
-| `createTextBinding`         | Binding    | 3    | No                 |
-| `createChildBinding`        | Binding    | 3    | No                 |
-| `createAttributeBinding`    | Binding    | 3    | No                 |
-| `createStyleBinding`        | Binding    | 3    | No                 |
-| `createClassBinding`        | Binding    | 3    | No                 |
-| `createShow`                | Binding    | 3    | No                 |
-| `isReactive`                | Utility    | 3    | No                 |
-| `reactive`                  | Utility    | 3    | No                 |
-| `nonReactive`               | Utility    | 3    | No                 |
-| `unwrap`                    | Utility    | 3    | No                 |
-| `getDevtoolsHook`           | Debug      | 3    | No                 |
-| `setCycleProtectionOptions` | Debug      | 3    | No                 |
+| Export                               | Category   | Tier | Compiler Dependent |
+| ------------------------------------ | ---------- | ---- | ------------------ |
+| `createMemo`                         | Reactivity | 1    | Yes                |
+| `createEffect`                       | Reactivity | 1    | Yes                |
+| `batch`                              | Scheduling | 1    | No                 |
+| `untrack`                            | Scheduling | 1    | No                 |
+| `startTransition`                    | Scheduling | 1    | No                 |
+| `useTransition`                      | Scheduling | 1    | No                 |
+| `useDeferredValue`                   | Scheduling | 1    | No                 |
+| `onMount`                            | Lifecycle  | 1    | No                 |
+| `onDestroy`                          | Lifecycle  | 1    | Yes                |
+| `onCleanup`                          | Lifecycle  | 1    | No                 |
+| `createRoot`                         | Lifecycle  | 1    | No                 |
+| `createRef`                          | Ref        | 1    | No                 |
+| `render`                             | DOM        | 1    | No                 |
+| `createElement`                      | DOM        | 1    | Yes                |
+| `createPortal`                       | DOM        | 1    | No                 |
+| `Fragment`                           | JSX        | 1    | Yes                |
+| `ErrorBoundary`                      | Component  | 1    | No                 |
+| `Suspense`                           | Component  | 1    | No                 |
+| `createSuspenseToken`                | Component  | 1    | No                 |
+| `createContext`                      | Context    | 1    | No                 |
+| `useContext`                         | Context    | 1    | No                 |
+| `hasContext`                         | Context    | 1    | No                 |
+| `mergeProps`                         | Props      | 1    | Yes                |
+| `prop`                               | Props      | 1    | Yes                |
+| `__fictProp`                         | Internal   | 2    | Yes                |
+| `__fictPropsRest`                    | Internal   | 2    | Yes                |
+| `__fictUseContext`                   | Internal   | 2    | Yes                |
+| `__fictPushContext`                  | Internal   | 2    | Yes                |
+| `__fictPopContext`                   | Internal   | 2    | Yes                |
+| `__fictUseSignal`                    | Internal   | 2    | Yes                |
+| `__fictUseMemo`                      | Internal   | 2    | Yes                |
+| `__fictUseEffect`                    | Internal   | 2    | Yes                |
+| `__fictRender`                       | Internal   | 2    | Yes                |
+| `__fictResetContext`                 | Internal   | 2    | Yes                |
+| `bindText`                           | Binding    | 2    | Yes                |
+| `bindAttribute`                      | Binding    | 2    | Yes                |
+| `bindProperty`                       | Binding    | 2    | Yes                |
+| `bindClass`                          | Binding    | 2    | Yes                |
+| `bindStyle`                          | Binding    | 2    | Yes                |
+| `bindEvent`                          | Binding    | 2    | Yes                |
+| `bindRef`                            | Binding    | 2    | Yes                |
+| `callEventHandler`                   | Binding    | 2    | Yes                |
+| `insert`                             | Binding    | 2    | Yes                |
+| `createConditional`                  | Binding    | 2    | Yes                |
+| `createKeyedList`                    | List       | 2    | Yes                |
+| `toNodeArray`                        | List       | 2    | Yes                |
+| `delegateEvents`                     | Events     | 2    | Yes                |
+| `spread`                             | Props      | 2    | No                 |
+| `assign`                             | Props      | 2    | No                 |
+| `classList`                          | Binding    | 2    | No                 |
+| `createTextBinding`                  | Binding    | 3    | No                 |
+| `createChildBinding`                 | Binding    | 3    | No                 |
+| `createAttributeBinding`             | Binding    | 3    | No                 |
+| `createStyleBinding`                 | Binding    | 3    | No                 |
+| `createClassBinding`                 | Binding    | 3    | No                 |
+| `createShow`                         | Binding    | 3    | No                 |
+| `isReactive`                         | Utility    | 3    | No                 |
+| `reactive`                           | Utility    | 3    | No                 |
+| `nonReactive`                        | Utility    | 3    | No                 |
+| `unwrap`                             | Utility    | 3    | No                 |
+| `getDevtoolsHook`                    | Debug      | 3    | No                 |
+| `isDevtoolsHookCompatible`           | Debug      | 3    | No                 |
+| `FICT_DEVTOOLS_PROTOCOL_VERSION`     | Debug      | 3    | No                 |
+| `FICT_DEVTOOLS_MIN_PROTOCOL_VERSION` | Debug      | 3    | No                 |
+| `setCycleProtectionOptions`          | Debug      | 3    | No                 |
 
 ### `@fictjs/runtime/advanced` (Advanced API)
 
-| Export                      | Category   | Tier | Notes                           |
-| --------------------------- | ---------- | ---- | ------------------------------- |
-| `createSignal`              | Reactivity | 3    | Cross-component escape hatch    |
-| `createSelector`            | Reactivity | 3    | Fine-grained subscription       |
-| `createScope`               | Scope      | 3    | Reactive scope management       |
-| `runInScope`                | Scope      | 3    | Flag-driven scope (void)        |
-| `effectScope`               | Scope      | 3    | Returns disposer                |
-| `createContext`             | Context    | 3    | Also in main entry              |
-| `useContext`                | Context    | 3    | Also in main entry              |
-| `hasContext`                | Context    | 3    | Also in main entry              |
-| `createVersionedSignal`     | Reactivity | 3    | Versioned signal                |
-| `createTextBinding`         | Binding    | 3    | Advanced binding                |
-| `createChildBinding`        | Binding    | 3    | Advanced binding                |
-| `createAttributeBinding`    | Binding    | 3    | Advanced binding                |
-| `createStyleBinding`        | Binding    | 3    | Advanced binding                |
-| `createClassBinding`        | Binding    | 3    | Advanced binding                |
-| `createShow`                | Binding    | 3    | Advanced binding                |
-| `isReactive`                | Utility    | 3    | Detect explicit reactive getter |
-| `reactive`                  | Utility    | 3    | Mark manual reactive getter     |
-| `nonReactive`               | Utility    | 3    | Advanced callback marker        |
-| `unwrap`                    | Utility    | 3    | Unwrap explicit reactive value  |
-| `getDevtoolsHook`           | Debug      | 3    | DevTools hook                   |
-| `setCycleProtectionOptions` | Debug      | 3    | Cycle protection config         |
-| `createRenderEffect`        | Effect     | 3    | Render effect                   |
+| Export                               | Category   | Tier | Notes                           |
+| ------------------------------------ | ---------- | ---- | ------------------------------- |
+| `createSignal`                       | Reactivity | 3    | Cross-component escape hatch    |
+| `createSelector`                     | Reactivity | 3    | Fine-grained subscription       |
+| `createScope`                        | Scope      | 3    | Reactive scope management       |
+| `runInScope`                         | Scope      | 3    | Flag-driven scope (void)        |
+| `effectScope`                        | Scope      | 3    | Returns disposer                |
+| `createContext`                      | Context    | 3    | Also in main entry              |
+| `useContext`                         | Context    | 3    | Also in main entry              |
+| `hasContext`                         | Context    | 3    | Also in main entry              |
+| `createVersionedSignal`              | Reactivity | 3    | Versioned signal                |
+| `createTextBinding`                  | Binding    | 3    | Advanced binding                |
+| `createChildBinding`                 | Binding    | 3    | Advanced binding                |
+| `createAttributeBinding`             | Binding    | 3    | Advanced binding                |
+| `createStyleBinding`                 | Binding    | 3    | Advanced binding                |
+| `createClassBinding`                 | Binding    | 3    | Advanced binding                |
+| `createShow`                         | Binding    | 3    | Advanced binding                |
+| `isReactive`                         | Utility    | 3    | Detect explicit reactive getter |
+| `reactive`                           | Utility    | 3    | Mark manual reactive getter     |
+| `nonReactive`                        | Utility    | 3    | Advanced callback marker        |
+| `unwrap`                             | Utility    | 3    | Unwrap explicit reactive value  |
+| `getDevtoolsHook`                    | Debug      | 3    | DevTools hook                   |
+| `isDevtoolsHookCompatible`           | Debug      | 3    | Protocol compatibility check    |
+| `FICT_DEVTOOLS_PROTOCOL_VERSION`     | Debug      | 3    | Runtime hook protocol version   |
+| `FICT_DEVTOOLS_MIN_PROTOCOL_VERSION` | Debug      | 3    | Minimum supported hook protocol |
+| `setCycleProtectionOptions`          | Debug      | 3    | Cycle protection config         |
+| `createRenderEffect`                 | Effect     | 3    | Render effect                   |
 
 ### `@fictjs/runtime/internal` (Compiler/Internal Use)
 

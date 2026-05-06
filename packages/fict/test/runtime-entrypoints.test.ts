@@ -5,9 +5,11 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import * as runtimeLoader from '@fictjs/runtime/loader'
+import * as runtimeAdvanced from '@fictjs/runtime/advanced'
 import * as runtimeInternal from '@fictjs/runtime/internal'
 import * as runtimeInternalList from '@fictjs/runtime/internal/list'
 
+import * as advanced from '../src/advanced'
 import * as loader from '../src/loader'
 import * as internal from '../src/internal'
 import * as internalList from '../src/internal-list'
@@ -24,6 +26,17 @@ describe('fict runtime bridge entrypoints', () => {
 
   it('re-exports the resumable loader through fict/loader', () => {
     expect(loader.installResumableLoader).toBe(runtimeLoader.installResumableLoader)
+  })
+
+  it('re-exports DevTools protocol helpers through fict/advanced', () => {
+    expect(advanced.FICT_DEVTOOLS_PROTOCOL_VERSION).toBe(
+      runtimeAdvanced.FICT_DEVTOOLS_PROTOCOL_VERSION,
+    )
+    expect(advanced.FICT_DEVTOOLS_MIN_PROTOCOL_VERSION).toBe(
+      runtimeAdvanced.FICT_DEVTOOLS_MIN_PROTOCOL_VERSION,
+    )
+    expect(advanced.isDevtoolsHookCompatible).toBe(runtimeAdvanced.isDevtoolsHookCompatible)
+    expect(advanced.getDevtoolsHook).toBe(runtimeAdvanced.getDevtoolsHook)
   })
 
   it('declares internal and loader subpath exports in package.json', () => {

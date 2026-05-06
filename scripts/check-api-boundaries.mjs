@@ -110,6 +110,20 @@ if (/export\s+\*\s+from\s+['"]@fictjs\/runtime\/advanced['"]/.test(fictMain)) {
   fail('fict main entrypoint must not wildcard-export @fictjs/runtime/advanced')
 }
 
+const fictAdvanced = readText('packages/fict/src/advanced.ts')
+for (const requiredExport of [
+  'FICT_DEVTOOLS_MIN_PROTOCOL_VERSION',
+  'FICT_DEVTOOLS_PROTOCOL_VERSION',
+  'getDevtoolsHook',
+  'isDevtoolsHookCompatible',
+  'FictDevtoolsCompatibility',
+  'FictDevtoolsHook',
+]) {
+  if (!containsStandaloneToken(fictAdvanced, requiredExport)) {
+    fail(`fict/advanced must re-export DevTools protocol API: ${requiredExport}`)
+  }
+}
+
 const runtimeMain = readText('packages/runtime/src/index.ts')
 for (const macro of ['$state', '$effect']) {
   if (containsStandaloneToken(runtimeMain, macro)) {
