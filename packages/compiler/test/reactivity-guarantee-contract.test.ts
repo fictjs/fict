@@ -274,6 +274,41 @@ describe('reactivity guarantee contract', () => {
         error: /FICT-R005/,
       },
       {
+        name: 'object shorthand reactive closure escaping through unknown boundary',
+        source: `
+          import { $state } from 'fict'
+          function consume(fn) {
+            return fn()
+          }
+          function App() {
+            let count = $state(0)
+            const read = () => count
+            const callbacks = { read }
+            consume(callbacks.read)
+            return <div />
+          }
+        `,
+        error: /FICT-R005/,
+      },
+      {
+        name: 'object slot assigned reactive closure escaping through unknown boundary',
+        source: `
+          import { $state } from 'fict'
+          function consume(fn) {
+            return fn()
+          }
+          function App() {
+            let count = $state(0)
+            const callbacks = {}
+            const readCount = () => count
+            callbacks.read = readCount
+            consume(callbacks.read)
+            return <div />
+          }
+        `,
+        error: /FICT-R005/,
+      },
+      {
         name: 'async promise callback captures reactive value across boundary',
         source: `
           import { $state } from 'fict'
@@ -414,6 +449,45 @@ describe('reactivity guarantee contract', () => {
             const callbacks = { read: () => count }
             const read = callbacks.read
             consume(read)
+            return <div />
+          }
+        `,
+      )
+      expect(warningCodes).toContain('FICT-R005')
+    })
+
+    it('warns FICT-R005 for object shorthand callback slots', () => {
+      const warningCodes = collectWarningCodes(
+        `
+          import { $state } from 'fict'
+          function consume(fn) {
+            return fn()
+          }
+          function App() {
+            let count = $state(0)
+            const read = () => count
+            const callbacks = { read }
+            consume(callbacks.read)
+            return <div />
+          }
+        `,
+      )
+      expect(warningCodes).toContain('FICT-R005')
+    })
+
+    it('warns FICT-R005 for object slots assigned from captured callbacks', () => {
+      const warningCodes = collectWarningCodes(
+        `
+          import { $state } from 'fict'
+          function consume(fn) {
+            return fn()
+          }
+          function App() {
+            let count = $state(0)
+            const callbacks = {}
+            const readCount = () => count
+            callbacks.read = readCount
+            consume(callbacks.read)
             return <div />
           }
         `,

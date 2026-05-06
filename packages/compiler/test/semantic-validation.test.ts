@@ -474,6 +474,45 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
   })
 
+  it('warns FICT-R005 when object shorthand callback slot escapes via unknown boundary', () => {
+    const source = `
+      import { $state } from 'fict'
+      function consume(fn) {
+        return fn()
+      }
+      function App() {
+        let count = $state(0)
+        const read = () => count
+        const callbacks = { read }
+        consume(callbacks.read)
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
+  })
+
+  it('warns FICT-R005 when object slot assigned from captured callback escapes', () => {
+    const source = `
+      import { $state } from 'fict'
+      function consume(fn) {
+        return fn()
+      }
+      function App() {
+        let count = $state(0)
+        const callbacks = {}
+        const readCount = () => count
+        callbacks.read = readCount
+        consume(callbacks.read)
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
+  })
+
   it('does not warn FICT-R005 for JSX event handlers capturing reactive values', () => {
     const source = `
       import { $state } from 'fict'
