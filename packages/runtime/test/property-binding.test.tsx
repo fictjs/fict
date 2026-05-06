@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 
 import { render } from '../src/index'
-import { createSignal } from '../src/advanced'
+import { createSignal, reactive } from '../src/advanced'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -16,7 +16,7 @@ describe('property bindings', () => {
     const value = createSignal('a')
     const container = document.createElement('div')
 
-    render(() => <input value={() => value()} />, container)
+    render(() => <input value={reactive(() => value())} />, container)
 
     const input = container.querySelector('input') as HTMLInputElement
     expect(input.value).toBe('a')
@@ -30,7 +30,7 @@ describe('property bindings', () => {
     const checked = createSignal(false)
     const container = document.createElement('div')
 
-    render(() => <input type="checkbox" checked={() => checked()} />, container)
+    render(() => <input type="checkbox" checked={reactive(() => checked())} />, container)
 
     const input = container.querySelector('input') as HTMLInputElement
     expect(input.checked).toBe(false)

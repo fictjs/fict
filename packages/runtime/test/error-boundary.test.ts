@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 import { render, ErrorBoundary, Fragment, createEffect, onMount, onDestroy } from '../src/index'
-import { createRenderEffect, createSignal } from '../src/advanced'
+import { createRenderEffect, createSignal, reactive } from '../src/advanced'
 import { bindEvent, createKeyedList, spread } from '../src/internal'
 
 const nextTick = () => Promise.resolve()
@@ -337,7 +337,7 @@ describe('ErrorBoundary', () => {
           children: {
             type: 'div',
             props: {
-              children: () => (show() ? { type: ThrowOnDestroy, props: {} } : null),
+              children: reactive(() => (show() ? { type: ThrowOnDestroy, props: {} } : null)),
             },
           },
         },
@@ -555,10 +555,11 @@ describe('ErrorBoundary', () => {
           children: {
             type: 'div',
             props: {
-              children: () =>
+              children: reactive(() =>
                 show()
                   ? { type: ThrowingChild, props: {} }
                   : { type: 'span', props: { children: 'ok' } },
+              ),
             },
           },
         },

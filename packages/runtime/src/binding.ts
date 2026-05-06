@@ -156,16 +156,17 @@ export interface ConditionalBindingOptions {
 // ============================================================================
 
 /**
- * Check if a value is reactive (a getter function that returns a value).
+ * Check if a value is reactive (a marked getter function that returns a value).
  *
  * A value is considered reactive if:
  * 1. It's a signal or computed value created by the runtime (marked with Symbol)
- * 2. It's a zero-argument function (getter pattern used by the compiler)
+ * 2. It's a prop getter or compiler-generated getter marked by the runtime
+ * 3. It's explicitly marked with reactive(fn)
  *
  * NOT considered reactive:
- * - Event handlers (functions that take arguments)
- * - Effect disposers (zero-arg but for cleanup, not value access)
- * - Effect scopes (zero-arg but for scope management)
+ * - Plain callbacks, including zero-argument callbacks
+ * - Effect disposers
+ * - Effect scopes
  *
  * @param value - The value to check
  * @returns true if the value is a reactive getter
@@ -174,7 +175,8 @@ export interface ConditionalBindingOptions {
  * ```ts
  * const [count, setCount] = createSignal(0)
  * isReactive(count)          // true - signal accessor
- * isReactive(() => 42)       // true - getter pattern
+ * isReactive(reactive(() => 42)) // true - explicit getter
+ * isReactive(() => 42)       // false - plain callback/function value
  * isReactive((x) => x)       // false - takes argument
  * isReactive('hello')        // false - not a function
  * isReactive(effectDisposer) // false - effect cleanup function
@@ -189,16 +191,13 @@ export function isReactive(value: unknown): value is () => unknown {
   // Check for runtime-created signals/computed (most reliable)
   if (isSignal(value) || isComputed(value)) return true
 
-  // Explicit marker for user-authored reactive getters.
-  if (isExplicitReactiveFn(value)) return true
+  // Explicit markers for prop/compiler/user-authored reactive getters.
+  if (isPropGetterFn(value) || isExplicitReactiveFn(value)) return true
 
-  // Exclude effect disposers and effect scopes - they are zero-arg
-  // functions but not reactive getters
+  // Exclude effect disposers and effect scopes.
   if (isEffect(value) || isEffectScope(value)) return false
 
-  // Fall back to length check for compiler-generated getters
-  // Zero-argument functions are treated as reactive getters
-  return value.length === 0
+  return false
 }
 
 /**
@@ -213,11 +212,7 @@ export function isReactive(value: unknown): value is () => unknown {
  * - Explicitly marked getters (reactive(...))
  */
 export function isStrictlyReactive(value: unknown): value is () => unknown {
-  if (typeof value !== 'function') return false
-  // Do NOT use length === 0 as fallback - many callbacks have 0 params.
-  return (
-    isSignal(value) || isComputed(value) || isPropGetterFn(value) || isExplicitReactiveFn(value)
-  )
+  return isReactive(value)
 }
 
 // Import-like check for prop getter marker without circular dependency
@@ -334,8 +329,8 @@ export function callEventHandler(
  * // Static text
  * createTextBinding("Hello")
  *
- * // Reactive text (compiler output)
- * createTextBinding(() => $count())
+ * // Reactive text
+ * createTextBinding(reactive(() => $count()))
  * ```
  */
 export function createTextBinding(
@@ -411,8 +406,8 @@ export type AttributeSetter = (el: Element, key: string, value: unknown) => void
  * // Static attribute
  * createAttributeBinding(button, 'disabled', false, setAttribute)
  *
- * // Reactive attribute (compiler output)
- * createAttributeBinding(button, 'disabled', () => !$isValid(), setAttribute)
+ * // Reactive attribute
+ * createAttributeBinding(button, 'disabled', reactive(() => !$isValid()), setAttribute)
  * ```
  */
 export function createAttributeBinding(
@@ -1500,8 +1495,8 @@ function createEventInvoker(
  * // Static event
  * bindEvent(button, 'click', handleClick)
  *
- * // Reactive event (compiler output)
- * bindEvent(button, 'click', () => $handler())
+ * // Reactive event handler accessor
+ * bindEvent(button, 'click', reactive(() => $handler()))
  *
  * // With modifiers
  * bindEvent(button, 'click', handler, { capture: true, passive: true, once: true })
@@ -1561,8 +1556,8 @@ export function bindEvent(
  * const inputRef = createRef()
  * bindRef(el, inputRef)
  *
- * // Reactive ref (compiler output)
- * bindRef(el, () => props.ref)
+ * // Reactive ref accessor
+ * bindRef(el, reactive(() => props.ref))
  * ```
  */
 export function bindRef(el: Element, ref: unknown, registerCleanup = true): Cleanup {
@@ -1982,7 +1977,7 @@ export function spread(
   // Handle ref
   bindRef(
     node,
-    (typeof props === 'function' ? () => resolveProps().ref : resolveProps().ref) ?? null,
+    (typeof props === 'function' ? reactive(() => resolveProps().ref) : resolveProps().ref) ?? null,
   )
 
   // Handle all other props

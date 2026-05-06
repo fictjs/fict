@@ -17,7 +17,7 @@ import {
   createContext,
   useContext,
 } from '../src/index'
-import { createSignal } from '../src/advanced'
+import { createSignal, reactive } from '../src/advanced'
 import { createKeyedList, createConditional } from '../src/internal'
 
 const tick = () =>
@@ -1013,7 +1013,7 @@ describe('Memory and Lifecycle Tests', () => {
 
       const Provider = ({ children, value }: { children?: Node; value: number }) => {
         const div = document.createElement('div')
-        TestContext.Provider({ value: { value }, children: () => div })
+        TestContext.Provider({ value: { value }, children: reactive(() => div) })
         if (children) div.appendChild(children)
         return div
       }

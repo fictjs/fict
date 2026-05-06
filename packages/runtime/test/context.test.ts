@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 import { createContext, useContext, hasContext, render, Fragment } from '../src/index'
-import { createSignal } from '../src/advanced'
+import { createSignal, reactive } from '../src/advanced'
 
 const tick = () => Promise.resolve()
 
@@ -322,7 +322,7 @@ describe('Context', () => {
         const ctx = useContext(ThemeContext)
         // Access the signal reactively
         capturedTheme = ctx.theme()
-        return { type: 'span', props: { children: () => ctx.theme() } }
+        return { type: 'span', props: { children: reactive(() => ctx.theme()) } }
       }
 
       const themeSignal = createSignal<'light' | 'dark'>('light')

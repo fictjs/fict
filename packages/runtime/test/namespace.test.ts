@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { createElement, render } from '../src/index'
+import { reactive } from '../src/advanced'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const HTML_NS = 'http://www.w3.org/1999/xhtml'
@@ -20,7 +21,7 @@ describe('namespace handling in createElement', () => {
       () => ({
         type: 'svg',
         props: {
-          children: () => ({ type: 'circle', props: { r: 2 } }),
+          children: reactive(() => ({ type: 'circle', props: { r: 2 } })),
         },
       }),
       container,

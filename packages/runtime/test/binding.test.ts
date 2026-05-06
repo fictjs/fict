@@ -26,6 +26,7 @@ import {
   createKeyedList,
   toNodeArray,
   delegateEvents,
+  __fictReactive,
 } from '../src/internal'
 
 const tick = () =>
@@ -65,13 +66,13 @@ describe('Reactive DOM Binding', () => {
   })
 
   describe('isReactive', () => {
-    it('detects reactive values (zero-argument functions)', () => {
-      expect(isReactive(() => 1)).toBe(true)
+    it('does not treat plain zero-argument functions as reactive', () => {
+      expect(isReactive(() => 1)).toBe(false)
       expect(
         isReactive(function () {
           return 1
         }),
-      ).toBe(true)
+      ).toBe(false)
     })
 
     it('does not detect static values', () => {
@@ -100,6 +101,11 @@ describe('Reactive DOM Binding', () => {
       expect(isReactive(getter)).toBe(true)
     })
 
+    it('supports compiler-marked zero-arg getters as reactive', () => {
+      const getter = __fictReactive(() => 1)
+      expect(isReactive(getter)).toBe(true)
+    })
+
     it('nonReactive marker overrides explicit reactive marker', () => {
       const getter = reactive(() => 1)
       const callback = nonReactive(getter)
@@ -116,7 +122,7 @@ describe('Reactive DOM Binding', () => {
 
   describe('unwrap', () => {
     it('unwraps reactive values', () => {
-      expect(unwrap(() => 42)).toBe(42)
+      expect(unwrap(reactive(() => 42))).toBe(42)
     })
 
     it('returns static values as-is', () => {
@@ -133,7 +139,7 @@ describe('Reactive DOM Binding', () => {
 
     it('creates reactive text node', async () => {
       const count = createSignal(0)
-      const { value: text, dispose } = createRoot(() => createTextBinding(() => count()))
+      const { value: text, dispose } = createRoot(() => createTextBinding(reactive(() => count())))
 
       expect(text.data).toBe('0')
 
@@ -190,7 +196,12 @@ describe('Reactive DOM Binding', () => {
       }
 
       const { dispose } = createRoot(() => {
-        createAttributeBinding(el, 'disabled', () => disabled(), setter)
+        createAttributeBinding(
+          el,
+          'disabled',
+          reactive(() => disabled()),
+          setter,
+        )
       })
 
       expect(el.hasAttribute('disabled')).toBe(false)
@@ -227,7 +238,10 @@ describe('Reactive DOM Binding', () => {
       const color = createSignal('red')
 
       const { dispose } = createRoot(() => {
-        createStyleBinding(el, () => ({ color: color() }))
+        createStyleBinding(
+          el,
+          reactive(() => ({ color: color() })),
+        )
       })
 
       expect(el.style.color).toBe('red')
@@ -273,7 +287,10 @@ describe('Reactive DOM Binding', () => {
       const active = createSignal(false)
 
       const { dispose } = createRoot(() => {
-        createClassBinding(el, () => ({ active: active(), base: true }))
+        createClassBinding(
+          el,
+          reactive(() => ({ active: active(), base: true })),
+        )
       })
 
       expect(el.classList.contains('base')).toBe(true)
@@ -1129,7 +1146,7 @@ describe('Reactive DOM Binding', () => {
         return {
           type: 'div',
           props: {
-            children: () => `Count: ${count()}`,
+            children: reactive(() => `Count: ${count()}`),
           },
           key: undefined,
         }
@@ -1155,7 +1172,7 @@ describe('Reactive DOM Binding', () => {
         () => ({
           type: 'div',
           props: {
-            children: () => `Count: ${count()}`,
+            children: reactive(() => `Count: ${count()}`),
           },
           key: undefined,
         }),
@@ -1178,7 +1195,7 @@ describe('Reactive DOM Binding', () => {
         () => ({
           type: 'button',
           props: {
-            disabled: () => disabled(),
+            disabled: reactive(() => disabled()),
             children: 'Click me',
           },
           key: undefined,
@@ -1207,7 +1224,7 @@ describe('Reactive DOM Binding', () => {
         () => ({
           type: 'div',
           props: {
-            children: () => (show() ? 'Visible' : null),
+            children: reactive(() => (show() ? 'Visible' : null)),
           },
           key: undefined,
         }),
@@ -1234,12 +1251,13 @@ describe('Reactive DOM Binding', () => {
         () => ({
           type: 'ul',
           props: {
-            children: () =>
+            children: reactive(() =>
               items().map(item => ({
                 type: 'li',
                 props: { children: item },
                 key: item,
               })),
+            ),
           },
           key: undefined,
         }),
@@ -1265,8 +1283,8 @@ describe('Reactive DOM Binding', () => {
         () => ({
           type: 'div',
           props: {
-            class: () => className(),
-            title: () => title(),
+            class: reactive(() => className()),
+            title: reactive(() => title()),
             children: 'Content',
           },
           key: undefined,
@@ -1294,7 +1312,7 @@ describe('Reactive DOM Binding', () => {
         () => ({
           type: Fragment,
           props: {
-            children: ['Static: ', () => `Dynamic: ${count()}`],
+            children: ['Static: ', reactive(() => `Dynamic: ${count()}`)],
           },
           key: undefined,
         }),

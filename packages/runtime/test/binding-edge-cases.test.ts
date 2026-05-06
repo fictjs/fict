@@ -105,7 +105,10 @@ describe('Binding Edge Cases', () => {
       const currentRef = createSignal<{ current: Element | null }>(ref1)
 
       const { dispose } = createRoot(() => {
-        bindRef(el, () => currentRef())
+        bindRef(
+          el,
+          reactive(() => currentRef()),
+        )
       })
 
       expect(ref1.current).toBe(el)
@@ -128,7 +131,10 @@ describe('Binding Edge Cases', () => {
       const currentCb = createSignal<(elem: Element | null) => void>(cb1)
 
       const { dispose } = createRoot(() => {
-        bindRef(el, () => currentCb())
+        bindRef(
+          el,
+          reactive(() => currentCb()),
+        )
       })
 
       // First callback should be called immediately
@@ -260,7 +266,11 @@ describe('Binding Edge Cases', () => {
       const currentHandler = createSignal<EventListener>(handler1)
 
       const { dispose } = createRoot(() => {
-        bindEvent(el, 'click', () => currentHandler())
+        bindEvent(
+          el,
+          'click',
+          reactive(() => currentHandler()),
+        )
       })
 
       el.dispatchEvent(new Event('click', { bubbles: true }))
@@ -687,7 +697,7 @@ describe('Binding Edge Cases', () => {
       const message = createSignal('hello')
 
       const { dispose } = createRoot(() => {
-        spread(el, { children: () => message() }, false, false)
+        spread(el, { children: reactive(() => message()) }, false, false)
       })
 
       await tick()
@@ -1313,7 +1323,7 @@ describe('Binding Edge Cases', () => {
         () => condition(),
         () => ({
           type: 'div',
-          props: { children: () => counter() },
+          props: { children: reactive(() => counter()) },
           key: undefined,
         }),
         createElement,
