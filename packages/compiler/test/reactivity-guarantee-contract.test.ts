@@ -223,6 +223,24 @@ describe('reactivity guarantee contract', () => {
         error: /FICT-R002/,
       },
       {
+        name: 'hoisted reactive closure escaping before declaration',
+        source: `
+          import { $state } from 'fict'
+          function consume(fn) {
+            return fn()
+          }
+          function App() {
+            let count = $state(0)
+            consume(readCount)
+            function readCount() {
+              return count
+            }
+            return <div />
+          }
+        `,
+        error: /FICT-R005/,
+      },
+      {
         name: 'object-property reactive closure escaping through unknown boundary',
         source: `
           import { $state } from 'fict'
@@ -342,6 +360,26 @@ describe('reactivity guarantee contract', () => {
             let count = $state(0)
             const readCount = () => count
             consume(readCount)
+            return <div />
+          }
+        `,
+      )
+      expect(warningCodes).toContain('FICT-R005')
+    })
+
+    it('warns FICT-R005 for hoisted closure escaping before declaration', () => {
+      const warningCodes = collectWarningCodes(
+        `
+          import { $state } from 'fict'
+          function consume(fn) {
+            return fn()
+          }
+          function App() {
+            let count = $state(0)
+            consume(readCount)
+            function readCount() {
+              return count
+            }
             return <div />
           }
         `,

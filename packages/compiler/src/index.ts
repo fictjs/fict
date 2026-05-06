@@ -785,6 +785,33 @@ function runWarningPass(
       }
     }
   }
+  type ScopeBinding = NonNullable<ReturnType<BabelCore.NodePath['scope']['getBinding']>>
+  const getCapturedFromBinding = (binding: ScopeBinding): Set<string> | null => {
+    const bindingId = binding.identifier as BabelCore.types.Identifier
+    const cached = capturedClosureByBinding.get(bindingId)
+    if (cached) return cached.size > 0 ? cached : null
+
+    if (binding.path.isFunctionDeclaration()) {
+      const captured = collectCapturedReactiveNames(binding.path)
+      capturedClosureByBinding.set(bindingId, captured)
+      return captured.size > 0 ? captured : null
+    }
+
+    if (binding.path.isVariableDeclarator()) {
+      const initPath = binding.path.get('init') as BabelCore.NodePath | null
+      if (initPath?.isMemberExpression() || initPath?.isOptionalMemberExpression()) {
+        return getCapturedFromMemberExpression(initPath.node, initPath)
+      }
+      if (initPath?.isFunctionExpression() || initPath?.isArrowFunctionExpression()) {
+        const captured = collectCapturedReactiveNames(initPath)
+        capturedClosureByBinding.set(bindingId, captured)
+        return captured.size > 0 ? captured : null
+      }
+    }
+
+    const captured = capturedClosureByBinding.get(bindingId)
+    return captured && captured.size > 0 ? captured : null
+  }
   const collectCapturedForArgument = (argPath: BabelCore.NodePath): Set<string> | null => {
     if (argPath.isArrowFunctionExpression() || argPath.isFunctionExpression()) {
       const captured = collectCapturedReactiveNames(argPath)
@@ -796,15 +823,7 @@ function runWarningPass(
     if (!argPath.isIdentifier()) return null
     const binding = argPath.scope.getBinding(argPath.node.name)
     if (!binding) return null
-    const initPath = binding.path.isVariableDeclarator()
-      ? (binding.path.get('init') as BabelCore.NodePath | null)
-      : null
-    if (initPath?.isMemberExpression() || initPath?.isOptionalMemberExpression()) {
-      const captured = getCapturedFromMemberExpression(initPath.node, initPath)
-      if (captured) return captured
-    }
-    const captured = capturedClosureByBinding.get(binding.identifier as BabelCore.types.Identifier)
-    return captured && captured.size > 0 ? captured : null
+    return getCapturedFromBinding(binding)
   }
   const isNonEscapingCallbackHost = (
     callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,

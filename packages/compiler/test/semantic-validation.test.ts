@@ -417,6 +417,26 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
   })
 
+  it('warns FICT-R005 when hoisted closure escapes before declaration', () => {
+    const source = `
+      import { $state } from 'fict'
+      function consume(fn) {
+        return fn()
+      }
+      function App() {
+        let count = $state(0)
+        consume(readCount)
+        function readCount() {
+          return count
+        }
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
+  })
+
   it('warns FICT-R005 when object-property closure escapes via unknown callback boundary', () => {
     const source = `
       import { $state } from 'fict'
