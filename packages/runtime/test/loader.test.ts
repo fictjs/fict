@@ -436,7 +436,12 @@ describe('resumable loader snapshot validation', () => {
       'data:text/javascript,export default null#__fict_missing_registry',
     )
     const missingFunctionButton = doc.createElement('button')
-    missingFunctionButton.setAttribute('on:click', 'data:text/javascript,export function ok(){}#ok')
+    ;(globalThis as { __fictMissingResumeHandlerCalls?: number }).__fictMissingResumeHandlerCalls =
+      0
+    missingFunctionButton.setAttribute(
+      'on:click',
+      'data:text/javascript,export function ok(){globalThis.__fictMissingResumeHandlerCalls=(globalThis.__fictMissingResumeHandlerCalls||0)+1}#ok',
+    )
     missingFunctionHost.appendChild(missingFunctionButton)
     doc.body.append(missingResumeHost, throwingResumeHost, missingFunctionHost)
 
@@ -473,7 +478,12 @@ describe('resumable loader snapshot validation', () => {
         exportName: '__fict_missing_registry',
       }),
     )
+    expect(
+      (globalThis as { __fictMissingResumeHandlerCalls?: number }).__fictMissingResumeHandlerCalls,
+    ).toBe(0)
     warnSpy.mockRestore()
+    delete (globalThis as { __fictMissingResumeHandlerCalls?: number })
+      .__fictMissingResumeHandlerCalls
   })
 
   it('resolves resume registry keys when hosts use relative asset QRLs', async () => {

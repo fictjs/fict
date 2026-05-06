@@ -865,6 +865,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
             exportName: resumeExport,
             eventType: event.type,
           })
+          return
         }
       }
     }
