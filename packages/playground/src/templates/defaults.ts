@@ -345,7 +345,7 @@ const tsConfig = {
     strict: true,
     noUncheckedIndexedAccess: true,
     skipLibCheck: true,
-    ignoreDeprecations: '6.0',
+    ignoreDeprecations: '5.0',
     types: ['node'],
   },
   include: ['src'],

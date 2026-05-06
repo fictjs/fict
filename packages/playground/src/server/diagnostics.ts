@@ -171,7 +171,7 @@ function withWorkspaceModulePaths(
 ): TypeScriptApi.CompilerOptions {
   return {
     ...options,
-    ignoreDeprecations: options.ignoreDeprecations ?? '6.0',
+    ignoreDeprecations: options.ignoreDeprecations ?? '5.0',
     baseUrl: workspaceRoot,
     paths: {
       ...(options.paths ?? {}),
