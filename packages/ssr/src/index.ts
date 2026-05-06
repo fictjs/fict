@@ -862,7 +862,7 @@ function buildIncrementalSnapshotChunk(
     const jsonLiteral = JSON.stringify(json)
     const setNonce =
       options.scriptNonce !== undefined
-        ? `s.setAttribute('nonce',${JSON.stringify(options.scriptNonce)});`
+        ? `s.setAttribute('nonce',${serializeScriptStringLiteral(options.scriptNonce)});`
         : ''
     return `<script${nonce}>(function(){var s=document.createElement('script');s.type='application/json';s.setAttribute('data-fict-snapshot','');${setNonce}s.textContent=${jsonLiteral};(document.head||document.documentElement).appendChild(s);}())</script>`
   }
@@ -927,6 +927,14 @@ function injectSnapshot(
 
 function serializeSnapshotForScript(state: ReturnType<typeof __fictSerializeSSRState>): string {
   return JSON.stringify(state)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
+}
+
+function serializeScriptStringLiteral(value: string): string {
+  return JSON.stringify(value)
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
     .replace(/\u2028/g, '\\u2028')

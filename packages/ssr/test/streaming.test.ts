@@ -406,6 +406,46 @@ describe('@fictjs/ssr streaming', () => {
     expect(html).toContain('document.head')
   })
 
+  it('escapes script nonce literals in head-target incremental snapshots', async () => {
+    const token = createSuspenseToken()
+    let ready = false
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      return { type: 'span', props: { children: 'HeadNonceDone' } }
+    }
+
+    function App(): FictNode {
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'HeadNonceLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    const stream = renderToStream(() => ({ type: App, props: {} }), {
+      mode: 'shell',
+      fullDocument: true,
+      snapshotTarget: 'head',
+      scriptNonce: '</script><script>globalThis.__fict_nonce_xss=1</script>',
+    })
+
+    const readAll = readReadableStream(stream)
+    await Promise.resolve()
+    ready = true
+    token.resolve()
+
+    const html = await readAll
+    expect(html).toContain('data-fict-snapshot')
+    expect(html).toContain('s.setAttribute')
+    expect(html).toContain('\\u003c/script\\u003e')
+    expect(html).not.toContain(
+      's.setAttribute(\'nonce\',"</script><script>globalThis.__fict_nonce_xss=1</script>");',
+    )
+  })
+
   it('all-ready mode respects snapshotTarget=head for full documents', async () => {
     const token = createSuspenseToken()
     let ready = false
