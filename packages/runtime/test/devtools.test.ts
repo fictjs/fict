@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
-import { batch, createEffect, createMemo, createRoot, render } from '../src/index'
+import {
+  FICT_DEVTOOLS_MIN_PROTOCOL_VERSION,
+  FICT_DEVTOOLS_PROTOCOL_VERSION,
+  batch,
+  createEffect,
+  createMemo,
+  createRoot,
+  isDevtoolsHookCompatible,
+  render,
+} from '../src/index'
 import { createSignal } from '../src/advanced'
 
 describe('devtools hook integration', () => {
@@ -130,6 +139,21 @@ describe('devtools hook integration', () => {
     count(1)
 
     expect(events).toEqual([])
+  })
+
+  it('checks hook compatibility against the current runtime protocol', () => {
+    const hook = {
+      ...(globalThis as any).__FICT_DEVTOOLS_HOOK__,
+      devtools: {
+        protocolVersion: 1,
+        minRuntimeProtocol: FICT_DEVTOOLS_MIN_PROTOCOL_VERSION,
+        maxRuntimeProtocol: FICT_DEVTOOLS_MIN_PROTOCOL_VERSION,
+      },
+    }
+
+    expect(isDevtoolsHookCompatible(hook)).toBe(
+      FICT_DEVTOOLS_MIN_PROTOCOL_VERSION === FICT_DEVTOOLS_PROTOCOL_VERSION,
+    )
   })
 
   it('does not emit devtools computed registration for internal memos', () => {

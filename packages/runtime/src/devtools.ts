@@ -70,7 +70,7 @@ export function isDevtoolsHookCompatible(hook: FictDevtoolsHook): boolean {
 
   return (
     compatibility.minRuntimeProtocol <= FICT_DEVTOOLS_PROTOCOL_VERSION &&
-    compatibility.maxRuntimeProtocol >= FICT_DEVTOOLS_MIN_PROTOCOL_VERSION
+    compatibility.maxRuntimeProtocol >= FICT_DEVTOOLS_PROTOCOL_VERSION
   )
 }
 
