@@ -10,8 +10,8 @@ import {
   onMount,
   onCleanup,
   $state,
-  reactive,
 } from 'fict'
+import { reactive } from 'fict/advanced'
 import { lazy, resource } from 'fict/plus'
 
 // ============================================================================

@@ -26,9 +26,8 @@
 
 /**
  * Note: createSignal is exported from ./advanced as an escape hatch.
- * For most use cases, prefer:
- * - $state: For component-local state (compiler-transformed, safe scoping)
- * - $store: For cross-component shared state with deep reactivity
+ * Application code should usually import from `fict`; compiler macros and the
+ * deep store helper are owned by that package, not by this runtime entrypoint.
  */
 export { createMemo, type Memo } from './memo'
 export { createEffect, type Effect } from './effect'
