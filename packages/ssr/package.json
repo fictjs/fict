@@ -30,6 +30,7 @@
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "test": "vitest run",
     "test:edge": "node test/edge-runtime.smoke.mjs",
+    "test:matrix": "pnpm run test && pnpm run test:edge",
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",

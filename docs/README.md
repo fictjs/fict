@@ -25,6 +25,7 @@ This folder holds documentation for the Fict project.
 - `ssr-seo.md` — SEO best practices for SSR/streaming apps
 - `ssr-performance.md` — SSR performance tuning and snapshot-size optimization
 - `ssr-deployment.md` — Deployment guides for Node, Vercel, Cloudflare Workers, and edge runtimes
+- `ssr-runtime-matrix.md` — Release-gate matrix for SSR runtime, CSP, hydration, resumability, and streaming checks
 
 ## Technical Details
 
