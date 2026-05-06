@@ -345,6 +345,7 @@ const tsConfig = {
     strict: true,
     noUncheckedIndexedAccess: true,
     skipLibCheck: true,
+    ignoreDeprecations: '6.0',
     types: ['node'],
   },
   include: ['src'],
@@ -358,6 +359,7 @@ function withBaseFiles(
   return {
     'index.html': html,
     'tsconfig.json': `${JSON.stringify(tsConfig, null, 2)}\n`,
+    'src/fict-env.d.ts': "declare module '*.css'\n",
     'src/main.tsx': mainContent,
     [entryFile]: appContent,
     'src/styles.css': styles,
