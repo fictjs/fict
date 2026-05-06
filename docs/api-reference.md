@@ -1862,6 +1862,18 @@ Key options:
 
 - `mode: 'shell' | 'all'` — shell-first streaming vs all-ready
 - `snapshotTarget: 'head' | 'body' | 'container'`
+- `scriptNonce` — nonce for generated scripts
+- `streamRuntime: 'inline' | 'external'` — external mode expects `streamRuntimeSrc`
+  to serve the published `@fictjs/ssr/fict-stream-runtime.js` asset
+
+### Stream Runtime Asset
+
+```typescript
+import { createStreamRuntimeCode } from '@fictjs/ssr/stream-runtime'
+```
+
+`@fictjs/ssr/fict-stream-runtime.js` is the packaged classic script asset for
+strict CSP streaming routes.
 
 ### renderToPartial
 

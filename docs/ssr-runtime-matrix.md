@@ -33,7 +33,7 @@ SSR/resume changes must satisfy these gates before being called production-ready
 
 1. CSP:
    - `scriptNonce` is applied to generated executable and JSON script tags.
-   - Strict CSP routes can use `streamRuntime: 'external'` with observer patch mode.
+   - Strict CSP routes can use `streamRuntime: 'external'` with observer patch mode and the published `@fictjs/ssr/fict-stream-runtime.js` asset.
 2. Snapshot compatibility:
    - Unsupported versions fail closed.
    - Explicit `snapshotMigrations` cover any accepted older schema.

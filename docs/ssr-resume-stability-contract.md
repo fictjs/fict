@@ -86,7 +86,7 @@ Operational behavior:
 2. Never serialize secrets/tokens/PII into resumable snapshot state.
 3. Prefer IDs and server fetch on interaction for sensitive or high-volume data.
 4. Treat snapshot as client-visible data by design.
-5. Strict CSP deployments should pass `scriptNonce`, or use `streamRuntime: 'external'` and observer patch mode to avoid per-chunk inline patch scripts.
+5. Strict CSP deployments should pass `scriptNonce`, or use `streamRuntime: 'external'` with observer patch mode and the published `@fictjs/ssr/fict-stream-runtime.js` asset to avoid per-chunk inline patch scripts.
 
 ## Streaming & Hydration Diagnostics
 

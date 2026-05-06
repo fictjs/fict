@@ -6,6 +6,7 @@ import { __fictUseContext, __fictUseSignal } from '@fictjs/runtime/internal'
 
 import { renderToPartial, renderToPipeableStream, renderToStream } from '../src/index'
 import { createQueuedTextStream } from '../src/stream-bridge'
+import { FICT_STREAM_RUNTIME_CODE, createStreamRuntimeCode } from '../src/stream-runtime'
 
 const decoder = new TextDecoder()
 
@@ -208,6 +209,16 @@ describe('@fictjs/ssr streaming', () => {
     )
     expect(html).toContain('ExternalDone')
     expect(html).not.toContain('__FICT_STREAM.apply("s1")')
+  })
+
+  it('exposes classic stream runtime code for external assets', () => {
+    const code = createStreamRuntimeCode({ observerMode: true })
+
+    expect(code).toBe(FICT_STREAM_RUNTIME_CODE)
+    expect(code).toContain('(function(){')
+    expect(code).toContain('MutationObserver')
+    expect(code).toContain('window.__FICT_STREAM')
+    expect(code).not.toContain('export ')
   })
 
   it('pipeable stream emits shell and completes on resolve', async () => {

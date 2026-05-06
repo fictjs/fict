@@ -15,6 +15,7 @@ import { parseHTML } from 'linkedom'
 
 import { installGlobals, installManifest } from './globals'
 import { createPipeBridge, createQueuedTextStream, type StreamWriter } from './stream-bridge'
+import { createStreamRuntimeCode } from './stream-runtime'
 
 const DEFAULT_HTML = '<!doctype html><html><head></head><body></body></html>'
 
@@ -816,43 +817,9 @@ function buildStreamRuntimeScript(options: RenderToStreamOptions): string {
     return `<script${nonce} src="${escapeAttribute(options.streamRuntimeSrc)}" data-fict-stream-runtime data-fict-stream-observer></script>`
   }
 
-  return `<script${nonce}>${buildStreamRuntimeCode(resolveStreamPatchMode(options) === 'observer')}</script>`
-}
-
-function buildStreamRuntimeCode(observerMode: boolean): string {
-  return (
-    '(function(){' +
-    'if(window.__FICT_STREAM)return;' +
-    'var cache=new Map();' +
-    'function find(id){' +
-    'var hit=cache.get(id);if(hit)return hit;' +
-    'var start=null,end=null;' +
-    'var w=document.createTreeWalker(document,NodeFilter.SHOW_COMMENT);' +
-    'while(w.nextNode()){' +
-    'var n=w.currentNode;var d=n.data;' +
-    'if(d==="fict:suspense-start:"+id)start=n;' +
-    'else if(d==="fict:suspense-end:"+id)end=n;' +
-    'if(start&&end)break;' +
-    '}' +
-    'if(start&&end){hit={start:start,end:end};cache.set(id,hit);}return hit;' +
-    '}' +
-    'function apply(id){' +
-    "var tpl=document.querySelector('template[data-fict-suspense=\"' + id + '\"]');" +
-    'if(!tpl)return;' +
-    'var b=find(id);if(!b)return;' +
-    'var node=b.start.nextSibling;' +
-    'while(node&&node!==b.end){var next=node.nextSibling;node.parentNode&&node.parentNode.removeChild(node);node=next;}' +
-    'b.end.parentNode&&b.end.parentNode.insertBefore(tpl.content,b.end);' +
-    'tpl.parentNode&&tpl.parentNode.removeChild(tpl);' +
-    '}' +
-    'window.__FICT_STREAM={apply:apply};' +
-    (observerMode
-      ? 'function scan(root){var list=(root&&root.querySelectorAll?root:document).querySelectorAll("template[data-fict-suspense]");for(var i=0;i<list.length;i++){apply(list[i].getAttribute("data-fict-suspense"));}}' +
-        'if(typeof MutationObserver==="function"){new MutationObserver(function(muts){for(var i=0;i<muts.length;i++){for(var j=0;j<muts[i].addedNodes.length;j++){var n=muts[i].addedNodes[j];if(n.nodeType===1){if(n.matches&&n.matches("template[data-fict-suspense]"))apply(n.getAttribute("data-fict-suspense"));scan(n);}}}}).observe(document.documentElement||document,{childList:true,subtree:true});}' +
-        'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",function(){scan(document);},{once:true});}else{scan(document);}'
-      : '') +
-    '})();'
-  )
+  return `<script${nonce}>${createStreamRuntimeCode({
+    observerMode: resolveStreamPatchMode(options) === 'observer',
+  })}</script>`
 }
 
 function buildPatchChunk(id: string, html: string, options: RenderToStreamOptions): string {

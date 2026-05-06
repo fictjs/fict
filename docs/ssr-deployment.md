@@ -94,5 +94,5 @@ Use this when you want static shell caching plus dynamic boundary resolution.
 - Manifest loading strategy matches runtime constraints.
 - SSR error logging wired (`onError`, promise catches).
 - Snapshot inclusion reviewed (`includeSnapshot` true/false by route needs).
-- CSP strategy chosen: `scriptNonce` for generated scripts, or `streamRuntime: 'external'` with observer patch mode.
+- CSP strategy chosen: `scriptNonce` for generated scripts, or `streamRuntime: 'external'` with observer patch mode and the published `@fictjs/ssr/fict-stream-runtime.js` asset served from `streamRuntimeSrc`.
 - Runtime matrix checked with `pnpm test:ssr-matrix`; manual Bun/Deno/host smoke results recorded when they apply.

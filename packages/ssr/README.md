@@ -287,6 +287,25 @@ import { renderToStream } from '@fictjs/ssr'
 const stream = renderToStream(() => <App />, { mode: 'shell' })
 ```
 
+#### Strict CSP Streaming Runtime
+
+For routes that disallow inline patch scripts, serve the packaged classic script
+asset and enable observer patch mode:
+
+```typescript
+import { renderToStream } from '@fictjs/ssr'
+
+const stream = renderToStream(() => <App />, {
+  mode: 'shell',
+  streamRuntime: 'external',
+  streamRuntimeSrc: '/assets/fict-stream-runtime.js',
+})
+```
+
+The asset is published as `@fictjs/ssr/fict-stream-runtime.js`. Build tools that
+need to materialize it themselves can import `createStreamRuntimeCode` from
+`@fictjs/ssr/stream-runtime`.
+
 ### renderToPipeableStream
 
 Node.js-style stream variant (compatible with `pipe()`).
