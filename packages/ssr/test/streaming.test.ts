@@ -296,6 +296,35 @@ describe('@fictjs/ssr streaming', () => {
     expect(html).toContain('LatePipeDone')
   })
 
+  it('resolves pipeable shellReady for large shells before pipe()', async () => {
+    const largeText = 'x'.repeat(1024 * 1024)
+    const { pipe, shellReady, allReady } = renderToPipeableStream(
+      () => ({ type: 'div', props: { children: largeText } }),
+      {
+        mode: 'shell',
+      },
+    )
+
+    const shellState = await Promise.race([
+      shellReady.then(() => 'ready'),
+      new Promise(resolve => setTimeout(() => resolve('timeout'), 200)),
+    ])
+    expect(shellState).toBe('ready')
+
+    const chunks: Buffer[] = []
+    const { PassThrough } = await import('node:stream')
+    const writable = new PassThrough()
+    const ended = new Promise<void>(resolve => writable.on('end', resolve))
+    writable.on('data', chunk => chunks.push(chunk as Buffer))
+
+    pipe(writable)
+    await allReady
+    await ended
+
+    const html = Buffer.concat(chunks).toString('utf8')
+    expect(html).toContain(largeText.slice(0, 128))
+  })
+
   it('all-ready mode emits single HTML with snapshot', async () => {
     const token = createSuspenseToken()
     let ready = false

@@ -205,35 +205,86 @@ function createNodePipeBridge(): PipeBridge | null {
     }
     if (!streamModule.PassThrough) return null
     const passThrough = new streamModule.PassThrough()
+    const buffer: string[] = []
+    let piped = false
+    let state: 'open' | 'closed' | 'aborted' = 'open'
+    let abortReason: Error | null = null
+
+    const writeToPassThrough = (chunk: string): void | Promise<void> => {
+      if (passThrough.write(chunk) === false) {
+        return new Promise<void>(resolve => {
+          const withOnce = passThrough as NodePassThroughLike & {
+            once?: (event: 'drain', listener: () => void) => unknown
+          }
+          if (typeof withOnce.once === 'function') {
+            withOnce.once('drain', resolve)
+          } else {
+            resolve()
+          }
+        })
+      }
+      return undefined
+    }
+
+    const flushBuffer = (): void | Promise<void> => {
+      if (buffer.length === 0) return undefined
+      const pending: Promise<void>[] = []
+      for (const chunk of buffer) {
+        const result = writeToPassThrough(chunk)
+        if (result) pending.push(result)
+      }
+      buffer.length = 0
+      return pending.length > 0 ? Promise.all(pending).then(() => undefined) : undefined
+    }
+
+    const destroyPassThrough = (error: Error) => {
+      if (typeof passThrough.destroy === 'function') {
+        passThrough.destroy(error)
+      } else {
+        passThrough.end()
+      }
+    }
 
     return {
       pipe(writable) {
+        piped = true
         passThrough.pipe(writable)
+
+        if (state === 'aborted') {
+          destroyPassThrough(abortReason ?? new Error('Stream aborted'))
+          return
+        }
+
+        const flushed = flushBuffer()
+        if (state === 'closed') {
+          if (flushed) {
+            void flushed.then(() => passThrough.end())
+          } else {
+            passThrough.end()
+          }
+        }
       },
       write(chunk) {
-        if (passThrough.write(chunk) === false) {
-          return new Promise<void>(resolve => {
-            const withOnce = passThrough as NodePassThroughLike & {
-              once?: (event: 'drain', listener: () => void) => unknown
-            }
-            if (typeof withOnce.once === 'function') {
-              withOnce.once('drain', resolve)
-            } else {
-              resolve()
-            }
-          })
+        if (state !== 'open') return
+        if (!piped) {
+          buffer.push(chunk)
+          return undefined
         }
-        return undefined
+        return writeToPassThrough(chunk)
       },
       close() {
+        if (state !== 'open') return
+        state = 'closed'
+        if (!piped) return
         passThrough.end()
       },
       abort(reason?: unknown) {
-        const error = reason instanceof Error ? reason : new Error('Stream aborted')
-        if (typeof passThrough.destroy === 'function') {
-          passThrough.destroy(error)
-        } else {
-          passThrough.end()
+        if (state !== 'open') return
+        state = 'aborted'
+        abortReason = reason instanceof Error ? reason : new Error('Stream aborted')
+        buffer.length = 0
+        if (piped) {
+          destroyPassThrough(abortReason)
         }
       },
     }
