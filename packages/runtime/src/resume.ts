@@ -1,5 +1,11 @@
 import type { HookContext } from './hooks'
 import { createSignal, isSignal } from './signal'
+import {
+  __fictCreateSSRSession,
+  __fictGetCurrentSSRSession,
+  __fictResetSSRSession,
+  type FictSSRSession,
+} from './ssr-session'
 import { __fictGetCurrentSSRBoundary } from './ssr-stream'
 import { createStore, isStoreProxy, unwrapStore } from './store'
 
@@ -52,34 +58,49 @@ export interface ScopeRecord {
   props?: Record<string, unknown>
 }
 
-let ssrEnabled = false
 let resumableEnabled = false
 let hydrating = false
-let scopeCounter = 0
-let scopeRegistry = new Map<string, ScopeRecord>()
-let boundaryScopes = new Map<string, Set<string>>()
-let snapshotState: SSRState | null = null
+const defaultSSRSession = __fictCreateSSRSession()
 const resumedScopes = new Map<
   string,
   { ctx: HookContext; host: Element; props?: Record<string, unknown> }
 >()
 
-function resetSSRTrackingState(): void {
-  scopeCounter = 0
-  scopeRegistry = new Map()
-  boundaryScopes = new Map()
+function getSSRSession(): FictSSRSession {
+  return __fictGetCurrentSSRSession() ?? defaultSSRSession
+}
+
+function getScopeRegistry(): Map<string, ScopeRecord> {
+  return getSSRSession().scopeRegistry as Map<string, ScopeRecord>
+}
+
+function getBoundaryScopes(): Map<string, Set<string>> {
+  return getSSRSession().boundaryScopes
+}
+
+function getSnapshotState(): SSRState | null {
+  return getSSRSession().snapshotState as SSRState | null
+}
+
+function setSnapshotState(state: SSRState | null): void {
+  getSSRSession().snapshotState = state
+}
+
+function resetSSRTrackingState(session = getSSRSession()): void {
+  __fictResetSSRSession(session)
   resumedScopes.clear()
-  snapshotState = null
 }
 
 export function __fictEnableSSR(): void {
-  ssrEnabled = true
-  resetSSRTrackingState()
+  const session = getSSRSession()
+  resetSSRTrackingState(session)
+  session.ssrEnabled = true
 }
 
 export function __fictDisableSSR(): void {
-  ssrEnabled = false
-  resetSSRTrackingState()
+  const session = getSSRSession()
+  session.ssrEnabled = false
+  resetSSRTrackingState(session)
 }
 
 export function __fictEnableResumable(): void {
@@ -92,11 +113,11 @@ export function __fictDisableResumable(): void {
 }
 
 export function __fictIsResumable(): boolean {
-  return ssrEnabled || resumableEnabled
+  return getSSRSession().ssrEnabled || resumableEnabled
 }
 
 export function __fictIsSSR(): boolean {
-  return ssrEnabled
+  return getSSRSession().ssrEnabled
 }
 
 export function __fictEnterHydration(): void {
@@ -119,7 +140,10 @@ export function __fictRegisterScope(
 ): string {
   if (!__fictIsResumable()) return ''
 
-  const id = `s${++scopeCounter}`
+  const session = getSSRSession()
+  const scopeRegistry = getScopeRegistry()
+  const boundaryScopes = getBoundaryScopes()
+  const id = `s${++session.scopeCounter}`
   ctx.scopeId = id
   if (type !== undefined) {
     ctx.scopeType = type
@@ -151,11 +175,11 @@ export function __fictRegisterScope(
 }
 
 export function __fictGetScopeRegistry(): Map<string, ScopeRecord> {
-  return scopeRegistry
+  return getScopeRegistry()
 }
 
 export function __fictGetScopesForBoundary(boundaryId: string): string[] {
-  const scopes = boundaryScopes.get(boundaryId)
+  const scopes = getBoundaryScopes().get(boundaryId)
   if (!scopes) return []
   return Array.from(scopes)
 }
@@ -163,7 +187,7 @@ export function __fictGetScopesForBoundary(boundaryId: string): string[] {
 export function __fictSerializeSSRState(): SSRState {
   const scopes: Record<string, ScopeSnapshot> = {}
 
-  for (const [id, record] of scopeRegistry.entries()) {
+  for (const [id, record] of getScopeRegistry().entries()) {
     const snapshot: ScopeSnapshot = {
       id,
       slots: serializeSlots(record.ctx),
@@ -187,7 +211,7 @@ export function __fictSerializeSSRStateForScopes(scopeIds: Iterable<string>): SS
   const scopes: Record<string, ScopeSnapshot> = {}
 
   for (const id of scopeIds) {
-    const record = scopeRegistry.get(id)
+    const record = getScopeRegistry().get(id)
     if (!record) continue
     const snapshot: ScopeSnapshot = {
       id,
@@ -209,7 +233,7 @@ export function __fictSerializeSSRStateForScopes(scopeIds: Iterable<string>): SS
 }
 
 export function __fictSetSSRState(state: SSRState | null): void {
-  snapshotState = state
+  setSnapshotState(state)
   if (!state) {
     resumedScopes.clear()
   }
@@ -217,15 +241,16 @@ export function __fictSetSSRState(state: SSRState | null): void {
 
 export function __fictMergeSSRState(state: SSRState | null): void {
   if (!state) return
+  const snapshotState = getSnapshotState()
   if (!snapshotState) {
-    snapshotState = { v: state.v, scopes: { ...state.scopes } }
+    setSnapshotState({ v: state.v, scopes: { ...state.scopes } })
     return
   }
   Object.assign(snapshotState.scopes, state.scopes)
 }
 
 export function __fictGetSSRScope(id: string): ScopeSnapshot | undefined {
-  return snapshotState?.scopes[id]
+  return getSnapshotState()?.scopes[id]
 }
 
 export function __fictEnsureScope(

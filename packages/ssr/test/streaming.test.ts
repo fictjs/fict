@@ -474,6 +474,70 @@ describe('@fictjs/ssr streaming', () => {
     expect(html.indexOf('SecondDone')).toBeLessThan(html.indexOf('FirstDone'))
   })
 
+  it('isolates resumable state across concurrent streams', async () => {
+    const first = createSuspenseToken()
+    const second = createSuspenseToken()
+    let firstReady = false
+    let secondReady = false
+
+    function Counter(props: { label: string }): FictNode {
+      const ctx = __fictUseContext()
+      const label = __fictUseSignal(ctx, props.label, { name: 'label' })
+      return { type: 'span', props: { children: `resolved:${String(label())}` } }
+    }
+
+    ;(Counter as any).__fictMeta = { id: 'Counter@concurrent', resume: 'counter#resume' }
+
+    function FirstChild(): FictNode {
+      if (!firstReady) throw first.token
+      return { type: Counter, props: { label: 'first-stream' } }
+    }
+
+    function SecondChild(): FictNode {
+      if (!secondReady) throw second.token
+      return { type: Counter, props: { label: 'second-stream' } }
+    }
+
+    function App(props: { child: () => FictNode }): FictNode {
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'ConcurrentLoading' } },
+          children: { type: props.child, props: {} },
+        },
+      }
+    }
+
+    const firstStream = renderToStream(() => ({ type: App, props: { child: FirstChild } }), {
+      mode: 'shell',
+    })
+    const firstRead = readReadableStream(firstStream)
+
+    const secondStream = renderToStream(() => ({ type: App, props: { child: SecondChild } }), {
+      mode: 'shell',
+    })
+    const secondRead = readReadableStream(secondStream)
+
+    await Promise.resolve()
+    secondReady = true
+    second.resolve()
+    const secondHtml = await secondRead
+
+    firstReady = true
+    first.resolve()
+    const firstHtml = await firstRead
+
+    expect(secondHtml).toContain('resolved:second-stream')
+    expect(secondHtml).toContain('data-fict-s=')
+    expect(secondHtml).toContain('second-stream')
+    expect(secondHtml).not.toContain('first-stream')
+
+    expect(firstHtml).toContain('resolved:first-stream')
+    expect(firstHtml).toContain('data-fict-s=')
+    expect(firstHtml).toContain('first-stream')
+    expect(firstHtml).not.toContain('second-stream')
+  })
+
   it('renderToPartial returns full shell and patch stream separately', async () => {
     const token = createSuspenseToken()
     let ready = false

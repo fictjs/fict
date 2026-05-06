@@ -14,6 +14,7 @@ import {
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import { createSignal } from './signal'
+import { __fictGetCurrentSSRSession, __fictRunWithSSRSession } from './ssr-session'
 import { __fictGetSSRStreamHooks, __fictPopSSRBoundary, __fictPushSSRBoundary } from './ssr-stream'
 import type { BaseProps, FictNode, SuspenseToken } from './types'
 
@@ -53,6 +54,7 @@ const isThenable = (value: unknown): value is PromiseLike<unknown> =>
 
 export function Suspense(props: SuspenseProps): FictNode {
   const streamHooks = __fictGetSSRStreamHooks()
+  const ssrSession = __fictGetCurrentSSRSession()
   const pending = createSignal(0)
   let resolvedOnce = false
   let epoch = 0
@@ -63,6 +65,9 @@ export function Suspense(props: SuspenseProps): FictNode {
     typeof props.fallback === 'function'
       ? (props.fallback as (e?: unknown) => FictNode)(err)
       : props.fallback
+
+  const runInCapturedSSRSession = <T>(fn: () => T): T =>
+    ssrSession ? __fictRunWithSSRSession(ssrSession, fn) : fn()
 
   const renderView = (view: FictNode | null) => {
     if (cleanup) {
@@ -171,58 +176,62 @@ export function Suspense(props: SuspenseProps): FictNode {
     if (thenable) {
       thenable.then(
         () => {
-          // This prevents stale token resolutions from affecting state after
-          // a reset. The order is important: check epoch first, then update state.
-          if (epoch !== tokenEpoch) {
-            // Token is stale (from before a reset), ignore it completely
-            return
-          }
-          // Use Math.max as a defensive measure - pending should never go below 0,
-          // but this protects against edge cases where a token might resolve twice
-          // or after the component has been reset.
-          const newPending = Math.max(0, pending() - 1)
-          pending(newPending)
-          if (newPending === 0) {
-            // Directly render children instead of using switchView
-            renderView(props.children ?? null)
-            if (streamPending && streamBoundaryId && streamHooks?.boundaryResolved) {
+          runInCapturedSSRSession(() => {
+            // This prevents stale token resolutions from affecting state after
+            // a reset. The order is important: check epoch first, then update state.
+            if (epoch !== tokenEpoch) {
+              // Token is stale (from before a reset), ignore it completely
+              return
+            }
+            // Use Math.max as a defensive measure - pending should never go below 0,
+            // but this protects against edge cases where a token might resolve twice
+            // or after the component has been reset.
+            const newPending = Math.max(0, pending() - 1)
+            pending(newPending)
+            if (newPending === 0) {
+              // Directly render children instead of using switchView
+              renderView(props.children ?? null)
+              if (streamPending && streamBoundaryId && streamHooks?.boundaryResolved) {
+                streamPending = false
+                streamHooks.boundaryResolved(streamBoundaryId)
+              }
+              onResolveMaybe()
+            }
+          })
+        },
+        err => {
+          runInCapturedSSRSession(() => {
+            // Same epoch check - ignore stale tokens
+            if (epoch !== tokenEpoch) {
+              return
+            }
+            const newPending = Math.max(0, pending() - 1)
+            pending(newPending)
+            let rejectionError = err
+            try {
+              props.onReject?.(err)
+            } catch (callbackError) {
+              rejectionError = callbackError
+            }
+
+            const handled = handleError(rejectionError, { source: 'render' }, hostRoot)
+            if (!handled) {
+              if (streamHooks?.onError) {
+                streamHooks.onError(rejectionError, streamBoundaryId ?? undefined)
+                return
+              }
+              throw rejectionError
+            }
+            if (
+              newPending === 0 &&
+              streamPending &&
+              streamBoundaryId &&
+              streamHooks?.boundaryResolved
+            ) {
               streamPending = false
               streamHooks.boundaryResolved(streamBoundaryId)
             }
-            onResolveMaybe()
-          }
-        },
-        err => {
-          // Same epoch check - ignore stale tokens
-          if (epoch !== tokenEpoch) {
-            return
-          }
-          const newPending = Math.max(0, pending() - 1)
-          pending(newPending)
-          let rejectionError = err
-          try {
-            props.onReject?.(err)
-          } catch (callbackError) {
-            rejectionError = callbackError
-          }
-
-          const handled = handleError(rejectionError, { source: 'render' }, hostRoot)
-          if (!handled) {
-            if (streamHooks?.onError) {
-              streamHooks.onError(rejectionError, streamBoundaryId ?? undefined)
-              return
-            }
-            throw rejectionError
-          }
-          if (
-            newPending === 0 &&
-            streamPending &&
-            streamBoundaryId &&
-            streamHooks?.boundaryResolved
-          ) {
-            streamPending = false
-            streamHooks.boundaryResolved(streamBoundaryId)
-          }
+          })
         },
       )
       return true

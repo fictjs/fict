@@ -3,8 +3,10 @@ import type { FictNode } from '@fictjs/runtime'
 import {
   __fictDisableSSR,
   __fictEnableSSR,
+  __fictCreateSSRSession,
   __fictGetScopeRegistry,
   __fictGetScopesForBoundary,
+  __fictRunWithSSRSession,
   __fictSerializeSSRState,
   __fictSerializeSSRStateForScopes,
   __fictSetSSRStreamHooks,
@@ -182,6 +184,14 @@ export function createSSRDocument(html: string = DEFAULT_HTML): SSRDom {
 export function renderToDocument(
   view: () => FictNode,
   options: RenderToStringOptions = {},
+): RenderToDocumentResult {
+  const session = __fictCreateSSRSession()
+  return __fictRunWithSSRSession(session, () => renderToDocumentInSession(view, options))
+}
+
+function renderToDocumentInSession(
+  view: () => FictNode,
+  options: RenderToStringOptions,
 ): RenderToDocumentResult {
   const includeSnapshot = options.includeSnapshot !== false
 
@@ -393,6 +403,22 @@ function startStreamingRender(
   writer: StreamWriter,
   control: StreamingControlOptions = {},
 ): { shellReady: Promise<void>; allReady: Promise<void>; abort: (reason?: unknown) => void } {
+  const session = __fictCreateSSRSession()
+  return __fictRunWithSSRSession(session, () =>
+    startStreamingRenderInSession(session, view, options, writer, control),
+  )
+}
+
+type SSRSession = ReturnType<typeof __fictCreateSSRSession>
+
+function startStreamingRenderInSession(
+  session: SSRSession,
+  view: () => FictNode,
+  options: RenderToStreamOptions,
+  writer: StreamWriter,
+  control: StreamingControlOptions = {},
+): { shellReady: Promise<void>; allReady: Promise<void>; abort: (reason?: unknown) => void } {
+  const runInSession = <T>(fn: () => T): T => __fictRunWithSSRSession(session, fn)
   const resolvedOptions: RenderToStreamOptions = {
     ...options,
     // Streaming requires a real document; default to fullDocument when unspecified.
@@ -430,35 +456,43 @@ function startStreamingRender(
   let pendingCount = 0
 
   const writeSnapshotForScopes = (scopeIds: string[]): void => {
-    if (!includeSnapshot || scopeIds.length === 0) return
-    const registry = __fictGetScopeRegistry()
-    const pending = scopeIds.filter(id => registry.has(id) && !sentScopes.has(id))
-    if (pending.length === 0) return
-    const snapshot = __fictSerializeSSRStateForScopes(pending)
-    const ids = Object.keys(snapshot.scopes)
-    if (ids.length === 0) return
-    const chunk = buildIncrementalSnapshotChunk(snapshot, resolvedOptions)
-    if (chunk) {
-      writer.write(chunk)
-    }
-    for (const id of ids) {
-      sentScopes.add(id)
-    }
+    runInSession(() => {
+      if (!includeSnapshot || scopeIds.length === 0) return
+      const registry = __fictGetScopeRegistry()
+      const pending = scopeIds.filter(id => registry.has(id) && !sentScopes.has(id))
+      if (pending.length === 0) return
+      const snapshot = __fictSerializeSSRStateForScopes(pending)
+      const ids = Object.keys(snapshot.scopes)
+      if (ids.length === 0) return
+      const chunk = buildIncrementalSnapshotChunk(snapshot, resolvedOptions)
+      if (chunk) {
+        writer.write(chunk)
+      }
+      for (const id of ids) {
+        sentScopes.add(id)
+      }
+    })
   }
 
   const writeSnapshotForBoundary = (boundary: string): void => {
-    const scopes = __fictGetScopesForBoundary(boundary)
-    writeSnapshotForScopes(scopes)
+    runInSession(() => {
+      const scopes = __fictGetScopesForBoundary(boundary)
+      writeSnapshotForScopes(scopes)
+    })
   }
 
   const writeRemainingSnapshots = (): void => {
-    const scopes = Array.from(__fictGetScopeRegistry().keys())
-    writeSnapshotForScopes(scopes)
+    runInSession(() => {
+      const scopes = Array.from(__fictGetScopeRegistry().keys())
+      writeSnapshotForScopes(scopes)
+    })
   }
 
   const cleanup = () => {
-    __fictSetSSRStreamHooks(null)
-    __fictDisableSSR()
+    runInSession(() => {
+      __fictSetSSRStreamHooks(null)
+      __fictDisableSSR()
+    })
     restoreGlobals()
     restoreManifest()
     try {

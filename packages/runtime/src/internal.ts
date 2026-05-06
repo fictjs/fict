@@ -66,6 +66,11 @@ export {
   serializeValue,
   deserializeValue,
 } from './resume'
+export {
+  __fictCreateSSRSession,
+  __fictRunWithSSRSession,
+  __fictGetCurrentSSRSession,
+} from './ssr-session'
 export { __fictGetSSRStreamHooks, __fictSetSSRStreamHooks } from './ssr-stream'
 
 // ============================================================================
