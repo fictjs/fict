@@ -93,6 +93,10 @@ export interface RenderToStringOptions {
    * Defaults to 'container'.
    */
   snapshotTarget?: 'container' | 'body' | 'head'
+  /**
+   * Nonce applied to generated <script> tags for CSP compatibility.
+   */
+  scriptNonce?: string
 }
 
 export interface RenderToStreamOptions extends RenderToStringOptions {
@@ -118,6 +122,20 @@ export interface RenderToStreamOptions extends RenderToStringOptions {
    * Abort signal to cancel the stream.
    */
   signal?: AbortSignal
+  /**
+   * How to load the streaming patch runtime.
+   * Defaults to 'inline'. Use 'external' with streamRuntimeSrc for strict CSP.
+   */
+  streamRuntime?: 'inline' | 'external'
+  /**
+   * External streaming patch runtime URL when streamRuntime is 'external'.
+   */
+  streamRuntimeSrc?: string
+  /**
+   * How resolved Suspense patch chunks are applied.
+   * Defaults to 'inline' for inline runtimes and 'observer' for external runtimes.
+   */
+  streamPatchMode?: 'inline' | 'observer'
 }
 
 export interface PipeableStream {
@@ -375,7 +393,7 @@ function startStreamingRender(
   writer: StreamWriter,
   control: StreamingControlOptions = {},
 ): { shellReady: Promise<void>; allReady: Promise<void>; abort: (reason?: unknown) => void } {
-  const resolvedOptions: RenderToStringOptions = {
+  const resolvedOptions: RenderToStreamOptions = {
     ...options,
     // Streaming requires a real document; default to fullDocument when unspecified.
     fullDocument: options.fullDocument ?? true,
@@ -511,7 +529,7 @@ function startStreamingRender(
         writeSnapshotForBoundary(id)
         if (dom) {
           const html = serializeBetween(dom.document, entry.start, entry.end)
-          writer.write(buildPatchChunk(id, html))
+          writer.write(buildPatchChunk(id, html, resolvedOptions))
         }
       }
       maybeFinalize()
@@ -559,7 +577,7 @@ function startStreamingRender(
 
     // shell-first mode
     const shellHtml = serializeOutput(dom.document, container, resolvedOptions)
-    const streamRuntime = boundaryMap.size > 0 ? buildStreamRuntimeScript() : ''
+    const streamRuntime = boundaryMap.size > 0 ? buildStreamRuntimeScript(resolvedOptions) : ''
     if (resolvedOptions.fullDocument) {
       const split = splitDocumentHtml(shellHtml)
       if (!split) {
@@ -624,9 +642,21 @@ function resolveContainer(document: Document, options: RenderToStringOptions): H
   return container
 }
 
-function buildStreamRuntimeScript(): string {
+function buildStreamRuntimeScript(options: RenderToStreamOptions): string {
+  const nonce = renderNonceAttribute(options)
+  if (options.streamRuntime === 'external') {
+    if (!options.streamRuntimeSrc) {
+      throw new Error('[fict/ssr] streamRuntimeSrc is required when streamRuntime is "external".')
+    }
+    return `<script${nonce} src="${escapeAttribute(options.streamRuntimeSrc)}" data-fict-stream-runtime data-fict-stream-observer></script>`
+  }
+
+  return `<script${nonce}>${buildStreamRuntimeCode(resolveStreamPatchMode(options) === 'observer')}</script>`
+}
+
+function buildStreamRuntimeCode(observerMode: boolean): string {
   return (
-    '<script>(function(){' +
+    '(function(){' +
     'if(window.__FICT_STREAM)return;' +
     'var cache=new Map();' +
     'function find(id){' +
@@ -651,16 +681,26 @@ function buildStreamRuntimeScript(): string {
     'tpl.parentNode&&tpl.parentNode.removeChild(tpl);' +
     '}' +
     'window.__FICT_STREAM={apply:apply};' +
-    '})();</script>'
+    (observerMode
+      ? 'function scan(root){var list=(root&&root.querySelectorAll?root:document).querySelectorAll("template[data-fict-suspense]");for(var i=0;i<list.length;i++){apply(list[i].getAttribute("data-fict-suspense"));}}' +
+        'if(typeof MutationObserver==="function"){new MutationObserver(function(muts){for(var i=0;i<muts.length;i++){for(var j=0;j<muts[i].addedNodes.length;j++){var n=muts[i].addedNodes[j];if(n.nodeType===1){if(n.matches&&n.matches("template[data-fict-suspense]"))apply(n.getAttribute("data-fict-suspense"));scan(n);}}}}).observe(document.documentElement||document,{childList:true,subtree:true});}' +
+        'if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",function(){scan(document);},{once:true});}else{scan(document);}'
+      : '') +
+    '})();'
   )
 }
 
-function buildPatchChunk(id: string, html: string): string {
-  return (
-    `<template data-fict-suspense="${id}">` +
-    html +
-    `</template><script>__FICT_STREAM.apply("${id}")</script>`
-  )
+function buildPatchChunk(id: string, html: string, options: RenderToStreamOptions): string {
+  const template = `<template data-fict-suspense="${escapeAttribute(id)}">${html}</template>`
+  if (resolveStreamPatchMode(options) === 'observer') {
+    return template
+  }
+  return `${template}<script${renderNonceAttribute(options)}>__FICT_STREAM.apply("${escapeScriptString(id)}")</script>`
+}
+
+function resolveStreamPatchMode(options: RenderToStreamOptions): 'inline' | 'observer' {
+  if (options.streamPatchMode) return options.streamPatchMode
+  return options.streamRuntime === 'external' ? 'observer' : 'inline'
 }
 
 function serializeBetween(document: Document, start: Comment, end: Comment): string {
@@ -685,11 +725,16 @@ function buildIncrementalSnapshotChunk(
   options: RenderToStringOptions,
 ): string {
   const json = serializeSnapshotForScript(state)
+  const nonce = renderNonceAttribute(options)
   if (options.snapshotTarget === 'head') {
     const jsonLiteral = JSON.stringify(json)
-    return `<script>(function(){var s=document.createElement('script');s.type='application/json';s.setAttribute('data-fict-snapshot','');s.textContent=${jsonLiteral};(document.head||document.documentElement).appendChild(s);}())</script>`
+    const setNonce =
+      options.scriptNonce !== undefined
+        ? `s.setAttribute('nonce',${JSON.stringify(options.scriptNonce)});`
+        : ''
+    return `<script${nonce}>(function(){var s=document.createElement('script');s.type='application/json';s.setAttribute('data-fict-snapshot','');${setNonce}s.textContent=${jsonLiteral};(document.head||document.documentElement).appendChild(s);}())</script>`
   }
-  return `<script type="application/json" data-fict-snapshot>${json}</script>`
+  return `<script${nonce} type="application/json" data-fict-snapshot>${json}</script>`
 }
 
 function serializeOutput(
@@ -719,6 +764,9 @@ function injectSnapshot(
   const script = document.createElement('script')
   script.type = 'application/json'
   script.id = options.snapshotScriptId ?? '__FICT_SNAPSHOT__'
+  if (options.scriptNonce !== undefined) {
+    script.setAttribute('nonce', options.scriptNonce)
+  }
   script.textContent = serializeSnapshotForScript(state)
 
   if (options.fullDocument) {
@@ -749,6 +797,27 @@ function serializeSnapshotForScript(state: ReturnType<typeof __fictSerializeSSRS
   return JSON.stringify(state)
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')
+}
+
+function renderNonceAttribute(options: RenderToStringOptions): string {
+  return options.scriptNonce === undefined ? '' : ` nonce="${escapeAttribute(options.scriptNonce)}"`
+}
+
+function escapeAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function escapeScriptString(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/</g, '\\u003c')
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029')
 }

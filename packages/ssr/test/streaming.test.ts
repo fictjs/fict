@@ -80,6 +80,114 @@ describe('@fictjs/ssr streaming', () => {
     expect(html).toContain('Done')
   })
 
+  it('applies CSP nonces to generated streaming scripts', async () => {
+    const token = createSuspenseToken()
+    let ready = false
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      return { type: 'span', props: { children: 'NonceDone' } }
+    }
+
+    function App(): FictNode {
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'NonceLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    const stream = renderToStream(() => ({ type: App, props: {} }), {
+      mode: 'shell',
+      scriptNonce: 'nonce-&-"',
+    })
+    const readAll = readReadableStream(stream)
+    await Promise.resolve()
+    ready = true
+    token.resolve()
+
+    const html = await readAll
+    expect(html).toContain('nonce="nonce-&amp;-&quot;"')
+    expect(html).toContain('<script nonce="nonce-&amp;-&quot;">(function(){')
+    expect(html).toContain('<script nonce="nonce-&amp;-&quot;">__FICT_STREAM.apply("s1")</script>')
+    expect(html).toContain('<script nonce="nonce-&amp;-&quot;" type="application/json"')
+  })
+
+  it('can stream observer patches without inline patch scripts', async () => {
+    const token = createSuspenseToken()
+    let ready = false
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      return { type: 'span', props: { children: 'ObserverDone' } }
+    }
+
+    function App(): FictNode {
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'ObserverLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    const stream = renderToStream(() => ({ type: App, props: {} }), {
+      mode: 'shell',
+      streamPatchMode: 'observer',
+    })
+    const readAll = readReadableStream(stream)
+    await Promise.resolve()
+    ready = true
+    token.resolve()
+
+    const html = await readAll
+    expect(html).toContain('MutationObserver')
+    expect(html).toContain('data-fict-suspense="s1"')
+    expect(html).toContain('ObserverDone')
+    expect(html).not.toContain('__FICT_STREAM.apply("s1")')
+  })
+
+  it('can reference an external stream runtime for strict CSP', async () => {
+    const token = createSuspenseToken()
+    let ready = false
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      return { type: 'span', props: { children: 'ExternalDone' } }
+    }
+
+    function App(): FictNode {
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'ExternalLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    const stream = renderToStream(() => ({ type: App, props: {} }), {
+      mode: 'shell',
+      streamRuntime: 'external',
+      streamRuntimeSrc: '/assets/fict-stream-runtime.js',
+      scriptNonce: 'external-nonce',
+    })
+    const readAll = readReadableStream(stream)
+    await Promise.resolve()
+    ready = true
+    token.resolve()
+
+    const html = await readAll
+    expect(html).toContain(
+      '<script nonce="external-nonce" src="/assets/fict-stream-runtime.js" data-fict-stream-runtime data-fict-stream-observer></script>',
+    )
+    expect(html).toContain('ExternalDone')
+    expect(html).not.toContain('__FICT_STREAM.apply("s1")')
+  })
+
   it('pipeable stream emits shell and completes on resolve', async () => {
     const token = createSuspenseToken()
     let ready = false
