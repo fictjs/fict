@@ -205,19 +205,20 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
   const match = props.matches[props.index]!
   const route = match.route
   const router = useRouter()
+  const hasPreload = typeof route.preload === 'function'
 
   // Create signals for route data
   const dataState = createSignal<RouteDataState>({
     data: undefined,
     error: undefined,
-    loading: !!route.preload,
+    loading: hasPreload,
   })
 
   // Token to prevent stale preload results from overwriting newer ones
   let preloadToken = 0
 
   // Load data if preload is defined
-  if (route.preload) {
+  if (hasPreload) {
     // Trigger preload on initial render and when location changes
     createEffect(() => {
       const location = readAccessor(router.location)
@@ -226,13 +227,15 @@ function RenderMatchesView(props: RenderMatchesProps): FictNode {
         location,
         intent: 'navigate' as const,
       }
+      const preload = route.preload
+      if (typeof preload !== 'function') return
 
       // Increment token to invalidate any pending preloads
       const currentToken = ++preloadToken
 
       dataState({ data: undefined, error: undefined, loading: true })
 
-      Promise.resolve(route.preload!(preloadArgs))
+      Promise.resolve(preload(preloadArgs))
         .then(result => {
           // Only apply result if this preload is still current
           if (currentToken === preloadToken) {

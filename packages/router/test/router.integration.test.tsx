@@ -13,12 +13,12 @@ import {
 
 function LocationText() {
   const location = useLocation()
-  return () => <span data-testid="path">{location().pathname}</span>
+  return <span data-testid="path">{location().pathname}</span>
 }
 
 function NavigateButton({ to }: { to: string }) {
   const navigate = useNavigate()
-  return () => (
+  return (
     <button data-testid={`go-${to}`} onClick={() => navigate(to)}>
       go
     </button>
@@ -33,7 +33,7 @@ function Guarded({
   useBeforeLeave(event => {
     onCall(event.retry, event.preventDefault)
   })
-  return () => <div data-testid="guarded" />
+  return <div data-testid="guarded" />
 }
 
 describe('Router integration (MemoryRouter)', () => {
