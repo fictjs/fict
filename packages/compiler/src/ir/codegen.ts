@@ -35,7 +35,6 @@ import {
   resolveHIRBindingPath,
   type HIRChildBindingOps,
 } from './codegen-hir-bindings'
-import { markCompilerReactiveGetter } from './codegen-reactive-getter'
 import {
   analyzeHookReturnInfo as analyzeHookReturnInfoWithOps,
   deserializeHookReturnInfo,
@@ -62,6 +61,7 @@ import {
   type RegionOverrideMap,
 } from './codegen-overrides'
 import { computeReactiveAccessors } from './codegen-reactive-accessors'
+import { markCompilerReactiveGetter } from './codegen-reactive-getter'
 import {
   getReactiveCallKind,
   getReactiveCallKindFromBabel,

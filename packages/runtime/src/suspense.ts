@@ -1,5 +1,5 @@
-import { createElement } from './dom'
 import { isReactive } from './binding'
+import { createElement } from './dom'
 import { createEffect } from './effect'
 import {
   createRootContext,
