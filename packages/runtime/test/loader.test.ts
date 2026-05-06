@@ -140,6 +140,71 @@ describe('resumable loader snapshot validation', () => {
     expect(issues.some(issue => issue.code === 'snapshot_unsupported_version')).toBe(true)
   })
 
+  it('migrates older snapshot schema versions when a migration is provided', () => {
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: 0,
+        scopeList: [{ id: 'sOld', slots: [[0, 'raw', 'migrated']] }],
+      }),
+    )
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      snapshotMigrations: {
+        0(snapshot, context) {
+          expect(context.fromVersion).toBe(0)
+          expect(context.toVersion).toBe(FICT_SSR_SNAPSHOT_SCHEMA_VERSION)
+          const scopes: Record<string, unknown> = {}
+          for (const scope of snapshot.scopeList as Array<{ id: string }>) {
+            scopes[scope.id] = scope
+          }
+          return {
+            v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+            scopes,
+          }
+        },
+      },
+    })
+
+    const scope = __fictGetSSRScope('sOld')
+    expect(scope).toBeDefined()
+    expect(scope?.slots[0]?.[2]).toBe('migrated')
+  })
+
+  it('reports failed snapshot schema migrations and keeps them fail-closed', () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: 0,
+        scopes: {
+          sBlocked: { id: 'sBlocked', slots: [[0, 'raw', 'blocked']] },
+        },
+      }),
+    )
+
+    installResumableLoader({
+      document: doc,
+      events: [],
+      prefetch: false,
+      snapshotMigrations: {
+        0() {
+          throw new Error('migration boom')
+        },
+      },
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+
+    expect(__fictGetSSRScope('sBlocked')).toBeUndefined()
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'snapshot_migration_failed',
+        actualVersion: 0,
+      }),
+    )
+  })
+
   it('reports parse and shape errors for invalid snapshots', () => {
     const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots('{not-valid-json', ['{"v":1,"scopes":[] }'])

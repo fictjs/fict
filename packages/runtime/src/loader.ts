@@ -179,6 +179,11 @@ export interface ResumableLoaderOptions {
   snapshotScriptId?: string
   events?: string[]
   /**
+   * Explicit snapshot schema migrations keyed by source version.
+   * Missing migrations keep the loader fail-closed for unsupported versions.
+   */
+  snapshotMigrations?: Record<number, SnapshotMigration> | undefined
+  /**
    * Receives structured snapshot/resume issues detected by the loader.
    * Useful for telemetry and fail-safe fallback orchestration.
    */
@@ -191,10 +196,22 @@ export interface ResumableLoaderOptions {
   prefetch?: PrefetchStrategy | false
 }
 
+export type SnapshotMigration = (
+  snapshot: Record<string, unknown>,
+  context: SnapshotMigrationContext,
+) => unknown
+
+export interface SnapshotMigrationContext {
+  fromVersion: number
+  toVersion: number
+  source: string
+}
+
 export type SnapshotIssueCode =
   | 'snapshot_parse_error'
   | 'snapshot_invalid_shape'
   | 'snapshot_unsupported_version'
+  | 'snapshot_migration_failed'
   | 'scope_snapshot_missing'
   | 'resume_import_failed'
   | 'resume_function_missing'
@@ -228,6 +245,7 @@ let eventListenerCleanup: (() => void) | null = null
 let snapshotObserver: MutationObserver | null = null
 const processedSnapshots = new Set<HTMLScriptElement>()
 let snapshotIssueHandler: ((issue: SnapshotIssue) => void) | null = null
+let snapshotMigrations: Record<number, SnapshotMigration> | null = null
 const emittedIssueKeys = new Set<string>()
 
 /**
@@ -275,6 +293,7 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
   const doc = options.document ?? window.document
   const scriptId = options.snapshotScriptId ?? '__FICT_SNAPSHOT__'
   snapshotIssueHandler = options.onSnapshotIssue ?? null
+  snapshotMigrations = options.snapshotMigrations ?? null
 
   // Reset hydrated scopes for fresh loader installation
   hydratedScopes.clear()
@@ -407,6 +426,10 @@ function normalizeSnapshotState(value: unknown, source: string): SSRState | null
   const rawVersion = value.v
   const version = rawVersion === undefined ? FICT_SSR_SNAPSHOT_SCHEMA_VERSION : rawVersion
   if (!Number.isInteger(version) || version !== FICT_SSR_SNAPSHOT_SCHEMA_VERSION) {
+    if (Number.isInteger(version) && typeof version === 'number') {
+      const migrated = migrateSnapshotState(value, version, source)
+      if (migrated !== undefined) return migrated
+    }
     const versionIssue: SnapshotIssue = {
       code: 'snapshot_unsupported_version',
       message: `[fict/loader] Snapshot schema version ${String(version)} is not supported by this runtime.`,
@@ -434,6 +457,94 @@ function normalizeSnapshotState(value: unknown, source: string): SSRState | null
   }
 
   return { v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION, scopes: scopes as SSRState['scopes'] }
+}
+
+function migrateSnapshotState(
+  value: Record<string, unknown>,
+  version: number,
+  source: string,
+): SSRState | null | undefined {
+  if (!snapshotMigrations) return undefined
+  let current: Record<string, unknown> = value
+  let currentVersion = version
+  const seen = new Set<number>()
+
+  while (currentVersion !== FICT_SSR_SNAPSHOT_SCHEMA_VERSION) {
+    if (seen.has(currentVersion)) {
+      emitSnapshotMigrationFailed(source, version, currentVersion, 'Migration produced a cycle.')
+      return null
+    }
+    seen.add(currentVersion)
+
+    const migration = snapshotMigrations[currentVersion]
+    if (!migration) return undefined
+
+    let migrated: unknown
+    try {
+      migrated = migration(current, {
+        fromVersion: currentVersion,
+        toVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        source,
+      })
+    } catch (error) {
+      emitSnapshotMigrationFailed(source, version, currentVersion, formatImportError(error), error)
+      return null
+    }
+
+    if (!isRecord(migrated)) {
+      emitSnapshotMigrationFailed(
+        source,
+        version,
+        currentVersion,
+        'Migration must return a snapshot object.',
+      )
+      return null
+    }
+
+    const nextVersionRaw = migrated.v
+    const nextVersion =
+      nextVersionRaw === undefined ? FICT_SSR_SNAPSHOT_SCHEMA_VERSION : nextVersionRaw
+    if (!Number.isInteger(nextVersion) || typeof nextVersion !== 'number') {
+      emitSnapshotMigrationFailed(
+        source,
+        version,
+        currentVersion,
+        `Migration returned invalid schema version ${String(nextVersion)}.`,
+      )
+      return null
+    }
+    if (nextVersion === currentVersion) {
+      emitSnapshotMigrationFailed(
+        source,
+        version,
+        currentVersion,
+        'Migration did not advance the schema version.',
+      )
+      return null
+    }
+
+    current = migrated
+    currentVersion = nextVersion
+  }
+
+  return normalizeSnapshotState(current, source)
+}
+
+function emitSnapshotMigrationFailed(
+  source: string,
+  originalVersion: number,
+  failedVersion: number,
+  reason: string,
+  error?: unknown,
+): void {
+  emitSnapshotIssue({
+    code: 'snapshot_migration_failed',
+    message: `[fict/loader] Failed to migrate snapshot schema from version ${originalVersion} at step ${failedVersion}: ${reason}`,
+    source,
+    expectedVersion: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+    actualVersion: originalVersion,
+    error,
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
