@@ -467,7 +467,7 @@ describe('ErrorBoundary', () => {
         type: ErrorBoundary,
         props: {
           fallback: 'render-fallback',
-          resetKeys: () => resetKey(),
+          resetKeys: reactive(() => resetKey()),
           children: { type: MaybeThrow, props: {} },
         },
       }),

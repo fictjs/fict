@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { jsx as _jsx, jsxs as _jsxs } from '../../runtime/src/jsx-runtime'
 import { createMemo, render } from '../src/index'
-import { createSignal } from '../src/advanced'
+import { createSignal, reactive } from '../src/advanced'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -34,11 +34,11 @@ describe('Component Integration', () => {
           _jsx('h1', { children: 'Counter' }),
           _jsxs('p', {
             // FIX: Pass a getter function for reactive text binding
-            children: ['Count: ', () => count()],
+            children: ['Count: ', reactive(() => count())],
           }),
           _jsxs('p', {
             // FIX: Pass a getter function for reactive text binding
-            children: ['Doubled: ', () => doubled()],
+            children: ['Doubled: ', reactive(() => doubled())],
           }),
           _jsx('button', {
             id: 'inc',
@@ -88,7 +88,7 @@ describe('Component Integration', () => {
           _jsx('div', {
             id: 'status',
             // Reactive child binding using generic function
-            children: () => (on() ? _jsx('span', { children: 'ON' }) : 'OFF'),
+            children: reactive(() => (on() ? _jsx('span', { children: 'ON' }) : 'OFF')),
           }),
         ],
       })
@@ -128,12 +128,13 @@ describe('Component Integration', () => {
           }),
           _jsx('ul', {
             // Naive list rendering: returning array of nodes
-            children: () =>
+            children: reactive(() =>
               items().map(item =>
                 _jsx('li', {
                   children: item,
                 }),
               ),
+            ),
           }),
         ],
       })
@@ -163,11 +164,11 @@ describe('Component Integration', () => {
       return _jsx('button', {
         id: 'btn',
         // Reactive class attribute
-        className: () => (active() ? 'active' : 'inactive'),
+        className: reactive(() => (active() ? 'active' : 'inactive')),
         // Reactive style attribute
-        style: () => ({ color: active() ? 'red' : 'blue' }),
+        style: reactive(() => ({ color: active() ? 'red' : 'blue' })),
         // Reactive standard attribute
-        disabled: () => active(),
+        disabled: reactive(() => active()),
         onClick: (_e: any) => active(!active()),
         children: 'Click me',
       })

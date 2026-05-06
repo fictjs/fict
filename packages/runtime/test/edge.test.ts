@@ -17,7 +17,7 @@ import {
   useTransition,
   startTransition,
 } from '../src/index'
-import { effectScope, createSignal } from '../src/advanced'
+import { effectScope, createSignal, reactive } from '../src/advanced'
 import { createPropsProxy, createKeyedList } from '../src/internal'
 import {
   isSignal,
@@ -454,7 +454,7 @@ describe('Suspense epoch check order', () => {
         type: Suspense,
         props: {
           fallback: 'loading',
-          resetKeys: () => resetKey(),
+          resetKeys: reactive(() => resetKey()),
           children: { type: Child, props: {} },
         },
       }),
@@ -504,7 +504,7 @@ describe('Suspense epoch check order', () => {
         type: Suspense,
         props: {
           fallback: 'loading',
-          resetKeys: () => resetKey(),
+          resetKeys: reactive(() => resetKey()),
           children: { type: Child, props: {} },
         },
       }),

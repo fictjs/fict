@@ -34,6 +34,8 @@ export {
 
   // Utilities
   isReactive,
+  nonReactive,
+  reactive,
   unwrap,
 
   // Debugging & DevTools

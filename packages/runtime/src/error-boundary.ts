@@ -1,4 +1,5 @@
 import { createElement } from './dom'
+import { isReactive } from './binding'
 import { createEffect } from './effect'
 import {
   createRootContext,
@@ -120,10 +121,8 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   })
 
   if (props.resetKeys !== undefined) {
-    const isGetter =
-      typeof props.resetKeys === 'function' && (props.resetKeys as () => unknown).length === 0
-    const getter = isGetter ? (props.resetKeys as () => unknown) : undefined
-    let prev = isGetter ? getter!() : props.resetKeys
+    const getter = isReactive(props.resetKeys) ? props.resetKeys : undefined
+    let prev = getter ? getter() : props.resetKeys
     createEffect(() => {
       const next = getter ? getter() : props.resetKeys
       if (prev !== next) {

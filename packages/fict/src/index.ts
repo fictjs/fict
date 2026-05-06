@@ -36,7 +36,7 @@
 export * from '@fictjs/runtime'
 
 // Re-export commonly used advanced APIs for convenience
-export { createSelector, createScope, runInScope } from '@fictjs/runtime/advanced'
+export { createSelector, createScope, reactive, runInScope } from '@fictjs/runtime/advanced'
 
 // ============================================================================
 // Convenience Aliases

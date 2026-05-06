@@ -1,5 +1,5 @@
 import { Suspense, createRoot, render } from '@fictjs/runtime'
-import { createSignal } from '@fictjs/runtime/advanced'
+import { createSignal, reactive } from '@fictjs/runtime/advanced'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 import { resource } from '../src/resource'
@@ -21,12 +21,12 @@ describe('resource', () => {
     const resetKey = createSignal(0)
     const r = resource<string, void>({
       fetch: fetcher,
-      reset: () => resetKey(),
+      reset: reactive(() => resetKey()),
     })
 
     let result: any
     createRoot(() => {
-      result = r.read(() => undefined)
+      result = r.read(undefined)
     })
 
     await vi.runAllTimersAsync()
@@ -54,7 +54,7 @@ describe('resource', () => {
     let result: any
 
     createRoot(() => {
-      result = r.read(() => null)
+      result = r.read(null)
     })
 
     expect(result.loading).toBe(true)
@@ -66,6 +66,45 @@ describe('resource', () => {
 
     expect(result.loading).toBe(false)
     expect(result.data).toBe('success')
+  })
+
+  it('treats plain function read args as values', async () => {
+    const fnArg = vi.fn(() => 'value')
+    const fetcher = vi.fn((_, arg: () => string) => Promise.resolve(arg))
+    const r = resource<() => string, () => string>(fetcher)
+
+    let result: any
+    createRoot(() => {
+      result = r.read(fnArg)
+    })
+
+    await vi.runAllTimersAsync()
+    await tick()
+
+    expect(fetcher).toHaveBeenCalledWith(expect.any(Object), fnArg)
+    expect(result.data).toBe(fnArg)
+    expect(fnArg).not.toHaveBeenCalled()
+  })
+
+  it('treats plain function reset options as static token values', async () => {
+    const resetToken = vi.fn()
+    const fetcher = vi.fn().mockResolvedValue('ok')
+    const r = resource<string, void>({
+      fetch: fetcher,
+      reset: resetToken,
+    })
+
+    let result: any
+    createRoot(() => {
+      result = r.read(undefined)
+    })
+
+    await vi.runAllTimersAsync()
+    await tick()
+
+    expect(result.data).toBe('ok')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(resetToken).not.toHaveBeenCalled()
   })
 
   it('should react to arguments change', async () => {
@@ -132,7 +171,7 @@ describe('resource', () => {
 
     let result: any
     createRoot(() => {
-      result = r.read(() => undefined)
+      result = r.read(undefined)
     })
 
     // Trigger a second request before the first resolves to force abort
@@ -150,10 +189,9 @@ describe('resource', () => {
     const r = resource({ fetch: fetcher, suspense: true, key: ['static'] })
     const container = document.createElement('div')
     let lastResult: any
-    const args = () => null
 
     const View = () => {
-      const result = r.read(args)
+      const result = r.read(null)
       lastResult = result
       return { type: 'span', props: { children: result.data } }
     }
@@ -192,8 +230,8 @@ describe('resource', () => {
     let second: any
 
     createRoot(() => {
-      first = r.read(() => 'k')
-      second = r.read(() => 'k')
+      first = r.read('k')
+      second = r.read('k')
     })
 
     await vi.runAllTimersAsync()
@@ -256,7 +294,7 @@ describe('resource', () => {
 
     let result: any
     createRoot(() => {
-      result = r.read(() => undefined)
+      result = r.read(undefined)
     })
 
     await vi.runAllTimersAsync()
@@ -286,7 +324,7 @@ describe('resource', () => {
     let result: any
     const loadingStates: boolean[] = []
     createRoot(() => {
-      result = r.read(() => undefined)
+      result = r.read(undefined)
     })
 
     // Initial fetch shows loading
@@ -302,7 +340,7 @@ describe('resource', () => {
     // Create new read to trigger revalidation of expired data
     let result2: any
     createRoot(() => {
-      result2 = r.read(() => undefined)
+      result2 = r.read(undefined)
     })
     await tick()
 
@@ -332,7 +370,7 @@ describe('resource', () => {
 
     let result: any
     createRoot(() => {
-      result = r.read(() => 'k')
+      result = r.read('k')
     })
     expect(result.data).toBe('value')
     expect(fetcher).toHaveBeenCalledTimes(1)
@@ -340,7 +378,7 @@ describe('resource', () => {
     // invalidate triggers next read to refetch
     r.invalidate('k')
     createRoot(() => {
-      result = r.read(() => 'k')
+      result = r.read('k')
     })
     await vi.runAllTimersAsync()
     await tick()
@@ -354,7 +392,7 @@ describe('resource', () => {
 
     let result: any
     createRoot(() => {
-      result = r.read(() => 'k')
+      result = r.read('k')
     })
 
     await vi.runAllTimersAsync()

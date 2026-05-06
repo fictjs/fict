@@ -3778,7 +3778,7 @@ describe('compiler + fict integration', () => {
     window.addEventListener('error', onError)
     window.addEventListener('unhandledrejection', onRejection)
     const source = `
-        import { $state, render, Suspense, ErrorBoundary } from 'fict'
+        import { $state, render, Suspense, ErrorBoundary, reactive } from 'fict'
         import { resource } from 'fict/plus'
 
         const fetchUsers = async ({ signal }) => {
@@ -3855,7 +3855,7 @@ describe('compiler + fict integration', () => {
         }
 
         function PostsList(props) {
-          const posts = postsResource.read(() => props.userId)
+          const posts = postsResource.read(reactive(() => props.userId))
           return (
             <div>
               {posts.data?.length === 0 ? (
@@ -5820,13 +5820,13 @@ describe('compiler + fict integration', () => {
 
     it('disposes reactive work in plain control flow via runInScope', async () => {
       const source = `
-        import { $state, render, runInScope, createEffect, onCleanup } from 'fict'
+        import { $state, render, runInScope, createEffect, onCleanup, reactive } from 'fict'
 
         export const events: string[] = []
 
         function App() {
           let show = $state(true)
-          runInScope(() => show, () => {
+          runInScope(reactive(() => show), () => {
             createEffect(() => {
               events.push(\`effect:\${show}\`)
               onCleanup(() => events.push(\`cleanup:\${show}\`))
@@ -7257,7 +7257,7 @@ describe('compiler + fict integration', () => {
      */
     it('handles multiple resources in parallel', async () => {
       const source = `
-        import { render, Suspense } from 'fict'
+        import { render, Suspense, reactive } from 'fict'
         import { resource } from 'fict/plus'
 
         const userResource = resource({
@@ -7285,9 +7285,9 @@ describe('compiler + fict integration', () => {
         })
 
         function Dashboard({ userId }: { userId: string }) {
-          const user = userResource.read(() => userId)
-          const posts = postsResource.read(() => userId)
-          const settings = settingsResource.read(() => null)
+          const user = userResource.read(reactive(() => userId))
+          const posts = postsResource.read(reactive(() => userId))
+          const settings = settingsResource.read(null)
 
           return (
             <div>
@@ -7363,7 +7363,7 @@ describe('compiler + fict integration', () => {
         })
 
         function OuterComponent() {
-          const outer = outerResource.read(() => null)
+          const outer = outerResource.read(null)
           return (
             <div>
               {outer.data?.map(item => (
@@ -7377,7 +7377,7 @@ describe('compiler + fict integration', () => {
         }
 
         function InnerComponent() {
-          const inner = innerResource.read(() => null)
+          const inner = innerResource.read(null)
           return (
             <div>
               {inner.data?.map(item => (

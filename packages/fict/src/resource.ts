@@ -9,7 +9,7 @@
  */
 
 import { createEffect, onCleanup, createSuspenseToken } from '@fictjs/runtime'
-import { createSignal } from '@fictjs/runtime/advanced'
+import { createSignal, isReactive } from '@fictjs/runtime/advanced'
 
 /**
  * The result of reading a resource.
@@ -93,7 +93,7 @@ export interface ResourceOptions<T, Args> {
   cache?: ResourceCacheOptions
 
   /**
-   * A value or reactive getter that, when changed, resets the resource.
+   * A value or explicitly marked reactive getter that, when changed, resets the resource.
    * Useful for clearing cache when certain conditions change.
    */
   reset?: unknown | (() => unknown)
@@ -108,9 +108,9 @@ export interface ResourceOptions<T, Args> {
 export interface Resource<T, Args> {
   /**
    * Read the resource data, triggering a fetch if needed.
-   * Can accept static args or a reactive getter.
+   * Can accept static args or an explicitly marked reactive getter.
    *
-   * @param argsAccessor - Arguments or a getter returning arguments
+   * @param argsAccessor - Arguments or an explicitly marked getter returning arguments
    */
   read(argsAccessor: (() => Args) | Args): ResourceResult<T>
 
@@ -132,7 +132,7 @@ export interface Resource<T, Args> {
   /**
    * Optimistically update cached data for a given args/key.
    *
-   * @param argsAccessor - Arguments or a getter returning arguments
+   * @param argsAccessor - Arguments or an explicitly marked getter returning arguments
    * @param value - New value or updater function
    * @param options - Optional settings (key override, revalidate)
    */
@@ -208,7 +208,8 @@ const defaultCacheOptions: Required<ResourceCacheOptions> = {
  *
  * @example
  * ```tsx
- * import { resource } from 'fict'
+ * import { reactive } from 'fict'
+ * import { resource } from 'fict/plus'
  *
  * // Simple fetcher
  * const userResource = resource(
@@ -229,7 +230,7 @@ const defaultCacheOptions: Required<ResourceCacheOptions> = {
  *
  * // Usage in component
  * function UserProfile({ userId }: { userId: string }) {
- *   const { data, loading, error, refresh } = userResource.read(() => userId)
+ *   const { data, loading, error, refresh } = userResource.read(reactive(() => userId))
  *
  *   if (loading) return <Spinner />
  *   if (error) return <ErrorMessage error={error} />
@@ -252,7 +253,7 @@ export function resource<T, Args = void>(
   const cache = new Map<unknown, ResourceEntry<T, Args>>()
 
   const readArgs = (argsAccessor: (() => Args) | Args): Args =>
-    typeof argsAccessor === 'function' ? (argsAccessor as () => Args)() : argsAccessor
+    isReactive(argsAccessor) ? (argsAccessor as () => Args)() : (argsAccessor as Args)
 
   const computeKey = (argsAccessor: (() => Args) | Args): unknown => {
     const argsValue = readArgs(argsAccessor)
@@ -266,7 +267,7 @@ export function resource<T, Args = void>(
   const readResetToken = (): unknown => {
     if (typeof optionsOrFetcher !== 'object') return undefined
     const reset = optionsOrFetcher.reset
-    if (typeof reset === 'function' && (reset as () => unknown).length === 0) {
+    if (isReactive(reset)) {
       return (reset as () => unknown)()
     }
     return reset

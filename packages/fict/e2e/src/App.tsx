@@ -10,6 +10,7 @@ import {
   onMount,
   onCleanup,
   $state,
+  reactive,
 } from 'fict'
 import { lazy, resource } from 'fict/plus'
 
@@ -609,7 +610,7 @@ function ResourceTest() {
 }
 
 function UserDisplay(props: { userId: string }) {
-  const result = userResource.read(() => props.userId)
+  const result = userResource.read(reactive(() => props.userId))
 
   return (
     <div id="user-data">

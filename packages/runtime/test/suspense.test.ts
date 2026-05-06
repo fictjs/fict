@@ -8,7 +8,7 @@ import {
   Fragment,
   onMount,
 } from '../src/index'
-import { createSignal } from '../src/advanced'
+import { createSignal, reactive } from '../src/advanced'
 
 const tick = () => Promise.resolve()
 
@@ -180,7 +180,7 @@ describe('Suspense', () => {
         type: Suspense,
         props: {
           fallback: 'loading',
-          resetKeys: () => reset(),
+          resetKeys: reactive(() => reset()),
           children: { type: Child, props: {} },
         },
       }),
