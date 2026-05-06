@@ -14,6 +14,9 @@ import {
   type DependencyGraphNode,
   type DevToolsSettings,
   type EffectState,
+  FICT_DEVTOOLS_MAX_RUNTIME_PROTOCOL,
+  FICT_DEVTOOLS_MIN_RUNTIME_PROTOCOL,
+  FICT_DEVTOOLS_PROTOCOL_VERSION,
   type FictDevtoolsHookEnhanced,
   MessageSource,
   NodeType,
@@ -1672,6 +1675,12 @@ function serializeDependencyGraphForTransport(graph: DependencyGraph | null): un
 // ============================================================================
 
 const hook: FictDevtoolsHookEnhanced = {
+  devtools: {
+    protocolVersion: FICT_DEVTOOLS_PROTOCOL_VERSION,
+    minRuntimeProtocol: FICT_DEVTOOLS_MIN_RUNTIME_PROTOCOL,
+    maxRuntimeProtocol: FICT_DEVTOOLS_MAX_RUNTIME_PROTOCOL,
+  },
+
   // Signal lifecycle
   registerSignal(
     id: number,

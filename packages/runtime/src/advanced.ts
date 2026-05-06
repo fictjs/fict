@@ -54,7 +54,14 @@ export { isReactive, nonReactive, reactive, unwrap } from './binding'
 // Debugging & DevTools
 // ============================================================================
 
-export { getDevtoolsHook, type FictDevtoolsHook } from './devtools'
+export {
+  FICT_DEVTOOLS_MIN_PROTOCOL_VERSION,
+  FICT_DEVTOOLS_PROTOCOL_VERSION,
+  getDevtoolsHook,
+  isDevtoolsHookCompatible,
+  type FictDevtoolsCompatibility,
+  type FictDevtoolsHook,
+} from './devtools'
 export { setCycleProtectionOptions } from './cycle-guard'
 export { registerErrorHandler } from './lifecycle'
 

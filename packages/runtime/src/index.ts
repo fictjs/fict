@@ -96,4 +96,9 @@ export type {
   SuspenseToken,
 } from './types'
 
-export type { FictDevtoolsHook } from './devtools'
+export {
+  FICT_DEVTOOLS_MIN_PROTOCOL_VERSION,
+  FICT_DEVTOOLS_PROTOCOL_VERSION,
+  isDevtoolsHookCompatible,
+} from './devtools'
+export type { FictDevtoolsCompatibility, FictDevtoolsHook } from './devtools'

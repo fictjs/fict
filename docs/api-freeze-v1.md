@@ -687,6 +687,33 @@ export interface SuspenseToken {
 - Newer runtimes may support older compiler output
 - Compiler and runtime versions should match for best performance
 
+### DevTools Protocol Compatibility
+
+`@fictjs/devtools` may keep an independent package version, but it must declare
+the hook protocol it implements through `globalThis.__FICT_DEVTOOLS_HOOK__.devtools`.
+
+Current protocol:
+
+```typescript
+export const FICT_DEVTOOLS_PROTOCOL_VERSION = 1
+export const FICT_DEVTOOLS_MIN_PROTOCOL_VERSION = 1
+
+interface FictDevtoolsCompatibility {
+  protocolVersion: number
+  minRuntimeProtocol: number
+  maxRuntimeProtocol: number
+}
+```
+
+Runtime behavior:
+
+1. Hooks without a `devtools` compatibility block are treated as legacy
+   development hooks and remain best-effort compatible before v1.0.
+2. Hooks with a compatibility block are used only when the runtime hook protocol
+   falls within `[minRuntimeProtocol, maxRuntimeProtocol]`.
+3. Breaking hook shape changes require a new protocol version, not just a
+   devtools package version bump.
+
 ---
 
 ## 7. Deprecation Policy

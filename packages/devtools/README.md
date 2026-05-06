@@ -5,6 +5,21 @@ Fict DevTools for Vite development. This package provides:
 - A Vite plugin that serves a standalone DevTools UI at `/_ _fict-devtools__/`
 - Auto-injection of the DevTools hook (best-effort)
 
+## Compatibility
+
+`@fictjs/devtools` can version independently from `fict` and
+`@fictjs/runtime`, but compatibility is governed by the DevTools hook protocol.
+This package currently implements protocol `1` and supports runtime hook
+protocol `1`.
+
+At runtime, the installed hook exposes:
+
+```ts
+globalThis.__FICT_DEVTOOLS_HOOK__.devtools
+```
+
+The runtime ignores hooks that declare an incompatible protocol range.
+
 ## Vite usage
 
 ```ts

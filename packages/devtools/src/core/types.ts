@@ -263,7 +263,19 @@ export interface InspectorState {
 // DevTools Hook Interface (Enhanced)
 // ============================================================================
 
+export const FICT_DEVTOOLS_PROTOCOL_VERSION = 1
+export const FICT_DEVTOOLS_MIN_RUNTIME_PROTOCOL = 1
+export const FICT_DEVTOOLS_MAX_RUNTIME_PROTOCOL = 1
+
+export interface FictDevtoolsCompatibility {
+  protocolVersion: number
+  minRuntimeProtocol: number
+  maxRuntimeProtocol: number
+}
+
 export interface FictDevtoolsHookEnhanced {
+  readonly devtools: FictDevtoolsCompatibility
+
   // Signal lifecycle
   registerSignal(
     id: number,

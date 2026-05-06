@@ -119,6 +119,19 @@ describe('devtools hook integration', () => {
     expect(events.some(e => e === `signal:${signalId}:update:1`)).toBe(true)
   })
 
+  it('ignores hooks outside the runtime devtools protocol range', () => {
+    ;(globalThis as any).__FICT_DEVTOOLS_HOOK__.devtools = {
+      protocolVersion: 1,
+      minRuntimeProtocol: 99,
+      maxRuntimeProtocol: 99,
+    }
+
+    const count = createSignal(0)
+    count(1)
+
+    expect(events).toEqual([])
+  })
+
   it('does not emit devtools computed registration for internal memos', () => {
     createMemo(() => 1)
     createMemo(() => 2, { internal: true })

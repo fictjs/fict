@@ -1,4 +1,17 @@
+export const FICT_DEVTOOLS_PROTOCOL_VERSION = 1
+export const FICT_DEVTOOLS_MIN_PROTOCOL_VERSION = 1
+
+export interface FictDevtoolsCompatibility {
+  /** DevTools hook protocol implemented by the installed hook. */
+  protocolVersion: number
+  /** Lowest runtime hook protocol accepted by this DevTools hook. */
+  minRuntimeProtocol: number
+  /** Highest runtime hook protocol accepted by this DevTools hook. */
+  maxRuntimeProtocol: number
+}
+
 export interface FictDevtoolsHook {
+  readonly devtools?: FictDevtoolsCompatibility
   registerSignal: (
     id: number,
     value: unknown,
@@ -49,6 +62,20 @@ function getGlobalHook(): FictDevtoolsHook | undefined {
     .__FICT_DEVTOOLS_HOOK__
 }
 
+export function isDevtoolsHookCompatible(hook: FictDevtoolsHook): boolean {
+  const compatibility = hook.devtools
+  if (!compatibility) {
+    return true
+  }
+
+  return (
+    compatibility.minRuntimeProtocol <= FICT_DEVTOOLS_PROTOCOL_VERSION &&
+    compatibility.maxRuntimeProtocol >= FICT_DEVTOOLS_MIN_PROTOCOL_VERSION
+  )
+}
+
 export function getDevtoolsHook(): FictDevtoolsHook | undefined {
-  return getGlobalHook()
+  const hook = getGlobalHook()
+  if (!hook || !isDevtoolsHookCompatible(hook)) return undefined
+  return hook
 }

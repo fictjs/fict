@@ -85,8 +85,18 @@ describe('debugger transport serialization', () => {
 
   it('falls back to transport-safe payloads for initial state messages', async () => {
     const { attachDebugger, hook } = await import('../src/core/debugger')
+    const { FICT_DEVTOOLS_PROTOCOL_VERSION } = await import('../src/core/types')
 
     attachDebugger()
+    expect(
+      (globalThis as typeof globalThis & { __FICT_DEVTOOLS_HOOK__?: typeof hook })
+        .__FICT_DEVTOOLS_HOOK__?.devtools,
+    ).toMatchObject({
+      protocolVersion: FICT_DEVTOOLS_PROTOCOL_VERSION,
+      minRuntimeProtocol: 1,
+      maxRuntimeProtocol: 1,
+    })
+
     hook.registerSignal(1, () => 1, { name: 'callable' })
     hook.registerComponent(1, 'App')
     hook.componentMount(1, [document.createElement('button')])
