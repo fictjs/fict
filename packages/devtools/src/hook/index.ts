@@ -5,7 +5,7 @@
  * This module re-exports a compatible surface to avoid drift.
  */
 
-import type { FictDevtoolsHook } from '@fictjs/runtime'
+import type { FictDevtoolsHook } from '@fictjs/runtime/advanced'
 
 import { attachDebugger, detachDebugger, hook as coreHook } from '../core/debugger'
 import type {

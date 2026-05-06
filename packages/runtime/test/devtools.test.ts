@@ -1,16 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
+import { batch, createEffect, createMemo, createRoot, render } from '../src/index'
 import {
   FICT_DEVTOOLS_MIN_PROTOCOL_VERSION,
   FICT_DEVTOOLS_PROTOCOL_VERSION,
-  batch,
-  createEffect,
-  createMemo,
-  createRoot,
+  createSignal,
   isDevtoolsHookCompatible,
-  render,
-} from '../src/index'
-import { createSignal } from '../src/advanced'
+} from '../src/advanced'
 
 describe('devtools hook integration', () => {
   let original: unknown

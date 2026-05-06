@@ -130,6 +130,17 @@ for (const macro of ['$state', '$effect']) {
     fail(`@fictjs/runtime main entrypoint must not export or document ${macro}`)
   }
 }
+for (const devtoolsProtocolExport of [
+  'FICT_DEVTOOLS_MIN_PROTOCOL_VERSION',
+  'FICT_DEVTOOLS_PROTOCOL_VERSION',
+  'isDevtoolsHookCompatible',
+  'FictDevtoolsCompatibility',
+  'FictDevtoolsHook',
+]) {
+  if (containsStandaloneToken(runtimeMain, devtoolsProtocolExport)) {
+    fail(`@fictjs/runtime main entrypoint must not export ${devtoolsProtocolExport}`)
+  }
+}
 
 const advancedOnlyFromFict = new Set([
   'createSignal',
@@ -141,7 +152,12 @@ const advancedOnlyFromFict = new Set([
   'createClassBinding',
   'createShow',
   'effectScope',
+  'FICT_DEVTOOLS_MIN_PROTOCOL_VERSION',
+  'FICT_DEVTOOLS_PROTOCOL_VERSION',
+  'FictDevtoolsCompatibility',
+  'FictDevtoolsHook',
   'getDevtoolsHook',
+  'isDevtoolsHookCompatible',
   'isReactive',
   'nonReactive',
   'reactive',
