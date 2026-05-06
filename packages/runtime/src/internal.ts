@@ -137,6 +137,8 @@ export {
 // ============================================================================
 
 export { createElement, template, render, hydrateComponent } from './dom'
+export type { HydrateComponentOptions } from './dom'
+export type { HydrationIssue, HydrationIssueCode, HydrationIssueHandler } from './hydration'
 export { createRenderEffect } from './effect'
 
 // ============================================================================

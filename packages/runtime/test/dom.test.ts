@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, createElement, Fragment, createRoot, onDestroy, onMount } from '../src/index'
 import { createSignal, reactive } from '../src/advanced'
 import { clearDelegatedEvents, hydrateComponent, spread, template } from '../src/internal'
+import type { HydrationIssue } from '../src/internal'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -167,6 +168,89 @@ describe('DOM Module', () => {
       expect(hydratedElement.textContent).toBe('helloworld')
 
       teardown()
+    })
+
+    it('reports text mismatches during hydration', () => {
+      container.innerHTML = 'server'
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const teardown = hydrateComponent(
+        () => {
+          return createElement('client')
+        },
+        container,
+        {
+          onHydrationIssue: issue => issues.push(issue),
+        },
+      )
+
+      expect(container.textContent).toBe('client')
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'text_mismatch',
+          expected: 'client',
+          actual: 'server',
+        }),
+      )
+
+      teardown()
+      warnSpy.mockRestore()
+    })
+
+    it('reports node mismatches during hydration', () => {
+      container.innerHTML = '<span>server</span>'
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const teardown = hydrateComponent(
+        () => {
+          const factory = template('<div></div>')
+          return factory()
+        },
+        container,
+        {
+          onHydrationIssue: issue => issues.push(issue),
+        },
+      )
+
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'node_type_mismatch',
+          expected: 'div',
+          actual: 'span',
+        }),
+      )
+
+      teardown()
+      warnSpy.mockRestore()
+    })
+
+    it('reports missing nodes during hydration', () => {
+      container.innerHTML = ''
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const teardown = hydrateComponent(
+        () => {
+          const factory = template('<div></div>')
+          return factory()
+        },
+        container,
+        {
+          onHydrationIssue: issue => issues.push(issue),
+        },
+      )
+
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'node_missing',
+          expected: 'div',
+        }),
+      )
+
+      teardown()
+      warnSpy.mockRestore()
     })
   })
 

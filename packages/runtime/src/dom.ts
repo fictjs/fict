@@ -29,7 +29,13 @@ import {
 import { Properties, ChildProperties, getPropAlias, SVGElements, SVGNamespace } from './constants'
 import { getDevtoolsHook } from './devtools'
 import { __fictPushContext, __fictPopContext, __fictGetCurrentComponentId } from './hooks'
-import { claimNodes, claimText, isHydratingActive, withHydration } from './hydration'
+import {
+  claimNodes,
+  claimText,
+  isHydratingActive,
+  withHydration,
+  type HydrationIssueHandler,
+} from './hydration'
 import { Fragment } from './jsx'
 import {
   createRootContext,
@@ -56,6 +62,10 @@ import { untrack } from './scheduler'
 import type { DOMElement, FictNode, FictVNode } from './types'
 
 type NamespaceContext = 'svg' | 'mathml' | null
+
+export interface HydrateComponentOptions {
+  onHydrationIssue?: HydrationIssueHandler | undefined
+}
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const MATHML_NS = 'http://www.w3.org/1998/Math/MathML'
@@ -167,7 +177,11 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
  * @param container - The DOM container with existing SSR content
  * @returns A teardown function to unmount the view
  */
-export function hydrateComponent(view: () => FictNode, container: HTMLElement): () => void {
+export function hydrateComponent(
+  view: () => FictNode,
+  container: HTMLElement,
+  options: HydrateComponentOptions = {},
+): () => void {
   const root = createRootContext()
   root.ownerDocument = container.ownerDocument ?? document
   const prev = pushRoot(root)
@@ -177,9 +191,13 @@ export function hydrateComponent(view: () => FictNode, container: HTMLElement): 
 
   try {
     // Run the view function INSIDE withHydration so template() can claim nodes
-    withHydration(container, () => {
-      view()
-    })
+    withHydration(
+      container,
+      () => {
+        view()
+      },
+      { onHydrationIssue: options.onHydrationIssue },
+    )
   } finally {
     __fictExitHydration()
     popRoot(prev)
