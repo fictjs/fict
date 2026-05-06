@@ -30,6 +30,14 @@ function joinLines(lines: readonly string[]): string {
   return lines.join('\n')
 }
 
+function matchesPreservePattern(pattern: RegExp, line: string): boolean {
+  const lastIndex = pattern.lastIndex
+  pattern.lastIndex = 0
+  const matches = pattern.test(line)
+  pattern.lastIndex = lastIndex
+  return matches
+}
+
 function rangeContainsPreservedLine(
   lines: readonly string[],
   start: number,
@@ -38,7 +46,7 @@ function rangeContainsPreservedLine(
 ): boolean {
   if (preserve.length === 0) return false
   for (let index = start; index < end; index += 1) {
-    if (preserve.some(pattern => pattern.test(lines[index]))) {
+    if (preserve.some(pattern => matchesPreservePattern(pattern, lines[index]))) {
       return true
     }
   }

@@ -36,6 +36,20 @@ describe('source regression minimizer', () => {
     expect(result.source).not.toContain('noise')
   })
 
+  it('keeps preserved lines when preserve patterns are stateful regexes', async () => {
+    for (const pattern of [/\/\/ keep/g, /\/\/ keep/y]) {
+      const result = await minimizeSourceByLines({
+        source: ['// keep: first', 'target()', '// keep: second'].join('\n'),
+        preserve: [pattern],
+        test: candidate => candidate.includes('target()'),
+      })
+
+      expect(result.source).toContain('// keep: first')
+      expect(result.source).toContain('// keep: second')
+      expect(result.source).toContain('target()')
+    }
+  })
+
   it('rejects inputs that do not reproduce before minimization', async () => {
     await expect(
       minimizeSourceByLines({
