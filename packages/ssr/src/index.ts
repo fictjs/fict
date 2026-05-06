@@ -304,6 +304,7 @@ export function renderToStream(
       })
       // renderToStream doesn't expose readiness promises, so consume rejections
       // to avoid unhandled promise noise when streaming aborts.
+      started.shellReady.catch(() => undefined)
       started.allReady.catch(() => undefined)
     },
     pull() {
@@ -457,11 +458,22 @@ function startStreamingRenderInSession(
   }
 
   let resolveShell!: () => void
+  let rejectShell!: (err: unknown) => void
   let resolveAll!: () => void
   let rejectAll!: (err: unknown) => void
+  let shellSettled = false
 
-  const shellReady = new Promise<void>(res => {
-    resolveShell = res
+  const shellReady = new Promise<void>((res, rej) => {
+    resolveShell = () => {
+      if (shellSettled) return
+      shellSettled = true
+      res()
+    }
+    rejectShell = err => {
+      if (shellSettled) return
+      shellSettled = true
+      rej(err)
+    }
   })
   const allReady = new Promise<void>((res, rej) => {
     resolveAll = res
@@ -479,6 +491,7 @@ function startStreamingRenderInSession(
   let shellCarriesTail = false
   let writeChain: Promise<void> | null = null
   let writeFailed = false
+  let removeAbortListener = () => {}
 
   const mode = options.mode ?? 'shell'
   const includeSnapshot = options.includeSnapshot !== false
@@ -494,6 +507,7 @@ function startStreamingRenderInSession(
     options.onError?.(error)
     writer.abort(error)
     cleanup()
+    rejectShell(error)
     rejectAll(error)
   }
 
@@ -596,6 +610,8 @@ function startStreamingRenderInSession(
   }
 
   const cleanup = () => {
+    removeAbortListener()
+    removeAbortListener = () => {}
     runInSession(() => {
       __fictSetSSRStreamHooks(null)
       __fictDisableSSR()
@@ -691,14 +707,19 @@ function startStreamingRenderInSession(
     writeFailed = true
     writer.abort(reason)
     cleanup()
-    rejectAll(reason ?? new Error('Stream aborted'))
+    const abortReason = reason ?? new Error('Stream aborted')
+    rejectShell(abortReason)
+    rejectAll(abortReason)
   }
 
   if (options.signal) {
     if (options.signal.aborted) {
       abort(options.signal.reason)
+      return { shellReady, allReady, abort }
     } else {
-      options.signal.addEventListener('abort', () => abort(options.signal?.reason), { once: true })
+      const onAbort = () => abort(options.signal?.reason)
+      options.signal.addEventListener('abort', onAbort, { once: true })
+      removeAbortListener = () => options.signal?.removeEventListener('abort', onAbort)
     }
   }
 

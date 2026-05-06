@@ -661,4 +661,59 @@ describe('@fictjs/ssr streaming', () => {
 
     await expect(readAll).rejects.toThrow('abort-shell')
   })
+
+  it('does not render or leak globals when a web stream signal is already aborted', async () => {
+    const previousDocument = (globalThis as { document?: Document }).document
+    const hadDocument = 'document' in globalThis
+    const controller = new AbortController()
+    controller.abort(new Error('pre-abort-web'))
+    let rendered = false
+
+    try {
+      const stream = renderToStream(
+        () => {
+          rendered = true
+          return { type: 'div', props: { children: 'should-not-render' } }
+        },
+        { signal: controller.signal },
+      )
+
+      await expect(readReadableStream(stream)).rejects.toThrow('pre-abort-web')
+      expect(rendered).toBe(false)
+      expect((globalThis as { document?: Document }).document).toBe(previousDocument)
+      expect('document' in globalThis).toBe(hadDocument)
+    } finally {
+      if (!hadDocument) {
+        delete (globalThis as { document?: Document }).document
+      }
+    }
+  })
+
+  it('rejects pipeable readiness without rendering when a signal is already aborted', async () => {
+    const previousDocument = (globalThis as { document?: Document }).document
+    const hadDocument = 'document' in globalThis
+    const controller = new AbortController()
+    controller.abort(new Error('pre-abort-pipe'))
+    let rendered = false
+
+    try {
+      const { shellReady, allReady } = renderToPipeableStream(
+        () => {
+          rendered = true
+          return { type: 'div', props: { children: 'should-not-render' } }
+        },
+        { signal: controller.signal },
+      )
+
+      await expect(shellReady).rejects.toThrow('pre-abort-pipe')
+      await expect(allReady).rejects.toThrow('pre-abort-pipe')
+      expect(rendered).toBe(false)
+      expect((globalThis as { document?: Document }).document).toBe(previousDocument)
+      expect('document' in globalThis).toBe(hadDocument)
+    } finally {
+      if (!hadDocument) {
+        delete (globalThis as { document?: Document }).document
+      }
+    }
+  })
 })
