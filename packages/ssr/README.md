@@ -312,6 +312,10 @@ The asset is published as `@fictjs/ssr/fict-stream-runtime.js`. Build tools that
 need to materialize it themselves can import `createStreamRuntimeCode` from
 `@fictjs/ssr/stream-runtime`.
 
+Trusted Types deployments should use this external observer runtime. The patch
+runtime moves `<template>` content with DOM APIs (`content` + `insertBefore`) and
+does not call `innerHTML`, `insertAdjacentHTML`, `eval`, or `Function`.
+
 ### renderToPipeableStream
 
 Node.js-style stream variant (compatible with `pipe()`).

@@ -38,6 +38,7 @@ called production-ready:
 1. CSP:
    - `scriptNonce` is applied to generated executable and JSON script tags.
    - Strict CSP routes can use `streamRuntime: 'external'` with observer patch mode and the published `@fictjs/ssr/fict-stream-runtime.js` asset.
+   - Trusted Types routes should use the external observer runtime; a sink regression test forbids `innerHTML`, `insertAdjacentHTML`, `eval`, and `Function`.
 2. Snapshot compatibility:
    - Unsupported versions fail closed.
    - Explicit `snapshotMigrations` cover any accepted older schema.

@@ -221,6 +221,17 @@ describe('@fictjs/ssr streaming', () => {
     expect(code).not.toContain('export ')
   })
 
+  it('keeps observer stream runtime compatible with Trusted Types sinks', () => {
+    const code = createStreamRuntimeCode({ observerMode: true })
+
+    expect(code).toContain('tpl.content')
+    expect(code).toContain('insertBefore')
+    expect(code).not.toMatch(/\binnerHTML\b/)
+    expect(code).not.toMatch(/\binsertAdjacentHTML\b/)
+    expect(code).not.toMatch(/\beval\s*\(/)
+    expect(code).not.toMatch(/\bFunction\s*\(/)
+  })
+
   it('pipeable stream emits shell and completes on resolve', async () => {
     const token = createSuspenseToken()
     let ready = false
