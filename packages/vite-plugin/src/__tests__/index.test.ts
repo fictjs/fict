@@ -40,7 +40,7 @@ function getTestPlugin(options?: Parameters<typeof fict>[0]): TestPlugin {
   return fict(options) as TestPlugin
 }
 
-type SourceMapLike = {
+interface SourceMapLike {
   mappings: string
   sources?: string[]
 }

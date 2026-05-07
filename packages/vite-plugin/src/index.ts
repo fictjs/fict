@@ -2080,7 +2080,7 @@ function collectRuntimeHelperUsages(
   runtimeHelperImports: Map<string, string>,
 ): RuntimeHelperUsage[] {
   const used = new Map<string, string>()
-  const scopes: Array<Set<string>> = [new Set()]
+  const scopes: Set<string>[] = [new Set()]
 
   const currentScope = () => scopes[scopes.length - 1]!
   const isBound = (name: string) => scopes.some(scope => scope.has(name))
