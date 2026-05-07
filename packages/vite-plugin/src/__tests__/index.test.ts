@@ -40,6 +40,84 @@ function getTestPlugin(options?: Parameters<typeof fict>[0]): TestPlugin {
   return fict(options) as TestPlugin
 }
 
+type SourceMapLike = {
+  mappings: string
+  sources?: string[]
+}
+
+const BASE64_VLQ_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+
+function decodeVlq(segment: string): number[] {
+  const values: number[] = []
+  let value = 0
+  let shift = 0
+
+  for (const char of segment) {
+    const digit = BASE64_VLQ_CHARS.indexOf(char)
+    if (digit < 0) {
+      throw new Error(`Invalid sourcemap VLQ digit: ${char}`)
+    }
+    const continuation = (digit & 32) !== 0
+    value += (digit & 31) << shift
+    if (continuation) {
+      shift += 5
+      continue
+    }
+    const negative = (value & 1) === 1
+    values.push((negative ? -1 : 1) * (value >> 1))
+    value = 0
+    shift = 0
+  }
+
+  return values
+}
+
+function findGeneratedPosition(code: string, token: string): { line: number; column: number } {
+  const index = code.indexOf(token)
+  expect(index).toBeGreaterThanOrEqual(0)
+  const before = code.slice(0, index)
+  const lines = before.split('\n')
+  return {
+    line: lines.length,
+    column: lines[lines.length - 1]!.length,
+  }
+}
+
+function originalPositionFor(
+  map: SourceMapLike,
+  generatedLine: number,
+  generatedColumn: number,
+): { source: string | undefined; line: number; column: number } | null {
+  const lines = map.mappings.split(';')
+  let sourceIndex = 0
+  let originalLine = 0
+  let originalColumn = 0
+  let candidate: { source: string | undefined; line: number; column: number } | null = null
+
+  for (let lineIndex = 0; lineIndex < lines.length && lineIndex < generatedLine; lineIndex++) {
+    let currentGeneratedColumn = 0
+    const segments = lines[lineIndex] ? lines[lineIndex]!.split(',') : []
+    for (const segment of segments) {
+      if (!segment) continue
+      const decoded = decodeVlq(segment)
+      currentGeneratedColumn += decoded[0] ?? 0
+      if (decoded.length < 4) continue
+      sourceIndex += decoded[1]!
+      originalLine += decoded[2]!
+      originalColumn += decoded[3]!
+      if (lineIndex === generatedLine - 1 && currentGeneratedColumn <= generatedColumn) {
+        candidate = {
+          source: map.sources?.[sourceIndex],
+          line: originalLine + 1,
+          column: originalColumn,
+        }
+      }
+    }
+  }
+
+  return candidate
+}
+
 describe('fict vite-plugin', () => {
   it('applies the Babel transformer', async () => {
     const plugin = fict() as any
@@ -1105,6 +1183,16 @@ describe('fict vite-plugin', () => {
         expect(result.code as string).toContain('virtual:fict-handler:')
         expect(result.map).not.toBeNull()
         expect(result.map).toMatchObject({ version: 3 })
+
+        const generated = findGeneratedPosition(result.code as string, 'virtual:fict-handler:')
+        const original = originalPositionFor(
+          result.map as SourceMapLike,
+          generated.line,
+          generated.column,
+        )
+        expect(original).not.toBeNull()
+        expect(original?.source).toContain('CounterMap.tsx')
+        expect(sample.split('\n')[original!.line - 1]).toMatch(/\$state|onClick\$/)
       }
     })
 
