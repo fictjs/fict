@@ -24,13 +24,16 @@ import { createRenderEffect } from './effect'
 import { withHydration, withHydrationRange, isHydratingActive } from './hydration'
 import {
   createRootContext,
+  deferRootRefAssignments,
   destroyRoot,
+  flushDeferredRefAssignments,
   flushOnMount,
   getCurrentRoot,
   handleError,
   handleSuspend,
   pushRoot,
   popRoot,
+  queueDeferredRefAssignment,
   registerRootCleanup,
   type RootContext,
 } from './lifecycle'
@@ -1577,15 +1580,27 @@ export function bindRef(el: Element, ref: unknown, registerCleanup = true): Clea
 
   const clearCurrentRef = () => {
     if (currentRef == null) return
-    applyRefValue(currentRef, null)
+    if (currentRefApplied) {
+      applyRefValue(currentRef, null)
+    }
     currentRef = undefined
+    currentRefApplied = false
   }
+
+  let currentRefApplied = false
 
   const syncRef = (nextRef: unknown) => {
     if (nextRef === currentRef) return
     clearCurrentRef()
     currentRef = nextRef
-    applyRefValue(currentRef, el)
+    const applyCurrentRef = () => {
+      if (currentRef !== nextRef || currentRefApplied) return
+      applyRefValue(nextRef, el)
+      currentRefApplied = true
+    }
+    if (!queueDeferredRefAssignment(applyCurrentRef)) {
+      applyCurrentRef()
+    }
   }
 
   let disposeTracking: Cleanup | undefined
@@ -2361,6 +2376,7 @@ export function createConditional(
       }
 
       const nextRoot = createRootContext(hostRoot)
+      deferRootRefAssignments(nextRoot)
       const prevNext = pushRoot(nextRoot)
       let handledRenderError = false
       let nextOutput: FictNode | undefined
@@ -2383,25 +2399,14 @@ export function createConditional(
         return
       }
 
-      lastCondition = cond
-
-      if (currentRoot) {
-        destroyRoot(currentRoot)
-        currentRoot = null
-      }
-      removeNodes(currentNodes)
-      currentNodes = []
-
       const prev = pushRoot(nextRoot)
       let handledError = false
+      let nextNodes: Node[] = []
       try {
-        if (nextOutput == null || nextOutput === false) {
-          return
+        if (nextOutput != null && nextOutput !== false) {
+          const el = createElementFn(nextOutput)
+          nextNodes = toNodeArray(el, parent.ownerDocument ?? markerOwnerDocument)
         }
-        const el = createElementFn(nextOutput)
-        const nodes = toNodeArray(el, parent.ownerDocument ?? markerOwnerDocument)
-        insertNodesBefore(parent, nodes, endMarker)
-        currentNodes = nodes
       } catch (err) {
         if (handleSuspend(err as any, nextRoot)) {
           handledError = true
@@ -2416,13 +2421,25 @@ export function createConditional(
         throw err
       } finally {
         popRoot(prev)
-        if (!handledError) {
-          flushOnMount(nextRoot)
-          currentRoot = nextRoot
-        } else {
-          currentRoot = null
-        }
       }
+
+      if (handledError) {
+        return
+      }
+
+      lastCondition = cond
+      if (nextNodes.length > 0) {
+        insertNodesBefore(parent, nextNodes, endMarker)
+      }
+      if (currentRoot) {
+        destroyRoot(currentRoot)
+        currentRoot = null
+      }
+      removeNodes(currentNodes)
+      currentNodes = nextNodes
+      flushDeferredRefAssignments(nextRoot)
+      flushOnMount(nextRoot)
+      currentRoot = nextRoot
       return
     }
     lastCondition = cond

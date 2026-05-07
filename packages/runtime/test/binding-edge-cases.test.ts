@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-import { createRoot, onDestroy, createElement, Fragment } from '../src/index'
+import { createRoot, onDestroy, createElement, Fragment, ErrorBoundary } from '../src/index'
 import { createSignal, reactive } from '../src/advanced'
 import {
   bindRef,
@@ -22,7 +22,14 @@ import {
   insert,
   callEventHandler,
 } from '../src/internal'
-import { createRootContext, destroyRoot, popRoot, pushRoot } from '../src/lifecycle'
+import {
+  createRootContext,
+  destroyRoot,
+  popRoot,
+  pushRoot,
+  registerErrorHandler,
+  registerSuspenseHandler,
+} from '../src/lifecycle'
 
 const tick = () =>
   new Promise<void>(resolve =>
@@ -1706,6 +1713,186 @@ describe('Binding Edge Cases', () => {
 
       dispose()
       expect(cleanupLog).toEqual([0, 1, 2])
+    })
+
+    it('keeps the old branch interactive when tracked remount DOM creation is handled as an error', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+      const clicks: number[] = []
+      const errors: unknown[] = []
+      const cleanupLog: number[] = []
+      const createElementMaybeThrow: typeof createElement = node => {
+        if (
+          typeof node === 'object' &&
+          node !== null &&
+          'props' in node &&
+          (node as { props?: { children?: unknown } }).props?.children === '1'
+        ) {
+          throw new Error('remount failed')
+        }
+        return createElement(node)
+      }
+
+      const root = createRoot(() => {
+        registerErrorHandler(err => {
+          errors.push(err)
+          return true
+        })
+
+        const handle = createConditional(
+          () => condition(),
+          () => {
+            const value = counter()
+            onDestroy(() => cleanupLog.push(value))
+            return {
+              type: 'button',
+              props: {
+                onClick: () => clicks.push(value),
+                children: String(value),
+              },
+              key: undefined,
+            }
+          },
+          createElementMaybeThrow,
+          () => 'OFF',
+          undefined,
+          undefined,
+          { trackBranchReads: true },
+        )
+        container.appendChild(handle.marker)
+        handle.flush?.()
+        onDestroy(handle.dispose)
+      })
+
+      const firstButton = container.querySelector('button')
+      expect(firstButton).not.toBeNull()
+      firstButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(clicks).toEqual([0])
+
+      counter(1)
+      await tick()
+
+      expect(errors).toHaveLength(1)
+      expect(cleanupLog).toEqual([1])
+      expect(container.textContent).toBe('0')
+      expect(container.querySelector('button')).toBe(firstButton)
+      firstButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(clicks).toEqual([0, 0])
+
+      root.dispose()
+      expect(cleanupLog).toEqual([1, 0])
+    })
+
+    it('keeps the old branch interactive when tracked remount DOM creation suspends', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+      const token = Promise.resolve()
+      const handledTokens: unknown[] = []
+      const clicks: number[] = []
+      const createElementMaybeSuspend: typeof createElement = node => {
+        if (
+          typeof node === 'object' &&
+          node !== null &&
+          'props' in node &&
+          (node as { props?: { children?: unknown } }).props?.children === '1'
+        ) {
+          throw token
+        }
+        return createElement(node)
+      }
+
+      const root = createRoot(() => {
+        registerSuspenseHandler(nextToken => {
+          handledTokens.push(nextToken)
+          return true
+        })
+
+        const handle = createConditional(
+          () => condition(),
+          () => {
+            const value = counter()
+            return {
+              type: 'button',
+              props: {
+                onClick: () => clicks.push(value),
+                children: String(value),
+              },
+              key: undefined,
+            }
+          },
+          createElementMaybeSuspend,
+          () => 'OFF',
+          undefined,
+          undefined,
+          { trackBranchReads: true },
+        )
+        container.appendChild(handle.marker)
+        handle.flush?.()
+        onDestroy(handle.dispose)
+      })
+
+      const firstButton = container.querySelector('button')
+      expect(firstButton).not.toBeNull()
+      firstButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(clicks).toEqual([0])
+
+      counter(1)
+      await tick()
+
+      expect(handledTokens).toEqual([token])
+      expect(container.textContent).toBe('0')
+      expect(container.querySelector('button')).toBe(firstButton)
+      firstButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(clicks).toEqual([0, 0])
+
+      root.dispose()
+    })
+
+    it('commits ErrorBoundary fallback output during tracked branch remount', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+      const errors: unknown[] = []
+
+      function Child() {
+        const value = counter()
+        if (value === 1) {
+          throw new Error('child failed')
+        }
+        return { type: 'button', props: { children: String(value) }, key: undefined }
+      }
+
+      const { marker, dispose, flush } = createConditional(
+        () => condition(),
+        () => ({
+          type: ErrorBoundary,
+          props: {
+            fallback: { type: 'span', props: { children: 'caught' }, key: undefined },
+            onError: (err: unknown) => errors.push(err),
+            children: { type: Child, props: {}, key: undefined },
+          },
+          key: undefined,
+        }),
+        createElement,
+        () => 'OFF',
+        undefined,
+        undefined,
+        { trackBranchReads: true },
+      )
+      container.appendChild(marker)
+      flush?.()
+
+      expect(container.textContent).toBe('0')
+      expect(container.querySelector('button')).not.toBeNull()
+
+      counter(1)
+      await tick()
+
+      expect(errors).toHaveLength(1)
+      expect(container.textContent).toBe('caught')
+      expect(container.querySelector('button')).toBeNull()
+      expect(container.querySelector('span')).not.toBeNull()
+
+      dispose()
     })
 
     it('falls back to structural replace when node kind changes', async () => {

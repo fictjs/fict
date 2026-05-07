@@ -13,6 +13,8 @@ export interface RootContext {
   parent?: RootContext | undefined
   ownerDocument?: Document | undefined
   onMountCallbacks?: LifecycleFn[]
+  deferRefAssignments?: boolean | undefined
+  deferredRefAssignments?: LifecycleFn[] | undefined
   cleanups: Cleanup[]
   destroyCallbacks: Cleanup[]
   errorHandlers?: ErrorHandler[]
@@ -125,6 +127,30 @@ export function flushOnMount(root: RootContext): void {
   } finally {
     cbs.length = 0
   }
+}
+
+export function deferRootRefAssignments(root: RootContext): void {
+  root.deferRefAssignments = true
+  root.deferredRefAssignments = []
+}
+
+export function queueDeferredRefAssignment(fn: LifecycleFn): boolean {
+  const root = currentRoot
+  if (!root?.deferRefAssignments) return false
+  ;(root.deferredRefAssignments ||= []).push(fn)
+  return true
+}
+
+export function flushDeferredRefAssignments(root: RootContext): void {
+  const cbs = root.deferredRefAssignments
+  root.deferRefAssignments = false
+  root.deferredRefAssignments = undefined
+  if (!cbs || cbs.length === 0) return
+  withRootContext(root, () => {
+    for (let i = 0; i < cbs.length; i++) {
+      cbs[i]?.()
+    }
+  })
 }
 
 export function withRootContext<T>(root: RootContext | undefined, fn: () => T): T {
