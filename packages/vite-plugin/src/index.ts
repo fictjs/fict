@@ -27,6 +27,12 @@ const generate = (
   typeof _generate === 'function' ? _generate : (_generate as { default: typeof _generate }).default
 ) as typeof _generate
 
+type BabelGeneratorOptions = NonNullable<Parameters<typeof generate>[1]>
+
+interface BabelGeneratorOptionsWithInputSourceMap extends BabelGeneratorOptions {
+  inputSourceMap?: TransformResult['map']
+}
+
 export interface FictPluginOptions extends FictCompilerOptions {
   /**
    * File patterns to include for transformation.
@@ -636,7 +642,8 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         const precompiledInput = isPrecompiledFictModule(code)
         let finalCode: string
         let finalMap: TransformResult['map']
-        let splitResult: { code: string; handlers: string[] } | null = null
+        let splitResult: { code: string; handlers: string[]; map: TransformResult['map'] } | null =
+          null
 
         if (precompiledInput) {
           finalCode = code
@@ -676,7 +683,12 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
         })
         if (shouldSplit) {
           try {
-            splitResult = extractAndRewriteHandlers(finalCode, filename, extractedHandlers)
+            splitResult = extractAndRewriteHandlers(
+              finalCode,
+              filename,
+              extractedHandlers,
+              finalMap,
+            )
           } catch (error) {
             this.warn(buildPluginMessage('extractAndRewriteHandlers failed', filename, error))
           }
@@ -689,9 +701,7 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
               file: filename,
             })
             finalCode = splitResult.code
-            // Note: source maps are invalidated by this rewrite
-            // For production builds, this is acceptable
-            finalMap = null
+            finalMap = splitResult.map
 
             // Emit each extracted handler as a separate chunk for lazy loading
             // This ensures the virtual modules are included in the build
@@ -760,7 +770,10 @@ export default function fict(options: FictPluginOptions = {}): Plugin {
           type: 'full-reload',
           path: '*',
         })
+        return []
       }
+
+      return undefined
     },
 
     generateBundle(_options, bundle) {
@@ -2202,7 +2215,8 @@ function extractAndRewriteHandlers(
   code: string,
   sourceModule: string,
   handlerRegistry: Map<string, ExtractedHandler>,
-): { code: string; handlers: string[] } | null {
+  inputSourceMap: TransformResult['map'] = null,
+): { code: string; handlers: string[]; map: TransformResult['map'] } | null {
   let ast: ReturnType<typeof parse>
 
   try {
@@ -2445,10 +2459,14 @@ function extractAndRewriteHandlers(
   }
 
   // Generate the modified code
-  const result = generate(ast, {
+  const generatorOptions: BabelGeneratorOptionsWithInputSourceMap = {
     retainLines: true,
     compact: false,
-  })
+    sourceMaps: inputSourceMap !== null,
+    inputSourceMap: inputSourceMap ?? undefined,
+    sourceFileName: sourceModule,
+  }
+  const result = generate(ast, generatorOptions)
 
-  return { code: result.code, handlers: handlerNames }
+  return { code: result.code, handlers: handlerNames, map: result.map as TransformResult['map'] }
 }

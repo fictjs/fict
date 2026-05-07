@@ -2507,6 +2507,7 @@ export const createFictPlugin = declare(
     api.assertVersion(7)
     const t = api.types as typeof BabelCore.types
     const strictGuaranteeFromEnv = readBooleanEnv('FICT_STRICT_GUARANTEE') === true
+    const isProduction = process.env.NODE_ENV === 'production'
     const normalizedOptions: FictCompilerOptions = {
       ...options,
       fineGrainedDom: options.fineGrainedDom ?? true,
@@ -2516,7 +2517,7 @@ export const createFictPlugin = declare(
       optimizeLevel: options.optimizeLevel ?? 'safe',
       inlineDerivedMemos: options.inlineDerivedMemos ?? true,
       emitModuleMetadata: options.emitModuleMetadata ?? 'auto',
-      strictGuarantee: strictGuaranteeFromEnv || options.strictGuarantee !== false,
+      strictGuarantee: strictGuaranteeFromEnv || isProduction || options.strictGuarantee !== false,
       dev:
         options.dev ?? (process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'),
     }

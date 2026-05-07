@@ -26,6 +26,7 @@ This folder holds documentation for the Fict project.
 - `ssr-performance.md` — SSR performance tuning and snapshot-size optimization
 - `ssr-deployment.md` — Deployment guides for Node, Vercel, Cloudflare Workers, and edge runtimes
 - `ssr-runtime-matrix.md` — Release-gate matrix for SSR runtime, CSP, hydration, resumability, and streaming checks
+- `tooling-runtime-matrix.md` — Release-gate matrix for Vite, bundler examples, HMR, sourcemaps, CSP, and Trusted Types
 
 ## Technical Details
 

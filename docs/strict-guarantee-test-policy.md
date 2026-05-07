@@ -5,7 +5,7 @@ This page defines when test code should explicitly set `strictGuarantee: false`.
 ## Default Rule
 
 - Keep `strictGuarantee: true` (default) for normal application compilation and guarantee-contract tests.
-- Only opt out in tests that intentionally use fallback/non-guaranteed shapes to verify runtime behavior.
+- Only opt out in non-production tests that intentionally use fallback/non-guaranteed shapes to verify runtime behavior.
 
 ## Current Approved Opt-out Suites
 

@@ -17,6 +17,7 @@ Current `@fictjs/compiler` defaults:
 - `inlineDerivedMemos: true`
 - `emitModuleMetadata: 'auto'`
 - `strictGuarantee: true`
+- `NODE_ENV=production` force-enables `strictGuarantee` even when options request opt-out
 - `strictReactivity: false`
 - `dev: NODE_ENV !== 'production' && NODE_ENV !== 'test'`
 

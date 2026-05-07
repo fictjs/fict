@@ -586,7 +586,8 @@ Key rules: nested component definitions (FICT-C003), missing list keys (FICT-J00
 - Recommended config mirrors compiler warnings so IDE diagnostics stay aligned with build output.
 - For strict CI gates, enable compiler `strictReactivity: true` to escalate control-flow fallback diagnostics (`FICT-R003`, `FICT-R006`) to build errors.
 - `strictGuarantee` is enabled by default for fail-closed guarantees.
-- Set `strictGuarantee: false` only when you intentionally opt out.
+- Production compilation (`NODE_ENV=production`) force-enables `strictGuarantee` even when an integration opts out.
+- Set `strictGuarantee: false` only for non-production migration or benchmark builds.
 - CI can force strict mode with `FICT_STRICT_GUARANTEE=1` during build steps.
 - Guarantee boundary reference: `docs/reactivity-guarantee-matrix.md`.
 

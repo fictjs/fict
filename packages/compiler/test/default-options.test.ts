@@ -52,4 +52,35 @@ describe('compiler default options', () => {
 
     expect(() => transformWithCompilerDefaults(source, { dev: false })).toThrow(/FICT-P00[1-5]/)
   })
+
+  it('forces strictGuarantee on in production even when an integration opts out', () => {
+    const previousNodeEnv = process.env.NODE_ENV
+    process.env.NODE_ENV = 'production'
+    const source = `
+      import { $state } from 'fict'
+      function sink(value) {
+        return value
+      }
+      function App() {
+        let count = $state(0)
+        sink(count)
+        return <div />
+      }
+    `
+
+    try {
+      expect(() =>
+        transformWithCompilerDefaults(source, {
+          strictGuarantee: false,
+          dev: false,
+        }),
+      ).toThrow(/FICT-S002/)
+    } finally {
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previousNodeEnv
+      }
+    }
+  })
 })

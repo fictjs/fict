@@ -87,6 +87,7 @@ Operational behavior:
 3. Prefer IDs and server fetch on interaction for sensitive or high-volume data.
 4. Treat snapshot as client-visible data by design.
 5. Strict CSP deployments should pass `scriptNonce`, or use `streamRuntime: 'external'` with observer patch mode and the published `@fictjs/ssr/fict-stream-runtime.js` asset to avoid per-chunk inline patch scripts.
+6. Trusted Types deployments should prefer external observer mode. The streaming runtime avoids `innerHTML`/`eval`; host applications that require Trusted Types policies should apply them to the complete server-rendered HTML document rather than expecting Fict to create a browser-side policy.
 
 ## Streaming & Hydration Diagnostics
 
@@ -126,3 +127,4 @@ At minimum, capture:
    - regression tests for mixed/legacy payload behavior
 2. Major release can drop legacy support, but must document migration path and fallback plan.
 3. SSR/resume release candidates must pass `pnpm test:ssr-matrix` and follow `docs/ssr-runtime-matrix.md`.
+4. Tooling release candidates must pass `pnpm test:bundlers` and follow `docs/tooling-runtime-matrix.md`.

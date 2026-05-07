@@ -102,6 +102,26 @@ describe('createDiagnostic', () => {
     expect(diagnostic.severity).toBe(DiagnosticSeverity.Warning)
   })
 
+  it('forces strictGuarantee for created diagnostics in production', () => {
+    const previousNodeEnv = process.env.NODE_ENV
+    process.env.NODE_ENV = 'production'
+    const node = t.identifier('value')
+
+    try {
+      const diagnostic = createDiagnostic(DiagnosticCode.FICT_P001, node, 'test.tsx', undefined, {
+        strictGuarantee: false,
+      })
+
+      expect(diagnostic.severity).toBe(DiagnosticSeverity.Error)
+    } finally {
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previousNodeEnv
+      }
+    }
+  })
+
   it('reports diagnostics with 1-based warning columns', () => {
     const node = t.identifier('warn')
     node.loc = {
@@ -200,6 +220,24 @@ describe('getDiagnosticInfo', () => {
 
     expect(info.severity).toBe(DiagnosticSeverity.Warning)
     expect(info.message).toContain('non-reactive binding')
+  })
+
+  it('forces strictGuarantee info severity in production', () => {
+    const previousNodeEnv = process.env.NODE_ENV
+    process.env.NODE_ENV = 'production'
+
+    try {
+      const info = getDiagnosticInfo(DiagnosticCode.FICT_P002, { strictGuarantee: false })
+
+      expect(info.severity).toBe(DiagnosticSeverity.Error)
+      expect(info.message).toContain('non-reactive binding')
+    } finally {
+      if (previousNodeEnv === undefined) {
+        delete process.env.NODE_ENV
+      } else {
+        process.env.NODE_ENV = previousNodeEnv
+      }
+    }
   })
 
   it('returns error severity when strictReactivity is enabled', () => {

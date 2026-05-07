@@ -127,12 +127,19 @@ Compiler option passthrough:
 
 - This plugin forwards compiler options directly (for example: `strictGuarantee`, `strictReactivity`, `lazyConditional`, `emitModuleMetadata`, `warningLevels`, `reactiveScopes`).
 - Current compiler default is `strictGuarantee: true` (fail-closed).
+- Production builds force-enable `strictGuarantee` when `NODE_ENV=production`; use opt-out profiles only outside production.
 
 Runtime dev/prod define:
 
 - The plugin defines `__DEV__` automatically:
   - `true` in dev server
   - `false` in production build
+
+HMR behavior:
+
+- Fict-transformed `.tsx`/`.jsx` modules intentionally trigger a full reload in dev so the compiler-generated reactive graph is rebuilt from a clean module instance.
+- `tsconfig` changes reset the TypeScript project and transform cache before the next transform.
+- See `docs/tooling-runtime-matrix.md` for the v1.0 tooling release gate.
 
 Recommended profiles:
 
@@ -142,7 +149,7 @@ fict({
   strictGuarantee: true,
 })
 
-// Migration / benchmark compatibility
+// Non-production migration / benchmark compatibility
 fict({
   strictGuarantee: false,
   emitModuleMetadata: false,

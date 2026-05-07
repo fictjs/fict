@@ -204,7 +204,9 @@ export function resolveDiagnosticSeverity(
   options: Partial<FictCompilerOptions> = {},
 ): DiagnosticSeverity {
   const strictGuaranteeEnabled =
-    readBooleanEnv('FICT_STRICT_GUARANTEE') === true || options.strictGuarantee !== false
+    readBooleanEnv('FICT_STRICT_GUARANTEE') === true ||
+    process.env.NODE_ENV === 'production' ||
+    options.strictGuarantee !== false
 
   if (strictGuaranteeEnabled && STRICT_GUARANTEE_DIAGNOSTICS.has(code)) {
     return DiagnosticSeverity.Error

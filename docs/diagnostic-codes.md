@@ -420,8 +420,10 @@ when you need tighter update granularity.
 **Strict mode:** Set compiler `strictReactivity: true` to treat `FICT-R003` and
 `FICT-R006` as build errors by default. You can still override per code with `warningLevels`.
 `strictGuarantee` is enabled by default for fail-closed behavior where non-guaranteed reactivity
-diagnostics cannot be suppressed or downgraded. Set `strictGuarantee: false` only when
-intentionally opting out.
+diagnostics cannot be suppressed or downgraded. Production compilation (`NODE_ENV=production`)
+force-enables it even when an integration passes `strictGuarantee: false`. Set
+`strictGuarantee: false` only when intentionally opting out in non-production migration or
+benchmark builds.
 Set `FICT_STRICT_GUARANTEE=1` in CI to force-enable strict mode globally.
 For the overall guarantee/fallback/unsupported map, see `docs/reactivity-guarantee-matrix.md`.
 

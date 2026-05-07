@@ -30,6 +30,10 @@ type TestPlugin = ReturnType<typeof fict> & {
   writeBundle?: {
     call: (context: unknown, options: unknown, bundle: unknown) => unknown | Promise<unknown>
   }
+  handleHotUpdate?: (context: {
+    file: string
+    server: { ws: { send: (payload: unknown) => void } }
+  }) => unknown[] | void
 }
 
 function getTestPlugin(options?: Parameters<typeof fict>[0]): TestPlugin {
@@ -114,6 +118,32 @@ describe('fict vite-plugin', () => {
           )
 
     expect(result).toBeNull()
+  })
+
+  it('sends a full reload for transformed modules during HMR', () => {
+    const plugin = getTestPlugin({ useTypeScriptProject: false })
+    const send = vi.fn()
+
+    const result = plugin.handleHotUpdate?.({
+      file: '/project/src/App.tsx',
+      server: { ws: { send } },
+    })
+
+    expect(send).toHaveBeenCalledWith({ type: 'full-reload', path: '*' })
+    expect(result).toEqual([])
+  })
+
+  it('leaves non-transformed files to Vite HMR', () => {
+    const plugin = getTestPlugin({ useTypeScriptProject: false })
+    const send = vi.fn()
+
+    const result = plugin.handleHotUpdate?.({
+      file: '/project/src/styles.css',
+      server: { ws: { send } },
+    })
+
+    expect(send).not.toHaveBeenCalled()
+    expect(result).toBeUndefined()
   })
 
   it('resolves Fict hook metadata from bare package imports', async () => {
@@ -1042,6 +1072,39 @@ describe('fict vite-plugin', () => {
           // Either format is acceptable depending on regex match
           expect(hasVirtualQrl || hasOriginalQrl).toBe(true)
         }
+      }
+    })
+
+    it('preserves main-module sourcemaps when function splitting rewrites handlers', async () => {
+      const plugin = fict({ functionSplitting: true, resumable: true, sourcemap: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const sample = `
+        import { $state } from 'fict'
+        export function Counter() {
+          let count = $state(0)
+          return <button onClick$={() => count++}>{count}</button>
+        }
+      `
+
+      const mockContext = {
+        error: vi.fn(),
+        emitFile: vi.fn(),
+      }
+      const transform = plugin.transform as any
+      const result =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, sample, '/project/src/CounterMap.tsx')
+          : await transform?.handler.call(mockContext, sample, '/project/src/CounterMap.tsx')
+
+      expect(result && typeof result === 'object').toBe(true)
+      if (result && typeof result === 'object' && 'code' in result) {
+        expect(result.code as string).toContain('virtual:fict-handler:')
+        expect(result.map).not.toBeNull()
+        expect(result.map).toMatchObject({ version: 3 })
       }
     })
 

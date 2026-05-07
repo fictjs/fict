@@ -179,7 +179,9 @@ export interface FictCompilerOptions {
    * Fail-closed reactivity guarantee mode.
    * When enabled, diagnostics that indicate non-guaranteed reactive behavior are
    * treated as hard errors and cannot be suppressed/downgraded.
-   * Default: true.
+   * Default: true. Production compilation (`NODE_ENV=production`) forces this
+   * mode on even if an integration passes `false`; use non-production builds for
+   * migration experiments that intentionally exercise fallback behavior.
    */
   strictGuarantee?: boolean
   /**

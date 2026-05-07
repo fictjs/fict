@@ -576,7 +576,10 @@ reactivity diagnostics are treated as hard errors and cannot be suppressed/downg
 This includes unknown call boundaries (`FICT-R002`), reactive callback/closure escapes
 (`FICT-R005`), async callback hosts, props fallback shapes, native element spread fallbacks,
 and legacy non-guaranteed object mutation/dynamic access diagnostics.
-Set `strictGuarantee: false` only when intentionally opting out.
+Production compilation (`NODE_ENV=production`) forces `strictGuarantee` on even
+when an integration passes `strictGuarantee: false`; use non-production builds
+for migration experiments that intentionally exercise fallback behavior.
+Set `strictGuarantee: false` only when intentionally opting out outside production.
 CI/build pipelines can force strict mode via `FICT_STRICT_GUARANTEE=1`.
 Guarantee boundary reference: `docs/reactivity-guarantee-matrix.md`.
 Profile presets (dev/CI/prod): `docs/config-profiles.md`.
@@ -760,7 +763,7 @@ This section defines the "contract" for v1.0. These rules are enforced by the co
   - Write: assignments/`++` to `count` are disallowed; mutate via `state.count++` or immutable updates (e.g., `state = { ...state(), count: state().count + 1 }`).
   - Correct Usage: `const s = $state({ id: 1 }); const id = () => s.id;` or usage in JSX `{s.id}`.
 - **Blackbox Functions**: Passing `$state` to a function `fn(state)` passes the _current value_. `fn` cannot subscribe to updates unless it receives a getter or signal object (`$store` from `fict`).
-- **Function arguments**: When you pass a `$state` accessor to an arbitrary function (e.g. `someFn(count)`), the compiler rewrites it to a snapshot (`someFn(count())`). The compiler emits `FICT-S002`; under default `strictGuarantee: true`, it is treated as a build error. If the callee needs a stable reactive contract, use an explicit Fict primitive/API boundary or opt out of `strictGuarantee` for that integration with tests.
+- **Function arguments**: When you pass a `$state` accessor to an arbitrary function (e.g. `someFn(count)`), the compiler rewrites it to a snapshot (`someFn(count())`). The compiler emits `FICT-S002`; under default `strictGuarantee: true`, it is treated as a build error. If the callee needs a stable reactive contract, use an explicit Fict primitive/API boundary or opt out of `strictGuarantee` only in a non-production integration build covered by tests.
 - **Callback escape**: Closures that capture reactive values are guaranteed for JSX event handlers and known synchronous iterator hosts. Unknown callback hosts, object-slot callback aliases, and async hosts such as `Promise.then` / `catch` / `finally` emit `FICT-R002` / `FICT-R005` and fail closed by default.
 - **Package hook metadata**: Imported hooks from third-party packages are opaque unless the package publishes Fict metadata through `package.json#fict.metadata` or `package.json#fict.exports`. Without metadata, hook return reactivity is not recovered across the npm boundary.
 - **Arrays**: `$state` arrays track mutations (`push`, index writes, `length` assignment) as writes to the signal. Prefer immutable updates for predictability; mutating `length` is allowed but should be documented as a full write.

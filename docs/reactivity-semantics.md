@@ -7,7 +7,8 @@ For fail-closed CI boundaries and unsupported/fallback classifications, see `doc
 Note: examples that pass reactive values directly to arbitrary function arguments (for example
 `console.log(count)`) illustrate lowering semantics. With default `strictGuarantee: true`, those
 patterns surface `FICT-S002`/`FICT-R002` as build errors unless you pass explicit getters/snapshots
-or intentionally opt out (`strictGuarantee: false`).
+or intentionally opt out in a non-production build (`strictGuarantee: false`). Production
+compilation (`NODE_ENV=production`) force-enables `strictGuarantee`.
 
 ## Core Principle: Getter-Based Reactivity
 

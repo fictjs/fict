@@ -61,7 +61,7 @@ module.exports = {
   presets: [['@fictjs/babel-preset', { strictGuarantee: true }]],
 }
 
-// Migration / benchmark profile
+// Non-production migration / benchmark profile
 module.exports = {
   presets: [
     ['@fictjs/babel-preset', { strictGuarantee: false, emitModuleMetadata: false, dev: false }],
@@ -72,5 +72,6 @@ module.exports = {
 Key defaults:
 
 - compiler `strictGuarantee`: `true`
+- production compilation (`NODE_ENV=production`) force-enables compiler `strictGuarantee`
 - compiler `emitModuleMetadata`: `'auto'`
 - preset `typescript`: `true`
