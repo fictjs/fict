@@ -27,6 +27,7 @@ import {
   waitForPendingHandlers,
 } from '@fictjs/runtime/loader'
 import {
+  FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
   __fictSetSSRState,
   __fictDisableSSR,
   __fictDisableResumable,
@@ -177,6 +178,13 @@ function parseSnapshot(html: string): Record<string, unknown> | null {
   } catch {
     return null
   }
+}
+
+function replaceSnapshot(html: string, payload: Record<string, unknown>): string {
+  return html.replace(
+    /<script id="__FICT_SNAPSHOT__" type="application\/json">[^<]*<\/script>/,
+    `<script id="__FICT_SNAPSHOT__" type="application/json">${JSON.stringify(payload)}</script>`,
+  )
 }
 
 const decoder = new TextDecoder()
@@ -415,6 +423,67 @@ describe('QRL Generation and Event Handler Resolution', () => {
 
       const button = env.document.querySelector('button') as HTMLElement
       expect(button).not.toBeNull()
+      expect(button.textContent).toBe('0')
+
+      dispatchClick(button, env.window)
+      await tick(3)
+
+      expect(button.textContent).toBe('1')
+    } finally {
+      await cleanup()
+      compiled.cleanup()
+    }
+  })
+
+  it('migrates legacy snapshot schema before invoking resumable handlers', async () => {
+    const source = `
+      import { $state } from 'fict'
+      export function App() {
+        let count = $state(0)
+        return <button onClick$={() => count++}>{count}</button>
+      }
+    `
+
+    const compiled = compileModule(source, { baseDir: path.join(process.cwd(), '.tmp') })
+    let cleanup = () => {}
+
+    try {
+      const mod = (await import(compiled.url)) as { App: () => FictNode }
+      const html = renderToString(() => ({ type: mod.App, props: {} }))
+      const currentSnapshot = parseSnapshot(html)
+      expect(currentSnapshot).not.toBeNull()
+      const currentScopes = currentSnapshot?.scopes as Record<string, Record<string, unknown>>
+      const legacySnapshot = {
+        v: 0,
+        scopeList: Object.entries(currentScopes).map(([id, scope]) => ({ id, ...scope })),
+      }
+      const legacyHtml = replaceSnapshot(html, legacySnapshot)
+      const env = setupClientEnvironment(legacyHtml)
+      cleanup = env.cleanup
+
+      installResumableLoader({
+        document: env.document,
+        events: ['click'],
+        snapshotMigrations: {
+          0(snapshot, context) {
+            expect(context.fromVersion).toBe(0)
+            expect(context.toVersion).toBe(FICT_SSR_SNAPSHOT_SCHEMA_VERSION)
+            const scopes: Record<string, unknown> = {}
+            for (const scope of snapshot.scopeList as Array<
+              Record<string, unknown> & { id: string }
+            >) {
+              const { id, ...rest } = scope
+              scopes[id] = { id, ...rest }
+            }
+            return {
+              v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+              scopes,
+            }
+          },
+        },
+      })
+
+      const button = env.document.querySelector('button') as HTMLElement
       expect(button.textContent).toBe('0')
 
       dispatchClick(button, env.window)
