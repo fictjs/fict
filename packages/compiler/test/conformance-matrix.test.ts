@@ -100,6 +100,98 @@ const cases: ConformanceCase[] = [
     },
   },
   {
+    id: 'guaranteed-nested-destructuring-default-rest',
+    axis: 'destructuring + default + rest props',
+    level: 'guaranteed',
+    source: `
+      export function Profile(props) {
+        const {
+          user: { name = 'Ada' } = {},
+          title = 'Engineer',
+          ...rest
+        } = props
+        return <section data-role={rest.role}>{title}: {name}</section>
+      }
+    `,
+    assertOutput: output => {
+      expect(output).toContain('__fictPropsRest')
+      expect(output).toContain('__fictProp')
+    },
+  },
+  {
+    id: 'guaranteed-keyed-list-conditional-child',
+    axis: 'keyed list + conditional child',
+    level: 'guaranteed',
+    source: `
+      import { $state } from 'fict'
+
+      export function Menu() {
+        let selected = $state(1)
+        const items = [1, 2, 3]
+        return (
+          <ul>
+            {items.map(item => (
+              <li key={item}>{item === selected ? <span>{selected}</span> : null}</li>
+            ))}
+          </ul>
+        )
+      }
+    `,
+    assertOutput: output => {
+      expect(output).toContain('createKeyedList')
+      expect(output).toContain('createConditional')
+    },
+  },
+  {
+    id: 'fallback-nested-switch-state-read',
+    axis: 'nested switch + state read',
+    level: 'fallback',
+    source: `
+      import { $state } from 'fict'
+
+      export function Status() {
+        let status = $state('idle')
+        let label = 'Unknown'
+        switch (status) {
+          case 'idle':
+            switch (status) {
+              case 'idle':
+                label = 'Idle'
+                break
+            }
+            break
+          default:
+            label = 'Other'
+        }
+        return <div>{label}: {status}</div>
+      }
+    `,
+    expectedError: /FICT-R006/,
+    nonStrictWarningCode: 'FICT-R006',
+  },
+  {
+    id: 'guaranteed-try-finally-state-update',
+    axis: 'try/finally + state update',
+    level: 'guaranteed',
+    source: `
+      import { $state } from 'fict'
+
+      export function App() {
+        let count = $state(0)
+        try {
+          count++
+        } finally {
+          count++
+        }
+        return <div>{count}</div>
+      }
+    `,
+    assertOutput: output => {
+      expect(output).toContain('__fictUseSignal')
+      expect(output).toMatch(/count\(\)/)
+    },
+  },
+  {
     id: 'fallback-unknown-callback-host',
     axis: 'function escape + callback host',
     level: 'fallback',
@@ -165,6 +257,43 @@ const cases: ConformanceCase[] = [
     `,
     expectedError: /FICT-P005/,
     nonStrictWarningCode: 'FICT-P005',
+  },
+  {
+    id: 'fallback-event-handler-escape',
+    axis: 'event handler escape + browser API',
+    level: 'fallback',
+    source: `
+      import { $state } from 'fict'
+
+      export function App() {
+        let count = $state(0)
+        const increment = () => {
+          count++
+        }
+        window.addEventListener('click', increment)
+        return <button>{count}</button>
+      }
+    `,
+    expectedError: /FICT-R002|FICT-R005/,
+    nonStrictWarningCode: 'FICT-R005',
+  },
+  {
+    id: 'fallback-loop-carried-state',
+    axis: 'loop-carried state',
+    level: 'fallback',
+    source: `
+      import { $state } from 'fict'
+
+      export function App({ items }) {
+        let total = $state(0)
+        for (const item of items) {
+          total += item.value
+        }
+        return <div>{total}</div>
+      }
+    `,
+    expectedError: /FICT-R006/,
+    nonStrictWarningCode: 'FICT-R006',
   },
   {
     id: 'unsupported-state-inside-nested-function',
