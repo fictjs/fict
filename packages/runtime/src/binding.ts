@@ -20,8 +20,8 @@ import {
   getPropAlias,
   SVGNamespace,
 } from './constants'
-import { createRenderEffect } from './effect'
 import { isNodeLike } from './dom-guards'
+import { createRenderEffect } from './effect'
 import { withHydration, withHydrationRange, isHydratingActive } from './hydration'
 import {
   createRootContext,
@@ -2431,7 +2431,6 @@ export function createConditional(
       }
 
       const prev = pushRoot(nextRoot)
-      let handledError = false
       let nextNodes: Node[] = []
       try {
         if (nextOutput != null && nextOutput !== false) {
@@ -2440,22 +2439,16 @@ export function createConditional(
         }
       } catch (err) {
         if (handleSuspend(err as any, nextRoot)) {
-          handledError = true
           destroyRoot(nextRoot)
           return
         }
         if (handleError(err, { source: 'renderChild' }, nextRoot)) {
-          handledError = true
           destroyRoot(nextRoot)
           return
         }
         throw err
       } finally {
         popRoot(prev)
-      }
-
-      if (handledError) {
-        return
       }
 
       lastCondition = cond
