@@ -5,12 +5,15 @@ const PROP_GETTER_MARKER = Symbol.for('fict:prop-getter')
 const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
 const REACTIVE_FN_MARKER = Symbol.for('fict:reactive-fn')
 const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
-const propGetters = new WeakSet<(...args: unknown[]) => unknown>()
+const REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:reactive-fn-registry')
+const PROP_GETTER_REGISTRY_KEY = Symbol.for('fict:prop-getter-registry')
 const rawToProxy = new WeakMap<object, object>()
 const proxyToRaw = new WeakMap<object, object>()
 
 type NonReactiveRegistryHost = typeof globalThis & {
   [NON_REACTIVE_FN_REGISTRY_KEY]?: WeakSet<(...args: unknown[]) => unknown>
+  [REACTIVE_FN_REGISTRY_KEY]?: WeakSet<(...args: unknown[]) => unknown>
+  [PROP_GETTER_REGISTRY_KEY]?: WeakSet<(...args: unknown[]) => unknown>
 }
 
 function getNonReactiveFnRegistry(): WeakSet<(...args: unknown[]) => unknown> {
@@ -23,6 +26,26 @@ function getNonReactiveFnRegistry(): WeakSet<(...args: unknown[]) => unknown> {
   return registry
 }
 
+function getReactiveFnRegistry(): WeakSet<(...args: unknown[]) => unknown> {
+  const host = globalThis as NonReactiveRegistryHost
+  let registry = host[REACTIVE_FN_REGISTRY_KEY]
+  if (!registry) {
+    registry = new WeakSet<(...args: unknown[]) => unknown>()
+    host[REACTIVE_FN_REGISTRY_KEY] = registry
+  }
+  return registry
+}
+
+function getPropGetterRegistry(): WeakSet<(...args: unknown[]) => unknown> {
+  const host = globalThis as NonReactiveRegistryHost
+  let registry = host[PROP_GETTER_REGISTRY_KEY]
+  if (!registry) {
+    registry = new WeakSet<(...args: unknown[]) => unknown>()
+    host[PROP_GETTER_REGISTRY_KEY] = registry
+  }
+  return registry
+}
+
 /**
  * @internal
  * Marks a prop getter so props proxy and runtime value paths can lazily evaluate it.
@@ -30,7 +53,7 @@ function getNonReactiveFnRegistry(): WeakSet<(...args: unknown[]) => unknown> {
  */
 export function __fictProp<T>(getter: () => T): () => T {
   if (typeof getter === 'function' && getter.length === 0) {
-    propGetters.add(getter)
+    getPropGetterRegistry().add(getter as (...args: unknown[]) => unknown)
     if (Object.isExtensible(getter)) {
       try {
         ;(getter as (() => T) & { [PROP_GETTER_MARKER]?: boolean })[PROP_GETTER_MARKER] = true
@@ -45,7 +68,10 @@ export function __fictProp<T>(getter: () => T): () => T {
 function isPropGetter(value: unknown): value is () => unknown {
   if (typeof value !== 'function') return false
   const fn = value as (() => unknown) & { [PROP_GETTER_MARKER]?: boolean }
-  return propGetters.has(fn as (...args: unknown[]) => unknown) || fn[PROP_GETTER_MARKER] === true
+  return (
+    getPropGetterRegistry().has(fn as (...args: unknown[]) => unknown) ||
+    fn[PROP_GETTER_MARKER] === true
+  )
 }
 
 function isNonReactiveFn(value: unknown): boolean {
@@ -72,6 +98,7 @@ function markNonReactiveFn<T extends (...args: unknown[]) => unknown>(fn: T): T 
 
 function isExplicitReactiveFn(value: unknown): boolean {
   if (typeof value !== 'function') return false
+  if (getReactiveFnRegistry().has(value as (...args: unknown[]) => unknown)) return true
   return (
     (value as ((...args: unknown[]) => unknown) & { [REACTIVE_FN_MARKER]?: boolean })[
       REACTIVE_FN_MARKER

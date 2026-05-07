@@ -652,12 +652,13 @@ function startStreamingRenderInSession(
       __fictSetSSRStreamHooks(null)
       __fictDisableSSR()
     })
-    restoreGlobals()
-    restoreManifest()
     try {
       teardown()
     } catch {
       // ignore cleanup errors
+    } finally {
+      restoreGlobals()
+      restoreManifest()
     }
   }
 

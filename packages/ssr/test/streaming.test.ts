@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 
 import type { FictNode } from '@fictjs/runtime'
-import { Suspense, createSuspenseToken } from '@fictjs/runtime'
+import { Suspense, createSuspenseToken, onDestroy } from '@fictjs/runtime'
 import { __fictUseContext, __fictUseSignal } from '@fictjs/runtime/internal'
 
 import { renderToPartial, renderToPipeableStream, renderToStream } from '../src/index'
@@ -747,6 +747,71 @@ describe('@fictjs/ssr streaming', () => {
     } finally {
       if (!hadDocument) {
         delete (globalThis as { document?: Document }).document
+      }
+    }
+  })
+
+  it('runs streaming teardown before restoring exposed DOM globals', async () => {
+    const globals = globalThis as Record<string, unknown>
+    const previousDocument = globals.document
+    const previousWindow = globals.window
+    const hadDocument = Object.prototype.hasOwnProperty.call(globals, 'document')
+    const hadWindow = Object.prototype.hasOwnProperty.call(globals, 'window')
+    const token = createSuspenseToken()
+    let cleanupHadDocument = false
+    let cleanupHadWindow = false
+    let cleanupDocumentCanCreateNodes = false
+
+    function AsyncChild(): FictNode {
+      throw token.token
+    }
+
+    function App(): FictNode {
+      onDestroy(() => {
+        const doc = globals.document as Document | undefined
+        cleanupHadDocument = Object.prototype.hasOwnProperty.call(globals, 'document')
+        cleanupHadWindow = Object.prototype.hasOwnProperty.call(globals, 'window')
+        cleanupDocumentCanCreateNodes = typeof doc?.createElement === 'function'
+      })
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'CleanupLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    try {
+      delete globals.document
+      delete globals.window
+
+      const stream = renderToStream(() => ({ type: App, props: {} }), {
+        mode: 'shell',
+        exposeGlobals: true,
+      })
+      const reader = stream.getReader()
+      const first = await reader.read()
+      expect(first.done).toBe(false)
+      expect(first.value ? decoder.decode(first.value) : '').toContain('CleanupLoading')
+
+      await reader.cancel(new Error('cleanup-order'))
+
+      expect(cleanupHadDocument).toBe(true)
+      expect(cleanupHadWindow).toBe(true)
+      expect(cleanupDocumentCanCreateNodes).toBe(true)
+      expect(Object.prototype.hasOwnProperty.call(globals, 'document')).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(globals, 'window')).toBe(false)
+    } finally {
+      if (hadDocument) {
+        globals.document = previousDocument
+      } else {
+        delete globals.document
+      }
+      if (hadWindow) {
+        globals.window = previousWindow
+      } else {
+        delete globals.window
       }
     }
   })

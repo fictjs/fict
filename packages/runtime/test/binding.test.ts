@@ -1,6 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-import { createEffect, createRoot, render, createElement, Fragment, onDestroy } from '../src/index'
+import {
+  createEffect,
+  createRoot,
+  render,
+  createElement,
+  Fragment,
+  onDestroy,
+  onMount,
+} from '../src/index'
 import { createSignal } from '../src/advanced'
 import {
   createTextBinding,
@@ -27,6 +35,7 @@ import {
   toNodeArray,
   delegateEvents,
   __fictReactive,
+  __fictProp,
 } from '../src/internal'
 
 const tick = () =>
@@ -101,9 +110,23 @@ describe('Reactive DOM Binding', () => {
       expect(isReactive(getter)).toBe(true)
     })
 
+    it('keeps frozen getters reactive when explicitly marked', () => {
+      const getter = Object.freeze(() => 1)
+      const marked = reactive(getter)
+      expect(marked).toBe(getter)
+      expect(isReactive(marked)).toBe(true)
+    })
+
     it('supports compiler-marked zero-arg getters as reactive', () => {
       const getter = __fictReactive(() => 1)
       expect(isReactive(getter)).toBe(true)
+    })
+
+    it('shares frozen prop getter markers with DOM binding checks', () => {
+      const getter = Object.freeze(() => 1)
+      const marked = __fictProp(getter)
+      expect(marked).toBe(getter)
+      expect(isReactive(marked)).toBe(true)
     })
 
     it('nonReactive marker overrides explicit reactive marker', () => {
@@ -363,6 +386,28 @@ describe('Reactive DOM Binding', () => {
       expect(container.textContent).toBe('Visible')
 
       dispose()
+    })
+
+    it('destroys empty child roots without running mount callbacks', () => {
+      const events: string[] = []
+
+      const { dispose } = createRoot(() => {
+        createChildBinding(
+          container,
+          () => {
+            onMount(() => events.push('mounted'))
+            onDestroy(() => events.push('destroyed'))
+            return null
+          },
+          createElement,
+        )
+      })
+
+      expect(container.textContent).toBe('')
+      expect(events).toEqual(['destroyed'])
+
+      dispose()
+      expect(events).toEqual(['destroyed'])
     })
 
     it('creates marker and children in parent ownerDocument', async () => {

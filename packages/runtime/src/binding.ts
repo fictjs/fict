@@ -61,9 +61,13 @@ const CHILDREN_BINDING_CACHE = Symbol('fict:children-binding-cache')
 const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
 const REACTIVE_FN_MARKER = Symbol.for('fict:reactive-fn')
 const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
+const REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:reactive-fn-registry')
+const PROP_GETTER_REGISTRY_KEY = Symbol.for('fict:prop-getter-registry')
 
 type NonReactiveRegistryHost = typeof globalThis & {
   [NON_REACTIVE_FN_REGISTRY_KEY]?: WeakSet<(...args: unknown[]) => unknown>
+  [REACTIVE_FN_REGISTRY_KEY]?: WeakSet<(...args: unknown[]) => unknown>
+  [PROP_GETTER_REGISTRY_KEY]?: WeakSet<(...args: unknown[]) => unknown>
 }
 
 interface StoredEventListener {
@@ -109,8 +113,29 @@ function getNonReactiveFnRegistry(): WeakSet<(...args: unknown[]) => unknown> {
   return registry
 }
 
+function getReactiveFnRegistry(): WeakSet<(...args: unknown[]) => unknown> {
+  const host = globalThis as NonReactiveRegistryHost
+  let registry = host[REACTIVE_FN_REGISTRY_KEY]
+  if (!registry) {
+    registry = new WeakSet<(...args: unknown[]) => unknown>()
+    host[REACTIVE_FN_REGISTRY_KEY] = registry
+  }
+  return registry
+}
+
+function getPropGetterRegistry(): WeakSet<(...args: unknown[]) => unknown> {
+  const host = globalThis as NonReactiveRegistryHost
+  let registry = host[PROP_GETTER_REGISTRY_KEY]
+  if (!registry) {
+    registry = new WeakSet<(...args: unknown[]) => unknown>()
+    host[PROP_GETTER_REGISTRY_KEY] = registry
+  }
+  return registry
+}
+
 function isExplicitReactiveFn(value: unknown): boolean {
   if (typeof value !== 'function') return false
+  if (getReactiveFnRegistry().has(value as (...args: unknown[]) => unknown)) return true
   return (
     (value as ((...args: unknown[]) => unknown) & { [REACTIVE_FN_MARKER]?: boolean })[
       REACTIVE_FN_MARKER
@@ -223,6 +248,7 @@ export function isStrictlyReactive(value: unknown): value is () => unknown {
 const PROP_GETTER_MARKER = Symbol.for('fict:prop-getter')
 function isPropGetterFn(value: unknown): boolean {
   if (typeof value !== 'function') return false
+  if (getPropGetterRegistry().has(value as (...args: unknown[]) => unknown)) return true
   return (value as any)[PROP_GETTER_MARKER] === true
 }
 
@@ -258,6 +284,7 @@ export function nonReactive<T extends (...args: unknown[]) => unknown>(fn: T): T
  * to participate in reactive binding without relying on heuristics.
  */
 export function reactive<T>(fn: () => T): () => T {
+  getReactiveFnRegistry().add(fn as (...args: unknown[]) => unknown)
   if (Object.isExtensible(fn)) {
     try {
       ;(fn as (() => T) & { [REACTIVE_FN_MARKER]?: boolean })[REACTIVE_FN_MARKER] = true
@@ -1113,11 +1140,13 @@ export function createChildBinding(
     const prev = pushRoot(root)
     let nodes: Node[] = []
     let handledError = false
+    let keepRoot = false
     try {
       const value = getValue()
 
       // Skip if value is null/undefined/false
       if (value == null || value === false) {
+        destroyRoot(root)
         return
       }
 
@@ -1127,6 +1156,7 @@ export function createChildBinding(
       if (parentNode) {
         insertNodesBefore(parentNode, nodes, marker)
       }
+      keepRoot = true
       return () => {
         destroyRoot(root)
         removeNodes(nodes)
@@ -1145,7 +1175,7 @@ export function createChildBinding(
       throw err
     } finally {
       popRoot(prev)
-      if (!handledError) {
+      if (!handledError && keepRoot) {
         flushOnMount(root)
       }
     }
