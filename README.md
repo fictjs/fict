@@ -254,6 +254,10 @@ Fict splits your component into **reactive regions**:
 
 ## Examples
 
+Runnable examples live under `examples/`, including Vite, Webpack, SSR, streaming, resumability,
+forms, dashboards, nested routing, and auth/error/loading flows. The docs index at
+`packages/docs-site/docs/examples/index.md` lists the current set.
+
 ### Conditional rendering
 
 ```tsx

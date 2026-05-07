@@ -48,7 +48,7 @@ async function createServer() {
     template = fs.readFileSync(path.resolve(__dirname, 'index.html'), 'utf-8')
   }
 
-  app.use('*', async (req, res) => {
+  app.use(async (req, res) => {
     const url = req.originalUrl
 
     try {

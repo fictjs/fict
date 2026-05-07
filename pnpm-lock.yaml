@@ -217,7 +217,60 @@ importers:
         specifier: ^7.3.1
         version: 7.3.1(@types/node@25.3.0)(jiti@2.6.1)(terser@5.46.0)(yaml@2.8.2)
 
+  examples/real-apps:
+    dependencies:
+      '@fictjs/router':
+        specifier: workspace:*
+        version: link:../../packages/router
+      '@fictjs/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@fictjs/vite-plugin':
+        specifier: workspace:*
+        version: link:../../packages/vite-plugin
+      fict:
+        specifier: workspace:*
+        version: link:../../packages/fict
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.1
+        version: 7.3.1(@types/node@25.3.0)(jiti@2.6.1)(terser@5.46.0)(yaml@2.8.2)
+
   examples/ssr-basic:
+    dependencies:
+      '@fictjs/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+      '@fictjs/ssr':
+        specifier: workspace:*
+        version: link:../../packages/ssr
+      '@fictjs/vite-plugin':
+        specifier: workspace:*
+        version: link:../../packages/vite-plugin
+      express:
+        specifier: ^5.2.1
+        version: 5.2.1
+      fict:
+        specifier: workspace:*
+        version: link:../../packages/fict
+    devDependencies:
+      '@types/express':
+        specifier: ^5.0.6
+        version: 5.0.6
+      '@types/node':
+        specifier: ^25.3.0
+        version: 25.3.0
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vite:
+        specifier: ^7.3.1
+        version: 7.3.1(@types/node@25.3.0)(jiti@2.6.1)(terser@5.46.0)(yaml@2.8.2)
+
+  examples/ssr-streaming:
     dependencies:
       '@fictjs/runtime':
         specifier: workspace:*
