@@ -1197,6 +1197,114 @@ function Counter() {
       expect(content).not.toContain('@fictjs/runtime/internal')
     })
 
+    it('does not import runtime helpers mentioned only in strings or comments', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_e0 = (scopeId, event, el) => {
+  // __fictGetScopeProps should not be detected from comments.
+  const helperName = "__fictUseLexicalScope";
+  return helperName + scopeId + event.type + el.tagName;
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn() }
+      const transform = plugin.transform as any
+      await transform.call(mockContext, compiledCode, '/project/src/StringHelperMention.tsx')
+
+      const load = plugin.load as any
+      const content = load('\0fict-handler:/project/src/StringHelperMention.tsx$$__fict_e0') as
+        | string
+        | null
+
+      expect(content).not.toBeNull()
+      expect(content).not.toContain('import { __fictUseLexicalScope')
+      expect(content).not.toContain('import { __fictGetScopeProps')
+    })
+
+    it('does not import runtime helpers shadowed by local bindings', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const __fictUseLexicalScope = () => ['local'];
+  const [value] = __fictUseLexicalScope(scopeId, ['count']);
+  return value + event.type + el.tagName;
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn() }
+      const transform = plugin.transform as any
+      await transform.call(mockContext, compiledCode, '/project/src/ShadowedHelper.tsx')
+
+      const load = plugin.load as any
+      const content = load('\0fict-handler:/project/src/ShadowedHelper.tsx$$__fict_e0') as
+        | string
+        | null
+
+      expect(content).not.toBeNull()
+      expect(content).not.toContain("from '@fictjs/runtime/internal';")
+      expect(content).toContain('const __fictUseLexicalScope')
+    })
+
+    it('preserves aliased runtime helper imports in extracted handler modules', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictUseLexicalScope as useScope, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const [count] = useScope(scopeId, ['count']);
+  const __handler = () => count(count() + 1);
+  return __handler.call(el, event);
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn() }
+      const transform = plugin.transform as any
+      await transform.call(mockContext, compiledCode, '/project/src/AliasedHelper.tsx')
+
+      const load = plugin.load as any
+      const content = load('\0fict-handler:/project/src/AliasedHelper.tsx$$__fict_e0') as
+        | string
+        | null
+
+      expect(content).not.toBeNull()
+      expect(content).toContain(
+        "import { __fictUseLexicalScope as useScope } from '@fictjs/runtime/internal';",
+      )
+      expect(content).toContain('useScope(scopeId')
+      expect(content).not.toContain('__fict_dep_useScope')
+    })
+
     it('clears extracted handlers on buildStart', async () => {
       const plugin = fict({ functionSplitting: true }) as any
 

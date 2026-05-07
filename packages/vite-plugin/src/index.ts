@@ -238,7 +238,7 @@ interface ExtractedHandler {
   /** The export name in the source module */
   exportName: string
   /** Runtime helpers used by this handler */
-  helpersUsed: string[]
+  helpersUsed: RuntimeHelperUsage[]
   /** Local dependencies from source module that need to be re-exported */
   localDeps: string[]
   /** The handler function code (without export) */
@@ -246,6 +246,8 @@ interface ExtractedHandler {
   /** Which runtime package family this module uses for helper imports */
   runtimeImportFamily: 'fict' | 'runtime'
 }
+
+type RuntimeHelperUsage = string | { helperName: string; localName: string }
 
 /**
  * Registry used only by the standalone registerExtractedHandler helper.
@@ -1808,6 +1810,16 @@ function getRuntimeHelperModule(helperName: string, family: 'fict' | 'runtime'):
   return family === 'runtime' ? '@fictjs/runtime/internal' : 'fict/internal'
 }
 
+function normalizeRuntimeHelperUsage(usage: RuntimeHelperUsage): {
+  helperName: string
+  localName: string
+} {
+  if (typeof usage === 'string') {
+    return { helperName: usage, localName: usage }
+  }
+  return usage
+}
+
 /**
  * Generate a standalone virtual module for an extracted handler.
  * The module contains the complete handler code with its own imports,
@@ -1822,14 +1834,17 @@ function generateHandlerModule(handler: ExtractedHandler): string {
   // Group imports by source module
   const importsByModule = new Map<string, string[]>()
 
-  for (const helperName of handler.helpersUsed) {
+  for (const usage of handler.helpersUsed) {
+    const { helperName, localName } = normalizeRuntimeHelperUsage(usage)
     const helper = RUNTIME_HELPERS[helperName]
     if (!helper) continue
 
     const moduleSource = getRuntimeHelperModule(helperName, handler.runtimeImportFamily)
     const existing = importsByModule.get(moduleSource) ?? []
-    if (!existing.includes(helper.import)) {
-      existing.push(helper.import)
+    const specifier =
+      localName === helper.import ? helper.import : `${helper.import} as ${localName}`
+    if (!existing.includes(specifier)) {
+      existing.push(specifier)
     }
     importsByModule.set(moduleSource, existing)
   }
@@ -1891,6 +1906,13 @@ const RUNTIME_HELPERS: Record<string, { import: string; from: string }> = {
   __fictQrl: { import: '__fictQrl', from: 'fict/internal' },
 }
 
+const RUNTIME_HELPER_IMPORT_SOURCES = new Set([
+  'fict/internal',
+  '@fictjs/runtime/internal',
+  'fict/internal/list',
+  '@fictjs/runtime/internal/list',
+])
+
 /** Known global identifiers that don't need to be imported */
 const GLOBAL_IDENTIFIERS = new Set([
   // JavaScript globals
@@ -1950,6 +1972,207 @@ const GLOBAL_IDENTIFIERS = new Set([
   'Node',
   'HTMLElement',
 ])
+
+function collectRuntimeHelperImports(body: t.Statement[]): Map<string, string> {
+  const helperImports = new Map<string, string>()
+
+  for (const stmt of body) {
+    if (!t.isImportDeclaration(stmt)) continue
+    if (!RUNTIME_HELPER_IMPORT_SOURCES.has(stmt.source.value)) continue
+
+    for (const specifier of stmt.specifiers) {
+      if (!t.isImportSpecifier(specifier)) continue
+      const imported = t.isIdentifier(specifier.imported)
+        ? specifier.imported.name
+        : specifier.imported.value
+      if (!RUNTIME_HELPERS[imported]) continue
+      helperImports.set(specifier.local.name, imported)
+    }
+  }
+
+  return helperImports
+}
+
+function isIdentifierReference(
+  current: t.Identifier,
+  parent: t.Node | null,
+  key: string | null,
+): boolean {
+  if (!parent) return true
+  if (t.isMemberExpression(parent) && parent.property === current && !parent.computed) return false
+  if (t.isOptionalMemberExpression(parent) && parent.property === current && !parent.computed) {
+    return false
+  }
+  if (t.isObjectProperty(parent) && parent.key === current && !parent.computed) return false
+  if (t.isObjectMethod(parent) && parent.key === current && !parent.computed) return false
+  if (t.isClassMethod(parent) && parent.key === current && !parent.computed) return false
+  if (t.isClassPrivateMethod(parent) && parent.key === current) return false
+  if (t.isVariableDeclarator(parent) && parent.id === current) return false
+  if (
+    (t.isFunctionDeclaration(parent) || t.isFunctionExpression(parent)) &&
+    parent.id === current
+  ) {
+    return false
+  }
+  if ((t.isClassDeclaration(parent) || t.isClassExpression(parent)) && parent.id === current) {
+    return false
+  }
+  if (key === 'params') return false
+  if (t.isCatchClause(parent) && parent.param === current) return false
+  if (
+    t.isImportSpecifier(parent) ||
+    t.isImportDefaultSpecifier(parent) ||
+    t.isImportNamespaceSpecifier(parent) ||
+    t.isExportSpecifier(parent)
+  ) {
+    return false
+  }
+  if (t.isLabeledStatement(parent) && parent.label === current) return false
+  if ((t.isBreakStatement(parent) || t.isContinueStatement(parent)) && parent.label === current) {
+    return false
+  }
+  return true
+}
+
+function visitChildNodes(
+  current: t.Node,
+  visitor: (node: t.Node, parent: t.Node, key: string) => void,
+): void {
+  for (const nodeKey of Object.keys(current)) {
+    if (
+      nodeKey === 'loc' ||
+      nodeKey === 'start' ||
+      nodeKey === 'end' ||
+      nodeKey === 'extra' ||
+      nodeKey === 'comments' ||
+      nodeKey === 'leadingComments' ||
+      nodeKey === 'trailingComments' ||
+      nodeKey === 'innerComments'
+    ) {
+      continue
+    }
+    const child = (current as unknown as Record<string, unknown>)[nodeKey]
+    if (Array.isArray(child)) {
+      for (const item of child) {
+        if (
+          item &&
+          typeof item === 'object' &&
+          item !== null &&
+          'type' in item &&
+          typeof (item as Record<string, unknown>).type === 'string'
+        ) {
+          visitor(item as t.Node, current, nodeKey)
+        }
+      }
+    } else if (
+      child &&
+      typeof child === 'object' &&
+      child !== null &&
+      'type' in child &&
+      typeof (child as Record<string, unknown>).type === 'string'
+    ) {
+      visitor(child as t.Node, current, nodeKey)
+    }
+  }
+}
+
+function collectRuntimeHelperUsages(
+  node: t.Node,
+  runtimeHelperImports: Map<string, string>,
+): RuntimeHelperUsage[] {
+  const used = new Map<string, string>()
+  const scopes: Array<Set<string>> = [new Set()]
+
+  const currentScope = () => scopes[scopes.length - 1]!
+  const isBound = (name: string) => scopes.some(scope => scope.has(name))
+  const addPattern = (pattern: t.LVal | t.PatternLike) => {
+    for (const name of collectPatternIdentifiers(pattern)) {
+      currentScope().add(name)
+    }
+  }
+
+  const visitNode = (
+    current: t.Node | null | undefined,
+    parent: t.Node | null,
+    key: string | null,
+  ): void => {
+    if (!current || t.isImportDeclaration(current)) return
+
+    if (t.isFunctionDeclaration(current)) {
+      if (current.id) currentScope().add(current.id.name)
+      const fnScope = new Set<string>()
+      for (const param of current.params) {
+        for (const name of collectPatternIdentifiers(param)) {
+          fnScope.add(name)
+        }
+      }
+      scopes.push(fnScope)
+      visitNode(current.body, current, 'body')
+      scopes.pop()
+      return
+    }
+
+    if (t.isFunctionExpression(current) || t.isArrowFunctionExpression(current)) {
+      const fnScope = new Set<string>()
+      if (t.isFunctionExpression(current) && current.id) {
+        fnScope.add(current.id.name)
+      }
+      for (const param of current.params) {
+        for (const name of collectPatternIdentifiers(param)) {
+          fnScope.add(name)
+        }
+      }
+      scopes.push(fnScope)
+      visitNode(current.body, current, 'body')
+      scopes.pop()
+      return
+    }
+
+    if (t.isVariableDeclarator(current)) {
+      addPattern(current.id)
+      visitNode(current.init, current, 'init')
+      return
+    }
+
+    if (t.isClassDeclaration(current) && current.id) {
+      currentScope().add(current.id.name)
+    }
+
+    if (t.isCatchClause(current)) {
+      const catchScope = new Set<string>()
+      if (current.param) {
+        for (const name of collectPatternIdentifiers(current.param)) {
+          catchScope.add(name)
+        }
+      }
+      scopes.push(catchScope)
+      visitNode(current.body, current, 'body')
+      scopes.pop()
+      return
+    }
+
+    if (t.isIdentifier(current)) {
+      if (!isIdentifierReference(current, parent, key)) return
+      if (isBound(current.name)) return
+
+      const helperName = runtimeHelperImports.get(current.name) ?? current.name
+      if (RUNTIME_HELPERS[helperName]) {
+        used.set(current.name, helperName)
+      }
+      return
+    }
+
+    visitChildNodes(current, (child, childParent, childKey) => {
+      visitNode(child, childParent, childKey)
+    })
+  }
+
+  visitNode(node, null, null)
+
+  return Array.from(used, ([localName, helperName]) =>
+    localName === helperName ? helperName : { helperName, localName },
+  )
+}
 
 /**
  * Collect identifiers referenced in an AST node that are not locally defined.
@@ -2240,6 +2463,7 @@ function extractAndRewriteHandlers(
   // Collect all top-level declarations that could be referenced by handlers
   const topLevelDeclarations = new Set<string>()
   const importedNames = new Set<string>()
+  const runtimeHelperImports = collectRuntimeHelperImports(ast.program.body)
 
   for (const node of ast.program.body) {
     // Collect imports
@@ -2325,12 +2549,7 @@ function extractAndRewriteHandlers(
           const handlerCode = generate(declarator.init).code
 
           // Detect which runtime helpers are used
-          const helpersUsed: string[] = []
-          for (const helperName of Object.keys(RUNTIME_HELPERS)) {
-            if (handlerCode.includes(helperName)) {
-              helpersUsed.push(helperName)
-            }
-          }
+          const helpersUsed = collectRuntimeHelperUsages(declarator.init, runtimeHelperImports)
 
           // Detect local dependencies
           const localBindings = collectLocalBindings(declarator.init)
@@ -2338,7 +2557,11 @@ function extractAndRewriteHandlers(
           const localDeps: string[] = []
           for (const ref of referencedIds) {
             // Only include if it's a top-level declaration (not a handler itself)
-            if (topLevelDeclarations.has(ref) && !ref.match(/^__fict_[er]\d+$/)) {
+            if (
+              topLevelDeclarations.has(ref) &&
+              !runtimeHelperImports.has(ref) &&
+              !ref.match(/^__fict_[er]\d+$/)
+            ) {
               localDeps.push(ref)
               allLocalDeps.add(ref)
             }
@@ -2379,12 +2602,7 @@ function extractAndRewriteHandlers(
         const handlerCode = generate(arrowFn).code
 
         // Detect which runtime helpers are used
-        const helpersUsed: string[] = []
-        for (const helperName of Object.keys(RUNTIME_HELPERS)) {
-          if (handlerCode.includes(helperName)) {
-            helpersUsed.push(helperName)
-          }
-        }
+        const helpersUsed = collectRuntimeHelperUsages(arrowFn, runtimeHelperImports)
 
         // Detect local dependencies
         const localBindings = collectLocalBindings(arrowFn)
@@ -2392,7 +2610,11 @@ function extractAndRewriteHandlers(
         const localDeps: string[] = []
         for (const ref of referencedIds) {
           // Only include if it's a top-level declaration (not a handler itself)
-          if (topLevelDeclarations.has(ref) && !ref.match(/^__fict_[er]\d+$/)) {
+          if (
+            topLevelDeclarations.has(ref) &&
+            !runtimeHelperImports.has(ref) &&
+            !ref.match(/^__fict_[er]\d+$/)
+          ) {
             localDeps.push(ref)
             allLocalDeps.add(ref)
           }
