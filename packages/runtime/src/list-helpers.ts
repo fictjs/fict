@@ -6,6 +6,7 @@
  */
 
 import { createElement } from './dom'
+import { isNodeLike } from './dom-guards'
 import { createRenderEffect } from './effect'
 import { isHydratingActive, withHydrationRange } from './hydration'
 import {
@@ -124,7 +125,7 @@ export function moveNodesBefore(parent: Node, nodes: Node[], anchor: Node | null
   // This way each node becomes the new anchor for the next
   for (let i = nodes.length - 1; i >= 0; i--) {
     const node = nodes[i]!
-    if (!node || !(node instanceof Node)) {
+    if (!isNodeLike(node, parent.ownerDocument ?? undefined)) {
       const message = isDev ? 'Invalid node in moveNodesBefore' : 'FICT:E_NODE'
       throw new Error(message)
     }
@@ -313,8 +314,8 @@ function createKeyedBlock<T>(
       // If render returns real DOM nodes/arrays, preserve them to avoid
       // reparenting side-effects (tests may pre-insert them).
       if (
-        rendered instanceof Node ||
-        (Array.isArray(rendered) && rendered.every(n => n instanceof Node))
+        isNodeLike(rendered, nodeOwnerDocument) ||
+        (Array.isArray(rendered) && rendered.every(n => isNodeLike(n, nodeOwnerDocument)))
       ) {
         nodes = toNodeArray(rendered, nodeOwnerDocument)
       } else {

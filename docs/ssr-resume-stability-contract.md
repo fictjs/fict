@@ -92,9 +92,10 @@ Operational behavior:
 ## Streaming & Hydration Diagnostics
 
 1. SSR tracking state, stream hooks, and boundary scope registries are isolated per render.
-2. Web Streams and Node pipeable streams must respect downstream pull/drain backpressure before continuing queued chunks.
-3. Hydration mismatches can be observed with `onHydrationIssue` and include node-missing, node-type, and text mismatch codes.
-4. Mismatch diagnostics do not change the existing fail-safe behavior: Fict still repairs or falls back to client-created nodes where needed.
+2. SSR does not expose DOM globals by default. `exposeGlobals: true` is a legacy compatibility mode for code that reads process-global `document/window`, and overlapping renders must not use it.
+3. Web Streams and Node pipeable streams must respect downstream pull/drain backpressure before continuing queued chunks.
+4. Hydration mismatches can be observed with `onHydrationIssue` and include node-missing, node-type, and text mismatch codes.
+5. Mismatch diagnostics do not change the existing fail-safe behavior: Fict still repairs or falls back to client-created nodes where needed.
 
 ## Snapshot Size & Budget Guidance
 

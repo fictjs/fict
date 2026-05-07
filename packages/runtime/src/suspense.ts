@@ -1,5 +1,6 @@
 import { isReactive } from './binding'
 import { createElement } from './dom'
+import { isCommentLike } from './dom-guards'
 import { createEffect } from './effect'
 import {
   createRootContext,
@@ -99,7 +100,9 @@ export function Suspense(props: SuspenseProps): FictNode {
       const suspendedAttempt =
         root.suspended ||
         (nodes.length > 0 &&
-          nodes.every(node => node instanceof Comment && (node as Comment).data === 'fict:suspend'))
+          nodes.every(
+            node => isCommentLike(node, markerOwnerDocument) && node.data === 'fict:suspend',
+          ))
       if (suspendedAttempt) {
         popRoot(prev)
         destroyRoot(root)

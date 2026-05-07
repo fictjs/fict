@@ -73,7 +73,8 @@ export interface RenderToStringOptions {
   doctype?: string | null
   /**
    * Expose DOM globals (window/document/Node/Element/etc) during render.
-   * Defaults to true.
+   * Defaults to false. Set to true only for compatibility with components
+   * that still read process-global DOM objects during server rendering.
    */
   exposeGlobals?: boolean
   /**
@@ -211,7 +212,7 @@ function renderToDocumentInSession(
     dom = resolveDom(options)
     const { document, window } = dom
 
-    const shouldExpose = options.exposeGlobals !== false
+    const shouldExpose = options.exposeGlobals === true
     restoreGlobals = shouldExpose ? installGlobals(window, document) : () => {}
     restoreManifest = installManifest(options.manifest)
 
@@ -764,7 +765,7 @@ function startStreamingRenderInSession(
 
     dom = resolveDom(resolvedOptions)
     restoreGlobals =
-      resolvedOptions.exposeGlobals !== false ? installGlobals(dom.window, dom.document) : () => {}
+      resolvedOptions.exposeGlobals === true ? installGlobals(dom.window, dom.document) : () => {}
     restoreManifest = installManifest(resolvedOptions.manifest)
 
     container = resolveContainer(dom.document, resolvedOptions)

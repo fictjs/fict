@@ -47,6 +47,7 @@ called production-ready:
    - Import, missing export, missing resume registry, and thrown handler failures emit structured issues.
 5. Concurrency:
    - SSR scope state and stream hooks are per render.
+   - DOM globals are not exposed by default; `exposeGlobals: true` is a legacy compatibility mode and is not concurrency-safe for overlapping renders.
 6. Streaming:
    - Web and Node writers respect pull/drain backpressure before continuing queued chunks.
 

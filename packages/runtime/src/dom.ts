@@ -28,6 +28,7 @@ import {
 } from './binding'
 import { Properties, ChildProperties, getPropAlias, SVGElements, SVGNamespace } from './constants'
 import { getDevtoolsHook } from './devtools'
+import { isDocumentFragmentLike, isHTMLElementLike, isNodeLike } from './dom-guards'
 import { __fictPushContext, __fictPopContext, __fictGetCurrentComponentId } from './hooks'
 import {
   claimNodes,
@@ -83,15 +84,17 @@ type DevtoolsAnnotatedElement = HTMLElement & {
 }
 
 function collectComponentMountElements(node: Node): HTMLElement[] {
-  if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
-    return toNodeArray(node).filter((child): child is HTMLElement => child instanceof HTMLElement)
+  if (isDocumentFragmentLike(node)) {
+    return toNodeArray(node).filter((child): child is HTMLElement =>
+      isHTMLElementLike(child, node.ownerDocument),
+    )
   }
 
-  if (node instanceof HTMLElement) {
+  if (isHTMLElementLike(node)) {
     // Resumable hosts use display: contents; surface concrete child elements for inspection.
     if (node.hasAttribute('data-fict-host')) {
-      const children = Array.from(node.children).filter(
-        (child): child is HTMLElement => child instanceof HTMLElement,
+      const children = Array.from(node.children).filter((child): child is HTMLElement =>
+        isHTMLElementLike(child, node.ownerDocument),
       )
       if (children.length > 0) return children
     }
@@ -261,7 +264,7 @@ function createElementWithContext(
   ownerDocument: Document,
 ): DOMElement {
   // Already a DOM node - pass through
-  if (node instanceof Node) {
+  if (isNodeLike(node, ownerDocument)) {
     return node
   }
 
@@ -285,7 +288,7 @@ function createElementWithContext(
     return createTextNodeWithHydration('', ownerDocument)
   }
 
-  if (typeof node === 'object' && node !== null && !(node instanceof Node)) {
+  if (typeof node === 'object' && node !== null && !isNodeLike(node, ownerDocument)) {
     // Handle BindingHandle (list/conditional bindings, etc)
     if ('marker' in node) {
       const handle = node as { marker: unknown; dispose?: () => void; flush?: () => void }
@@ -411,7 +414,7 @@ function createElementWithContext(
         if (meta?.resume) {
           host.setAttribute('data-fict-h', meta.resume)
         }
-        if (content instanceof DocumentFragment) {
+        if (isDocumentFragmentLike(content, ownerDocument)) {
           host.append(...Array.from(content.childNodes))
         } else {
           host.appendChild(content)

@@ -21,6 +21,7 @@ import {
   SVGNamespace,
 } from './constants'
 import { createRenderEffect } from './effect'
+import { isNodeLike } from './dom-guards'
 import { withHydration, withHydrationRange, isHydratingActive } from './hydration'
 import {
   createRootContext,
@@ -754,7 +755,7 @@ export function insert(
   let ownsMarker = false
   let createFn: CreateElementFn | undefined = createElementFn
 
-  if (markerOrCreateElement instanceof Node) {
+  if (isNodeLike(markerOrCreateElement, parentOwnerDocument)) {
     marker = markerOrCreateElement
     createFn = createElementFn
   } else {
@@ -836,10 +837,10 @@ export function insert(
       let newNode: Node | Node[]
       const ownerDocument = parentNode?.ownerDocument ?? markerOwnerDocument
 
-      if (value instanceof Node) {
+      if (isNodeLike(value, ownerDocument)) {
         newNode = value
       } else if (Array.isArray(value)) {
-        if (value.every(v => v instanceof Node)) {
+        if (value.every(v => isNodeLike(v, ownerDocument))) {
           newNode = value as Node[]
         } else {
           if (createFn) {
@@ -1008,11 +1009,11 @@ export function insertBetween(
       let newNode: Node | Node[] = undefined as unknown as Node | Node[]
       const ownerDocument = parentNode?.ownerDocument ?? markerOwnerDocument
       const createValue = () => {
-        if (value instanceof Node) {
+        if (isNodeLike(value, ownerDocument)) {
           return value
         }
         if (Array.isArray(value)) {
-          if (value.every(v => v instanceof Node)) {
+          if (value.every(v => isNodeLike(v, ownerDocument))) {
             return value as Node[]
           }
           if (createElementFn) {
@@ -1722,7 +1723,7 @@ function bindAssignedChildren(
 
     if (initialHydrating && isHydratingActive()) {
       const hydratedNodes = collectCurrentChildren()
-      if (hydratedNodes.length === 1 && hydratedNodes[0]?.nodeType === Node.TEXT_NODE) {
+      if (hydratedNodes.length === 1 && hydratedNodes[0]?.nodeType === 3) {
         const hydratedText = hydratedNodes[0] as Text
         if (hydratedText.data !== textValue) {
           hydratedText.data = textValue
@@ -1785,11 +1786,11 @@ function bindAssignedChildren(
     try {
       const ownerDocument = node.ownerDocument ?? hostRoot?.ownerDocument ?? document
       const createValue = () => {
-        if (value instanceof Node) {
+        if (isNodeLike(value, ownerDocument)) {
           return value
         }
         if (Array.isArray(value)) {
-          if (value.every(v => v instanceof Node)) {
+          if (value.every(v => isNodeLike(v, ownerDocument))) {
             return value as Node[]
           }
           if (createFn) {

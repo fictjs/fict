@@ -1,4 +1,5 @@
 import { DelegatedEvents } from './constants'
+import { isElementLike } from './dom-guards'
 import {
   FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
   type SSRState,
@@ -338,7 +339,7 @@ export function installResumableLoader(options: ResumableLoaderOptions = {}): vo
     snapshotObserver = new MutationObserver(mutations => {
       for (const mutation of mutations) {
         for (const node of Array.from(mutation.addedNodes)) {
-          if (!(node instanceof Element)) continue
+          if (!isElementLike(node, doc)) continue
           if (node.tagName === 'SCRIPT') {
             const script = node as HTMLScriptElement
             if (isSnapshotScript(script)) {
@@ -637,7 +638,7 @@ function setupHoverPrefetch(doc: Document, delay: number): () => void {
 
   const handlePointerOver = (event: Event) => {
     const target = event.target
-    if (!(target instanceof Element)) return
+    if (!isElementLike(target, doc)) return
 
     // Find the closest element with interactive attributes
     const interactiveEl =
@@ -761,7 +762,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
     typeof event.composedPath === 'function' ? event.composedPath() : buildEventPath(event)
 
   for (const node of path) {
-    if (!(node instanceof Element)) continue
+    if (!isElementLike(node)) continue
     const qrl = node.getAttribute(`on:${event.type}`)
     if (!qrl) continue
 

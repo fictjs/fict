@@ -250,10 +250,16 @@ interface RenderToStringOptions {
   snapshotTarget?: 'container' | 'body' | 'head'
 
   // Runtime Configuration
-  exposeGlobals?: boolean // Default: true
+  exposeGlobals?: boolean // Default: false; opt-in compatibility mode
   manifest?: Record<string, string> | string
 }
 ```
+
+By default SSR does not write `window`, `document`, `Node`, or related DOM constructors to
+`globalThis`. This keeps concurrent renders from racing over process-global DOM state. Components
+should use Fict's render-provided document/ownerDocument paths; set `exposeGlobals: true` only for
+legacy code that still reads DOM globals during server render. That compatibility mode is restored
+on `dispose()`, but it is not concurrency-safe while overlapping renders are active.
 
 ### renderToDocument
 

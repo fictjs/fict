@@ -3,6 +3,8 @@
  * Keep this file dependency-free to avoid module cycles.
  */
 
+import { isDocumentFragmentLike, isNodeLike } from './dom-guards'
+
 const HYDRATED_FRAGMENT_NODES = Symbol.for('fict:hydration-fragment-nodes')
 const DOCUMENT_FRAGMENT_NODE = 11
 
@@ -31,13 +33,7 @@ export function toNodeArray(
       // Preserve original array reference when it's already a flat Node array
       let allNodes = true
       for (const item of node) {
-        let isItemNode = false
-        try {
-          isItemNode = item instanceof Node
-        } catch {
-          isItemNode = false
-        }
-        if (!isItemNode) {
+        if (!isNodeLike(item, ownerDocument)) {
           allNodes = false
           break
         }
@@ -58,17 +54,9 @@ export function toNodeArray(
     return []
   }
 
-  let isNode: boolean
-  try {
-    isNode = node instanceof Node
-  } catch {
-    // If safe check fails, treat as primitive string
-    isNode = false
-  }
-
-  if (isNode) {
+  if (isNodeLike(node, ownerDocument)) {
     try {
-      if ((node as Node).nodeType === DOCUMENT_FRAGMENT_NODE) {
+      if (isDocumentFragmentLike(node, ownerDocument)) {
         return getFragmentChildNodes(node as Node)
       }
     } catch {

@@ -143,7 +143,7 @@ export function claimText(value: string, fallback: () => Text): Text {
     })
     return mountFallback(ctx, fallback(), null, 0) as Text
   }
-  if (ctx.cursor.nodeType !== Node.TEXT_NODE) {
+  if (ctx.cursor.nodeType !== 3) {
     emitHydrationIssue(ctx, {
       code: 'node_type_mismatch',
       message: '[fict/hydration] Hydrated DOM node is not a text node.',
@@ -180,9 +180,7 @@ function mountFallback(
   removeCount: number,
 ): Node {
   const fallbackFragmentNodes =
-    fallbackNode.nodeType === Node.DOCUMENT_FRAGMENT_NODE
-      ? Array.from(fallbackNode.childNodes)
-      : null
+    fallbackNode.nodeType === 11 ? Array.from(fallbackNode.childNodes) : null
   const parent =
     ((replaceStart?.parentNode ?? ctx.boundary?.parentNode ?? ctx.parent) as
       | (ParentNode & Node)
@@ -244,17 +242,17 @@ function emitHydrationIssue(
 
 function isCompatibleNode(expected: Node, actual: Node): boolean {
   if (expected.nodeType !== actual.nodeType) return false
-  if (expected.nodeType === Node.ELEMENT_NODE && actual.nodeType === Node.ELEMENT_NODE) {
+  if (expected.nodeType === 1 && actual.nodeType === 1) {
     return (expected as Element).tagName === (actual as Element).tagName
   }
   return true
 }
 
 function describeNode(node: Node): string {
-  if (node.nodeType === Node.TEXT_NODE) return '#text'
-  if (node.nodeType === Node.COMMENT_NODE) return '#comment'
-  if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) return '#fragment'
-  if (node.nodeType === Node.ELEMENT_NODE) {
+  if (node.nodeType === 3) return '#text'
+  if (node.nodeType === 8) return '#comment'
+  if (node.nodeType === 11) return '#fragment'
+  if (node.nodeType === 1) {
     return (node as Element).tagName.toLowerCase()
   }
   return `node:${node.nodeType}`

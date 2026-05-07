@@ -11,6 +11,96 @@ import {
 import { renderToDocument, renderToString } from '../src/index'
 
 describe('@fictjs/ssr', () => {
+  it('does not replace process DOM globals by default', () => {
+    const globals = globalThis as Record<string, unknown>
+    const hadDocument = Object.prototype.hasOwnProperty.call(globals, 'document')
+    const hadWindow = Object.prototype.hasOwnProperty.call(globals, 'window')
+    const previousDocument = globals.document
+    const previousWindow = globals.window
+    const sentinelDocument = { sentinel: 'document' }
+    const sentinelWindow = { sentinel: 'window' }
+    let seenDocument: unknown
+    let seenWindow: unknown
+
+    try {
+      globals.document = sentinelDocument
+      globals.window = sentinelWindow
+
+      const result = renderToDocument(
+        () => {
+          seenDocument = globals.document
+          seenWindow = globals.window
+          return { type: 'div', props: { children: 'safe' } }
+        },
+        { includeSnapshot: false },
+      )
+
+      expect(result.html).toContain('<div>safe</div>')
+      expect(seenDocument).toBe(sentinelDocument)
+      expect(seenWindow).toBe(sentinelWindow)
+      expect(globals.document).toBe(sentinelDocument)
+      expect(globals.window).toBe(sentinelWindow)
+      result.dispose()
+      expect(globals.document).toBe(sentinelDocument)
+      expect(globals.window).toBe(sentinelWindow)
+    } finally {
+      if (hadDocument) {
+        globals.document = previousDocument
+      } else {
+        delete globals.document
+      }
+      if (hadWindow) {
+        globals.window = previousWindow
+      } else {
+        delete globals.window
+      }
+    }
+  })
+
+  it('exposes and restores process DOM globals only when explicitly requested', () => {
+    const globals = globalThis as Record<string, unknown>
+    const hadDocument = Object.prototype.hasOwnProperty.call(globals, 'document')
+    const hadWindow = Object.prototype.hasOwnProperty.call(globals, 'window')
+    const previousDocument = globals.document
+    const previousWindow = globals.window
+    let seenDocument: unknown
+    let seenWindow: unknown
+
+    try {
+      delete globals.document
+      delete globals.window
+
+      const result = renderToDocument(
+        () => {
+          seenDocument = globals.document
+          seenWindow = globals.window
+          return { type: 'div', props: { children: 'compat' } }
+        },
+        { exposeGlobals: true, includeSnapshot: false },
+      )
+
+      expect(result.html).toContain('<div>compat</div>')
+      expect(seenDocument).toBe(result.document)
+      expect(seenWindow).toBe(result.window)
+      expect(globals.document).toBe(result.document)
+      expect(globals.window).toBe(result.window)
+      result.dispose()
+      expect(Object.prototype.hasOwnProperty.call(globals, 'document')).toBe(false)
+      expect(Object.prototype.hasOwnProperty.call(globals, 'window')).toBe(false)
+    } finally {
+      if (hadDocument) {
+        globals.document = previousDocument
+      } else {
+        delete globals.document
+      }
+      if (hadWindow) {
+        globals.window = previousWindow
+      } else {
+        delete globals.window
+      }
+    }
+  })
+
   it('renders snapshot script with scope data', () => {
     function Counter(props: { initial: number }): FictNode {
       const ctx = __fictUseContext()
