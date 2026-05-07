@@ -130,6 +130,10 @@ for (const macro of ['$state', '$effect']) {
     fail(`@fictjs/runtime main entrypoint must not export or document ${macro}`)
   }
 }
+const runtimeSignal = readText('packages/runtime/src/signal.ts')
+if (containsStandaloneToken(runtimeSignal, '$state')) {
+  fail('@fictjs/runtime signal internals must not define private $state alias')
+}
 for (const devtoolsProtocolExport of [
   'FICT_DEVTOOLS_MIN_PROTOCOL_VERSION',
   'FICT_DEVTOOLS_PROTOCOL_VERSION',

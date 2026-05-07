@@ -1647,7 +1647,6 @@ export default {
   createReactiveSystem,
   ReactiveFlags,
 }
-export const $state = signal as <T>(value: T) => T
 
 interface DevtoolsIdentifiable {
   __id?: number
