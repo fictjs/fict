@@ -2006,7 +2006,6 @@ function isIdentifierReference(
   if (t.isObjectProperty(parent) && parent.key === current && !parent.computed) return false
   if (t.isObjectMethod(parent) && parent.key === current && !parent.computed) return false
   if (t.isClassMethod(parent) && parent.key === current && !parent.computed) return false
-  if (t.isClassPrivateMethod(parent) && parent.key === current) return false
   if (t.isVariableDeclarator(parent) && parent.id === current) return false
   if (
     (t.isFunctionDeclaration(parent) || t.isFunctionExpression(parent)) &&
