@@ -19,6 +19,7 @@ const warmup = Number(process.env.BENCH_WARMUP ?? 5)
 const repeats = Number(process.env.BENCH_REPEATS ?? 5)
 const updateBaseline = process.argv.includes('--update')
 const compareBaseline = process.argv.includes('--compare')
+const outputPath = getOutputPath(process.argv, process.env.BENCH_OUTPUT)
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -66,6 +67,27 @@ const samples = [
     `,
   },
 ]
+
+function getOutputPath(argv, envOutputPath) {
+  for (let i = 2; i < argv.length; i++) {
+    const arg = argv[i]
+    if (arg === '--output' || arg === '--json') {
+      const value = argv[i + 1]
+      if (!value || value.startsWith('--')) {
+        throw new Error(`${arg} requires a file path`)
+      }
+      return value
+    }
+    if (arg.startsWith('--output=')) {
+      return arg.slice('--output='.length)
+    }
+    if (arg.startsWith('--json=')) {
+      return arg.slice('--json='.length)
+    }
+  }
+
+  return envOutputPath?.trim() ? envOutputPath : null
+}
 
 function compile(source, optimize) {
   return transformSync(source, {
@@ -135,7 +157,7 @@ function deriveRuntimeScale(rows, baseline) {
   return Math.max(1, median(factors))
 }
 
-function compareWithBaseline(rows, baseline) {
+function evaluateBaseline(rows, baseline) {
   const budgets = { ...DEFAULT_BUDGETS, ...(baseline?.budgets ?? {}) }
   const failures = []
   const runtimeScale = deriveRuntimeScale(rows, baseline)
@@ -168,12 +190,56 @@ function compareWithBaseline(rows, baseline) {
     }
   }
 
-  if (failures.length > 0) {
-    const message = failures.join('\n')
-    throw new Error(
-      `[optimizer-bench] Baseline regressions (runtimeScale=${runtimeScale.toFixed(2)}x):\n${message}`,
-    )
+  return {
+    status: failures.length > 0 ? 'failed' : 'passed',
+    runtimeScale,
+    budgets,
+    failures,
   }
+}
+
+function assertBaselineComparison(comparison) {
+  if (!comparison || comparison.failures.length === 0) {
+    return
+  }
+  const message = comparison.failures.join('\n')
+  const runtimeScale =
+    typeof comparison.runtimeScale === 'number' ? `${comparison.runtimeScale.toFixed(2)}x` : 'n/a'
+  throw new Error(
+    `[optimizer-bench] Baseline regressions (runtimeScale=${runtimeScale}):\n${message}`,
+  )
+}
+
+function writeBenchmarkReport(targetPath, rows, baseline, comparison) {
+  const resolvedPath = path.resolve(process.cwd(), targetPath)
+  const budgets = comparison?.budgets ?? { ...DEFAULT_BUDGETS, ...(baseline?.budgets ?? {}) }
+  const payload = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    benchmark: {
+      iterations,
+      warmup,
+      repeats,
+    },
+    environment: {
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
+    },
+    budgets,
+    baseline: baseline
+      ? {
+          path: path.relative(process.cwd(), baselinePath),
+          samples: baseline.samples ?? {},
+        }
+      : null,
+    comparison,
+    samples: rows,
+  }
+
+  fs.mkdirSync(path.dirname(resolvedPath), { recursive: true })
+  fs.writeFileSync(resolvedPath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+  console.log(`Optimizer benchmark raw output written to ${resolvedPath}`)
 }
 
 function main() {
@@ -197,6 +263,8 @@ function main() {
   const baseline = fs.existsSync(baselinePath)
     ? JSON.parse(fs.readFileSync(baselinePath, 'utf8'))
     : null
+  let reportBaseline = baseline
+  let comparison = null
 
   if (updateBaseline) {
     const payload = {
@@ -214,8 +282,26 @@ function main() {
       ),
     }
     fs.writeFileSync(baselinePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8')
+    reportBaseline = payload
     console.log(`Optimizer bench baseline updated at ${baselinePath}`)
   } else {
+    if (compareBaseline) {
+      if (!baseline) {
+        comparison = {
+          status: 'failed',
+          runtimeScale: null,
+          budgets: DEFAULT_BUDGETS,
+          failures: [`Missing baseline at ${baselinePath}. Run with --update to generate.`],
+        }
+      } else {
+        comparison = evaluateBaseline(rows, baseline)
+      }
+    }
+
+    if (outputPath) {
+      writeBenchmarkReport(outputPath, rows, reportBaseline, comparison)
+    }
+
     console.log('Optimizer benchmark (avg ms per compile):')
     console.table(
       rows.map(row => ({
@@ -233,9 +319,13 @@ function main() {
       if (!baseline) {
         throw new Error(`Missing baseline at ${baselinePath}. Run with --update to generate.`)
       }
-      compareWithBaseline(rows, baseline)
+      assertBaselineComparison(comparison)
       console.log('Optimizer bench baseline check passed.')
     }
+  }
+
+  if (updateBaseline && outputPath) {
+    writeBenchmarkReport(outputPath, rows, reportBaseline, comparison)
   }
 }
 

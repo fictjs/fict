@@ -150,7 +150,17 @@ jobs:
 
       - run: pnpm install
       - run: pnpm --filter @fictjs/compiler build
-      - run: pnpm guardrails:perf
+      - name: Run performance guardrails
+        run: BENCH_OUTPUT="${RUNNER_TEMP}/optimizer-bench.json" pnpm guardrails:perf
+
+      - name: Upload optimizer benchmark output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimizer-benchmark-${{ github.sha }}
+          path: ${{ runner.temp }}/optimizer-bench.json
+          if-no-files-found: warn
+          retention-days: 30
 
   test:
     name: Test

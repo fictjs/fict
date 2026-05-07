@@ -35,8 +35,10 @@ To release packages to NPM:
 #### Step 2: Run Release Verification
 
 ```bash
-# Verify compiler release gate locally before tagging
-pnpm release:compiler:verify
+# Verify the full v1 release gate locally before tagging.
+# BENCH_OUTPUT captures the raw optimizer benchmark JSON used as release evidence.
+export BENCH_OUTPUT="${TMPDIR:-/tmp}/fict-optimizer-bench.json"
+pnpm release:verify
 ```
 
 #### Step 3: Create and Push a Tag
@@ -65,6 +67,8 @@ git push origin v0.1.0
 - ✅ **Merge commit** → Runs CI tests + Creates Version PR
 - ✅ **Push tag** → Triggers release and publishes to NPM
 - ❌ **NO automatic release** on normal commits
+- CI and release workflows upload the raw optimizer benchmark JSON as an artifact
+  (`optimizer-benchmark-*` / `release-optimizer-benchmark-*`).
 
 ## Changeset Commands
 

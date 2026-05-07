@@ -51,11 +51,13 @@ Compiler package quality gates now pass cleanly:
 
 Before publishing this package:
 
-1. `pnpm release:compiler:verify`
+1. `BENCH_OUTPUT=/tmp/fict-optimizer-bench.json pnpm release:compiler:verify`
 2. Confirm no new failing diagnostics in `packages/compiler/test/validation.test.ts`
 3. Confirm benchmark guardrails pass:
    - `pnpm guardrails:hir`
-   - `pnpm bench:optimizer:guard`
+   - `BENCH_OUTPUT=/tmp/fict-optimizer-bench.json pnpm bench:optimizer:guard`
+4. Attach or retain the raw optimizer benchmark JSON from `BENCH_OUTPUT` with the
+   release evidence.
 
 ## Notes
 

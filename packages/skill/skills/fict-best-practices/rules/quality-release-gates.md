@@ -20,10 +20,8 @@ pnpm --filter @fictjs/compiler test
 **Correct (full gate sequence):**
 
 ```bash
-pnpm release:compiler:verify
-pnpm --dir packages/runtime test
-pnpm stress:runtime
-pnpm bench:optimizer:guard
+export BENCH_OUTPUT="${TMPDIR:-/tmp}/fict-optimizer-bench.json"
+pnpm release:verify
 ```
 
 Reference: [Repository scripts](https://github.com/fictjs/fict/blob/main/package.json)

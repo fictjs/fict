@@ -559,7 +559,9 @@ Optimizer safety: `optimizeLevel` controls algebraic simplification. Defaults to
 which avoids non-constant algebraic rewrites that can change JavaScript semantics.
 Use `optimizeLevel: 'full'` to enable those rewrites for maximum optimization.
 Benchmarking: run `pnpm bench:optimizer` (builds the compiler and prints average compile
-times with optimization enabled/disabled).
+times with optimization enabled/disabled). Set `BENCH_OUTPUT=path/to/report.json` or
+pass `--output path/to/report.json` to `scripts/optimizer-bench.mjs` to write the raw
+JSON report used by CI/release evidence artifacts.
 Optimizer baselines: `pnpm bench:optimizer:guard` compares results to
 `scripts/optimizer-bench.baseline.json`. Use `pnpm bench:optimizer:update` to refresh
 the baseline when changes are intentional.

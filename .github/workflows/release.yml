@@ -38,7 +38,19 @@ jobs:
         run: FICT_STRICT_GUARANTEE=1 pnpm -C packages/compiler test -- reactivity-guarantee-contract.test.ts
       - run: FICT_STRICT_GUARANTEE=1 pnpm build
       - name: Verify compiler release gate
-        run: pnpm release:compiler:verify
+        run: BENCH_OUTPUT="${RUNNER_TEMP}/optimizer-bench.json" pnpm release:compiler:verify
+
+      - name: Verify runtime performance guardrail
+        run: pnpm guardrails:runtime
+
+      - name: Upload optimizer benchmark output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-optimizer-benchmark-${{ github.ref_name }}
+          path: ${{ runner.temp }}/optimizer-bench.json
+          if-no-files-found: warn
+          retention-days: 90
 
       - name: Create .npmrc
         run: |
