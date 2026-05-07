@@ -150,6 +150,7 @@ describe('DOM Module', () => {
       container.innerHTML = '<div>hello<span>world</span></div>'
       const existingElement = container.firstChild as HTMLDivElement
       const existingText = existingElement.firstChild
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
       const teardown = hydrateComponent(() => {
         const factory = template('<div></div>')
@@ -175,6 +176,7 @@ describe('DOM Module', () => {
       expect(hydratedElement.textContent).toBe('helloworld')
 
       teardown()
+      warnSpy.mockRestore()
     })
 
     it('reports text mismatches during hydration', () => {
@@ -199,6 +201,21 @@ describe('DOM Module', () => {
           expected: 'client',
           actual: 'server',
         }),
+      )
+
+      teardown()
+      warnSpy.mockRestore()
+    })
+
+    it('warns about hydration mismatches in dev without an issue handler', () => {
+      container.innerHTML = 'server'
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const teardown = hydrateComponent(() => createElement('client'), container)
+
+      expect(container.textContent).toBe('client')
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[fict/hydration] Hydrated text content does not match client output.',
       )
 
       teardown()

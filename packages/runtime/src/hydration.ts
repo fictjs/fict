@@ -22,6 +22,11 @@ export interface HydrationOptions {
   onHydrationIssue?: HydrationIssueHandler | undefined
 }
 
+const isDev =
+  typeof __DEV__ !== 'undefined'
+    ? __DEV__
+    : typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'
+
 const hydrationStack: HydrationContext[] = []
 const HYDRATED_FRAGMENT_NODES = Symbol.for('fict:hydration-fragment-nodes')
 
@@ -220,7 +225,6 @@ function emitHydrationIssue(
   ctx: HydrationContext,
   issue: Omit<HydrationIssue, 'actual'> & { actual?: string | null },
 ): void {
-  if (!ctx.onIssue) return
   const normalized: HydrationIssue = {
     code: issue.code,
     message: issue.message,
@@ -234,8 +238,8 @@ function emitHydrationIssue(
   if (issue.node !== undefined) {
     normalized.node = issue.node
   }
-  ctx.onIssue(normalized)
-  if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+  ctx.onIssue?.(normalized)
+  if (isDev && typeof console !== 'undefined' && typeof console.warn === 'function') {
     console.warn(normalized.message)
   }
 }
