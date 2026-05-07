@@ -826,7 +826,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
             eventType: event.type,
             error,
           })
-          return
+          continue
         }
         // Get resume function from registry (not module exports)
         const resumeFn =
@@ -850,7 +850,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
               eventType: event.type,
               error,
             })
-            return
+            continue
           }
           hydratedScopes.add(scopeId)
           resumedDuringEvent = true
@@ -866,7 +866,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
             exportName: resumeExport,
             eventType: event.type,
           })
-          return
+          continue
         }
       }
     }
@@ -894,11 +894,12 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
         eventType: event.type,
         error,
       })
-      return
+      continue
     }
     const handler = (mod as Record<string, unknown>)[exportName]
     if (typeof handler === 'function') {
       const originalCurrentTarget = event.currentTarget
+      let handlerFailed = false
       Object.defineProperty(event, 'currentTarget', {
         configurable: true,
         get() {
@@ -924,6 +925,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
           eventType: event.type,
           error,
         })
+        handlerFailed = true
       } finally {
         Object.defineProperty(event, 'currentTarget', {
           configurable: true,
@@ -931,6 +933,9 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
             return originalCurrentTarget
           },
         })
+      }
+      if (handlerFailed) {
+        continue
       }
     } else {
       emitSnapshotIssue({
@@ -944,6 +949,7 @@ async function handleResumableEventAsync(event: Event): Promise<void> {
         exportName,
         eventType: event.type,
       })
+      continue
     }
 
     return

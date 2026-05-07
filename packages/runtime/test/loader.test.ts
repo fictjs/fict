@@ -346,6 +346,61 @@ describe('resumable loader snapshot validation', () => {
     warnSpy.mockRestore()
   })
 
+  it('continues event path scanning after nested handler import failures', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sParent: { id: 'sParent', slots: [] },
+          sChild: { id: 'sChild', slots: [] },
+        },
+      }),
+    )
+
+    ;(globalThis as { __fictRecoveredParentCalls?: number }).__fictRecoveredParentCalls = 0
+
+    const parentHost = doc.createElement('div')
+    parentHost.setAttribute('data-fict-s', 'sParent')
+    parentHost.setAttribute(
+      'on:click',
+      'data:text/javascript,export function parent(){globalThis.__fictRecoveredParentCalls=(globalThis.__fictRecoveredParentCalls||0)+1}#parent',
+    )
+
+    const childHost = doc.createElement('div')
+    childHost.setAttribute('data-fict-s', 'sChild')
+    const childButton = doc.createElement('button')
+    childButton.setAttribute('on:click', '/__fict_missing_nested_handler__.js#default')
+
+    childHost.appendChild(childButton)
+    parentHost.appendChild(childHost)
+    doc.body.appendChild(parentHost)
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installResumableLoader({
+      document: doc,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+
+    childButton.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect((globalThis as { __fictRecoveredParentCalls?: number }).__fictRecoveredParentCalls).toBe(
+      1,
+    )
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'handler_import_failed',
+        scopeId: 'sChild',
+      }),
+    )
+
+    warnSpy.mockRestore()
+    delete (globalThis as { __fictRecoveredParentCalls?: number }).__fictRecoveredParentCalls
+  })
+
   it('reports missing and thrown resumable handlers', async () => {
     const issues: SnapshotIssue[] = []
     const doc = createDocumentWithSnapshots(
