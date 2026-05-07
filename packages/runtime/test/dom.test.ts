@@ -222,6 +222,33 @@ describe('DOM Module', () => {
       warnSpy.mockRestore()
     })
 
+    it('throws on hydration mismatches when strictHydration is enabled', () => {
+      container.innerHTML = 'server'
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      expect(() =>
+        hydrateComponent(() => createElement('client'), container, {
+          strictHydration: true,
+          onHydrationIssue: issue => issues.push(issue),
+        }),
+      ).toThrow('[fict/hydration] Hydrated text content does not match client output.')
+
+      expect(container.textContent).toBe('server')
+      expect(issues).toContainEqual(
+        expect.objectContaining({
+          code: 'text_mismatch',
+          expected: 'client',
+          actual: 'server',
+        }),
+      )
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[fict/hydration] Hydrated text content does not match client output.',
+      )
+
+      warnSpy.mockRestore()
+    })
+
     it('reports node mismatches during hydration', () => {
       container.innerHTML = '<span>server</span>'
       const issues: HydrationIssue[] = []

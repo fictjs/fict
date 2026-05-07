@@ -95,7 +95,8 @@ Operational behavior:
 2. SSR does not expose DOM globals by default. `exposeGlobals: true` is a legacy compatibility mode for code that reads process-global `document/window`, and overlapping renders must not use it.
 3. Web Streams and Node pipeable streams must respect downstream pull/drain backpressure before continuing queued chunks.
 4. Hydration mismatches can be observed with `onHydrationIssue` and include node-missing, node-type, and text mismatch codes.
-5. Mismatch diagnostics do not change the existing fail-safe behavior: Fict still repairs or falls back to client-created nodes where needed.
+5. `strictHydration: true` turns mismatches into thrown errors after reporting the issue, for tests and deployments that prefer fail-fast hydration.
+6. Mismatch diagnostics do not change the default fail-safe behavior: Fict still repairs or falls back to client-created nodes where needed.
 
 ## Snapshot Size & Budget Guidance
 

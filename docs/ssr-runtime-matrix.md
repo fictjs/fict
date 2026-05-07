@@ -43,6 +43,7 @@ called production-ready:
    - Explicit `snapshotMigrations` cover any accepted older schema.
 3. Hydration diagnostics:
    - Mismatched node/text claims are observable through `onHydrationIssue`.
+   - `strictHydration: true` turns hydration mismatches into thrown errors after reporting the issue.
 4. Resumable loader recovery:
    - Import, missing export, missing resume registry, and thrown handler failures emit structured issues.
 5. Concurrency:

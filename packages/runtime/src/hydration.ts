@@ -4,6 +4,7 @@ interface HydrationContext {
   owner: Document
   parent: ParentNode & Node
   onIssue?: HydrationIssueHandler | undefined
+  strictHydration?: boolean | undefined
 }
 
 export type HydrationIssueCode = 'node_missing' | 'node_type_mismatch' | 'text_mismatch'
@@ -20,6 +21,7 @@ export type HydrationIssueHandler = (issue: HydrationIssue) => void
 
 export interface HydrationOptions {
   onHydrationIssue?: HydrationIssueHandler | undefined
+  strictHydration?: boolean | undefined
 }
 
 const isDev =
@@ -44,6 +46,7 @@ export function withHydration<T>(
     owner,
     parent: root,
     onIssue: options.onHydrationIssue,
+    strictHydration: options.strictHydration,
   })
   try {
     return fn()
@@ -69,6 +72,7 @@ export function withHydrationRange<T>(
     owner,
     parent: rangeParent,
     onIssue: options.onHydrationIssue ?? parent?.onIssue,
+    strictHydration: options.strictHydration ?? parent?.strictHydration,
   })
   try {
     return fn()
@@ -241,6 +245,11 @@ function emitHydrationIssue(
   ctx.onIssue?.(normalized)
   if (isDev && typeof console !== 'undefined' && typeof console.warn === 'function') {
     console.warn(normalized.message)
+  }
+  if (ctx.strictHydration) {
+    const error = new Error(normalized.message) as Error & { issue?: HydrationIssue }
+    error.issue = normalized
+    throw error
   }
 }
 

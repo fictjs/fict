@@ -67,6 +67,7 @@ type NamespaceContext = 'svg' | 'mathml' | null
 
 export interface HydrateComponentOptions {
   onHydrationIssue?: HydrationIssueHandler | undefined
+  strictHydration?: boolean | undefined
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -198,8 +199,14 @@ export function hydrateComponent(
       () => {
         view()
       },
-      { onHydrationIssue: options.onHydrationIssue },
+      {
+        onHydrationIssue: options.onHydrationIssue,
+        strictHydration: options.strictHydration,
+      },
     )
+  } catch (err) {
+    destroyRoot(root)
+    throw err
   } finally {
     __fictExitHydration()
     popRoot(prev)
