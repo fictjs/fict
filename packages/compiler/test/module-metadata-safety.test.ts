@@ -13,7 +13,7 @@ import { transformSync } from '@babel/core'
 import syntaxJsx from '@babel/plugin-syntax-jsx'
 import { describe, expect, it } from 'vitest'
 
-import createFictPlugin from '../src'
+import createFictPlugin, { type CompilerWarning } from '../src'
 import { clearModuleMetadata, resolveModuleMetadata, setModuleMetadata } from '../src'
 
 describe('module metadata safety', () => {
@@ -63,7 +63,7 @@ describe('module metadata safety', () => {
               emitModuleMetadata: false,
               dev: true,
               strictGuarantee: false,
-              onWarn: warning => warnings.push(warning),
+              onWarn: (warning: CompilerWarning) => warnings.push(warning),
             },
           ],
         ],
@@ -228,7 +228,7 @@ describe('module metadata safety', () => {
           () => ({
             visitor: {
               Program: {
-                exit(path) {
+                exit(path: { scope: { hasBinding(name: string): boolean } }) {
                   hasStateBinding = path.scope.hasBinding('$state')
                   hasKeepBinding = path.scope.hasBinding('keep')
                 },

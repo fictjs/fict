@@ -30,6 +30,10 @@ const generate = (
 type BabelGeneratorOptions = NonNullable<Parameters<typeof generate>[1]>
 
 interface BabelGeneratorOptionsWithInputSourceMap extends BabelGeneratorOptions {
+  retainLines?: boolean
+  compact?: boolean
+  sourceMaps?: boolean
+  sourceFileName?: string
   inputSourceMap?: TransformResult['map']
 }
 

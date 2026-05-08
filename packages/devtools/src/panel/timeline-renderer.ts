@@ -16,6 +16,8 @@ import {
 
 import { formatComputedDisplayName } from './panel-utils'
 
+export type { TimelineLayer } from '../core/types'
+
 export interface TimelineRendererOptions {
   container: HTMLElement
   events: TimelineEvent[]

@@ -1,7 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "exactOptionalPropertyTypes": false,
+    "noImplicitReturns": false,
+    "noUncheckedIndexedAccess": false,
     "rootDir": "../..",
     "types": ["node"]
-  }
+  },
+  "include": ["src/**/*.ts", "../compiler/src/types/**/*.d.ts", "../runtime/src/dev.d.ts"],
+  "exclude": ["node_modules", "dist", "test"]
 }

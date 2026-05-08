@@ -1,7 +1,12 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "exactOptionalPropertyTypes": false,
+    "noImplicitReturns": false,
+    "noUncheckedIndexedAccess": false,
     "rootDir": "../..",
     "types": ["chrome", "node"]
-  }
+  },
+  "include": ["src/**/*.ts", "vite.config.ts", "vitest.config.ts", "../runtime/src/dev.d.ts"],
+  "exclude": ["node_modules", "dist", "build", "test"]
 }

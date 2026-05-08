@@ -440,7 +440,7 @@ function renderRulerMarks(model: PerformanceTrackModel): string {
   const marks = 6
   const list: string[] = []
   for (let i = 0; i < marks; i++) {
-    const ratio = marks === 1 ? 0 : i / (marks - 1)
+    const ratio = i / (marks - 1)
     const position = ratio * 100
     const value = model.startTime + model.duration * ratio
     const offset = value - model.startTime

@@ -141,7 +141,7 @@ describe('compiler cache fingerprint stack parsing', () => {
 })
 
 async function makePackageFixture(files: {
-  source: string | null
+  source?: string | null
   cacheSource?: string | null
   indexSource?: string | null
   esm: string
@@ -151,7 +151,7 @@ async function makePackageFixture(files: {
   tempRoots.push(root)
   await mkdir(path.join(root, 'src'), { recursive: true })
   await mkdir(path.join(root, 'dist'), { recursive: true })
-  const cacheSource = files.cacheSource ?? files.source
+  const cacheSource = files.cacheSource ?? files.source ?? null
   const indexSource = files.indexSource ?? null
   if (cacheSource !== null) {
     await writeFile(path.join(root, 'src', 'cache-fingerprint.ts'), cacheSource)

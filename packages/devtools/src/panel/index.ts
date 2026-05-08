@@ -12,14 +12,13 @@ import {
   getPluginTimelineLayers,
   type PluginState,
 } from '../core/plugin'
-import { MessageSource } from '../core/types'
+import { MessageSource, NodeType } from '../core/types'
 import type {
   ComponentState,
   ComputedState,
   DependencyGraph,
   DevToolsSettings,
   EffectState,
-  NodeType,
   PanelTab,
   RootState,
   SignalState,
@@ -760,8 +759,9 @@ function handleMessage(message: Record<string, unknown>): void {
     case 'signal:observers': {
       if (!hasId(payload)) return
       const signal = state.signals.get(payload.id)
-      if (signal && Array.isArray((payload as { observers: number[] }).observers)) {
-        signal.observers = (payload as { observers: number[] }).observers
+      const observerPayload = payload as unknown as { observers: number[] }
+      if (signal && Array.isArray(observerPayload.observers)) {
+        signal.observers = observerPayload.observers
         state.lastUpdate = Date.now()
         if (state.activeTab === 'signals') renderSignalsTab()
       }
@@ -771,8 +771,9 @@ function handleMessage(message: Record<string, unknown>): void {
     case 'computed:observers': {
       if (!hasId(payload)) return
       const computed = state.computeds.get(payload.id)
-      if (computed && Array.isArray((payload as { observers: number[] }).observers)) {
-        computed.observers = (payload as { observers: number[] }).observers
+      const observerPayload = payload as unknown as { observers: number[] }
+      if (computed && Array.isArray(observerPayload.observers)) {
+        computed.observers = observerPayload.observers
         state.lastUpdate = Date.now()
         if (state.activeTab === 'signals') renderSignalsTab()
       }
@@ -782,8 +783,9 @@ function handleMessage(message: Record<string, unknown>): void {
     case 'computed:dependencies': {
       if (!hasId(payload)) return
       const computed = state.computeds.get(payload.id)
-      if (computed && Array.isArray((payload as { dependencies: number[] }).dependencies)) {
-        computed.dependencies = (payload as { dependencies: number[] }).dependencies
+      const dependencyPayload = payload as unknown as { dependencies: number[] }
+      if (computed && Array.isArray(dependencyPayload.dependencies)) {
+        computed.dependencies = dependencyPayload.dependencies
         state.lastUpdate = Date.now()
         if (state.activeTab === 'signals') renderSignalsTab()
       }
@@ -793,8 +795,9 @@ function handleMessage(message: Record<string, unknown>): void {
     case 'effect:dependencies': {
       if (!hasId(payload)) return
       const effect = state.effects.get(payload.id)
-      if (effect && Array.isArray((payload as { dependencies: number[] }).dependencies)) {
-        effect.dependencies = (payload as { dependencies: number[] }).dependencies
+      const dependencyPayload = payload as unknown as { dependencies: number[] }
+      if (effect && Array.isArray(dependencyPayload.dependencies)) {
+        effect.dependencies = dependencyPayload.dependencies
         state.lastUpdate = Date.now()
         if (state.activeTab === 'effects') renderEffectsTab()
       }
@@ -1942,6 +1945,7 @@ function renderGraphContent(): string {
 
 function scheduleGraphRefresh(): void {
   if (!graphAutoRefresh || !graphAutoRefreshNodeId || state.activeTab !== 'graph') return
+  const refreshNodeId = graphAutoRefreshNodeId
 
   if (graphRefreshDebounceTimer) {
     clearTimeout(graphRefreshDebounceTimer)
@@ -1949,7 +1953,7 @@ function scheduleGraphRefresh(): void {
 
   graphRefreshDebounceTimer = setTimeout(() => {
     graphRefreshDebounceTimer = null
-    requestDependencyGraph(graphAutoRefreshNodeId, state.selectedNodeType)
+    requestDependencyGraph(refreshNodeId, state.selectedNodeType)
   }, GRAPH_REFRESH_DEBOUNCE_MS)
 }
 
@@ -2251,7 +2255,7 @@ function initSignalsVirtualList(): void {
 
       // Select the item
       state.selectedNodeId = item.id
-      state.selectedNodeType = 'isDirty' in item ? 'computed' : ('signal' as NodeType)
+      state.selectedNodeType = 'isDirty' in item ? NodeType.Computed : NodeType.Signal
       signalsVirtualList?.refresh()
     },
   })
