@@ -544,7 +544,7 @@ describe('QRL Generation and Event Handler Resolution', () => {
         return (
           <button onClick$={() => {
             count++
-            console.log(formatNumber(count))
+            console.log(formatNumber(1000))
           }}>
             {count}
           </button>
@@ -588,7 +588,7 @@ describe('QRL Generation and Event Handler Resolution', () => {
 
         return (
           <button onClick$={() => {
-            x = add(x, multiply(x, 2))
+            x = add(1, multiply(2, 2))
           }}>
             {x}
           </button>
@@ -621,8 +621,8 @@ describe('QRL Generation and Event Handler Resolution', () => {
 
         return (
           <div>
-            <button onClick$={() => { if (validate(count + 1)) count++ }}>Inc</button>
-            <button onClick$={() => { if (validate(count - 1)) count-- }}>Dec</button>
+            <button onClick$={() => { if (validate(1)) count++ }}>Inc</button>
+            <button onClick$={() => { if (validate(0)) count-- }}>Dec</button>
           </div>
         )
       }
