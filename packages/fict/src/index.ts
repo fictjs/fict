@@ -32,6 +32,8 @@
  * @packageDocumentation
  */
 
+import { createUncompiledMacroError } from './macro-diagnostics'
+
 // Re-export everything from runtime
 export * from '@fictjs/runtime'
 
@@ -93,7 +95,7 @@ export { $store } from './store'
  */
 export function $state<T>(_initialValue: T): T {
   // This function is never called at runtime - the compiler transforms it
-  throw new Error('Uncompiled')
+  throw createUncompiledMacroError('$state')
 }
 
 /**
@@ -111,5 +113,5 @@ export function $state<T>(_initialValue: T): T {
  */
 export function $effect(_fn: () => void | (() => void)): void {
   // This function is never called at runtime - the compiler transforms it
-  throw new Error('Uncompiled')
+  throw createUncompiledMacroError('$effect')
 }

@@ -31,3 +31,33 @@ describe('fict/slim exports', () => {
     expect(slim.$effect).toBeTypeOf('function')
   })
 })
+
+describe('compiler macro diagnostics', () => {
+  it('explains uncompiled macro calls in development', () => {
+    const previous = process.env.NODE_ENV
+    process.env.NODE_ENV = 'development'
+
+    try {
+      expect(() => fict.$state(0)).toThrow(
+        '$state() is a Fict compiler macro. It must be transformed',
+      )
+      expect(() => slim.$effect(() => {})).toThrow(
+        '$effect() is a Fict compiler macro. It must be transformed',
+      )
+    } finally {
+      process.env.NODE_ENV = previous
+    }
+  })
+
+  it('uses a short uncompiled macro code in production', () => {
+    const previous = process.env.NODE_ENV
+    process.env.NODE_ENV = 'production'
+
+    try {
+      expect(() => fict.$state(0)).toThrow('FICT_E_UNCOMPILED')
+      expect(() => slim.$effect(() => {})).toThrow('FICT_E_UNCOMPILED')
+    } finally {
+      process.env.NODE_ENV = previous
+    }
+  })
+})

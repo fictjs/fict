@@ -8,12 +8,14 @@
  * @packageDocumentation
  */
 
+import { createUncompiledMacroError } from './macro-diagnostics'
+
 /**
  * Compiler macro for reactive state.
  * This is transformed at compile time and should never be called at runtime.
  */
 export function $state<T>(_initialValue: T): T {
-  throw new Error('Uncompiled')
+  throw createUncompiledMacroError('$state')
 }
 
 /**
@@ -21,5 +23,5 @@ export function $state<T>(_initialValue: T): T {
  * This is transformed at compile time and should never be called at runtime.
  */
 export function $effect(_fn: () => void | (() => void)): void {
-  throw new Error('Uncompiled')
+  throw createUncompiledMacroError('$effect')
 }
