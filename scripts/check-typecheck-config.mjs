@@ -4,10 +4,11 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
 
-const repoRoot = path.resolve(new URL('..', import.meta.url).pathname)
+const repoRoot = path.resolve(fileURLToPath(new URL('..', import.meta.url)))
 const tscBin = require.resolve('typescript/bin/tsc')
 
 const criticalPackages = ['compiler', 'devtools', 'eslint-plugin', 'ssr', 'vite-plugin']
