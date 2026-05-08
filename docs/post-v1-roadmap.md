@@ -35,3 +35,20 @@ Risk notes:
 
 - The protocol should remain append-only within a minor line; incompatible graph payloads require a protocol version bump.
 - Large apps need graph virtualization or filtering before enabling all edges by default.
+
+## Compiler Explain Visualization
+
+Goal: turn compiler explain output into an inspectable visual artifact for reactive regions, dependencies, generated handlers, and diagnostics.
+
+Acceptance criteria:
+
+- Emit a stable JSON explain schema that includes source spans, region IDs, dependency keys, generated handler IDs, warnings, and optimization decisions.
+- Add a renderer for the schema in the playground or docs site that overlays source code with region/dependency highlights.
+- Support a CLI path that writes the explain JSON and an HTML artifact for offline debugging.
+- Add snapshot tests for the JSON schema and browser smoke tests for the visual artifact.
+- Document how to attach explain artifacts to compiler bug reports.
+
+Risk notes:
+
+- The schema should be versioned separately from human-readable debug text.
+- Visualization must not become part of the production transform path or affect sourcemaps.
