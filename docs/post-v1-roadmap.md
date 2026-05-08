@@ -18,3 +18,20 @@ Risk notes:
 
 - Incorrect compatibility detection is worse than a full reload because it can bind old state slots to new meanings.
 - The first implementation should prefer explicit fallback-to-reload paths over partial patching when metadata is missing.
+
+## DevTools Signal And Branch Graph
+
+Goal: let developers inspect how signals, memos, effects, components, and conditional/list branches relate at runtime.
+
+Acceptance criteria:
+
+- Extend the DevTools protocol with branch nodes, owner/root IDs, dependency edges, and lifecycle state without breaking the current protocol version negotiation.
+- Show signal-to-consumer edges and branch ownership in the panel graph view with filtering for component, signal, memo, effect, branch, and root nodes.
+- Link graph nodes to timeline events so a signal update can be traced to affected branches and DOM work.
+- Add runtime/devtools tests for missing-node tolerance, protocol compatibility, branch disposal, and graph updates after conditional flips.
+- Keep graph collection dev-only and prove production bundles do not include the collector.
+
+Risk notes:
+
+- The protocol should remain append-only within a minor line; incompatible graph payloads require a protocol version bump.
+- Large apps need graph virtualization or filtering before enabling all edges by default.
