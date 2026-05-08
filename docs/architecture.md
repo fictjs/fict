@@ -832,8 +832,9 @@ Fict’s SSR executes compiled output inside a DOM simulation (linkedom) and ser
 `renderToString` returns a full HTML string, while streaming mode can emit a **shell-first**
 response and patch Suspense boundaries as they resolve.
 
-`renderToPartial` is available for Partial Prerendering workflows: it returns a
-complete shell HTML plus a deferred patch stream.
+`renderToPartial` is available as an experimental preview for Partial
+Prerendering workflows: it returns a complete shell HTML plus a deferred patch
+stream, but its return shape is not frozen as stable v1 API surface.
 
 ### 12.1 Shell-first streaming
 

@@ -334,7 +334,7 @@ await allReady
 ### renderToPartial
 
 Generate a complete shell HTML plus a deferred patch stream for Partial Prerendering workflows.
-This is an advanced API and currently considered **Preview** in v1.0.
+This is an advanced API and currently considered **Experimental Preview** in v1.0; do not treat the return shape as frozen.
 
 ```typescript
 import { renderToPartial } from '@fictjs/ssr'
@@ -479,7 +479,7 @@ Generated detailed `fict.manifest.json` during production build, mapping virtual
 
 ## Partial Prerendering
 
-`renderToPartial()` enables a PPR-style split:
+`renderToPartial()` is an **Experimental Preview** API that enables a PPR-style split:
 
 1. **Shell phase**: serve/cache `shell` as static-first HTML.
 2. **Deferred phase**: deliver `stream` patches for resolved Suspense boundaries.

@@ -62,7 +62,7 @@ const partial = renderToPartial(() => <App />, { mode: 'shell', fullDocument: tr
 // 2) Stream partial.stream as deferred response body (or secondary channel)
 ```
 
-Use this when you want static shell caching plus dynamic boundary resolution.
+Use this **Experimental Preview** API when you want static shell caching plus dynamic boundary resolution. Do not rely on the exact return shape as stable v1 API surface yet.
 
 ## 5) Manifest Handling
 

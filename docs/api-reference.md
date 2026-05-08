@@ -1906,7 +1906,7 @@ strict CSP streaming routes.
 ### renderToPartial
 
 Partial prerendering API: returns a complete shell HTML plus a deferred patch stream.
-Status: **Advanced / Preview** for v1.0.
+Status: **Advanced / Experimental Preview** for v1.0; the return shape is not part of the stable v1 API freeze yet.
 
 ```typescript
 import { renderToPartial } from '@fictjs/ssr'

@@ -7,7 +7,7 @@ This guide focuses on practical SSR tuning for Fict apps.
 - `renderToString`: simplest, one-shot HTML.
 - `renderToStream({ mode: 'shell' })`: best TTFB; stream fallback shell first.
 - `renderToStream({ mode: 'all' })`: complete HTML only after all Suspense resolves.
-- `renderToPartial`: static-first shell + deferred patch stream (PPR-style).
+- `renderToPartial`: experimental static-first shell + deferred patch stream (PPR-style).
 
 Rule of thumb:
 

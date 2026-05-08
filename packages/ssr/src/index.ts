@@ -152,6 +152,9 @@ export interface PipeableStream {
 export interface PartialPrerenderResult {
   /**
    * Complete shell HTML (fallbacks + markers + initial snapshot scripts).
+   *
+   * @experimental Preview API for v1.0; the access pattern may change before
+   * this becomes stable.
    */
   shell: string
   /**
@@ -372,6 +375,10 @@ export function renderToPipeableStream(
   }
 }
 
+/**
+ * @experimental Preview API for v1.0; the return shape may change before this
+ * becomes stable.
+ */
 export function renderToPartial(
   view: () => FictNode,
   options: RenderToStreamOptions = {},
