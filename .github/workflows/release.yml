@@ -34,14 +34,12 @@ jobs:
           registry-url: https://registry.npmjs.org/
 
       - run: pnpm install
-      - name: Verify strict guarantee contract
-        run: FICT_STRICT_GUARANTEE=1 pnpm -C packages/compiler test -- reactivity-guarantee-contract.test.ts
-      - run: FICT_STRICT_GUARANTEE=1 pnpm build
-      - name: Verify compiler release gate
-        run: BENCH_OUTPUT="${RUNNER_TEMP}/optimizer-bench.json" pnpm release:compiler:verify
 
-      - name: Verify runtime performance guardrail
-        run: pnpm guardrails:runtime
+      - name: Install Playwright browser for release e2e
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Verify full release gate
+        run: BENCH_OUTPUT="${RUNNER_TEMP}/optimizer-bench.json" FICT_STRICT_GUARANTEE=1 pnpm release:verify
 
       - name: Upload optimizer benchmark output
         if: always()
