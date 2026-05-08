@@ -289,9 +289,12 @@ export function __fictGetScopeProps(scopeId: string): Record<string, unknown> | 
 }
 
 export function __fictQrl(moduleId: string, exportName: string): string {
-  const manifest = (globalThis as Record<string, unknown>).__FICT_MANIFEST__ as
-    | Record<string, string>
-    | undefined
+  const sessionManifest = __fictGetCurrentSSRSession()?.manifest
+  const manifest =
+    sessionManifest ??
+    ((globalThis as Record<string, unknown>).__FICT_MANIFEST__ as
+      | Record<string, string>
+      | undefined)
 
   // Check manifest first (production builds)
   if (manifest?.[moduleId]) {

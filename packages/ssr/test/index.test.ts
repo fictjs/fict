@@ -165,16 +165,58 @@ describe('@fictjs/ssr', () => {
     const manifest = {
       'file:///counter.tsx': '/assets/counter.js',
     }
+    let qrl = ''
 
-    const result = renderToDocument(() => ({ type: 'div', props: {} }), {
-      includeSnapshot: false,
-      manifest,
-    })
+    const result = renderToDocument(
+      () => {
+        qrl = __fictQrl('file:///counter.tsx', '__fict_r0')
+        return { type: 'div', props: {} }
+      },
+      {
+        includeSnapshot: false,
+        manifest,
+      },
+    )
 
     try {
-      expect(__fictQrl('file:///counter.tsx', '__fict_r0')).toBe('/assets/counter.js#__fict_r0')
+      expect(qrl).toBe('/assets/counter.js#__fict_r0')
+      expect((globalThis as Record<string, unknown>).__FICT_MANIFEST__).toBeUndefined()
     } finally {
       result.dispose()
     }
+  })
+
+  it('keeps manifest mappings scoped to nested SSR sessions', () => {
+    const seen: string[] = []
+
+    const html = renderToString(
+      () => {
+        seen.push(__fictQrl('file:///shared.tsx', '__fict_outer0'))
+        renderToString(
+          () => {
+            seen.push(__fictQrl('file:///shared.tsx', '__fict_inner0'))
+            return { type: 'span', props: { children: 'inner' } }
+          },
+          {
+            includeSnapshot: false,
+            manifest: { 'file:///shared.tsx': '/assets/inner.js' },
+          },
+        )
+        seen.push(__fictQrl('file:///shared.tsx', '__fict_outer1'))
+        return { type: 'div', props: { children: 'outer' } }
+      },
+      {
+        includeSnapshot: false,
+        manifest: { 'file:///shared.tsx': '/assets/outer.js' },
+      },
+    )
+
+    expect(html).toContain('<div>outer</div>')
+    expect(seen).toEqual([
+      '/assets/outer.js#__fict_outer0',
+      '/assets/inner.js#__fict_inner0',
+      '/assets/outer.js#__fict_outer1',
+    ])
+    expect((globalThis as Record<string, unknown>).__FICT_MANIFEST__).toBeUndefined()
   })
 })

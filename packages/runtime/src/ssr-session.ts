@@ -6,6 +6,7 @@ export interface FictSSRSession {
   snapshotState: unknown | null
   streamHooks: unknown | null
   boundaryStack: string[]
+  manifest?: Record<string, string> | undefined
 }
 
 const sessionStack: FictSSRSession[] = []
@@ -19,6 +20,7 @@ export function __fictCreateSSRSession(): FictSSRSession {
     snapshotState: null,
     streamHooks: null,
     boundaryStack: [],
+    manifest: undefined,
   }
 }
 
@@ -42,4 +44,5 @@ export function __fictResetSSRSession(session: FictSSRSession): void {
   session.snapshotState = null
   session.streamHooks = null
   session.boundaryStack.length = 0
+  session.manifest = undefined
 }

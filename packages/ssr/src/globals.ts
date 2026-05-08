@@ -1,3 +1,5 @@
+import { __fictGetCurrentSSRSession } from '@fictjs/runtime/internal'
+
 interface GlobalSnapshot {
   key: string
   exists: boolean
@@ -76,6 +78,16 @@ export function installManifest(manifest?: Record<string, string> | string): () 
     resolved = JSON.parse(raw) as Record<string, string>
   } else {
     resolved = manifest
+  }
+
+  const session = __fictGetCurrentSSRSession()
+  if (session) {
+    const previous = session.manifest
+    session.manifest = resolved
+
+    return () => {
+      session.manifest = previous
+    }
   }
 
   const key = '__FICT_MANIFEST__'
