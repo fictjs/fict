@@ -1999,184 +1999,51 @@ function collectRuntimeHelperImports(body: t.Statement[]): Map<string, string> {
   return helperImports
 }
 
-function isIdentifierReference(
-  current: t.Identifier,
-  parent: t.Node | null,
-  key: string | null,
-): boolean {
-  if (!parent) return true
-  if (t.isMemberExpression(parent) && parent.property === current && !parent.computed) return false
-  if (t.isOptionalMemberExpression(parent) && parent.property === current && !parent.computed) {
-    return false
-  }
-  if (t.isObjectProperty(parent) && parent.key === current && !parent.computed) return false
-  if (t.isObjectMethod(parent) && parent.key === current && !parent.computed) return false
-  if (t.isClassMethod(parent) && parent.key === current && !parent.computed) return false
-  if (t.isVariableDeclarator(parent) && parent.id === current) return false
-  if (
-    (t.isFunctionDeclaration(parent) || t.isFunctionExpression(parent)) &&
-    parent.id === current
-  ) {
-    return false
-  }
-  if ((t.isClassDeclaration(parent) || t.isClassExpression(parent)) && parent.id === current) {
-    return false
-  }
-  if (key === 'params') return false
-  if (t.isCatchClause(parent) && parent.param === current) return false
-  if (
-    t.isImportSpecifier(parent) ||
-    t.isImportDefaultSpecifier(parent) ||
-    t.isImportNamespaceSpecifier(parent) ||
-    t.isExportSpecifier(parent)
-  ) {
-    return false
-  }
-  if (t.isLabeledStatement(parent) && parent.label === current) return false
-  if ((t.isBreakStatement(parent) || t.isContinueStatement(parent)) && parent.label === current) {
-    return false
-  }
-  return true
-}
-
-function visitChildNodes(
-  current: t.Node,
-  visitor: (node: t.Node, parent: t.Node, key: string) => void,
-): void {
-  for (const nodeKey of Object.keys(current)) {
-    if (
-      nodeKey === 'loc' ||
-      nodeKey === 'start' ||
-      nodeKey === 'end' ||
-      nodeKey === 'extra' ||
-      nodeKey === 'comments' ||
-      nodeKey === 'leadingComments' ||
-      nodeKey === 'trailingComments' ||
-      nodeKey === 'innerComments'
-    ) {
-      continue
-    }
-    const child = (current as unknown as Record<string, unknown>)[nodeKey]
-    if (Array.isArray(child)) {
-      for (const item of child) {
-        if (
-          item &&
-          typeof item === 'object' &&
-          item !== null &&
-          'type' in item &&
-          typeof (item as Record<string, unknown>).type === 'string'
-        ) {
-          visitor(item as t.Node, current, nodeKey)
-        }
-      }
-    } else if (
-      child &&
-      typeof child === 'object' &&
-      child !== null &&
-      'type' in child &&
-      typeof (child as Record<string, unknown>).type === 'string'
-    ) {
-      visitor(child as t.Node, current, nodeKey)
-    }
-  }
-}
-
 function collectRuntimeHelperUsages(
-  node: t.Node,
+  handlerPath: NodePath<t.Node>,
   runtimeHelperImports: Map<string, string>,
 ): RuntimeHelperUsage[] {
   const used = new Map<string, string>()
-  const scopes: Set<string>[] = [new Set()]
 
-  const currentScope = () => scopes[scopes.length - 1]!
-  const isBound = (name: string) => scopes.some(scope => scope.has(name))
-  const addPattern = (pattern: t.LVal | t.PatternLike) => {
-    for (const name of collectPatternIdentifiers(pattern)) {
-      currentScope().add(name)
-    }
-  }
+  handlerPath.traverse({
+    Identifier(identifierPath) {
+      if (!identifierPath.isReferencedIdentifier()) return
+      if (isTypeOnlyIdentifierPath(identifierPath)) return
 
-  const visitNode = (
-    current: t.Node | null | undefined,
-    parent: t.Node | null,
-    key: string | null,
-  ): void => {
-    if (!current || t.isImportDeclaration(current)) return
+      const localName = identifierPath.node.name
+      const importedHelperName = runtimeHelperImports.get(localName)
+      const binding = identifierPath.scope.getBinding(localName)
 
-    if (t.isFunctionDeclaration(current)) {
-      if (current.id) currentScope().add(current.id.name)
-      const fnScope = new Set<string>()
-      for (const param of current.params) {
-        for (const name of collectPatternIdentifiers(param)) {
-          fnScope.add(name)
-        }
+      if (importedHelperName) {
+        if (!isRuntimeHelperImportBinding(binding, importedHelperName)) return
+        used.set(localName, importedHelperName)
+        return
       }
-      scopes.push(fnScope)
-      visitNode(current.body, current, 'body')
-      scopes.pop()
-      return
-    }
 
-    if (t.isFunctionExpression(current) || t.isArrowFunctionExpression(current)) {
-      const fnScope = new Set<string>()
-      if (t.isFunctionExpression(current) && current.id) {
-        fnScope.add(current.id.name)
-      }
-      for (const param of current.params) {
-        for (const name of collectPatternIdentifiers(param)) {
-          fnScope.add(name)
-        }
-      }
-      scopes.push(fnScope)
-      visitNode(current.body, current, 'body')
-      scopes.pop()
-      return
-    }
-
-    if (t.isVariableDeclarator(current)) {
-      addPattern(current.id)
-      visitNode(current.init, current, 'init')
-      return
-    }
-
-    if (t.isClassDeclaration(current) && current.id) {
-      currentScope().add(current.id.name)
-    }
-
-    if (t.isCatchClause(current)) {
-      const catchScope = new Set<string>()
-      if (current.param) {
-        for (const name of collectPatternIdentifiers(current.param)) {
-          catchScope.add(name)
-        }
-      }
-      scopes.push(catchScope)
-      visitNode(current.body, current, 'body')
-      scopes.pop()
-      return
-    }
-
-    if (t.isIdentifier(current)) {
-      if (!isIdentifierReference(current, parent, key)) return
-      if (isBound(current.name)) return
-
-      const helperName = runtimeHelperImports.get(current.name) ?? current.name
-      if (RUNTIME_HELPERS[helperName]) {
-        used.set(current.name, helperName)
-      }
-      return
-    }
-
-    visitChildNodes(current, (child, childParent, childKey) => {
-      visitNode(child, childParent, childKey)
-    })
-  }
-
-  visitNode(node, null, null)
+      if (!RUNTIME_HELPERS[localName]) return
+      if (binding) return
+      used.set(localName, localName)
+    },
+  })
 
   return Array.from(used, ([localName, helperName]) =>
     localName === helperName ? helperName : { helperName, localName },
   )
+}
+
+function isRuntimeHelperImportBinding(
+  binding: ReturnType<Scope['getBinding']>,
+  helperName: string,
+): boolean {
+  if (!binding?.path.isImportSpecifier()) return false
+
+  const parent = binding.path.parent
+  if (!t.isImportDeclaration(parent)) return false
+  if (!RUNTIME_HELPER_IMPORT_SOURCES.has(parent.source.value)) return false
+
+  const imported = binding.path.node.imported
+  const importedName = t.isIdentifier(imported) ? imported.name : imported.value
+  return importedName === helperName
 }
 
 function isTypeOnlyIdentifierPath(path: NodePath<t.Identifier>): boolean {
@@ -2404,7 +2271,7 @@ function extractAndRewriteHandlers(
           const handlerCode = generate(initPath.node).code
 
           // Detect which runtime helpers are used
-          const helpersUsed = collectRuntimeHelperUsages(initPath.node, runtimeHelperImports)
+          const helpersUsed = collectRuntimeHelperUsages(initPath, runtimeHelperImports)
 
           // Detect local dependencies
           const referencedIds = collectHandlerTopLevelReferences(
@@ -2457,7 +2324,7 @@ function extractAndRewriteHandlers(
         const handlerCode = generate(arrowFn).code
 
         // Detect which runtime helpers are used
-        const helpersUsed = collectRuntimeHelperUsages(arrowFn, runtimeHelperImports)
+        const helpersUsed = collectRuntimeHelperUsages(declarationPath, runtimeHelperImports)
 
         // Detect local dependencies
         const referencedIds = collectHandlerTopLevelReferences(

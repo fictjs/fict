@@ -1408,6 +1408,100 @@ function Counter() {
       expect(content).toContain('const __fictUseLexicalScope')
     })
 
+    it('uses Babel scope for block, catch, and class static helper shadows', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictGetScopeProps, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_e0 = (scopeId, event, el) => {
+  {
+    const __fictUseLexicalScope = () => ['local'];
+    __fictUseLexicalScope(scopeId, ['shadowed']);
+  }
+  try {
+    throw new Error('local');
+  } catch (__fictGetScopeProps) {
+    __fictGetScopeProps(scopeId);
+  }
+  class Local {
+    static {
+      const __fictEnsureScope = () => 'local';
+      __fictEnsureScope(scopeId, el);
+    }
+  }
+  const [count] = __fictUseLexicalScope(scopeId, ['count']);
+  return count + event.type + String(Local);
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn() }
+      const transform = plugin.transform as any
+      await transform.call(mockContext, compiledCode, '/project/src/ScopedHelperShadows.tsx')
+
+      const load = plugin.load as any
+      const content = load('\0fict-handler:/project/src/ScopedHelperShadows.tsx$$__fict_e0') as
+        | string
+        | null
+
+      expect(content).not.toBeNull()
+      expect(content).toContain("import { __fictUseLexicalScope } from '@fictjs/runtime/internal';")
+      expect(content).not.toContain('import { __fictGetScopeProps')
+      expect(content).not.toContain('__fictEnsureScope } from')
+    })
+
+    it('preserves aliased helper imports after nested local shadows', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictUseLexicalScope as useScope, __fictGetScopeProps as getScopeProps, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_e0 = (scopeId, event, el) => {
+  {
+    const useScope = () => ['local'];
+    useScope(scopeId, ['shadowed']);
+  }
+  function inner(getScopeProps) {
+    return getScopeProps(scopeId);
+  }
+  const [count] = useScope(scopeId, ['count']);
+  return count + inner(() => 'local') + event.type + el.tagName;
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn() }
+      const transform = plugin.transform as any
+      await transform.call(mockContext, compiledCode, '/project/src/AliasedScopedHelper.tsx')
+
+      const load = plugin.load as any
+      const content = load('\0fict-handler:/project/src/AliasedScopedHelper.tsx$$__fict_e0') as
+        | string
+        | null
+
+      expect(content).not.toBeNull()
+      expect(content).toContain(
+        "import { __fictUseLexicalScope as useScope } from '@fictjs/runtime/internal';",
+      )
+      expect(content).not.toContain('__fictGetScopeProps as getScopeProps')
+      expect(content).toContain('const useScope = () => [')
+    })
+
     it('preserves aliased runtime helper imports in extracted handler modules', async () => {
       const plugin = fict({ functionSplitting: true }) as any
 
