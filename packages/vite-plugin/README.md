@@ -141,6 +141,13 @@ HMR behavior:
 - `tsconfig` changes reset the TypeScript project and transform cache before the next transform.
 - See `docs/tooling-runtime-matrix.md` for the v1.0 tooling release gate.
 
+Function splitting:
+
+- Production builds extract compiler-generated event handlers into virtual handler modules when `functionSplitting` is enabled.
+- Runtime helper imports in those virtual modules are self-contained and use the same package family as the source module (`fict` or `@fictjs/runtime`).
+- If an extracted handler closes over a module-local helper, component, constant, or import, the source module keeps that binding and re-exports it under a private `__fict_dep_` name. The virtual handler imports that private dependency from the source module.
+- Because of that local dependency contract, handler chunks are not always fully independent from their source module. A handler with no module-local dependencies can split at handler granularity; a handler with local dependencies may load the source module when the handler chunk runs.
+
 Recommended profiles:
 
 ```ts

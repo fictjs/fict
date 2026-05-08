@@ -52,6 +52,13 @@ Function splitting must preserve sourcemaps for the main transformed module and
 must emit stable virtual modules for extracted handlers. Release candidates must
 keep the Vite plugin function-splitting tests green before claiming support.
 
+Extracted handler modules are self-contained for Fict runtime helper imports.
+They are not guaranteed to be independent of the source module when the handler
+references module-local dependencies. In that case the source module re-exports
+the dependency under a private `__fict_dep_` name and the virtual handler imports
+it, which preserves correctness while reducing split granularity for that
+handler.
+
 ## Strict CSP and Trusted Types Contract
 
 Fict SSR does not require `innerHTML` or `eval` in its streaming patch runtime.
