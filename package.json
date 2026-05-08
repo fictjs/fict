@@ -24,6 +24,7 @@
     "test:bundlers": "pnpm -C examples/counter-webpack build && pnpm -C examples/counter-basic build && pnpm examples:verify",
     "examples:verify": "pnpm -C examples/real-apps build && pnpm -C examples/ssr-basic build && pnpm -C examples/ssr-streaming build",
     "guardrails:typecheck-config": "node scripts/check-typecheck-config.mjs",
+    "typecheck:strict-candidate": "node scripts/typecheck-strict-candidate.mjs",
     "size": "size-limit",
     "size:analyze": "size-limit --why",
     "commit": "cz",
