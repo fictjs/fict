@@ -84,6 +84,11 @@
       "path": "metadata-packaging-architecture.md"
     },
     {
+      "id": "post-v1-roadmap",
+      "title": "Post-v1 Roadmap",
+      "path": "post-v1-roadmap.md"
+    },
+    {
       "id": "reactivity-guarantee-matrix",
       "title": "Reactivity Guarantee Matrix",
       "path": "reactivity-guarantee-matrix.md"
@@ -146,6 +151,11 @@
       "id": "tooling-runtime-matrix",
       "title": "Tooling Runtime Matrix",
       "path": "tooling-runtime-matrix.md"
+    },
+    {
+      "id": "typecheck-hardening",
+      "title": "Typecheck Hardening Plan",
+      "path": "typecheck-hardening.md"
     }
   ]
 }
