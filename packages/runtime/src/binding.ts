@@ -2331,6 +2331,111 @@ export function createConditional(
   // (like bindText) even if we early-return, breaking fine-grained reactivity.
   const conditionMemo = computed(condition)
 
+  const prepareBranch = (
+    render: (() => FictNode) | undefined,
+    parent: ParentNode & Node,
+    deferRefs: boolean,
+  ): { root: RootContext | null; nodes: Node[]; handled: boolean } => {
+    if (!render) {
+      return { root: null, nodes: [], handled: false }
+    }
+
+    const root = createRootContext(hostRoot)
+    if (deferRefs) {
+      deferRootRefAssignments(root)
+    }
+
+    const prevRender = pushRoot(root)
+    let output: FictNode | undefined
+    try {
+      // Use untrack for ordinary branches so nested signal reads do not make
+      // the conditional effect own child dependencies.
+      output = trackBranchReads ? render() : untrack(render)
+    } catch (err) {
+      if (handleSuspend(err as any, root)) {
+        destroyRoot(root)
+        return { root: null, nodes: [], handled: true }
+      }
+      if (handleError(err, { source: 'renderChild' }, root)) {
+        destroyRoot(root)
+        return { root: null, nodes: [], handled: true }
+      }
+      throw err
+    } finally {
+      popRoot(prevRender)
+    }
+
+    const prevCreate = pushRoot(root)
+    try {
+      if (output == null || output === false) {
+        return { root, nodes: [], handled: false }
+      }
+      const el = createElementFn(output)
+      return {
+        root,
+        nodes: toNodeArray(el, parent.ownerDocument ?? markerOwnerDocument),
+        handled: false,
+      }
+    } catch (err) {
+      if (handleSuspend(err as any, root)) {
+        destroyRoot(root)
+        return { root: null, nodes: [], handled: true }
+      }
+      if (handleError(err, { source: 'renderChild' }, root)) {
+        destroyRoot(root)
+        return { root: null, nodes: [], handled: true }
+      }
+      throw err
+    } finally {
+      popRoot(prevCreate)
+    }
+  }
+
+  const commitBranch = (
+    cond: boolean,
+    root: RootContext | null,
+    nodes: Node[],
+    parent: ParentNode & Node,
+  ): void => {
+    const previousRoot = currentRoot
+    const previousNodes = currentNodes
+    let inserted = false
+
+    try {
+      if (nodes.length > 0) {
+        insertNodesBefore(parent, nodes, endMarker)
+      }
+      inserted = true
+
+      currentNodes = nodes
+      currentRoot = root
+      lastCondition = cond
+
+      try {
+        if (previousRoot) {
+          destroyRoot(previousRoot)
+        }
+      } finally {
+        removeNodes(previousNodes)
+      }
+
+      if (root) {
+        flushDeferredRefAssignments(root)
+        flushOnMount(root)
+      }
+    } catch (err) {
+      if (!inserted) {
+        removeNodes(nodes)
+        if (root) {
+          destroyRoot(root)
+        }
+        currentNodes = previousNodes
+        currentRoot = previousRoot
+      }
+      throw err
+    }
+  }
+
   const runConditional = () => {
     const cond = conditionMemo()
     const parent = startMarker.parentNode as (ParentNode & Node) | null
@@ -2402,140 +2507,21 @@ export function createConditional(
       }
     } else if (lastCondition === cond) {
       const render = cond ? renderTrue : renderFalse
-      if (!render) {
+      const next = prepareBranch(render, parent, true)
+      if (next.handled) {
         return
       }
 
-      const nextRoot = createRootContext(hostRoot)
-      deferRootRefAssignments(nextRoot)
-      const prevNext = pushRoot(nextRoot)
-      let handledRenderError = false
-      let nextOutput: FictNode | undefined
-      try {
-        nextOutput = render()
-      } catch (err) {
-        if (handleSuspend(err as any, nextRoot)) {
-          handledRenderError = true
-        } else if (handleError(err, { source: 'renderChild' }, nextRoot)) {
-          handledRenderError = true
-        } else {
-          throw err
-        }
-      } finally {
-        popRoot(prevNext)
-      }
-
-      if (handledRenderError) {
-        destroyRoot(nextRoot)
-        return
-      }
-
-      const prev = pushRoot(nextRoot)
-      let nextNodes: Node[] = []
-      try {
-        if (nextOutput != null && nextOutput !== false) {
-          const el = createElementFn(nextOutput)
-          nextNodes = toNodeArray(el, parent.ownerDocument ?? markerOwnerDocument)
-        }
-      } catch (err) {
-        if (handleSuspend(err as any, nextRoot)) {
-          destroyRoot(nextRoot)
-          return
-        }
-        if (handleError(err, { source: 'renderChild' }, nextRoot)) {
-          destroyRoot(nextRoot)
-          return
-        }
-        throw err
-      } finally {
-        popRoot(prev)
-      }
-
-      lastCondition = cond
-      const previousRoot = currentRoot
-      const previousNodes = currentNodes
-      let committed = false
-      try {
-        if (nextNodes.length > 0) {
-          insertNodesBefore(parent, nextNodes, endMarker)
-        }
-
-        currentNodes = nextNodes
-        currentRoot = nextRoot
-        committed = true
-
-        try {
-          if (previousRoot) {
-            destroyRoot(previousRoot)
-          }
-        } finally {
-          removeNodes(previousNodes)
-        }
-
-        flushDeferredRefAssignments(nextRoot)
-        flushOnMount(nextRoot)
-      } catch (err) {
-        if (!committed) {
-          removeNodes(nextNodes)
-          destroyRoot(nextRoot)
-          currentNodes = previousNodes
-          currentRoot = previousRoot
-        }
-        throw err
-      }
+      commitBranch(cond, next.root, next.nodes, parent)
       return
     }
-    lastCondition = cond
-
-    if (currentRoot) {
-      destroyRoot(currentRoot)
-      currentRoot = null
-    }
-    removeNodes(currentNodes)
-    currentNodes = []
 
     const render = cond ? renderTrue : renderFalse
-    if (!render) {
+    const next = prepareBranch(render, parent, lastCondition !== undefined)
+    if (next.handled) {
       return
     }
-
-    const root = createRootContext(hostRoot)
-    const prev = pushRoot(root)
-    let handledError = false
-    try {
-      // Use untrack to prevent render function's signal accesses from being
-      // tracked by createConditional's effect. This ensures that signals used
-      // inside the render function (e.g., nested if conditions) don't cause
-      // createConditional to re-run, which would purge child effect deps.
-      const output = trackBranchReads ? render() : untrack(render)
-      if (output == null || output === false) {
-        return
-      }
-      const el = createElementFn(output)
-      const nodes = toNodeArray(el, parent.ownerDocument ?? markerOwnerDocument)
-      insertNodesBefore(parent, nodes, endMarker)
-      currentNodes = nodes
-    } catch (err) {
-      if (handleSuspend(err as any, root)) {
-        handledError = true
-        destroyRoot(root)
-        return
-      }
-      if (handleError(err, { source: 'renderChild' }, root)) {
-        handledError = true
-        destroyRoot(root)
-        return
-      }
-      throw err
-    } finally {
-      popRoot(prev)
-      if (!handledError) {
-        flushOnMount(root)
-        currentRoot = root
-      } else {
-        currentRoot = null
-      }
-    }
+    commitBranch(cond, next.root, next.nodes, parent)
   }
 
   const dispose = createRenderEffect(runConditional)

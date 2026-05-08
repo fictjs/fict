@@ -1902,6 +1902,404 @@ describe('Binding Edge Cases', () => {
       dispose()
     })
 
+    it('keeps the old branch interactive when ordinary branch flip render fails', async () => {
+      const condition = createSignal(true)
+      const renderError = new Error('flip render failed')
+      const errors: unknown[] = []
+      const clicks: string[] = []
+      const cleanupLog: string[] = []
+
+      const root = createRoot(() => {
+        registerErrorHandler(err => {
+          errors.push(err)
+          return true
+        })
+
+        const handle = createConditional(
+          () => condition(),
+          () => {
+            onDestroy(() => cleanupLog.push('old'))
+            return {
+              type: 'button',
+              props: {
+                onClick: () => clicks.push('old'),
+                children: 'old',
+              },
+              key: undefined,
+            }
+          },
+          createElement,
+          () => {
+            onDestroy(() => cleanupLog.push('new'))
+            throw renderError
+          },
+        )
+        container.appendChild(handle.marker)
+        handle.flush?.()
+        onDestroy(handle.dispose)
+      })
+
+      const oldButton = container.querySelector('button')
+      expect(oldButton).not.toBeNull()
+      oldButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(clicks).toEqual(['old'])
+
+      condition(false)
+      await tick()
+
+      expect(errors).toEqual([renderError])
+      expect(cleanupLog).toEqual(['new'])
+      expect(container.textContent).toBe('old')
+      expect(container.querySelector('button')).toBe(oldButton)
+      oldButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(clicks).toEqual(['old', 'old'])
+
+      root.dispose()
+      expect(cleanupLog).toEqual(['new', 'old'])
+    })
+
+    it('keeps the old branch interactive when ordinary branch flip DOM creation fails', async () => {
+      const condition = createSignal(true)
+      const createError = new Error('flip create failed')
+      const errors: unknown[] = []
+      const clicks: string[] = []
+      const cleanupLog: string[] = []
+      const createElementMaybeThrow: typeof createElement = node => {
+        if (
+          typeof node === 'object' &&
+          node !== null &&
+          'props' in node &&
+          (node as { props?: { children?: unknown } }).props?.children === 'new'
+        ) {
+          throw createError
+        }
+        return createElement(node)
+      }
+
+      const root = createRoot(() => {
+        registerErrorHandler(err => {
+          errors.push(err)
+          return true
+        })
+
+        const handle = createConditional(
+          () => condition(),
+          () => {
+            onDestroy(() => cleanupLog.push('old'))
+            return {
+              type: 'button',
+              props: {
+                onClick: () => clicks.push('old'),
+                children: 'old',
+              },
+              key: undefined,
+            }
+          },
+          createElementMaybeThrow,
+          () => {
+            onDestroy(() => cleanupLog.push('new'))
+            return { type: 'button', props: { children: 'new' }, key: undefined }
+          },
+        )
+        container.appendChild(handle.marker)
+        handle.flush?.()
+        onDestroy(handle.dispose)
+      })
+
+      const oldButton = container.querySelector('button')
+      expect(oldButton).not.toBeNull()
+
+      condition(false)
+      await tick()
+
+      expect(errors).toEqual([createError])
+      expect(cleanupLog).toEqual(['new'])
+      expect(container.textContent).toBe('old')
+      expect(container.querySelector('button')).toBe(oldButton)
+      oldButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(clicks).toEqual(['old'])
+
+      root.dispose()
+      expect(cleanupLog).toEqual(['new', 'old'])
+    })
+
+    it('keeps the old branch interactive when ordinary branch flip insertion fails', async () => {
+      const condition = createSignal(true)
+      const insertError = new Error('flip insert failed')
+      const errors: unknown[] = []
+      const clicks: string[] = []
+      const cleanupLog: string[] = []
+      const originalInsertBefore = container.insertBefore.bind(container)
+      let failInsert = false
+
+      container.insertBefore = ((node: Node, child: Node | null) => {
+        if (failInsert && node.nodeType === Node.ELEMENT_NODE && node.textContent === 'new') {
+          throw insertError
+        }
+        return originalInsertBefore(node, child)
+      }) as typeof container.insertBefore
+
+      try {
+        const root = createRoot(() => {
+          registerErrorHandler(err => {
+            errors.push(err)
+            return true
+          })
+
+          const handle = createConditional(
+            () => condition(),
+            () => {
+              onDestroy(() => cleanupLog.push('old'))
+              return {
+                type: 'button',
+                props: {
+                  onClick: () => clicks.push('old'),
+                  children: 'old',
+                },
+                key: undefined,
+              }
+            },
+            createElement,
+            () => {
+              onDestroy(() => cleanupLog.push('new'))
+              return { type: 'button', props: { children: 'new' }, key: undefined }
+            },
+          )
+          container.appendChild(handle.marker)
+          handle.flush?.()
+          onDestroy(handle.dispose)
+        })
+
+        const oldButton = container.querySelector('button')
+        expect(oldButton).not.toBeNull()
+
+        failInsert = true
+        condition(false)
+        await tick()
+
+        expect(errors).toEqual([insertError])
+        expect(cleanupLog).toEqual(['new'])
+        expect(container.textContent).toBe('old')
+        expect(container.querySelector('button')).toBe(oldButton)
+        oldButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        expect(clicks).toEqual(['old'])
+
+        root.dispose()
+        expect(cleanupLog).toEqual(['new', 'old'])
+      } finally {
+        container.insertBefore = originalInsertBefore as typeof container.insertBefore
+      }
+    })
+
+    it('removes partially inserted nodes when ordinary branch flip insertion fails', async () => {
+      const condition = createSignal(true)
+      const insertError = new Error('flip partial insert failed')
+      const errors: unknown[] = []
+      const cleanupLog: string[] = []
+      const originalInsertBefore = container.insertBefore.bind(container)
+      let failInsert = false
+
+      container.insertBefore = ((node: Node, child: Node | null) => {
+        if (failInsert && node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+          const first = node.firstChild
+          if (first) {
+            originalInsertBefore(first, child)
+          }
+          throw insertError
+        }
+        return originalInsertBefore(node, child)
+      }) as typeof container.insertBefore
+
+      try {
+        const root = createRoot(() => {
+          registerErrorHandler(err => {
+            errors.push(err)
+            return true
+          })
+
+          const handle = createConditional(
+            () => condition(),
+            () => {
+              onDestroy(() => cleanupLog.push('old'))
+              return { type: 'button', props: { children: 'old' }, key: undefined }
+            },
+            createElement,
+            () => {
+              onDestroy(() => cleanupLog.push('new'))
+              return {
+                type: Fragment,
+                props: {
+                  children: [
+                    { type: 'span', props: { children: 'new-a' }, key: undefined },
+                    { type: 'span', props: { children: 'new-b' }, key: undefined },
+                  ],
+                },
+                key: undefined,
+              }
+            },
+          )
+          container.appendChild(handle.marker)
+          handle.flush?.()
+          onDestroy(handle.dispose)
+        })
+
+        expect(container.textContent).toBe('old')
+
+        failInsert = true
+        condition(false)
+        await tick()
+
+        expect(errors).toEqual([insertError])
+        expect(cleanupLog).toEqual(['new'])
+        expect(container.textContent).toBe('old')
+        expect(container.querySelectorAll('span')).toHaveLength(0)
+
+        root.dispose()
+        expect(cleanupLog).toEqual(['new', 'old'])
+      } finally {
+        container.insertBefore = originalInsertBefore as typeof container.insertBefore
+      }
+    })
+
+    it('keeps new branch ownership when ordinary branch flip ref assignment throws', async () => {
+      const condition = createSignal(true)
+      const refError = new Error('flip ref failed')
+      const errors: unknown[] = []
+      const cleanupLog: string[] = []
+
+      const root = createRoot(() => {
+        registerErrorHandler(err => {
+          errors.push(err)
+          return true
+        })
+
+        const handle = createConditional(
+          () => condition(),
+          () => {
+            onDestroy(() => cleanupLog.push('old'))
+            return { type: 'button', props: { children: 'old' }, key: undefined }
+          },
+          createElement,
+          () => {
+            onDestroy(() => cleanupLog.push('new'))
+            return {
+              type: 'button',
+              props: {
+                ref: (el: Element | null) => {
+                  if (el) {
+                    throw refError
+                  }
+                },
+                children: 'new',
+              },
+              key: undefined,
+            }
+          },
+        )
+        container.appendChild(handle.marker)
+        handle.flush?.()
+        onDestroy(handle.dispose)
+      })
+
+      expect(container.textContent).toBe('old')
+
+      condition(false)
+      await tick()
+
+      expect(errors).toEqual([refError])
+      expect(cleanupLog).toEqual(['old'])
+      expect(container.textContent).toBe('new')
+      expect(container.querySelector('button')?.textContent).toBe('new')
+
+      root.dispose()
+      expect(cleanupLog).toEqual(['old', 'new'])
+    })
+
+    it('keeps new branch ownership when ordinary branch flip onMount throws', async () => {
+      const condition = createSignal(true)
+      const mountError = new Error('flip mount failed')
+      const errors: unknown[] = []
+      const cleanupLog: string[] = []
+
+      function NewBranch() {
+        onMount(() => {
+          throw mountError
+        })
+        onDestroy(() => cleanupLog.push('new'))
+        return { type: 'button', props: { children: 'new' }, key: undefined }
+      }
+
+      const root = createRoot(() => {
+        registerErrorHandler(err => {
+          errors.push(err)
+          return true
+        })
+
+        const handle = createConditional(
+          () => condition(),
+          () => {
+            onDestroy(() => cleanupLog.push('old'))
+            return { type: 'button', props: { children: 'old' }, key: undefined }
+          },
+          createElement,
+          () => ({ type: NewBranch, props: {}, key: undefined }),
+        )
+        container.appendChild(handle.marker)
+        handle.flush?.()
+        onDestroy(handle.dispose)
+      })
+
+      expect(container.textContent).toBe('old')
+
+      condition(false)
+      await tick()
+
+      expect(errors).toEqual([mountError])
+      expect(cleanupLog).toEqual(['old'])
+      expect(container.textContent).toBe('new')
+
+      root.dispose()
+      expect(cleanupLog).toEqual(['old', 'new'])
+    })
+
+    it('commits ErrorBoundary fallback output during ordinary branch flip', async () => {
+      const condition = createSignal(true)
+      const errors: unknown[] = []
+
+      function Child() {
+        throw new Error('ordinary child failed')
+      }
+
+      const { marker, dispose, flush } = createConditional(
+        () => condition(),
+        () => ({ type: 'button', props: { children: 'old' }, key: undefined }),
+        createElement,
+        () => ({
+          type: ErrorBoundary,
+          props: {
+            fallback: { type: 'span', props: { children: 'caught' }, key: undefined },
+            onError: (err: unknown) => errors.push(err),
+            children: { type: Child, props: {}, key: undefined },
+          },
+          key: undefined,
+        }),
+      )
+      container.appendChild(marker)
+      flush?.()
+
+      expect(container.textContent).toBe('old')
+
+      condition(false)
+      await tick()
+
+      expect(errors).toHaveLength(1)
+      expect(container.textContent).toBe('caught')
+      expect(container.querySelector('button')).toBeNull()
+      expect(container.querySelector('span')).not.toBeNull()
+
+      dispose()
+    })
+
     it('keeps the old branch interactive when tracked remount insertion fails', async () => {
       const condition = createSignal(true)
       const counter = createSignal(0)
