@@ -5,7 +5,6 @@ import {
   Suspense,
   $memo,
   $store,
-  prop,
   $effect,
   onMount,
   onCleanup,
@@ -333,39 +332,18 @@ function ThrowingComponent(props: { shouldThrow: boolean }) {
 }
 
 function ErrorBoundaryTest() {
-  let showChild = $state(true)
   let shouldThrow = $state(false)
-  let remountTimer: ReturnType<typeof setTimeout> | undefined
-
-  const scheduleRemount = () => {
-    if (remountTimer !== undefined) {
-      clearTimeout(remountTimer)
-    }
-    const remount = () => {
-      showChild = true
-      remountTimer = undefined
-    }
-    remountTimer = setTimeout(remount, 0)
-  }
+  let boundaryVersion = $state(0)
 
   const triggerError = () => {
     shouldThrow = true
-    showChild = false
-    scheduleRemount()
+    boundaryVersion++
   }
 
   const reset = () => {
-    showChild = false
     shouldThrow = false
-    scheduleRemount()
+    boundaryVersion++
   }
-
-  onCleanup(() => {
-    if (remountTimer !== undefined) {
-      clearTimeout(remountTimer)
-      remountTimer = undefined
-    }
-  })
 
   return (
     <section id="error-boundary-test">
@@ -377,13 +355,12 @@ function ErrorBoundaryTest() {
         Reset
       </button>
       <div id="error-container">
-        {showChild && (
-          <ErrorBoundary
-            fallback={err => <div id="error-fallback">Error: {(err as Error).message}</div>}
-          >
-            <ThrowingComponent shouldThrow={prop(() => shouldThrow)} />
-          </ErrorBoundary>
-        )}
+        <ErrorBoundary
+          key={boundaryVersion}
+          fallback={err => <div id="error-fallback">Error: {(err as Error).message}</div>}
+        >
+          <ThrowingComponent shouldThrow={shouldThrow} />
+        </ErrorBoundary>
       </div>
     </section>
   )

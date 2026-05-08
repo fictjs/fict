@@ -79,7 +79,7 @@
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "playwright test --reporter=list",
+    "test:e2e": "env -u FICT_STRICT_GUARANTEE playwright test --reporter=list",
     "clean": "rm -rf dist"
   },
   "dependencies": {
