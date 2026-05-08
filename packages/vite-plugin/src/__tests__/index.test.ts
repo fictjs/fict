@@ -1196,6 +1196,59 @@ describe('fict vite-plugin', () => {
       }
     })
 
+    it('maps generated stack frame positions back to original TSX lines', async () => {
+      const plugin = fict({ functionSplitting: true, resumable: true, sourcemap: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const sample = `
+        import { $state } from 'fict'
+
+        function crash() {
+          throw new Error('mapped boom')
+        }
+
+        export function Counter() {
+          let count = $state(0)
+          return <button onClick$={() => crash()}>{count}</button>
+        }
+      `
+
+      const mockContext = {
+        error: vi.fn(),
+        emitFile: vi.fn(),
+      }
+      const transform = plugin.transform as any
+      const result =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, sample, '/project/src/CounterStack.tsx')
+          : await transform?.handler.call(mockContext, sample, '/project/src/CounterStack.tsx')
+
+      expect(result && typeof result === 'object').toBe(true)
+      if (result && typeof result === 'object' && 'code' in result) {
+        expect(result.map).not.toBeNull()
+
+        const generated = findGeneratedPosition(result.code as string, 'mapped boom')
+        const stackFrame = `    at crash (/project/src/CounterStack.tsx:${generated.line}:${
+          generated.column + 1
+        })`
+        const match = stackFrame.match(/:(\d+):(\d+)\)?$/)
+        expect(match).not.toBeNull()
+
+        const original = originalPositionFor(
+          result.map as SourceMapLike,
+          Number(match![1]),
+          Number(match![2]) - 1,
+        )
+
+        expect(original).not.toBeNull()
+        expect(original?.source).toContain('CounterStack.tsx')
+        expect(sample.split('\n')[original!.line - 1]).toContain("throw new Error('mapped boom')")
+      }
+    })
+
     it('resolves virtual handler modules', async () => {
       const plugin = fict({ functionSplitting: true }) as any
 
