@@ -86,3 +86,20 @@ Risk notes:
 
 - Guides must be framed as migration help, not compatibility promises.
 - Examples should prefer idiomatic Fict code over mechanical transliteration.
+
+## Bundler And Edge Runtime Matrix
+
+Goal: make bundler and edge-runtime support explicit, tested, and release-gated instead of anecdotal.
+
+Acceptance criteria:
+
+- Expand the runtime matrix to cover Vite, Webpack, library mode, Node SSR, Web Streams edge SSR, Vercel Edge, Cloudflare Workers, Bun, and Deno Deploy.
+- Define support states for each row: automated gate, manual smoke, external certification, experimental, or unsupported.
+- Add minimal smoke projects for every automated row and make their commands discoverable from `package.json`.
+- Record required manifest form, stream runtime mode, CSP requirements, and filesystem assumptions for each runtime.
+- Add release checklist entries so a row cannot move to "supported" without a build command, runtime smoke, and owner.
+
+Risk notes:
+
+- External platforms should stay "certification required" until their deployment-specific constraints are tested outside local emulation.
+- Matrix rows should describe guarantees precisely; "works in Vite" does not imply every SSR host or edge runtime is covered.
