@@ -1207,6 +1207,80 @@ describe('Edge Cases and Error Handling', () => {
     }
   })
 
+  it('soaks repeated SSR/resume cycles without cross-run state leaks', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function Soak(props: { label: string; initial: number }) {
+        let count = $state(props.initial)
+        let show = $state(false)
+        return (
+          <section data-label={props.label}>
+            <button data-testid="inc" onClick$={() => count++}>
+              {props.label}:{count}
+            </button>
+            <button data-testid="toggle" onClick$={() => show = !show}>
+              {show ? 'on' : 'off'}
+            </button>
+            {show ? <span data-testid="status">shown {count}</span> : null}
+          </section>
+        )
+      }
+    `
+
+    const compiled = compileModule(source)
+
+    try {
+      const mod = (await import(compiled.url)) as {
+        Soak: (props: { label: string; initial: number }) => FictNode
+      }
+
+      for (let i = 0; i < 5; i++) {
+        let cleanup = () => {}
+        const label = `run-${i}`
+        const initial = i * 10
+
+        try {
+          const html = renderToString(() => ({
+            type: mod.Soak,
+            props: { label, initial },
+          }))
+          const snapshot = parseSnapshot(html)
+          const scopes = snapshot?.scopes as Record<string, unknown> | undefined
+          expect(Object.keys(scopes ?? {}).length).toBeGreaterThan(0)
+
+          const env = setupClientEnvironment(html)
+          cleanup = env.cleanup
+
+          installResumableLoader({ document: env.document, events: ['click'] })
+
+          const inc = env.document.querySelector('[data-testid="inc"]') as HTMLElement
+          const toggle = env.document.querySelector('[data-testid="toggle"]') as HTMLElement
+          expect(inc.textContent).toBe(`${label}:${initial}`)
+          expect(toggle.textContent).toBe('off')
+          expect(env.document.querySelector('[data-testid="status"]')).toBeNull()
+
+          dispatchClick(inc, env.window)
+          dispatchClick(inc, env.window)
+          await tick(4)
+          expect(inc.textContent).toBe(`${label}:${initial + 2}`)
+
+          dispatchClick(toggle, env.window)
+          await tick(4)
+          expect(toggle.textContent).toBe('on')
+          expect(env.document.querySelector('[data-testid="status"]')?.textContent).toBe(
+            `shown ${initial + 2}`,
+          )
+        } finally {
+          await cleanup()
+          await cleanupTestState()
+        }
+      }
+    } finally {
+      compiled.cleanup()
+    }
+  })
+
   it('scope snapshot contains correct slot types', async () => {
     const source = `
       import { $state } from 'fict'
