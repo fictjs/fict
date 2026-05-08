@@ -52,3 +52,20 @@ Risk notes:
 
 - The schema should be versioned separately from human-readable debug text.
 - Visualization must not become part of the production transform path or affect sourcemaps.
+
+## Real-World Templates
+
+Goal: expand beyond counters and focused fixtures with maintained templates that exercise common app architecture.
+
+Acceptance criteria:
+
+- Add templates for dashboard CRUD, authenticated shell, form-heavy workflow, SSR streaming page, and library-author hook package.
+- Keep templates small enough to run in release verification while still covering routing, forms, async data, error boundaries, and resumable handlers.
+- Share a common verification command so each template can be built and smoke-tested from CI.
+- Document template intent, covered features, and known exclusions in each template README.
+- Add an ownership rule that templates must be updated when compiler/runtime public contracts change.
+
+Risk notes:
+
+- Templates should stay product-like but not become large demo apps that slow release gates.
+- Fixtures used only for regressions should remain in tests; templates should represent recommended app structure.
