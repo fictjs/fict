@@ -17,7 +17,14 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["node"]
+    "types": ["node"],
+    "baseUrl": "../..",
+    "paths": {
+      "@fictjs/compiler": ["packages/compiler/src"],
+      "@fictjs/compiler/*": ["packages/compiler/src/*"],
+      "@fictjs/runtime": ["packages/runtime/src"],
+      "@fictjs/runtime/*": ["packages/runtime/src/*"]
+    }
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "../runtime/src/dev.d.ts"],
   "exclude": ["node_modules", "dist"]
