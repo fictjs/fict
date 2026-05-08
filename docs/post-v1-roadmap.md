@@ -69,3 +69,20 @@ Risk notes:
 
 - Templates should stay product-like but not become large demo apps that slow release gates.
 - Fixtures used only for regressions should remain in tests; templates should represent recommended app structure.
+
+## Migration Guides
+
+Goal: provide practical migration paths from React, Solid, Svelte, and Vue to Fict without overselling one-to-one compatibility.
+
+Acceptance criteria:
+
+- Publish framework-specific guides for state, effects, props, events, lists, conditional rendering, async data, SSR, and testing.
+- Include side-by-side examples that compile in Fict tests or docs-site examples.
+- Call out unsupported patterns and recommended rewrites, especially around hooks, prop destructuring, stores, lifecycle cleanup, and compiler macros.
+- Add a glossary mapping common source-framework concepts to Fict concepts.
+- Keep guides versioned with API freeze changes so stale migration advice fails docs review before release.
+
+Risk notes:
+
+- Guides must be framed as migration help, not compatibility promises.
+- Examples should prefer idiomatic Fict code over mechanical transliteration.
