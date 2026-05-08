@@ -2380,7 +2380,6 @@ function extractAndRewriteHandlers(
   traverse(ast, {
     ExportNamedDeclaration(path) {
       const declarationPath = path.get('declaration')
-      const declaration = path.node.declaration
       const programScope = path.scope.getProgramParent()
 
       // Handle: export const __fict_e0 = (scopeId, event, el) => { ... }
