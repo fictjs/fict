@@ -17,14 +17,18 @@ The command set covers:
 - Vite plugin transform, cache, function-splitting, sourcemap, and metadata behavior.
 - Webpack example build (`examples/counter-webpack`).
 - Basic Vite example build (`examples/counter-basic`).
+- Real app workflow build (`examples/real-apps`).
+- SSR document build (`examples/ssr-basic`).
+- SSR streaming build (`examples/ssr-streaming`).
 
 ## Bundler Matrix
 
 | Tooling path        | Required coverage                                          | Status         |
 | ------------------- | ---------------------------------------------------------- | -------------- |
 | Vite dev server     | Plugin transform tests and explicit HMR contract below     | Required       |
-| Vite production app | Plugin tests plus `examples/counter-basic` build           | Required       |
+| Vite production app | Plugin tests plus counter and real-app example builds      | Required       |
 | Vite library mode   | Metadata emission, package declaration, and fingerprinting | Required       |
+| Vite SSR app        | Basic and streaming SSR example builds                     | Required       |
 | Webpack app example | `examples/counter-webpack` production build                | Required       |
 | Other bundlers      | Use Babel preset/compiler directly; no release gate yet    | Not guaranteed |
 
