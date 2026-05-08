@@ -1393,6 +1393,120 @@ function Counter() {
       expect(content).not.toContain('__fict_dep_useScope')
     })
 
+    it('captures top-level dependencies when nested handler scopes shadow the same name', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+const config = { step: 1 };
+function readStep() {
+  return config.step;
+}
+class StepBox {
+  value = 2;
+}
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const current = config.step + readStep() + new StepBox().value;
+  function inner(config) {
+    return config.step;
+  }
+  return current + inner({ step: 3 }) + event.type + el.tagName;
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn() }
+      const transform = plugin.transform as any
+      await transform.call(mockContext, compiledCode, '/project/src/ScopedDeps.tsx')
+
+      const load = plugin.load as any
+      const content = load('\0fict-handler:/project/src/ScopedDeps.tsx$$__fict_e0') as string | null
+
+      expect(content).not.toBeNull()
+      expect(content).toContain('__fict_dep_config as config')
+      expect(content).toContain('__fict_dep_readStep as readStep')
+      expect(content).toContain('__fict_dep_StepBox as StepBox')
+    })
+
+    it('does not capture block or catch parameters that shadow top-level dependencies', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+const config = { step: 1 };
+
+export const __fict_e0 = () => {
+  {
+    const config = { step: 2 };
+    if (config.step) return config.step;
+  }
+  try {
+    throw { step: 3 };
+  } catch (config) {
+    return config.step;
+  }
+};
+      `
+
+      const mockContext = { error: vi.fn() }
+      const transform = plugin.transform as any
+      await transform.call(mockContext, compiledCode, '/project/src/ShadowOnlyDeps.tsx')
+
+      const load = plugin.load as any
+      const content = load('\0fict-handler:/project/src/ShadowOnlyDeps.tsx$$__fict_e0') as
+        | string
+        | null
+
+      expect(content).not.toBeNull()
+      expect(content).not.toContain('__fict_dep_config as config')
+    })
+
+    it('captures destructured and imported runtime deps without type-only imports', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictQrl } from '@fictjs/runtime/internal';
+import { format as fmt } from './format';
+import type { Formatter } from './types';
+
+const { label } = { label: 'count' };
+
+export const __fict_e0 = (value: Formatter) => {
+  return fmt(label, value);
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn() }
+      const transform = plugin.transform as any
+      await transform.call(mockContext, compiledCode, '/project/src/TypedDeps.tsx')
+
+      const load = plugin.load as any
+      const content = load('\0fict-handler:/project/src/TypedDeps.tsx$$__fict_e0') as string | null
+
+      expect(content).not.toBeNull()
+      expect(content).toContain('__fict_dep_fmt as fmt')
+      expect(content).toContain('__fict_dep_label as label')
+      expect(content).not.toContain('__fict_dep_Formatter')
+    })
+
     it('clears extracted handlers on buildStart', async () => {
       const plugin = fict({ functionSplitting: true }) as any
 

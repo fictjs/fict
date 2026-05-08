@@ -7,6 +7,7 @@ import { transformAsync } from '@babel/core'
 import _generate from '@babel/generator'
 import { parse } from '@babel/parser'
 import _traverse from '@babel/traverse'
+import type { NodePath, Scope } from '@babel/traverse'
 import * as t from '@babel/types'
 import {
   COMPILER_CACHE_FINGERPRINT,
@@ -2177,228 +2178,54 @@ function collectRuntimeHelperUsages(
   )
 }
 
-/**
- * Collect identifiers referenced in an AST node that are not locally defined.
- * Uses simple recursive traversal instead of Babel's traverse to work on sub-nodes.
- */
-function collectReferencedIdentifiers(node: t.Node, localBindings: Set<string>): Set<string> {
-  const referenced = new Set<string>()
-
-  function visitNode(
-    current: t.Node | null | undefined,
-    parent: t.Node | null,
-    key: string | null,
-  ): void {
-    if (!current) return
-
-    if (t.isIdentifier(current)) {
-      const name = current.name
-
-      // Skip if it's a property access (obj.prop) - only the object is a reference
-      if (
-        parent &&
-        t.isMemberExpression(parent) &&
-        parent.property === current &&
-        !parent.computed
-      ) {
-        return
-      }
-
-      // Skip if it's a key in object property (non-computed)
-      if (parent && t.isObjectProperty(parent) && parent.key === current && !parent.computed) {
-        return
-      }
-
-      // Skip if it's a function/variable declaration name
-      if (parent && t.isVariableDeclarator(parent) && parent.id === current) {
-        return
-      }
-      if (
-        parent &&
-        (t.isFunctionDeclaration(parent) || t.isFunctionExpression(parent)) &&
-        parent.id === current
-      ) {
-        return
-      }
-
-      // Skip if it's a parameter
-      if (key === 'params') {
-        return
-      }
-
-      // Skip if it's a catch clause parameter
-      if (parent && t.isCatchClause(parent) && parent.param === current) {
-        return
-      }
-
-      // Skip local bindings (locally declared variables)
-      if (localBindings.has(name)) {
-        return
-      }
-
-      // Skip globals
-      if (GLOBAL_IDENTIFIERS.has(name)) {
-        return
-      }
-
-      // Skip runtime helpers
-      if (RUNTIME_HELPERS[name]) {
-        return
-      }
-
-      referenced.add(name)
-      return
-    }
-
-    // Recursively visit child nodes
-    for (const nodeKey of Object.keys(current)) {
-      // Skip metadata keys that aren't child nodes
-      if (
-        nodeKey === 'loc' ||
-        nodeKey === 'start' ||
-        nodeKey === 'end' ||
-        nodeKey === 'extra' ||
-        nodeKey === 'comments' ||
-        nodeKey === 'leadingComments' ||
-        nodeKey === 'trailingComments' ||
-        nodeKey === 'innerComments'
-      ) {
-        continue
-      }
-      const child = (current as unknown as Record<string, unknown>)[nodeKey]
-      if (Array.isArray(child)) {
-        for (const item of child) {
-          if (
-            item &&
-            typeof item === 'object' &&
-            item !== null &&
-            'type' in item &&
-            typeof (item as Record<string, unknown>).type === 'string'
-          ) {
-            visitNode(item as t.Node, current, nodeKey)
-          }
-        }
-      } else if (
-        child &&
-        typeof child === 'object' &&
-        child !== null &&
-        'type' in child &&
-        typeof (child as Record<string, unknown>).type === 'string'
-      ) {
-        visitNode(child as t.Node, current, nodeKey)
-      }
-    }
-  }
-
-  visitNode(node, null, null)
-  return referenced
+function isTypeOnlyIdentifierPath(path: NodePath<t.Identifier>): boolean {
+  return Boolean(
+    path.findParent(
+      parent =>
+        parent.isTSTypeReference() ||
+        parent.isTSTypeAnnotation() ||
+        parent.isTSTypeAliasDeclaration() ||
+        parent.isTSInterfaceDeclaration() ||
+        parent.isTSTypeParameterDeclaration() ||
+        parent.isTSTypeParameterInstantiation() ||
+        parent.isTSExpressionWithTypeArguments() ||
+        parent.isTSImportType() ||
+        parent.isTSTypeQuery(),
+    ),
+  )
 }
 
-/**
- * Collect all bindings (variables, functions, params) defined within an AST node.
- * Uses simple recursive traversal instead of Babel's traverse to work on sub-nodes.
- */
-function collectLocalBindings(node: t.Node): Set<string> {
-  const bindings = new Set<string>()
+function isTypeOnlyImportSpecifier(specifier: t.ImportDeclaration['specifiers'][number]): boolean {
+  return t.isImportSpecifier(specifier) && specifier.importKind === 'type'
+}
 
-  function visitNode(current: t.Node | null | undefined): void {
-    if (!current) return
+function collectHandlerTopLevelReferences(
+  handlerPath: NodePath<t.Node>,
+  programScope: Scope,
+  topLevelDeclarations: Set<string>,
+  runtimeHelperImports: Map<string, string>,
+): Set<string> {
+  const referenced = new Set<string>()
 
-    // Handle variable declarations
-    if (t.isVariableDeclarator(current)) {
-      if (t.isIdentifier(current.id)) {
-        bindings.add(current.id.name)
-      } else if (t.isObjectPattern(current.id) || t.isArrayPattern(current.id)) {
-        const names = collectPatternIdentifiers(current.id)
-        for (const name of names) {
-          bindings.add(name)
-        }
-      }
-    }
+  handlerPath.traverse({
+    Identifier(identifierPath) {
+      if (!identifierPath.isReferencedIdentifier()) return
+      if (isTypeOnlyIdentifierPath(identifierPath)) return
 
-    // Handle function declarations
-    if (t.isFunctionDeclaration(current)) {
-      if (current.id) {
-        bindings.add(current.id.name)
-      }
-      for (const param of current.params) {
-        const names = collectPatternIdentifiers(param)
-        for (const name of names) {
-          bindings.add(name)
-        }
-      }
-    }
+      const name = identifierPath.node.name
+      if (GLOBAL_IDENTIFIERS.has(name)) return
+      if (RUNTIME_HELPERS[name] || runtimeHelperImports.has(name)) return
 
-    // Handle function expressions
-    if (t.isFunctionExpression(current)) {
-      for (const param of current.params) {
-        const names = collectPatternIdentifiers(param)
-        for (const name of names) {
-          bindings.add(name)
-        }
-      }
-    }
+      const binding = identifierPath.scope.getBinding(name)
+      if (!binding || binding.scope !== programScope) return
+      if (!topLevelDeclarations.has(name)) return
+      if (name.match(/^__fict_[er]\d+$/)) return
 
-    // Handle arrow function expressions
-    if (t.isArrowFunctionExpression(current)) {
-      for (const param of current.params) {
-        const names = collectPatternIdentifiers(param)
-        for (const name of names) {
-          bindings.add(name)
-        }
-      }
-    }
+      referenced.add(name)
+    },
+  })
 
-    // Handle catch clauses
-    if (t.isCatchClause(current)) {
-      if (current.param && t.isIdentifier(current.param)) {
-        bindings.add(current.param.name)
-      }
-    }
-
-    // Recursively visit child nodes
-    for (const nodeKey of Object.keys(current)) {
-      // Skip metadata keys that aren't child nodes
-      if (
-        nodeKey === 'loc' ||
-        nodeKey === 'start' ||
-        nodeKey === 'end' ||
-        nodeKey === 'extra' ||
-        nodeKey === 'comments' ||
-        nodeKey === 'leadingComments' ||
-        nodeKey === 'trailingComments' ||
-        nodeKey === 'innerComments'
-      ) {
-        continue
-      }
-      const child = (current as unknown as Record<string, unknown>)[nodeKey]
-      if (Array.isArray(child)) {
-        for (const item of child) {
-          if (
-            item &&
-            typeof item === 'object' &&
-            item !== null &&
-            'type' in item &&
-            typeof (item as Record<string, unknown>).type === 'string'
-          ) {
-            visitNode(item as t.Node)
-          }
-        }
-      } else if (
-        child &&
-        typeof child === 'object' &&
-        child !== null &&
-        'type' in child &&
-        typeof (child as Record<string, unknown>).type === 'string'
-      ) {
-        visitNode(child as t.Node)
-      }
-    }
-  }
-
-  visitNode(node)
-
-  return bindings
+  return referenced
 }
 
 /**
@@ -2471,7 +2298,9 @@ function extractAndRewriteHandlers(
   for (const node of ast.program.body) {
     // Collect imports
     if (t.isImportDeclaration(node)) {
+      if (node.importKind === 'type') continue
       for (const specifier of node.specifiers) {
+        if (isTypeOnlyImportSpecifier(specifier)) continue
         if (t.isImportSpecifier(specifier) || t.isImportDefaultSpecifier(specifier)) {
           importedNames.add(specifier.local.name)
         } else if (t.isImportNamespaceSpecifier(specifier)) {
@@ -2490,8 +2319,8 @@ function extractAndRewriteHandlers(
     // Collect variable declarations
     if (t.isVariableDeclaration(node)) {
       for (const declarator of node.declarations) {
-        if (t.isIdentifier(declarator.id)) {
-          topLevelDeclarations.add(declarator.id.name)
+        for (const name of collectPatternIdentifiers(declarator.id)) {
+          topLevelDeclarations.add(name)
         }
       }
       continue
@@ -2503,17 +2332,35 @@ function extractAndRewriteHandlers(
       continue
     }
 
+    if (t.isTSEnumDeclaration(node) && !node.declare) {
+      topLevelDeclarations.add(node.id.name)
+      continue
+    }
+
+    if (t.isTSModuleDeclaration(node) && !node.declare && t.isIdentifier(node.id)) {
+      topLevelDeclarations.add(node.id.name)
+      continue
+    }
+
     // Collect exported declarations
     if (t.isExportNamedDeclaration(node) && node.declaration) {
       if (t.isFunctionDeclaration(node.declaration) && node.declaration.id) {
         topLevelDeclarations.add(node.declaration.id.name)
       } else if (t.isVariableDeclaration(node.declaration)) {
         for (const declarator of node.declaration.declarations) {
-          if (t.isIdentifier(declarator.id)) {
-            topLevelDeclarations.add(declarator.id.name)
+          for (const name of collectPatternIdentifiers(declarator.id)) {
+            topLevelDeclarations.add(name)
           }
         }
       } else if (t.isClassDeclaration(node.declaration) && node.declaration.id) {
+        topLevelDeclarations.add(node.declaration.id.name)
+      } else if (t.isTSEnumDeclaration(node.declaration) && !node.declaration.declare) {
+        topLevelDeclarations.add(node.declaration.id.name)
+      } else if (
+        t.isTSModuleDeclaration(node.declaration) &&
+        !node.declaration.declare &&
+        t.isIdentifier(node.declaration.id)
+      ) {
         topLevelDeclarations.add(node.declaration.id.name)
       }
     }
@@ -2532,11 +2379,15 @@ function extractAndRewriteHandlers(
   // First pass: find all handler exports and extract their code
   traverse(ast, {
     ExportNamedDeclaration(path) {
+      const declarationPath = path.get('declaration')
       const declaration = path.node.declaration
+      const programScope = path.scope.getProgramParent()
 
       // Handle: export const __fict_e0 = (scopeId, event, el) => { ... }
-      if (t.isVariableDeclaration(declaration)) {
-        for (const declarator of declaration.declarations) {
+      if (declarationPath.isVariableDeclaration()) {
+        const declaratorPaths = declarationPath.get('declarations')
+        for (const declaratorPath of declaratorPaths) {
+          const declarator = declaratorPath.node
           if (!t.isIdentifier(declarator.id)) continue
 
           const name = declarator.id.name
@@ -2544,30 +2395,28 @@ function extractAndRewriteHandlers(
           // Resume handlers have complex component dependencies that can't be easily extracted
           if (!name.match(/^__fict_e\d+$/)) continue
 
-          if (!declarator.init) continue
+          const initPath = declaratorPath.get('init')
+          if (!initPath.node || !initPath.isExpression()) continue
 
           handlerNames.push(name)
 
           // Generate the handler function code
-          const handlerCode = generate(declarator.init).code
+          const handlerCode = generate(initPath.node).code
 
           // Detect which runtime helpers are used
-          const helpersUsed = collectRuntimeHelperUsages(declarator.init, runtimeHelperImports)
+          const helpersUsed = collectRuntimeHelperUsages(initPath.node, runtimeHelperImports)
 
           // Detect local dependencies
-          const localBindings = collectLocalBindings(declarator.init)
-          const referencedIds = collectReferencedIdentifiers(declarator.init, localBindings)
+          const referencedIds = collectHandlerTopLevelReferences(
+            initPath,
+            programScope,
+            topLevelDeclarations,
+            runtimeHelperImports,
+          )
           const localDeps: string[] = []
           for (const ref of referencedIds) {
-            // Only include if it's a top-level declaration (not a handler itself)
-            if (
-              topLevelDeclarations.has(ref) &&
-              !runtimeHelperImports.has(ref) &&
-              !ref.match(/^__fict_[er]\d+$/)
-            ) {
-              localDeps.push(ref)
-              allLocalDeps.add(ref)
-            }
+            localDeps.push(ref)
+            allLocalDeps.add(ref)
           }
 
           // Register the handler with its full code
@@ -2588,8 +2437,11 @@ function extractAndRewriteHandlers(
       }
 
       // Handle: export function __fict_e0(scopeId, event, el) { ... }
-      if (t.isFunctionDeclaration(declaration) && declaration.id) {
-        const name = declaration.id.name
+      if (declarationPath.isFunctionDeclaration()) {
+        const declaration = declarationPath.node
+        const functionId = declaration.id
+        if (!functionId) return
+        const name = functionId.name
         // Only extract event handlers (__fict_e*), not resume handlers (__fict_r*)
         // Resume handlers have complex component dependencies that can't be easily extracted
         if (!name.match(/^__fict_e\d+$/)) return
@@ -2608,19 +2460,16 @@ function extractAndRewriteHandlers(
         const helpersUsed = collectRuntimeHelperUsages(arrowFn, runtimeHelperImports)
 
         // Detect local dependencies
-        const localBindings = collectLocalBindings(arrowFn)
-        const referencedIds = collectReferencedIdentifiers(arrowFn, localBindings)
+        const referencedIds = collectHandlerTopLevelReferences(
+          declarationPath,
+          programScope,
+          topLevelDeclarations,
+          runtimeHelperImports,
+        )
         const localDeps: string[] = []
         for (const ref of referencedIds) {
-          // Only include if it's a top-level declaration (not a handler itself)
-          if (
-            topLevelDeclarations.has(ref) &&
-            !runtimeHelperImports.has(ref) &&
-            !ref.match(/^__fict_[er]\d+$/)
-          ) {
-            localDeps.push(ref)
-            allLocalDeps.add(ref)
-          }
+          localDeps.push(ref)
+          allLocalDeps.add(ref)
         }
 
         // Register the handler with its full code
