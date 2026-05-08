@@ -2452,18 +2452,37 @@ export function createConditional(
       }
 
       lastCondition = cond
-      if (nextNodes.length > 0) {
-        insertNodesBefore(parent, nextNodes, endMarker)
+      const previousRoot = currentRoot
+      const previousNodes = currentNodes
+      let committed = false
+      try {
+        if (nextNodes.length > 0) {
+          insertNodesBefore(parent, nextNodes, endMarker)
+        }
+
+        currentNodes = nextNodes
+        currentRoot = nextRoot
+        committed = true
+
+        try {
+          if (previousRoot) {
+            destroyRoot(previousRoot)
+          }
+        } finally {
+          removeNodes(previousNodes)
+        }
+
+        flushDeferredRefAssignments(nextRoot)
+        flushOnMount(nextRoot)
+      } catch (err) {
+        if (!committed) {
+          removeNodes(nextNodes)
+          destroyRoot(nextRoot)
+          currentNodes = previousNodes
+          currentRoot = previousRoot
+        }
+        throw err
       }
-      if (currentRoot) {
-        destroyRoot(currentRoot)
-        currentRoot = null
-      }
-      removeNodes(currentNodes)
-      currentNodes = nextNodes
-      flushDeferredRefAssignments(nextRoot)
-      flushOnMount(nextRoot)
-      currentRoot = nextRoot
       return
     }
     lastCondition = cond

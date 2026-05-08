@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-import { createRoot, onDestroy, createElement, Fragment, ErrorBoundary } from '../src/index'
+import {
+  createRoot,
+  onDestroy,
+  onMount,
+  createElement,
+  Fragment,
+  ErrorBoundary,
+} from '../src/index'
 import { createSignal, reactive } from '../src/advanced'
 import {
   bindRef,
@@ -1893,6 +1900,264 @@ describe('Binding Edge Cases', () => {
       expect(container.querySelector('span')).not.toBeNull()
 
       dispose()
+    })
+
+    it('keeps the old branch interactive when tracked remount insertion fails', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+      const insertError = new Error('insert failed')
+      const errors: unknown[] = []
+      const clicks: number[] = []
+      const cleanupLog: number[] = []
+      const originalInsertBefore = container.insertBefore.bind(container)
+      let failInsert = false
+
+      container.insertBefore = ((node: Node, child: Node | null) => {
+        if (failInsert && node.nodeType === Node.ELEMENT_NODE && node.textContent === '1') {
+          throw insertError
+        }
+        return originalInsertBefore(node, child)
+      }) as typeof container.insertBefore
+
+      try {
+        const root = createRoot(() => {
+          registerErrorHandler(err => {
+            errors.push(err)
+            return true
+          })
+
+          const handle = createConditional(
+            () => condition(),
+            () => {
+              const value = counter()
+              onDestroy(() => cleanupLog.push(value))
+              return {
+                type: 'button',
+                props: {
+                  onClick: () => clicks.push(value),
+                  children: String(value),
+                },
+                key: undefined,
+              }
+            },
+            createElement,
+            () => 'OFF',
+            undefined,
+            undefined,
+            { trackBranchReads: true },
+          )
+          container.appendChild(handle.marker)
+          handle.flush?.()
+          onDestroy(handle.dispose)
+        })
+
+        const firstButton = container.querySelector('button')
+        expect(firstButton).not.toBeNull()
+        firstButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        expect(clicks).toEqual([0])
+
+        failInsert = true
+        counter(1)
+        await tick()
+
+        expect(errors).toEqual([insertError])
+        expect(cleanupLog).toEqual([1])
+        expect(container.textContent).toBe('0')
+        expect(container.querySelector('button')).toBe(firstButton)
+        firstButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+        expect(clicks).toEqual([0, 0])
+
+        root.dispose()
+        expect(cleanupLog).toEqual([1, 0])
+      } finally {
+        container.insertBefore = originalInsertBefore as typeof container.insertBefore
+      }
+    })
+
+    it('removes partially inserted nodes when tracked remount insertion fails', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+      const insertError = new Error('partial insert failed')
+      const errors: unknown[] = []
+      const cleanupLog: number[] = []
+      const originalInsertBefore = container.insertBefore.bind(container)
+      let failInsert = false
+
+      container.insertBefore = ((node: Node, child: Node | null) => {
+        if (failInsert && node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
+          const first = node.firstChild
+          if (first) {
+            originalInsertBefore(first, child)
+          }
+          throw insertError
+        }
+        return originalInsertBefore(node, child)
+      }) as typeof container.insertBefore
+
+      try {
+        const root = createRoot(() => {
+          registerErrorHandler(err => {
+            errors.push(err)
+            return true
+          })
+
+          const handle = createConditional(
+            () => condition(),
+            () => {
+              const value = counter()
+              onDestroy(() => cleanupLog.push(value))
+              return value === 0
+                ? { type: 'span', props: { children: '0' }, key: undefined }
+                : {
+                    type: Fragment,
+                    props: {
+                      children: [
+                        { type: 'span', props: { children: '1A' }, key: undefined },
+                        { type: 'span', props: { children: '1B' }, key: undefined },
+                      ],
+                    },
+                    key: undefined,
+                  }
+            },
+            createElement,
+            () => 'OFF',
+            undefined,
+            undefined,
+            { trackBranchReads: true },
+          )
+          container.appendChild(handle.marker)
+          handle.flush?.()
+          onDestroy(handle.dispose)
+        })
+
+        expect(container.textContent).toBe('0')
+
+        failInsert = true
+        counter(1)
+        await tick()
+
+        expect(errors).toEqual([insertError])
+        expect(cleanupLog).toEqual([1])
+        expect(container.textContent).toBe('0')
+        expect(container.querySelectorAll('span')).toHaveLength(1)
+
+        root.dispose()
+        expect(cleanupLog).toEqual([1, 0])
+      } finally {
+        container.insertBefore = originalInsertBefore as typeof container.insertBefore
+      }
+    })
+
+    it('keeps new branch ownership when deferred ref assignment throws', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+      const refError = new Error('ref failed')
+      const errors: unknown[] = []
+      const cleanupLog: number[] = []
+      const refValues: Array<string | null> = []
+
+      const root = createRoot(() => {
+        registerErrorHandler(err => {
+          errors.push(err)
+          return true
+        })
+
+        const handle = createConditional(
+          () => condition(),
+          () => {
+            const value = counter()
+            onDestroy(() => cleanupLog.push(value))
+            return {
+              type: 'button',
+              props: {
+                ref: (el: Element | null) => {
+                  refValues.push(el?.textContent ?? null)
+                  if (value === 1 && el) {
+                    throw refError
+                  }
+                },
+                children: String(value),
+              },
+              key: undefined,
+            }
+          },
+          createElement,
+          () => 'OFF',
+          undefined,
+          undefined,
+          { trackBranchReads: true },
+        )
+        container.appendChild(handle.marker)
+        handle.flush?.()
+        onDestroy(handle.dispose)
+      })
+
+      expect(container.textContent).toBe('0')
+      expect(refValues).toEqual([''])
+
+      counter(1)
+      await tick()
+
+      expect(errors).toEqual([refError])
+      expect(cleanupLog).toEqual([0])
+      expect(container.textContent).toBe('1')
+
+      root.dispose()
+      expect(cleanupLog).toEqual([0, 1])
+    })
+
+    it('keeps new branch ownership when onMount throws after tracked remount', async () => {
+      const condition = createSignal(true)
+      const counter = createSignal(0)
+      const mountError = new Error('mount failed')
+      const errors: unknown[] = []
+      const cleanupLog: number[] = []
+      const mounts: number[] = []
+
+      function Child() {
+        const value = counter()
+        onMount(() => {
+          if (value === 1) {
+            throw mountError
+          }
+          mounts.push(value)
+        })
+        onDestroy(() => cleanupLog.push(value))
+        return { type: 'button', props: { children: String(value) }, key: undefined }
+      }
+
+      const root = createRoot(() => {
+        registerErrorHandler(err => {
+          errors.push(err)
+          return true
+        })
+
+        const handle = createConditional(
+          () => condition(),
+          () => ({ type: Child, props: {}, key: undefined }),
+          createElement,
+          () => 'OFF',
+          undefined,
+          undefined,
+          { trackBranchReads: true },
+        )
+        container.appendChild(handle.marker)
+        handle.flush?.()
+        onDestroy(handle.dispose)
+      })
+
+      expect(container.textContent).toBe('0')
+      expect(mounts).toEqual([0])
+
+      counter(1)
+      await tick()
+
+      expect(errors).toEqual([mountError])
+      expect(cleanupLog).toEqual([0])
+      expect(container.textContent).toBe('1')
+
+      root.dispose()
+      expect(cleanupLog).toEqual([0, 1])
     })
 
     it('falls back to structural replace when node kind changes', async () => {
