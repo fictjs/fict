@@ -1882,11 +1882,15 @@ function Counter() {
         // Handler export should be removed from main module
         expect(code).not.toContain('export const __fict_e0')
 
-        // Hoisted function should also be removed (it's only used by handler)
-        expect(code).not.toContain('export const __fict_fn_formatNumber_0')
+        // Hoisted helpers referenced by handlers remain available from the
+        // source module and are re-exported under a private dependency name.
+        expect(code).toContain('export const __fict_fn_formatNumber_0')
+        expect(code).toContain(
+          'export { __fict_fn_formatNumber_0 as __fict_dep___fict_fn_formatNumber_0 }',
+        )
       }
 
-      // Check that the virtual module includes the hoisted helper
+      // Check that the virtual module imports the hoisted helper dependency
       const load = plugin.load as any
       if (typeof load === 'function') {
         const content = load('\0fict-handler:/project/src/Counter.tsx$$__fict_e0')
@@ -1895,8 +1899,11 @@ function Counter() {
           expect(content).toContain('export default')
           expect(content).toContain('__fictUseLexicalScope')
 
-          // Should include the hoisted helper function as a dependency import
+          // Should import the hoisted helper from the source module dependency re-export
           expect(content).toContain('__fict_fn_formatNumber_0')
+          expect(content).toContain(
+            '__fict_dep___fict_fn_formatNumber_0 as __fict_fn_formatNumber_0',
+          )
           // The helper should be imported from the source module
           expect(content).toContain('/project/src/Counter.tsx')
         }

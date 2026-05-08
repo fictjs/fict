@@ -1826,9 +1826,10 @@ function normalizeRuntimeHelperUsage(usage: RuntimeHelperUsage): {
 }
 
 /**
- * Generate a standalone virtual module for an extracted handler.
- * The module contains the complete handler code with its own imports,
- * creating a truly independent chunk that doesn't depend on the source module.
+ * Generate a virtual module for an extracted handler.
+ * Runtime helper imports stay self-contained. Module-local dependencies are
+ * imported from re-exports on the source module, so handlers that close over
+ * local helpers trade split granularity for a stable dependency contract.
  */
 function generateHandlerModule(handler: ExtractedHandler): string {
   // If no code was extracted (fallback case), use re-export
@@ -2261,8 +2262,8 @@ function collectPatternIdentifiers(pattern: t.LVal | t.PatternLike): string[] {
 
 /**
  * Extract handlers using Babel AST and rewrite QRLs to use virtual modules.
- * This creates truly independent chunks for each handler.
- * Local dependencies are detected and re-exported for handlers to import.
+ * Local dependencies are detected and re-exported for handlers to import from
+ * the source module.
  */
 function extractAndRewriteHandlers(
   code: string,
