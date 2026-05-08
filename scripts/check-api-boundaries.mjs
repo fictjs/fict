@@ -134,6 +134,10 @@ const runtimeSignal = readText('packages/runtime/src/signal.ts')
 if (containsStandaloneToken(runtimeSignal, '$state')) {
   fail('@fictjs/runtime signal internals must not define private $state alias')
 }
+const runtimeEffect = readText('packages/runtime/src/effect.ts')
+if (containsStandaloneToken(runtimeEffect, '$effect')) {
+  fail('@fictjs/runtime effect internals must not define private $effect alias')
+}
 for (const devtoolsProtocolExport of [
   'FICT_DEVTOOLS_MIN_PROTOCOL_VERSION',
   'FICT_DEVTOOLS_PROTOCOL_VERSION',

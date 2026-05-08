@@ -58,8 +58,6 @@ export function createEffect(fn: Effect, options?: EffectOptions): () => void {
   return teardown
 }
 
-export const $effect = createEffect
-
 export function createRenderEffect(fn: Effect, options?: EffectOptions): () => void {
   let cleanups: Cleanup[] = []
   const rootForError = getCurrentRoot()
