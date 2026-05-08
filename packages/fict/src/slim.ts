@@ -13,7 +13,7 @@
  * This is transformed at compile time and should never be called at runtime.
  */
 export function $state<T>(_initialValue: T): T {
-  throw new Error('$state() is a compiler macro and should be transformed at compile time')
+  throw new Error('Uncompiled')
 }
 
 /**
@@ -21,5 +21,5 @@ export function $state<T>(_initialValue: T): T {
  * This is transformed at compile time and should never be called at runtime.
  */
 export function $effect(_fn: () => void | (() => void)): void {
-  throw new Error('$effect() is a compiler macro and should be transformed at compile time')
+  throw new Error('Uncompiled')
 }

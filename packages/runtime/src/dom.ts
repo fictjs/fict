@@ -714,11 +714,7 @@ function appendChildren(
  */
 function applyRef(el: Element, value: unknown): void {
   if (!getCurrentRoot() && isDev) {
-    console.warn(
-      '[fict] Ref applied outside of a root context. ' +
-        'The ref cleanup (setting to null) will not run automatically. ' +
-        'Consider using createRoot() or ensure the element is created within a component.',
-    )
+    console.warn('rootless ref')
   }
   bindRef(el, value)
 }

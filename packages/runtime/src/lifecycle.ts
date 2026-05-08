@@ -258,9 +258,7 @@ function runLifecycle(fn: LifecycleFn): void {
 
 export function registerErrorHandler(fn: ErrorHandler): void {
   if (!currentRoot) {
-    const message = isDev
-      ? 'registerErrorHandler must be called within a root'
-      : 'FICT:E_ROOT_HANDLER'
+    const message = isDev ? 'Needs root' : 'FICT:E_ROOT_HANDLER'
     throw new Error(message)
   }
   if (!currentRoot.errorHandlers) {
@@ -271,9 +269,7 @@ export function registerErrorHandler(fn: ErrorHandler): void {
 
 export function registerSuspenseHandler(fn: SuspenseHandler): void {
   if (!currentRoot) {
-    const message = isDev
-      ? 'registerSuspenseHandler must be called within a root'
-      : 'FICT:E_ROOT_SUSPENSE'
+    const message = isDev ? 'Needs root' : 'FICT:E_ROOT_SUSPENSE'
     throw new Error(message)
   }
   if (!currentRoot.suspenseHandlers) {
