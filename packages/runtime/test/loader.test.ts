@@ -668,4 +668,62 @@ describe('resumable loader snapshot validation', () => {
 
     delete (globalThis as { __fictCapturedInputValue?: string | null }).__fictCapturedInputValue
   })
+
+  it('preserves foreign-document input values across first-event hydration', async () => {
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    const doc = iframe.contentDocument
+    expect(doc).not.toBeNull()
+
+    try {
+      const script = doc!.createElement('script')
+      script.id = '__FICT_SNAPSHOT__'
+      script.type = 'application/json'
+      script.textContent = JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          s1: { id: 's1', slots: [] },
+        },
+      })
+      doc!.body.appendChild(script)
+      ;(globalThis as { __fictForeignInputValue?: string | null }).__fictForeignInputValue =
+        undefined
+
+      const host = doc!.createElement('div')
+      host.setAttribute('data-fict-s', 's1')
+      host.setAttribute('data-fict-h', 'data:text/javascript,export default null#__fict_r0')
+
+      __fictRegisterResume('__fict_r0', (_scopeId, node) => {
+        const input =
+          node && typeof (node as Element).querySelector === 'function'
+            ? (node as Element).querySelector('input')
+            : null
+        if (input) {
+          ;(input as HTMLInputElement).value = ''
+        }
+      })
+
+      const input = doc!.createElement('input')
+      expect(input instanceof HTMLInputElement).toBe(false)
+      input.setAttribute(
+        'on:input',
+        'data:text/javascript,export function capture(scopeId,event){globalThis.__fictForeignInputValue=event.currentTarget?.value??null}#capture',
+      )
+      host.appendChild(input)
+      doc!.body.appendChild(host)
+
+      installResumableLoader({ document: doc!, events: ['input'], prefetch: false })
+
+      input.value = 'foreign'
+      input.dispatchEvent(new iframe.contentWindow!.Event('input', { bubbles: true }))
+      await waitForPendingHandlers()
+
+      expect(
+        (globalThis as { __fictForeignInputValue?: string | null }).__fictForeignInputValue,
+      ).toBe('foreign')
+    } finally {
+      iframe.remove()
+      delete (globalThis as { __fictForeignInputValue?: string | null }).__fictForeignInputValue
+    }
+  })
 })

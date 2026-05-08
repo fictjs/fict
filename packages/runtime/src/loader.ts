@@ -79,29 +79,39 @@ interface PreservedControlState {
   selectedValues?: string[]
 }
 
+function getControlTagName(node: Element): string {
+  return (node.localName || node.tagName || '').toLowerCase()
+}
+
 function captureControlState(node: Element, event: Event): PreservedControlState | null {
   if (event.type !== 'input' && event.type !== 'change') return null
 
-  if (node instanceof HTMLInputElement) {
-    if (node.type === 'file') return null
-    if (node.type === 'checkbox' || node.type === 'radio') {
-      return { checked: node.checked }
+  const tagName = getControlTagName(node)
+
+  if (tagName === 'input') {
+    const input = node as HTMLInputElement
+    if (input.type === 'file') return null
+    if (input.type === 'checkbox' || input.type === 'radio') {
+      return { checked: input.checked }
     }
-    return { value: node.value }
+    return { value: input.value }
   }
 
-  if (node instanceof HTMLTextAreaElement) {
-    return { value: node.value }
+  if (tagName === 'textarea') {
+    return { value: (node as HTMLTextAreaElement).value }
   }
 
-  if (node instanceof HTMLSelectElement) {
-    return node.multiple
+  if (tagName === 'select') {
+    const select = node as HTMLSelectElement
+    return select.multiple
       ? {
-          selectedValues: Array.from(node.selectedOptions).map(option => option.value),
+          selectedValues: Array.from(select.options)
+            .filter(option => option.selected)
+            .map(option => option.value),
         }
       : {
-          value: node.value,
-          selectedIndex: node.selectedIndex,
+          value: select.value,
+          selectedIndex: select.selectedIndex,
         }
   }
 
@@ -111,37 +121,41 @@ function captureControlState(node: Element, event: Event): PreservedControlState
 function restoreControlState(node: Element, state: PreservedControlState | null): void {
   if (!state) return
 
-  if (node instanceof HTMLInputElement) {
+  const tagName = getControlTagName(node)
+
+  if (tagName === 'input') {
+    const input = node as HTMLInputElement
     if (typeof state.checked === 'boolean') {
-      node.checked = state.checked
+      input.checked = state.checked
     }
-    if (typeof state.value === 'string' && node.type !== 'file') {
-      node.value = state.value
+    if (typeof state.value === 'string' && input.type !== 'file') {
+      input.value = state.value
     }
     return
   }
 
-  if (node instanceof HTMLTextAreaElement) {
+  if (tagName === 'textarea') {
     if (typeof state.value === 'string') {
-      node.value = state.value
+      ;(node as HTMLTextAreaElement).value = state.value
     }
     return
   }
 
-  if (node instanceof HTMLSelectElement) {
-    if (Array.isArray(state.selectedValues) && node.multiple) {
+  if (tagName === 'select') {
+    const select = node as HTMLSelectElement
+    if (Array.isArray(state.selectedValues) && select.multiple) {
       const selected = new Set(state.selectedValues)
-      for (const option of Array.from(node.options)) {
+      for (const option of Array.from(select.options)) {
         option.selected = selected.has(option.value)
       }
       return
     }
 
     if (typeof state.selectedIndex === 'number') {
-      node.selectedIndex = state.selectedIndex
+      select.selectedIndex = state.selectedIndex
     }
     if (typeof state.value === 'string') {
-      node.value = state.value
+      select.value = state.value
     }
   }
 }
