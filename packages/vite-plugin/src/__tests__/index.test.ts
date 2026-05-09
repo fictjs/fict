@@ -2100,6 +2100,92 @@ function Counter() {
       expect(content).toContain('metrics.clicks++')
     })
 
+    it('keeps handlers with import.meta in the source module', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const [] = __fictUseLexicalScope(scopeId, []);
+  return new URL('./asset.png', import.meta.url).href;
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn(), warn: vi.fn() }
+      const transform = plugin.transform as any
+      const result =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, compiledCode, '/project/src/ImportMeta.tsx')
+          : null
+
+      expect(mockContext.error).not.toHaveBeenCalled()
+      expect(result && typeof result === 'object').toBe(true)
+      expect(mockContext.warn).not.toHaveBeenCalled()
+      if (result && typeof result === 'object' && 'code' in result) {
+        const code = result.code as string
+
+        expect(code).toContain('export const __fict_e0')
+        expect(code).toContain("__fictQrl(import.meta.url, '__fict_e0')")
+        expect(code).not.toContain('virtual:fict-handler:/project/src/ImportMeta.tsx$$__fict_e0')
+      }
+
+      const load = plugin.load as any
+      expect(load('\0fict-handler:/project/src/ImportMeta.tsx$$__fict_e0')).toBeNull()
+    })
+
+    it('keeps handlers with relative dynamic imports in the source module', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+
+export const __fict_e0 = async (scopeId, event, el) => {
+  const [] = __fictUseLexicalScope(scopeId, []);
+  return import('./heavy');
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn(), warn: vi.fn() }
+      const transform = plugin.transform as any
+      const result =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, compiledCode, '/project/src/RelativeImport.tsx')
+          : null
+
+      expect(mockContext.error).not.toHaveBeenCalled()
+      expect(result && typeof result === 'object').toBe(true)
+      expect(mockContext.warn).not.toHaveBeenCalled()
+      if (result && typeof result === 'object' && 'code' in result) {
+        const code = result.code as string
+
+        expect(code).toContain('export const __fict_e0')
+        expect(code).toContain("__fictQrl(import.meta.url, '__fict_e0')")
+        expect(code).not.toContain(
+          'virtual:fict-handler:/project/src/RelativeImport.tsx$$__fict_e0',
+        )
+      }
+
+      const load = plugin.load as any
+      expect(load('\0fict-handler:/project/src/RelativeImport.tsx$$__fict_e0')).toBeNull()
+    })
+
     it('handler with direct function reference works in virtual module', async () => {
       const plugin = fict({ functionSplitting: true }) as any
 

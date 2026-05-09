@@ -2179,6 +2179,41 @@ function collectHandlerMutableTopLevelWrites(
   return written
 }
 
+function hasModuleContextSensitiveHandlerSyntax(handlerPath: NodePath<t.Node>): boolean {
+  let found = false
+
+  handlerPath.traverse({
+    MetaProperty(path) {
+      if (
+        t.isIdentifier(path.node.meta, { name: 'import' }) &&
+        t.isIdentifier(path.node.property, { name: 'meta' })
+      ) {
+        found = true
+        path.stop()
+      }
+    },
+
+    CallExpression(path) {
+      if (!t.isImport(path.node.callee)) return
+
+      const [specifier] = path.node.arguments
+      if (!t.isStringLiteral(specifier)) {
+        found = true
+        path.stop()
+        return
+      }
+
+      const value = specifier.value
+      if (value === '.' || value === '..' || value.startsWith('./') || value.startsWith('../')) {
+        found = true
+        path.stop()
+      }
+    },
+  })
+
+  return found
+}
+
 /**
  * Collect identifier names from a pattern (for destructuring).
  */
@@ -2356,6 +2391,7 @@ function extractAndRewriteHandlers(
 
           const initPath = declaratorPath.get('init')
           if (!initPath.node || !initPath.isExpression()) continue
+          if (hasModuleContextSensitiveHandlerSyntax(initPath)) continue
 
           // Generate the handler function code
           const handlerCode = generate(initPath.node).code
@@ -2413,6 +2449,7 @@ function extractAndRewriteHandlers(
         // Only extract event handlers (__fict_e*), not resume handlers (__fict_r*)
         // Resume handlers have complex component dependencies that can't be easily extracted
         if (!name.match(/^__fict_e\d+$/)) return
+        if (hasModuleContextSensitiveHandlerSyntax(declarationPath)) return
 
         // Convert to arrow function expression for the virtual module
         const params = declaration.params
