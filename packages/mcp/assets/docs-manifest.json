@@ -31,6 +31,11 @@
       "path": "blog/react-compiler-and-beyond.md"
     },
     {
+      "id": "compiler-maintenance",
+      "title": "Compiler Maintenance",
+      "path": "compiler-maintenance.md"
+    },
+    {
       "id": "compiler-spec",
       "title": "Fict Compiler Spec (v1.0)",
       "path": "compiler-spec.md",
@@ -84,6 +89,11 @@
       "path": "metadata-packaging-architecture.md"
     },
     {
+      "id": "migration-guide",
+      "title": "Migration Guide",
+      "path": "migration-guide.md"
+    },
+    {
       "id": "post-v1-roadmap",
       "title": "Post-v1 Roadmap",
       "path": "post-v1-roadmap.md"
@@ -104,6 +114,11 @@
       "id": "README",
       "title": "Fict Documentation",
       "path": "README.md"
+    },
+    {
+      "id": "release-policy",
+      "title": "Release Policy",
+      "path": "release-policy.md"
     },
     {
       "id": "scheduler",
@@ -136,6 +151,16 @@
       "id": "ssr-seo",
       "title": "SSR SEO Guide",
       "path": "ssr-seo.md"
+    },
+    {
+      "id": "store-api",
+      "title": "Store API",
+      "path": "store-api.md"
+    },
+    {
+      "id": "strict-guarantee-cookbook",
+      "title": "Strict Guarantee Cookbook",
+      "path": "strict-guarantee-cookbook.md"
     },
     {
       "id": "strict-guarantee-test-policy",

@@ -31,6 +31,11 @@ export const AVAILABLE_DOCS = [
     relPath: 'blog/react-compiler-and-beyond.md',
   },
   {
+    id: 'compiler-maintenance',
+    title: 'Compiler Maintenance',
+    relPath: 'compiler-maintenance.md',
+  },
+  {
     id: 'compiler-spec',
     title: 'Fict Compiler Spec (v1.0)',
     relPath: 'compiler-spec.md',
@@ -76,6 +81,11 @@ export const AVAILABLE_DOCS = [
     relPath: 'metadata-packaging-architecture.md',
   },
   {
+    id: 'migration-guide',
+    title: 'Migration Guide',
+    relPath: 'migration-guide.md',
+  },
+  {
     id: 'post-v1-roadmap',
     title: 'Post-v1 Roadmap',
     relPath: 'post-v1-roadmap.md',
@@ -94,6 +104,11 @@ export const AVAILABLE_DOCS = [
     id: 'README',
     title: 'Fict Documentation',
     relPath: 'README.md',
+  },
+  {
+    id: 'release-policy',
+    title: 'Release Policy',
+    relPath: 'release-policy.md',
   },
   {
     id: 'scheduler',
@@ -126,6 +141,16 @@ export const AVAILABLE_DOCS = [
     relPath: 'ssr-seo.md',
   },
   {
+    id: 'store-api',
+    title: 'Store API',
+    relPath: 'store-api.md',
+  },
+  {
+    id: 'strict-guarantee-cookbook',
+    title: 'Strict Guarantee Cookbook',
+    relPath: 'strict-guarantee-cookbook.md',
+  },
+  {
     id: 'strict-guarantee-test-policy',
     title: 'Strict Guarantee Test Policy',
     relPath: 'strict-guarantee-test-policy.md',
@@ -148,4 +173,4 @@ export const AVAILABLE_DOCS = [
 ] as const
 
 export const AVAILABLE_DOCS_BLOCK =
-  '<available-docs>\n- api-freeze-v1 — Fict v1.0 API Freeze Specification\n- api-reference — Fict API Reference\n- architecture — Fict Architecture\n- blog__fict — Fict – A compiler that makes JavaScript variables automatically reactive\n- blog__react-compiler-and-beyond — React Compiler and Beyond: Capability Boundaries of Compiler-Driven UI Frameworks\n- compiler-spec — Fict Compiler Spec (v1.0)\n- config-profiles — Fict Config Profiles (Dev / CI / Prod)\n- cycle-protection — Cycle Protection\n- diagnostic-codes — Diagnostic Codes Reference\n- error-boundary — Error Handling & ErrorBoundary (Runtime)\n- eslint-rules — ESLint rules for Fict\n- fiction-ui — Fiction UI: Think About Your "Fiction Layer" Before Designing UI\n- framework-comparison — Fict Framework Comparison Report\n- metadata-packaging-architecture — Metadata Packaging Architecture\n- post-v1-roadmap — Post-v1 Roadmap\n- reactivity-guarantee-matrix — Reactivity Guarantee Matrix\n- reactivity-semantics — Fict Reactivity Semantics\n- README — Fict Documentation\n- scheduler — Multi-Priority Scheduler Technical Documentation\n- ssr-deployment — SSR Deployment Guide\n- ssr-performance — SSR Performance Tuning\n- ssr-resume-stability-contract — SSR / Streaming / Resume Stability Contract\n- ssr-runtime-matrix — SSR Runtime Matrix\n- ssr-seo — SSR SEO Guide\n- strict-guarantee-test-policy — Strict Guarantee Test Policy\n- third-party-libraries — Third-Party Fict Libraries\n- tooling-runtime-matrix — Tooling Runtime Matrix\n- typecheck-hardening — Typecheck Hardening Status\n</available-docs>'
+  '<available-docs>\n- api-freeze-v1 — Fict v1.0 API Freeze Specification\n- api-reference — Fict API Reference\n- architecture — Fict Architecture\n- blog__fict — Fict – A compiler that makes JavaScript variables automatically reactive\n- blog__react-compiler-and-beyond — React Compiler and Beyond: Capability Boundaries of Compiler-Driven UI Frameworks\n- compiler-maintenance — Compiler Maintenance\n- compiler-spec — Fict Compiler Spec (v1.0)\n- config-profiles — Fict Config Profiles (Dev / CI / Prod)\n- cycle-protection — Cycle Protection\n- diagnostic-codes — Diagnostic Codes Reference\n- error-boundary — Error Handling & ErrorBoundary (Runtime)\n- eslint-rules — ESLint rules for Fict\n- fiction-ui — Fiction UI: Think About Your "Fiction Layer" Before Designing UI\n- framework-comparison — Fict Framework Comparison Report\n- metadata-packaging-architecture — Metadata Packaging Architecture\n- migration-guide — Migration Guide\n- post-v1-roadmap — Post-v1 Roadmap\n- reactivity-guarantee-matrix — Reactivity Guarantee Matrix\n- reactivity-semantics — Fict Reactivity Semantics\n- README — Fict Documentation\n- release-policy — Release Policy\n- scheduler — Multi-Priority Scheduler Technical Documentation\n- ssr-deployment — SSR Deployment Guide\n- ssr-performance — SSR Performance Tuning\n- ssr-resume-stability-contract — SSR / Streaming / Resume Stability Contract\n- ssr-runtime-matrix — SSR Runtime Matrix\n- ssr-seo — SSR SEO Guide\n- store-api — Store API\n- strict-guarantee-cookbook — Strict Guarantee Cookbook\n- strict-guarantee-test-policy — Strict Guarantee Test Policy\n- third-party-libraries — Third-Party Fict Libraries\n- tooling-runtime-matrix — Tooling Runtime Matrix\n- typecheck-hardening — Typecheck Hardening Status\n</available-docs>'
