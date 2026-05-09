@@ -4,10 +4,10 @@ interface LiveTraceUpdatePayload {
   type: 'trace/update'
   file: string
   line: number
-  kind?: TraceMarkerKind
-  runCount?: number
-  lastDuration?: number
-  lastDurationMs?: number
+  kind?: TraceMarkerKind | undefined
+  runCount?: number | undefined
+  lastDuration?: number | undefined
+  lastDurationMs?: number | undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -84,7 +84,7 @@ function collectMapCallbackAliasDeclarations(callback: Expression): Map<string, 
     block => block.instructions.length > 0 || block.terminator.kind !== 'Unreachable',
   )
   const isSingleLinearBlock =
-    effectiveBlocks.length === 1 && effectiveBlocks[0].terminator.kind === 'Return'
+    effectiveBlocks.length === 1 && effectiveBlocks[0]?.terminator.kind === 'Return'
   for (const [name, state] of declarationState) {
     if (isSingleLinearBlock) {
       if (state.declarationCount <= 1) {

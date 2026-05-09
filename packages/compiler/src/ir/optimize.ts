@@ -43,8 +43,8 @@ interface DefUseInfo {
 }
 
 interface PurityContext {
-  functionPure?: boolean
-  impureIdentifiers?: Set<string>
+  functionPure?: boolean | undefined
+  impureIdentifiers?: Set<string> | undefined
 }
 
 const PURE_MATH_METHODS = new Set([
@@ -176,9 +176,9 @@ interface ReactiveGraphNode {
   id: string
   kind: ReactiveNodeKind
   deps: Set<string>
-  name?: string
-  pure?: boolean
-  explicit?: boolean
+  name?: string | undefined
+  pure?: boolean | undefined
+  explicit?: boolean | undefined
 }
 
 interface ReactiveGraph {
@@ -1133,6 +1133,7 @@ function eliminateCrossBlockCSE(
 
     for (let i = 0; i < updatedInstructions.length; i++) {
       const instr = updatedInstructions[i]
+      if (!instr) continue
       if (instr.kind === 'Assign' || instr.kind === 'Expression') {
         if (!isPureExpression(instr.value, purity) || isExplicitMemoCall(instr.value, purity)) {
           cseMap.clear()
@@ -1240,6 +1241,7 @@ function inlineSingleUseDerivedMemos(
 
     for (let i = 0; i < instructions.length; i++) {
       const instr = instructions[i]
+      if (!instr) continue
       if (instr.kind !== 'Assign') continue
       const target = instr.target.name
       if (!allowUserNames && !isCompilerGeneratedName(target)) continue
@@ -1251,6 +1253,7 @@ function inlineSingleUseDerivedMemos(
       const info = defUse.get(target)
       if (!info || info.uses.length !== 1) continue
       const use = info.uses[0]
+      if (!use) continue
       if (use.inFunctionBody || use.kind === 'Phi') continue
       if (!isPureExpression(instr.value, derivedPurity)) continue
       if (isExplicitMemoCall(instr.value, purity)) continue
@@ -1332,6 +1335,7 @@ function propagateCrossBlockConstants(
   for (const block of fn.blocks) {
     for (let index = 0; index < block.instructions.length; index++) {
       const instr = block.instructions[index]
+      if (!instr) continue
       if (instr.kind !== 'Assign') continue
       const target = instr.target.name
       if (!isCompilerGeneratedName(target)) continue
@@ -3170,6 +3174,7 @@ function inlineSingleUse(fn: HIRFunction, purity: PurityContext): HIRFunction {
     const toRemove = new Set<number>()
     for (let i = 0; i < instructions.length; i++) {
       const instr = instructions[i]
+      if (!instr) continue
       if (instr.kind !== 'Assign') continue
       const target = instr.target.name
       const info = defUse.get(target)
@@ -3220,6 +3225,7 @@ function hasSideEffectsBetween(
 ): boolean {
   for (let i = start; i < Math.min(end, instructions.length); i++) {
     const instr = instructions[i]
+    if (!instr) continue
     if (instr.kind === 'Expression') {
       if (!isPureExpression(instr.value, purity)) return true
     } else if (instr.kind === 'Assign') {
@@ -3363,6 +3369,7 @@ function resolveParallelCopies(copies: { from: string; to: string }[]): Instruct
     const acyclicIndex = pending.findIndex(c => !dests.has(c.from))
     if (acyclicIndex >= 0) {
       const [copy] = pending.splice(acyclicIndex, 1)
+      if (!copy) continue
       emitAssign(copy.to, copy.from)
       continue
     }

@@ -14,7 +14,7 @@ interface GraphNode {
   type: NodeType
   name: string
   value?: unknown
-  isDirty?: boolean
+  isDirty?: boolean | undefined
 }
 
 interface GraphEdge {
@@ -24,8 +24,8 @@ interface GraphEdge {
 
 export interface GraphRendererOptions {
   container: HTMLElement
-  onNodeSelect?: (nodeId: number) => void
-  onNodeHover?: (nodeId: number | null) => void
+  onNodeSelect?: ((nodeId: number) => void) | undefined
+  onNodeHover?: ((nodeId: number | null) => void) | undefined
 }
 
 // Node type colors
@@ -37,6 +37,7 @@ const NODE_COLORS: Record<string, { bg: string; border: string; text: string }> 
   root: { bg: '#6b7280', border: '#4b5563', text: '#fff' },
   component: { bg: '#ec4899', border: '#db2777', text: '#fff' },
 }
+const DEFAULT_NODE_COLOR = NODE_COLORS.signal!
 
 export class GraphRenderer {
   private canvas: HTMLCanvasElement
@@ -319,6 +320,7 @@ export class GraphRenderer {
     // Check in reverse order (top-most first)
     for (let i = this.nodes.length - 1; i >= 0; i--) {
       const node = this.nodes[i]
+      if (!node) continue
       const dx = worldX - node.x
       const dy = worldY - node.y
       if (dx * dx + dy * dy <= nodeRadius * nodeRadius) {
@@ -451,7 +453,7 @@ export class GraphRenderer {
   private drawNode(node: GraphNode): void {
     const ctx = this.ctx
     const radius = 25
-    const colors = NODE_COLORS[node.type] || NODE_COLORS.signal
+    const colors = NODE_COLORS[node.type] ?? DEFAULT_NODE_COLOR
 
     const isSelected = node.id === this.selectedNode
     const isHovered = node.id === this.hoveredNode
@@ -484,7 +486,7 @@ export class GraphRenderer {
     ctx.font = 'bold 14px system-ui, sans-serif'
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    const typeLabel = node.type === 'effect-scope' ? 'ES' : node.type[0].toUpperCase()
+    const typeLabel = node.type === 'effect-scope' ? 'ES' : node.type.charAt(0).toUpperCase()
     ctx.fillText(typeLabel, node.x, node.y)
 
     // Name below node
@@ -530,7 +532,7 @@ export class GraphRenderer {
     ctx.fill()
 
     for (const legend of legends) {
-      const colors = NODE_COLORS[legend.type]
+      const colors = NODE_COLORS[legend.type] ?? DEFAULT_NODE_COLOR
 
       // Dot
       ctx.beginPath()

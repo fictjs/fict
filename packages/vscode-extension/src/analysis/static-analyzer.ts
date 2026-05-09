@@ -268,7 +268,6 @@ function buildComponentsFromStatic(
     startLine: candidate.startLine,
     endLine: candidate.endLine,
     trace: buildTraceForComponent(lines, candidate, verbosity),
-    regions: undefined,
   }))
 }
 

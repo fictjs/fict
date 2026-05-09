@@ -142,6 +142,7 @@ export function extractKeyFromMapCallback(callback: Expression): Expression | un
   }
   if (returnedKeyExpressions.length > 1) {
     const [firstKey, ...restKeys] = returnedKeyExpressions
+    if (!firstKey) return undefined
     const firstSignature = keyExpressionSignature(firstKey)
     if (
       firstSignature &&
@@ -158,6 +159,7 @@ export function extractKeyFromMapCallback(callback: Expression): Expression | un
   if (keyExpressions.some(expr => !expr)) return undefined
 
   const [firstKey, ...restKeys] = keyExpressions as Expression[]
+  if (!firstKey) return undefined
   const firstSignature = keyExpressionSignature(firstKey)
   if (!firstSignature) return undefined
 

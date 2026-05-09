@@ -10,7 +10,7 @@ import type {
 export interface TraceDecorationApplyOptions {
   showOnce: boolean
   showRegionShading: boolean
-  regions?: RegionInfoSerializable[]
+  regions?: RegionInfoSerializable[] | undefined
 }
 
 function pickPrimaryMarker(markers: TraceMarker[], showOnce: boolean): TraceMarkerKind | null {

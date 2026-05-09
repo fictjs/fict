@@ -10,15 +10,23 @@ export interface PlaygroundConfig {
   devtools: boolean
 }
 
+export interface PlaygroundConfigPatch {
+  profile?: PlaygroundProfile | undefined
+  strictGuarantee?: boolean | undefined
+  strictReactivity?: boolean | undefined
+  lazyConditional?: boolean | undefined
+  resumable?: boolean | undefined
+  functionSplitting?: boolean | undefined
+  devtools?: boolean | undefined
+}
+
 export interface PlaygroundTemplate {
   id: string
   name: string
   description: string
   entryFile: string
   files: Record<string, string>
-  recommendedConfig?: Partial<Omit<PlaygroundConfig, 'profile'>> & {
-    profile?: PlaygroundProfile
-  }
+  recommendedConfig?: PlaygroundConfigPatch
 }
 
 export interface PlaygroundSessionSnapshot {

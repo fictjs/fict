@@ -243,14 +243,14 @@ export interface Diagnostic {
   fileName: string
   line: number
   column: number
-  endLine?: number
-  endColumn?: number
+  endLine?: number | undefined
+  endColumn?: number | undefined
   /** Additional context for the diagnostic */
-  context?: Record<string, unknown>
+  context?: Record<string, unknown> | undefined
 }
 
 interface DiagnosticNode {
-  loc?: BabelCore.types.SourceLocation | null
+  loc?: BabelCore.types.SourceLocation | null | undefined
 }
 
 /**
@@ -279,17 +279,19 @@ export function createDiagnostic(
 
 /** Context type for diagnostics - compatible with both TransformContext and CodegenContext */
 export interface DiagnosticContext {
-  file?: { opts?: { filename?: string | null } }
-  options?: Pick<
-    FictCompilerOptions,
-    | 'dev'
-    | 'filename'
-    | 'onWarn'
-    | 'strictGuarantee'
-    | 'strictReactivity'
-    | 'warningLevels'
-    | 'warningsAsErrors'
-  >
+  file?: { opts?: { filename?: string | null | undefined } | undefined } | undefined
+  options?:
+    | Pick<
+        FictCompilerOptions,
+        | 'dev'
+        | 'filename'
+        | 'onWarn'
+        | 'strictGuarantee'
+        | 'strictReactivity'
+        | 'warningLevels'
+        | 'warningsAsErrors'
+      >
+    | undefined
 }
 
 /**

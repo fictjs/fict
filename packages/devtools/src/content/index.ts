@@ -13,10 +13,12 @@ console.debug('[Fict DevTools] Content script loaded')
 
 interface FictGlobal {
   __FICT_DEVTOOLS_HOOK__?: unknown
-  __FICT_VERSION__?: string
-  __FICT__?: {
-    version?: string
-  }
+  __FICT_VERSION__?: string | undefined
+  __FICT__?:
+    | {
+        version?: string | undefined
+      }
+    | undefined
 }
 
 // ============================================================================
@@ -36,7 +38,7 @@ const DETECTION_INTERVAL = 100
 /**
  * Check if Fict is present on the page
  */
-function detectFict(): { detected: boolean; version?: string } {
+function detectFict(): { detected: boolean; version?: string | undefined } {
   const global = globalThis as typeof globalThis & FictGlobal
 
   if (global.__FICT_DEVTOOLS_HOOK__) {

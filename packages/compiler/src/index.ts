@@ -126,7 +126,7 @@ type WarningSink = (warning: CompilerWarning, path?: BabelCore.NodePath) => void
 interface SuppressionDirective {
   line: number
   nextLine: boolean
-  codes?: Set<string>
+  codes?: Set<string> | undefined
 }
 
 function parseSuppressionCodes(raw?: string): Set<string> | undefined {
@@ -382,7 +382,12 @@ function switchCaseChainCompletions(
     return new Set<CaseCompletionKind>(['fallthrough'])
   }
 
-  const outcomes = caseStatementListCompletions(cases[index].consequent)
+  const currentCase = cases[index]
+  if (!currentCase) {
+    return new Set<CaseCompletionKind>(['fallthrough'])
+  }
+
+  const outcomes = caseStatementListCompletions(currentCase.consequent)
   if (!outcomes.has('fallthrough')) {
     return outcomes
   }

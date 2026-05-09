@@ -35,7 +35,7 @@ interface BabelGeneratorOptionsWithInputSourceMap extends BabelGeneratorOptions 
   compact?: boolean
   sourceMaps?: boolean
   sourceFileName?: string
-  inputSourceMap?: TransformResult['map']
+  inputSourceMap?: TransformResult['map'] | null | undefined
 }
 
 export interface FictPluginOptions extends FictCompilerOptions {
@@ -108,7 +108,7 @@ export interface FictLibraryOptions {
 interface NormalizedCacheOptions {
   enabled: boolean
   persistent: boolean
-  dir?: string
+  dir?: string | undefined
 }
 
 interface CachedTransform {
@@ -2638,7 +2638,7 @@ function extractAndRewriteHandlers(
     retainLines: true,
     compact: false,
     sourceMaps: inputSourceMap !== null,
-    inputSourceMap: inputSourceMap ?? undefined,
+    inputSourceMap,
     sourceFileName: sourceModule,
   }
   const result = generate(ast, generatorOptions)

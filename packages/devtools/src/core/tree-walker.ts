@@ -16,28 +16,28 @@ export interface TreeNode {
   type: 'root' | 'component' | 'element'
   name: string
   depth: number
-  parentId?: number
+  parentId?: number | undefined
   children: TreeNode[]
   /** For components: associated signals, effects, etc. */
-  signals?: number[]
-  effects?: number[]
-  computeds?: number[]
+  signals?: number[] | undefined
+  effects?: number[] | undefined
+  computeds?: number[] | undefined
   /** DOM elements */
-  elements?: number
+  elements?: number | undefined
   /** Is expanded in UI */
-  isExpanded?: boolean
+  isExpanded?: boolean | undefined
   /** Is currently selected */
-  isSelected?: boolean
+  isSelected?: boolean | undefined
   /** Is matching a search filter */
-  isMatching?: boolean
+  isMatching?: boolean | undefined
   /** Has matching children (for filter) */
-  hasMatchingChildren?: boolean
+  hasMatchingChildren?: boolean | undefined
   /** Source location */
-  source?: { file: string; line: number; column: number }
+  source?: { file: string; line: number; column: number } | undefined
   /** Render count */
-  renderCount?: number
+  renderCount?: number | undefined
   /** Is mounted */
-  isMounted?: boolean
+  isMounted?: boolean | undefined
 }
 
 export interface TreeWalkerOptions {
@@ -244,10 +244,10 @@ function walkComponent(
 interface WalkContext {
   depth: number
   maxDepth: number
-  filter?: string
+  filter?: string | undefined
   includeUnmounted: boolean
-  expandedIds?: Set<number>
-  parentId?: number
+  expandedIds?: Set<number> | undefined
+  parentId?: number | undefined
   /** Visited component IDs to prevent infinite loops from circular references */
   visited: Set<number>
 }

@@ -4,6 +4,7 @@ import { buildHIR } from '../src/ir/build-hir'
 import { getSSABaseName, makeSSAName, resetGeneratedSSANames } from '../src/ir/hir'
 import { enterSSA, analyzeCFG } from '../src/ir/ssa'
 import { printHIR } from '../src/ir/printer'
+import { firstFunction } from './hir-test-utils'
 
 const parseFile = (code: string) =>
   parseSync(code, {
@@ -316,7 +317,7 @@ describe('analyzeCFG - basic analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const fn = hir.functions[0]
+    const fn = firstFunction(hir)
     expect(fn).toBeDefined()
 
     // analyzeCFG expects BasicBlock[]
@@ -336,7 +337,7 @@ describe('analyzeCFG - basic analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const fn = hir.functions[0]
+    const fn = firstFunction(hir)
     expect(fn).toBeDefined()
 
     // analyzeCFG expects BasicBlock[]
@@ -357,7 +358,7 @@ describe('analyzeCFG - basic analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const fn = hir.functions[0]
+    const fn = firstFunction(hir)
     expect(fn).toBeDefined()
 
     // analyzeCFG expects BasicBlock[]

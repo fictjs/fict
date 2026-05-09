@@ -9,16 +9,16 @@ interface SectionSearchMatch {
   path: string
   score: number
   reason: string
-  use_cases?: string[]
-  tags?: string[]
+  use_cases?: string[] | undefined
+  tags?: string[] | undefined
 }
 
 function toSearchText(section: {
   id: string
   title: string
   path: string
-  use_cases?: string[]
-  tags?: string[]
+  use_cases?: string[] | undefined
+  tags?: string[] | undefined
 }): string {
   return [
     section.id,
@@ -36,8 +36,8 @@ function scoreSection(
     id: string
     title: string
     path: string
-    use_cases?: string[]
-    tags?: string[]
+    use_cases?: string[] | undefined
+    tags?: string[] | undefined
   },
   query: string,
 ): SectionSearchMatch | null {

@@ -15,6 +15,7 @@ import {
   isAssignInstruction,
 } from '../src/ir/hir'
 import { printHIR } from '../src/ir/printer'
+import { firstFunction, functionAt, namedFunction } from './hir-test-utils'
 
 const parseFile = (code: string) =>
   parseSync(code, {
@@ -146,7 +147,7 @@ describe('buildHIR', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const instructions = hir.functions[0]?.blocks.flatMap(block => block.instructions) ?? []
+    const instructions = firstFunction(hir)?.blocks.flatMap(block => block.instructions) ?? []
     const noMemoFn = instructions.find(
       instr =>
         instr.kind === 'Assign' &&
@@ -190,7 +191,7 @@ describe('buildHIR - complex control flow', () => {
     `)
     const hir = buildHIR(ast)
     const printed = printHIR(hir)
-    expect(hir.functions[0].blocks.length).toBeGreaterThanOrEqual(4)
+    expect(firstFunction(hir).blocks.length).toBeGreaterThanOrEqual(4)
     expect(printed.toLowerCase()).toContain('branch')
     expect(printed).toContain('return')
   })
@@ -210,7 +211,7 @@ describe('buildHIR - complex control flow', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0].blocks.length).toBeGreaterThanOrEqual(5)
+    expect(firstFunction(hir).blocks.length).toBeGreaterThanOrEqual(5)
   })
 
   it('handles switch statements', () => {
@@ -229,7 +230,7 @@ describe('buildHIR - complex control flow', () => {
     const hir = buildHIR(ast)
     const printed = printHIR(hir)
     expect(printed.toLowerCase()).toContain('switch')
-    expect(hir.functions[0].blocks.length).toBeGreaterThanOrEqual(2)
+    expect(firstFunction(hir).blocks.length).toBeGreaterThanOrEqual(2)
   })
 
   it('handles do-while loops', () => {
@@ -259,7 +260,7 @@ describe('buildHIR - complex control flow', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
     // Try-catch is simplified in current implementation
     const printed = printHIR(hir)
     expect(printed).toContain('function TryCatch')
@@ -279,7 +280,7 @@ describe('buildHIR - complex control flow', () => {
     `)
     const hir = buildHIR(ast)
     // Nested loops should create multiple blocks
-    expect(hir.functions[0].blocks.length).toBeGreaterThanOrEqual(5)
+    expect(firstFunction(hir).blocks.length).toBeGreaterThanOrEqual(5)
     const printed = printHIR(hir)
     expect(printed.toLowerCase()).toContain('jump')
     expect(printed.toLowerCase()).toContain('branch')
@@ -298,7 +299,7 @@ describe('buildHIR - complex control flow', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0].blocks.length).toBeGreaterThanOrEqual(4)
+    expect(firstFunction(hir).blocks.length).toBeGreaterThanOrEqual(4)
     const printed = printHIR(hir)
     expect(printed.toLowerCase()).toContain('branch')
   })
@@ -317,7 +318,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
     const printed = printHIR(hir)
     expect(printed).toContain('name')
   })
@@ -348,7 +349,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
   })
 
   it('handles array destructuring with defaults', () => {
@@ -359,7 +360,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
   })
 
   it('handles object pattern variable declarations', () => {
@@ -370,7 +371,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const fn = hir.functions[0]
+    const fn = firstFunction(hir)
     expect(fn.blocks.length).toBeGreaterThan(0)
     const targets = getAssignTargets(fn)
     expect(targets).toContain('count')
@@ -455,7 +456,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const fn = hir.functions.find(f => f.name === 'Assign') ?? hir.functions[0]
+    const fn = namedFunction(hir, 'Assign', 0)
     const targets = getAssignTargets(fn)
     expect(targets).toContain('a')
     expect(targets).toContain('b')
@@ -478,7 +479,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0].blocks.length).toBeGreaterThanOrEqual(4)
+    expect(firstFunction(hir).blocks.length).toBeGreaterThanOrEqual(4)
   })
 
   it('handles nested ternary expressions', () => {
@@ -495,7 +496,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
   })
 
   it('handles computed property access in loops', () => {
@@ -509,7 +510,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0].blocks.length).toBeGreaterThanOrEqual(3)
+    expect(firstFunction(hir).blocks.length).toBeGreaterThanOrEqual(3)
   })
 
   it('throws on array literal holes', () => {
@@ -560,8 +561,8 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const restFn = hir.functions.find(f => f.name === 'Rest') ?? hir.functions[0]
-    const restObjFn = hir.functions.find(f => f.name === 'RestObj') ?? hir.functions[1]
+    const restFn = namedFunction(hir, 'Rest', 0)
+    const restObjFn = namedFunction(hir, 'RestObj', 1)
     expect(restFn.params.map(p => p.name)).toEqual(expect.arrayContaining(['a', 'b']))
     expect(restObjFn.params.map(p => p.name)).toEqual(expect.arrayContaining(['c', 'd']))
   })
@@ -574,7 +575,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const fn = hir.functions.find(f => f.name === 'Obj') ?? hir.functions[0]
+    const fn = namedFunction(hir, 'Obj', 0)
     const assign = assertDefined(findAssignInstruction(fn, 'obj'), 'expected obj assign')
     const objExpr = assign.value
     expect(objExpr?.kind).toBe('ObjectExpression')
@@ -614,7 +615,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const fn = hir.functions.find(f => f.name === 'ObjMethods') ?? hir.functions[0]
+    const fn = namedFunction(hir, 'ObjMethods', 0)
     const assign = assertDefined(findAssignInstruction(fn, 'obj'), 'expected obj assign')
     const objExpr = assign.value
     if (objExpr.kind !== 'ObjectExpression') {
@@ -650,7 +651,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
     const printed = printHIR(hir)
     expect(printed.toLowerCase()).toContain('jsx')
   })
@@ -670,7 +671,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const fn = hir.functions.find(f => f.name === 'App') ?? hir.functions[0]
+    const fn = namedFunction(hir, 'App', 0)
     const returnTerm = assertDefined(findReturnWithArgument(fn), 'expected jsx return')
     const jsx = returnTerm.argument
     expect(jsx.kind).toBe('JSXElement')
@@ -734,7 +735,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const fn = hir.functions.find(f => f.name === 'App') ?? hir.functions[0]
+    const fn = namedFunction(hir, 'App', 0)
     const returnTerm = assertDefined(findReturnWithArgument(fn), 'expected fragment return')
     const fragment = returnTerm.argument
 
@@ -764,7 +765,7 @@ describe('buildHIR - Advanced Patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
   })
 })
 
@@ -827,7 +828,7 @@ describe('buildHIR - break statements', () => {
     const hir = buildHIR(ast)
     const printed = printHIR(hir)
     expect(printed.toLowerCase()).toContain('break')
-    expect(hir.functions[0].blocks.length).toBeGreaterThanOrEqual(4)
+    expect(firstFunction(hir).blocks.length).toBeGreaterThanOrEqual(4)
   })
 })
 
@@ -907,7 +908,7 @@ describe('buildHIR - labeled statements', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
     const printed = printHIR(hir)
     expect(printed.toLowerCase()).toContain('break')
   })
@@ -928,7 +929,7 @@ describe('buildHIR - labeled statements', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
     const printed = printHIR(hir)
     expect(printed.toLowerCase()).toContain('continue')
   })
@@ -950,7 +951,7 @@ describe('buildHIR - labeled statements', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
   })
 
   it('handles multiple nested labeled loops', () => {
@@ -974,7 +975,7 @@ describe('buildHIR - labeled statements', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
   })
 })
 
@@ -1007,7 +1008,7 @@ describe('buildHIR - throw statements', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
     const printed = printHIR(hir)
     expect(printed.toLowerCase()).toContain('throw')
   })
@@ -1024,7 +1025,7 @@ describe('buildHIR - throw statements', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
   })
 })
 
@@ -1040,7 +1041,7 @@ describe('buildHIR - try-finally patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
     const printed = printHIR(hir)
     expect(printed).toContain('TryFinally')
   })
@@ -1061,7 +1062,7 @@ describe('buildHIR - try-finally patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
   })
 
   it('handles throw in try with finally', () => {
@@ -1078,7 +1079,7 @@ describe('buildHIR - try-finally patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
   })
 
   it('handles nested try-finally', () => {
@@ -1096,7 +1097,7 @@ describe('buildHIR - try-finally patterns', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
   })
 })
 
@@ -1122,7 +1123,7 @@ describe('buildHIR - switch fall-through', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
     const printed = printHIR(hir)
     expect(printed.toLowerCase()).toContain('switch')
   })
@@ -1143,7 +1144,7 @@ describe('buildHIR - switch fall-through', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
   })
 
   it('handles switch with return in cases', () => {
@@ -1160,7 +1161,7 @@ describe('buildHIR - switch fall-through', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
     const printed = printHIR(hir)
     expect(printed.toLowerCase()).toContain('return')
   })
@@ -1186,6 +1187,6 @@ describe('buildHIR - switch fall-through', () => {
       }
     `)
     const hir = buildHIR(ast)
-    expect(hir.functions[0]).toBeDefined()
+    expect(firstFunction(hir)).toBeDefined()
   })
 })

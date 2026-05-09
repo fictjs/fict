@@ -244,12 +244,12 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
 
       // Track which files have been injected to avoid duplicate imports
       transform(code, id) {
-        if (!resolvedEnabled) return
+        if (!resolvedEnabled) return undefined
 
         // Skip node_modules and non-project files
-        if (id.includes('node_modules')) return
-        if (id.includes('/packages/')) return // Skip workspace packages
-        if (!/\.[jt]sx?$/.test(id)) return
+        if (id.includes('node_modules')) return undefined
+        if (id.includes('/packages/')) return undefined // Skip workspace packages
+        if (!/\.[jt]sx?$/.test(id)) return undefined
 
         // Skip test files to avoid false positives
         if (
@@ -258,12 +258,12 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
           id.includes('__tests__') ||
           id.includes('__mocks__')
         ) {
-          return
+          return undefined
         }
 
         // Only inject into entry files that don't already have devtools
         if (code.includes('virtual:fict-devtools') || code.includes('@fictjs/devtools')) {
-          return
+          return undefined
         }
 
         // ========================================================================
@@ -282,7 +282,7 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
 
         // Step 1: Must import from 'fict' or '@fictjs/runtime'
         const hasFictImport = /import\s+.*\s+from\s+['"](?:fict|@fictjs\/runtime)['"]/.test(code)
-        if (!hasFictImport) return
+        if (!hasFictImport) return undefined
 
         // Step 2: Check for direct render/createRoot/hydrate calls
         const hasDirectRenderCall = /\b(render|createRoot|hydrate)\s*\(/.test(code)
@@ -331,6 +331,7 @@ export default function fictDevTools(options: FictDevToolsOptions = {}): Plugin[
               `     If this is your entry file, add: \x1b[36mimport 'virtual:fict-devtools'\x1b[0m`,
           )
         }
+        return undefined
       },
     },
 

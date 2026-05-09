@@ -422,7 +422,7 @@ export function lowerPropsPlan(
   }
 
   if (args.length === 1 && !plan.flags.hasLazySource) {
-    return args[0]
+    return args[0] ?? null
   }
 
   ctx.helpersUsed.add('mergeProps')

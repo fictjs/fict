@@ -11,6 +11,7 @@ import {
   generateRegionCode,
   analyzeRegionMemoization,
 } from '../src/ir/regions'
+import { firstFunction } from './hir-test-utils'
 
 const parseFile = (code: string) =>
   parseSync(code, {
@@ -31,8 +32,8 @@ describe('generateRegions', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     expect(regionResult.regions.length).toBeGreaterThan(0)
     expect(regionResult.topLevelRegions.length).toBeGreaterThan(0)
@@ -49,8 +50,8 @@ describe('generateRegions', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     // Multi-block scopes or scopes spanning branches should have control flow
     // If no regions are generated, that's also valid
@@ -71,8 +72,8 @@ describe('generateRegions + shapes', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     const deps = regionResult.regions.flatMap(r => Array.from(r.dependencies))
     expect(deps.some(d => d === 'props.value')).toBe(true)
@@ -86,8 +87,9 @@ describe('generateRegions + shapes', () => {
       }
     `)
     const hirProgram = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hirProgram.functions[0])
-    const regionResult = generateRegions(hirProgram.functions[0], scopeResult)
+    const fn = firstFunction(hirProgram)
+    const scopeResult = analyzeReactiveScopes(fn)
+    const regionResult = generateRegions(fn, scopeResult)
 
     const deps = new Set(regionResult.regions.flatMap(r => Array.from(r.dependencies)))
     expect(deps.has('props')).toBe(true)
@@ -104,11 +106,12 @@ describe('regionToMetadata', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
-    if (regionResult.regions.length > 0) {
-      const metadata = regionToMetadata(regionResult.regions[0])
+    const firstRegion = regionResult.regions[0]
+    if (firstRegion) {
+      const metadata = regionToMetadata(firstRegion)
       expect(metadata).toHaveProperty('id')
       expect(metadata).toHaveProperty('dependencies')
       expect(metadata).toHaveProperty('declarations')
@@ -125,9 +128,9 @@ describe('generateRegionCode', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
     const ctx = createCodegenContext(t)
-    const statements = generateRegionCode(hir.functions[0], scopeResult, t, ctx)
+    const statements = generateRegionCode(firstFunction(hir), scopeResult, t, ctx)
 
     // Should produce some statements
     expect(Array.isArray(statements)).toBe(true)
@@ -145,8 +148,8 @@ describe('analyzeRegionMemoization', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
     const memoMap = analyzeRegionMemoization(regionResult)
 
     expect(memoMap.size).toBeGreaterThanOrEqual(0)
@@ -228,8 +231,8 @@ describe('nested region hierarchies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     expect(regionResult.regions.length).toBeGreaterThanOrEqual(0)
   })
@@ -247,8 +250,8 @@ describe('nested region hierarchies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     expect(regionResult.regions.length).toBeGreaterThanOrEqual(0)
   })
@@ -266,8 +269,8 @@ describe('nested region hierarchies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     expect(regionResult.regions.length).toBeGreaterThanOrEqual(0)
   })
@@ -284,8 +287,8 @@ describe('nested region hierarchies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     // Should have regions with proper dependency tracking
     expect(regionResult.regions.length).toBeGreaterThanOrEqual(0)
@@ -307,8 +310,8 @@ describe('cross-region dependencies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     // Dependencies should be properly tracked
     const allDeps = new Set<string>()
@@ -332,8 +335,8 @@ describe('cross-region dependencies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     expect(regionResult.regions.length).toBeGreaterThanOrEqual(0)
   })
@@ -347,8 +350,8 @@ describe('cross-region dependencies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     // Check that props is a dependency
     const deps = regionResult.regions.flatMap(r => Array.from(r.dependencies))
@@ -372,8 +375,8 @@ describe('region boundary detection', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     // Control flow creates region boundaries
     expect(regionResult.topLevelRegions.length).toBeGreaterThanOrEqual(0)
@@ -390,8 +393,8 @@ describe('region boundary detection', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     // Loop creates region boundary
     expect(regionResult.regions.length).toBeGreaterThanOrEqual(0)
@@ -407,8 +410,8 @@ describe('region boundary detection', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     // Consecutive statements may be merged or kept separate
     expect(regionResult.regions.length).toBeGreaterThanOrEqual(0)
@@ -429,8 +432,8 @@ describe('region declaration tracking', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     // Check declarations are tracked
     for (const region of regionResult.regions) {
@@ -448,8 +451,8 @@ describe('region declaration tracking', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     expect(regionResult.regions.length).toBeGreaterThanOrEqual(0)
   })
@@ -463,8 +466,8 @@ describe('region declaration tracking', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     expect(regionResult.regions.length).toBeGreaterThanOrEqual(0)
   })
@@ -484,8 +487,8 @@ describe('regionToMetadata - edge cases', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     for (const region of regionResult.regions) {
       const metadata = regionToMetadata(region)
@@ -503,8 +506,8 @@ describe('regionToMetadata - edge cases', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     // Regions may or may not be generated for pure computation
     expect(regionResult).toBeDefined()
@@ -523,8 +526,8 @@ describe('regionToMetadata - edge cases', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
 
     for (const region of regionResult.regions) {
       const metadata = regionToMetadata(region)
@@ -549,9 +552,9 @@ describe('generateRegionCode - edge cases', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
     const ctx = createCodegenContext(t)
-    const statements = generateRegionCode(hir.functions[0], scopeResult, t, ctx)
+    const statements = generateRegionCode(firstFunction(hir), scopeResult, t, ctx)
 
     expect(Array.isArray(statements)).toBe(true)
   })
@@ -574,9 +577,9 @@ describe('generateRegionCode - edge cases', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
     const ctx = createCodegenContext(t)
-    const statements = generateRegionCode(hir.functions[0], scopeResult, t, ctx)
+    const statements = generateRegionCode(firstFunction(hir), scopeResult, t, ctx)
 
     expect(Array.isArray(statements)).toBe(true)
   })
@@ -594,9 +597,9 @@ describe('generateRegionCode - edge cases', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
     const ctx = createCodegenContext(t)
-    const statements = generateRegionCode(hir.functions[0], scopeResult, t, ctx)
+    const statements = generateRegionCode(firstFunction(hir), scopeResult, t, ctx)
 
     expect(Array.isArray(statements)).toBe(true)
   })
@@ -616,8 +619,8 @@ describe('analyzeRegionMemoization - edge cases', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
     const memoMap = analyzeRegionMemoization(regionResult)
 
     expect(memoMap).toBeDefined()
@@ -631,8 +634,8 @@ describe('analyzeRegionMemoization - edge cases', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
     const memoMap = analyzeRegionMemoization(regionResult)
 
     expect(memoMap).toBeDefined()
@@ -647,8 +650,8 @@ describe('analyzeRegionMemoization - edge cases', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const regionResult = generateRegions(hir.functions[0], scopeResult)
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const regionResult = generateRegions(firstFunction(hir), scopeResult)
     const memoMap = analyzeRegionMemoization(regionResult)
 
     expect(memoMap).toBeDefined()

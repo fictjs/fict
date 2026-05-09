@@ -106,9 +106,9 @@ export const MODULE_REACTIVE_METADATA_VERSION = 1
 export type ModuleReactiveMetadataVersion = typeof MODULE_REACTIVE_METADATA_VERSION
 
 export interface HookReturnInfoSerializable {
-  objectProps?: Record<string, 'signal' | 'memo'>
-  arrayProps?: Record<string, 'signal' | 'memo'>
-  directAccessor?: 'signal' | 'memo'
+  objectProps?: Record<string, 'signal' | 'memo'> | undefined
+  arrayProps?: Record<string, 'signal' | 'memo'> | undefined
+  directAccessor?: 'signal' | 'memo' | undefined
 }
 
 export interface ModuleReactiveMetadata {
@@ -168,7 +168,7 @@ export interface FictCompilerOptions {
   /**
    * Per-warning override. "off" suppresses, "error" throws, "warn" emits.
    */
-  warningLevels?: Record<string, 'off' | 'warn' | 'error'>
+  warningLevels?: Record<string, 'off' | 'warn' | 'error'> | undefined
   /**
    * Strict control-flow reactivity mode.
    * When enabled, control-flow fallback diagnostics (`FICT-R003`, `FICT-R006`)

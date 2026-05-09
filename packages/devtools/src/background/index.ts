@@ -20,10 +20,10 @@ interface PortInfo {
 }
 
 interface TabState {
-  devtools?: chrome.runtime.Port
-  userApp?: chrome.runtime.Port
+  devtools?: chrome.runtime.Port | undefined
+  userApp?: chrome.runtime.Port | undefined
   fictDetected: boolean
-  fictVersion?: string
+  fictVersion?: string | undefined
 }
 
 // ============================================================================

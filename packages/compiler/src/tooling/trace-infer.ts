@@ -10,7 +10,7 @@ interface InferTraceInput {
   startLine: number
   endLine: number
   verbosity: 'minimal' | 'verbose'
-  regions?: RegionInfoSerializable[]
+  regions?: RegionInfoSerializable[] | undefined
 }
 
 const TRACE_REGEX_ESCAPES = /[.*+?^${}()|[\]\\]/g

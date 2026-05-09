@@ -5,10 +5,10 @@ export type TraceMarkerKind = 'once' | 'reactive' | 'effect'
 export interface TraceMarker {
   kind: TraceMarkerKind
   label: string
-  deps?: string[]
-  regionId?: number
-  runCount?: number
-  lastDurationMs?: number
+  deps?: string[] | undefined
+  regionId?: number | undefined
+  runCount?: number | undefined
+  lastDurationMs?: number | undefined
 }
 
 export interface LineTrace {
@@ -18,15 +18,15 @@ export interface LineTrace {
 
 export interface RegionInfoSerializable {
   id: number
-  startLine?: number
-  startColumn?: number
-  endLine?: number
-  endColumn?: number
+  startLine?: number | undefined
+  startColumn?: number | undefined
+  endLine?: number | undefined
+  endColumn?: number | undefined
   dependencies: string[]
   declarations: string[]
   hasControlFlow: boolean
   hasReactiveWrites: boolean
-  children?: RegionInfoSerializable[]
+  children?: RegionInfoSerializable[] | undefined
 }
 
 export interface AnalyzeDiagnostic {
@@ -35,8 +35,8 @@ export interface AnalyzeDiagnostic {
   severity: 'error' | 'warning' | 'info' | 'hint'
   line: number
   column: number
-  endLine?: number
-  endColumn?: number
+  endLine?: number | undefined
+  endColumn?: number | undefined
 }
 
 export interface ComponentAnalysis {
@@ -44,14 +44,14 @@ export interface ComponentAnalysis {
   startLine: number
   endLine: number
   trace: LineTrace[]
-  regions?: RegionInfoSerializable[]
+  regions?: RegionInfoSerializable[] | undefined
 }
 
 export interface AnalyzeOptions {
-  includeRegions?: boolean
-  includeDiagnostics?: boolean
-  verbosity?: 'minimal' | 'verbose'
-  compilerOptions?: Partial<FictCompilerOptions>
+  includeRegions?: boolean | undefined
+  includeDiagnostics?: boolean | undefined
+  verbosity?: 'minimal' | 'verbose' | undefined
+  compilerOptions?: Partial<FictCompilerOptions> | undefined
 }
 
 export interface AnalyzeResult {

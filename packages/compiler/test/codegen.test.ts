@@ -12,6 +12,7 @@ import {
   hasReactiveRegions,
 } from '../src/ir/codegen'
 import { analyzeReactiveScopes } from '../src/ir/scopes'
+import { firstFunction } from './hir-test-utils'
 
 const parseFile = (code: string) =>
   parseSync(code, {
@@ -47,7 +48,7 @@ describe('codegenWithScopes', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopes = analyzeReactiveScopes(hir.functions[0])
+    const scopes = analyzeReactiveScopes(firstFunction(hir))
     const result = codegenWithScopes(hir, scopes, t)
 
     expect(result.type).toBe('File')
@@ -123,7 +124,7 @@ describe('getRegionMetadataForFunction', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const metadata = getRegionMetadataForFunction(hir.functions[0])
+    const metadata = getRegionMetadataForFunction(firstFunction(hir))
 
     expect(Array.isArray(metadata)).toBe(true)
   })
@@ -138,7 +139,7 @@ describe('hasReactiveRegions', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const hasReactive = hasReactiveRegions(hir.functions[0])
+    const hasReactive = hasReactiveRegions(firstFunction(hir))
 
     expect(typeof hasReactive).toBe('boolean')
   })

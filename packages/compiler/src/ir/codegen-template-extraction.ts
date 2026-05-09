@@ -5,14 +5,14 @@ import type { Expression, JSXChild, JSXElementExpression } from './hir'
 export interface HIRBinding {
   type: 'attr' | 'child' | 'event' | 'key' | 'spread' | 'text'
   path: number[] // path to navigate from root to target node
-  name?: string // for attributes/events
-  expr?: Expression // the dynamic expression
-  exclude?: string[] // spread-only: keys overridden by following explicit attrs
-  eventOptions?: { capture?: boolean; passive?: boolean; once?: boolean }
-  resumable?: boolean
-  resumableExplicit?: boolean
+  name?: string | undefined // for attributes/events
+  expr?: Expression | undefined // the dynamic expression
+  exclude?: string[] | undefined // spread-only: keys overridden by following explicit attrs
+  eventOptions?: { capture?: boolean; passive?: boolean; once?: boolean } | undefined
+  resumable?: boolean | undefined
+  resumableExplicit?: boolean | undefined
   /** Namespace context at this binding's location (for dynamic children) */
-  namespace?: NamespaceContext
+  namespace?: NamespaceContext | undefined
 }
 
 export interface HIRTemplateExtractionResult {
@@ -20,9 +20,9 @@ export interface HIRTemplateExtractionResult {
   bindings: HIRBinding[]
   nodeCount: number
   /** Whether the root element is an SVG element (or child of SVG) */
-  isSVG?: boolean
+  isSVG?: boolean | undefined
   /** Whether the root element is a MathML element (or child of MathML) */
-  isMathML?: boolean
+  isMathML?: boolean | undefined
 }
 
 /** Namespace context type for template extraction */

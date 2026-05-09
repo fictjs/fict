@@ -46,7 +46,8 @@ function rangeContainsPreservedLine(
 ): boolean {
   if (preserve.length === 0) return false
   for (let index = start; index < end; index += 1) {
-    if (preserve.some(pattern => matchesPreservePattern(pattern, lines[index]))) {
+    const line = lines[index]
+    if (line !== undefined && preserve.some(pattern => matchesPreservePattern(pattern, line))) {
       return true
     }
   }

@@ -99,7 +99,7 @@ export function extractDelegatedEventData(
   expr: BabelCore.types.Expression,
   t: typeof BabelCore.types,
   options?: { isKnownHandlerIdentifier?: (name: string) => boolean },
-): { handler: BabelCore.types.Expression; data?: BabelCore.types.Expression } | null {
+): { handler: BabelCore.types.Expression; data?: BabelCore.types.Expression | undefined } | null {
   const isSimpleHandler = t.isIdentifier(expr) || t.isMemberExpression(expr)
   if (isSimpleHandler) {
     return { handler: expr }

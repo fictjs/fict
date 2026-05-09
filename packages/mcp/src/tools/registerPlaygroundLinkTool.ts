@@ -7,6 +7,7 @@ import { encodeSessionSnapshot } from '../playground/share'
 import { listPlaygroundTemplates } from '../playground/templates'
 import type {
   PlaygroundConfig,
+  PlaygroundConfigPatch,
   PlaygroundProfile,
   PlaygroundSessionSnapshot,
 } from '../playground/types'
@@ -49,10 +50,7 @@ export interface RegisterPlaygroundLinkToolOptions {
 
 function applyConfigPatch(
   base: PlaygroundConfig,
-  patch:
-    | Partial<Omit<PlaygroundConfig, 'profile'>>
-    | (Partial<Omit<PlaygroundConfig, 'profile'>> & { profile?: PlaygroundProfile })
-    | undefined,
+  patch: PlaygroundConfigPatch | undefined,
 ): PlaygroundConfig {
   if (!patch) return base
 

@@ -369,7 +369,7 @@ function toSSA(fn: HIRFunction): HIRFunction {
     const baseName = getSSABaseName(name)
     const stack = stacks.get(baseName)
     if (!stack || stack.length === 0) return name
-    return stack[stack.length - 1]
+    return stack[stack.length - 1] ?? name
   }
   const popName = (name: string) => {
     const baseName = getSSABaseName(name)

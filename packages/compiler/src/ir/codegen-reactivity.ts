@@ -92,7 +92,7 @@ export function getReactiveDependencies(expr: Expression, ctx: CodegenContext): 
 }
 
 interface HookInfoLike {
-  directAccessor?: string
+  directAccessor?: string | undefined
 }
 
 export interface TextExpressionOps {

@@ -57,7 +57,7 @@ import { VirtualList, shouldUseVirtualList } from './virtual-list'
 interface PanelState {
   isConnected: boolean
   fictDetected: boolean
-  fictVersion?: string
+  fictVersion?: string | undefined
   isInspecting: boolean
   activeTab: PanelTab
   signals: Map<number, SignalState>
@@ -94,7 +94,7 @@ interface ComponentTracePayload {
   startLine: number
   endLine: number
   lines: ComponentTraceLine[]
-  warnings?: string[]
+  warnings?: string[] | undefined
 }
 
 const state: PanelState = {
@@ -1879,7 +1879,9 @@ function renderPerformanceContent(): string {
   `
 }
 
-function getGraphItemsForType(type: GraphSelectableNodeType): { id: number; name?: string }[] {
+function getGraphItemsForType(
+  type: GraphSelectableNodeType,
+): { id: number; name?: string | undefined }[] {
   switch (type) {
     case 'computed':
       return Array.from(state.computeds.values())
@@ -1959,7 +1961,7 @@ function scheduleGraphRefresh(): void {
 
 function renderGraphNodeList(
   type: GraphSelectableNodeType,
-  items: { id: number; name?: string }[],
+  items: { id: number; name?: string | undefined }[],
 ): string {
   if (items.length === 0) {
     return '<div class="empty-message" style="height: 60px">No items</div>'
@@ -3127,10 +3129,9 @@ function renderActiveTabContent(): void {
 // Utility Functions
 // ============================================================================
 
-function filterItems<T extends { name?: string; id: number; type?: string }>(
-  items: T[],
-  query: string,
-): T[] {
+function filterItems<
+  T extends { name?: string | undefined; id: number; type?: string | undefined },
+>(items: T[], query: string): T[] {
   if (!query.trim()) return items
 
   // Generate display names for items without names for better search

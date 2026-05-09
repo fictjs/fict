@@ -16,9 +16,9 @@ const TRACE_FLOW_FLUSH_OFFSET = 1_000_000_000
 interface RangeStart {
   id: number
   timestamp: number
-  nodeId?: number
-  nodeType?: NodeType
-  nodeName?: string
+  nodeId?: number | undefined
+  nodeType?: NodeType | undefined
+  nodeName?: string | undefined
 }
 
 export interface PerformanceTrackSegment {
@@ -28,9 +28,9 @@ export interface PerformanceTrackSegment {
   duration: number
   label: string
   type: TimelineEventType
-  nodeId?: number
-  nodeType?: NodeType
-  nodeName?: string
+  nodeId?: number | undefined
+  nodeType?: NodeType | undefined
+  nodeName?: string | undefined
 }
 
 export interface PerformanceTrackLane {
@@ -71,10 +71,10 @@ interface TraceEvent {
   ts: number
   pid: number
   tid: number
-  dur?: number
-  s?: 't'
-  id?: number
-  args?: Record<string, unknown>
+  dur?: number | undefined
+  s?: 't' | undefined
+  id?: number | undefined
+  args?: Record<string, unknown> | undefined
 }
 
 export interface ChromeTraceFile {
@@ -578,8 +578,8 @@ function asFiniteNumber(value: unknown): number | undefined {
 }
 
 interface TimelineGroupContext {
-  batchGroupId?: number
-  flushGroupId?: number
+  batchGroupId?: number | undefined
+  flushGroupId?: number | undefined
 }
 
 function resolveTimelineGroupContext(

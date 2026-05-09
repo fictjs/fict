@@ -7,7 +7,7 @@
 
 export interface SearchableItem {
   id: number
-  name?: string
+  name?: string | undefined
   [key: string]: unknown
 }
 
@@ -24,16 +24,23 @@ export interface SearchMatch {
 
 export interface SearchOptions {
   /** Keys to search in (default: ['name']) */
-  keys?: string[]
+  keys?: string[] | undefined
   /** Minimum score threshold 0-1 (default: 0.3) */
-  threshold?: number
+  threshold?: number | undefined
   /** Whether to ignore case (default: true) */
-  ignoreCase?: boolean
+  ignoreCase?: boolean | undefined
   /** Maximum results to return (default: 100) */
-  limit?: number
+  limit?: number | undefined
 }
 
-const DEFAULT_OPTIONS: Required<SearchOptions> = {
+interface ResolvedSearchOptions {
+  keys: string[]
+  threshold: number
+  ignoreCase: boolean
+  limit: number
+}
+
+const DEFAULT_OPTIONS: ResolvedSearchOptions = {
   keys: ['name'],
   threshold: 0.3,
   ignoreCase: true,
@@ -147,7 +154,12 @@ export function fuzzySearch<T extends SearchableItem>(
   query: string,
   options: SearchOptions = {},
 ): SearchResult<T>[] {
-  const opts = { ...DEFAULT_OPTIONS, ...options }
+  const opts: ResolvedSearchOptions = {
+    keys: options.keys ?? DEFAULT_OPTIONS.keys,
+    threshold: options.threshold ?? DEFAULT_OPTIONS.threshold,
+    ignoreCase: options.ignoreCase ?? DEFAULT_OPTIONS.ignoreCase,
+    limit: options.limit ?? DEFAULT_OPTIONS.limit,
+  }
 
   if (!query.trim()) {
     // Return all items with max score when no query
@@ -213,7 +225,7 @@ export function filterItems<T extends SearchableItem>(
 export function highlightMatches(
   text: string,
   query: string,
-  options: { ignoreCase?: boolean; highlightClass?: string } = {},
+  options: { ignoreCase?: boolean | undefined; highlightClass?: string | undefined } = {},
 ): string {
   const { ignoreCase = true, highlightClass = 'search-highlight' } = options
 

@@ -78,7 +78,7 @@ export type StructuredNode =
       test: Expression
       consequent: StructuredNode
       alternate: StructuredNode | null
-      joinBlock?: BlockId
+      joinBlock?: BlockId | undefined
     }
   | {
       kind: 'while'
@@ -104,7 +104,7 @@ export type StructuredNode =
       kind: 'forOf'
       variable: string
       variableKind: 'const' | 'let' | 'var'
-      pattern?: LVal
+      pattern?: LVal | undefined
       iterable: Expression
       body: StructuredNode
     }
@@ -112,7 +112,7 @@ export type StructuredNode =
       kind: 'forIn'
       variable: string
       variableKind: 'const' | 'let' | 'var'
-      pattern?: LVal
+      pattern?: LVal | undefined
       object: Expression
       body: StructuredNode
     }
@@ -129,8 +129,8 @@ export type StructuredNode =
     }
   | { kind: 'return'; argument: Expression | null }
   | { kind: 'throw'; argument: Expression }
-  | { kind: 'break'; label?: string }
-  | { kind: 'continue'; label?: string }
+  | { kind: 'break'; label?: string | undefined }
+  | { kind: 'continue'; label?: string | undefined }
   | { kind: 'instruction'; instruction: Instruction }
   | {
       // Fallback: state machine representation for non-structurable CFGs
@@ -1201,7 +1201,7 @@ function structurizeSwitch(
   term: {
     kind: 'Switch'
     discriminant: Expression
-    cases: { test?: Expression; target: BlockId }[]
+    cases: { test?: Expression | undefined; target: BlockId }[]
   },
   outerJoin?: BlockId,
 ): StructuredNode {
@@ -1413,7 +1413,7 @@ function structurizeForOf(
     kind: 'ForOf'
     variable: string
     variableKind: 'const' | 'let' | 'var'
-    pattern?: LVal
+    pattern?: LVal | undefined
     iterable: Expression
     body: BlockId
     exit: BlockId
@@ -1459,7 +1459,7 @@ function structurizeForIn(
     kind: 'ForIn'
     variable: string
     variableKind: 'const' | 'let' | 'var'
-    pattern?: LVal
+    pattern?: LVal | undefined
     object: Expression
     body: BlockId
     exit: BlockId
@@ -1571,9 +1571,9 @@ function structurizeTry(
   term: {
     kind: 'Try'
     tryBlock: BlockId
-    catchBlock?: BlockId
-    catchParam?: string
-    finallyBlock?: BlockId
+    catchBlock?: BlockId | undefined
+    catchParam?: string | undefined
+    finallyBlock?: BlockId | undefined
     exit: BlockId
   },
   outerJoin?: BlockId,

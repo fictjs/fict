@@ -58,7 +58,7 @@ export interface Region {
   /** Child regions (for nested scopes) */
   children: Region[]
   /** Parent region ID if nested */
-  parentId?: number
+  parentId?: number | undefined
 }
 
 /**
@@ -111,7 +111,7 @@ function buildEffectCall(
   ctx: CodegenContext,
   t: typeof BabelCore.types,
   effectFn: BabelCore.types.Expression,
-  options?: { slot?: number; forceSlot?: boolean },
+  options?: { slot?: number | undefined; forceSlot?: boolean | undefined },
 ): BabelCore.types.CallExpression {
   if (ctx.inModule) {
     ctx.helpersUsed.add('effect')
@@ -134,10 +134,10 @@ function buildMemoCall(
   t: typeof BabelCore.types,
   memoFn: BabelCore.types.Expression,
   options?: {
-    slot?: number
-    name?: string
-    source?: string
-    internal?: boolean
+    slot?: number | undefined
+    name?: string | undefined
+    source?: string | undefined
+    internal?: boolean | undefined
   },
 ): BabelCore.types.CallExpression {
   const slot = options?.slot
@@ -814,14 +814,14 @@ interface RegionEmitContext {
   disabledRegions: Set<number>
   pendingInstructions: Map<number, Instruction[]>
   rootNode: StructuredNode
-  inlineUnownedInRegionBody?: boolean
+  inlineUnownedInRegionBody?: boolean | undefined
 }
 
 interface ControlFlowRegionState {
-  region?: Region
+  region?: Region | undefined
   partialRegionIds: Set<number>
-  hasUnownedInstructions?: boolean
-  ownedInstructionsByRegion?: Map<number, Instruction[]>
+  hasUnownedInstructions?: boolean | undefined
+  ownedInstructionsByRegion?: Map<number, Instruction[]> | undefined
 }
 
 function shouldDisablePartialRegions(node: StructuredNode): boolean {
@@ -954,7 +954,7 @@ function buildDirectRegionEmitCandidate(
   nodes: StructuredNode[],
   startIndex: number,
   state: ControlFlowRegionState,
-  instructionBuffer: { instr: Instruction; region?: Region }[],
+  instructionBuffer: { instr: Instruction; region?: Region | undefined }[],
   regionCtx?: RegionEmitContext,
 ): {
   region: Region
@@ -1189,7 +1189,7 @@ function lowerNodeWithRegionContext(
     case 'sequence': {
       const stmts: BabelCore.types.Statement[] = []
       // Collect instructions and emit regions as complete units
-      const instructionBuffer: { instr: Instruction; region?: Region }[] = []
+      const instructionBuffer: { instr: Instruction; region?: Region | undefined }[] = []
 
       for (let index = 0; index < node.nodes.length; index++) {
         const child = node.nodes[index]!
@@ -2306,7 +2306,7 @@ function instructionsMatch(a: Instruction, b: Instruction): boolean {
  * Flush pending instructions, emitting regions as needed
  */
 function flushInstructionBuffer(
-  buffer: { instr: Instruction; region?: Region }[],
+  buffer: { instr: Instruction; region?: Region | undefined }[],
   t: typeof BabelCore.types,
   ctx: CodegenContext,
   declaredVars: Set<string>,

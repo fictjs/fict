@@ -22,9 +22,9 @@ export type TraceMode = 'static' | 'compiler' | 'live'
 
 export interface LiveTraceLineUpdate {
   line: number
-  kind?: TraceMarkerKind
-  runCount?: number
-  lastDurationMs?: number
+  kind?: TraceMarkerKind | undefined
+  runCount?: number | undefined
+  lastDurationMs?: number | undefined
 }
 
 export interface FictDocumentAnalysis extends AnalyzeResult {

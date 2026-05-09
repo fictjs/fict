@@ -1,9 +1,6 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "exactOptionalPropertyTypes": false,
-    "noImplicitReturns": false,
-    "noUncheckedIndexedAccess": false,
     "rootDir": "../..",
     "types": ["chrome", "node"]
   },

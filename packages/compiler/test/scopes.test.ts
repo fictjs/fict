@@ -12,6 +12,7 @@ import {
   getLoopDependentScopes,
   needsVersionedMemo,
 } from '../src/ir/scopes'
+import { firstFunction } from './hir-test-utils'
 
 const parseFile = (code: string) =>
   parseSync(code, {
@@ -33,9 +34,11 @@ describe('analyzeReactiveScopes', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
     expect(res.scopes.length).toBeGreaterThan(0)
     const scope = res.scopes[0]
+    expect(scope).toBeDefined()
+    if (!scope) throw new Error('expected a scope')
     expect(scope.writes.has('x')).toBe(true)
     expect(scope.reads.has('x')).toBe(true)
   })
@@ -50,7 +53,7 @@ describe('analyzeOptionalChainDependencies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // Find scope that contains 'name' declaration
     const nameScope = res.byName.get('name')
@@ -69,7 +72,7 @@ describe('analyzeOptionalChainDependencies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const nameScope = res.byName.get('name')
     expect(nameScope).toBeDefined()
@@ -87,7 +90,7 @@ describe('analyzeOptionalChainDependencies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const xScope = res.byName.get('x')
     expect(xScope).toBeDefined()
@@ -106,7 +109,7 @@ describe('analyzeOptionalChainDependencies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const xScope = res.byName.get('x')
     expect(xScope).toBeDefined()
@@ -128,7 +131,7 @@ describe('analyzeControlFlowReads', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const analysis = analyzeControlFlowReads(hir.functions[0])
+    const analysis = analyzeControlFlowReads(firstFunction(hir))
 
     // 'x' is read in condition position
     expect(analysis.controlFlowReads.has('x') || analysis.mixedReads.has('x')).toBe(true)
@@ -142,7 +145,7 @@ describe('analyzeControlFlowReads', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const analysis = analyzeControlFlowReads(hir.functions[0])
+    const analysis = analyzeControlFlowReads(firstFunction(hir))
 
     // 'x' is only read in expression position
     expect(analysis.expressionOnlyReads.has('x') || analysis.mixedReads.has('x')).toBe(true)
@@ -158,7 +161,7 @@ describe('analyzeControlFlowReads', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const analysis = analyzeControlFlowReads(hir.functions[0])
+    const analysis = analyzeControlFlowReads(firstFunction(hir))
 
     // 'x' is read in both condition and expression positions
     expect(analysis.mixedReads.has('x')).toBe(true)
@@ -176,7 +179,7 @@ describe('analyzeControlFlowReads', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const analysis = analyzeControlFlowReads(hir.functions[0])
+    const analysis = analyzeControlFlowReads(firstFunction(hir))
 
     expect(analysis.controlFlowReads.has('day') || analysis.mixedReads.has('day')).toBe(true)
   })
@@ -192,7 +195,7 @@ describe('analyzeControlFlowReads', () => {
     `)
     const hir = buildHIR(ast)
     const reactiveVars = new Set(['count'])
-    const analysis = analyzeControlFlowReads(hir.functions[0], reactiveVars)
+    const analysis = analyzeControlFlowReads(firstFunction(hir), reactiveVars)
 
     expect(analysis.hasReactiveControlFlow).toBe(true)
   })
@@ -207,8 +210,8 @@ describe('analyzeControlFlowReads', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const scopeResult = analyzeReactiveScopes(hir.functions[0])
-    const cfAnalysis = analyzeControlFlowReads(hir.functions[0])
+    const scopeResult = analyzeReactiveScopes(firstFunction(hir))
+    const cfAnalysis = analyzeControlFlowReads(firstFunction(hir))
 
     // Create a mock scope with both dependencies
     const mockScope: ReactiveScope = {
@@ -246,7 +249,7 @@ describe('cross-region dependency edges', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // y depends on x
     const yScope = res.byName.get('y')
@@ -265,7 +268,7 @@ describe('cross-region dependency edges', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // Each scope should have its direct dependency
     const bScope = res.byName.get('b')
@@ -288,7 +291,7 @@ describe('cross-region dependency edges', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // d depends on both b and c
     const dScope = res.byName.get('d')
@@ -305,7 +308,7 @@ describe('cross-region dependency edges', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const sumScope = res.byName.get('sum')
     expect(sumScope).toBeDefined()
@@ -335,7 +338,7 @@ describe('nested scope hierarchies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // Result should be tracked across all nesting levels
     const resultScope = res.byName.get('result')
@@ -356,7 +359,7 @@ describe('nested scope hierarchies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const sumScope = res.byName.get('sum')
     expect(sumScope).toBeDefined()
@@ -378,7 +381,7 @@ describe('nested scope hierarchies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const countScope = res.byName.get('count')
     expect(countScope).toBeDefined()
@@ -402,7 +405,7 @@ describe('nested scope hierarchies', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const resultScope = res.byName.get('result')
     expect(resultScope).toBeDefined()
@@ -424,7 +427,7 @@ describe('closure capture analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // value is read in the handler closure
     expect(res.scopes.length).toBeGreaterThan(0)
@@ -439,7 +442,7 @@ describe('closure capture analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // multiplier is captured by the map callback
     const mappedScope = res.byName.get('mapped')
@@ -458,7 +461,7 @@ describe('closure capture analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // a is captured through nested closures
     expect(res.scopes.length).toBeGreaterThan(0)
@@ -475,7 +478,7 @@ describe('closure capture analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // count should be tracked
     expect(res.scopes.length).toBeGreaterThan(0)
@@ -495,7 +498,7 @@ describe('escaping variable analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // result escapes via return
     expect(res.escapingVars.has('result')).toBe(true)
@@ -509,7 +512,7 @@ describe('escaping variable analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // message escapes via JSX
     expect(res.escapingVars.has('message')).toBe(true)
@@ -524,7 +527,7 @@ describe('escaping variable analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // Scopes should be created
     expect(res.scopes.length).toBeGreaterThanOrEqual(0)
@@ -538,7 +541,7 @@ describe('escaping variable analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // extra escapes via object spread return
     expect(res.escapingVars.has('extra')).toBe(true)
@@ -558,7 +561,7 @@ describe('dependency path analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const nameScope = res.byName.get('name')
     expect(nameScope).toBeDefined()
@@ -573,7 +576,7 @@ describe('dependency path analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const valueScope = res.byName.get('value')
     expect(valueScope).toBeDefined()
@@ -589,7 +592,7 @@ describe('dependency path analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const itemsScope = res.byName.get('items')
     expect(itemsScope).toBeDefined()
@@ -605,7 +608,7 @@ describe('dependency path analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const sumScope = res.byName.get('sum')
     expect(sumScope).toBeDefined()
@@ -622,7 +625,7 @@ describe('dependency path analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const firstScope = res.byName.get('first')
     const lastScope = res.byName.get('last')
@@ -646,7 +649,7 @@ describe('SSA de-versioning in scope analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     // All versions should be tracked under same base name
     const xScope = res.byName.get('x')
@@ -667,7 +670,7 @@ describe('SSA de-versioning in scope analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const xScope = res.byName.get('x')
     expect(xScope).toBeDefined()
@@ -685,7 +688,7 @@ describe('SSA de-versioning in scope analysis', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const res = analyzeReactiveScopes(hir.functions[0])
+    const res = analyzeReactiveScopes(firstFunction(hir))
 
     const sumScope = res.byName.get('sum')
     expect(sumScope).toBeDefined()
@@ -709,7 +712,7 @@ describe('analyzeReactiveScopesWithSSA', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const result = analyzeReactiveScopesWithSSA(hir.functions[0])
+    const result = analyzeReactiveScopesWithSSA(firstFunction(hir))
 
     // Should have loop headers detected
     expect(result.cfgAnalysis.loopHeaders.size).toBeGreaterThan(0)
@@ -726,7 +729,7 @@ describe('analyzeReactiveScopesWithSSA', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const result = analyzeReactiveScopesWithSSA(hir.functions[0])
+    const result = analyzeReactiveScopesWithSSA(firstFunction(hir))
 
     // Loop-dependent scopes should be detected
     const loopScopes = getLoopDependentScopes(result)
@@ -744,7 +747,7 @@ describe('analyzeReactiveScopesWithSSA', () => {
       }
     `)
     const hir = buildHIR(ast)
-    const result = analyzeReactiveScopesWithSSA(hir.functions[0])
+    const result = analyzeReactiveScopesWithSSA(firstFunction(hir))
 
     // If there are scopes in loops with dependencies, they need versioned memo
     for (const scope of result.scopes) {

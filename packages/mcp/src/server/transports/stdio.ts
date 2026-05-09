@@ -3,9 +3,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createFictMcpServer } from '../createServer'
 
 export interface StartStdioServerOptions {
-  docsRoot?: string
-  docsManifestPath?: string
-  playgroundOrigin?: string
+  docsRoot?: string | undefined
+  docsManifestPath?: string | undefined
+  playgroundOrigin?: string | undefined
 }
 
 export async function startStdioServer(overrides: StartStdioServerOptions = {}): Promise<void> {

@@ -14,9 +14,9 @@ import { analyzeReactiveScopesWithSSA, type ReactiveScopeResult } from './scopes
 export type HookAccessorKind = 'signal' | 'memo'
 
 export interface HookReturnInfo {
-  objectProps?: Map<string, HookAccessorKind>
-  arrayProps?: Map<number, HookAccessorKind>
-  directAccessor?: HookAccessorKind
+  objectProps?: Map<string, HookAccessorKind> | undefined
+  arrayProps?: Map<number, HookAccessorKind> | undefined
+  directAccessor?: HookAccessorKind | undefined
 }
 
 export interface HookReturnInfoAnalysisOps {

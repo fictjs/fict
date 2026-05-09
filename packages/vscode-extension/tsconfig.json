@@ -15,8 +15,7 @@
     "noEmit": true,
     "declaration": false,
     "declarationMap": false,
-    "sourceMap": true,
-    "exactOptionalPropertyTypes": false
+    "sourceMap": true
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "test/**/*.ts", "vitest.config.ts"],
   "exclude": ["node_modules", "dist"]

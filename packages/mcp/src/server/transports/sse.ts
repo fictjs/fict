@@ -29,17 +29,17 @@ interface SessionEntry {
 }
 
 export interface StartSseHttpServerOptions extends CreateFictMcpServerOptions {
-  host?: string
-  port?: number
-  ssePath?: string
-  messagesPath?: string
-  healthPath?: string
-  statsPath?: string
-  enableCors?: boolean
-  corsOrigin?: string
-  authToken?: string
-  maxSessions?: number
-  sessionTtlMs?: number
+  host?: string | undefined
+  port?: number | undefined
+  ssePath?: string | undefined
+  messagesPath?: string | undefined
+  healthPath?: string | undefined
+  statsPath?: string | undefined
+  enableCors?: boolean | undefined
+  corsOrigin?: string | undefined
+  authToken?: string | undefined
+  maxSessions?: number | undefined
+  sessionTtlMs?: number | undefined
 }
 
 export interface SseHttpServerStats {

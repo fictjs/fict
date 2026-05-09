@@ -82,6 +82,7 @@ jobs:
 
       - run: pnpm install
       - run: pnpm guardrails:typecheck-config
+      - run: pnpm typecheck:strict-candidate
       - run: pnpm typecheck
       - run: pnpm typecheck:tests
 

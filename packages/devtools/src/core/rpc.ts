@@ -17,17 +17,17 @@ import { MessageSource } from './types'
 export interface RPCMessage<T = unknown> {
   source: MessageSource
   type: string
-  payload?: T
-  tabId?: number
+  payload?: T | undefined
+  tabId?: number | undefined
   timestamp: number
   /** Unique message ID for request/response correlation */
-  id?: string
+  id?: string | undefined
   /** For response messages, the ID of the request */
-  replyTo?: string
+  replyTo?: string | undefined
   /** Whether this is a response message */
-  isResponse?: boolean
+  isResponse?: boolean | undefined
   /** Error if the request failed */
-  error?: string
+  error?: string | undefined
 }
 
 /**
@@ -53,11 +53,11 @@ export interface RPCClientOptions {
   /** Message source identifier */
   source: MessageSource
   /** Request timeout in milliseconds */
-  timeout?: number
+  timeout?: number | undefined
   /** Custom transport (auto-detected if not provided) */
-  transport?: RPCTransport
+  transport?: RPCTransport | undefined
   /** Tab ID (for Chrome extension mode) */
-  tabId?: number
+  tabId?: number | undefined
 }
 
 /**
@@ -311,7 +311,7 @@ export class RPCClient {
   private source: MessageSource
   private transport: RPCTransport
   private timeout: number
-  private tabId?: number
+  private tabId: number | undefined
   private handlers = new Map<string, RPCHandler>()
   private pendingRequests = new Map<
     string,

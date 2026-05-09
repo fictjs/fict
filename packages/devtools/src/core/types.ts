@@ -42,19 +42,19 @@ export enum NodeFlag {
 export interface SignalState {
   id: number
   type: NodeType.Signal
-  name?: string
+  name?: string | undefined
   value: unknown
-  pendingValue?: unknown
-  previousValue?: unknown
+  pendingValue?: unknown | undefined
+  previousValue?: unknown | undefined
   updateCount: number
   createdAt: number
-  lastUpdatedAt?: number
+  lastUpdatedAt?: number | undefined
   /** IDs of nodes that depend on this signal */
   observers: number[]
   /** Source location info */
-  source?: SourceLocation
+  source?: SourceLocation | undefined
   /** Component that owns this signal */
-  ownerId?: number
+  ownerId?: number | undefined
 }
 
 // ============================================================================
@@ -64,12 +64,12 @@ export interface SignalState {
 export interface ComputedState {
   id: number
   type: NodeType.Computed
-  name?: string
+  name?: string | undefined
   value: unknown
-  previousValue?: unknown
+  previousValue?: unknown | undefined
   updateCount: number
   createdAt: number
-  lastUpdatedAt?: number
+  lastUpdatedAt?: number | undefined
   /** IDs of nodes this computed depends on */
   dependencies: number[]
   /** IDs of nodes that depend on this computed */
@@ -77,9 +77,9 @@ export interface ComputedState {
   /** Is the value stale/dirty */
   isDirty: boolean
   /** Source location info */
-  source?: SourceLocation
+  source?: SourceLocation | undefined
   /** Component that owns this computed */
-  ownerId?: number
+  ownerId?: number | undefined
 }
 
 // ============================================================================
@@ -89,12 +89,12 @@ export interface ComputedState {
 export interface EffectState {
   id: number
   type: NodeType.Effect
-  name?: string
+  name?: string | undefined
   runCount: number
   createdAt: number
-  lastRunAt?: number
+  lastRunAt?: number | undefined
   /** Duration of last run in ms */
-  lastRunDuration?: number
+  lastRunDuration?: number | undefined
   /** IDs of signals/computed this effect depends on */
   dependencies: number[]
   /** Is the effect currently active */
@@ -102,9 +102,9 @@ export interface EffectState {
   /** Has cleanup function */
   hasCleanup: boolean
   /** Source location info */
-  source?: SourceLocation
+  source?: SourceLocation | undefined
   /** Component that owns this effect */
-  ownerId?: number
+  ownerId?: number | undefined
 }
 
 // ============================================================================
@@ -116,11 +116,11 @@ export interface ComponentState {
   type: NodeType.Component
   name: string
   /** Parent component ID */
-  parentId?: number
+  parentId?: number | undefined
   /** Child component IDs */
   children: number[]
   /** Props passed to component */
-  props?: Record<string, unknown>
+  props?: Record<string, unknown> | undefined
   /** Signals owned by this component */
   signals: number[]
   /** Computed values owned by this component */
@@ -128,11 +128,11 @@ export interface ComponentState {
   /** Effects owned by this component */
   effects: number[]
   /** Root context this component belongs to */
-  rootId?: number
+  rootId?: number | undefined
   /** DOM elements rendered by this component */
-  elements?: HTMLElement[]
+  elements?: HTMLElement[] | undefined
   /** Source file location */
-  source?: SourceLocation
+  source?: SourceLocation | undefined
   /** Is component currently mounted */
   isMounted: boolean
   /** Render count */
@@ -148,7 +148,7 @@ export interface ComponentState {
 export interface RootState {
   id: number
   type: NodeType.Root
-  name?: string
+  name?: string | undefined
   /** Child component IDs */
   children: number[]
   /** Is currently suspended */
@@ -167,8 +167,8 @@ export interface SourceLocation {
   file: string
   line: number
   column: number
-  endLine?: number
-  endColumn?: number
+  endLine?: number | undefined
+  endColumn?: number | undefined
 }
 
 // ============================================================================
@@ -186,9 +186,9 @@ export interface DependencyGraphNode {
   /** IDs of nodes that depend on this (observers) */
   observers: number[]
   /** Current value (for signals/computed) */
-  value?: unknown
+  value?: unknown | undefined
   /** Is currently dirty/pending */
-  isDirty?: boolean
+  isDirty?: boolean | undefined
 }
 
 export interface DependencyGraph {
@@ -233,17 +233,17 @@ export interface TimelineEvent {
   type: TimelineEventType
   timestamp: number
   /** Related node ID */
-  nodeId?: number
+  nodeId?: number | undefined
   /** Node type */
-  nodeType?: NodeType
+  nodeType?: NodeType | undefined
   /** Node name */
-  nodeName?: string
+  nodeName?: string | undefined
   /** Additional event data */
-  data?: Record<string, unknown>
+  data?: Record<string, unknown> | undefined
   /** Duration for events with start/end */
-  duration?: number
+  duration?: number | undefined
   /** Group ID for related events */
-  groupId?: number
+  groupId?: number | undefined
 }
 
 // ============================================================================

@@ -64,6 +64,15 @@ function runCompiled(code: string): Record<string, (...args: unknown[]) => unkno
   return module.exports as Record<string, (...args: unknown[]) => unknown>
 }
 
+function compiledFunction(
+  mod: Record<string, (...args: unknown[]) => unknown>,
+  name: string,
+): (...args: unknown[]) => unknown {
+  const fn = mod[name]
+  if (!fn) throw new Error(`Expected compiled export ${name}`)
+  return fn
+}
+
 describe('state write expression semantics', () => {
   it('preserves JS return values for update/assignment expressions on $state', () => {
     const source = `
@@ -80,7 +89,7 @@ describe('state write expression semantics', () => {
     `
     const output = transformCommonJS(source)
     const mod = runCompiled(output)
-    const raw = mod.useStateWriteExpressionSemantics() as unknown[]
+    const raw = compiledFunction(mod, 'useStateWriteExpressionSemantics')() as unknown[]
     const values = raw.map(value =>
       typeof value === 'function' ? (value as () => unknown)() : value,
     )
@@ -104,7 +113,7 @@ describe('state write expression semantics', () => {
     `
     const output = transformCommonJS(source)
     const mod = runCompiled(output)
-    const raw = mod.useCompoundAssignmentSemantics() as unknown[]
+    const raw = compiledFunction(mod, 'useCompoundAssignmentSemantics')() as unknown[]
     const values = raw.map(value =>
       typeof value === 'function' ? (value as () => unknown)() : value,
     )
@@ -134,7 +143,7 @@ describe('state write expression semantics', () => {
     `
     const output = transformCommonJS(source)
     const mod = runCompiled(output)
-    const raw = mod.useComputedHookMemberWrites() as unknown[]
+    const raw = compiledFunction(mod, 'useComputedHookMemberWrites')() as unknown[]
     const values = raw.map(value =>
       typeof value === 'function' ? (value as () => unknown)() : value,
     )
@@ -154,7 +163,7 @@ describe('state write expression semantics', () => {
     `
     const output = transformCommonJS(source)
     const mod = runCompiled(output)
-    const raw = mod.useBigIntUpdateSemantics() as unknown[]
+    const raw = compiledFunction(mod, 'useBigIntUpdateSemantics')() as unknown[]
     const values = raw.map(value =>
       typeof value === 'function' ? (value as () => unknown)() : value,
     )

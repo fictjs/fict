@@ -38,7 +38,7 @@ export type ObjectSource =
   | { kind: 'local'; name: string }
   | { kind: 'imported'; module: string; name: string }
   | { kind: 'props' }
-  | { kind: 'store'; name?: string }
+  | { kind: 'store'; name?: string | undefined }
   | { kind: 'unknown' }
 
 /**

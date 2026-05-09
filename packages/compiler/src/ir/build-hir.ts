@@ -131,8 +131,13 @@ const rewriteObjectRestHelpers = (ast: BabelCore.types.File): void => {
           checkExpr.callee.name === OBJECT_DESTRUCTURING_EMPTY_HELPER &&
           checkExpr.arguments.length === 1
         ) {
-          const [checkArg] = checkExpr.arguments
-          if (isExpressionOrSpreadElement(checkArg) && isSameIdentifier(checkArg, sourceExpr)) {
+          const checkArg = checkExpr.arguments[0]
+          if (
+            checkArg &&
+            sourceExpr &&
+            isExpressionOrSpreadElement(checkArg) &&
+            isSameIdentifier(checkArg, sourceExpr)
+          ) {
             const restCall = t.callExpression(t.identifier('__fictPropsRest'), [
               t.cloneNode(sourceExpr, true),
               t.arrayExpression([]),
@@ -301,7 +306,8 @@ export function parseFictReturnAnnotation(
       const match = comment.value.match(/@fictReturn\s+(.+?)(?:\s*\*\/|\s*$|\n)/s)
       if (!match) continue
 
-      const content = match[1].trim()
+      const content = match[1]?.trim()
+      if (!content) continue
 
       // Direct accessor: 'signal' or 'memo'
       if (content === "'signal'" || content === '"signal"') {
@@ -321,11 +327,15 @@ export function parseFictReturnAnnotation(
       if (objectMatch) {
         const objectProps = new Map<string, 'signal' | 'memo'>()
         const propsStr = objectMatch[1]
+        if (!propsStr) continue
         // Parse key: 'value' pairs
         const propPattern = /(\w+)\s*:\s*['"]?(signal|memo)['"]?/g
         let propMatch
         while ((propMatch = propPattern.exec(propsStr)) !== null) {
-          objectProps.set(propMatch[1], propMatch[2] as 'signal' | 'memo')
+          const key = propMatch[1]
+          const value = propMatch[2]
+          if (!key || (value !== 'signal' && value !== 'memo')) continue
+          objectProps.set(key, value)
         }
         if (objectProps.size > 0) {
           return { objectProps }
@@ -337,11 +347,15 @@ export function parseFictReturnAnnotation(
       if (arrayMatch) {
         const arrayProps = new Map<number, 'signal' | 'memo'>()
         const propsStr = arrayMatch[1]
+        if (!propsStr) continue
         // Parse index: 'value' pairs
         const propPattern = /(\d+)\s*:\s*['"]?(signal|memo)['"]?/g
         let propMatch
         while ((propMatch = propPattern.exec(propsStr)) !== null) {
-          arrayProps.set(parseInt(propMatch[1], 10), propMatch[2] as 'signal' | 'memo')
+          const index = propMatch[1]
+          const value = propMatch[2]
+          if (!index || (value !== 'signal' && value !== 'memo')) continue
+          arrayProps.set(parseInt(index, 10), value)
         }
         if (arrayProps.size > 0) {
           return { arrayProps }
@@ -1829,8 +1843,8 @@ function handleExpressionStatement(
  */
 interface LoopContext {
   breakTarget: number
-  continueTarget?: number
-  label?: string
+  continueTarget?: number | undefined
+  label?: string | undefined
 }
 
 interface CFGBuildContext {

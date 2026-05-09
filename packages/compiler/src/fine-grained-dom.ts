@@ -51,8 +51,8 @@ export interface RegionCodegenOptions {
 }
 
 interface RegionApplyState {
-  identifierOverrides?: Record<string, () => BabelCore.types.Expression>
-  regionMetadata?: RegionMetadata
+  identifierOverrides?: Record<string, () => BabelCore.types.Expression> | undefined
+  regionMetadata?: RegionMetadata | undefined
 }
 
 /**

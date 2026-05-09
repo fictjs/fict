@@ -17,9 +17,9 @@ export interface VirtualListOptions<T> {
   /** Number of extra items to render above/below viewport */
   overscan?: number
   /** Callback when an item is clicked */
-  onItemClick?: (item: T, index: number, event: MouseEvent) => void
+  onItemClick?: ((item: T, index: number, event: MouseEvent) => void) | undefined
   /** CSS class for the scroll container */
-  containerClass?: string
+  containerClass?: string | undefined
 }
 
 export class VirtualList<T> {
@@ -28,7 +28,7 @@ export class VirtualList<T> {
   private itemHeight: number
   private renderItem: (item: T, index: number) => string
   private overscan: number
-  private onItemClick?: (item: T, index: number, event: MouseEvent) => void
+  private onItemClick: ((item: T, index: number, event: MouseEvent) => void) | undefined
 
   private scrollContainer: HTMLElement
   private contentWrapper: HTMLElement
@@ -107,7 +107,10 @@ export class VirtualList<T> {
 
     const index = parseInt(target.dataset.index || '-1', 10)
     if (index >= 0 && index < this.items.length) {
-      this.onItemClick(this.items[index], index, e)
+      const item = this.items[index]
+      if (item !== undefined) {
+        this.onItemClick(item, index, e)
+      }
     }
   }
 

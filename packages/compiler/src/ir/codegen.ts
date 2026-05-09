@@ -311,19 +311,19 @@ function withNoMemoAndDynamicHooks<T>(ctx: CodegenContext, fn: () => T): T {
 export interface CodegenContext {
   t: typeof BabelCore.types
   /** Compiler options (for feature toggles like lazyConditional). */
-  options?: FictCompilerOptions
+  options?: FictCompilerOptions | undefined
   /** Module-level declared names for helper shadowing checks. */
-  moduleDeclaredNames?: Set<string>
+  moduleDeclaredNames?: Set<string> | undefined
   /** Module-level runtime helper imports (e.g., from 'fict'). */
-  moduleRuntimeNames?: Set<string>
+  moduleRuntimeNames?: Set<string> | undefined
   /** Module-level runtime import map (local name -> imported name). */
-  moduleRuntimeImportMap?: Map<string, string>
+  moduleRuntimeImportMap?: Map<string, string> | undefined
   /** Module-level runtime namespace/default imports (local name). */
-  moduleRuntimeNamespaceImports?: Set<string>
+  moduleRuntimeNamespaceImports?: Set<string> | undefined
   /** Macro aliases for $state (compiler macro). */
-  stateMacroNames?: Set<string>
+  stateMacroNames?: Set<string> | undefined
   /** Local (function-scope) declared names for helper shadowing checks. */
-  localDeclaredNames?: Set<string>
+  localDeclaredNames?: Set<string> | undefined
   /** Tracks which runtime helpers are used */
   helpersUsed: Set<string>
   /** Counter for generating unique identifiers */
@@ -331,130 +331,130 @@ export interface CodegenContext {
   /** Set of tracked/reactive variable names (de-versioned) */
   trackedVars: Set<string>
   /** Identifiers shadowed in the current lowering scope (params/locals) */
-  shadowedNames?: Set<string>
+  shadowedNames?: Set<string> | undefined
   /** Reactive scope analysis results */
   scopes?: ReactiveScopeResult | undefined
   /** Whether a context object (__fictCtx) is needed */
-  needsCtx?: boolean
+  needsCtx?: boolean | undefined
   /** Whether local for-of helper is needed */
-  needsForOfHelper?: boolean
+  needsForOfHelper?: boolean | undefined
   /** Whether local for-in helper is needed */
-  needsForInHelper?: boolean
+  needsForInHelper?: boolean | undefined
   /** Control-flow dependencies per instruction (from CFG analysis) */
-  controlDepsByInstr?: Map<Instruction, Set<string>>
+  controlDepsByInstr?: Map<Instruction, Set<string>> | undefined
   /** Current region info for fine-grained DOM optimization */
-  currentRegion?: RegionInfo
+  currentRegion?: RegionInfo | undefined
   /** All regions for the current function */
-  regions?: RegionInfo[]
+  regions?: RegionInfo[] | undefined
   /** Alias variables that point to tracked signals (for reassignment guards) */
-  aliasVars?: Set<string>
+  aliasVars?: Set<string> | undefined
   /** Tracked bindings that exist outside the current lowering scope (e.g., captured signals) */
-  externalTracked?: Set<string>
+  externalTracked?: Set<string> | undefined
   /** Variables initialized with $store (need path-level reactivity, no getter transformation) */
-  storeVars?: Set<string>
+  storeVars?: Set<string> | undefined
   /** Namespace import metadata for reactive exports (used for obj.signal access) */
-  importedNamespaces?: Map<string, ModuleReactiveMetadata>
+  importedNamespaces?: Map<string, ModuleReactiveMetadata> | undefined
   /** Variables initialized with $state (signal accessors) */
-  signalVars?: Set<string>
+  signalVars?: Set<string> | undefined
   /** Variables assigned to function expressions (should not be treated as reactive accessors) */
-  functionVars?: Set<string>
+  functionVars?: Set<string> | undefined
   /** Variables that are memos (derived values) - these shouldn't be cached by getter cache */
-  memoVars?: Set<string>
+  memoVars?: Set<string> | undefined
   /** Memo call names (including aliases) that return accessors */
-  memoMacroNames?: Set<string>
+  memoMacroNames?: Set<string> | undefined
   /** Variables that are assigned after declaration (need mutable binding) */
-  mutatedVars?: Set<string>
+  mutatedVars?: Set<string> | undefined
   /** Whether we are emitting statements inside a region memo */
-  inRegionMemo?: boolean
+  inRegionMemo?: boolean | undefined
   /** Whether we are lowering a list item render callback */
-  inListRender?: boolean
+  inListRender?: boolean | undefined
   /** Whether we are lowering top-level module statements */
-  inModule?: boolean
+  inModule?: boolean | undefined
   /** Next explicit slot index for nested memo hooks */
-  nextHookSlot?: number
+  nextHookSlot?: number | undefined
   /** Disable numbered hook slots within dynamic iteration contexts */
-  dynamicHookSlotDepth?: number
+  dynamicHookSlotDepth?: number | undefined
   /**
    * Rule L: Getter cache for sync blocks.
    * Maps getter expression keys to their cached variable names.
    * When enabled, repeated reads of the same getter within a sync function
    * will use a cached value instead of calling the getter multiple times.
    */
-  getterCache?: Map<string, string>
+  getterCache?: Map<string, string> | undefined
   /** Pending cache declarations to insert at the start of a function body */
-  getterCacheDeclarations?: Map<string, BabelCore.types.Expression>
+  getterCacheDeclarations?: Map<string, BabelCore.types.Expression> | undefined
   /** Whether getter caching is enabled for the current scope */
-  getterCacheEnabled?: boolean
+  getterCacheEnabled?: boolean | undefined
   /** Disable memoization for the current function (\"use no memo\" directive) */
-  noMemo?: boolean
+  noMemo?: boolean | undefined
   /** Current expression recursion depth for stack overflow protection */
-  expressionDepth?: number
+  expressionDepth?: number | undefined
   /** Maximum allowed expression depth (default: 500) */
-  maxExpressionDepth?: number
+  maxExpressionDepth?: number | undefined
   /** Track non-reactive nested scopes (event handlers, effects) */
-  nonReactiveScopeDepth?: number
+  nonReactiveScopeDepth?: number | undefined
   /** Current assignment target name (for devtools metadata) */
-  currentAssignmentName?: string
+  currentAssignmentName?: string | undefined
   /** Depth counter for conditional child lowering (disable memo caching) */
-  inConditional?: number
+  inConditional?: number | undefined
   /** Whether we are lowering JSX props (enables prop getter wrapping) */
-  inPropsContext?: boolean
+  inPropsContext?: boolean | undefined
   /** Name of the props parameter for component lowering */
-  propsParamName?: string
+  propsParamName?: string | undefined
   /** Pending prop accessor declarations synthesized for props reads */
-  propAccessorDecls?: Map<string, BabelCore.types.Statement>
+  propAccessorDecls?: Map<string, BabelCore.types.Statement> | undefined
   /** Whether tracked expressions should be wrapped in runtime effects */
-  wrapTrackedExpressions?: boolean
+  wrapTrackedExpressions?: boolean | undefined
   /** Whether the current function is treated as a hook (preserve accessor returns) */
-  currentFnIsHook?: boolean
+  currentFnIsHook?: boolean | undefined
   /** Whether the current function is a component (PascalCase) */
-  isComponentFn?: boolean
+  isComponentFn?: boolean | undefined
   /** Whether we are lowering a return statement (for hook return preservation) */
-  inReturn?: boolean
+  inReturn?: boolean | undefined
   /** Cache of hook return accessor metadata keyed by hook name */
-  hookReturnInfo?: Map<string, HookReturnInfo>
+  hookReturnInfo?: Map<string, HookReturnInfo> | undefined
   /** Map of local variables bound to hook results (per function) */
-  hookResultVarMap?: Map<string, string>
+  hookResultVarMap?: Map<string, string> | undefined
   /** Program functions keyed by name for hook metadata lookup */
-  programFunctions?: Map<string, HIRFunction>
+  programFunctions?: Map<string, HIRFunction> | undefined
   /** Cache of hoisted template identifiers keyed by HTML string */
-  hoistedTemplates?: Map<string, BabelCore.types.Identifier>
+  hoistedTemplates?: Map<string, BabelCore.types.Identifier> | undefined
   /** Hoisted template declarations to insert at function/component scope */
-  hoistedTemplateStatements?: BabelCore.types.Statement[]
+  hoistedTemplateStatements?: BabelCore.types.Statement[] | undefined
   /** Hoisted resumable handler/export statements */
-  hoistedResumableStatements?: BabelCore.types.Statement[]
+  hoistedResumableStatements?: BabelCore.types.Statement[] | undefined
   /** Resumable handler counter */
-  resumableHandlerCounter?: number
+  resumableHandlerCounter?: number | undefined
   /** Resumable component counter */
-  resumableComponentCounter?: number
+  resumableComponentCounter?: number | undefined
   /** Resumable component metadata */
-  resumableComponents?: Map<string, { resumeExport: string; typeKey: string }>
+  resumableComponents?: Map<string, { resumeExport: string; typeKey: string }> | undefined
   /** Whether resumable output is enabled */
-  resumableEnabled?: boolean
+  resumableEnabled?: boolean | undefined
   /** Whether auto-extraction of handlers is enabled */
-  autoExtractEnabled?: boolean
+  autoExtractEnabled?: boolean | undefined
   /** Minimum AST node count for auto-extraction */
-  autoExtractThreshold?: number
+  autoExtractThreshold?: number | undefined
   /** Set of delegated events used (for hoisting delegateEvents call) */
-  delegatedEventsUsed?: Set<string>
+  delegatedEventsUsed?: Set<string> | undefined
   /** Component-scoped function definitions (variable name -> HIR expression) for handler dependency hoisting */
-  componentFunctionDefs?: Map<string, Expression>
+  componentFunctionDefs?: Map<string, Expression> | undefined
   /** Hoisted function dependency counter for unique naming */
-  hoistedFunctionDepCounter?: number
+  hoistedFunctionDepCounter?: number | undefined
   /** Map of hoisted function dep names (original name -> hoisted module-level name) */
-  hoistedFunctionDepNames?: Map<string, string>
+  hoistedFunctionDepNames?: Map<string, string> | undefined
   /** Parameter name for the list key constant (e.g., "__key") when in list render */
-  listKeyParamName?: string
+  listKeyParamName?: string | undefined
   /** The key expression HIR (e.g., row.id) for comparison when replacing with __key */
-  listKeyExpr?: Expression
+  listKeyExpr?: Expression | undefined
   /** The item parameter name in list render (e.g., "row") for key expression matching */
-  listItemParamName?: string
+  listItemParamName?: string | undefined
   /** Current namespace context for SVG/MathML element creation */
-  namespaceContext?: NamespaceContext
+  namespaceContext?: NamespaceContext | undefined
   /** Injected lowering operations used by regions.ts to avoid runtime import cycles */
-  regionLoweringOps?: RegionLoweringOps
+  regionLoweringOps?: RegionLoweringOps | undefined
   /** Dedupe set for control-flow re-execution diagnostics */
-  controlFlowReexecWarnings?: Set<string>
+  controlFlowReexecWarnings?: Set<string> | undefined
 }
 
 /**
@@ -2175,7 +2175,10 @@ function lowerDomExpression(
   expr: Expression,
   ctx: CodegenContext,
   region?: RegionInfo | null,
-  options?: { skipHookAccessors?: boolean; skipRegionRootOverride?: boolean },
+  options?: {
+    skipHookAccessors?: boolean | undefined
+    skipRegionRootOverride?: boolean | undefined
+  },
 ): BabelCore.types.Expression {
   let lowered = lowerExpression(expr, ctx)
   const skipHookAccessors = options?.skipHookAccessors ?? false
@@ -2367,7 +2370,7 @@ export function applyRegionMetadataToExpression(
   expr: BabelCore.types.Expression,
   ctx: CodegenContext,
   regionOverride?: RegionInfo | null,
-  options?: { skipRootOverride?: boolean },
+  options?: { skipRootOverride?: boolean | undefined },
 ): BabelCore.types.Expression {
   if (ctx.inReturn && ctx.currentFnIsHook) {
     return expr
@@ -2377,7 +2380,7 @@ export function applyRegionMetadataToExpression(
   const skipRootOverride = options?.skipRootOverride ?? false
 
   const metadata = regionInfoToMetadata(region)
-  const state: { identifierOverrides?: RegionOverrideMap } = {}
+  const state: { identifierOverrides?: RegionOverrideMap | undefined } = {}
 
   applyRegionMetadata(state, {
     region: metadata,

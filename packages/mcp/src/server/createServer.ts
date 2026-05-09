@@ -13,11 +13,11 @@ import { buildFictTaskPrompt } from '../tools/registerFictPrompts'
 import { registerPlaygroundLinkTool } from '../tools/registerPlaygroundLinkTool'
 
 export interface CreateFictMcpServerOptions {
-  docsRoot?: string
-  docsManifestPath?: string
-  playgroundOrigin?: string
-  serverName?: string
-  serverVersion?: string
+  docsRoot?: string | undefined
+  docsManifestPath?: string | undefined
+  playgroundOrigin?: string | undefined
+  serverName?: string | undefined
+  serverVersion?: string | undefined
 }
 
 function findDocsRoot(startDir: string): string {

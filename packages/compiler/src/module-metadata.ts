@@ -459,7 +459,7 @@ function resolveImportSource(
   source: string,
   importer: string | undefined,
   store: Map<string, ModuleReactiveMetadata>,
-  options?: { probeFs?: boolean; fsCache?: FsProbeCache },
+  options?: { probeFs?: boolean | undefined; fsCache?: FsProbeCache | undefined },
 ): string | undefined {
   if (!importer) return undefined
   const probeFs = options?.probeFs ?? true

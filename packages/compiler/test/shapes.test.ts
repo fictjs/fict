@@ -9,6 +9,7 @@ import {
   needsSpreadWrapping,
   printShapeAnalysis,
 } from '../src/ir'
+import { firstFunction } from './hir-test-utils'
 
 const parseFile = (code: string) =>
   parseSync(code, {
@@ -30,7 +31,7 @@ describe('Object Shape Lattice Analysis', () => {
       `)
       const hir = buildHIR(ast)
       expect(hir.functions.length).toBeGreaterThan(0)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const objShape = result.shapes.get('obj')
       expect(objShape).toBeDefined()
@@ -48,7 +49,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const subscriptions = getPropertySubscription('props', result)
       expect(subscriptions).toBeDefined()
@@ -66,7 +67,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const storeShape = result.shapes.get('store')
       expect(storeShape).toBeDefined()
@@ -87,7 +88,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('store', result)).toBe(false)
       const subscriptions = getPropertySubscription('store', result)
@@ -103,7 +104,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const propsShape = result.shapes.get('props')
       expect(propsShape).toBeDefined()
@@ -124,7 +125,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
       const subscriptions = getPropertySubscription('props', result)
@@ -147,7 +148,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
       const subscriptions = getPropertySubscription('props', result)
@@ -164,7 +165,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
       const subscriptions = getPropertySubscription('props', result)
@@ -180,7 +181,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
       const subscriptions = getPropertySubscription('props', result)
@@ -198,7 +199,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
       const subscriptions = getPropertySubscription('props', result)
@@ -216,7 +217,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
       const subscriptions = getPropertySubscription('props', result)
@@ -235,7 +236,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
       const subscriptions = getPropertySubscription('props', result)
@@ -254,7 +255,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
       const subscriptions = getPropertySubscription('props', result)
@@ -272,7 +273,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const propsShape = result.shapes.get('props')
       expect(propsShape).toBeDefined()
@@ -291,7 +292,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const propsShape = result.shapes.get('props')
       expect(propsShape).toBeDefined()
@@ -311,7 +312,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
       const subscriptions = getPropertySubscription('props', result)
@@ -330,7 +331,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
       const subscriptions = getPropertySubscription('props', result)
@@ -350,7 +351,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
       const subscriptions = getPropertySubscription('props', result)
@@ -371,7 +372,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const propsShape = result.shapes.get('props')
       expect(propsShape).toBeDefined()
@@ -386,7 +387,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const propsShape = result.shapes.get('props')
       expect(propsShape).toBeDefined()
@@ -401,7 +402,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const propsShape = result.shapes.get('props')
       expect(propsShape).toBeDefined()
@@ -416,7 +417,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const propsShape = result.shapes.get('props')
       expect(propsShape).toBeDefined()
@@ -433,7 +434,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const objShape = result.shapes.get('obj')
       expect(objShape).toBeDefined()
@@ -448,7 +449,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const propsShape = result.shapes.get('props')
       expect(propsShape).toBeDefined()
@@ -464,7 +465,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(false)
       const subscriptions = getPropertySubscription('props', result)
@@ -481,7 +482,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       expect(shouldUseWholeObjectSubscription('props', result)).toBe(true)
     })
@@ -495,7 +496,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       // Should track access to 'user' on props
       const subscriptions = getPropertySubscription('props', result)
@@ -510,7 +511,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const subscriptions = getPropertySubscription('props', result)
       expect(subscriptions).toBeDefined()
@@ -525,7 +526,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const propsShape = result.shapes.get('props')
       expect(propsShape).toBeDefined()
@@ -540,7 +541,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const subscriptions = getPropertySubscription('props', result)
       expect(subscriptions).toBeDefined()
@@ -559,7 +560,7 @@ describe('Object Shape Lattice Analysis', () => {
         }
       `)
       const hir = buildHIR(ast)
-      const result = analyzeObjectShapes(hir.functions[0])
+      const result = analyzeObjectShapes(firstFunction(hir))
 
       const output = printShapeAnalysis(result)
       expect(output).toContain('Object Shape Analysis')

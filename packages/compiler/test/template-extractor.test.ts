@@ -25,6 +25,12 @@ describe('extractStaticHtml', () => {
     return jsx
   }
 
+  const firstBinding = (params: ReturnType<typeof extractStaticHtml>) => {
+    const binding = params.bindings[0]
+    if (!binding) throw new Error('Expected first binding')
+    return binding
+  }
+
   it('extracts simple static HTML', () => {
     const code = '<div id="test" class="foo">Hello</div>'
     const params = extractStaticHtml(parseJSX(code), t)
@@ -46,9 +52,10 @@ describe('extractStaticHtml', () => {
     expect(params.html).toBe('<div></div>')
     expect(params.hasDynamic).toBe(true)
     expect(params.bindings).toHaveLength(1)
-    expect(params.bindings[0].type).toBe('attr')
-    expect(params.bindings[0].name).toBe('id')
-    expect(params.bindings[0].path).toEqual([]) // root element
+    const binding = firstBinding(params)
+    expect(binding.type).toBe('attr')
+    expect(binding.name).toBe('id')
+    expect(binding.path).toEqual([]) // root element
   })
 
   it('handles child expressions with correct paths', () => {
@@ -61,8 +68,9 @@ describe('extractStaticHtml', () => {
     )
     expect(params.hasDynamic).toBe(true)
     expect(params.bindings).toHaveLength(1)
-    expect(params.bindings[0].type).toBe('child')
-    expect(params.bindings[0].path).toEqual([1])
+    const binding = firstBinding(params)
+    expect(binding.type).toBe('child')
+    expect(binding.path).toEqual([1])
   })
 
   it('handles nested structures and paths', () => {
@@ -74,7 +82,8 @@ describe('extractStaticHtml', () => {
     expect(params.html).toBe('<ul><li><!--fict:slot:start--><!--fict:slot:end--></li></ul>')
     expect(params.hasDynamic).toBe(true)
     expect(params.bindings).toHaveLength(1)
-    expect(params.bindings[0].type).toBe('child')
-    expect(params.bindings[0].path).toEqual([0, 0])
+    const binding = firstBinding(params)
+    expect(binding.type).toBe('child')
+    expect(binding.path).toEqual([0, 0])
   })
 })

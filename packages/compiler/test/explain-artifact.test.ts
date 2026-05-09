@@ -30,12 +30,15 @@ describe('compiler explain artifact', () => {
     )
 
     expect(artifacts).toHaveLength(1)
-    expect(artifacts[0]).toMatchObject({
+    const artifact = artifacts[0]
+    expect(artifact).toBeDefined()
+    if (!artifact) throw new Error('expected explain artifact')
+    expect(artifact).toMatchObject({
       version: 1,
     })
-    expect(artifacts[0].fileName).toMatch(/explain\.tsx$/)
-    expect(artifacts[0].helpers).toContain('__fictUseSignal')
-    expect(artifacts[0].events.map(event => event.kind)).toEqual(
+    expect(artifact.fileName).toMatch(/explain\.tsx$/)
+    expect(artifact.helpers).toContain('__fictUseSignal')
+    expect(artifact.events.map(event => event.kind)).toEqual(
       expect.arrayContaining([
         'source-signal',
         'source-control-flow',
@@ -44,7 +47,7 @@ describe('compiler explain artifact', () => {
         'diagnostic',
       ]),
     )
-    expect(artifacts[0].diagnostics.map(diagnostic => diagnostic.code)).toContain('FICT-H')
+    expect(artifact.diagnostics.map(diagnostic => diagnostic.code)).toContain('FICT-H')
   })
 
   it('attaches the artifact to Babel metadata when explain is true', () => {

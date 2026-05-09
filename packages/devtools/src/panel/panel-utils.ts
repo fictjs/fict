@@ -3,7 +3,7 @@ import type { DependencyGraph, DependencyGraphNode } from '../core/types'
 export type GraphSelectableNodeType = 'signal' | 'computed' | 'effect'
 
 interface ComponentWithParent {
-  parentId?: number
+  parentId?: number | undefined
 }
 
 function parseNodeId(value: unknown): number | null {

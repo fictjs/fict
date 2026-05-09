@@ -86,6 +86,12 @@ const runCompiled = (code: string) => {
   return module.exports as Record<string, (...args: unknown[]) => unknown>
 }
 
+const compiledFunction = (mod: Record<string, (...args: unknown[]) => unknown>, name: string) => {
+  const fn = mod[name]
+  if (!fn) throw new Error(`Expected compiled export ${name}`)
+  return fn
+}
+
 describe('destructuring semantic alignment', () => {
   it('preserves parameter object destructuring defaults and rest', () => {
     const source = `
@@ -95,9 +101,10 @@ describe('destructuring semantic alignment', () => {
     `
     const output = transformCommonJS(source)
     const mod = runCompiled(output)
-    expect(mod.paramObject(undefined)).toEqual([10, 20, 30])
-    expect(mod.paramObject({})).toEqual([1, 2, 0])
-    expect(mod.paramObject({ a: 5, b: { c: 7 }, d: 9 })).toEqual([5, 7, 9])
+    const paramObject = compiledFunction(mod, 'paramObject')
+    expect(paramObject(undefined)).toEqual([10, 20, 30])
+    expect(paramObject({})).toEqual([1, 2, 0])
+    expect(paramObject({ a: 5, b: { c: 7 }, d: 9 })).toEqual([5, 7, 9])
   })
 
   it('preserves parameter array destructuring defaults and rest', () => {
@@ -108,9 +115,10 @@ describe('destructuring semantic alignment', () => {
     `
     const output = transformCommonJS(source)
     const mod = runCompiled(output)
-    expect(mod.paramArray(undefined)).toEqual([3, 4, 1])
-    expect(mod.paramArray([undefined, 2])).toEqual([1, 2, 0])
-    expect(mod.paramArray([9, 8, 7, 6])).toEqual([9, 8, 2])
+    const paramArray = compiledFunction(mod, 'paramArray')
+    expect(paramArray(undefined)).toEqual([3, 4, 1])
+    expect(paramArray([undefined, 2])).toEqual([1, 2, 0])
+    expect(paramArray([9, 8, 7, 6])).toEqual([9, 8, 2])
   })
 
   it('preserves nested destructuring in variable declarations', () => {
@@ -122,9 +130,10 @@ describe('destructuring semantic alignment', () => {
     `
     const output = transformCommonJS(source)
     const mod = runCompiled(output)
-    expect(mod.nestedDecl({ a: {} })).toEqual([1, 3])
-    expect(mod.nestedDecl({ a: { b: 5 }, c: 9 })).toEqual([5, 9])
-    expect(mod.nestedDecl({})).toEqual([2, 3])
+    const nestedDecl = compiledFunction(mod, 'nestedDecl')
+    expect(nestedDecl({ a: {} })).toEqual([1, 3])
+    expect(nestedDecl({ a: { b: 5 }, c: 9 })).toEqual([5, 9])
+    expect(nestedDecl({})).toEqual([2, 3])
   })
 
   it('preserves defaults in destructuring assignments', () => {
@@ -138,8 +147,9 @@ describe('destructuring semantic alignment', () => {
     `
     const output = transformCommonJS(source)
     const mod = runCompiled(output)
-    expect(mod.assign({ a: 1 }, [undefined])).toEqual([1, 2, 5])
-    expect(mod.assign({ a: 4, b: 6 }, [9])).toEqual([4, 6, 9])
+    const assign = compiledFunction(mod, 'assign')
+    expect(assign({ a: 1 }, [undefined])).toEqual([1, 2, 5])
+    expect(assign({ a: 4, b: 6 }, [9])).toEqual([4, 6, 9])
   })
 
   it('preserves nested function parameter patterns and defaults', () => {
@@ -159,7 +169,8 @@ describe('destructuring semantic alignment', () => {
     `
     const output = transformCommonJS(source)
     const mod = runCompiled(output)
-    expect(mod.nestedParams()).toEqual([
+    const nestedParams = compiledFunction(mod, 'nestedParams')
+    expect(nestedParams()).toEqual([
       [10, 20, 30],
       [1, 2, 0],
       [5, 7, 9],

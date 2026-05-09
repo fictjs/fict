@@ -15,13 +15,13 @@ interface CliOptions {
   healthPath: string
   statsPath: string
   enableCors: boolean
-  corsOrigin?: string
-  authToken?: string
+  corsOrigin?: string | undefined
+  authToken?: string | undefined
   maxSessions: number
   sessionTtlMs: number
-  docsRoot?: string
-  docsManifestPath?: string
-  playgroundOrigin?: string
+  docsRoot?: string | undefined
+  docsManifestPath?: string | undefined
+  playgroundOrigin?: string | undefined
 }
 
 type CliStringFlag =

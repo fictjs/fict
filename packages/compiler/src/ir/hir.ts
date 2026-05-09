@@ -63,10 +63,10 @@ export class HIRError extends Error {
     message: string,
     public readonly code: HIRErrorCode,
     public readonly context?: {
-      blockId?: BlockId
-      variable?: string
-      file?: string
-      line?: number
+      blockId?: BlockId | undefined
+      variable?: string | undefined
+      file?: string | undefined
+      line?: number | undefined
     },
   ) {
     super(`[HIR] ${message}`)
@@ -108,7 +108,7 @@ export type HIRErrorCode =
 export type BlockId = number
 
 export interface SourceInfo {
-  loc?: SourceLocation | null
+  loc?: SourceLocation | null | undefined
 }
 
 /**
@@ -162,25 +162,25 @@ export function isSSAName(name: string): boolean {
 
 /** Terminator of a basic block */
 export type Terminator =
-  | ({ kind: 'Return'; argument?: Expression } & SourceInfo)
+  | ({ kind: 'Return'; argument?: Expression | undefined } & SourceInfo)
   | ({ kind: 'Throw'; argument: Expression } & SourceInfo)
   | ({ kind: 'Jump'; target: BlockId } & SourceInfo)
   | ({ kind: 'Branch'; test: Expression; consequent: BlockId; alternate: BlockId } & SourceInfo)
   | ({
       kind: 'Switch'
       discriminant: Expression
-      cases: { test?: Expression; target: BlockId }[]
+      cases: { test?: Expression | undefined; target: BlockId }[]
     } & SourceInfo)
   | ({ kind: 'Unreachable' } & SourceInfo)
-  | ({ kind: 'Break'; target: BlockId; label?: string } & SourceInfo)
-  | ({ kind: 'Continue'; target: BlockId; label?: string } & SourceInfo)
+  | ({ kind: 'Break'; target: BlockId; label?: string | undefined } & SourceInfo)
+  | ({ kind: 'Continue'; target: BlockId; label?: string | undefined } & SourceInfo)
   | ({
       kind: 'ForOf'
       variable: string
       /** Variable declaration kind (const, let, var) */
       variableKind: 'const' | 'let' | 'var'
       /** Original pattern for destructuring (stored as Babel AST node) */
-      pattern?: LVal
+      pattern?: LVal | undefined
       iterable: Expression
       body: BlockId
       exit: BlockId
@@ -191,7 +191,7 @@ export type Terminator =
       /** Variable declaration kind (const, let, var) */
       variableKind: 'const' | 'let' | 'var'
       /** Original pattern for destructuring (stored as Babel AST node) */
-      pattern?: LVal
+      pattern?: LVal | undefined
       object: Expression
       body: BlockId
       exit: BlockId
@@ -199,9 +199,9 @@ export type Terminator =
   | ({
       kind: 'Try'
       tryBlock: BlockId
-      catchBlock?: BlockId
-      catchParam?: string
-      finallyBlock?: BlockId
+      catchBlock?: BlockId | undefined
+      catchParam?: string | undefined
+      finallyBlock?: BlockId | undefined
       exit: BlockId
     } & SourceInfo)
 
@@ -210,7 +210,7 @@ export interface AssignInstruction extends SourceInfo {
   kind: 'Assign'
   target: Identifier
   value: Expression
-  declarationKind?: 'const' | 'let' | 'var' | 'function'
+  declarationKind?: 'const' | 'let' | 'var' | 'function' | undefined
 }
 
 export interface ExpressionInstruction extends SourceInfo {
@@ -296,7 +296,7 @@ export interface CallExpression extends SourceInfo {
   callee: Expression
   arguments: Expression[]
   /** Optional purity hint (e.g., from @__PURE__ annotations) */
-  pure?: boolean
+  pure?: boolean | undefined
 }
 
 export interface MemberExpression extends SourceInfo {
@@ -304,7 +304,7 @@ export interface MemberExpression extends SourceInfo {
   object: Expression
   property: Expression
   computed: boolean
-  optional?: boolean
+  optional?: boolean | undefined
 }
 
 /**
@@ -448,14 +448,14 @@ export interface ArrayExpression extends SourceInfo {
 export interface ObjectProperty extends SourceInfo {
   kind: 'Property'
   key: Expression
-  computed?: boolean
+  computed?: boolean | undefined
   value: Expression
-  shorthand?: boolean
+  shorthand?: boolean | undefined
   /**
    * Property kind for object methods/getters/setters.
    * Undefined or 'init' indicates a standard property initializer.
    */
-  propertyKind?: 'init' | 'method' | 'get' | 'set'
+  propertyKind?: 'init' | 'method' | 'get' | 'set' | undefined
 }
 
 export interface ObjectExpression extends SourceInfo {
@@ -474,42 +474,42 @@ export interface JSXElementExpression extends SourceInfo {
 export interface JSXAttribute extends SourceInfo {
   name: string
   value: Expression | null // null means boolean attribute
-  isSpread?: boolean
-  spreadExpr?: Expression
+  isSpread?: boolean | undefined
+  spreadExpr?: Expression | undefined
 }
 
 export type JSXChild =
-  | { kind: 'text'; value: string; loc?: SourceLocation | null }
-  | { kind: 'expression'; value: Expression; loc?: SourceLocation | null }
-  | { kind: 'element'; value: JSXElementExpression; loc?: SourceLocation | null }
+  | { kind: 'text'; value: string; loc?: SourceLocation | null | undefined }
+  | { kind: 'expression'; value: Expression; loc?: SourceLocation | null | undefined }
+  | { kind: 'element'; value: JSXElementExpression; loc?: SourceLocation | null | undefined }
 
 export interface ArrowFunctionExpression extends SourceInfo {
   kind: 'ArrowFunction'
   params: Identifier[]
   /** Original Babel param AST nodes for preserving patterns/rest params */
-  rawParams?: BabelParamNode[]
+  rawParams?: BabelParamNode[] | undefined
   body: Expression | BasicBlock[]
   isExpression: boolean // true if body is Expression, false if block
-  isAsync?: boolean
-  noMemo?: boolean
-  pure?: boolean
+  isAsync?: boolean | undefined
+  noMemo?: boolean | undefined
+  pure?: boolean | undefined
   /** Marks this function as a reactive scope callback (e.g., renderHook(() => ...)). */
-  reactiveScope?: string
+  reactiveScope?: string | undefined
 }
 
 export interface FunctionExpression extends SourceInfo {
   kind: 'FunctionExpression'
-  name?: string
+  name?: string | undefined
   params: Identifier[]
   /** Original Babel param AST nodes for preserving patterns/rest params */
-  rawParams?: BabelParamNode[]
+  rawParams?: BabelParamNode[] | undefined
   body: BasicBlock[]
-  isAsync?: boolean
-  isGenerator?: boolean
-  noMemo?: boolean
-  pure?: boolean
+  isAsync?: boolean | undefined
+  isGenerator?: boolean | undefined
+  noMemo?: boolean | undefined
+  pure?: boolean | undefined
   /** Marks this function as a reactive scope callback (e.g., renderHook(() => ...)). */
-  reactiveScope?: string
+  reactiveScope?: string | undefined
 }
 
 export interface AssignmentExpression extends SourceInfo {
@@ -565,7 +565,7 @@ export interface OptionalCallExpression extends SourceInfo {
   arguments: Expression[]
   optional: boolean
   /** Optional purity hint (e.g., from @__PURE__ annotations) */
-  pure?: boolean
+  pure?: boolean | undefined
 }
 
 export interface TaggedTemplateExpression extends SourceInfo {
@@ -576,8 +576,8 @@ export interface TaggedTemplateExpression extends SourceInfo {
 
 export interface ClassExpression extends SourceInfo {
   kind: 'ClassExpression'
-  name?: string
-  superClass?: Expression
+  name?: string | undefined
+  superClass?: Expression | undefined
   /** Class body elements - stored as Babel AST nodes */
   body: BabelClassMember[]
 }
@@ -610,38 +610,40 @@ export interface LabeledStatementMeta {
    * Explicit exit boundary for generic labeled statements.
    * Loop/switch labels don't need this because their hosts are structurized directly.
    */
-  exitBlock?: BlockId
+  exitBlock?: BlockId | undefined
 }
 
 export interface HIRFunction extends SourceInfo {
-  name?: string
+  name?: string | undefined
   params: Identifier[]
   blocks: BasicBlock[]
   /** Original Babel param AST nodes for proper props pattern lowering */
-  rawParams?: BabelParamNode[]
+  rawParams?: BabelParamNode[] | undefined
   /** Optional SSA version map for consumers */
-  ssaMap?: Map<string, number>
+  ssaMap?: Map<string, number> | undefined
   /** Optional metadata about the origin of this function */
-  meta?: {
-    fromExpression?: boolean
-    isArrow?: boolean
-    hasExpressionBody?: boolean
-    isAsync?: boolean
-    isGenerator?: boolean
-    noMemo?: boolean
-    pure?: boolean
-    /**
-     * Hook return info parsed from @fictReturn JSDoc annotation.
-     * Allows cross-module hook return type declarations.
-     */
-    hookReturnInfo?: {
-      objectProps?: Map<string, 'signal' | 'memo'>
-      arrayProps?: Map<number, 'signal' | 'memo'>
-      directAccessor?: 'signal' | 'memo'
-    }
-    /** Labels attached to structured hosts or explicit labeled-statement entry blocks. */
-    labeledStatements?: Map<BlockId, LabeledStatementMeta>
-  }
+  meta?:
+    | {
+        fromExpression?: boolean | undefined
+        isArrow?: boolean | undefined
+        hasExpressionBody?: boolean | undefined
+        isAsync?: boolean | undefined
+        isGenerator?: boolean | undefined
+        noMemo?: boolean | undefined
+        pure?: boolean | undefined
+        /**
+         * Hook return info parsed from @fictReturn JSDoc annotation.
+         * Allows cross-module hook return type declarations.
+         */
+        hookReturnInfo?: {
+          objectProps?: Map<string, 'signal' | 'memo'> | undefined
+          arrayProps?: Map<number, 'signal' | 'memo'> | undefined
+          directAccessor?: 'signal' | 'memo' | undefined
+        }
+        /** Labels attached to structured hosts or explicit labeled-statement entry blocks. */
+        labeledStatements?: Map<BlockId, LabeledStatementMeta> | undefined
+      }
+    | undefined
 }
 
 export interface HIRProgram {

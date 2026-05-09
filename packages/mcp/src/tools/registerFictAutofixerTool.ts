@@ -18,18 +18,22 @@ interface Issue {
   severity: IssueSeverity
   message: string
   file: string
-  suggestion?: string
-  range?: {
-    start: {
-      line: number
-      col: number
-    }
-    end?: {
-      line: number
-      col: number
-    }
-  }
-  doc_refs?: string[]
+  suggestion?: string | undefined
+  range?:
+    | {
+        start: {
+          line: number
+          col: number
+        }
+        end?:
+          | {
+              line: number
+              col: number
+            }
+          | undefined
+      }
+    | undefined
+  doc_refs?: string[] | undefined
 }
 
 const DEFAULT_PROFILE: AutofixerProfile = 'app-default'
@@ -860,7 +864,6 @@ async function collectTypeScriptIssues(files: Record<string, string>): Promise<I
         jsx: ts.JsxEmit.Preserve,
         strict: true,
       },
-      transformers: undefined,
       jsDocParsingMode: ts.JSDocParsingMode.ParseForTypeErrors,
     })
 
