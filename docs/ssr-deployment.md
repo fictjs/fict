@@ -67,8 +67,8 @@ Use this **Experimental Preview** API when you want static shell caching plus dy
 ## 5) Manifest Handling
 
 - Universal-safe: pass `manifest` as object.
-- Path string (`manifest: '/path/to/fict.manifest.json'`) is supported in Node/Deno environments with filesystem access.
-- In Edge runtimes, prefer object form loaded at startup/bundle-time.
+- Path string (`manifest: '/path/to/fict.manifest.json'`) is a synchronous convenience for Deno deployments with `Deno.readTextFileSync` and Node CommonJS environments where `require('node:fs')` is available.
+- In Node ESM and Edge runtimes, prefer object form loaded at startup/bundle-time.
 - Manifest options are scoped to the active SSR render session. Concurrent or nested renders can use different manifest objects without overwriting `globalThis.__FICT_MANIFEST__`; the global manifest remains a non-SSR/client fallback.
 
 ## 6) Platform Notes

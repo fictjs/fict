@@ -80,7 +80,9 @@ export interface RenderToStringOptions {
   /**
    * Manifest mapping module URLs to built client chunk URLs.
    * Can be an object or a path to a JSON file.
-   * File path mode requires Node.js or Deno filesystem access.
+   * File path mode requires Deno sync filesystem access or a CommonJS
+   * environment where `require('node:fs')` is available. Pass an object when
+   * rendering from Node ESM or edge runtimes.
    */
   manifest?: Record<string, string> | string
   /**

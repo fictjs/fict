@@ -143,8 +143,8 @@ function readTextFileFromPath(path: string): string {
   }
 
   throw new Error(
-    '[fict/ssr] `manifest` as file path is only supported in Node.js or Deno. ' +
-      'Pass a manifest object in edge runtimes.',
+    '[fict/ssr] `manifest` as file path is only supported when Deno.readTextFileSync or CommonJS require is available. ' +
+      'Pass a manifest object in Node ESM or edge runtimes.',
   )
 }
 

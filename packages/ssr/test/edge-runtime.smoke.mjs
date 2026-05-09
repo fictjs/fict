@@ -70,7 +70,7 @@ async function run() {
         }),
         { manifest: '/tmp/fict-manifest.json' },
       ),
-    /manifest.*file path.*Node\.js or Deno/i,
+    /manifest.*file path.*CommonJS require/i,
   )
 }
 
