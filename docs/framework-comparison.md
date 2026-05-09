@@ -4,7 +4,11 @@
 
 ## 1. Executive Summary
 
-**Fict** positions itself as a "Fiction-first" UI library. Its core philosophy distinguishes between **Reality** (domain state) and **Fiction** (UI narrative). Technically, it is a **compiler-driven, fine-grained reactive library** written in standard TSX but compiled into a Signal Graph, thereby eliminating the Virtual DOM (VDOM).
+**Fict** positions itself as a compiler-driven fine-grained reactive library
+written in standard TSX. Its practical product claim is **React-like authoring
+with a Solid-style dependency graph and compile-time reactivity guarantees**.
+It is not positioned as the smallest runtime or as a benchmark-only Solid
+replacement.
 
 - **Core Innovation**: "Implicit Reactivity" via compilation. You write mutable JS code (`let x = $state(0); x++`), and the compiler automatically generates the signal graph.
 - **Standout Feature**: **Automatic Derivation**. Unlike Svelte 5 (`$derived`) or Solid (`createMemo`), Fict automatically infers derived values and their dependencies.
@@ -39,7 +43,10 @@
 
 ### 2.3 Runtime Size & Overhead
 
-- **Fict**: ~10kb brotli compressed (including runtime). Performance is within ~8% of Solid in js-framework-benchmark.
+- **Fict**: ~10kb brotli compressed for the main package. Current
+  js-framework-benchmark results are in the fine-grained tier, but the primary
+  tradeoff is DX + strict guarantees rather than beating Solid on size or raw
+  benchmark mean.
 - **React**: Larger runtime (Scheduler, Reconciler, VDOM). ~50kb compressed.
 - **Solid**: ~4.5kb brotli compressed. The smallest runtime among major frameworks.
 - **Svelte**: Runtime is small, but code size can grow with component complexity (though Runes improves this).

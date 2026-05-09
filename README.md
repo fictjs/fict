@@ -93,11 +93,17 @@ function Counter() {
   </tbody>
 </table>
 
-**Fict gives you the best of every world:**
+**Fict's bet:**
 
-- 🧩 **React's familiar syntax** — JSX, destructuring-friendly, native `if`/`for`
-- ⚡ **Solid's fine-grained updates** — no VDOM, surgical DOM patches
-- ✨ **Less boilerplate than both** — compiler infers derived values automatically
+- React-style TSX ergonomics with destructuring-friendly props and native
+  control flow.
+- Solid-style fine-grained DOM updates without getter calls in component code.
+- Compile-time guarantees that fail closed when the compiler cannot prove
+  reactive behavior.
+
+The goal is not to be the smallest possible runtime. Fict trades compiler
+complexity for React-like authoring, automatic derivation, package metadata,
+and strict reactivity guarantees.
 
 ---
 
@@ -424,6 +430,8 @@ const { shell, stream } = renderToPartial(() => <App />, { mode: 'shell' })
 ```
 
 `renderToPartial` is an advanced API (Preview in v1.0).
+Resumable handlers and partial prerendering are active preview work, not a
+stable Qwik-compatible contract.
 
 </details>
 
@@ -511,6 +519,9 @@ return branches) and lowers them to reactive conditionals.
 ## Performance
 
 > 🚧 **Note**: Bundle size and memory optimizations are currently in progress.
+> Benchmarks are used as guardrails, not as the primary product claim. Fict aims
+> to stay in the fine-grained performance tier while buying React-like TSX
+> ergonomics and compile-time guarantees.
 
 ![Performance Benchmark](./perf.png)
 
@@ -643,7 +654,11 @@ Not directly. Fict compiles to DOM operations, not React elements.
 <details>
 <summary><strong>How big is the runtime?</strong></summary>
 
-~10kb brotli compressed. Performance is within ~3% of Solid in js-framework-benchmark (geometric mean 1.07 vs 1.04).
+~10kb brotli compressed for the main package. It is not the smallest
+fine-grained runtime; the extra budget pays for scheduler, hydration/resume,
+store, diagnostics, and public entrypoint coverage. Current
+js-framework-benchmark results keep Fict close to the Solid/Svelte/Vue Vapor
+tier, but Fict should be evaluated primarily on the DX + guarantee tradeoff.
 
 </details>
 
