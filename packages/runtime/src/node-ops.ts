@@ -93,25 +93,20 @@ export function insertNodesBefore(
 ): Node[] {
   if (nodes.length === 0) return []
 
-  // Single node optimization - direct insertion
-  if (nodes.length === 1) {
-    const node = nodes[0]!
-    if (node === undefined || node === null) return []
-    if (node.nodeType === DOCUMENT_FRAGMENT_NODE) {
-      return insertNodesBefore(parent, getFragmentChildNodes(node), anchor)
-    }
-    if (node.ownerDocument !== parent.ownerDocument && parent.ownerDocument) {
-      parent.ownerDocument.adoptNode(node)
+  const doc = parent.ownerDocument
+  const insertSingle = (nodeToInsert: Node, anchorNode: Node | null): Node => {
+    if (nodeToInsert.ownerDocument !== doc && doc) {
+      doc.adoptNode(nodeToInsert)
     }
     try {
-      parent.insertBefore(node, anchor)
-      return [node]
+      parent.insertBefore(nodeToInsert, anchorNode)
+      return nodeToInsert
     } catch (e: unknown) {
-      if (parent.ownerDocument) {
+      if (doc) {
         try {
-          const clone = parent.ownerDocument.importNode(node, true)
-          parent.insertBefore(clone, anchor)
-          return [clone]
+          const clone = doc.importNode(nodeToInsert, true)
+          parent.insertBefore(clone, anchorNode)
+          return clone
         } catch {
           // Clone fallback failed
         }
@@ -120,8 +115,17 @@ export function insertNodesBefore(
     }
   }
 
+  // Single node optimization - direct insertion
+  if (nodes.length === 1) {
+    const node = nodes[0]!
+    if (node === undefined || node === null) return []
+    if (node.nodeType === DOCUMENT_FRAGMENT_NODE) {
+      return insertNodesBefore(parent, getFragmentChildNodes(node), anchor)
+    }
+    return [insertSingle(node, anchor)]
+  }
+
   // Batch insertion using DocumentFragment for multiple nodes
-  const doc = parent.ownerDocument
   if (doc) {
     const frag = doc.createDocumentFragment()
     const insertedNodes: Node[] = []
@@ -149,27 +153,6 @@ export function insertNodesBefore(
   }
 
   // Fallback for non-document contexts (rare)
-  const insertSingle = (nodeToInsert: Node, anchorNode: Node | null): Node => {
-    if (nodeToInsert.ownerDocument !== parent.ownerDocument && parent.ownerDocument) {
-      parent.ownerDocument.adoptNode(nodeToInsert)
-    }
-    try {
-      parent.insertBefore(nodeToInsert, anchorNode)
-      return nodeToInsert
-    } catch (e: unknown) {
-      if (parent.ownerDocument) {
-        try {
-          const clone = parent.ownerDocument.importNode(nodeToInsert, true)
-          parent.insertBefore(clone, anchorNode)
-          return clone
-        } catch {
-          // Clone fallback failed
-        }
-      }
-      throw e
-    }
-  }
-
   const insertedNodes: Node[] = []
   for (let i = nodes.length - 1; i >= 0; i--) {
     const node = nodes[i]!
