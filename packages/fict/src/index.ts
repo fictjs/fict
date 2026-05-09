@@ -64,7 +64,9 @@ export { createMemo as $memo } from '@fictjs/runtime'
 
 /**
  * Create a deep reactive store using Proxy.
- * Unlike createStore, $store allows direct mutation.
+ * `$store` is the canonical public deep-store API. Runtime `createStore`
+ * is internal compiler/resume infrastructure and should not be imported by
+ * application code.
  *
  * @example
  * ```tsx

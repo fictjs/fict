@@ -198,6 +198,9 @@ function TodoList() {
 ### $store
 
 Create a deeply reactive proxy that allows direct mutation of nested properties.
+This is the canonical user-facing deep store API. Internal `createStore`
+helpers are reserved for compiler/runtime code and are not part of the
+application API.
 
 ```typescript
 import { $store } from 'fict'
@@ -288,7 +291,7 @@ function Counter() {
 | **`createSignal`** | ✅ Module-level shared state (global store) <br> ✅ Custom hooks that return a signal <br> ✅ Utility / non-component code |
 
 > [!TIP]
-> General rule: use `$state` inside components; use `createSignal` or `$store` for shared or non-component scenarios.
+> General rule: use `$state` inside components, `$store` for deep shared objects, and `createSignal` only for advanced scalar/library primitives.
 
 ---
 

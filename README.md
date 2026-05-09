@@ -462,6 +462,9 @@ const result = untrack(() => externalLib.compute(count))
 | Derived values | Auto-memoized              | Auto-memoized            |
 | Best for       | Primitives, simple objects | Complex nested state     |
 
+`$store` is the only user-facing deep store API. Internal `createStore` helpers
+exist for compiler/runtime infrastructure and should not be imported by app code.
+
 </details>
 
 ---
@@ -567,6 +570,7 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 | [Compiler Spec](./docs/compiler-spec.md)                         | Formal semantics                   |
 | [Migration Guide](./docs/migration-guide.md)                     | React/Vue/Svelte/Solid migration   |
 | [Strict Guarantee Cookbook](./docs/strict-guarantee-cookbook.md) | Fail-closed diagnostic rewrites    |
+| [Store API](./docs/store-api.md)                                 | `$state` vs `$store` ownership     |
 | [ESLint Rules](./docs/eslint-rules.md)                           | Linting configuration              |
 | [Diagnostic Codes](./docs/diagnostic-codes.md)                   | Compiler warnings reference        |
 | [Config Profiles](./docs/config-profiles.md)                     | Recommended dev/CI/prod settings   |
@@ -621,7 +625,9 @@ No. Fict compiles to direct DOM operations for surgical, fine-grained updates.
 <details>
 <summary><strong>How does Fict handle arrays?</strong></summary>
 
-Default: immutable style (`todos = [...todos, newTodo]`). For deep mutations, use spread to create new immutable data, or use Immer/Mutative, or use `$store` from `fict`.
+Default: immutable style (`todos = [...todos, newTodo]`). For deep mutations,
+use spread to create new immutable data, or use Immer/Mutative, or use `$store`
+from `fict`.
 
 </details>
 

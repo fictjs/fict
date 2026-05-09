@@ -99,7 +99,10 @@ export function useDeferredValue<T>(value: () => T): () => T
 export function $store<T extends object>(initialValue: T): T
 ```
 
-> **Note**: `createStore` is internal and returns `[store, setStore]` with reconcile-based updates. Regular users only need `$store`.
+> **Note**: `createStore` is internal compiler/resume infrastructure and
+> returns `[store, setStore]` with reconcile-based updates. Regular users should
+> only use `$store`; docs and examples must not teach `createStore` as a second
+> store model.
 
 ### 1.2 Lifecycle
 
@@ -917,7 +920,8 @@ from source that imports `fict`.
 
 /**
  * Create a deep reactive proxy object.
- * Unlike createStore (internal), $store returns the proxy directly with no setter.
+ * $store is the canonical public deep-store API. createStore is internal
+ * compiler/resume infrastructure and is not user-facing.
  */
 export function $store<T extends object>(initialValue: T): T
 

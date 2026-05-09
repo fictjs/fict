@@ -1,8 +1,9 @@
 /**
  * @fileoverview Deep reactive store implementation for Fict.
  *
- * $store creates a deeply reactive proxy that tracks property access at the path level.
- * Unlike $state (which is shallow), $store allows direct mutation of nested properties.
+ * `$store` creates a deeply reactive proxy that tracks property access at the path level.
+ * It is the only user-facing deep store API. Runtime `createStore` remains an
+ * internal compiler/resume helper; application code should import `$store`.
  *
  * @example
  * ```typescript
