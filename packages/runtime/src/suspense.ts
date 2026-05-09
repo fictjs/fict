@@ -110,7 +110,7 @@ export function Suspense(props: SuspenseProps): FictNode {
       }
       const parentNode = endMarker.parentNode as (ParentNode & Node) | null
       if (parentNode) {
-        insertNodesBefore(parentNode, nodes, endMarker)
+        nodes = insertNodesBefore(parentNode, nodes, endMarker)
       }
     } catch (err) {
       popRoot(prev)

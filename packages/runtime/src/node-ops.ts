@@ -90,41 +90,41 @@ export function insertNodesBefore(
   parent: ParentNode & Node,
   nodes: Node[],
   anchor: Node | null,
-): void {
-  if (nodes.length === 0) return
+): Node[] {
+  if (nodes.length === 0) return []
 
   // Single node optimization - direct insertion
   if (nodes.length === 1) {
     const node = nodes[0]!
-    if (node === undefined || node === null) return
+    if (node === undefined || node === null) return []
     if (node.nodeType === DOCUMENT_FRAGMENT_NODE) {
-      insertNodesBefore(parent, getFragmentChildNodes(node), anchor)
-      return
+      return insertNodesBefore(parent, getFragmentChildNodes(node), anchor)
     }
     if (node.ownerDocument !== parent.ownerDocument && parent.ownerDocument) {
       parent.ownerDocument.adoptNode(node)
     }
     try {
       parent.insertBefore(node, anchor)
+      return [node]
     } catch (e: unknown) {
       if (parent.ownerDocument) {
         try {
           const clone = parent.ownerDocument.importNode(node, true)
           parent.insertBefore(clone, anchor)
-          return
+          return [clone]
         } catch {
           // Clone fallback failed
         }
       }
       throw e
     }
-    return
   }
 
   // Batch insertion using DocumentFragment for multiple nodes
   const doc = parent.ownerDocument
   if (doc) {
     const frag = doc.createDocumentFragment()
+    const insertedNodes: Node[] = []
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i]!
       if (node === undefined || node === null) continue
@@ -132,17 +132,20 @@ export function insertNodesBefore(
       if (node.nodeType === DOCUMENT_FRAGMENT_NODE) {
         const childrenArr = getFragmentChildNodes(node)
         for (let j = 0; j < childrenArr.length; j++) {
-          frag.appendChild(childrenArr[j]!)
+          const child = childrenArr[j]!
+          frag.appendChild(child)
+          insertedNodes.push(child)
         }
       } else {
         if (node.ownerDocument !== doc) {
           doc.adoptNode(node)
         }
         frag.appendChild(node)
+        insertedNodes.push(node)
       }
     }
     parent.insertBefore(frag, anchor)
-    return
+    return insertedNodes
   }
 
   // Fallback for non-document contexts (rare)
@@ -167,6 +170,7 @@ export function insertNodesBefore(
     }
   }
 
+  const insertedNodes: Node[] = []
   for (let i = nodes.length - 1; i >= 0; i--) {
     const node = nodes[i]!
     if (node === undefined || node === null) continue
@@ -178,11 +182,15 @@ export function insertNodesBefore(
       for (let j = childrenArr.length - 1; j >= 0; j--) {
         const child = childrenArr[j]!
         anchor = insertSingle(child, anchor)
+        insertedNodes.unshift(anchor)
       }
     } else {
       anchor = insertSingle(node, anchor)
+      insertedNodes.unshift(anchor)
     }
   }
+
+  return insertedNodes
 }
 
 /**

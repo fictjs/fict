@@ -821,8 +821,9 @@ export function insert(
     }
 
     clearCurrentNodes()
-    insertNodesBefore(parentNode, [currentText], marker)
-    currentNodes = [currentText]
+    const insertedNodes = insertNodesBefore(parentNode, [currentText], marker)
+    currentText = (insertedNodes[0] as Text | undefined) ?? currentText
+    currentNodes = insertedNodes
   }
 
   const dispose = createRenderEffect(() => {
@@ -891,7 +892,7 @@ export function insert(
         return
       }
       if (parentNode) {
-        insertNodesBefore(parentNode, nodes, marker)
+        nodes = insertNodesBefore(parentNode, nodes, marker)
       }
     } catch (err) {
       if (handleSuspend(err as any, root)) {
@@ -983,8 +984,9 @@ export function insertBetween(
 
     clearCurrentNodes()
     if (parentNode) {
-      insertNodesBefore(parentNode, [currentText], end)
-      currentNodes = [currentText]
+      const insertedNodes = insertNodesBefore(parentNode, [currentText], end)
+      currentText = (insertedNodes[0] as Text | undefined) ?? currentText
+      currentNodes = insertedNodes
     }
   }
 
@@ -1077,7 +1079,7 @@ export function insertBetween(
         return
       }
       if (parentNode && !initialHydrating) {
-        insertNodesBefore(parentNode, nodes, end)
+        nodes = insertNodesBefore(parentNode, nodes, end)
       }
     } catch (err) {
       if (handleSuspend(err as any, root)) {
@@ -1154,7 +1156,7 @@ export function createChildBinding(
       nodes = toNodeArray(output, marker.ownerDocument ?? parent.ownerDocument ?? document)
       const parentNode = marker.parentNode as (ParentNode & Node) | null
       if (parentNode) {
-        insertNodesBefore(parentNode, nodes, marker)
+        nodes = insertNodesBefore(parentNode, nodes, marker)
       }
       keepRoot = true
       return () => {
@@ -2403,7 +2405,7 @@ export function createConditional(
 
     try {
       if (nodes.length > 0) {
-        insertNodesBefore(parent, nodes, endMarker)
+        nodes = insertNodesBefore(parent, nodes, endMarker)
       }
       inserted = true
 
@@ -2624,9 +2626,10 @@ export function createPortal(
         const el = createElementFn(output)
         const nodes = toNodeArray(el, markerOwnerDocument)
         if (marker.parentNode) {
-          insertNodesBefore(marker.parentNode as ParentNode & Node, nodes, marker)
+          currentNodes = insertNodesBefore(marker.parentNode as ParentNode & Node, nodes, marker)
+        } else {
+          currentNodes = nodes
         }
-        currentNodes = nodes
       }
     } catch (err) {
       if (handleSuspend(err as any, root)) {

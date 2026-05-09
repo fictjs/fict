@@ -2308,6 +2308,50 @@ describe('Binding Edge Cases', () => {
       expect(cleanupLog).toEqual(['old', 'new'])
     })
 
+    it('tracks cloned branch nodes returned by insertion fallback', async () => {
+      const condition = createSignal(false)
+      const newButton = document.createElement('button')
+      newButton.textContent = 'new'
+      const originalInsertBefore = container.insertBefore.bind(container)
+
+      container.insertBefore = ((node: Node, child: Node | null) => {
+        if (node === newButton) {
+          throw new Error('force clone fallback')
+        }
+        return originalInsertBefore(node, child)
+      }) as typeof container.insertBefore
+
+      try {
+        const handle = createConditional(
+          () => condition(),
+          () => newButton as any,
+          value => (value instanceof Node ? value : createElement(value)),
+        )
+        container.appendChild(handle.marker)
+        handle.flush?.()
+
+        expect(container.textContent).toBe('')
+
+        condition(true)
+        await tick()
+
+        const inserted = container.querySelector('button')
+        expect(inserted).not.toBeNull()
+        expect(inserted).not.toBe(newButton)
+        expect(container.textContent).toBe('new')
+
+        condition(false)
+        await tick()
+
+        expect(container.querySelector('button')).toBeNull()
+        expect(container.textContent).toBe('')
+
+        handle.dispose()
+      } finally {
+        container.insertBefore = originalInsertBefore as typeof container.insertBefore
+      }
+    })
+
     it('commits ErrorBoundary fallback output during ordinary branch flip', async () => {
       const condition = createSignal(true)
       const errors: unknown[] = []

@@ -148,6 +148,38 @@ describe('List Helpers', () => {
 
       expect(container.textContent).toBe('12anchor')
     })
+
+    it('insertNodesBefore returns cloned fallback nodes that can be removed', () => {
+      const anchor = document.createElement('div')
+      anchor.textContent = 'anchor'
+      container.appendChild(anchor)
+
+      const div = document.createElement('div')
+      div.textContent = 'clone'
+      const originalInsertBefore = container.insertBefore.bind(container)
+
+      container.insertBefore = ((node: Node, child: Node | null) => {
+        if (node === div) {
+          throw new Error('force clone fallback')
+        }
+        return originalInsertBefore(node, child)
+      }) as typeof container.insertBefore
+
+      try {
+        const inserted = insertNodesBefore(container, [div], anchor)
+
+        expect(inserted).toHaveLength(1)
+        expect(inserted[0]).not.toBe(div)
+        expect(inserted[0]?.textContent).toBe('clone')
+        expect(container.textContent).toBe('cloneanchor')
+
+        removeNodes(inserted)
+
+        expect(container.textContent).toBe('anchor')
+      } finally {
+        container.insertBefore = originalInsertBefore as typeof container.insertBefore
+      }
+    })
   })
 
   describe('Utilities', () => {

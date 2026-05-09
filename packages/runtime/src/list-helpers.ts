@@ -804,11 +804,22 @@ function createFineGrainedKeyedList<T>(
           }
         }
         if (appendedNodes.length > 0) {
-          insertNodesBefore(parent, appendedNodes, container.endMarker)
+          const insertedNodes = insertNodesBefore(parent, appendedNodes, container.endMarker)
+          let insertedOffset = 0
+          for (const block of appendedBlocks) {
+            const nextBlockNodes = insertedNodes.slice(
+              insertedOffset,
+              insertedOffset + block.nodes.length,
+            )
+            if (nextBlockNodes.length === block.nodes.length) {
+              block.nodes = nextBlockNodes
+            }
+            insertedOffset += block.nodes.length
+          }
           const currentNodes = container.currentNodes
           currentNodes.pop()
-          for (let i = 0; i < appendedNodes.length; i++) {
-            currentNodes.push(appendedNodes[i]!)
+          for (let i = 0; i < insertedNodes.length; i++) {
+            currentNodes.push(insertedNodes[i]!)
           }
           currentNodes.push(container.endMarker)
         }

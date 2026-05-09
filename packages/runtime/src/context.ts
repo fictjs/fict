@@ -205,7 +205,7 @@ export function createContext<T>(defaultValue: T): Context<T> {
         nodes = toNodeArray(output, markerOwnerDocument)
         const parentNode = marker.parentNode as (ParentNode & Node) | null
         if (parentNode) {
-          insertNodesBefore(parentNode, nodes, marker)
+          nodes = insertNodesBefore(parentNode, nodes, marker)
         }
       } finally {
         popRoot(prev)
