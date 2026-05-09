@@ -1,5 +1,17 @@
 # @fictjs/mcp
 
+## 0.21.0
+
+### Minor Changes
+
+- fix
+
+### Patch Changes
+
+- Updated dependencies
+  - @fictjs/compiler@0.21.0
+  - @fictjs/eslint-plugin@0.21.0
+
 ## 0.20.0
 
 ### Minor Changes

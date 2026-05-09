@@ -1,5 +1,11 @@
 # @fictjs/compiler
 
+## 0.21.0
+
+### Minor Changes
+
+- fix
+
 ## 0.20.0
 
 ### Minor Changes
