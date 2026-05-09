@@ -4,7 +4,7 @@
 
 ### Minor Changes
 
-- fix
+- Harden function splitting by resolving handler helpers and dependencies through Babel scope analysis, preserving split sourcemaps, and documenting module-local dependency behavior.
 
 ### Patch Changes
 
@@ -15,7 +15,7 @@
 
 ### Minor Changes
 
-- fix
+- Consume and publish library metadata, skip virtual module optimization when appropriate, and keep declaration output rooted correctly for library builds.
 
 ### Patch Changes
 
@@ -26,7 +26,7 @@
 
 ### Minor Changes
 
-- fix
+- Emit library metadata assets and declarations, and harden cache fingerprinting for remapped package metadata.
 
 ### Patch Changes
 
@@ -52,7 +52,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Restore split handlers from transform cache and pick up module-QRL resumable handler output.
 
 ### Patch Changes
 
@@ -63,7 +63,7 @@
 
 ### Minor Changes
 
-- fix fict issue
+- Publish plugin with map-key and tooling-analysis compiler output; no plugin runtime behavior changed.
 
 ### Patch Changes
 
@@ -74,7 +74,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Reset transform metadata between builds and preserve compiler dependency and spread semantics.
 
 ### Patch Changes
 
@@ -85,7 +85,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Preserve parse error causes for Vite diagnostics.
 
 ### Patch Changes
 
@@ -96,7 +96,7 @@
 
 ### Minor Changes
 
-- fix mcp
+- Publish plugin with the MCP launch release train; no plugin behavior changed in this release.
 
 ### Patch Changes
 
@@ -107,7 +107,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish plugin with the strict diagnostic compiler release; no plugin behavior changed in this release.
 
 ### Patch Changes
 
@@ -118,7 +118,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish plugin with ownerDocument/runtime and compiler callback fixes used by transformed output.
 
 ### Patch Changes
 
@@ -129,7 +129,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish plugin with resumable-event, keyed-list, and state-write compiler fixes used by transformed output.
 
 ### Patch Changes
 
@@ -140,7 +140,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Publish plugin with strict guarantee defaults and compiler config profile updates.
 
 ### Patch Changes
 
@@ -151,7 +151,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Publish plugin with HIR fuzz and alias diagnostic compiler fixes.
 
 ### Patch Changes
 
@@ -162,7 +162,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish plugin with compiler metadata cache and codegen refactor updates.
 
 ### Patch Changes
 
@@ -173,7 +173,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Publish plugin with control-flow, HIR, and Babel compatibility compiler fixes.
 
 ### Patch Changes
 
@@ -184,7 +184,7 @@
 
 ### Patch Changes
 
-- fix ssr
+- Handle SSR logging during the streaming and renderToPartial updates.
 - Updated dependencies
   - @fictjs/compiler@0.5.2
 
@@ -192,7 +192,7 @@
 
 ### Patch Changes
 
-- fix fict issue
+- Publish plugin with the Fict cleanup and router type patch; no plugin behavior changed in this patch.
 - Updated dependencies
   - @fictjs/compiler@0.5.1
 
@@ -200,7 +200,7 @@
 
 ### Minor Changes
 
-- fix ssr
+- Publish plugin with the SSR, router, and testing-library release train; no plugin behavior changed in this release.
 
 ### Patch Changes
 
@@ -211,7 +211,7 @@
 
 ### Minor Changes
 
-- update config
+- Refresh plugin package metadata for release packaging.
 
 ### Patch Changes
 
@@ -222,7 +222,7 @@
 
 ### Minor Changes
 
-- update
+- Add cross-module metadata resolution used by Vite transforms.
 
 ### Patch Changes
 
@@ -233,7 +233,7 @@
 
 ### Patch Changes
 
-- improve compiler
+- Publish plugin with compiler cross-module metadata and dynamic key narrowing fixes.
 - Updated dependencies
   - @fictjs/compiler@0.2.3
 
@@ -241,7 +241,7 @@
 
 ### Patch Changes
 
-- improve compiler
+- Add incremental TypeScript project support and transform cache coverage.
 - Updated dependencies
   - @fictjs/compiler@0.2.2
 
@@ -249,7 +249,7 @@
 
 ### Patch Changes
 
-- improve HIR
+- Publish plugin with the HIR optimizer, `@fictReturn`, and macro state and memo fixes.
 - Updated dependencies
   - @fictjs/compiler@0.2.1
 
@@ -257,7 +257,7 @@
 
 ### Minor Changes
 
-- fix some issue
+- Publish plugin with compiler/runtime integration, suspension handling, sourcemap, and e2e coverage fixes.
 
 ### Patch Changes
 
@@ -268,7 +268,7 @@
 
 ### Minor Changes
 
-- fix some issue
+- Publish plugin with DOM binding, lifecycle, createRoot inheritance, and runtime stability fixes.
 
 ### Patch Changes
 
@@ -279,7 +279,7 @@
 
 ### Patch Changes
 
-- fix props
+- Publish plugin with props API fixes and initial router package scaffolding.
 - Updated dependencies
   - @fictjs/compiler@0.0.15
 
@@ -287,7 +287,7 @@
 
 ### Patch Changes
 
-- refactor apis
+- Publish plugin with delegated event, prop API, signal export, and state refactors.
 - Updated dependencies
   - @fictjs/compiler@0.0.14
 
@@ -295,7 +295,7 @@
 
 ### Patch Changes
 
-- fix dev mode
+- Publish plugin with SSA/destructuring, unkeyed list rendering, and dev-mode size fixes.
 - Updated dependencies
   - @fictjs/compiler@0.0.13
 
@@ -303,7 +303,7 @@
 
 ### Patch Changes
 
-- fix perf
+- Publish plugin with runtime ESM key, disposal, reorder, and package metadata fixes.
 - Updated dependencies
   - @fictjs/compiler@0.0.12
 
@@ -311,7 +311,7 @@
 
 ### Patch Changes
 
-- fix effect cleanup
+- Publish plugin with event handler invocation and effect cleanup fixes.
 - Updated dependencies
   - @fictjs/compiler@0.0.11
 
@@ -319,7 +319,7 @@
 
 ### Patch Changes
 
-- fix issue and improve perf
+- Publish plugin with early integration and performance fixes.
 - Updated dependencies
   - @fictjs/compiler@0.0.10
 
@@ -327,7 +327,7 @@
 
 ### Patch Changes
 
-- fix list
+- Publish plugin with sourcemap, host root, SVG, and list rendering fixes.
 - Updated dependencies
   - @fictjs/compiler@0.0.9
 
@@ -335,7 +335,7 @@
 
 ### Patch Changes
 
-- fix store
+- Publish plugin with reactivity semantics, `$state`, hooks, and store dependency fixes.
 - Updated dependencies
   - @fictjs/compiler@0.0.8
 
@@ -343,7 +343,7 @@
 
 ### Patch Changes
 
-- fix version
+- Fix Vite plugin configuration for published package resolution.
 - Updated dependencies
   - @fictjs/compiler@0.0.7
 
@@ -351,7 +351,7 @@
 
 ### Patch Changes
 
-- update version
+- Align Vite plugin configuration and version metadata for the release.
 - Updated dependencies
   - @fictjs/compiler@0.0.6
 
@@ -359,7 +359,7 @@
 
 ### Patch Changes
 
-- fix(compiler): fix the hoisted-function breakage
+- Fix compiler hoisted-function handling.
 - Updated dependencies
   - @fictjs/compiler@0.0.5
 
@@ -367,7 +367,7 @@
 
 ### Patch Changes
 
-- fix(runtime): fix event handlers
-  fix(compiler): fix accessors issue
+- Fix runtime event handler behavior.
+- Fix compiler accessor handling.
 - Updated dependencies
   - @fictjs/compiler@0.0.4

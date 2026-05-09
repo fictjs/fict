@@ -4,7 +4,7 @@
 
 ### Minor Changes
 
-- fix
+- Make DOM globals opt-in, scope manifests to individual render sessions, and harden resumable and streaming coverage for Trusted Types and partial renders.
 
 ### Patch Changes
 
@@ -15,7 +15,7 @@
 
 ### Minor Changes
 
-- fix
+- Add CSP-safe stream scripts, stream runtime assets, resumable state isolation, backpressure handling, and abort/cancel coverage.
 
 ### Patch Changes
 
@@ -26,7 +26,7 @@
 
 ### Minor Changes
 
-- fix
+- Publish SSR with the library metadata release train; no SSR runtime behavior changed in this release.
 
 ### Patch Changes
 
@@ -45,13 +45,14 @@
 ### Patch Changes
 
 - Fix standard `fict` app installs so compiler-generated helpers resolve through `fict/internal` and `fict/loader` instead of requiring a separate top-level `@fictjs/runtime` install. This also adds the new `fict/internal`, `fict/internal/list`, and `fict/loader` bridge entrypoints and updates docs/examples to use the main `fict` package consistently.
+- Updated dependencies
   - @fictjs/runtime@0.17.1
 
 ## 0.17.0
 
 ### Minor Changes
 
-- fix fict
+- Publish SSR with resumable handler and hydration control-state runtime fixes.
 
 ### Patch Changes
 
@@ -62,7 +63,7 @@
 
 ### Minor Changes
 
-- fix fict issue
+- Publish SSR with map-key validation and tooling analysis updates; no SSR behavior changed.
 
 ### Patch Changes
 
@@ -73,7 +74,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Split stream/global helpers and pick up runtime SSR tracking reset behavior.
 
 ### Patch Changes
 
@@ -84,7 +85,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish SSR with MCP security and parse-diagnostic release updates; no SSR behavior changed.
 
 ### Patch Changes
 
@@ -95,7 +96,7 @@
 
 ### Minor Changes
 
-- fix mcp
+- Publish SSR with the MCP tooling release train; no SSR behavior changed.
 
 ### Patch Changes
 
@@ -106,7 +107,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish SSR with strict-guarantee fixture updates; no SSR behavior changed.
 
 ### Patch Changes
 
@@ -117,7 +118,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish SSR with ownerDocument runtime fixes used by hydrated output.
 
 ### Patch Changes
 
@@ -128,7 +129,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish SSR with resumable-event and state-write runtime/compiler fixes.
 
 ### Patch Changes
 
@@ -139,7 +140,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Harden snapshot resume contract and loader validation.
 
 ### Patch Changes
 
@@ -150,7 +151,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Publish SSR with strict guarantee defaults and branch tracking fixes.
 
 ### Patch Changes
 
@@ -161,7 +162,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish SSR with runtime cleanup/performance and compiler metadata cache fixes.
 
 ### Patch Changes
 
@@ -172,7 +173,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Publish SSR with compiler control-flow and HIR compatibility fixes.
 
 ### Patch Changes
 
@@ -183,7 +184,7 @@
 
 ### Patch Changes
 
-- fix ssr
+- Implement streaming SSR, renderToPartial, file manifests, node backpressure, edge smoke coverage, and preview docs.
 - Updated dependencies
   - @fictjs/runtime@0.5.2
 
@@ -191,7 +192,7 @@
 
 ### Patch Changes
 
-- fix fict issue
+- Publish SSR with effect cleanup and ShadowRoot list fixes; no SSR API changed.
 - Updated dependencies
   - @fictjs/runtime@0.5.1
 
@@ -199,7 +200,7 @@
 
 ### Minor Changes
 
-- fix ssr
+- Implement core SSR, hydrateComponent, resumable signal names, and SSR event test stability.
 
 ### Patch Changes
 
@@ -210,7 +211,7 @@
 
 ### Minor Changes
 
-- update config
+- Refresh SSR package metadata for release packaging.
 
 ### Patch Changes
 
@@ -221,107 +222,107 @@
 
 ### Minor Changes
 
-- update
+- Publish SSR with reactive behavior, router, testing-library, devtools, and Vite metadata updates from the release train.
 
 ## 0.2.3
 
 ### Patch Changes
 
-- improve compiler
+- Publish SSR with cross-module reactive metadata and dynamic key narrowing fixes.
 
 ## 0.2.2
 
 ### Patch Changes
 
-- improve compiler
+- Publish SSR with key narrowing, transform cache, literal support, destructuring assignments, and store cache fixes.
 
 ## 0.2.1
 
 ### Patch Changes
 
-- improve HIR
+- Publish SSR with the HIR optimizer, `@fictReturn`, and macro state and memo fixes.
 
 ## 0.2.0
 
 ### Minor Changes
 
-- fix some issue
+- Publish SSR with compiler/runtime integration, suspension handling, sourcemap, and e2e coverage fixes.
 
 ## 0.1.0
 
 ### Minor Changes
 
-- fix some issue
+- Publish SSR with DOM binding, lifecycle, createRoot inheritance, and runtime stability fixes.
 
 ## 0.0.15
 
 ### Patch Changes
 
-- fix props
+- Publish SSR with props API fixes and initial router package scaffolding.
 
 ## 0.0.14
 
 ### Patch Changes
 
-- refactor apis
+- Publish SSR with delegated event, prop API, signal export, and state refactors.
 
 ## 0.0.13
 
 ### Patch Changes
 
-- fix dev mode
+- Publish SSR with SSA/destructuring, unkeyed list rendering, and dev-mode size fixes.
 
 ## 0.0.12
 
 ### Patch Changes
 
-- fix perf
+- Publish SSR with runtime ESM key, disposal, reorder, and package metadata fixes.
 
 ## 0.0.11
 
 ### Patch Changes
 
-- fix effect cleanup
+- Publish SSR with event handler invocation and effect cleanup fixes.
 
 ## 0.0.10
 
 ### Patch Changes
 
-- fix issue and improve perf
+- Publish SSR with early integration and performance fixes.
 
 ## 0.0.9
 
 ### Patch Changes
 
-- fix list
+- Publish SSR with sourcemap, host root, SVG, and list rendering fixes.
 
 ## 0.0.8
 
 ### Patch Changes
 
-- fix store
+- Publish SSR with reactivity semantics, `$state`, hooks, and store dependency fixes.
 
 ## 0.0.7
 
 ### Patch Changes
 
-- fix version
+- Fix SSR package configuration for published package resolution.
 
 ## 0.0.6
 
 ### Patch Changes
 
-- update version
+- Align SSR package configuration and version metadata for the release.
 
 ## 0.0.5
 
 ### Patch Changes
 
-- fix(compiler): fix the hoisted-function breakage
+- Fix compiler hoisted-function handling.
 
 ## 0.0.4
 
 ### Patch Changes
 
-- fix(runtime): fix event handlers
-  fix(compiler): fix accessors issue
+- Fix runtime event handler behavior.
+- Fix compiler accessor handling.

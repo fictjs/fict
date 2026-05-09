@@ -4,7 +4,7 @@
 
 ### Minor Changes
 
-- fix
+- Publish the extension against compiler 0.21 so analyzer and preview integrations consume the current compiler metadata.
 
 ### Patch Changes
 
@@ -15,7 +15,7 @@
 
 ### Minor Changes
 
-- fix
+- Publish the extension against compiler 0.20 so analyzer integrations consume the current diagnostics and metadata surfaces.
 
 ### Patch Changes
 
@@ -26,7 +26,7 @@
 
 ### Minor Changes
 
-- fix
+- Publish the extension with the package metadata release train so analyzer integrations stay compatible with current compiler output.
 
 ### Patch Changes
 
@@ -55,7 +55,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Keep analyzer and preview integrations compatible with resumable handler compiler output.
 
 ### Patch Changes
 
@@ -66,7 +66,7 @@
 
 ### Minor Changes
 
-- fix fict issue
+- Publish the extension against compiler 0.16 so analyzer integrations consume map-key diagnostics and tooling analysis APIs.
 
 ### Patch Changes
 

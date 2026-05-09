@@ -4,7 +4,7 @@
 
 ### Minor Changes
 
-- fix
+- Publish the Babel preset against compiler 0.21 so transformed projects pick up the strict guarantee and release-verification fixes.
 
 ### Patch Changes
 
@@ -15,7 +15,7 @@
 
 ### Minor Changes
 
-- fix
+- Publish the preset against compiler 0.20, including package metadata ABI support, cleaner type surfaces, and explain-artifact updates.
 
 ### Patch Changes
 
@@ -26,7 +26,7 @@
 
 ### Minor Changes
 
-- fix
+- Publish the preset with the library metadata and cache-fingerprint release train so Babel users consume the current compiler output.
 
 ### Patch Changes
 
@@ -52,7 +52,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish the preset with resumable handler QRL, split-handler cache, and hydration control-state fixes from the release train.
 
 ### Patch Changes
 
@@ -63,7 +63,7 @@
 
 ### Minor Changes
 
-- fix fict issue
+- Publish the preset with map-key validation, tooling-analysis APIs, and editor analyzer updates from the release train.
 
 ### Patch Changes
 
@@ -74,7 +74,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish the preset with dependency-walking, metadata-reset, handler cleanup, and spread semantics fixes from the release train.
 
 ### Patch Changes
 
@@ -85,7 +85,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish the preset with MCP security hardening, parse-error preservation, and lint-cleanup fixes from the release train.
 
 ### Patch Changes
 
@@ -96,7 +96,7 @@
 
 ### Minor Changes
 
-- fix mcp
+- Publish the preset with the MCP docs, autofixer, playground-link, streamable HTTP, and docs-search release train.
 
 ### Patch Changes
 
@@ -107,7 +107,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish the preset with strict-guarantee fixture and callback-host diagnostic fixes from the release train.
 
 ### Patch Changes
 
@@ -118,7 +118,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish the preset with skill-library, ownerDocument rendering, and logical hook diagnostic fixes from the release train.
 
 ### Patch Changes
 
@@ -129,7 +129,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish the preset with resumable-event, keyed-list, state-write, playground, and devtools updates from the release train.
 
 ### Patch Changes
 
@@ -140,7 +140,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Publish the preset with strict guarantee defaults, tracked branch patching, and SSR resume contract hardening from the release train.
 
 ### Patch Changes
 
@@ -151,7 +151,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Publish the preset with HIR fuzz invariant and alias diagnostic fixes from the release train.
 
 ### Patch Changes
 
@@ -162,7 +162,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish the preset with compiler metadata cache, reactive control-flow, and runtime cleanup and performance fixes from the release train.
 
 ### Patch Changes
 
@@ -173,7 +173,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Publish the preset with control-flow lowering, HIR object method and accessor support, and Babel compatibility fixes from the release train.
 
 ### Patch Changes
 
@@ -184,7 +184,7 @@
 
 ### Patch Changes
 
-- fix ssr
+- Publish the preset with SSR streaming, renderToPartial, manifest, and backpressure updates from the release train.
 - Updated dependencies
   - @fictjs/compiler@0.5.2
 
@@ -192,7 +192,7 @@
 
 ### Patch Changes
 
-- fix fict issue
+- Publish the preset with router typing, effect cleanup, list rest parameter, and ShadowRoot list fixes from the release train.
 - Updated dependencies
   - @fictjs/compiler@0.5.1
 
@@ -200,7 +200,7 @@
 
 ### Minor Changes
 
-- fix ssr
+- Publish the preset with core SSR, hydration, router, and testing-library updates from the release train.
 
 ### Patch Changes
 
@@ -211,7 +211,7 @@
 
 ### Minor Changes
 
-- update config
+- Refresh package metadata for the release pipeline.
 
 ### Patch Changes
 
@@ -222,7 +222,7 @@
 
 ### Minor Changes
 
-- update
+- Publish the preset with reactive behavior, router, testing-library, devtools, and Vite metadata updates from the release train.
 
 ### Patch Changes
 
@@ -233,7 +233,7 @@
 
 ### Patch Changes
 
-- improve compiler
+- Publish the preset with cross-module reactive metadata and dynamic key narrowing fixes.
 - Updated dependencies
   - @fictjs/compiler@0.2.3
 
@@ -241,7 +241,7 @@
 
 ### Patch Changes
 
-- improve compiler
+- Publish the preset with key narrowing, transform cache, literal support, destructuring assignments, and store cache fixes.
 - Updated dependencies
   - @fictjs/compiler@0.2.2
 
@@ -249,7 +249,7 @@
 
 ### Patch Changes
 
-- improve HIR
+- Publish the preset with the HIR optimizer, `@fictReturn`, and macro state and memo fixes.
 - Updated dependencies
   - @fictjs/compiler@0.2.1
 
@@ -257,7 +257,7 @@
 
 ### Minor Changes
 
-- fix some issue
+- Publish the preset with compiler/runtime integration, suspension handling, sourcemap, and e2e coverage fixes.
 
 ### Patch Changes
 
@@ -268,7 +268,7 @@
 
 ### Minor Changes
 
-- fix some issue
+- Publish the preset with DOM binding, lifecycle, createRoot inheritance, and runtime stability fixes.
 
 ### Patch Changes
 
@@ -279,7 +279,7 @@
 
 ### Patch Changes
 
-- fix props
+- Publish the preset with props API fixes and initial router package scaffolding.
 - Updated dependencies
   - @fictjs/compiler@0.0.15
 
@@ -287,7 +287,7 @@
 
 ### Patch Changes
 
-- refactor apis
+- Publish the preset with delegated event, prop API, signal export, and state refactors.
 - Updated dependencies
   - @fictjs/compiler@0.0.14
 
@@ -295,7 +295,7 @@
 
 ### Patch Changes
 
-- fix dev mode
+- Publish the preset with SSA/destructuring, unkeyed list rendering, and dev-mode size fixes.
 - Updated dependencies
   - @fictjs/compiler@0.0.13
 
@@ -303,7 +303,7 @@
 
 ### Patch Changes
 
-- fix perf
+- Publish the preset with runtime ESM key, disposal, reorder, and package metadata fixes.
 - Updated dependencies
   - @fictjs/compiler@0.0.12
 
@@ -311,7 +311,7 @@
 
 ### Patch Changes
 
-- fix effect cleanup
+- Publish the preset with event handler invocation and effect cleanup fixes.
 - Updated dependencies
   - @fictjs/compiler@0.0.11
 
@@ -319,7 +319,7 @@
 
 ### Patch Changes
 
-- fix issue and improve perf
+- Publish the preset with early integration and performance fixes.
 - Updated dependencies
   - @fictjs/compiler@0.0.10
 
@@ -327,7 +327,7 @@
 
 ### Patch Changes
 
-- fix list
+- Publish the preset with sourcemap, host root, SVG, and list rendering fixes.
 - Updated dependencies
   - @fictjs/compiler@0.0.9
 
@@ -335,7 +335,7 @@
 
 ### Patch Changes
 
-- fix store
+- Publish the preset with reactivity semantics, `$state`, hooks, and store dependency fixes.
 - Updated dependencies
   - @fictjs/compiler@0.0.8
 
@@ -343,7 +343,7 @@
 
 ### Patch Changes
 
-- fix version
+- Fix Babel preset configuration for published package resolution.
 - Updated dependencies
   - @fictjs/compiler@0.0.7
 
@@ -351,7 +351,7 @@
 
 ### Patch Changes
 
-- update version
+- Align Babel preset configuration and version metadata for the release.
 - Updated dependencies
   - @fictjs/compiler@0.0.6
 
@@ -359,7 +359,7 @@
 
 ### Patch Changes
 
-- fix(compiler): fix the hoisted-function breakage
+- Fix compiler hoisted-function handling.
 - Updated dependencies
   - @fictjs/compiler@0.0.5
 
@@ -367,7 +367,7 @@
 
 ### Patch Changes
 
-- fix(runtime): fix event handlers
-  fix(compiler): fix accessors issue
+- Fix runtime event handler behavior.
+- Fix compiler accessor handling.
 - Updated dependencies
   - @fictjs/compiler@0.0.4

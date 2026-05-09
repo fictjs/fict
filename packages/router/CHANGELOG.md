@@ -4,7 +4,7 @@
 
 ### Minor Changes
 
-- fix
+- Keep router packaging aligned with the 0.21 runtime release train; no router API behavior changed in this release.
 
 ### Patch Changes
 
@@ -15,7 +15,7 @@
 
 ### Minor Changes
 
-- fix
+- Keep router packaging aligned with the 0.20 runtime and SSR release train; no router API behavior changed in this release.
 
 ### Patch Changes
 
@@ -26,7 +26,7 @@
 
 ### Minor Changes
 
-- fix
+- Keep router packaging aligned with the package metadata release train; no router API behavior changed in this release.
 
 ### Patch Changes
 
@@ -44,13 +44,14 @@
 
 ### Patch Changes
 
-- @fictjs/runtime@0.17.1
+- Updated dependencies
+  - @fictjs/runtime@0.17.1
 
 ## 0.17.0
 
 ### Minor Changes
 
-- fix fict
+- Align router with resumable event and hydration control-state runtime fixes.
 
 ### Patch Changes
 
@@ -61,7 +62,7 @@
 
 ### Minor Changes
 
-- fix fict issue
+- Align router with map-key validation and analyzer tooling release updates.
 
 ### Patch Changes
 
@@ -72,7 +73,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Align router with runtime handler cleanup and dependency-walking fixes.
 
 ### Patch Changes
 
@@ -83,7 +84,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Align router with MCP security and runtime lint-cleanup release updates.
 
 ### Patch Changes
 
@@ -94,7 +95,7 @@
 
 ### Minor Changes
 
-- fix mcp
+- Align router with the MCP tooling release train.
 
 ### Patch Changes
 
@@ -105,7 +106,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Align router with strict-guarantee diagnostic fixes.
 
 ### Patch Changes
 
@@ -116,7 +117,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Align router with ownerDocument runtime fixes.
 
 ### Patch Changes
 
@@ -127,7 +128,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Align router with resumable-event, keyed-list, and state-write runtime/compiler fixes.
 
 ### Patch Changes
 
@@ -138,7 +139,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Align router with strict guarantee defaults and tracked branch patching fixes.
 
 ### Patch Changes
 
@@ -149,7 +150,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Align router with HIR fuzz and alias diagnostic compiler fixes.
 
 ### Patch Changes
 
@@ -160,7 +161,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Align router with runtime cleanup/performance and compiler metadata fixes.
 
 ### Patch Changes
 
@@ -171,7 +172,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Align router with control-flow and HIR compiler fixes.
 
 ### Patch Changes
 
@@ -182,7 +183,7 @@
 
 ### Patch Changes
 
-- fix ssr
+- Align router with SSR streaming and renderToPartial updates.
 - Updated dependencies
   - @fictjs/runtime@0.5.2
 
@@ -190,7 +191,7 @@
 
 ### Patch Changes
 
-- fix fict issue
+- Fix router type surface.
 - Updated dependencies
   - @fictjs/runtime@0.5.1
 
@@ -198,7 +199,7 @@
 
 ### Minor Changes
 
-- fix ssr
+- Fix router behavior and add router test coverage and documentation.
 
 ### Patch Changes
 
@@ -209,7 +210,7 @@
 
 ### Minor Changes
 
-- update config
+- Refresh router package metadata for release packaging.
 
 ### Patch Changes
 
@@ -220,7 +221,7 @@
 
 ### Minor Changes
 
-- update
+- Implement the core router and add route test coverage.
 
 ### Patch Changes
 
@@ -232,34 +233,34 @@
 
 ### Patch Changes
 
-- improve compiler
+- Publish router with cross-module metadata release updates.
 
 ## 0.2.2
 
 ### Patch Changes
 
-- improve compiler
+- Publish router with key narrowing and runtime store cache fixes.
 
 ## 0.2.1
 
 ### Patch Changes
 
-- improve HIR
+- Publish router with HIR optimizer and macro fixes.
 
 ## 0.2.0
 
 ### Minor Changes
 
-- fix some issue
+- Publish router with compiler/runtime integration and e2e coverage fixes.
 
 ## 0.1.0
 
 ### Minor Changes
 
-- fix some issue
+- Publish router with initial runtime stability fixes.
 
 ## 0.0.15
 
 ### Patch Changes
 
-- fix props
+- Initialize the router package.

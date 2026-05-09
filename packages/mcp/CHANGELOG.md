@@ -4,7 +4,7 @@
 
 ### Minor Changes
 
-- fix
+- Refresh the bundled documentation manifest so MCP docs tools serve the current release documentation.
 
 ### Patch Changes
 
@@ -16,7 +16,7 @@
 
 ### Minor Changes
 
-- fix
+- Keep MCP autofixer, diagnostics, and docs tooling aligned with the compiler and lint metadata from the 0.20 release train.
 
 ### Patch Changes
 
@@ -28,7 +28,7 @@
 
 ### Minor Changes
 
-- fix
+- Publish MCP tooling with the package metadata release train so docs and diagnostics stay compatible with current compiler output.
 
 ### Patch Changes
 
@@ -52,7 +52,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Keep MCP diagnostics compatible with resumable handler compiler output.
 
 ### Patch Changes
 
@@ -64,7 +64,7 @@
 
 ### Minor Changes
 
-- fix fict issue
+- Keep MCP autofixer compatible with map-key diagnostics and tooling analysis APIs.
 
 ### Patch Changes
 
@@ -76,7 +76,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Keep MCP tooling aligned with compiler dependency-walking and runtime handler cleanup fixes.
 
 ### Patch Changes
 
@@ -88,7 +88,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Block manifest path traversal and harden HTTP transports with auth and safe CORS defaults.
 
 ### Patch Changes
 
@@ -100,7 +100,7 @@
 
 ### Minor Changes
 
-- fix mcp
+- Launch docs resources, compiler-backed autofixer, playground-link, streamable HTTP transport, search tools, templates, health/stats endpoints, and session governance.
 
 ### Patch Changes
 
@@ -113,22 +113,22 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish MCP with strict-guarantee diagnostic fixes consumed by autofixer workflows.
 
 ## 0.11.0
 
 ### Minor Changes
 
-- fix fict
+- Publish MCP with ownerDocument/runtime and logical hook diagnostic fixes.
 
 ## 0.10.0
 
 ### Minor Changes
 
-- fix fict
+- Publish MCP with resumable-event, keyed-list, and state-write compiler fixes.
 
 ## 0.9.0
 
 ### Minor Changes
 
-- fix complier
+- Publish MCP scaffold with strict guarantee release updates.

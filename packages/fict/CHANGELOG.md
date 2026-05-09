@@ -4,7 +4,7 @@
 
 ### Minor Changes
 
-- fix
+- Improve uncompiled macro diagnostics and trim bundled dev-only diagnostic code while keeping the Fict runtime bridge aligned with runtime 0.21.
 
 ### Patch Changes
 
@@ -15,7 +15,7 @@
 
 ### Minor Changes
 
-- fix
+- Surface the devtools protocol through the advanced entry point and keep reactive marker exports limited to advanced builds.
 
 ### Patch Changes
 
@@ -26,7 +26,7 @@
 
 ### Minor Changes
 
-- fix
+- Resolve published Fict package metadata for library consumers and keep package configuration compatible with the Vite/Vitest updates.
 
 ### Patch Changes
 
@@ -45,13 +45,14 @@
 ### Patch Changes
 
 - Fix standard `fict` app installs so compiler-generated helpers resolve through `fict/internal` and `fict/loader` instead of requiring a separate top-level `@fictjs/runtime` install. This also adds the new `fict/internal`, `fict/internal/list`, and `fict/loader` bridge entrypoints and updates docs/examples to use the main `fict` package consistently.
+- Updated dependencies
   - @fictjs/runtime@0.17.1
 
 ## 0.17.0
 
 ### Minor Changes
 
-- fix fict
+- Align the root package with resumable event and hydration runtime/compiler fixes.
 
 ### Patch Changes
 
@@ -62,7 +63,7 @@
 
 ### Minor Changes
 
-- fix fict issue
+- Update package release metadata and docs alongside map-key validation and analyzer tooling.
 
 ### Patch Changes
 
@@ -73,7 +74,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Align the root package with dependency walking, handler cleanup, and spread semantics fixes.
 
 ### Patch Changes
 
@@ -84,7 +85,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Align the root package with MCP security, diagnostics, and lint-cleanup fixes.
 
 ### Patch Changes
 
@@ -95,7 +96,7 @@
 
 ### Minor Changes
 
-- fix mcp
+- Publish the root package with the MCP tooling release train.
 
 ### Patch Changes
 
@@ -106,7 +107,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Stabilize e2e fixtures under strict-guarantee defaults.
 
 ### Patch Changes
 
@@ -117,7 +118,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Fix package types while adopting ownerDocument runtime and compiler callback fixes.
 
 ### Patch Changes
 
@@ -128,7 +129,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Publish the root package with resumable-event, keyed-list, state-write, playground, and devtools updates.
 
 ### Patch Changes
 
@@ -139,7 +140,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Avoid runtime pretest rebuild races under strict guarantee defaults.
 
 ### Patch Changes
 
@@ -150,7 +151,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Publish the root package with HIR fuzz and alias diagnostic fixes.
 
 ### Patch Changes
 
@@ -161,7 +162,7 @@
 
 ### Minor Changes
 
-- fix fict
+- Improve package performance while adopting compiler metadata and runtime cleanup fixes.
 
 ### Patch Changes
 
@@ -172,7 +173,7 @@
 
 ### Minor Changes
 
-- fix complier
+- Publish the root package with control-flow, HIR, and Babel compatibility compiler fixes.
 
 ### Patch Changes
 
@@ -183,7 +184,7 @@
 
 ### Patch Changes
 
-- fix ssr
+- Publish the root package with SSR streaming and renderToPartial support.
 - Updated dependencies
   - @fictjs/runtime@0.5.2
 
@@ -191,7 +192,7 @@
 
 ### Patch Changes
 
-- fix fict issue
+- Fix effect cleanup semantics, list rest parameters, and ShadowRoot list support.
 - Updated dependencies
   - @fictjs/runtime@0.5.1
 
@@ -199,7 +200,7 @@
 
 ### Minor Changes
 
-- fix ssr
+- Fix SSR integration for the root package as core SSR and hydration support land.
 
 ### Patch Changes
 
@@ -210,7 +211,7 @@
 
 ### Minor Changes
 
-- update config
+- Refresh root package metadata for release packaging.
 
 ### Patch Changes
 
@@ -221,7 +222,7 @@
 
 ### Minor Changes
 
-- update
+- Improve compiler/runtime reactive behavior, event delegation cycle guards, renderHook macros, and Vite package metadata resolution.
 
 ### Patch Changes
 
@@ -232,7 +233,7 @@
 
 ### Patch Changes
 
-- improve compiler
+- Publish the root package with cross-module reactive metadata and dynamic key narrowing fixes.
 - Updated dependencies
   - @fictjs/runtime@0.2.3
 
@@ -240,7 +241,7 @@
 
 ### Patch Changes
 
-- improve compiler
+- Enhance resources and dangerouslySetInnerHTML handling while adopting compiler and Vite transform cache fixes.
 - Updated dependencies
   - @fictjs/runtime@0.2.2
 
@@ -248,7 +249,7 @@
 
 ### Patch Changes
 
-- improve HIR
+- Fix `$state` and `$memo` macro behavior while adopting the HIR optimizer release.
 - Updated dependencies
   - @fictjs/runtime@0.2.1
 
@@ -256,7 +257,7 @@
 
 ### Minor Changes
 
-- fix some issue
+- Fix compiler integration, add more testing, and update documentation.
 
 ### Patch Changes
 
@@ -267,7 +268,7 @@
 
 ### Minor Changes
 
-- fix some issue
+- Fix lifecycle behavior and adopt DOM binding/createRoot runtime stability fixes.
 
 ### Patch Changes
 
@@ -278,7 +279,7 @@
 
 ### Patch Changes
 
-- fix props
+- Publish the root package with props API fixes and router package scaffolding.
 - Updated dependencies
   - @fictjs/runtime@0.0.15
 
@@ -286,7 +287,7 @@
 
 ### Patch Changes
 
-- refactor apis
+- Refactor the prop API and package exports.
 - Updated dependencies
   - @fictjs/runtime@0.0.14
 
@@ -294,7 +295,7 @@
 
 ### Patch Changes
 
-- fix dev mode
+- Publish the root package with dev-mode and bundle-size fixes from the runtime/list release.
 - Updated dependencies
   - @fictjs/runtime@0.0.13
 
@@ -302,7 +303,7 @@
 
 ### Patch Changes
 
-- fix perf
+- Publish the root package with runtime ESM key, disposal, reorder, and package metadata fixes.
 - Updated dependencies
   - @fictjs/runtime@0.0.12
 
@@ -310,7 +311,7 @@
 
 ### Patch Changes
 
-- fix effect cleanup
+- Publish the root package with event handler invocation and effect cleanup fixes.
 - Updated dependencies
   - @fictjs/runtime@0.0.11
 
@@ -318,7 +319,7 @@
 
 ### Patch Changes
 
-- fix issue and improve perf
+- Improve early integration stability and performance.
 - Updated dependencies
   - @fictjs/runtime@0.0.10
 
@@ -326,7 +327,7 @@
 
 ### Patch Changes
 
-- fix list
+- Fix sourcemap, host root, SVG, and list behavior.
 - Updated dependencies
   - @fictjs/runtime@0.0.9
 
@@ -334,7 +335,7 @@
 
 ### Patch Changes
 
-- fix store
+- Fix dependency metadata around reactivity, `$state`, hooks, and store updates.
 - Updated dependencies
   - @fictjs/runtime@0.0.8
   - @fictjs/vite-plugin@0.0.8
@@ -343,7 +344,7 @@
 
 ### Patch Changes
 
-- fix version
+- Fix package configuration for the root package and dependencies.
 - Updated dependencies
   - @fictjs/vite-plugin@0.0.7
   - @fictjs/runtime@0.0.7
@@ -352,7 +353,7 @@
 
 ### Patch Changes
 
-- update version
+- Align root package version metadata.
 - Updated dependencies
   - @fictjs/runtime@0.0.6
   - @fictjs/vite-plugin@0.0.6
@@ -361,7 +362,7 @@
 
 ### Patch Changes
 
-- fix(compiler): fix the hoisted-function breakage
+- Fix compiler hoisted-function handling.
 - Updated dependencies
   - @fictjs/runtime@0.0.5
   - @fictjs/vite-plugin@0.0.5
@@ -370,8 +371,8 @@
 
 ### Patch Changes
 
-- fix(runtime): fix event handlers
-  fix(compiler): fix accessors issue
+- Fix runtime event handler behavior.
+- Fix compiler accessor handling.
 - Updated dependencies
   - @fictjs/runtime@0.0.4
   - @fictjs/vite-plugin@0.0.4
