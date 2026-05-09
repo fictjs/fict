@@ -2096,6 +2096,89 @@ function collectHandlerTopLevelReferences(
   return referenced
 }
 
+function collectHandlerMutableTopLevelWrites(
+  handlerPath: NodePath<t.Node>,
+  programScope: Scope,
+  mutableTopLevelDeclarations: Set<string>,
+): Set<string> {
+  const written = new Set<string>()
+
+  const addIdentifier = (identifierPath: NodePath<t.Identifier>) => {
+    const name = identifierPath.node.name
+    if (!mutableTopLevelDeclarations.has(name)) return
+
+    const binding = identifierPath.scope.getBinding(name)
+    if (!binding || binding.scope !== programScope) return
+
+    written.add(name)
+  }
+
+  const collectAssignedPattern = (patternPath: NodePath<t.Node>) => {
+    if (patternPath.isIdentifier()) {
+      addIdentifier(patternPath)
+      return
+    }
+
+    if (patternPath.isObjectPattern()) {
+      for (const propertyPath of patternPath.get('properties')) {
+        if (propertyPath.isObjectProperty()) {
+          collectAssignedPattern(propertyPath.get('value') as NodePath<t.Node>)
+        } else if (propertyPath.isRestElement()) {
+          collectAssignedPattern(propertyPath.get('argument') as NodePath<t.Node>)
+        }
+      }
+      return
+    }
+
+    if (patternPath.isArrayPattern()) {
+      for (const elementPath of patternPath.get('elements')) {
+        if (elementPath.node) {
+          collectAssignedPattern(elementPath as NodePath<t.Node>)
+        }
+      }
+      return
+    }
+
+    if (patternPath.isRestElement()) {
+      collectAssignedPattern(patternPath.get('argument') as NodePath<t.Node>)
+      return
+    }
+
+    if (patternPath.isAssignmentPattern()) {
+      collectAssignedPattern(patternPath.get('left') as NodePath<t.Node>)
+    }
+  }
+
+  handlerPath.traverse({
+    AssignmentExpression(path) {
+      collectAssignedPattern(path.get('left') as NodePath<t.Node>)
+    },
+
+    UpdateExpression(path) {
+      const argumentPath = path.get('argument')
+      if (argumentPath.isIdentifier()) {
+        addIdentifier(argumentPath)
+      }
+    },
+
+    ForInStatement(path) {
+      const leftPath = path.get('left')
+      if (!leftPath.isVariableDeclaration()) {
+        collectAssignedPattern(leftPath as NodePath<t.Node>)
+      }
+    },
+
+    ForOfStatement(path) {
+      const leftPath = path.get('left')
+      if (!leftPath.isVariableDeclaration()) {
+        collectAssignedPattern(leftPath as NodePath<t.Node>)
+      }
+    },
+  })
+
+  return written
+}
+
 /**
  * Collect identifier names from a pattern (for destructuring).
  */
@@ -2160,6 +2243,7 @@ function extractAndRewriteHandlers(
 
   // Collect all top-level declarations that could be referenced by handlers
   const topLevelDeclarations = new Set<string>()
+  const mutableTopLevelDeclarations = new Set<string>()
   const importedNames = new Set<string>()
   const runtimeHelperImports = collectRuntimeHelperImports(ast.program.body)
 
@@ -2181,6 +2265,7 @@ function extractAndRewriteHandlers(
     // Collect function declarations
     if (t.isFunctionDeclaration(node) && node.id) {
       topLevelDeclarations.add(node.id.name)
+      mutableTopLevelDeclarations.add(node.id.name)
       continue
     }
 
@@ -2189,6 +2274,9 @@ function extractAndRewriteHandlers(
       for (const declarator of node.declarations) {
         for (const name of collectPatternIdentifiers(declarator.id)) {
           topLevelDeclarations.add(name)
+          if (node.kind === 'let' || node.kind === 'var') {
+            mutableTopLevelDeclarations.add(name)
+          }
         }
       }
       continue
@@ -2214,10 +2302,14 @@ function extractAndRewriteHandlers(
     if (t.isExportNamedDeclaration(node) && node.declaration) {
       if (t.isFunctionDeclaration(node.declaration) && node.declaration.id) {
         topLevelDeclarations.add(node.declaration.id.name)
+        mutableTopLevelDeclarations.add(node.declaration.id.name)
       } else if (t.isVariableDeclaration(node.declaration)) {
         for (const declarator of node.declaration.declarations) {
           for (const name of collectPatternIdentifiers(declarator.id)) {
             topLevelDeclarations.add(name)
+            if (node.declaration.kind === 'let' || node.declaration.kind === 'var') {
+              mutableTopLevelDeclarations.add(name)
+            }
           }
         }
       } else if (t.isClassDeclaration(node.declaration) && node.declaration.id) {
@@ -2265,8 +2357,6 @@ function extractAndRewriteHandlers(
           const initPath = declaratorPath.get('init')
           if (!initPath.node || !initPath.isExpression()) continue
 
-          handlerNames.push(name)
-
           // Generate the handler function code
           const handlerCode = generate(initPath.node).code
 
@@ -2283,6 +2373,17 @@ function extractAndRewriteHandlers(
           const localDeps: string[] = []
           for (const ref of referencedIds) {
             localDeps.push(ref)
+          }
+
+          const mutableWrites = collectHandlerMutableTopLevelWrites(
+            initPath,
+            programScope,
+            mutableTopLevelDeclarations,
+          )
+          if (mutableWrites.size > 0) continue
+
+          handlerNames.push(name)
+          for (const ref of localDeps) {
             allLocalDeps.add(ref)
           }
 
@@ -2313,8 +2414,6 @@ function extractAndRewriteHandlers(
         // Resume handlers have complex component dependencies that can't be easily extracted
         if (!name.match(/^__fict_e\d+$/)) return
 
-        handlerNames.push(name)
-
         // Convert to arrow function expression for the virtual module
         const params = declaration.params
         const body = declaration.body
@@ -2336,6 +2435,17 @@ function extractAndRewriteHandlers(
         const localDeps: string[] = []
         for (const ref of referencedIds) {
           localDeps.push(ref)
+        }
+
+        const mutableWrites = collectHandlerMutableTopLevelWrites(
+          declarationPath,
+          programScope,
+          mutableTopLevelDeclarations,
+        )
+        if (mutableWrites.size > 0) return
+
+        handlerNames.push(name)
+        for (const ref of localDeps) {
           allLocalDeps.add(ref)
         }
 

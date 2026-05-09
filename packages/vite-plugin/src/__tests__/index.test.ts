@@ -2004,6 +2004,102 @@ function Counter() {
       }
     })
 
+    it('keeps handlers in the source module when they write mutable module-local bindings', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+
+let clicks = 0;
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const [] = __fictUseLexicalScope(scopeId, []);
+  clicks++;
+  return clicks;
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn(), warn: vi.fn() }
+      const transform = plugin.transform as any
+      const result =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, compiledCode, '/project/src/MutableLocal.tsx')
+          : null
+
+      expect(mockContext.error).not.toHaveBeenCalled()
+      expect(result && typeof result === 'object').toBe(true)
+      expect(mockContext.warn).not.toHaveBeenCalled()
+      if (result && typeof result === 'object' && 'code' in result) {
+        const code = result.code as string
+
+        expect(code).toContain('export const __fict_e0')
+        expect(code).toContain("__fictQrl(import.meta.url, '__fict_e0')")
+        expect(code).not.toContain('virtual:fict-handler:/project/src/MutableLocal.tsx$$__fict_e0')
+        expect(code).not.toContain('__fict_dep_clicks')
+      }
+
+      const load = plugin.load as any
+      expect(load('\0fict-handler:/project/src/MutableLocal.tsx$$__fict_e0')).toBeNull()
+    })
+
+    it('still splits handlers that mutate properties on module-local objects', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const compiledCode = `
+import { __fictUseLexicalScope, __fictQrl } from '@fictjs/runtime/internal';
+
+const metrics = { clicks: 0 };
+
+export const __fict_e0 = (scopeId, event, el) => {
+  const [] = __fictUseLexicalScope(scopeId, []);
+  metrics.clicks++;
+  return metrics.clicks;
+};
+
+function Counter() {
+  el.setAttribute('on:click', __fictQrl(import.meta.url, '__fict_e0'));
+}
+      `
+
+      const mockContext = { error: vi.fn(), warn: vi.fn(), emitFile: vi.fn() }
+      const transform = plugin.transform as any
+      const result =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, compiledCode, '/project/src/MutableObject.tsx')
+          : null
+
+      expect(mockContext.error).not.toHaveBeenCalled()
+      expect(result && typeof result === 'object').toBe(true)
+      expect(mockContext.warn).not.toHaveBeenCalled()
+      if (result && typeof result === 'object' && 'code' in result) {
+        const code = result.code as string
+
+        expect(code).not.toContain('export const __fict_e0')
+        expect(code).toContain('virtual:fict-handler:/project/src/MutableObject.tsx$$__fict_e0')
+        expect(code).toContain('export { metrics as __fict_dep_metrics }')
+      }
+
+      const load = plugin.load as any
+      const content = load('\0fict-handler:/project/src/MutableObject.tsx$$__fict_e0') as
+        | string
+        | null
+      expect(content).not.toBeNull()
+      expect(content).toContain('__fict_dep_metrics as metrics')
+      expect(content).toContain('metrics.clicks++')
+    })
+
     it('handler with direct function reference works in virtual module', async () => {
       const plugin = fict({ functionSplitting: true }) as any
 
