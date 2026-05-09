@@ -245,7 +245,7 @@ interface ExtractedHandler {
   /** Runtime helpers used by this handler */
   helpersUsed: RuntimeHelperUsage[]
   /** Local dependencies from source module that need to be re-exported */
-  localDeps: string[]
+  localDeps: HandlerLocalDependency[]
   /** The handler function code (without export) */
   code: string
   /** Which runtime package family this module uses for helper imports */
@@ -253,6 +253,11 @@ interface ExtractedHandler {
 }
 
 type RuntimeHelperUsage = string | { helperName: string; localName: string }
+
+interface HandlerLocalDependency {
+  localName: string
+  exportName: string
+}
 
 /**
  * Registry used only by the standalone registerExtractedHandler helper.
@@ -1862,9 +1867,9 @@ function generateHandlerModule(handler: ExtractedHandler): string {
   }
 
   // Import local dependencies from the source module
-  // These are re-exported by the source module with __fict_dep_ prefix
+  // These are re-exported by the source module with generated __fict_dep_ names
   if (handler.localDeps.length > 0) {
-    const depImports = handler.localDeps.map(dep => `${HANDLER_DEP_PREFIX}${dep} as ${dep}`)
+    const depImports = handler.localDeps.map(dep => `${dep.exportName} as ${dep.localName}`)
     imports.push(`import { ${depImports.join(', ')} } from '${handler.sourceModule}';`)
   }
 
@@ -1890,7 +1895,10 @@ export function registerExtractedHandler(
     sourceModule,
     exportName,
     helpersUsed,
-    localDeps,
+    localDeps: localDeps.map(dep => ({
+      localName: dep,
+      exportName: `${HANDLER_DEP_PREFIX}${dep}`,
+    })),
     code,
     runtimeImportFamily: 'fict',
   })
@@ -2245,6 +2253,73 @@ function collectPatternIdentifiers(pattern: t.LVal | t.PatternLike): string[] {
   return names
 }
 
+function getExportedName(exported: t.ExportSpecifier['exported']): string {
+  return t.isIdentifier(exported) ? exported.name : exported.value
+}
+
+function collectExportedNames(body: t.Statement[]): Set<string> {
+  const names = new Set<string>()
+
+  for (const node of body) {
+    if (t.isExportDefaultDeclaration(node)) {
+      names.add('default')
+      continue
+    }
+
+    if (!t.isExportNamedDeclaration(node)) continue
+
+    for (const specifier of node.specifiers) {
+      if (t.isExportSpecifier(specifier)) {
+        names.add(getExportedName(specifier.exported))
+      }
+    }
+
+    const declaration = node.declaration
+    if (!declaration) continue
+
+    if (t.isFunctionDeclaration(declaration) && declaration.id) {
+      names.add(declaration.id.name)
+    } else if (t.isVariableDeclaration(declaration)) {
+      for (const declarator of declaration.declarations) {
+        for (const name of collectPatternIdentifiers(declarator.id)) {
+          names.add(name)
+        }
+      }
+    } else if (t.isClassDeclaration(declaration) && declaration.id) {
+      names.add(declaration.id.name)
+    } else if (t.isTSEnumDeclaration(declaration) && !declaration.declare) {
+      names.add(declaration.id.name)
+    } else if (
+      t.isTSModuleDeclaration(declaration) &&
+      !declaration.declare &&
+      t.isIdentifier(declaration.id)
+    ) {
+      names.add(declaration.id.name)
+    }
+  }
+
+  return names
+}
+
+function createHandlerDependencyExportName(
+  sourceModule: string,
+  localName: string,
+  usedExportNames: Set<string>,
+): string {
+  const hash = hashString(`${sourceModule}:${localName}`).slice(0, 8)
+  const base = `${HANDLER_DEP_PREFIX}${hash}_${localName}`
+  let candidate = base
+  let suffix = 1
+
+  while (usedExportNames.has(candidate)) {
+    candidate = `${base}_${suffix}`
+    suffix++
+  }
+
+  usedExportNames.add(candidate)
+  return candidate
+}
+
 /**
  * Extract handlers using Babel AST and rewrite QRLs to use virtual modules.
  * Local dependencies are detected and re-exported for handlers to import from
@@ -2280,6 +2355,7 @@ function extractAndRewriteHandlers(
   const topLevelDeclarations = new Set<string>()
   const mutableTopLevelDeclarations = new Set<string>()
   const importedNames = new Set<string>()
+  const usedExportNames = collectExportedNames(ast.program.body)
   const runtimeHelperImports = collectRuntimeHelperImports(ast.program.body)
 
   for (const node of ast.program.body) {
@@ -2368,7 +2444,7 @@ function extractAndRewriteHandlers(
 
   const handlerNames: string[] = []
   const nodesToRemove = new Set<t.Node>()
-  const allLocalDeps = new Set<string>()
+  const dependencyExportNames = new Map<string, string>()
   const runtimeImportFamily = detectRuntimeImportFamilyFromCode(ast.program.body)
 
   // First pass: find all handler exports and extract their code
@@ -2406,9 +2482,9 @@ function extractAndRewriteHandlers(
             topLevelDeclarations,
             runtimeHelperImports,
           )
-          const localDeps: string[] = []
+          const localDepNames: string[] = []
           for (const ref of referencedIds) {
-            localDeps.push(ref)
+            localDepNames.push(ref)
           }
 
           const mutableWrites = collectHandlerMutableTopLevelWrites(
@@ -2419,9 +2495,18 @@ function extractAndRewriteHandlers(
           if (mutableWrites.size > 0) continue
 
           handlerNames.push(name)
-          for (const ref of localDeps) {
-            allLocalDeps.add(ref)
-          }
+          const localDeps = localDepNames.map(localName => {
+            let exportName = dependencyExportNames.get(localName)
+            if (!exportName) {
+              exportName = createHandlerDependencyExportName(
+                sourceModule,
+                localName,
+                usedExportNames,
+              )
+              dependencyExportNames.set(localName, exportName)
+            }
+            return { localName, exportName }
+          })
 
           // Register the handler with its full code
           const handlerId = createHandlerId(sourceModule, name)
@@ -2469,9 +2554,9 @@ function extractAndRewriteHandlers(
           topLevelDeclarations,
           runtimeHelperImports,
         )
-        const localDeps: string[] = []
+        const localDepNames: string[] = []
         for (const ref of referencedIds) {
-          localDeps.push(ref)
+          localDepNames.push(ref)
         }
 
         const mutableWrites = collectHandlerMutableTopLevelWrites(
@@ -2482,9 +2567,14 @@ function extractAndRewriteHandlers(
         if (mutableWrites.size > 0) return
 
         handlerNames.push(name)
-        for (const ref of localDeps) {
-          allLocalDeps.add(ref)
-        }
+        const localDeps = localDepNames.map(localName => {
+          let exportName = dependencyExportNames.get(localName)
+          if (!exportName) {
+            exportName = createHandlerDependencyExportName(sourceModule, localName, usedExportNames)
+            dependencyExportNames.set(localName, exportName)
+          }
+          return { localName, exportName }
+        })
 
         // Register the handler with its full code
         const handlerId = createHandlerId(sourceModule, name)
@@ -2533,15 +2623,12 @@ function extractAndRewriteHandlers(
     },
   })
 
-  // Add re-exports for local dependencies used by handlers
-  // This allows handlers to import them from the source module
-  if (allLocalDeps.size > 0) {
+  // Add private re-exports for local dependencies used by handlers.
+  // Generated names include a stable hash and collision suffix when needed.
+  if (dependencyExportNames.size > 0) {
     const reExports: t.ExportSpecifier[] = []
-    for (const dep of allLocalDeps) {
-      // Export as __fict_dep_<name> to avoid conflicts
-      reExports.push(
-        t.exportSpecifier(t.identifier(dep), t.identifier(`${HANDLER_DEP_PREFIX}${dep}`)),
-      )
+    for (const [localName, exportName] of dependencyExportNames) {
+      reExports.push(t.exportSpecifier(t.identifier(localName), t.identifier(exportName)))
     }
     ast.program.body.push(t.exportNamedDeclaration(null, reExports))
   }

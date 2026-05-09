@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -1577,9 +1578,51 @@ function Counter() {
       const content = load('\0fict-handler:/project/src/ScopedDeps.tsx$$__fict_e0') as string | null
 
       expect(content).not.toBeNull()
-      expect(content).toContain('__fict_dep_config as config')
-      expect(content).toContain('__fict_dep_readStep as readStep')
-      expect(content).toContain('__fict_dep_StepBox as StepBox')
+      expect(content).toMatch(/__fict_dep_[a-f0-9]{8}_config as config/)
+      expect(content).toMatch(/__fict_dep_[a-f0-9]{8}_readStep as readStep/)
+      expect(content).toMatch(/__fict_dep_[a-f0-9]{8}_StepBox as StepBox/)
+    })
+
+    it('avoids private dependency export name collisions', async () => {
+      const plugin = fict({ functionSplitting: true }) as any
+
+      if (typeof plugin.configResolved === 'function') {
+        plugin.configResolved(mockBuildConfig as any)
+      }
+
+      const sourcePath = '/project/src/DepConflict.tsx'
+      const collidingExport = `__fict_dep_${createHash('sha256')
+        .update(`${sourcePath}:config`)
+        .digest('hex')
+        .slice(0, 8)}_config`
+      const compiledCode = `
+export const ${collidingExport} = 'user export';
+const config = { step: 1 };
+
+export const __fict_e0 = () => config.step;
+      `
+
+      const mockContext = { error: vi.fn(), emitFile: vi.fn() }
+      const transform = plugin.transform as any
+      const result =
+        typeof transform === 'function'
+          ? await transform.call(mockContext, compiledCode, sourcePath)
+          : null
+
+      expect(mockContext.error).not.toHaveBeenCalled()
+      expect(result && typeof result === 'object').toBe(true)
+      if (result && typeof result === 'object' && 'code' in result) {
+        expect(result.code as string).toContain(`export const ${collidingExport}`)
+        expect(result.code as string).toContain(`export { config as ${collidingExport}_1 }`)
+      }
+
+      const load = plugin.load as any
+      const content = load('\0fict-handler:/project/src/DepConflict.tsx$$__fict_e0') as
+        | string
+        | null
+
+      expect(content).not.toBeNull()
+      expect(content).toContain(`${collidingExport}_1 as config`)
     })
 
     it('does not capture block or catch parameters that shadow top-level dependencies', async () => {
@@ -1649,8 +1692,8 @@ function Counter() {
       const content = load('\0fict-handler:/project/src/TypedDeps.tsx$$__fict_e0') as string | null
 
       expect(content).not.toBeNull()
-      expect(content).toContain('__fict_dep_fmt as fmt')
-      expect(content).toContain('__fict_dep_label as label')
+      expect(content).toMatch(/__fict_dep_[a-f0-9]{8}_fmt as fmt/)
+      expect(content).toMatch(/__fict_dep_[a-f0-9]{8}_label as label/)
       expect(content).not.toContain('__fict_dep_Formatter')
     })
 
@@ -1979,8 +2022,8 @@ function Counter() {
         // Hoisted helpers referenced by handlers remain available from the
         // source module and are re-exported under a private dependency name.
         expect(code).toContain('export const __fict_fn_formatNumber_0')
-        expect(code).toContain(
-          'export { __fict_fn_formatNumber_0 as __fict_dep___fict_fn_formatNumber_0 }',
+        expect(code).toMatch(
+          /export \{ __fict_fn_formatNumber_0 as __fict_dep_[a-f0-9]{8}___fict_fn_formatNumber_0 \}/,
         )
       }
 
@@ -1995,8 +2038,8 @@ function Counter() {
 
           // Should import the hoisted helper from the source module dependency re-export
           expect(content).toContain('__fict_fn_formatNumber_0')
-          expect(content).toContain(
-            '__fict_dep___fict_fn_formatNumber_0 as __fict_fn_formatNumber_0',
+          expect(content).toMatch(
+            /__fict_dep_[a-f0-9]{8}___fict_fn_formatNumber_0 as __fict_fn_formatNumber_0/,
           )
           // The helper should be imported from the source module
           expect(content).toContain('/project/src/Counter.tsx')
@@ -2088,7 +2131,7 @@ function Counter() {
 
         expect(code).not.toContain('export const __fict_e0')
         expect(code).toContain('virtual:fict-handler:/project/src/MutableObject.tsx$$__fict_e0')
-        expect(code).toContain('export { metrics as __fict_dep_metrics }')
+        expect(code).toMatch(/export \{ metrics as __fict_dep_[a-f0-9]{8}_metrics \}/)
       }
 
       const load = plugin.load as any
@@ -2096,7 +2139,7 @@ function Counter() {
         | string
         | null
       expect(content).not.toBeNull()
-      expect(content).toContain('__fict_dep_metrics as metrics')
+      expect(content).toMatch(/__fict_dep_[a-f0-9]{8}_metrics as metrics/)
       expect(content).toContain('metrics.clicks++')
     })
 
