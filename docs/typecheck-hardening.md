@@ -31,6 +31,8 @@ pnpm typecheck:strict-candidate
 
 It reruns TypeScript for the packages above with the hardening flags forced to `true` and exits non-zero on any regression. The same gate is wired into PR typecheck, `precommit`, and `release:verify`.
 
+The script first rebuilds the dist-backed type dependencies used by downstream package configs (`@fictjs/compiler` and `@fictjs/eslint-plugin`), so the gate is valid from a clean checkout and not dependent on ignored local `dist` directories.
+
 Output is truncated per package by default. Set `FICT_STRICT_CANDIDATE_MAX_LINES` when a full package error list is useful. The underlying script can still be run without `--fail-on-error` for ad hoc progress reports.
 
 ## Current RC Status

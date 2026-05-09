@@ -11,6 +11,8 @@ const tscBin = require.resolve('typescript/bin/tsc')
 const failOnError = process.argv.includes('--fail-on-error')
 const maxOutputLines = Number(process.env.FICT_STRICT_CANDIDATE_MAX_LINES ?? 80)
 
+const distBackedTypeDependencies = ['packages/compiler', 'packages/eslint-plugin']
+
 const candidates = [
   {
     packageName: 'compiler',
@@ -35,6 +37,33 @@ const candidates = [
 function flagArgs(flags) {
   return flags.flatMap(flag => [`--${flag}`, 'true'])
 }
+
+function packageManagerInvocation(args) {
+  const npmExecPath = process.env.npm_execpath
+  if (npmExecPath && /pnpm(?:\.cjs|\.js|\.mjs)?$/.test(path.basename(npmExecPath))) {
+    return { command: process.execPath, args: [npmExecPath, ...args] }
+  }
+
+  return { command: process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', args }
+}
+
+function runPnpm(args) {
+  const invocation = packageManagerInvocation(args)
+  execFileSync(invocation.command, invocation.args, {
+    cwd: repoRoot,
+    env: process.env,
+    stdio: 'inherit',
+  })
+}
+
+function prepareDistBackedTypeDependencies() {
+  console.log('Preparing dist-backed type dependencies for strict candidate checks...')
+  for (const packageDir of distBackedTypeDependencies) {
+    runPnpm(['--dir', packageDir, 'build'])
+  }
+}
+
+prepareDistBackedTypeDependencies()
 
 let failed = 0
 
