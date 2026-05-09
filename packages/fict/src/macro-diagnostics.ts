@@ -3,5 +3,9 @@ export function createUncompiledMacroError(macroName: '$state' | '$effect'): Err
     typeof __DEV__ !== 'undefined'
       ? __DEV__
       : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
-  return new Error(isDev ? `${macroName}() compile-only.` : 'FICT_E_UNCOMPILED')
+  return new Error(
+    isDev
+      ? `${macroName}() is a Fict compile-time macro that ran at runtime because this file was not transformed. Check @fictjs/vite-plugin, test transforms, or package aliases.`
+      : 'FICT_E_UNCOMPILED',
+  )
 }

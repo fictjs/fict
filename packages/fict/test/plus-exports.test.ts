@@ -38,8 +38,12 @@ describe('compiler macro diagnostics', () => {
     process.env.NODE_ENV = 'development'
 
     try {
-      expect(() => fict.$state(0)).toThrow('$state() compile-only')
-      expect(() => slim.$effect(() => {})).toThrow('$effect() compile-only')
+      expect(() => fict.$state(0)).toThrow(
+        '$state() is a Fict compile-time macro that ran at runtime because this file was not transformed',
+      )
+      expect(() => slim.$effect(() => {})).toThrow(
+        '$effect() is a Fict compile-time macro that ran at runtime because this file was not transformed',
+      )
     } finally {
       process.env.NODE_ENV = previous
     }
