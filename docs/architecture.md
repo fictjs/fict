@@ -873,6 +873,7 @@ stream, but its return shape is not frozen as stable v1 API surface.
 
 - From an architectural perspective, it stands on the shoulders of several predecessors:
   - React Compiler's automatic derivation idea
+  - Million.js's compiler-assisted React performance exploration
   - Solid's fine-grained reactive graph
   - Svelte 5 / Vue's intuitive mutable syntax
   - A hybrid execution model that matches developer intuition

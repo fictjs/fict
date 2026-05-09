@@ -684,8 +684,10 @@ The compiler has some limitations when handling conditional rendering patterns.
 Fict is built upon the brilliant ideas and relentless innovation of the open-source community. We express our deepest respect and gratitude to these projects:
 
 - **[React](https://react.dev/)** — For defining the modern era of UI development. Its component model and declarative philosophy set the standard for developer experience.
+- **[React Compiler](https://react.dev/learn/react-compiler)** — For proving that automatic memoization and compiler-owned reactivity can reduce manual dependency bookkeeping while preserving React semantics.
 - **[Solid](https://www.solidjs.com/)** — For pioneering fine-grained reactivity and demonstrating the power of compilation. Its architecture is the bedrock upon which Fict's performance is built.
 - **[Qwik](https://qwik.dev/)** — For its outstanding resumability-first SSR vision. Its approach to instant interactivity has been a major inspiration for Fict's resumable SSR direction.
+- **[Million.js](https://million.dev/)** — For exploring compiler-assisted React performance and helping popularize the idea that UI performance can be shifted from runtime work into build-time analysis.
 - **[alien-signals](https://github.com/stackblitz/alien-signals)** — For pushing the boundaries of signal performance. Its implementation provided critical guidance for Fict's reactive system.
 
 ---
