@@ -406,9 +406,9 @@ describe('fict vite-plugin', () => {
         },
       )
 
-      const metadataCalls = emitFile.mock.calls as unknown as Array<
-        [{ type: string; fileName: string; source?: string }]
-      >
+      const metadataCalls = emitFile.mock.calls as unknown as [
+        { type: string; fileName: string; source?: string },
+      ][]
       const metadataCall = metadataCalls.find(
         ([asset]) => asset.type === 'asset' && asset.fileName === 'index.fict.meta.json',
       )
@@ -473,9 +473,9 @@ describe('fict vite-plugin', () => {
         },
       )
 
-      const metadataCalls = emitFile.mock.calls as unknown as Array<
-        [{ type: string; fileName: string; source?: string }]
-      >
+      const metadataCalls = emitFile.mock.calls as unknown as [
+        { type: string; fileName: string; source?: string },
+      ][]
       const metadataCall = metadataCalls.find(
         ([asset]) => asset.type === 'asset' && asset.fileName === 'index.fict.meta.json',
       )
