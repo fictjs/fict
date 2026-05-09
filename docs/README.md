@@ -36,6 +36,7 @@ This folder holds documentation for the Fict project.
 
 - `scheduler.md` — Multi-priority scheduler and transition APIs
 - `error-boundary.md` — Error boundary runtime semantics
+- `compiler-maintenance.md` — Compiler complexity budgets and profiling workflow
 
 ## Tooling
 
