@@ -20,6 +20,7 @@ This folder holds documentation for the Fict project.
 - `migration-guide.md` — Practical migration paths from React, Vue, Svelte, and Solid
 - `strict-guarantee-cookbook.md` — Common strictGuarantee failures and rewrites
 - `store-api.md` — Public `$store` ownership and internal `createStore` boundary
+- `release-policy.md` — SemVer, Changesets, changelog, and release note standards
 - `config-profiles.md` — Recommended dev/CI/prod compiler + runtime profiles
 - `third-party-libraries.md` — Package metadata ABI for third-party Fict hook libraries
 - `metadata-packaging-architecture.md` — Architecture decision for compiler-generated metadata and build-time packaging

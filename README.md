@@ -571,6 +571,7 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 | [Migration Guide](./docs/migration-guide.md)                     | React/Vue/Svelte/Solid migration   |
 | [Strict Guarantee Cookbook](./docs/strict-guarantee-cookbook.md) | Fail-closed diagnostic rewrites    |
 | [Store API](./docs/store-api.md)                                 | `$state` vs `$store` ownership     |
+| [Release Policy](./docs/release-policy.md)                       | SemVer and changelog standards     |
 | [ESLint Rules](./docs/eslint-rules.md)                           | Linting configuration              |
 | [Diagnostic Codes](./docs/diagnostic-codes.md)                   | Compiler warnings reference        |
 | [Config Profiles](./docs/config-profiles.md)                     | Recommended dev/CI/prod settings   |
