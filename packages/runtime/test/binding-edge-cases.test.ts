@@ -45,6 +45,10 @@ const tick = () =>
       : Promise.resolve().then(resolve),
   )
 
+const pushCleanup = <T>(log: T[], value: T): void => {
+  log.push(value)
+}
+
 describe('Binding Edge Cases', () => {
   let container: HTMLElement
 
@@ -525,7 +529,7 @@ describe('Binding Edge Cases', () => {
         fontSize: 14,
       })
 
-      bindStyle(el, () => style())
+      bindStyle(el, () => style() as any)
 
       style({ color: null as any, fontSize: undefined as any })
       await tick()
@@ -1220,7 +1224,7 @@ describe('Binding Edge Cases', () => {
         receivedEvent = e
       }
 
-      callEventHandler(handler, event, null, 'test-data')
+      callEventHandler(handler as any, event, null, 'test-data')
 
       expect(receivedData).toBe('test-data')
       expect(receivedEvent).toBe(event)
@@ -1692,7 +1696,7 @@ describe('Binding Edge Cases', () => {
         () => condition(),
         () => {
           const value = counter()
-          onDestroy(() => cleanupLog.push(value))
+          onDestroy(() => pushCleanup(cleanupLog, value))
           return {
             type: 'div',
             props: { children: String(value) },
@@ -1750,7 +1754,7 @@ describe('Binding Edge Cases', () => {
           () => condition(),
           () => {
             const value = counter()
-            onDestroy(() => cleanupLog.push(value))
+            onDestroy(() => pushCleanup(cleanupLog, value))
             return {
               type: 'button',
               props: {
@@ -1871,7 +1875,7 @@ describe('Binding Edge Cases', () => {
       const { marker, dispose, flush } = createConditional(
         () => condition(),
         () => ({
-          type: ErrorBoundary,
+          type: ErrorBoundary as any,
           props: {
             fallback: { type: 'span', props: { children: 'caught' }, key: undefined },
             onError: (err: unknown) => errors.push(err),
@@ -1918,7 +1922,7 @@ describe('Binding Edge Cases', () => {
         const handle = createConditional(
           () => condition(),
           () => {
-            onDestroy(() => cleanupLog.push('old'))
+            onDestroy(() => pushCleanup(cleanupLog, 'old'))
             return {
               type: 'button',
               props: {
@@ -1930,7 +1934,7 @@ describe('Binding Edge Cases', () => {
           },
           createElement,
           () => {
-            onDestroy(() => cleanupLog.push('new'))
+            onDestroy(() => pushCleanup(cleanupLog, 'new'))
             throw renderError
           },
         )
@@ -1985,7 +1989,7 @@ describe('Binding Edge Cases', () => {
         const handle = createConditional(
           () => condition(),
           () => {
-            onDestroy(() => cleanupLog.push('old'))
+            onDestroy(() => pushCleanup(cleanupLog, 'old'))
             return {
               type: 'button',
               props: {
@@ -1997,7 +2001,7 @@ describe('Binding Edge Cases', () => {
           },
           createElementMaybeThrow,
           () => {
-            onDestroy(() => cleanupLog.push('new'))
+            onDestroy(() => pushCleanup(cleanupLog, 'new'))
             return { type: 'button', props: { children: 'new' }, key: undefined }
           },
         )
@@ -2049,7 +2053,7 @@ describe('Binding Edge Cases', () => {
           const handle = createConditional(
             () => condition(),
             () => {
-              onDestroy(() => cleanupLog.push('old'))
+              onDestroy(() => pushCleanup(cleanupLog, 'old'))
               return {
                 type: 'button',
                 props: {
@@ -2061,7 +2065,7 @@ describe('Binding Edge Cases', () => {
             },
             createElement,
             () => {
-              onDestroy(() => cleanupLog.push('new'))
+              onDestroy(() => pushCleanup(cleanupLog, 'new'))
               return { type: 'button', props: { children: 'new' }, key: undefined }
             },
           )
@@ -2120,12 +2124,12 @@ describe('Binding Edge Cases', () => {
           const handle = createConditional(
             () => condition(),
             () => {
-              onDestroy(() => cleanupLog.push('old'))
+              onDestroy(() => pushCleanup(cleanupLog, 'old'))
               return { type: 'button', props: { children: 'old' }, key: undefined }
             },
             createElement,
             () => {
-              onDestroy(() => cleanupLog.push('new'))
+              onDestroy(() => pushCleanup(cleanupLog, 'new'))
               return {
                 type: Fragment,
                 props: {
@@ -2176,12 +2180,12 @@ describe('Binding Edge Cases', () => {
         const handle = createConditional(
           () => condition(),
           () => {
-            onDestroy(() => cleanupLog.push('old'))
+            onDestroy(() => pushCleanup(cleanupLog, 'old'))
             return { type: 'button', props: { children: 'old' }, key: undefined }
           },
           createElement,
           () => {
-            onDestroy(() => cleanupLog.push('new'))
+            onDestroy(() => pushCleanup(cleanupLog, 'new'))
             return {
               type: 'button',
               props: {
@@ -2225,7 +2229,7 @@ describe('Binding Edge Cases', () => {
         onMount(() => {
           throw mountError
         })
-        onDestroy(() => cleanupLog.push('new'))
+        onDestroy(() => pushCleanup(cleanupLog, 'new'))
         return { type: 'button', props: { children: 'new' }, key: undefined }
       }
 
@@ -2238,7 +2242,7 @@ describe('Binding Edge Cases', () => {
         const handle = createConditional(
           () => condition(),
           () => {
-            onDestroy(() => cleanupLog.push('old'))
+            onDestroy(() => pushCleanup(cleanupLog, 'old'))
             return { type: 'button', props: { children: 'old' }, key: undefined }
           },
           createElement,
@@ -2285,7 +2289,7 @@ describe('Binding Edge Cases', () => {
           },
           createElement,
           () => {
-            onDestroy(() => cleanupLog.push('new'))
+            onDestroy(() => pushCleanup(cleanupLog, 'new'))
             return { type: 'button', props: { children: 'new' }, key: undefined }
           },
         )
@@ -2365,7 +2369,7 @@ describe('Binding Edge Cases', () => {
         () => ({ type: 'button', props: { children: 'old' }, key: undefined }),
         createElement,
         () => ({
-          type: ErrorBoundary,
+          type: ErrorBoundary as any,
           props: {
             fallback: { type: 'span', props: { children: 'caught' }, key: undefined },
             onError: (err: unknown) => errors.push(err),
@@ -2418,7 +2422,7 @@ describe('Binding Edge Cases', () => {
             () => condition(),
             () => {
               const value = counter()
-              onDestroy(() => cleanupLog.push(value))
+              onDestroy(() => pushCleanup(cleanupLog, value))
               return {
                 type: 'button',
                 props: {
@@ -2493,7 +2497,7 @@ describe('Binding Edge Cases', () => {
             () => condition(),
             () => {
               const value = counter()
-              onDestroy(() => cleanupLog.push(value))
+              onDestroy(() => pushCleanup(cleanupLog, value))
               return value === 0
                 ? { type: 'span', props: { children: '0' }, key: undefined }
                 : {
@@ -2554,7 +2558,7 @@ describe('Binding Edge Cases', () => {
           () => condition(),
           () => {
             const value = counter()
-            onDestroy(() => cleanupLog.push(value))
+            onDestroy(() => pushCleanup(cleanupLog, value))
             return {
               type: 'button',
               props: {
@@ -2610,7 +2614,7 @@ describe('Binding Edge Cases', () => {
           }
           mounts.push(value)
         })
-        onDestroy(() => cleanupLog.push(value))
+        onDestroy(() => pushCleanup(cleanupLog, value))
         return { type: 'button', props: { children: String(value) }, key: undefined }
       }
 

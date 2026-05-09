@@ -8,6 +8,11 @@
     "strictFunctionTypes": false,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "test/list-helpers.test.ts", "../compiler/src/types/**/*.d.ts"],
+  "include": [
+    "src/**/*.ts",
+    "test/list-helpers.test.ts",
+    "test/binding-edge-cases.test.ts",
+    "../compiler/src/types/**/*.d.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }
