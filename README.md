@@ -553,25 +553,28 @@ _Lower is better. Geometric mean is the weighted mean of all relative factors._
 
 ### 🗺️ Planned
 
-- [ ] Migration guides from React/Vue/Svelte/Solid
+- [x] Initial migration guide from React/Vue/Svelte/Solid
+- [ ] Framework-specific migration recipes and maintained real-world templates
 
 ---
 
 ## Documentation
 
-| Doc                                            | Description                        |
-| :--------------------------------------------- | :--------------------------------- |
-| [Architecture](./docs/architecture.md)         | How the compiler and runtime work  |
-| [API Reference](./docs/api-reference.md)       | Complete API documentation         |
-| [Compiler Spec](./docs/compiler-spec.md)       | Formal semantics                   |
-| [ESLint Rules](./docs/eslint-rules.md)         | Linting configuration              |
-| [Diagnostic Codes](./docs/diagnostic-codes.md) | Compiler warnings reference        |
-| [Config Profiles](./docs/config-profiles.md)   | Recommended dev/CI/prod settings   |
-| [Cycle Protection](./docs/cycle-protection.md) | Dev-mode infinite loop detection   |
-| [SSR SEO Guide](./docs/ssr-seo.md)             | SEO best practices for SSR pages   |
-| [SSR Performance](./docs/ssr-performance.md)   | Snapshot size & render-mode tuning |
-| [SSR Deployment](./docs/ssr-deployment.md)     | Vercel/Cloudflare/edge deployment  |
-| [DevTools](./packages/devtools/README.md)      | Vite plugin usage & auto-injection |
+| Doc                                                              | Description                        |
+| :--------------------------------------------------------------- | :--------------------------------- |
+| [Architecture](./docs/architecture.md)                           | How the compiler and runtime work  |
+| [API Reference](./docs/api-reference.md)                         | Complete API documentation         |
+| [Compiler Spec](./docs/compiler-spec.md)                         | Formal semantics                   |
+| [Migration Guide](./docs/migration-guide.md)                     | React/Vue/Svelte/Solid migration   |
+| [Strict Guarantee Cookbook](./docs/strict-guarantee-cookbook.md) | Fail-closed diagnostic rewrites    |
+| [ESLint Rules](./docs/eslint-rules.md)                           | Linting configuration              |
+| [Diagnostic Codes](./docs/diagnostic-codes.md)                   | Compiler warnings reference        |
+| [Config Profiles](./docs/config-profiles.md)                     | Recommended dev/CI/prod settings   |
+| [Cycle Protection](./docs/cycle-protection.md)                   | Dev-mode infinite loop detection   |
+| [SSR SEO Guide](./docs/ssr-seo.md)                               | SEO best practices for SSR pages   |
+| [SSR Performance](./docs/ssr-performance.md)                     | Snapshot size & render-mode tuning |
+| [SSR Deployment](./docs/ssr-deployment.md)                       | Vercel/Cloudflare/edge deployment  |
+| [DevTools](./packages/devtools/README.md)                        | Vite plugin usage & auto-injection |
 
 <details>
 <summary><strong>🔍 Linting & diagnostics</strong></summary>
