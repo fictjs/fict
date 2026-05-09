@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: '17 8 * * *'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -79,7 +81,9 @@ jobs:
           cache: pnpm
 
       - run: pnpm install
+      - run: pnpm guardrails:typecheck-config
       - run: pnpm typecheck
+      - run: pnpm typecheck:tests
 
   strict-guarantee:
     name: Strict Guarantee Gate
@@ -204,6 +208,43 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage/lcov.info
           fail_ci_if_error: false
+
+  e2e:
+    name: E2E
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'schedule'
+    steps:
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+        continue-on-error: true
+
+      - name: Fallback checkout from codeload archive
+        if: steps.checkout.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          echo "::warning::actions/checkout failed; falling back to archive download."
+          archive_url="https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_SHA}"
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+          curl --fail --location --retry 5 --retry-all-errors --retry-delay 3 "${archive_url}" \
+            | tar -xz -C "${tmp_dir}" --strip-components=1
+          find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+          cp -a "${tmp_dir}"/. .
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: FICT_STRICT_GUARANTEE=1 pnpm build
+      - run: pnpm test:e2e
 
   test-opt-out:
     name: Test (Opt-out)
