@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/index.ts",
+    "src/cache-fingerprint.ts",
+    "src/__tests__/index.test.ts",
+    "../compiler/src/types/**/*.d.ts",
+    "../runtime/src/dev.d.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

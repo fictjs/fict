@@ -34,6 +34,7 @@
     "test:coverage": "vitest run --coverage",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist"
   },
   "peerDependencies": {

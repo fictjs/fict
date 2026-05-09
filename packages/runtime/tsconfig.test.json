@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "exactOptionalPropertyTypes": false,
+    "noImplicitAny": false,
+    "noImplicitReturns": false,
+    "noUncheckedIndexedAccess": false,
+    "strictFunctionTypes": false,
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts", "test/list-helpers.test.ts", "../compiler/src/types/**/*.d.ts"],
+  "exclude": ["node_modules", "dist"]
+}

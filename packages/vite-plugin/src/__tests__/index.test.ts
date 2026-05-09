@@ -406,11 +406,14 @@ describe('fict vite-plugin', () => {
         },
       )
 
-      const metadataCall = emitFile.mock.calls.find(
+      const metadataCalls = emitFile.mock.calls as unknown as Array<
+        [{ type: string; fileName: string; source?: string }]
+      >
+      const metadataCall = metadataCalls.find(
         ([asset]) => asset.type === 'asset' && asset.fileName === 'index.fict.meta.json',
       )
       expect(metadataCall).toBeDefined()
-      expect(JSON.parse(metadataCall?.[0].source as string)).toEqual({
+      expect(JSON.parse(metadataCall![0].source as string)).toEqual({
         version: 1,
         exports: {},
         hooks: { useCounter: { directAccessor: 'signal' } },
@@ -470,7 +473,10 @@ describe('fict vite-plugin', () => {
         },
       )
 
-      const metadataCall = emitFile.mock.calls.find(
+      const metadataCalls = emitFile.mock.calls as unknown as Array<
+        [{ type: string; fileName: string; source?: string }]
+      >
+      const metadataCall = metadataCalls.find(
         ([asset]) => asset.type === 'asset' && asset.fileName === 'index.fict.meta.json',
       )
       expect(metadataCall).toBeDefined()

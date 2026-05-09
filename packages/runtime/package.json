@@ -75,6 +75,7 @@
     "bench:watch": "vitest bench",
     "lint": "eslint src",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "typecheck:tests": "tsc -p tsconfig.test.json --noEmit",
     "clean": "rm -rf dist coverage"
   },
   "devDependencies": {

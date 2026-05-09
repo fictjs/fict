@@ -110,7 +110,7 @@ describe('@fictjs/ssr', () => {
 
     ;(Counter as any).__fictMeta = { id: 'Counter@test', resume: 'counter#resume' }
 
-    const html = renderToString(() => ({ type: Counter, props: { initial: 5 } }))
+    const html = renderToString(() => ({ type: Counter as any, props: { initial: 5 } }))
 
     expect(html).toContain('<fict-host')
     expect(html).toContain('data-fict-s=')
@@ -122,6 +122,7 @@ describe('@fictjs/ssr', () => {
     )
     expect(match).not.toBeNull()
     const state = JSON.parse(match?.[1] ?? '{}') as {
+      v: number
       scopes: Record<
         string,
         { slots: Array<[number, string, unknown]>; props?: Record<string, unknown> }
