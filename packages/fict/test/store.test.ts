@@ -221,9 +221,7 @@ describe('$store', () => {
         return this.value + '!'
       }
       expect(state.getValue()).toBe('original!')
-      expect(warnSpy).toHaveBeenCalledWith(
-        '[fict] Direct mutation detected for "getValue"; mutate via $store proxy.',
-      )
+      expect(warnSpy).toHaveBeenCalledWith('[fict] Use $store for getValue.')
     })
 
     it('should maintain correct this binding after reassignment', () => {
@@ -825,9 +823,7 @@ describe('$store', () => {
       // Second read - should detect the discrepancy and warn
       expect(store.value).toBe(2) // Still returns current value
 
-      expect(warnSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[fict] Direct mutation detected for "value"'),
-      )
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[fict] Use $store for value'))
     })
 
     it('should not warn when mutations go through proxy', async () => {

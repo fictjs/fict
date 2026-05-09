@@ -503,10 +503,7 @@ export function template(
       const wrapper = (t as HTMLTemplateElement).content.firstChild!
       // Dev check for multi-root SVG templates
       if (isDev && wrapper.childNodes.length !== 1) {
-        console.warn(
-          `[fict] template() received multi-root SVG content (${wrapper.childNodes.length} nodes). ` +
-            `Returning a DocumentFragment. This may indicate a compiler bug or invalid JSX structure.`,
-        )
+        console.warn('[fict] Multi-root SVG template.')
       }
       if (wrapper.childNodes.length === 1) {
         return wrapper.firstChild!
@@ -523,10 +520,7 @@ export function template(
       const wrapper = (t as HTMLTemplateElement).content.firstChild!
       // Dev check for multi-root MathML templates
       if (isDev && wrapper.childNodes.length !== 1) {
-        console.warn(
-          `[fict] template() received multi-root MathML content (${wrapper.childNodes.length} nodes). ` +
-            `Returning a DocumentFragment. This may indicate a compiler bug or invalid JSX structure.`,
-        )
+        console.warn('[fict] Multi-root MathML template.')
       }
       if (wrapper.childNodes.length === 1) {
         return wrapper.firstChild!
@@ -541,10 +535,7 @@ export function template(
     const content = (t as HTMLTemplateElement).content
     // Dev check for multi-root templates
     if (isDev && content.childNodes.length !== 1) {
-      console.warn(
-        `[fict] template() received multi-root content (${content.childNodes.length} nodes). ` +
-          `Returning a DocumentFragment. This may indicate a compiler bug or invalid JSX structure.`,
-      )
+      console.warn('[fict] Multi-root template.')
     }
     if (content.childNodes.length === 1) {
       return content.firstChild!

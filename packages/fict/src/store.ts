@@ -40,11 +40,11 @@ const isDev =
     ? __DEV__
     : typeof process === 'undefined' || process.env?.NODE_ENV !== 'production'
 
-/** Track if we've warned about direct mutation for a specific target+property */
-const MUTATION_WARNED = new WeakMap<object, Set<string | symbol>>()
+/** Track if we've warned about direct mutation for a target object */
+const MUTATION_WARNED = new WeakSet<object>()
 
 /** Properties to skip for direct mutation warning (built-in/internal properties) */
-const SKIP_MUTATION_WARNING_PROPS = new Set<string | symbol>([
+const SKIP_MUTATION_WARNING_PROPS: Array<string | symbol> = [
   'constructor',
   'prototype',
   '__proto__',
@@ -57,7 +57,7 @@ const SKIP_MUTATION_WARNING_PROPS = new Set<string | symbol>([
   Symbol.toStringTag,
   Symbol.iterator,
   Symbol.toPrimitive,
-])
+]
 
 /** Cache of signals per object property */
 const SIGNAL_CACHE = new WeakMap<object, Record<string | symbol, Signal<unknown>>>()
@@ -160,19 +160,15 @@ export function $store<T extends object>(initialValue: T): T {
       const currentValue = Reflect.get(target, prop, receiver ?? proxy)
 
       // Remove "read-time write" - direct mutation is now undefined behavior
-      // In dev mode, warn once per property if we detect the underlying object was mutated directly
-      if (isDev && currentValue !== trackedValue && !SKIP_MUTATION_WARNING_PROPS.has(prop)) {
-        let warnedProps = MUTATION_WARNED.get(target)
-        if (!warnedProps) {
-          warnedProps = new Set()
-          MUTATION_WARNED.set(target, warnedProps)
-        }
-        if (!warnedProps.has(prop)) {
-          warnedProps.add(prop)
-          console.warn(
-            `[fict] Direct mutation detected for "${String(prop)}"; mutate via $store proxy.`,
-          )
-        }
+      // In dev mode, warn once per object if we detect the underlying object was mutated directly
+      if (
+        isDev &&
+        currentValue !== trackedValue &&
+        !SKIP_MUTATION_WARNING_PROPS.includes(prop) &&
+        !MUTATION_WARNED.has(target)
+      ) {
+        MUTATION_WARNED.add(target)
+        console.warn(`[fict] Use $store for ${String(prop)}.`)
       }
 
       if (typeof currentValue === 'function') {
@@ -244,7 +240,6 @@ export function $store<T extends object>(initialValue: T): T {
       // Ensure array length subscribers are notified even if the native push/pop
       // doesn't trigger a separate set trap for "length" (defensive).
       if (Array.isArray(target) && prop !== 'length') {
-        const signals = SIGNAL_CACHE.get(target)
         if (signals && signals.length) {
           signals.length(target.length)
         }
@@ -254,7 +249,6 @@ export function $store<T extends object>(initialValue: T): T {
       if (Array.isArray(target) && prop === 'length') {
         const nextLength = target.length
         if (typeof oldLength === 'number' && nextLength < oldLength) {
-          const signals = SIGNAL_CACHE.get(target)
           if (signals) {
             for (let i = nextLength; i < oldLength; i += 1) {
               const key = String(i)

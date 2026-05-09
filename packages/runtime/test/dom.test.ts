@@ -1210,9 +1210,7 @@ describe('DOM Module', () => {
         expect((nodes[1] as HTMLDivElement).textContent).toBe('Second')
 
         // Should have warned about multi-root
-        expect(warnSpy).toHaveBeenCalledWith(
-          expect.stringContaining('[fict] template() received multi-root content'),
-        )
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('[fict] Multi-root template'))
 
         warnSpy.mockRestore()
       })
@@ -1237,7 +1235,7 @@ describe('DOM Module', () => {
 
         // Should have warned about multi-root
         expect(warnSpy).toHaveBeenCalledWith(
-          expect.stringContaining('[fict] template() received multi-root SVG content'),
+          expect.stringContaining('[fict] Multi-root SVG template'),
         )
 
         warnSpy.mockRestore()
@@ -1259,7 +1257,7 @@ describe('DOM Module', () => {
 
         // Should have warned about multi-root
         expect(warnSpy).toHaveBeenCalledWith(
-          expect.stringContaining('[fict] template() received multi-root MathML content'),
+          expect.stringContaining('[fict] Multi-root MathML template'),
         )
 
         warnSpy.mockRestore()
