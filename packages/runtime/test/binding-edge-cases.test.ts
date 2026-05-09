@@ -2262,6 +2262,52 @@ describe('Binding Edge Cases', () => {
       expect(cleanupLog).toEqual(['old', 'new'])
     })
 
+    it('keeps new branch ownership when old branch cleanup throws after commit', async () => {
+      const condition = createSignal(true)
+      const cleanupError = new Error('old cleanup failed')
+      const errors: unknown[] = []
+      const cleanupLog: string[] = []
+
+      const root = createRoot(() => {
+        registerErrorHandler(err => {
+          errors.push(err)
+          return true
+        })
+
+        const handle = createConditional(
+          () => condition(),
+          () => {
+            onDestroy(() => {
+              cleanupLog.push('old')
+              throw cleanupError
+            })
+            return { type: 'button', props: { children: 'old' }, key: undefined }
+          },
+          createElement,
+          () => {
+            onDestroy(() => cleanupLog.push('new'))
+            return { type: 'button', props: { children: 'new' }, key: undefined }
+          },
+        )
+        container.appendChild(handle.marker)
+        handle.flush?.()
+        onDestroy(handle.dispose)
+      })
+
+      expect(container.textContent).toBe('old')
+
+      condition(false)
+      await tick()
+
+      expect(errors).toEqual([cleanupError])
+      expect(cleanupLog).toEqual(['old'])
+      expect(container.textContent).toBe('new')
+      expect(container.querySelector('button')?.textContent).toBe('new')
+
+      root.dispose()
+      expect(cleanupLog).toEqual(['old', 'new'])
+    })
+
     it('commits ErrorBoundary fallback output during ordinary branch flip', async () => {
       const condition = createSignal(true)
       const errors: unknown[] = []
