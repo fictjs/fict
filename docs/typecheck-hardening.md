@@ -37,6 +37,24 @@ node scripts/typecheck-strict-candidate.mjs --fail-on-error
 
 Output is truncated per package by default. Set `FICT_STRICT_CANDIDATE_MAX_LINES` when a full package error list is useful.
 
+## Current RC Status
+
+As of the v1 RC hardening pass on May 9, 2026, the strict candidate report still
+fails for all tracked packages. `compiler` remains the root blocker for removing
+the strictness overrides from downstream packages that import compiler source,
+including `vite-plugin`.
+
+The release gate now also runs:
+
+```sh
+pnpm typecheck:tests
+```
+
+That command typechecks the currently clean high-risk test slices for runtime,
+compiler, vite-plugin, and SSR. It is a regression guard for test harness
+coverage; it is not a substitute for removing the source strictness overrides
+listed above.
+
 ## Hardening Sequence
 
 1. Fix one package at a time and remove that package from `scripts/typecheck-strict-candidate.mjs`.
