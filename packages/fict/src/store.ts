@@ -44,7 +44,7 @@ const isDev =
 const MUTATION_WARNED = new WeakSet<object>()
 
 /** Properties to skip for direct mutation warning (built-in/internal properties) */
-const SKIP_MUTATION_WARNING_PROPS: Array<string | symbol> = [
+const SKIP_MUTATION_WARNING_PROPS: (string | symbol)[] = [
   'constructor',
   'prototype',
   '__proto__',
