@@ -50,8 +50,8 @@
     "@fictjs/compiler": "workspace:*",
     "@fictjs/devtools": "workspace:*",
     "@fictjs/vite-plugin": "workspace:*",
-    "typescript": "^5.9.3",
-    "vite": "^7.3.1"
+    "typescript": "^6.0.3",
+    "vite": "^8.0.12"
   },
   "devDependencies": {
     "tsup": "^8.5.1",

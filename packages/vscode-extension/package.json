@@ -151,7 +151,7 @@
     "@babel/core": "^7.29.0",
     "@babel/preset-typescript": "^7.26.0",
     "@fictjs/compiler": "workspace:*",
-    "ws": "^8.18.3"
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",
