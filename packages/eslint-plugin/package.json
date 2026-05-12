@@ -40,7 +40,7 @@
   "devDependencies": {
     "eslint": "^10.0.2",
     "@types/eslint": "^9.0.0",
-    "@types/estree": "^1.0.8",
+    "@types/estree": "^1.0.9",
     "tsup": "^8.5.1"
   },
   "keywords": [
