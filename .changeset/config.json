@@ -7,12 +7,9 @@
       "fict",
       "@fictjs/runtime",
       "@fictjs/compiler",
-      "@fictjs/vite-plugin",
       "@fictjs/babel-preset",
-      "@fictjs/eslint-plugin",
-      "@fictjs/ssr",
-      "@fictjs/router",
-      "@fictjs/testing-library"
+      "@fictjs/vite-plugin",
+      "@fictjs/eslint-plugin"
     ]
   ],
   "linked": [],
@@ -23,6 +20,8 @@
     "fict-docs-site",
     "@fictjs/devtools",
     "@fictjs/playground",
+    "@fictjs/mcp",
+    "@fictjs/skill",
     "fict-example-*",
     "fict-example-counter-basic"
   ],
