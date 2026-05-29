@@ -40,11 +40,11 @@ Internal tiers.
 2. **Reachable only via an `experimental` entrypoint**, never the main export:
    - Framework-level previews → `fict/experimental` (export subpath; see
      SCOPE.md migration step 3).
-   - **Known current exception (Preview debt, not satisfied today):**
-     `@fictjs/ssr`'s `renderToPartial` is still exported from the package's
-     **main** entry. It carries the `@experimental` JSDoc, but it violates this
-     principle right now. Tracked fix: add a `@fictjs/ssr/experimental` subpath
-     and move it there. Until then this signal is aspirational for SSR.
+   - **SSR previews** → `@fictjs/ssr/experimental` (`renderToPartial`).
+     **Resolved:** `renderToPartial` is no longer on the `@fictjs/ssr` main
+     export. The engine lives in the internal `render-core` module (not in
+     `package.json#exports`); `.` re-exports only the supported surface, and
+     `./experimental` re-exports the Preview surface.
 
 3. **A `> **Preview**` callout** at the top of any doc page that teaches a
    Preview API.
@@ -53,7 +53,7 @@ Internal tiers.
 
 | API / capability                           | Host package                       | Why still Preview                                                                                                                                                           |
 | ------------------------------------------ | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `renderToPartial` (partial prerendering)   | `@fictjs/ssr`                      | Return shape (`{ shell, stream, … }`) not frozen.                                                                                                                           |
+| `renderToPartial` (partial prerendering)   | `@fictjs/ssr/experimental`         | Return shape (`{ shell, stream, … }`) not frozen.                                                                                                                           |
 | Resumable handlers / QRL extraction        | `@fictjs/compiler` + `@fictjs/ssr` | Not a stable Qwik-compatible contract.                                                                                                                                      |
 | SSR snapshot schema (`data-fict-snapshot`) | `@fictjs/runtime`+ `@fictjs/ssr`   | A version field (`SSRState.v`) and a `snapshotMigrations` hook (runtime `loader.ts`) already exist; the cross-version **stability/migration commitment** is not yet frozen. |
 | `fict/experimental` exports                | `fict`                             | Staging area; contents change freely.                                                                                                                                       |

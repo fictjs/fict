@@ -64,10 +64,11 @@ These are explicitly **not** under semver and **not** under the guarantee bar.
 See [docs/PREVIEW.md](./docs/PREVIEW.md) for the policy and the required
 degradation contract.
 
-- `@fictjs/ssr`: `renderToPartial` (partial prerendering), the resumability /
-  QRL handler extraction path, and the SSR snapshot schema.
-- Anything exported from `fict/experimental` (export subpath to be added; see
-  migration step 3).
+- `@fictjs/ssr/experimental`: `renderToPartial` (partial prerendering) — now
+  off the `@fictjs/ssr` main export. The resumability / QRL handler extraction
+  path and the SSR snapshot schema remain Preview too.
+- `fict/experimental`: not created yet — there is no framework-level Preview API
+  to put there. Add the subpath when one exists (deferred part of step 3).
 
 ## Enforcement (how the rule is encoded, not just written)
 
@@ -122,8 +123,13 @@ of independent satellites + ignored internal tooling."
 - [x] **Step 2 — Encode Core via changesets.** `fixed` reduced to the 6 Core
       packages; `ssr`/`router`/`testing-library` moved to independent versioning;
       `mcp`/`skill` added to `ignore`. (See `.changeset/config.json`.)
-- [ ] **Step 3 — Add `fict/experimental` entrypoint.** New `packages/fict/src/experimental.ts` + `./experimental` export map entry + tsup entry. Move Preview re-exports
-      there. Sweep `@experimental` JSDoc onto Preview APIs.
+- [x] **Step 3 — Move Preview off main exports.** Added the
+      `@fictjs/ssr/experimental` entrypoint and moved `renderToPartial` there,
+      off the `@fictjs/ssr` main export (engine extracted to the internal
+      `render-core` module; `.` re-exports only the supported surface). Verified:
+      ssr build + 110 tests + edge smoke + typecheck green. `fict/experimental`
+      is intentionally not created — no framework-level Preview API exists to put
+      there yet; add the subpath when one does.
 - [x] **Step 4 — Privatize internal tooling.** Set `"private": true` on
       `@fictjs/mcp` and `@fictjs/skill` (and dropped their `publishConfig`), per
       "The two-thesis trap". Spin-out to `fict-ai-tools` remains open.
@@ -135,9 +141,9 @@ of independent satellites + ignored internal tooling."
       and resume/PPR are Preview. Tier-0 docs (semantics, diagnostics, guarantee
       matrix, compiler spec) remain Core (unchanged).
 
-> **Remaining:** Steps 3 (`experimental` entrypoint) and 5 (Preview degradation
-> contracts) are deferred — each is a build/test-touching change that warrants
-> its own verified PR (Step 3 moves `renderToPartial` off the `@fictjs/ssr` main
-> export, a breaking API change; Step 5 implements the failure modes in
-> [docs/PREVIEW.md](./docs/PREVIEW.md)). When both land, collapse this block to
-> the map + rule as the standing contract.
+> **Remaining:** Step 5 (Preview degradation contracts) — implement the
+> resume/streaming failure modes in [docs/PREVIEW.md](./docs/PREVIEW.md) as code
+>
+> - tests. It is the prerequisite for graduating any Preview API to stable and
+>   warrants its own verified PR. When it lands, collapse this block to the map +
+>   rule as the standing contract.

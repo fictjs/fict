@@ -21,6 +21,11 @@
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
+    "./experimental": {
+      "types": "./dist/experimental.d.ts",
+      "import": "./dist/experimental.js",
+      "require": "./dist/experimental.cjs"
+    },
     "./stream-runtime": {
       "types": "./dist/stream-runtime.d.ts",
       "import": "./dist/stream-runtime.js",
@@ -32,9 +37,9 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/stream-runtime.ts --format cjs,esm --dts && pnpm run build:stream-runtime",
+    "build": "tsup src/index.ts src/experimental.ts src/stream-runtime.ts --format cjs,esm --dts && pnpm run build:stream-runtime",
     "build:stream-runtime": "node scripts/write-stream-runtime-asset.mjs",
-    "dev": "tsup src/index.ts src/stream-runtime.ts --format cjs,esm --dts --watch --onSuccess \"pnpm run build:stream-runtime\"",
+    "dev": "tsup src/index.ts src/experimental.ts src/stream-runtime.ts --format cjs,esm --dts --watch --onSuccess \"pnpm run build:stream-runtime\"",
     "test": "vitest run",
     "test:edge": "node test/edge-runtime.smoke.mjs",
     "test:matrix": "pnpm run test && pnpm run test:edge",

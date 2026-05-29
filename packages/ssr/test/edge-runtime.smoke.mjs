@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 
 import { Suspense, createSuspenseToken } from '../../runtime/dist/index.js'
-import { renderToPartial, renderToStream, renderToString } from '../dist/index.js'
+import { renderToStream, renderToString } from '../dist/index.js'
+import { renderToPartial } from '../dist/experimental.js'
 
 async function readReadableStream(stream) {
   const decoder = new TextDecoder()

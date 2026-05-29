@@ -59,7 +59,7 @@ export default {
 ## 4) Partial Prerendering Delivery Pattern
 
 ```ts
-import { renderToPartial } from '@fictjs/ssr'
+import { renderToPartial } from '@fictjs/ssr/experimental'
 
 const partial = renderToPartial(() => <App />, { mode: 'shell', fullDocument: true })
 

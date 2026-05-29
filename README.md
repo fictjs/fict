@@ -422,7 +422,7 @@ await allReady
 <summary><strong>🧪 Partial prerendering (Preview)</strong></summary>
 
 ```tsx
-import { renderToPartial } from '@fictjs/ssr'
+import { renderToPartial } from '@fictjs/ssr/experimental'
 
 const { shell, stream } = renderToPartial(() => <App />, { mode: 'shell' })
 // shell: complete fallback HTML

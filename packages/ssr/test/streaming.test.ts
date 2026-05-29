@@ -4,7 +4,8 @@ import type { FictNode } from '@fictjs/runtime'
 import { Suspense, createSuspenseToken, onDestroy } from '@fictjs/runtime'
 import { __fictUseContext, __fictUseSignal } from '@fictjs/runtime/internal'
 
-import { renderToPartial, renderToPipeableStream, renderToStream } from '../src/index'
+import { renderToPipeableStream, renderToStream } from '../src/index'
+import { renderToPartial } from '../src/experimental'
 import { createQueuedTextStream } from '../src/stream-bridge'
 import { FICT_STREAM_RUNTIME_CODE, createStreamRuntimeCode } from '../src/stream-runtime'
 
