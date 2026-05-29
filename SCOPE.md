@@ -95,6 +95,11 @@ packages is a second, implicit thesis ("AI-native distribution is the GTM").
 - If _AI-native distribution_ is primary → that is a different project; do not
   let it share one maintainer's attention with the compiler.
 
+> **Decision (2026-05):** primary thesis is compiler-first reactivity →
+> `@fictjs/mcp` and `@fictjs/skill` are set `"private": true` (Step 4). They stay
+> in-repo as internal dev tooling; spinning them out to a `fict-ai-tools` repo
+> later remains open and does not change this contract.
+
 ## Tripwire (prevents regression to breadth)
 
 > **Before publishing any new package or version-locked surface, answer in the
@@ -119,8 +124,9 @@ of independent satellites + ignored internal tooling."
       `mcp`/`skill` added to `ignore`. (See `.changeset/config.json`.)
 - [ ] **Step 3 — Add `fict/experimental` entrypoint.** New `packages/fict/src/experimental.ts` + `./experimental` export map entry + tsup entry. Move Preview re-exports
       there. Sweep `@experimental` JSDoc onto Preview APIs.
-- [ ] **Step 4 — Privatize internal tooling.** Set `"private": true` on
-      `@fictjs/mcp` and `@fictjs/skill` (or spin out), per "The two-thesis trap".
+- [x] **Step 4 — Privatize internal tooling.** Set `"private": true` on
+      `@fictjs/mcp` and `@fictjs/skill` (and dropped their `publishConfig`), per
+      "The two-thesis trap". Spin-out to `fict-ai-tools` remains open.
 - [ ] **Step 5 — Preview degradation contracts.** Implement the resume-failure
       fallbacks defined in [docs/PREVIEW.md](./docs/PREVIEW.md) before any
       Preview API is considered for graduation.

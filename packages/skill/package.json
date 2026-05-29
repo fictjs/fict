@@ -1,6 +1,7 @@
 {
   "name": "@fictjs/skill",
   "version": "0.21.0",
+  "private": true,
   "description": "Skill library for Fict-focused coding agents",
   "type": "module",
   "main": "dist/index.cjs",
@@ -19,10 +20,6 @@
     "skills",
     "scripts"
   ],
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
   "repository": {
     "type": "git",
     "url": "https://github.com/fictjs/fict.git",
