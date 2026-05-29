@@ -2,6 +2,10 @@
 
 This guide focuses on practical SSR tuning for Fict apps.
 
+> **Maturity:** `@fictjs/ssr` is a **Satellite** package (see [SCOPE.md](../SCOPE.md)).
+> `renderToString` / `renderToStream` / `renderToPipeableStream` are supported;
+> **`renderToPartial` / partial prerendering are Preview** ([PREVIEW.md](./PREVIEW.md)).
+
 ## 1) Choose the Right Render Mode
 
 - `renderToString`: simplest, one-shot HTML.

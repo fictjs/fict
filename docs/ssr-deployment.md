@@ -2,6 +2,11 @@
 
 This guide shows practical deployment patterns for Fict SSR.
 
+> **Maturity:** `@fictjs/ssr` is a **Satellite** package (independent versioning,
+> not Core) — see [SCOPE.md](../SCOPE.md). `renderToString` / `renderToStream` /
+> `renderToPipeableStream` are supported; **`renderToPartial`, resumability, and
+> partial prerendering are Preview** (no semver) — see [PREVIEW.md](./PREVIEW.md).
+
 ## 1) Runtime Selection Matrix
 
 - Node runtime: `renderToPipeableStream` or `renderToStream`

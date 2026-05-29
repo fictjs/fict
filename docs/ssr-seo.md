@@ -2,6 +2,10 @@
 
 This guide covers practical SEO patterns for Fict SSR apps.
 
+> **Maturity:** `@fictjs/ssr` is a **Satellite** package (see [SCOPE.md](../SCOPE.md)).
+> SEO via `renderToString` / shell streaming is supported; resume and partial
+> prerendering are **Preview** ([PREVIEW.md](./PREVIEW.md)).
+
 ## 1) Core Rule: Ship SEO-Critical HTML in the First Response
 
 Search bots may not execute deferred JS patches. Put these in the initial HTML:

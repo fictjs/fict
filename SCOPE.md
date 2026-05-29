@@ -130,9 +130,14 @@ of independent satellites + ignored internal tooling."
 - [ ] **Step 5 — Preview degradation contracts.** Implement the resume-failure
       fallbacks defined in [docs/PREVIEW.md](./docs/PREVIEW.md) before any
       Preview API is considered for graduation.
-- [ ] **Step 6 — Re-tier docs.** Tag premature docs (SSR deployment / edge
-      guides) as Preview; keep Tier-0 docs (semantics, diagnostics, guarantee
-      matrix, compiler spec) as Core.
+- [x] **Step 6 — Re-tier docs.** SSR docs (deployment, resume-stability,
+      performance, SEO) now carry a maturity banner: `@fictjs/ssr` is a Satellite
+      and resume/PPR are Preview. Tier-0 docs (semantics, diagnostics, guarantee
+      matrix, compiler spec) remain Core (unchanged).
 
-> When Step 6 is done, delete this status block's checkboxes and keep the map +
-> rule as the standing contract.
+> **Remaining:** Steps 3 (`experimental` entrypoint) and 5 (Preview degradation
+> contracts) are deferred — each is a build/test-touching change that warrants
+> its own verified PR (Step 3 moves `renderToPartial` off the `@fictjs/ssr` main
+> export, a breaking API change; Step 5 implements the failure modes in
+> [docs/PREVIEW.md](./docs/PREVIEW.md)). When both land, collapse this block to
+> the map + rule as the standing contract.

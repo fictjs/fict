@@ -2,6 +2,11 @@
 
 This contract defines production guarantees and non-goals for Fict SSR, streaming, hydration, and resumability.
 
+> **Maturity:** streaming patch, resumability, and partial prerendering are
+> **Preview** — no semver guarantee yet. The required failure/degradation
+> behavior is tracked in [PREVIEW.md](./PREVIEW.md); `@fictjs/ssr` is a Satellite
+> package, see [SCOPE.md](../SCOPE.md).
+
 ## Scope
 
 Covered:
