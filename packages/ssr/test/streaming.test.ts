@@ -367,23 +367,13 @@ describe('@fictjs/ssr streaming', () => {
     ready = true
     token.resolve()
 
-    // Must not hang or throw: allReady settles (resolve or reject) deterministically.
-    let settled = false
-    await allReady.then(
-      () => {
-        settled = true
-      },
-      () => {
-        settled = true
-      },
-    )
+    // The downstream sink error is the contract under test: it must be observed,
+    // and it must abort the render instead of allowing allReady to resolve.
+    await expect(allReady).rejects.toThrow('sink exploded')
 
-    expect(settled).toBe(true)
-    expect(writes).toBeGreaterThan(0)
-    // If a post-shell write occurred, its failure stayed on the sink.
-    if (sinkError !== undefined) {
-      expect(sinkError).toBeInstanceOf(Error)
-    }
+    expect(writes).toBeGreaterThan(1)
+    expect(sinkError).toBeInstanceOf(Error)
+    expect((sinkError as Error).message).toBe('sink exploded')
   })
 
   it('resolves pipeable shellReady for large shells before pipe()', async () => {
