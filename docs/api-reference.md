@@ -1944,7 +1944,8 @@ function renderToPipeableStream(
 }
 ```
 
-For Edge runtimes, prefer `renderToStream()` / `renderToPartial()`.
+For Edge runtimes, prefer `renderToStream()`. Use `renderToPartial()` from
+`@fictjs/ssr/experimental` only for Preview PPR workflows.
 
 ---
 

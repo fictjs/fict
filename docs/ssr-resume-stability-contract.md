@@ -1,6 +1,9 @@
 # SSR / Streaming / Resume Stability Contract
 
-This contract defines production guarantees and non-goals for Fict SSR, streaming, hydration, and resumability.
+This contract defines supported behavior, Preview degradation expectations, and
+non-goals for Fict SSR, streaming, hydration, and resumability. Stable guarantees
+apply only to the supported `@fictjs/ssr` surface; Preview entries document
+required failure behavior, not semver stability.
 
 > **Maturity:** streaming patch, resumability, and partial prerendering are
 > **Preview** — no semver guarantee yet. The required failure/degradation
@@ -11,7 +14,8 @@ This contract defines production guarantees and non-goals for Fict SSR, streamin
 
 Covered:
 
-- `@fictjs/ssr` rendering (`renderToString`, `renderToStream`, `renderToPipeableStream`, `renderToPartial`)
+- supported `@fictjs/ssr` rendering (`renderToString`, `renderToStream`, `renderToPipeableStream`)
+- Preview `@fictjs/ssr/experimental` rendering (`renderToPartial`)
 - runtime resumable loader (`@fictjs/runtime/loader`)
 - server snapshot payload emitted by SSR and consumed by loader
 

@@ -32,8 +32,9 @@ The command runs:
 
 ## Release Gates
 
-SSR/resume changes must satisfy these local gates before the core package is
-called production-ready:
+SSR/resume changes must satisfy these local gates before the supported SSR
+surface is called production-ready. These gates do not graduate Preview APIs;
+Preview graduation still follows [PREVIEW.md](./PREVIEW.md).
 
 1. CSP:
    - `scriptNonce` is applied to generated executable and JSON script tags.

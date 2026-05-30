@@ -5,7 +5,8 @@ compiler/runtime packages.
 
 ## Required Checks
 
-Run the local tooling matrix before calling a release production-ready:
+Run the local tooling matrix before calling the supported tooling surface
+production-ready:
 
 ```sh
 pnpm test:bundlers

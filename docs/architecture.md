@@ -857,7 +857,8 @@ stream, but its return shape is not frozen as stable v1 API surface.
 
 ### 12.4 Edge runtime notes
 
-- Use `renderToStream` / `renderToPartial` in Edge runtimes.
+- Use `renderToStream` in Edge runtimes; use `renderToPartial` from
+  `@fictjs/ssr/experimental` only for Preview PPR workflows.
 - `renderToPipeableStream` targets Node-style writable streams.
 - `manifest` file path strings rely on runtime filesystem access (Node/Deno);
   edge environments should pass manifest objects.
