@@ -19,6 +19,7 @@
   "ignore": [
     "fict-docs-site",
     "@fictjs/devtools",
+    "@fictjs/vscode-extension",
     "@fictjs/playground",
     "@fictjs/mcp",
     "@fictjs/skill",

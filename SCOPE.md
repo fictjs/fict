@@ -40,23 +40,23 @@ Fail any of the three → it is **not Core**. It is demoted, not deleted.
 
 ## The map
 
-| Package                    | Tier          | Notes                                                                                                                                                                  |
-| -------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fict`                     | **Core**      | Public API surface. Only `.`, `/jsx-runtime`, `/jsx-dev-runtime`, `/plus`, `/advanced` are guaranteed.                                                                 |
-| `@fictjs/runtime`          | **Core**      | Reactive graph + fine-grained DOM.                                                                                                                                     |
-| `@fictjs/compiler`         | **Core**      | HIR/SSA/region lowering. The thesis lives here.                                                                                                                        |
-| `@fictjs/babel-preset`     | **Core**      | Compiler plumbing; versions with the compiler.                                                                                                                         |
-| `@fictjs/vite-plugin`      | **Core**      | The delivery mechanism. Without it nobody can use Fict.                                                                                                                |
-| `@fictjs/eslint-plugin`    | **Core**      | Mirrors compiler diagnostics — part of the fail-closed DX, not an add-on.                                                                                              |
-| `@fictjs/ssr`              | **Satellite** | `renderToString`/`renderToStream`/`renderToPipeableStream` are the supported surface. Streaming/resume/PPR is **Preview** (see below).                                 |
-| `@fictjs/router`           | **Satellite** | A router may lag Core. Best candidate to invite a second maintainer (reduces truck factor).                                                                            |
-| `@fictjs/testing-library`  | **Satellite** | Adoption-enabling; frozen API, downstream of runtime stability.                                                                                                        |
-| `@fictjs/devtools`         | **Internal**  | Browser extension / Vite auto-inject — a **distribution artifact**, not an npm library. Already in changesets `ignore`. Feature-frozen.                                |
-| `@fictjs/vscode-extension` | **Internal**  | Editor extension via the VS Code Marketplace, not npm. **Currently independent** in changesets — should move to `ignore` to match this tier (pending). Feature-frozen. |
-| `@fictjs/mcp`              | **Internal**  | Agent/docs tooling. Should be `private` or spun out (see "The two-thesis trap").                                                                                       |
-| `@fictjs/skill`            | **Internal**  | Agent skill. Same as `mcp`.                                                                                                                                            |
-| `@fictjs/playground`       | **Internal**  | Dev/demo tool.                                                                                                                                                         |
-| `fict-docs-site`           | **Internal**  | Already private.                                                                                                                                                       |
+| Package                    | Tier          | Notes                                                                                                                                   |
+| -------------------------- | ------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `fict`                     | **Core**      | Public API surface. Only `.`, `/jsx-runtime`, `/jsx-dev-runtime`, `/plus`, `/advanced` are guaranteed.                                  |
+| `@fictjs/runtime`          | **Core**      | Reactive graph + fine-grained DOM.                                                                                                      |
+| `@fictjs/compiler`         | **Core**      | HIR/SSA/region lowering. The thesis lives here.                                                                                         |
+| `@fictjs/babel-preset`     | **Core**      | Compiler plumbing; versions with the compiler.                                                                                          |
+| `@fictjs/vite-plugin`      | **Core**      | The delivery mechanism. Without it nobody can use Fict.                                                                                 |
+| `@fictjs/eslint-plugin`    | **Core**      | Mirrors compiler diagnostics — part of the fail-closed DX, not an add-on.                                                               |
+| `@fictjs/ssr`              | **Satellite** | `renderToString`/`renderToStream`/`renderToPipeableStream` are the supported surface. Streaming/resume/PPR is **Preview** (see below).  |
+| `@fictjs/router`           | **Satellite** | A router may lag Core. Best candidate to invite a second maintainer (reduces truck factor).                                             |
+| `@fictjs/testing-library`  | **Satellite** | Adoption-enabling; frozen API, downstream of runtime stability.                                                                         |
+| `@fictjs/devtools`         | **Internal**  | Browser extension / Vite auto-inject — a **distribution artifact**, not an npm library. Already in changesets `ignore`. Feature-frozen. |
+| `@fictjs/vscode-extension` | **Internal**  | Editor extension via the VS Code Marketplace, not npm. In changesets `ignore` (distribution artifact, like devtools). Feature-frozen.   |
+| `@fictjs/mcp`              | **Internal**  | Agent/docs tooling. Now `private` (Step 4 / "The two-thesis trap").                                                                     |
+| `@fictjs/skill`            | **Internal**  | Agent skill. Same as `mcp`.                                                                                                             |
+| `@fictjs/playground`       | **Internal**  | Dev/demo tool.                                                                                                                          |
+| `fict-docs-site`           | **Internal**  | Already private.                                                                                                                        |
 
 ### Preview surface (lives inside Core/Satellite packages, but NOT guaranteed)
 
