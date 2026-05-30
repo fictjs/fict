@@ -31,12 +31,12 @@
     "@babel/core": ">=7.0.0"
   },
   "dependencies": {
-    "@babel/plugin-syntax-jsx": "^7.28.6",
-    "@babel/preset-typescript": "^7.26.0",
+    "@babel/plugin-syntax-jsx": "^7.29.7",
+    "@babel/preset-typescript": "^7.29.7",
     "@fictjs/compiler": "workspace:*"
   },
   "devDependencies": {
-    "@babel/core": "^7.29.0",
+    "@babel/core": "^7.29.7",
     "@types/babel__core": "^7.20.5",
     "tsup": "^8.5.1"
   },
