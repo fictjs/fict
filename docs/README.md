@@ -1,17 +1,36 @@
 # Fict Documentation
 
-This folder holds documentation for the Fict project.
+This folder holds documentation for the Fict project. The canonical scope
+boundary lives in [SCOPE.md](../SCOPE.md); Preview policy lives in
+[PREVIEW.md](./PREVIEW.md).
 
-## Getting Started
+## Start Here
 
 - `fict.md` — **Start here!** Core design philosophy, technical overview, and how the compiler works
-- `reactivity-semantics.md` — Semantic rules for Fict reactivity (memoization, closures, call-site expansion)
-- `diagnostic-codes.md` — Complete reference for compiler warnings and errors with fixes
+- `../SCOPE.md` — Core / Satellite / Preview / Internal tiers for the monorepo
+- `PREVIEW.md` — Preview surface policy, entrypoint rules, and degradation contract
+- `api-reference.md` — Developer-facing API reference
 
-## Core Specs
+## Core Contracts
 
 - `compiler-spec.md` — Compiler rules, lowering details, and formal semantics (v1.0)
+- `reactivity-semantics.md` — Semantic rules for Fict reactivity (memoization, closures, call-site expansion)
+- `reactivity-guarantee-matrix.md` — Guarantee matrix for compiler/runtime behavior
+- `diagnostic-codes.md` — Complete reference for compiler warnings and errors with fixes
+- `api-freeze-v1.md` — v1 API freeze map for stable public and compiler-dependent surfaces
+- `config-profiles.md` — Recommended dev/CI/prod compiler + runtime profiles
+- `release-policy.md` — SemVer, Changesets, changelog, and release note standards
+
+## Architecture And Internals
+
 - `architecture.md` — Runtime and compiler architecture notes
+- `compiler-maintenance.md` — Compiler complexity budgets and profiling workflow
+- `metadata-packaging-architecture.md` — Architecture decision for compiler-generated metadata and build-time packaging
+- `typecheck-hardening.md` — Typecheck hardening notes and policy
+- `cycle-protection.md` — Runtime cycle protection semantics
+- `scheduler.md` — Multi-priority scheduler and transition APIs
+- `error-boundary.md` — Error boundary runtime semantics
+- `store-api.md` — Public `$store` ownership and internal `createStore` boundary
 
 ## Guides
 
@@ -19,25 +38,25 @@ This folder holds documentation for the Fict project.
 - `framework-comparison.md` — Comparison with React, Solid, Vue, Svelte
 - `migration-guide.md` — Practical migration paths from React, Vue, Svelte, and Solid
 - `strict-guarantee-cookbook.md` — Common strictGuarantee failures and rewrites
-- `store-api.md` — Public `$store` ownership and internal `createStore` boundary
-- `release-policy.md` — SemVer, Changesets, changelog, and release note standards
-- `config-profiles.md` — Recommended dev/CI/prod compiler + runtime profiles
 - `third-party-libraries.md` — Package metadata ABI for third-party Fict hook libraries
-- `metadata-packaging-architecture.md` — Architecture decision for compiler-generated metadata and build-time packaging
 - `strict-guarantee-test-policy.md` — Policy for test suites that intentionally opt out of strict guarantee diagnostics
-- `ssr-resume-stability-contract.md` — Production stability contract for SSR/streaming/resume (behavior, compatibility, security, budgets)
-- `ssr-seo.md` — SEO best practices for SSR/streaming apps
-- `ssr-performance.md` — SSR performance tuning and snapshot-size optimization
+
+## SSR And Preview
+
 - `ssr-deployment.md` — Deployment guides for Node, Vercel, Cloudflare Workers, and edge runtimes
+- `ssr-performance.md` — SSR performance tuning and snapshot-size optimization
+- `ssr-seo.md` — SEO best practices for SSR/streaming apps
+- `ssr-resume-stability-contract.md` — Supported SSR behavior plus Preview contracts for streaming patch, resume, and PPR
 - `ssr-runtime-matrix.md` — Release-gate matrix for SSR runtime, CSP, hydration, resumability, and streaming checks
-- `tooling-runtime-matrix.md` — Release-gate matrix for Vite, bundler examples, HMR, sourcemaps, CSP, and Trusted Types
-
-## Technical Details
-
-- `scheduler.md` — Multi-priority scheduler and transition APIs
-- `error-boundary.md` — Error boundary runtime semantics
-- `compiler-maintenance.md` — Compiler complexity budgets and profiling workflow
+- `preview-degradation-audit.md` — Current coverage audit for Preview degradation behavior
 
 ## Tooling
 
 - `eslint-rules.md` — ESLint plugin rules
+- `tooling-runtime-matrix.md` — Release-gate matrix for Vite, bundler examples, HMR, sourcemaps, CSP, and Trusted Types
+
+## Roadmap And Essays
+
+- `post-v1-roadmap.md` — Post-v1 roadmap and deferred work
+- `blog/fict.md` — Long-form Fict overview
+- `blog/react-compiler-and-beyond.md` — React Compiler comparison essay
