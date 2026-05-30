@@ -335,9 +335,10 @@ await allReady
 
 Generate a complete shell HTML plus a deferred patch stream for Partial Prerendering workflows.
 This is an advanced API and currently considered **Experimental Preview** in v1.0; do not treat the return shape as frozen.
+Import it from the explicit Preview entrypoint, not the supported package main export.
 
 ```typescript
-import { renderToPartial } from '@fictjs/ssr'
+import { renderToPartial } from '@fictjs/ssr/experimental'
 
 const { shell, stream, shellReady, allReady } = renderToPartial(() => <App />, {
   mode: 'shell',
