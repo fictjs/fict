@@ -10,11 +10,10 @@
 > inbox. The default in this repo is **contract minimalism** — expansion must be
 > justified; contraction is free.
 
-> **Status: active (Steps 1–2 landed).** This file separates **TARGET state**
-> (the tiers and rule below) from **CURRENT fact** (see _Migration status_).
-> Steps 1–2 (this contract + the changeset Core lockstep) landed together in one
-> atomic commit; Steps 3–6 are still pending and are flagged as such. Treat
-> anything not yet checked off as target, not live.
+> **Status: active (Steps 1–6 landed).** This file separates the standing
+> scope rule from the historical migration checklist below. The tiers and
+> enforcement rules in this document now describe the live tree; the remaining
+> work is graduation of individual Preview surfaces, not the migration itself.
 
 ## The rule
 
@@ -127,7 +126,7 @@ of independent satellites + ignored internal tooling."
       `@fictjs/ssr/experimental` entrypoint and moved `renderToPartial` there,
       off the `@fictjs/ssr` main export (engine extracted to the internal
       `render-core` module; `.` re-exports only the supported surface). Verified:
-      ssr build + 110 tests + edge smoke + typecheck green. `fict/experimental`
+      ssr build + SSR test suite + edge smoke + typecheck green. `fict/experimental`
       is intentionally not created — no framework-level Preview API exists to put
       there yet; add the subpath when one does.
 - [x] **Step 4 — Privatize internal tooling.** Set `"private": true` on
