@@ -136,7 +136,7 @@ of independent satellites + ignored internal tooling."
 - [ ] **Step 5 — Preview degradation contracts.** _In progress (audited)._ See
       [preview-degradation-audit.md](./docs/preview-degradation-audit.md): 10 of
       11 failure modes are already implemented + tested. Remaining: gap **G1**
-      (streaming write-error test) and reinforcement **G2** (per-scope revive
+      (streaming sink-error hang) and reinforcement **G2** (per-scope revive
       isolation). Required before any Preview API graduates.
 - [x] **Step 6 — Re-tier docs.** SSR docs (deployment, resume-stability,
       performance, SEO) now carry a maturity banner: `@fictjs/ssr` is a Satellite

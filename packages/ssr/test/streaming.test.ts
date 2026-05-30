@@ -319,6 +319,73 @@ describe('@fictjs/ssr streaming', () => {
     expect(html).toContain('LatePipeDone')
   })
 
+  // PREVIEW.md degradation row S4 / audit gap G1 — KNOWN BUG, executable repro.
+  // When a piped sink errors mid-stream the pipe bridge swallows the error but
+  // does NOT abort the render, so the source PassThrough backs up and
+  // `allReady` never settles — this hangs (times out). Skipped until the bridge
+  // propagates sink errors to the render's abort. See
+  // docs/preview-degradation-audit.md (G1); un-skip when fixed.
+  it.skip('a failing downstream sink does not crash the pipeable render', async () => {
+    const token = createSuspenseToken()
+    let ready = false
+
+    function AsyncChild(): FictNode {
+      if (!ready) throw token.token
+      return { type: 'span', props: { children: 'SinkDone' } }
+    }
+    function App(): FictNode {
+      return {
+        type: Suspense,
+        props: {
+          fallback: { type: 'div', props: { children: 'SinkLoading' } },
+          children: { type: AsyncChild, props: {} },
+        },
+      }
+    }
+
+    const { pipe, allReady } = renderToPipeableStream(() => ({ type: App, props: {} }), {
+      mode: 'shell',
+    })
+
+    const { Writable } = await import('node:stream')
+    let writes = 0
+    let sinkError: unknown
+    const failing = new Writable({
+      write(_chunk, _enc, cb) {
+        writes += 1
+        // Accept the shell, then fail every later (post-shell) write.
+        cb(writes > 1 ? new Error('sink exploded') : null)
+      },
+    })
+    // Handle the sink's error so it surfaces on the sink, not as an uncaught crash.
+    failing.on('error', err => {
+      sinkError = err
+    })
+
+    pipe(failing)
+    await Promise.resolve()
+    ready = true
+    token.resolve()
+
+    // Must not hang or throw: allReady settles (resolve or reject) deterministically.
+    let settled = false
+    await allReady.then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+
+    expect(settled).toBe(true)
+    expect(writes).toBeGreaterThan(0)
+    // If a post-shell write occurred, its failure stayed on the sink.
+    if (sinkError !== undefined) {
+      expect(sinkError).toBeInstanceOf(Error)
+    }
+  })
+
   it('resolves pipeable shellReady for large shells before pipe()', async () => {
     const largeText = 'x'.repeat(1024 * 1024)
     const { pipe, shellReady, allReady } = renderToPipeableStream(
