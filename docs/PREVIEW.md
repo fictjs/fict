@@ -11,7 +11,9 @@
 > not Preview — it is just risk.
 
 See [SCOPE.md](../SCOPE.md) for how Preview relates to Core / Satellite /
-Internal tiers.
+Internal tiers. For the current coverage of the degradation contract below
+(what is implemented + tested vs. gaps), see
+[preview-degradation-audit.md](./preview-degradation-audit.md).
 
 ## What "Preview" means
 
