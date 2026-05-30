@@ -7,8 +7,8 @@
 >
 > **Headline:** the contract is far more real than the placeholders implied —
 > **10 of 11 rows are implemented _and_ tested.** Most of the contract can
-> graduate now. One genuine gap remains (a streaming **sink-error hang**, found
-> while writing its test — see G1) plus one reinforcement; both are under _Gaps_.
+> graduate now. The one real gap — a streaming **sink-error hang** (G1) — is now
+> **fixed and regression-tested**; only optional reinforcement **G2** remains.
 
 This corresponds to [SCOPE.md](../SCOPE.md) migration **Step 5**. A row is only
 "done" for graduation when both **Impl** and **Test** are ✅.
@@ -26,29 +26,27 @@ This corresponds to [SCOPE.md](../SCOPE.md) migration **Step 5**. A row is only
 
 ## Streaming failure modes
 
-| #   | Failure (PREVIEW row)                         | Implemented behavior                                                                                                        | Where                                                                      | Test                                                                       | Status                              |
-| --- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ----------------------------------- |
-| S1  | Client disconnect / `signal` abort mid-stream | `abort(reason)` runs cleanup, rejects `shellReady`/`allReady`, drains backpressure; `ReadableStream.cancel` wired to abort. | `ssr/src/render-core.ts` (`abort`, `cancel`)                               | `ssr/test/streaming.test.ts` (abort / disconnect)                          | ✅ impl ✅ test                     |
-| S2  | A Suspense boundary rejects after shell sent  | Routed to `onError` / nearest `ErrorBoundary`; other boundaries keep resolving.                                             | `render-core.ts` (`hooks.onError`), `runtime/src/suspense.ts` (`onReject`) | `ssr/test/streaming.test.ts`, `runtime/test/suspense.test.ts` (`onReject`) | ✅ impl ✅ test                     |
-| S3  | Backpressure: consumer slower than producer   | Honors `desiredSize`; suspends writes via `readyResolvers` until `pull`; bounded.                                           | `render-core.ts` ~L279–348                                                 | `ssr/test/streaming.test.ts` (backpressure)                                | ✅ impl ✅ test                     |
-| S4  | Write throws after shell flushed              | `handleWriteError` marks stream failed, aborts, rejects shell/all, avoids double-close.                                     | `render-core.ts` ~L549–599 (`handleWriteError`/`enqueueWrite`)             | **none**                                                                   | ⚠️ reachable as a **hang** — **G1** |
-| S5  | CSP active (`scriptNonce`)                    | All injected `<script>` carry the nonce; `external` runtime mode for strict CSP.                                            | `render-core.ts` (`renderNonceAttribute`, `buildStreamRuntimeScript`)      | `ssr/test/streaming.test.ts` (`nonce`, `scriptNonce`)                      | ✅ impl ✅ test                     |
+| #   | Failure (PREVIEW row)                         | Implemented behavior                                                                                                                                                                    | Where                                                                      | Test                                                                       | Status                         |
+| --- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------ |
+| S1  | Client disconnect / `signal` abort mid-stream | `abort(reason)` runs cleanup, rejects `shellReady`/`allReady`, drains backpressure; `ReadableStream.cancel` wired to abort.                                                             | `ssr/src/render-core.ts` (`abort`, `cancel`)                               | `ssr/test/streaming.test.ts` (abort / disconnect)                          | ✅ impl ✅ test                |
+| S2  | A Suspense boundary rejects after shell sent  | Routed to `onError` / nearest `ErrorBoundary`; other boundaries keep resolving.                                                                                                         | `render-core.ts` (`hooks.onError`), `runtime/src/suspense.ts` (`onReject`) | `ssr/test/streaming.test.ts`, `runtime/test/suspense.test.ts` (`onReject`) | ✅ impl ✅ test                |
+| S3  | Backpressure: consumer slower than producer   | Honors `desiredSize`; suspends writes via `readyResolvers` until `pull`; bounded.                                                                                                       | `render-core.ts` ~L279–348                                                 | `ssr/test/streaming.test.ts` (backpressure)                                | ✅ impl ✅ test                |
+| S4  | Write throws after shell flushed              | Sink errors route via the pipe bridge `onError` → render `abort` (rejects shell/all, flushes the stalled drain so cleanup runs); `handleWriteError` also guards injected-writer throws. | `render-core.ts` ~L549–599 (`handleWriteError`/`enqueueWrite`)             | `streaming.test.ts` ('downstream sink errors')                             | ✅ impl ✅ test — **G1 fixed** |
+| S5  | CSP active (`scriptNonce`)                    | All injected `<script>` carry the nonce; `external` runtime mode for strict CSP.                                                                                                        | `render-core.ts` (`renderNonceAttribute`, `buildStreamRuntimeScript`)      | `ssr/test/streaming.test.ts` (`nonce`, `scriptNonce`)                      | ✅ impl ✅ test                |
 
 ## Gaps
 
-- **G1 — Streaming sink-error hangs the pipeable render (a real bug, not just a
-  missing test).** Writing the S4 test surfaced this. `handleWriteError` is
-  effectively **unreachable** via the public API (`renderToStream` guards
-  `if (!controller) return`; the pipe bridge's `safeWrite`/`safeDestroy` swallow
-  downstream errors). But the publicly-reachable failure — a piped `Writable`
-  that errors mid-stream — is **worse than swallowed: it hangs.** `allReady`
-  never settles, because after the sink unpipes, the source `PassThrough` backs
-  up (never drains) and the render's `enqueueWrite` chain never resolves.
-  Executable repro: `it.skip('a failing downstream sink …')` in
-  `ssr/test/streaming.test.ts` (skipped — currently times out). **Fix (own PR):**
-  give the pipe bridge an error-propagation channel (e.g. `pipe(writable, { onError })`)
-  that calls the render's `abort`, so a sink error rejects `shellReady`/`allReady`
-  and runs cleanup instead of hanging.
+- **G1 — Streaming sink-error hang — FIXED.** Found while writing the S4 test:
+  `handleWriteError` is effectively unreachable via the public API, but the
+  reachable failure — a piped `Writable` that errors mid-stream — **hung** the
+  render (`allReady` never settled; after the sink unpiped, the source
+  `PassThrough` backed up and the write chain never drained). **Fix:** the pipe
+  bridge now takes an `onError` channel wired to the render's `abort`
+  (`render-core.ts` `renderToPipeableStream`), and flushes pending backpressure
+  drains on sink-error/abort so the stalled write chain releases; `abort` now
+  settles `shellReady`/`allReady` even when `finalize()` already set `closed`.
+  Regression test: `ssr/test/streaming.test.ts` › 'aborts the pipeable render
+  when a downstream sink errors' (was a 5 s timeout; now ~8 ms).
 - **G2 — Per-scope revive isolation assertion (R4) is weak.** `resume_failed` is
   tested, but not the invariant "a failing scope does not invalidate its
   siblings." Add a focused assertion. _(Lower priority; behavior appears correct,
@@ -57,10 +55,10 @@ This corresponds to [SCOPE.md](../SCOPE.md) migration **Step 5**. A row is only
 ## Graduation impact
 
 Per PREVIEW.md's graduation gate, the "degradation contract implemented and
-tested" criterion is **met for resume R1–R3, R5, R6 and streaming S1–S3, S5**.
-It is **blocked only by G1** (and optionally hardened by G2). Closing G1 makes
-the entire degradation contract test-backed, clearing one of the bars that keeps
-`renderToPartial` / resume in Preview.
+tested" criterion is now **met for every row (resume R1–R6, streaming S1–S5)**
+after G1 was fixed; only optional reinforcement **G2** remains. The
+degradation-contract bar is fully test-backed — one of the bars that keeps
+`renderToPartial` / resume in Preview is cleared.
 
 > Note: graduation also requires the _other_ gate items (frozen shape, release-gate
 > matrix rows, frozen snapshot-schema commitment). This audit only covers the

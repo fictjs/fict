@@ -133,11 +133,11 @@ of independent satellites + ignored internal tooling."
 - [x] **Step 4 — Privatize internal tooling.** Set `"private": true` on
       `@fictjs/mcp` and `@fictjs/skill` (and dropped their `publishConfig`), per
       "The two-thesis trap". Spin-out to `fict-ai-tools` remains open.
-- [ ] **Step 5 — Preview degradation contracts.** _In progress (audited)._ See
-      [preview-degradation-audit.md](./docs/preview-degradation-audit.md): 10 of
-      11 failure modes are already implemented + tested. Remaining: gap **G1**
-      (streaming sink-error hang) and reinforcement **G2** (per-scope revive
-      isolation). Required before any Preview API graduates.
+- [ ] **Step 5 — Preview degradation contracts.** _Nearly done (audited + G1
+      fixed)._ See [preview-degradation-audit.md](./docs/preview-degradation-audit.md):
+      all 11 failure modes are now implemented + tested (the streaming
+      sink-error hang **G1** is fixed and regression-tested). Only optional
+      reinforcement **G2** (per-scope revive isolation assertion) remains.
 - [x] **Step 6 — Re-tier docs.** SSR docs (deployment, resume-stability,
       performance, SEO) now carry a maturity banner: `@fictjs/ssr` is a Satellite
       and resume/PPR are Preview. Tier-0 docs (semantics, diagnostics, guarantee

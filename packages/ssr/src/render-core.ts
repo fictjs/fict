@@ -369,7 +369,9 @@ export function renderToPipeableStream(
 
   return {
     pipe(writable) {
-      bridge.pipe(writable)
+      // Route downstream-sink errors to abort so a failing sink rejects
+      // shellReady/allReady and runs cleanup instead of hanging the render.
+      bridge.pipe(writable, { onError: abort })
     },
     abort,
     shellReady,
@@ -748,12 +750,16 @@ function startStreamingRenderInSession(
   }
 
   const abort = (reason?: unknown) => {
-    if (closed) return
-    closed = true
-    writeFailed = true
-    writer.abort(reason)
-    cleanup()
     const abortReason = reason ?? new Error('Stream aborted')
+    if (!closed) {
+      closed = true
+      writeFailed = true
+      writer.abort(reason)
+      cleanup()
+    }
+    // Always settle. A late sink error can arrive after finalize() set `closed`
+    // but before its (stalled) write chain resolves; rejecting an already-settled
+    // promise is a no-op, so this is safe and prevents allReady from hanging.
     rejectShell(abortReason)
     rejectAll(abortReason)
   }

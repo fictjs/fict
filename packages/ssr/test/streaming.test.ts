@@ -319,13 +319,10 @@ describe('@fictjs/ssr streaming', () => {
     expect(html).toContain('LatePipeDone')
   })
 
-  // PREVIEW.md degradation row S4 / audit gap G1 — KNOWN BUG, executable repro.
-  // When a piped sink errors mid-stream the pipe bridge swallows the error but
-  // does NOT abort the render, so the source PassThrough backs up and
-  // `allReady` never settles — this hangs (times out). Skipped until the bridge
-  // propagates sink errors to the render's abort. See
-  // docs/preview-degradation-audit.md (G1); un-skip when fixed.
-  it.skip('a failing downstream sink does not crash the pipeable render', async () => {
+  // PREVIEW.md degradation row S4 / audit G1 (fixed). A piped sink that errors
+  // mid-stream is routed to the render's abort (pipe-bridge `onError`), so
+  // `allReady` settles promptly instead of hanging. Regression guard.
+  it('aborts the pipeable render when a downstream sink errors', async () => {
     const token = createSuspenseToken()
     let ready = false
 
@@ -343,9 +340,12 @@ describe('@fictjs/ssr streaming', () => {
       }
     }
 
-    const { pipe, allReady } = renderToPipeableStream(() => ({ type: App, props: {} }), {
-      mode: 'shell',
-    })
+    const { pipe, shellReady, allReady } = renderToPipeableStream(
+      () => ({ type: App, props: {} }),
+      { mode: 'shell' },
+    )
+    // shellReady may reject when the sink aborts; we assert on allReady.
+    shellReady.catch(() => undefined)
 
     const { Writable } = await import('node:stream')
     let writes = 0

@@ -106,7 +106,10 @@ export function createQueuedTextStream(options: QueuedTextStreamOptions = {}): Q
 }
 
 export interface PipeBridge {
-  pipe: (writable: NodeJS.WritableStream) => void
+  pipe: (
+    writable: NodeJS.WritableStream,
+    options?: { onError?: (reason?: unknown) => void },
+  ) => void
   write: (chunk: string) => void | Promise<void>
   close: () => void
   abort: (reason?: unknown) => void
@@ -120,6 +123,9 @@ export function createPipeBridge(): PipeBridge {
   const buffer: string[] = []
   let state: 'open' | 'closed' | 'aborted' = 'open'
   let abortReason: Error | null = null
+  // Propagates downstream-sink failures to the render so it can abort instead of
+  // hanging on a backed-up source (see docs/preview-degradation-audit.md G1).
+  let sinkErrorHandler: ((reason?: unknown) => void) | undefined
 
   const safeWrite = (target: NodeJS.WritableStream, chunk: string): void | Promise<void> => {
     try {
@@ -136,8 +142,9 @@ export function createPipeBridge(): PipeBridge {
           }
         })
       }
-    } catch {
-      // Ignore target write errors to keep stream lifecycle deterministic.
+    } catch (error) {
+      // Surface the sink failure to the render (abort), then keep lifecycle deterministic.
+      sinkErrorHandler?.(error)
     }
     return undefined
   }
@@ -164,8 +171,14 @@ export function createPipeBridge(): PipeBridge {
   }
 
   return {
-    pipe(writable) {
+    pipe(writable, options) {
       targets.add(writable)
+      if (options?.onError) {
+        sinkErrorHandler = options.onError
+        if (typeof (writable as { on?: unknown }).on === 'function') {
+          writable.on('error', options.onError)
+        }
+      }
       if (buffer.length > 0) {
         for (const chunk of buffer) {
           safeWrite(writable, chunk)
@@ -226,17 +239,30 @@ function createNodePipeBridge(): PipeBridge | null {
     let piped = false
     let state: 'open' | 'closed' | 'aborted' = 'open'
     let abortReason: Error | null = null
+    // Pending backpressure 'drain' resolvers. If the sink dies the PassThrough
+    // never drains, so these must be flushed on sink-error/abort to release the
+    // render's write chain (otherwise allReady hangs — audit G1).
+    const pendingDrains = new Set<() => void>()
+    const flushDrains = () => {
+      for (const resolve of pendingDrains) resolve()
+      pendingDrains.clear()
+    }
 
     const writeToPassThrough = (chunk: string): void | Promise<void> => {
       if (passThrough.write(chunk) === false) {
         return new Promise<void>(resolve => {
+          const settle = () => {
+            pendingDrains.delete(settle)
+            resolve()
+          }
+          pendingDrains.add(settle)
           const withOnce = passThrough as NodePassThroughLike & {
             once?: (event: 'drain', listener: () => void) => unknown
           }
           if (typeof withOnce.once === 'function') {
-            withOnce.once('drain', resolve)
+            withOnce.once('drain', settle)
           } else {
-            resolve()
+            settle()
           }
         })
       }
@@ -263,9 +289,18 @@ function createNodePipeBridge(): PipeBridge | null {
     }
 
     return {
-      pipe(writable) {
+      pipe(writable, options) {
         piped = true
         passThrough.pipe(writable)
+        // A downstream sink that errors mid-stream would otherwise back up the
+        // source PassThrough and hang the render; route it to the render's abort.
+        const onError = options?.onError
+        if (onError && typeof (writable as { on?: unknown }).on === 'function') {
+          writable.on('error', (err: unknown) => {
+            flushDrains()
+            onError(err)
+          })
+        }
 
         if (state === 'aborted') {
           destroyPassThrough(abortReason ?? new Error('Stream aborted'))
@@ -300,6 +335,7 @@ function createNodePipeBridge(): PipeBridge | null {
         state = 'aborted'
         abortReason = reason instanceof Error ? reason : new Error('Stream aborted')
         buffer.length = 0
+        flushDrains()
         if (piped) {
           destroyPassThrough(abortReason)
         }
