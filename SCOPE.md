@@ -143,7 +143,6 @@ of independent satellites + ignored internal tooling."
 
 > **Remaining:** Step 5 (Preview degradation contracts) — implement the
 > resume/streaming failure modes in [docs/PREVIEW.md](./docs/PREVIEW.md) as code
->
-> - tests. It is the prerequisite for graduating any Preview API to stable and
->   warrants its own verified PR. When it lands, collapse this block to the map +
->   rule as the standing contract.
+> and tests. It is the prerequisite for graduating any Preview API to stable and
+> warrants its own verified PR. When it lands, collapse this block to the map +
+> rule as the standing contract.
