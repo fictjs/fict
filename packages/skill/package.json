@@ -37,7 +37,7 @@
   },
   "devDependencies": {
     "tsup": "^8.5.1",
-    "yaml": "^2.8.1"
+    "yaml": "^2.9.0"
   },
   "keywords": [
     "fict",
