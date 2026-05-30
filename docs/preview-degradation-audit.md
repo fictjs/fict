@@ -6,23 +6,23 @@
 > placeholders with verified reality.
 >
 > **Headline:** the contract is far more real than the placeholders implied —
-> **10 of 11 rows are implemented _and_ tested.** Most of the contract can
-> graduate now. The one real gap — a streaming **sink-error hang** (G1) — is now
-> **fixed and regression-tested**; only optional reinforcement **G2** remains.
+> **all 11 rows are implemented _and_ tested.** The streaming **sink-error hang**
+> (G1) is fixed and regression-tested, and the per-scope revive isolation
+> assertion (G2) is now pinned.
 
 This corresponds to [SCOPE.md](../SCOPE.md) migration **Step 5**. A row is only
 "done" for graduation when both **Impl** and **Test** are ✅.
 
 ## Resume failure modes
 
-| #   | Failure (PREVIEW row)                         | Implemented behavior                                                                                                                                                                                           | Where                                                | Test                                                                                                                   | Status                                                     |
-| --- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| R1  | Snapshot missing / malformed JSON             | `JSON.parse` in try/catch → `snapshot_parse_error` issue; state stays `null` → app client-renders. Never throws to user.                                                                                       | `runtime/src/loader.ts` (`parseSnapshotText`, ~L416) | `runtime/test/loader.test.ts:208` (`'{not-valid-json'` → asserts `snapshot_parse_error` + `snapshot_invalid_shape`)    | ✅ impl ✅ test                                            |
-| R2  | Snapshot schema version mismatch              | Version checked vs `FICT_SSR_SNAPSHOT_SCHEMA_VERSION`; tries `snapshotMigrations`, else `snapshot_unsupported_version` (fail-closed). Migration guards cycles / invalid / non-advancing versions.              | `loader.ts` ~L442–540 (`migrateSnapshotState`)       | `loader.test.ts` (`snapshot_unsupported_version`, `snapshot_migration_failed`)                                         | ✅ impl ✅ test                                            |
-| R3  | Scope id in DOM but absent from snapshot      | `scope_snapshot_missing` issue; that scope re-inits, siblings keep resumed state.                                                                                                                              | `loader.ts` (code `scope_snapshot_missing`)          | `loader.test.ts` (`scope_snapshot_missing`)                                                                            | ✅ impl ✅ test                                            |
-| R4  | Scope deserializes but a slot fails to revive | `resume_failed` / `resume_import_failed` / `resume_function_missing` issues; failure is reported per scope. (SSR-side signal-read errors are also swallowed, `resume.ts:362`.)                                 | `loader.ts` (codes), `resume.ts:358–366`             | `loader.test.ts` (`resume_failed`, `resume_import_failed`)                                                             | ✅ impl ⚠️ test — see Gap G2 (sibling-isolation assertion) |
-| R5  | DOM/snapshot structural mismatch during claim | Stop at mismatch → `node_missing` / `node_type_mismatch` / `text_mismatch` issue → `mountFallback` mounts the fallback subtree; `text_mismatch` repairs `.data`. `onHydrationIssue` + `strictHydration` throw. | `runtime/src/hydration.ts:84–254`                    | `runtime/test/resume-lifecycle.test.ts` (`node_type_mismatch`, `text_mismatch`, `onHydrationIssue`, `strictHydration`) | ✅ impl ✅ test                                            |
-| R6  | QRL module fails to load on interaction       | `handler_import_failed` / `handler_missing` / `handler_failed`; logged via `console.error`, does not crash the page.                                                                                           | `loader.ts` ~L760–767 (codes L234–236)               | `loader.test.ts` (`handler_failed`, `handler_import_failed`)                                                           | ✅ impl ✅ test                                            |
+| #   | Failure (PREVIEW row)                         | Implemented behavior                                                                                                                                                                                           | Where                                                | Test                                                                                                                   | Status          |
+| --- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | --------------- |
+| R1  | Snapshot missing / malformed JSON             | `JSON.parse` in try/catch → `snapshot_parse_error` issue; state stays `null` → app client-renders. Never throws to user.                                                                                       | `runtime/src/loader.ts` (`parseSnapshotText`, ~L416) | `runtime/test/loader.test.ts:208` (`'{not-valid-json'` → asserts `snapshot_parse_error` + `snapshot_invalid_shape`)    | ✅ impl ✅ test |
+| R2  | Snapshot schema version mismatch              | Version checked vs `FICT_SSR_SNAPSHOT_SCHEMA_VERSION`; tries `snapshotMigrations`, else `snapshot_unsupported_version` (fail-closed). Migration guards cycles / invalid / non-advancing versions.              | `loader.ts` ~L442–540 (`migrateSnapshotState`)       | `loader.test.ts` (`snapshot_unsupported_version`, `snapshot_migration_failed`)                                         | ✅ impl ✅ test |
+| R3  | Scope id in DOM but absent from snapshot      | `scope_snapshot_missing` issue; that scope re-inits, siblings keep resumed state.                                                                                                                              | `loader.ts` (code `scope_snapshot_missing`)          | `loader.test.ts` (`scope_snapshot_missing`)                                                                            | ✅ impl ✅ test |
+| R4  | Scope deserializes but a slot fails to revive | `resume_failed` / `resume_import_failed` / `resume_function_missing` issues; failure is reported per scope. (SSR-side signal-read errors are also swallowed, `resume.ts:362`.)                                 | `loader.ts` (codes), `resume.ts:358–366`             | `loader.test.ts` (`resume_failed`, `resume_import_failed`, sibling-isolation assertion)                                | ✅ impl ✅ test |
+| R5  | DOM/snapshot structural mismatch during claim | Stop at mismatch → `node_missing` / `node_type_mismatch` / `text_mismatch` issue → `mountFallback` mounts the fallback subtree; `text_mismatch` repairs `.data`. `onHydrationIssue` + `strictHydration` throw. | `runtime/src/hydration.ts:84–254`                    | `runtime/test/resume-lifecycle.test.ts` (`node_type_mismatch`, `text_mismatch`, `onHydrationIssue`, `strictHydration`) | ✅ impl ✅ test |
+| R6  | QRL module fails to load on interaction       | `handler_import_failed` / `handler_missing` / `handler_failed`; logged via `console.error`, does not crash the page.                                                                                           | `loader.ts` ~L760–767 (codes L234–236)               | `loader.test.ts` (`handler_failed`, `handler_import_failed`)                                                           | ✅ impl ✅ test |
 
 ## Streaming failure modes
 
@@ -47,18 +47,17 @@ This corresponds to [SCOPE.md](../SCOPE.md) migration **Step 5**. A row is only
   settles `shellReady`/`allReady` even when `finalize()` already set `closed`.
   Regression test: `ssr/test/streaming.test.ts` › 'aborts the pipeable render
   when a downstream sink errors' (was a 5 s timeout; now ~8 ms).
-- **G2 — Per-scope revive isolation assertion (R4) is weak.** `resume_failed` is
-  tested, but not the invariant "a failing scope does not invalidate its
-  siblings." Add a focused assertion. _(Lower priority; behavior appears correct,
-  only the explicit guarantee test is missing.)_
+- **G2 — Per-scope revive isolation assertion — FIXED.** `loader.test.ts` now
+  proves that a failing scope's `resume_failed` path does not invalidate a
+  sibling scope: after `sBad` fails to resume, `sGood` still resumes, preserves
+  its own host state, and runs its handler.
 
 ## Graduation impact
 
 Per PREVIEW.md's graduation gate, the "degradation contract implemented and
 tested" criterion is now **met for every row (resume R1–R6, streaming S1–S5)**
-after G1 was fixed; only optional reinforcement **G2** remains. The
-degradation-contract bar is fully test-backed — one of the bars that keeps
-`renderToPartial` / resume in Preview is cleared.
+after G1 and G2 were fixed. The degradation-contract bar is fully test-backed —
+one of the bars that keeps `renderToPartial` / resume in Preview is cleared.
 
 > Note: graduation also requires the _other_ gate items (frozen shape, release-gate
 > matrix rows, frozen snapshot-schema commitment). This audit only covers the

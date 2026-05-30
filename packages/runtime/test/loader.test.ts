@@ -541,6 +541,91 @@ describe('resumable loader snapshot validation', () => {
       .__fictMissingResumeHandlerCalls
   })
 
+  it('keeps sibling scopes resumable when one resume function fails', async () => {
+    const issues: SnapshotIssue[] = []
+    const doc = createDocumentWithSnapshots(
+      JSON.stringify({
+        v: FICT_SSR_SNAPSHOT_SCHEMA_VERSION,
+        scopes: {
+          sBad: { id: 'sBad', slots: [] },
+          sGood: { id: 'sGood', slots: [] },
+        },
+      }),
+    )
+
+    ;(globalThis as { __fictG2BadHandlerCalls?: number }).__fictG2BadHandlerCalls = 0
+    ;(globalThis as { __fictG2GoodResumeScopes?: string[] }).__fictG2GoodResumeScopes = []
+    ;(globalThis as { __fictG2GoodHandlerScope?: string }).__fictG2GoodHandlerScope = undefined
+
+    const badHost = doc.createElement('div')
+    badHost.setAttribute('data-fict-s', 'sBad')
+    badHost.setAttribute('data-fict-h', 'data:text/javascript,export default null#__fict_g2_bad')
+    __fictRegisterResume('__fict_g2_bad', () => {
+      throw new Error('g2 resume boom')
+    })
+    const badButton = doc.createElement('button')
+    badButton.setAttribute(
+      'on:click',
+      'data:text/javascript,export function bad(){globalThis.__fictG2BadHandlerCalls=(globalThis.__fictG2BadHandlerCalls||0)+1}#bad',
+    )
+    badHost.appendChild(badButton)
+
+    const goodHost = doc.createElement('div')
+    goodHost.setAttribute('data-fict-s', 'sGood')
+    goodHost.setAttribute('data-fict-h', 'data:text/javascript,export default null#__fict_g2_good')
+    __fictRegisterResume('__fict_g2_good', (scopeId, node) => {
+      ;(globalThis as { __fictG2GoodResumeScopes?: string[] }).__fictG2GoodResumeScopes?.push(
+        String(scopeId),
+      )
+      ;(node as Element).setAttribute('data-resumed', 'yes')
+    })
+    const goodButton = doc.createElement('button')
+    goodButton.setAttribute(
+      'on:click',
+      'data:text/javascript,export function good(scopeId){globalThis.__fictG2GoodHandlerScope=scopeId}#good',
+    )
+    goodHost.appendChild(goodButton)
+    doc.body.append(badHost, goodHost)
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    installResumableLoader({
+      document: doc,
+      events: ['click'],
+      prefetch: false,
+      onSnapshotIssue: issue => issues.push(issue),
+    })
+
+    badButton.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect(issues).toContainEqual(
+      expect.objectContaining({
+        code: 'resume_failed',
+        scopeId: 'sBad',
+        exportName: '__fict_g2_bad',
+      }),
+    )
+    expect((globalThis as { __fictG2BadHandlerCalls?: number }).__fictG2BadHandlerCalls).toBe(0)
+    expect(goodHost.getAttribute('data-resumed')).toBeNull()
+
+    goodButton.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    await waitForPendingHandlers()
+
+    expect(
+      (globalThis as { __fictG2GoodResumeScopes?: string[] }).__fictG2GoodResumeScopes,
+    ).toEqual(['sGood'])
+    expect((globalThis as { __fictG2GoodHandlerScope?: string }).__fictG2GoodHandlerScope).toBe(
+      'sGood',
+    )
+    expect(goodHost.getAttribute('data-resumed')).toBe('yes')
+    expect(issues.filter(issue => issue.scopeId === 'sGood')).toHaveLength(0)
+
+    warnSpy.mockRestore()
+    delete (globalThis as { __fictG2BadHandlerCalls?: number }).__fictG2BadHandlerCalls
+    delete (globalThis as { __fictG2GoodResumeScopes?: string[] }).__fictG2GoodResumeScopes
+    delete (globalThis as { __fictG2GoodHandlerScope?: string }).__fictG2GoodHandlerScope
+  })
+
   it('resolves resume registry keys when hosts use relative asset QRLs', async () => {
     const doc = createDocumentWithSnapshots(
       JSON.stringify({

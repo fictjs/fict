@@ -133,18 +133,18 @@ of independent satellites + ignored internal tooling."
 - [x] **Step 4 — Privatize internal tooling.** Set `"private": true` on
       `@fictjs/mcp` and `@fictjs/skill` (and dropped their `publishConfig`), per
       "The two-thesis trap". Spin-out to `fict-ai-tools` remains open.
-- [ ] **Step 5 — Preview degradation contracts.** _Nearly done (audited + G1
-      fixed)._ See [preview-degradation-audit.md](./docs/preview-degradation-audit.md):
-      all 11 failure modes are now implemented + tested (the streaming
-      sink-error hang **G1** is fixed and regression-tested). Only optional
-      reinforcement **G2** (per-scope revive isolation assertion) remains.
+- [x] **Step 5 — Preview degradation contracts.** Audited and fully test-backed:
+      all 11 failure modes are implemented + tested. See
+      [preview-degradation-audit.md](./docs/preview-degradation-audit.md): the
+      streaming sink-error hang **G1** is fixed/regression-tested, and **G2** now
+      proves per-scope revive failure does not invalidate sibling scopes.
 - [x] **Step 6 — Re-tier docs.** SSR docs (deployment, resume-stability,
       performance, SEO) now carry a maturity banner: `@fictjs/ssr` is a Satellite
       and resume/PPR are Preview. Tier-0 docs (semantics, diagnostics, guarantee
       matrix, compiler spec) remain Core (unchanged).
 
-> **Remaining:** Step 5 (Preview degradation contracts) — implement the
-> resume/streaming failure modes in [docs/PREVIEW.md](./docs/PREVIEW.md) as code
-> and tests. It is the prerequisite for graduating any Preview API to stable and
-> warrants its own verified PR. When it lands, collapse this block to the map +
-> rule as the standing contract.
+> **Remaining:** the Preview degradation-contract migration work is complete.
+> Graduation still requires the other [docs/PREVIEW.md](./docs/PREVIEW.md) gates
+> (frozen API shape, release-gate matrix rows, and frozen snapshot-schema
+> commitment). When those land, collapse this block to the map + rule as the
+> standing contract.
