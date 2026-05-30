@@ -21,8 +21,6 @@
     "@fictjs/devtools",
     "@fictjs/vscode-extension",
     "@fictjs/playground",
-    "@fictjs/mcp",
-    "@fictjs/skill",
     "fict-example-*",
     "fict-example-counter-basic"
   ],

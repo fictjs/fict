@@ -16,7 +16,6 @@ The root `tsconfig.base.json` is strict by default:
 | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `packages/compiler`         | Standalone config now explicitly enables `exactOptionalPropertyTypes`, `noImplicitReturns`, and `noUncheckedIndexedAccess`. |
 | `packages/devtools`         | Package-level overrides for `exactOptionalPropertyTypes`, `noImplicitReturns`, and `noUncheckedIndexedAccess` removed.      |
-| `packages/mcp`              | Package-level `exactOptionalPropertyTypes` override removed.                                                                |
 | `packages/ssr`              | Package-level overrides for `exactOptionalPropertyTypes`, `noImplicitReturns`, and `noUncheckedIndexedAccess` removed.      |
 | `packages/vite-plugin`      | Package-level overrides for `exactOptionalPropertyTypes`, `noImplicitReturns`, and `noUncheckedIndexedAccess` removed.      |
 | `packages/vscode-extension` | Package-level `exactOptionalPropertyTypes` override removed.                                                                |
@@ -41,7 +40,6 @@ As of the v1 RC hardening pass on May 9, 2026, the strict candidate report is gr
 
 - `compiler`
 - `devtools`
-- `mcp`
 - `ssr`
 - `vite-plugin`
 - `vscode-extension`

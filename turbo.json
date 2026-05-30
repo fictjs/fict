@@ -37,10 +37,6 @@
       ],
       "outputs": []
     },
-    "@fictjs/mcp#typecheck": {
-      "dependsOn": ["@fictjs/compiler#build", "@fictjs/eslint-plugin#build"],
-      "outputs": []
-    },
     "@fictjs/vscode-extension#typecheck": {
       "dependsOn": ["@fictjs/compiler#build"],
       "outputs": []

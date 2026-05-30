@@ -22,7 +22,6 @@ const candidates = [
     packageName: 'devtools',
     flags: ['exactOptionalPropertyTypes', 'noImplicitReturns', 'noUncheckedIndexedAccess'],
   },
-  { packageName: 'mcp', flags: ['exactOptionalPropertyTypes'] },
   {
     packageName: 'ssr',
     flags: ['exactOptionalPropertyTypes', 'noImplicitReturns', 'noUncheckedIndexedAccess'],

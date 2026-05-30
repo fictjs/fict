@@ -52,8 +52,6 @@ Fail any of the three → it is **not Core**. It is demoted, not deleted.
 | `@fictjs/testing-library`  | **Satellite** | Adoption-enabling; frozen API, downstream of runtime stability.                                                                         |
 | `@fictjs/devtools`         | **Internal**  | Browser extension / Vite auto-inject — a **distribution artifact**, not an npm library. Already in changesets `ignore`. Feature-frozen. |
 | `@fictjs/vscode-extension` | **Internal**  | Editor extension via the VS Code Marketplace, not npm. In changesets `ignore` (distribution artifact, like devtools). Feature-frozen.   |
-| `@fictjs/mcp`              | **Internal**  | Agent/docs tooling. Now `private` (Step 4 / "The two-thesis trap").                                                                     |
-| `@fictjs/skill`            | **Internal**  | Agent skill. Same as `mcp`.                                                                                                             |
 | `@fictjs/playground`       | **Internal**  | Dev/demo tool.                                                                                                                          |
 | `fict-docs-site`           | **Internal**  | Already private.                                                                                                                        |
 
@@ -83,22 +81,23 @@ degradation contract.
 
 ## The two-thesis trap
 
-`@fictjs/mcp` and `@fictjs/skill` are tooling for **AI agents to consume Fict**.
-For a project with ~zero production users, shipping them as versioned product
-packages is a second, implicit thesis ("AI-native distribution is the GTM").
+The MCP server and agent skill library are tooling for **AI agents to consume
+Fict**. For a project with ~zero production users, carrying them inside the
+core monorepo as versioned product packages is a second, implicit thesis
+("AI-native distribution is the GTM").
 
 **A solo project cannot carry two core theses.** Pick one:
 
-- If _compiler-first reactivity_ is primary (the assumption here) → `mcp`/`skill`
-  are **Internal**: `"private": true` or spin out to a separate `fict-ai-tools`
-  repo. They must not compete with Core for attention or version surface.
+- If _compiler-first reactivity_ is primary (the assumption here) → MCP/skill
+  tooling lives outside this monorepo. It must not compete with Core for
+  attention or version surface.
 - If _AI-native distribution_ is primary → that is a different project; do not
   let it share one maintainer's attention with the compiler.
 
-> **Decision (2026-05):** primary thesis is compiler-first reactivity →
-> `@fictjs/mcp` and `@fictjs/skill` are set `"private": true` (Step 4). They stay
-> in-repo as internal dev tooling; spinning them out to a `fict-ai-tools` repo
-> later remains open and does not change this contract.
+> **Decision (2026-05):** primary thesis is compiler-first reactivity. The MCP
+> server and skill library have moved to standalone repos (`mcp/` and `skill/`,
+> remotes `fictjs/mcp` and `fictjs/skill`) and are no longer packages in this
+> monorepo.
 
 ## Tripwire (prevents regression to breadth)
 
@@ -121,7 +120,8 @@ of independent satellites + ignored internal tooling."
 - [x] **Step 1 — Define tiers** (this file + [docs/PREVIEW.md](./docs/PREVIEW.md)).
 - [x] **Step 2 — Encode Core via changesets.** `fixed` reduced to the 6 Core
       packages; `ssr`/`router`/`testing-library` moved to independent versioning;
-      `mcp`/`skill` added to `ignore`. (See `.changeset/config.json`.)
+      then-internal `mcp`/`skill` were temporarily added to `ignore` before their
+      standalone repo split. (See `.changeset/config.json`.)
 - [x] **Step 3 — Move Preview off main exports.** Added the
       `@fictjs/ssr/experimental` entrypoint and moved `renderToPartial` there,
       off the `@fictjs/ssr` main export (engine extracted to the internal
@@ -129,9 +129,10 @@ of independent satellites + ignored internal tooling."
       ssr build + SSR test suite + edge smoke + typecheck green. `fict/experimental`
       is intentionally not created — no framework-level Preview API exists to put
       there yet; add the subpath when one does.
-- [x] **Step 4 — Privatize internal tooling.** Set `"private": true` on
-      `@fictjs/mcp` and `@fictjs/skill` (and dropped their `publishConfig`), per
-      "The two-thesis trap". Spin-out to `fict-ai-tools` remains open.
+- [x] **Step 4 — Move agent tooling out of the monorepo.** `@fictjs/mcp` and
+      `@fictjs/skill` were first privatized, then migrated into standalone repos
+      (`mcp/` and `skill/`). They no longer participate in this monorepo's
+      workspace, Changesets config, or Turbo graph.
 - [x] **Step 5 — Preview degradation contracts.** Audited and fully test-backed:
       all 11 failure modes are implemented + tested. See
       [preview-degradation-audit.md](./docs/preview-degradation-audit.md): the
