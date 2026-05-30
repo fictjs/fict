@@ -1,16 +1,19 @@
 # @fictjs/devtools
 
+> **Internal distribution artifact:** per [SCOPE.md](../../SCOPE.md), this
+> package is Changesets-ignored and feature-frozen. It exists for
+> Fict-maintained browser/Vite tooling, not as a stable application dependency.
+
 Fict DevTools for Vite development. This package provides:
 
-- A Vite plugin that serves a standalone DevTools UI at `/_ _fict-devtools__/`
+- A Vite plugin that serves a standalone DevTools UI at `/__fict-devtools__/`
 - Auto-injection of the DevTools hook (best-effort)
 
 ## Compatibility
 
-`@fictjs/devtools` can version independently from `fict` and
-`@fictjs/runtime`, but compatibility is governed by the DevTools hook protocol.
-This package currently implements protocol `1` and supports runtime hook
-protocol `1`.
+Compatibility is governed by the DevTools hook protocol rather than the Core
+release train. This package currently implements protocol `1` and supports
+runtime hook protocol `1`.
 
 At runtime, the installed hook exposes:
 
@@ -20,7 +23,7 @@ globalThis.__FICT_DEVTOOLS_HOOK__.devtools
 
 The runtime ignores hooks that declare an incompatible protocol range.
 
-## Vite usage
+## Vite usage (local/internal)
 
 ```ts
 // vite.config.ts

@@ -32,18 +32,18 @@ Fict exposes multiple package subpaths because compiler output, library authors,
 and application code have different stability needs. v1.0 treats these as
 separate surfaces:
 
-| Surface                                          | Owner / Audience                | Stability                             |
-| ------------------------------------------------ | ------------------------------- | ------------------------------------- |
-| `fict`                                           | Application authors             | Tier 1 public API                     |
-| `fict/plus`                                      | Application authors             | Tier 1 extended API                   |
-| `fict/advanced`                                  | Power users and library authors | Tier 3 advanced API                   |
-| `fict/loader`                                    | SSR/resume app entrypoints      | Tier 3/Preview where noted            |
-| `fict/jsx-runtime`, `fict/jsx-dev-runtime`       | JSX transform                   | Tier 1 JSX ABI                        |
-| `fict/internal`, `fict/internal/list`            | Compiler-generated code         | Tier 2 compiler ABI, not user API     |
-| `@fictjs/runtime`                                | Low-level runtime integrators   | Tier 1 runtime API, no compiler macro |
-| `@fictjs/runtime/advanced`                       | Runtime integrators             | Tier 3 advanced runtime API           |
-| `@fictjs/runtime/internal`, `./internal/list`    | Compiler/generated runtime code | Tier 2 compiler ABI, not user API     |
-| `@fictjs/devtools`, `@fictjs/devtools/core/vite` | Development tooling             | Follows the DevTools protocol         |
+| Surface                                                              | Owner / Audience                | Stability                                         |
+| -------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------- |
+| `fict`                                                               | Application authors             | Tier 1 public API                                 |
+| `fict/plus`                                                          | Application authors             | Tier 1 extended API                               |
+| `fict/advanced`                                                      | Power users and library authors | Tier 3 advanced API                               |
+| `fict/loader`                                                        | SSR/resume app entrypoints      | Tier 3/Preview where noted                        |
+| `fict/jsx-runtime`, `fict/jsx-dev-runtime`                           | JSX transform                   | Tier 1 JSX ABI                                    |
+| `fict/internal`, `fict/internal/list`                                | Compiler-generated code         | Tier 2 compiler ABI, not user API                 |
+| `@fictjs/runtime`                                                    | Low-level runtime integrators   | Tier 1 runtime API, no compiler macro             |
+| `@fictjs/runtime/advanced`                                           | Runtime integrators             | Tier 3 advanced runtime API                       |
+| `@fictjs/runtime/internal`, `./internal/list`                        | Compiler/generated runtime code | Tier 2 compiler ABI, not user API                 |
+| `@fictjs/devtools`, `@fictjs/devtools/vite`, `@fictjs/devtools/core` | Fict-maintained tooling         | Internal distribution artifact; not v1 public API |
 
 Rules:
 
@@ -57,6 +57,9 @@ Rules:
    hand-written application/library code must not.
 4. The compiler should emit `fict/internal` when the source imports from `fict`,
    and `@fictjs/runtime/internal` when targeting the standalone runtime family.
+5. DevTools paths are listed only to document protocol compatibility. Per
+   [SCOPE.md](../SCOPE.md), `@fictjs/devtools` is a Changesets-ignored Internal
+   distribution artifact, not part of the v1 public API freeze.
 
 ---
 
@@ -701,10 +704,11 @@ export interface SuspenseToken {
 - Newer runtimes may support older compiler output
 - Compiler and runtime versions should match for best performance
 
-### DevTools Protocol Compatibility
+### Internal DevTools Protocol Compatibility
 
-`@fictjs/devtools` may keep an independent package version, but it must declare
-the hook protocol it implements through `globalThis.__FICT_DEVTOOLS_HOOK__.devtools`.
+`@fictjs/devtools` is an Internal distribution artifact, not part of the v1
+public API freeze. When it is distributed, compatibility is governed by the hook
+protocol it declares through `globalThis.__FICT_DEVTOOLS_HOOK__.devtools`.
 
 Current protocol:
 
