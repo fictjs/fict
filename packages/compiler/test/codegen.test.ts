@@ -687,6 +687,63 @@ describe('event handler transformation', () => {
     )
   })
 
+  it('does not constify static member reads from dynamic computed list keys', () => {
+    const ast = parseFile(`
+      function Table() {
+        const idKey = 'id'
+        const rows = [{ id: 'actual-key', idKey: 'literal-prop' }]
+        return (
+          <table>
+            <tbody>
+              {rows.map(row => (
+                <tr key={row[idKey]}>
+                  <td>{row.idKey}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('row().idKey')
+    expect(code).not.toMatch(/setText\([^,]+,\s*__key\)/)
+    expect(code).not.toMatch(/\.data\s*=\s*String\(__key\)/)
+  })
+
+  it('keeps literal computed key aliases optimized in keyed lists', () => {
+    const ast = parseFile(`
+      function Table() {
+        const rows = [{ id: 'actual-key' }]
+        return (
+          <table>
+            <tbody>
+              {rows.map(row => (
+                <tr key={row["id"]}>
+                  <td>{row.id}</td>
+                </tr>
+              ))}
+              {rows.map(row => (
+                <tr key={row?.["id"]}>
+                  <td>{row?.id}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/setText\([^,]+,\s*__key\)/)
+    expect(code).not.toMatch(/bindText\([^,]+,\s*\(\)\s*=>\s*__key\)/)
+  })
+
   it('does not extract delegated data when handler comes from event param', () => {
     const ast = parseFile(`
       function Comp() {

@@ -1705,6 +1705,44 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not constify static member reads from dynamic computed list keys', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const idKey = 'id'
+        const items = [{ id: 'actual-key', idKey: 'literal-prop' }]
+        return (
+          <ul>
+            {items.map(item => (
+              <li key={item[idKey]}>{item.idKey}</li>
+            ))}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(Array.from(container.querySelectorAll('li')).map(li => li.textContent)).toEqual([
+      'literal-prop',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
   it(
     'switches conditional branches and updates attributes in fine-grained mode',
     { timeout: 10000 },

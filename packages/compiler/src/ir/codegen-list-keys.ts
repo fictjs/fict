@@ -4,7 +4,7 @@ import { deSSAVarName } from './regions'
 
 /**
  * Check if a MemberExpression matches the list key pattern.
- * Matches `item.prop` when key expression is `item.prop`.
+ * Matches equivalent item property reads when the key expression reads that same property.
  */
 export function matchesListKeyPattern(expr: Expression, ctx: CodegenContext): boolean {
   if (!ctx.listKeyExpr || !ctx.listItemParamName || !ctx.listKeyParamName) {
@@ -28,12 +28,6 @@ export function matchesListKeyPattern(expr: Expression, ctx: CodegenContext): bo
     return false
   }
 
-  if (keyExpr.property.kind !== 'Identifier' && keyExpr.property.kind !== 'Literal') {
-    return false
-  }
-  const keyPropName =
-    keyExpr.property.kind === 'Identifier' ? keyExpr.property.name : String(keyExpr.property.value)
-
   const exprObj = expr.object
   if (exprObj.kind !== 'Identifier') {
     return false
@@ -43,13 +37,42 @@ export function matchesListKeyPattern(expr: Expression, ctx: CodegenContext): bo
     return false
   }
 
-  if (expr.property.kind !== 'Identifier' && expr.property.kind !== 'Literal') {
+  return memberPropertiesMatch(keyExpr, expr)
+}
+
+function getMemberPropertyName(expr: Expression): string | null {
+  if (expr.kind === 'Identifier') return expr.name
+  if (expr.kind === 'Literal') {
+    if (typeof expr.value === 'string' || typeof expr.value === 'number') {
+      return String(expr.value)
+    }
+  }
+  return null
+}
+
+function hasComputedLiteralProperty(
+  member: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+): boolean {
+  return (
+    member.computed &&
+    member.property.kind === 'Literal' &&
+    (typeof member.property.value === 'string' || typeof member.property.value === 'number')
+  )
+}
+
+function memberPropertiesMatch(
+  keyExpr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+  expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+): boolean {
+  const keyPropName = getMemberPropertyName(keyExpr.property)
+  const exprPropName = getMemberPropertyName(expr.property)
+  if (keyPropName === null || exprPropName === null || keyPropName !== exprPropName) {
     return false
   }
-  const exprPropName =
-    expr.property.kind === 'Identifier' ? expr.property.name : String(expr.property.value)
 
-  return exprPropName === keyPropName
+  if (keyExpr.computed === expr.computed) return true
+
+  return hasComputedLiteralProperty(keyExpr) || hasComputedLiteralProperty(expr)
 }
 
 export function isListKeyParamIdentifier(name: string, ctx: CodegenContext): boolean {
