@@ -115,6 +115,76 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('unwraps optional hook-return signal member reads across modules', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-optional-member'
+
+        export function App() {
+          const state = useCounter()
+          return state?.count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-optional-member.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-optional-member.tsx'),
+      )
+
+      expect(output).toMatch(/return state\?\.count\?\.\(\)/)
+      expect(output).not.toContain('return state?.count;')
+    })
+
+    it('unwraps optional computed hook-return signal member reads across modules', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-optional-computed-member'
+
+        export function App() {
+          const state = useCounter()
+          return state?.['count']
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-optional-computed-member.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-optional-computed-member.tsx'),
+      )
+
+      expect(output).toMatch(/return state\?\.\["count"\]\?\.\(\)/)
+      expect(output).not.toContain('return state?.["count"];')
+    })
+
     it('propagates hook return metadata through pass-through wrapper modules', () => {
       const hookSource = `
         import { $state } from 'fict'
@@ -473,6 +543,60 @@ describe('Cross-Module Reactivity', () => {
 
       expect(output).toMatch(/store\.count\?\.\(\)/)
       expect(output).not.toMatch(/store\.count\?\.\(\)\?\.\(\)/)
+    })
+
+    it('unwraps optional namespace signal member reads', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+      `
+      const appSource = `
+        import * as store from './store-ns-optional-member'
+
+        export function App() {
+          return store?.count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-optional-member.ts'))
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-ns-optional-member.tsx'),
+      )
+
+      expect(output).toMatch(/return store\?\.count\?\.\(\)/)
+      expect(output).not.toContain('return store?.count;')
+    })
+
+    it('unwraps optional computed namespace signal member reads', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+      `
+      const appSource = `
+        import * as store from './store-ns-optional-computed-member'
+
+        export function App() {
+          return store?.['count']
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        storeSource,
+        { moduleMetadata },
+        path.join(baseDir, 'store-ns-optional-computed-member.ts'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-ns-optional-computed-member.tsx'),
+      )
+
+      expect(output).toMatch(/return store\?\.\["count"\]\?\.\(\)/)
+      expect(output).not.toContain('return store?.["count"];')
     })
 
     it('preserves namespace signal assignment targets in non-strict mode', () => {

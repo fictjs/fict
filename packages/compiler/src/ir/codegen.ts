@@ -98,6 +98,7 @@ import {
   type Instruction,
   type JSXChild,
   type JSXElementExpression,
+  type OptionalMemberExpression as HIROptionalMemberExpression,
   type TemplateQuasi,
   type Terminator,
 } from './hir'
@@ -1945,6 +1946,9 @@ function lowerExpressionImpl(
     }
     return lowerExpression(callee, ctx)
   }
+  const shouldUnwrapOptionalAccessorMember = (member: HIROptionalMemberExpression): boolean =>
+    isNamespaceReactiveAccessorMember(member as Expression) ||
+    isHookReturnAccessorMember(member as Expression)
 
   switch (expr.kind) {
     case 'Identifier':
@@ -2751,19 +2755,32 @@ function lowerExpressionImpl(
     case 'SuperExpression':
       return t.super()
 
-    case 'OptionalMemberExpression':
+    case 'OptionalMemberExpression': {
+      const optionalMember = expr as HIROptionalMemberExpression
+      if (shouldUnwrapOptionalAccessorMember(optionalMember)) {
+        return t.optionalCallExpression(
+          lowerMemberExpressionWithoutAccessorCall(optionalMember),
+          [],
+          true,
+        )
+      }
       return t.optionalMemberExpression(
-        lowerExpression(expr.object, ctx),
-        expr.computed
-          ? lowerExpression(expr.property, ctx)
-          : expr.property.kind === 'Identifier'
-            ? t.identifier(expr.property.name)
+        lowerExpression(optionalMember.object, ctx),
+        optionalMember.computed
+          ? lowerExpression(optionalMember.property, ctx)
+          : optionalMember.property.kind === 'Identifier'
+            ? t.identifier(optionalMember.property.name)
             : t.stringLiteral(
-                String(expr.property.kind === 'Literal' ? (expr.property.value ?? '') : ''),
+                String(
+                  optionalMember.property.kind === 'Literal'
+                    ? (optionalMember.property.value ?? '')
+                    : '',
+                ),
               ),
-        expr.computed,
-        expr.optional,
+        optionalMember.computed,
+        optionalMember.optional,
       )
+    }
 
     default:
       return t.identifier('undefined')
