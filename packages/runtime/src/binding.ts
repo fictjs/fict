@@ -666,9 +666,7 @@ function applyStyle(
   }
 }
 
-const isUnitlessStyleProperty = isDev
-  ? (prop: string): boolean => UnitlessStyles.has(prop)
-  : (prop: string): boolean => prop === 'opacity' || prop === 'zIndex'
+const isUnitlessStyleProperty = (prop: string): boolean => UnitlessStyles.has(prop)
 
 function normalizeStyleProperty(prop: string): string {
   const cached = STYLE_PROP_CACHE.get(prop)
