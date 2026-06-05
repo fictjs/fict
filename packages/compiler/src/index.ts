@@ -2535,6 +2535,46 @@ function createHIREntrypointVisitor(
               `  import { ${macroCall.macroName} } from '${macroCall.source}'`,
           )
         }
+        const validateMemberHookPlacement = (
+          callPath: BabelCore.NodePath<
+            BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+          >,
+        ): void => {
+          const callee = callPath.node.callee
+          if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) return
+          const hookName = getStaticMemberPropertyName(callee)
+          if (!hookName || !isHookName(hookName)) return
+
+          const objectName = t.isIdentifier(callee.object) ? callee.object.name : null
+          const objectBindingPath = objectName ? callPath.scope.getBinding(objectName)?.path : null
+          const isNamespaceHookCall = objectBindingPath?.isImportNamespaceSpecifier() ?? false
+          const isPlacementSensitive =
+            isInsideLoop(callPath) ||
+            isInsideConditional(callPath) ||
+            isInsideNestedFunctionWithReactiveScopes(callPath)
+          if (!isNamespaceHookCall && !isPlacementSensitive) return
+
+          const ownerFunction = callPath.findParent(parent => {
+            if (!parent.isFunction?.()) return false
+            return isComponentOrHookDefinition(
+              parent as BabelCore.NodePath<BabelCore.types.Function>,
+            )
+          })
+          const displayName = objectName ? `${objectName}.${hookName}` : hookName
+          if (!ownerFunction) {
+            if (isNamespaceHookCall) {
+              throw callPath.buildCodeFrameError(
+                `${displayName}() must be called inside a component or hook (useX)`,
+              )
+            }
+            return
+          }
+          if (isPlacementSensitive) {
+            throw callPath.buildCodeFrameError(
+              `${displayName}() must be called at the top level of a component or hook (no loops/conditions/nested functions)`,
+            )
+          }
+        }
         const isImportedReactiveCreationCall = (
           callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
         ): boolean => {
@@ -2867,6 +2907,7 @@ function createHIREntrypointVisitor(
                 fileName,
               )
             }
+            validateMemberHookPlacement(callPath)
             if (calleeId && isHookName(calleeId)) {
               const binding = callPath.scope.getBinding(calleeId)
               const bindingPath = binding?.path
@@ -2964,6 +3005,7 @@ function createHIREntrypointVisitor(
           },
           OptionalCallExpression(callPath) {
             rejectUnsupportedNamespaceMacroCall(callPath)
+            validateMemberHookPlacement(callPath)
             emitDirectStateArgumentWarnings(callPath, isImportedStateArgumentAllowedCall(callPath))
           },
         })

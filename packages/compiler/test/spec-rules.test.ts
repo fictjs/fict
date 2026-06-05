@@ -756,6 +756,99 @@ describe('Rule I: Component-only state placement', () => {
     `
     expect(() => transform(input)).toThrow(/top level of a component or hook/)
   })
+
+  it('throws when namespace hook calls are conditional', () => {
+    const input = `
+      import * as hooks from './hooks'
+      function Component() {
+        if (true) {
+          hooks.useCounter()
+        }
+        return null
+      }
+    `
+    expect(() => transform(input)).toThrow(/hooks\.useCounter\(\) must be called at the top level/)
+  })
+
+  it('throws when namespace hook calls are in logical branches', () => {
+    const input = `
+      import * as hooks from './hooks'
+      function Component() {
+        const ready = true
+        ready && hooks.useCounter()
+        return null
+      }
+    `
+    expect(() => transform(input)).toThrow(/hooks\.useCounter\(\) must be called at the top level/)
+  })
+
+  it('throws when local object hook members are conditional', () => {
+    const input = `
+      function useCounter() {
+        return 1
+      }
+      const api = { useCounter }
+      function Component() {
+        if (true) {
+          api.useCounter()
+        }
+        return null
+      }
+    `
+    expect(() => transform(input)).toThrow(/api\.useCounter\(\) must be called at the top level/)
+  })
+
+  it('throws when computed or optional member hook calls are conditional', () => {
+    const computed = `
+      import * as hooks from './hooks'
+      function Component() {
+        if (true) {
+          hooks['useCounter']()
+        }
+        return null
+      }
+    `
+    const optional = `
+      import * as hooks from './hooks'
+      function Component() {
+        if (true) {
+          hooks.useCounter?.()
+        }
+        return null
+      }
+    `
+
+    expect(() => transform(computed)).toThrow(
+      /hooks\.useCounter\(\) must be called at the top level/,
+    )
+    expect(() => transform(optional)).toThrow(
+      /hooks\.useCounter\(\) must be called at the top level/,
+    )
+  })
+
+  it('allows top-level namespace hook calls and conditional non-hook member calls', () => {
+    expect(() =>
+      transform(`
+        import * as hooks from './hooks'
+        function Component() {
+          hooks.useCounter()
+          return null
+        }
+      `),
+    ).not.toThrow()
+
+    expect(() =>
+      transform(`
+        const api = { useful: () => 1 }
+        function Component() {
+          if (true) {
+            api.useful()
+          }
+          return null
+        }
+      `),
+    ).not.toThrow()
+  })
 })
 
 // ============================================================================
