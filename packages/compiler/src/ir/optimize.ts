@@ -6503,9 +6503,9 @@ function hashExpression(expr: Expression): string {
         : member.property.kind === 'Identifier'
           ? member.property.name
           : hashExpression(member.property as Expression)
-      return `mem:${hashExpression(member.object as Expression)}:${prop}:${
-        member.computed ? 'c' : 's'
-      }`
+      return `mem:${member.kind}:${member.optional ? 'o' : 'r'}:${hashExpression(
+        member.object as Expression,
+      )}:${prop}:${member.computed ? 'c' : 's'}`
     }
     case 'BinaryExpression':
       return `bin:${expr.operator}:${hashExpression(expr.left as Expression)}:${hashExpression(

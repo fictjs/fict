@@ -804,6 +804,141 @@ describe('optimizeHIR', () => {
     expect(matches.length).toBe(1)
   })
 
+  it('does not eliminate required member reads with optional member reads', () => {
+    const ast = parseFile(`
+      function Foo(obj) {
+        "use pure"
+        const __a = obj?.x
+        const __b = obj.x
+        return [__a, __b]
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+
+    const optionalCount = countExpression(
+      optimized,
+      expr =>
+        expr.kind === 'OptionalMemberExpression' &&
+        expr.object.kind === 'Identifier' &&
+        expr.object.name === 'obj' &&
+        expr.property.kind === 'Identifier' &&
+        expr.property.name === 'x',
+    )
+    const requiredCount = countExpression(
+      optimized,
+      expr =>
+        expr.kind === 'MemberExpression' &&
+        expr.object.kind === 'Identifier' &&
+        expr.object.name === 'obj' &&
+        expr.property.kind === 'Identifier' &&
+        expr.property.name === 'x',
+    )
+
+    expect(optionalCount).toBe(1)
+    expect(requiredCount).toBe(1)
+  })
+
+  it('does not eliminate optional member reads with required member reads', () => {
+    const ast = parseFile(`
+      function Foo(obj) {
+        "use pure"
+        const __a = obj.x
+        const __b = obj?.x
+        return [__a, __b]
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+
+    const optionalCount = countExpression(
+      optimized,
+      expr =>
+        expr.kind === 'OptionalMemberExpression' &&
+        expr.object.kind === 'Identifier' &&
+        expr.object.name === 'obj' &&
+        expr.property.kind === 'Identifier' &&
+        expr.property.name === 'x',
+    )
+    const requiredCount = countExpression(
+      optimized,
+      expr =>
+        expr.kind === 'MemberExpression' &&
+        expr.object.kind === 'Identifier' &&
+        expr.object.name === 'obj' &&
+        expr.property.kind === 'Identifier' &&
+        expr.property.name === 'x',
+    )
+
+    expect(optionalCount).toBe(1)
+    expect(requiredCount).toBe(1)
+  })
+
+  it('does not eliminate nested required chains with nested optional chains', () => {
+    const ast = parseFile(`
+      function Foo(obj) {
+        "use pure"
+        const __a = obj?.a.b
+        const __b = obj.a.b
+        return [__a, __b]
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+
+    const optionalChainCount = countExpression(
+      optimized,
+      expr =>
+        expr.kind === 'OptionalMemberExpression' &&
+        expr.property.kind === 'Identifier' &&
+        expr.property.name === 'b',
+    )
+    const requiredChainCount = countExpression(
+      optimized,
+      expr =>
+        expr.kind === 'MemberExpression' &&
+        expr.property.kind === 'Identifier' &&
+        expr.property.name === 'b' &&
+        expr.object.kind === 'MemberExpression',
+    )
+
+    expect(optionalChainCount).toBe(1)
+    expect(requiredChainCount).toBe(1)
+  })
+
+  it('does not eliminate computed required members with computed optional members', () => {
+    const ast = parseFile(`
+      function Foo(obj, key) {
+        "use pure"
+        const __a = obj?.[key]
+        const __b = obj[key]
+        return [__a, __b]
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+
+    const optionalCount = countExpression(
+      optimized,
+      expr =>
+        expr.kind === 'OptionalMemberExpression' &&
+        expr.computed &&
+        expr.object.kind === 'Identifier' &&
+        expr.object.name === 'obj' &&
+        expr.property.kind === 'Identifier' &&
+        expr.property.name === 'key',
+    )
+    const requiredCount = countExpression(
+      optimized,
+      expr =>
+        expr.kind === 'MemberExpression' &&
+        expr.computed &&
+        expr.object.kind === 'Identifier' &&
+        expr.object.name === 'obj' &&
+        expr.property.kind === 'Identifier' &&
+        expr.property.name === 'key',
+    )
+
+    expect(optionalCount).toBe(1)
+    expect(requiredCount).toBe(1)
+  })
+
   it('propagates block-local constants in reactive functions', () => {
     const ast = parseFile(`
       function Foo() {
