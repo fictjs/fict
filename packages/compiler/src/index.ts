@@ -2066,6 +2066,26 @@ function createHIREntrypointVisitor(
           if (!id) return null
           return hasStateRootBinding(exprPath, id.name) ? id : null
         }
+        const isImmediateFunctionBodyStatement = (nodePath: BabelCore.NodePath): boolean => {
+          const ownerFunction = nodePath.getFunctionParent()
+          if (!ownerFunction) return false
+          const bodyPath = ownerFunction.get('body')
+          if (!bodyPath.isBlockStatement()) return false
+          const statementPath = nodePath.isStatement()
+            ? nodePath
+            : nodePath.findParent(parentPath => parentPath.isStatement())
+          return !!statementPath && statementPath.parentPath?.node === bodyPath.node
+        }
+        const isImmediateEffectStatement = (
+          callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
+        ): boolean => {
+          const parentPath = callPath.parentPath
+          return !!(
+            parentPath?.isExpressionStatement() &&
+            parentPath.node.expression === callPath.node &&
+            isImmediateFunctionBodyStatement(parentPath)
+          )
+        }
         path.traverse({
           VariableDeclarator(varPath) {
             const init = varPath.node.init
@@ -2105,6 +2125,13 @@ function createHIREntrypointVisitor(
                     `For module-level shared state, use one of these alternatives:\n` +
                     `  • $store from 'fict' - for deep reactive objects\n` +
                     `  • createSignal from 'fict/advanced' - for primitives`,
+                )
+              }
+              if (!isImmediateFunctionBodyStatement(varPath)) {
+                throw varPath.buildCodeFrameError(
+                  `$state() cannot be declared inside loops or conditionals.\n\n` +
+                    `Signals must be created at the top level of components for stable identity.\n` +
+                    `Move the $state() declaration before the nested block.`,
                 )
               }
               stateVars.add(varPath.node.id.name)
@@ -2209,6 +2236,13 @@ function createHIREntrypointVisitor(
                     `  • createSignal from 'fict/advanced' - for primitives`,
                 )
               }
+              if (!isImmediateFunctionBodyStatement(parentPath)) {
+                throw callPath.buildCodeFrameError(
+                  `$state() cannot be declared inside loops or conditionals.\n\n` +
+                    `Move the declaration to the top level of your component.\n` +
+                    `For dynamic collections, consider using $store with an array/object.`,
+                )
+              }
               if (isInsideLoop(callPath) || isInsideConditional(callPath)) {
                 throw callPath.buildCodeFrameError(
                   `$state() cannot be declared inside loops or conditionals.\n\n` +
@@ -2231,6 +2265,13 @@ function createHIREntrypointVisitor(
                   `$effect() cannot be called inside nested functions.\n\n` +
                     `Move the effect to the component's top level,\n` +
                     `or extract the nested logic into a custom hook (useXxx).`,
+                )
+              }
+              if (!isImmediateEffectStatement(callPath)) {
+                throw callPath.buildCodeFrameError(
+                  `$effect() cannot be called inside loops or conditionals.\n\n` +
+                    `Effects must be registered at the top level of components.\n` +
+                    `Move the $effect() call before the nested block.`,
                 )
               }
               if (isInsideLoop(callPath) || isInsideConditional(callPath)) {

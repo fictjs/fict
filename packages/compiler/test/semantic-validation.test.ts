@@ -30,6 +30,53 @@ describe('semantic validation', () => {
     expect(() => transform(source)).toThrow(/cannot be declared inside loops or conditionals/)
   })
 
+  it('throws when $state is declared outside the immediate function body', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        function App() {
+          try {
+            const x = $state(0)
+            return x
+          } finally {}
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function App() {
+          try {
+            throw 1
+          } catch (error) {
+            const x = $state(0)
+            return x
+          }
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function App() {
+          try {} finally {
+            const x = $state(0)
+          }
+          return null
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function App() {
+          {
+            const x = $state(0)
+          }
+          return null
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      expect(() => transform(source)).toThrow(/top level|loops or conditionals/)
+    }
+  })
+
   it('throws when $state is declared inside a nested function (closure)', () => {
     const source = `
       import { $state } from 'fict'
@@ -82,6 +129,53 @@ describe('semantic validation', () => {
     expect(() => transform(source, { reactiveScopes: ['renderHook'] })).toThrow(
       /cannot be called inside loops/,
     )
+  })
+
+  it('throws when $effect is called outside the immediate function body', () => {
+    const cases = [
+      `
+        import { $effect } from 'fict'
+        function App() {
+          try {
+            $effect(() => {})
+          } finally {}
+          return null
+        }
+      `,
+      `
+        import { $effect } from 'fict'
+        function App() {
+          try {
+            throw 1
+          } catch (error) {
+            $effect(() => {})
+          }
+          return null
+        }
+      `,
+      `
+        import { $effect } from 'fict'
+        function App() {
+          try {} finally {
+            $effect(() => {})
+          }
+          return null
+        }
+      `,
+      `
+        import { $effect } from 'fict'
+        function App() {
+          {
+            $effect(() => {})
+          }
+          return null
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      expect(() => transform(source)).toThrow(/top level|loops or conditionals/)
+    }
   })
 
   it('throws when reactive scope is invoked via alias (not supported)', () => {

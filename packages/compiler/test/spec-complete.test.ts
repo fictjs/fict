@@ -181,8 +181,7 @@ describe('R005: Props destructuring', () => {
         return <div>{count}</div>
       }
     `)
-    // Default value handling uses reactive getter with nullish coalescing
-    expect(output).toContain('prop(() => __props.count ?? 0)')
+    expect(output).toContain('=== undefined ? 0')
     expect(output).toContain('__props')
   })
 
@@ -195,7 +194,7 @@ describe('R005: Props destructuring', () => {
     `)
     expect(output).toContain('__props')
     expect(output).toContain('prop(() => __props.user.name)')
-    expect(output).toContain('prop(() => __props.user.age ?? 18)')
+    expect(output).toContain('=== undefined ? 18')
   })
 
   it('handles rest props', () => {

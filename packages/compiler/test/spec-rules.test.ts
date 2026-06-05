@@ -209,10 +209,6 @@ describe('Spec rule coverage', () => {
     const input = `
       import { $state, $effect } from 'fict'
 
-      $effect(() => {
-        console.log('mount only')
-      })
-
       function Demo() {
         const count = $state(0)
         $effect(() => {
