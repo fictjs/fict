@@ -190,6 +190,58 @@ function isTypeScriptOnlyTopLevelStatement(
   return (node as { declare?: boolean }).declare === true
 }
 
+function isTypeOnlyKind(kind: string | null | undefined): boolean {
+  return kind === 'type'
+}
+
+function isTypeOnlyRuntimeOmittedStatement(
+  node: BabelCore.types.Node,
+  t: typeof BabelCore.types,
+): boolean {
+  return (
+    t.isTSTypeAliasDeclaration(node) ||
+    t.isTSInterfaceDeclaration(node) ||
+    t.isTSDeclareFunction(node) ||
+    ((node as { declare?: boolean }).declare === true &&
+      (t.isFunctionDeclaration(node) ||
+        t.isClassDeclaration(node) ||
+        t.isVariableDeclaration(node)))
+  )
+}
+
+function runtimeImportDeclaration(
+  stmt: BabelCore.types.ImportDeclaration,
+  t: typeof BabelCore.types,
+): BabelCore.types.ImportDeclaration | null {
+  if (isTypeOnlyKind(stmt.importKind)) return null
+  const specifiers = stmt.specifiers.filter(spec => {
+    return !(t.isImportSpecifier(spec) && isTypeOnlyKind(spec.importKind))
+  })
+  if (stmt.specifiers.length > 0 && specifiers.length === 0) return null
+  if (specifiers.length === stmt.specifiers.length) return stmt
+  const next = t.cloneNode(stmt, true)
+  next.specifiers = specifiers.map(spec => t.cloneNode(spec, true))
+  return next
+}
+
+function runtimeExportNamedDeclaration(
+  stmt: BabelCore.types.ExportNamedDeclaration,
+  t: typeof BabelCore.types,
+): BabelCore.types.ExportNamedDeclaration | null {
+  if (isTypeOnlyKind(stmt.exportKind)) return null
+  if (stmt.declaration && isTypeOnlyRuntimeOmittedStatement(stmt.declaration, t)) return null
+  if (stmt.specifiers.length === 0) return stmt
+
+  const specifiers = stmt.specifiers.filter(spec => {
+    return !isTypeOnlyKind((spec as { exportKind?: string | null }).exportKind)
+  })
+  if (specifiers.length === 0) return null
+  if (specifiers.length === stmt.specifiers.length) return stmt
+  const next = t.cloneNode(stmt, true)
+  next.specifiers = specifiers.map(spec => t.cloneNode(spec, true))
+  return next
+}
+
 function lowerRawJSXInBabelNode<T extends BabelCore.types.Node>(node: T, ctx: CodegenContext): T {
   const { t } = ctx
   const visit = (current: unknown): unknown => {
@@ -5141,6 +5193,11 @@ export function lowerHIRWithRegions(
 
   // Rebuild program body preserving original order
   for (const stmt of originalBody as BabelCore.types.Statement[]) {
+    if (isTypeOnlyRuntimeOmittedStatement(stmt, t)) {
+      flushLowerableBuffer()
+      continue
+    }
+
     if (isTypeScriptOnlyTopLevelStatement(stmt, t)) {
       flushLowerableBuffer()
       body.push(stmt)
@@ -5149,7 +5206,8 @@ export function lowerHIRWithRegions(
 
     if (t.isImportDeclaration(stmt)) {
       flushLowerableBuffer()
-      body.push(stmt)
+      const runtimeImport = runtimeImportDeclaration(stmt, t)
+      if (runtimeImport) body.push(runtimeImport)
       continue
     }
 
@@ -5186,8 +5244,16 @@ export function lowerHIRWithRegions(
     // Export named with function declaration
     if (t.isExportNamedDeclaration(stmt) && stmt.declaration) {
       flushLowerableBuffer()
+      const runtimeExport = runtimeExportNamedDeclaration(stmt, t)
+      if (!runtimeExport) {
+        continue
+      }
+      if (runtimeExport !== stmt) {
+        body.push(lowerRawStatement(runtimeExport))
+        continue
+      }
       if (isTypeScriptOnlyTopLevelStatement(stmt.declaration, t)) {
-        body.push(stmt)
+        body.push(lowerRawStatement(stmt))
         continue
       }
       if (t.isFunctionDeclaration(stmt.declaration) && stmt.declaration.id?.name) {
@@ -5255,7 +5321,8 @@ export function lowerHIRWithRegions(
 
     if (t.isExportNamedDeclaration(stmt)) {
       flushLowerableBuffer()
-      body.push(lowerRawStatement(stmt))
+      const runtimeExport = runtimeExportNamedDeclaration(stmt, t)
+      if (runtimeExport) body.push(lowerRawStatement(runtimeExport))
       continue
     }
 
@@ -5317,9 +5384,17 @@ export function lowerHIRWithRegions(
       continue
     }
 
-    if (t.isExportDefaultDeclaration(stmt) || t.isExportAllDeclaration(stmt)) {
+    if (t.isExportDefaultDeclaration(stmt)) {
       flushLowerableBuffer()
       body.push(lowerRawStatement(stmt))
+      continue
+    }
+
+    if (t.isExportAllDeclaration(stmt)) {
+      flushLowerableBuffer()
+      if (!isTypeOnlyKind(stmt.exportKind)) {
+        body.push(lowerRawStatement(stmt))
+      }
       continue
     }
 

@@ -49,7 +49,9 @@ export function collectDeclaredNames(
 
   for (const stmt of body) {
     if (t.isImportDeclaration(stmt)) {
+      if ((stmt as { importKind?: string | null }).importKind === 'type') continue
       for (const spec of stmt.specifiers) {
+        if (t.isImportSpecifier(spec) && spec.importKind === 'type') continue
         declared.add(spec.local.name)
       }
       continue
@@ -78,6 +80,7 @@ export function collectDeclaredNames(
         }
       } else {
         for (const spec of stmt.specifiers) {
+          if ((spec as { exportKind?: string | null }).exportKind === 'type') continue
           if (t.isExportSpecifier(spec)) {
             declared.add(spec.local.name)
           }

@@ -132,6 +132,48 @@ describe('lowerHIRWithRegions', () => {
     expect(code).not.toContain('number[]')
   })
 
+  it('omits type-only imports and declarations from emitted modules', () => {
+    const ast = parseFile(`
+      import type { Foo } from './types'
+      import value, { type Bar, helper } from './values'
+      export type Baz = { a: number }
+      export interface Qux {
+        b: string
+      }
+
+      export function f() {
+        return value + helper
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain("from './types'")
+    expect(code).not.toContain('import type')
+    expect(code).not.toContain('type Baz')
+    expect(code).not.toContain('interface Qux')
+    expect(code).not.toContain('Foo')
+    expect(code).not.toContain('Bar')
+    expect(code).toContain('helper')
+    expect(code).toContain('value')
+  })
+
+  it('omits type-only re-export specifiers from emitted modules', () => {
+    const ast = parseFile(`
+      export type { Foo } from './types'
+      export { value, type Bar } from './values'
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain("from './types'")
+    expect(code).not.toContain('Foo')
+    expect(code).not.toContain('Bar')
+    expect(code).toContain('value')
+  })
+
   it('should handle control flow', () => {
     const ast = parseFile(`
       function Foo(props) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { transform } from './test-utils'
+import { transform, transformCommonJS } from './test-utils'
 
 describe('createFictPlugin (HIR)', () => {
   describe('Basics', () => {
@@ -418,6 +418,75 @@ describe('createFictPlugin (HIR)', () => {
 
       expect(output).toContain('return 1')
       expect(output).not.toContain('x: number')
+    })
+
+    it('drops type-only imports from runtime output', () => {
+      const output = transformCommonJS(`
+        import type { Foo } from './types'
+
+        export function f() {
+          return 1
+        }
+      `)
+
+      expect(output).not.toContain('require("./types")')
+      expect(output).not.toContain('Foo')
+    })
+
+    it('drops type-only specifiers from mixed imports', () => {
+      const output = transformCommonJS(`
+        import value, { type Foo, bar } from './values'
+
+        export function f() {
+          return value + bar
+        }
+      `)
+
+      expect(output).toContain('require("./values")')
+      expect(output).toContain('bar')
+      expect(output).not.toContain('Foo')
+    })
+
+    it('drops exported type aliases and interfaces from runtime output', () => {
+      const output = transformCommonJS(`
+        export type Foo = { a: number }
+        export interface Bar {
+          b: string
+        }
+
+        export function f() {
+          return 1
+        }
+      `)
+
+      expect(output).not.toContain('type Foo')
+      expect(output).not.toContain('interface Bar')
+      expect(output).not.toContain('Foo')
+      expect(output).not.toContain('Bar')
+      expect(output).toContain('function f()')
+    })
+
+    it('drops type-only re-exports from runtime output', () => {
+      const output = transformCommonJS(`
+        export type { Foo } from './types'
+
+        export function f() {
+          return 1
+        }
+      `)
+
+      expect(output).not.toContain('require("./types")')
+      expect(output).not.toContain('Foo')
+    })
+
+    it('drops type-only specifiers from mixed re-exports', () => {
+      const output = transformCommonJS(`
+        export { value, type Foo } from './values'
+      `)
+
+      expect(output).toContain('require("./values")')
+      expect(output).toContain('value')
+      expect(output).not.toContain('Foo')
     })
 
     it('preserves import expressions and meta properties', () => {
