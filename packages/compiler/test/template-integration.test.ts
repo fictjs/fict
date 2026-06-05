@@ -1955,6 +1955,114 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('applies static classList objects in fine-grained mode', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return <div data-id="target" class="base" classList={{ active: true, off: false }} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const target = container.querySelector('[data-id="target"]') as HTMLElement
+    expect(target.classList.contains('base')).toBe(true)
+    expect(target.classList.contains('active')).toBe(true)
+    expect(target.classList.contains('off')).toBe(false)
+    expect(target.hasAttribute('classList')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
+  it('updates reactive classList objects in fine-grained mode', { timeout: 10000 }, async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { toggle(): void }
+
+      export function App() {
+        let active = $state(true)
+        api = { toggle: () => (active = !active) }
+        return (
+          <div
+            data-id="target"
+            class="base"
+            classList={{ active: active, off: !active }}
+          />
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      api: { toggle(): void }
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const target = container.querySelector('[data-id="target"]') as HTMLElement
+    expect(target.classList.contains('base')).toBe(true)
+    expect(target.classList.contains('active')).toBe(true)
+    expect(target.classList.contains('off')).toBe(false)
+    expect(target.hasAttribute('classList')).toBe(false)
+
+    mod.api.toggle()
+    await flushUpdates()
+    expect(target.classList.contains('base')).toBe(true)
+    expect(target.classList.contains('active')).toBe(false)
+    expect(target.classList.contains('off')).toBe(true)
+    expect(target.hasAttribute('classList')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps classList object behavior aligned with VNode fallback', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return <div data-id="target" class="base" classList={{ active: true, off: false }} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: false,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const target = container.querySelector('[data-id="target"]') as HTMLElement
+    expect(target.classList.contains('base')).toBe(true)
+    expect(target.classList.contains('active')).toBe(true)
+    expect(target.classList.contains('off')).toBe(false)
+    expect(target.hasAttribute('classList')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
   it('wires event handlers in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'

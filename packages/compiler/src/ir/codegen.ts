@@ -3807,7 +3807,7 @@ function lowerIntrinsicElement(
             t.callExpression(runtimeIdentifier(ctx, 'bindRef'), [targetId, valueWithRegion]),
           ),
         )
-      } else if (attrName === 'class' || attrName === 'className') {
+      } else if (attrName === 'class' || attrName === 'className' || attrName === 'classList') {
         if (isReactiveAttr && binding.expr) {
           const patch = t.expressionStatement(
             t.callExpression(runtimeIdentifier(ctx, 'setClass'), [targetId, valueWithRegion]),
