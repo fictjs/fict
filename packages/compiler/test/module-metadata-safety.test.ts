@@ -466,6 +466,81 @@ describe('module metadata safety', () => {
     }
   })
 
+  it('prefers modern package metadata exports over legacy fictMetadata declarations', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_package_modern_metadata_with_legacy__')
+    const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+    const importer = path.join(baseDir, 'src', 'consumer.tsx')
+    const legacyMetaPath = path.join(packageDir, 'dist', 'legacy.fict.meta.json')
+    const rootMetaPath = path.join(packageDir, 'dist', 'index.fict.meta.json')
+    const hooksMetaPath = path.join(packageDir, 'dist', 'hooks.fict.meta.json')
+
+    try {
+      mkdirSync(path.dirname(rootMetaPath), { recursive: true })
+      mkdirSync(path.dirname(importer), { recursive: true })
+      writeFileSync(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          fictMetadata: './dist/legacy.fict.meta.json',
+          fict: {
+            metadata: './dist/index.fict.meta.json',
+            exports: {
+              '.': './dist/index.fict.meta.json',
+              './hooks': './dist/hooks.fict.meta.json',
+            },
+          },
+        }),
+        'utf8',
+      )
+      writeFileSync(
+        legacyMetaPath,
+        JSON.stringify({
+          exports: {},
+          hooks: { useLegacy: { directAccessor: 'signal' } },
+        }),
+        'utf8',
+      )
+      writeFileSync(
+        rootMetaPath,
+        JSON.stringify({
+          exports: {},
+          hooks: { useRoot: { directAccessor: 'signal' } },
+        }),
+        'utf8',
+      )
+      writeFileSync(
+        hooksMetaPath,
+        JSON.stringify({
+          exports: {},
+          hooks: { useHooks: { directAccessor: 'memo' } },
+        }),
+        'utf8',
+      )
+
+      const rootResolved = resolveModuleMetadata('fict-hook-lib', importer, {
+        emitModuleMetadata: false,
+      })
+      const subpathResolved = resolveModuleMetadata('fict-hook-lib/hooks', importer, {
+        emitModuleMetadata: false,
+      })
+
+      expect(rootResolved).toEqual({
+        exports: {},
+        hooks: { useRoot: { directAccessor: 'signal' } },
+      })
+      expect(subpathResolved).toEqual({
+        exports: {},
+        hooks: { useHooks: { directAccessor: 'memo' } },
+      })
+    } finally {
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
   it('does not read disk sidecars when moduleMetadata store is explicitly provided', () => {
     clearModuleMetadata()
     const baseDir = path.join(process.cwd(), '__fict_metadata_store_only__')

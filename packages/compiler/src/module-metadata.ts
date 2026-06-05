@@ -371,12 +371,9 @@ function readPackageConfig(packageJsonPath: string): FictPackageConfig | null {
       fict?: unknown
       fictMetadata?: unknown
     }
-    if (typeof pkg.fictMetadata === 'string') {
-      return { metadata: pkg.fictMetadata }
-    }
+    const config: FictPackageConfig = {}
     if (pkg.fict && typeof pkg.fict === 'object') {
       const fict = pkg.fict as { metadata?: unknown; exports?: unknown }
-      const config: FictPackageConfig = {}
       if (typeof fict.metadata === 'string') {
         config.metadata = fict.metadata
       }
@@ -389,8 +386,11 @@ function readPackageConfig(packageJsonPath: string): FictPackageConfig | null {
           config.exports = exportsConfig
         }
       }
-      if (config.metadata || config.exports) return config
     }
+    if (!config.metadata && typeof pkg.fictMetadata === 'string') {
+      config.metadata = pkg.fictMetadata
+    }
+    if (config.metadata || config.exports) return config
   } catch {
     // Malformed package metadata is ignored so package resolution stays best-effort.
   }
