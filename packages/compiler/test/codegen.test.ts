@@ -744,6 +744,39 @@ describe('event handler transformation', () => {
     expect(code).not.toMatch(/bindText\([^,]+,\s*\(\)\s*=>\s*__key\)/)
   })
 
+  it('does not constify list key aliases with different optional semantics', () => {
+    const ast = parseFile(`
+      function Table() {
+        const nullableRows = [null]
+        const rows = [{ id: 'actual-key' }]
+        return (
+          <table>
+            <tbody>
+              {nullableRows.map(row => (
+                <tr key={row?.id}>
+                  <td>{row.id}</td>
+                </tr>
+              ))}
+              {rows.map(row => (
+                <tr key={row.id}>
+                  <td>{row?.id}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('row().id')
+    expect(code).toContain('row()?.id')
+    expect(code).not.toMatch(/setText\([^,]+,\s*__key\)/)
+    expect(code).not.toMatch(/\.data\s*=\s*String\(__key\)/)
+  })
+
   it('does not extract delegated data when handler comes from event param', () => {
     const ast = parseFile(`
       function Comp() {

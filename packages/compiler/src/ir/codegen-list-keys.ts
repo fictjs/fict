@@ -64,6 +64,10 @@ function memberPropertiesMatch(
   keyExpr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
   expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
 ): boolean {
+  if ((keyExpr.optional ?? false) !== (expr.optional ?? false)) {
+    return false
+  }
+
   const keyPropName = getMemberPropertyName(keyExpr.property)
   const exprPropName = getMemberPropertyName(expr.property)
   if (keyPropName === null || exprPropName === null || keyPropName !== exprPropName) {

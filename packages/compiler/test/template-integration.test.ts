@@ -1743,6 +1743,49 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not constify non-optional reads from optional list keys', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        let reads = 0
+        const items = [{
+          get id() {
+            reads += 1
+            return reads === 1 ? 'key-value' : 'body-value'
+          },
+        }]
+        return (
+          <ul>
+            {items.map(item => (
+              <li key={item?.id}>{item.id}</li>
+            ))}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(Array.from(container.querySelectorAll('li')).map(li => li.textContent)).toEqual([
+      'body-value',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
   it(
     'switches conditional branches and updates attributes in fine-grained mode',
     { timeout: 10000 },
