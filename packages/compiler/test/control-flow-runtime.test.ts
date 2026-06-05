@@ -1986,6 +1986,49 @@ describe('control flow runtime regressions', () => {
     ).toThrow('spread iterator')
   })
 
+  it('preserves observable computed object keys with optimization', () => {
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            "use pure"
+            const key = {
+              toString() {
+                throw new Error('computed key')
+              },
+            }
+            const obj = { [key]: 1 }
+            void obj
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow('computed key')
+
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            "use pure"
+            const obj = {
+              [{
+                [Symbol.toPrimitive]() {
+                  throw new Error('inline computed key')
+                },
+              }]: 1,
+            }
+            void obj
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow('inline computed key')
+  })
+
   it('preserves tagged template unicode raw and cooked values with optimization', () => {
     const result = compileAndRunHook<string>(
       `

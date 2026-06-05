@@ -5753,7 +5753,7 @@ function isPureExpression(expr: Expression, ctx: PurityContext): boolean {
       return expr.properties.every(prop => {
         if (prop.kind === 'SpreadElement') return false
         return (
-          (!prop.computed || isPureExpression(prop.key as Expression, ctx)) &&
+          (!prop.computed || isKnownPrimitivePureExpression(prop.key as Expression, ctx)) &&
           isPureExpression(prop.value as Expression, ctx)
         )
       })
