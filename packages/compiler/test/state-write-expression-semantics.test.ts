@@ -74,6 +74,46 @@ function compiledFunction(
 }
 
 describe('state write expression semantics', () => {
+  it('preserves non-strict member assignment semantics on $state objects', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useStateObjectMemberAssignment() {
+        let user = $state({ name: 'A' })
+        user.name = 'B'
+        return user
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toContain('user().name = "B"')
+    const mod = runCompiled(output)
+    const user = compiledFunction(mod, 'useStateObjectMemberAssignment')() as () => {
+      name: string
+    }
+    expect(user()).toEqual({ name: 'B' })
+  })
+
+  it('preserves non-strict member update semantics on $state objects', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useStateObjectMemberUpdate() {
+        let user = $state({ count: 1 })
+        const post = user.count++
+        return [post, user]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toContain('user().count++')
+    const mod = runCompiled(output)
+    const [post, user] = compiledFunction(mod, 'useStateObjectMemberUpdate')() as [
+      number | (() => number),
+      () => { count: number },
+    ]
+    expect(typeof post === 'function' ? post() : post).toBe(1)
+    expect(user()).toEqual({ count: 2 })
+  })
+
   it('preserves JS return values for update/assignment expressions on $state', () => {
     const source = `
       import { $state } from 'fict'

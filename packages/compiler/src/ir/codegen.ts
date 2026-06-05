@@ -1088,6 +1088,55 @@ export function lowerExpression(
   }
 }
 
+function isAccessorObjectRoot(expr: Expression, ctx: CodegenContext): string | null {
+  if (expr.kind !== 'Identifier') return null
+  const baseName = deSSAVarName(expr.name)
+  if (
+    ctx.signalVars?.has(baseName) ||
+    ctx.memoVars?.has(baseName) ||
+    ctx.aliasVars?.has(baseName)
+  ) {
+    return baseName
+  }
+  return null
+}
+
+function lowerMemberPropertyForTarget(
+  property: Expression,
+  computed: boolean,
+  ctx: CodegenContext,
+): BabelCore.types.Expression {
+  if (computed) return lowerExpression(property, ctx)
+  if (property.kind === 'Identifier') return ctx.t.identifier(property.name)
+  return ctx.t.stringLiteral(String(property.kind === 'Literal' ? (property.value ?? '') : ''))
+}
+
+function lowerMemberObjectForAssignmentTarget(
+  object: Expression,
+  ctx: CodegenContext,
+): BabelCore.types.Expression {
+  const accessorName = isAccessorObjectRoot(object, ctx)
+  if (accessorName) {
+    return ctx.t.callExpression(ctx.t.identifier(accessorName), [])
+  }
+  if (object.kind === 'MemberExpression' || object.kind === 'OptionalMemberExpression') {
+    return lowerMemberExpressionForAssignmentTarget(object, ctx)
+  }
+  return lowerExpression(object, ctx)
+}
+
+function lowerMemberExpressionForAssignmentTarget(
+  expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+  ctx: CodegenContext,
+): BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression {
+  const object = lowerMemberObjectForAssignmentTarget(expr.object as Expression, ctx)
+  const property = lowerMemberPropertyForTarget(expr.property as Expression, expr.computed, ctx)
+  if (expr.kind === 'OptionalMemberExpression') {
+    return ctx.t.optionalMemberExpression(object, property, expr.computed, expr.optional)
+  }
+  return ctx.t.memberExpression(object, property, expr.computed, expr.optional)
+}
+
 function lowerExpressionImpl(
   expr: Expression,
   ctx: CodegenContext,
@@ -2016,6 +2065,14 @@ function lowerExpressionImpl(
         }
       }
 
+      if (expr.left.kind === 'MemberExpression' || expr.left.kind === 'OptionalMemberExpression') {
+        return t.assignmentExpression(
+          expr.operator as BabelCore.types.AssignmentExpression['operator'],
+          lowerMemberExpressionForAssignmentTarget(expr.left, ctx) as BabelCore.types.LVal,
+          lowerExpression(expr.right, ctx),
+        )
+      }
+
       return t.assignmentExpression(
         expr.operator as BabelCore.types.AssignmentExpression['operator'],
         lowerExpression(expr.left, ctx) as BabelCore.types.LVal,
@@ -2090,6 +2147,17 @@ function lowerExpressionImpl(
         if (ctx.trackedVars.has(baseName)) {
           return lowerTrackedUpdateCall(t.identifier(baseName), expr.operator, expr.prefix)
         }
+      }
+
+      if (
+        expr.argument.kind === 'MemberExpression' ||
+        expr.argument.kind === 'OptionalMemberExpression'
+      ) {
+        return t.updateExpression(
+          expr.operator,
+          lowerMemberExpressionForAssignmentTarget(expr.argument, ctx),
+          expr.prefix,
+        )
       }
 
       return t.updateExpression(
