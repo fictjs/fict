@@ -14,9 +14,21 @@ const DOM_PROPERTY_NAMES = new Set([
   'innerHTML',
   'innerText',
   'textContent',
+  'defaultValue',
+  'defaultChecked',
+  'defaultSelected',
+  'defaultMuted',
 ])
 
-const DOM_CONTENT_PROPERTY_NAMES = new Set(['innerHTML', 'innerText', 'textContent'])
+const DOM_TEMPLATE_PROPERTY_NAMES = new Set([
+  'innerHTML',
+  'innerText',
+  'textContent',
+  'defaultValue',
+  'defaultChecked',
+  'defaultSelected',
+  'defaultMuted',
+])
 
 export function isStaticDelegatedDataAst(
   expr: BabelCore.types.Expression,
@@ -45,6 +57,6 @@ export function isDOMProperty(name: string): boolean {
   return DOM_PROPERTY_NAMES.has(name)
 }
 
-export function isDOMContentProperty(name: string): boolean {
-  return DOM_CONTENT_PROPERTY_NAMES.has(name)
+export function isDOMTemplateProperty(name: string): boolean {
+  return DOM_TEMPLATE_PROPERTY_NAMES.has(name)
 }

@@ -628,6 +628,81 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('sets form default JSX props through DOM properties in fine-grained output', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: {
+        setValue(value: string): void
+        setOn(value: boolean): void
+      }
+
+      export function App() {
+        let val = $state('x')
+        let on = $state(true)
+        api = {
+          setValue(value) {
+            val = value
+          },
+          setOn(value) {
+            on = value
+          },
+        }
+        return (
+          <section>
+            <input data-testid="static" defaultValue="static" defaultChecked={true} />
+            <input data-testid="dynamic" defaultValue={val} defaultChecked={on} value={val} checked={on} />
+            <select>
+              <option data-testid="option" defaultSelected={on}>item</option>
+            </select>
+            <video data-testid="video" defaultMuted={on} />
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { setValue(value: string): void; setOn(value: boolean): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const staticInput = container.querySelector('[data-testid="static"]') as HTMLInputElement
+    const dynamicInput = container.querySelector('[data-testid="dynamic"]') as HTMLInputElement
+    const option = container.querySelector('[data-testid="option"]') as HTMLOptionElement
+    const video = container.querySelector('[data-testid="video"]') as HTMLVideoElement
+
+    expect(staticInput.defaultValue).toBe('static')
+    expect(staticInput.defaultChecked).toBe(true)
+    expect(staticInput.getAttribute('defaultValue')).toBeNull()
+    expect(dynamicInput.defaultValue).toBe('x')
+    expect(dynamicInput.defaultChecked).toBe(true)
+    expect(dynamicInput.value).toBe('x')
+    expect(dynamicInput.checked).toBe(true)
+    expect(option.defaultSelected).toBe(true)
+    expect(video.defaultMuted).toBe(true)
+
+    mod.api.setValue('y')
+    mod.api.setOn(false)
+    await flushUpdates()
+
+    expect(dynamicInput.defaultValue).toBe('y')
+    expect(dynamicInput.defaultChecked).toBe(false)
+    expect(dynamicInput.value).toBe('y')
+    expect(dynamicInput.checked).toBe(false)
+    expect(option.defaultSelected).toBe(false)
+    expect(video.defaultMuted).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
   it('renders intrinsic children props as child content in fine-grained output', async () => {
     const source = `
       import { $state, render } from 'fict'

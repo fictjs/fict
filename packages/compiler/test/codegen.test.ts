@@ -1769,6 +1769,37 @@ describe('spread operator in JSX', () => {
     expect(code).toContain('data-id=\\"ok\\"')
   })
 
+  it('routes form default JSX props through DOM properties', () => {
+    const ast = parseFile(`
+      function DefaultProps() {
+        let val = $state('x')
+        let on = $state(true)
+        return (
+          <section>
+            <input defaultValue="static" defaultChecked={true} value={val} checked={on} />
+            <input defaultValue={val} defaultChecked={on} />
+            <option defaultSelected={on}>item</option>
+            <video defaultMuted={on} />
+          </section>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/setProp\([^,]+,\s*"defaultValue",\s*"static"\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"defaultChecked",\s*true\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"defaultValue",\s*val\(\)\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"defaultChecked",\s*on\(\)\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"defaultSelected",\s*on\(\)\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"defaultMuted",\s*on\(\)\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"value",\s*val\(\)\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"checked",\s*on\(\)\)/)
+    expect(code).not.toContain('defaultValue=\\"')
+    expect(code).not.toContain('defaultChecked=\\"')
+  })
+
   it('routes intrinsic children props through child insertion', () => {
     const ast = parseFile(`
       function ChildrenProps() {

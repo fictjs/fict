@@ -958,6 +958,30 @@ describe('DOM Module', () => {
         expect((result as HTMLInputElement).checked).toBe(true)
       })
 
+      it('sets form default properties', () => {
+        const input = createElement({
+          type: 'input',
+          props: { defaultValue: 'initial', defaultChecked: true },
+          key: undefined,
+        }) as HTMLInputElement
+        const option = createElement({
+          type: 'option',
+          props: { defaultSelected: true },
+          key: undefined,
+        }) as HTMLOptionElement
+        const video = createElement({
+          type: 'video',
+          props: { defaultMuted: true },
+          key: undefined,
+        }) as HTMLVideoElement
+
+        expect(input.defaultValue).toBe('initial')
+        expect(input.defaultChecked).toBe(true)
+        expect(input.getAttribute('defaultValue')).toBeNull()
+        expect(option.defaultSelected).toBe(true)
+        expect(video.defaultMuted).toBe(true)
+      })
+
       it('sets disabled property', () => {
         const result = createElement({
           type: 'button',

@@ -87,6 +87,7 @@ const properties = isDev
       // Core properties
       'className',
       'value',
+      'defaultValue',
 
       // CamelCase booleans
       'readOnly',
