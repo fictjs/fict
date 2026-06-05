@@ -110,6 +110,7 @@ describe('Spec rule coverage', () => {
     expect(output).toContain('function Child(__props')
     expect(output).toContain('prop(() => __props.user.name)')
     expect(warnings.some(w => w.code === 'FICT-P004')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-R003')).toBe(false)
   })
 
   it('emits warnings for deep mutations and dynamic property access', () => {

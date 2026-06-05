@@ -6756,6 +6756,36 @@ function transformControlFlowReturns(
     )
   }
 
+  function isGeneratedPropNullishGuard(stmt: BabelCore.types.Statement): boolean {
+    if (!t.isIfStatement(stmt)) return false
+    if (
+      !t.isBinaryExpression(stmt.test) ||
+      stmt.test.operator !== '==' ||
+      !t.isNullLiteral(stmt.test.right)
+    ) {
+      return false
+    }
+
+    const consequent = t.isBlockStatement(stmt.consequent)
+      ? stmt.consequent.body.length === 1
+        ? stmt.consequent.body[0]
+        : null
+      : stmt.consequent
+    if (!consequent || !t.isThrowStatement(consequent)) return false
+
+    const argument = consequent.argument
+    if (!t.isNewExpression(argument) || !t.isIdentifier(argument.callee, { name: 'TypeError' })) {
+      return false
+    }
+
+    const [message] = argument.arguments
+    return (
+      t.isStringLiteral(message) &&
+      message.value.startsWith('Cannot destructure prop "') &&
+      message.value.endsWith('" because it is nullish')
+    )
+  }
+
   for (let i = 0; i < rewrittenStatements.length; i++) {
     const stmt = rewrittenStatements[i]
     if (!t.isReturnStatement(stmt) || !stmt.argument || !t.isExpression(stmt.argument)) continue
@@ -6768,6 +6798,7 @@ function transformControlFlowReturns(
   for (let i = 0; i < rewrittenStatements.length; i++) {
     const stmt = rewrittenStatements[i]
     if (!t.isIfStatement(stmt)) continue
+    if (isGeneratedPropNullishGuard(stmt)) continue
     const rest = rewrittenStatements.slice(i + 1)
     const conditionalExpr = buildConditionalExpr(stmt, rest)
     if (!conditionalExpr) {
