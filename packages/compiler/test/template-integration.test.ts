@@ -246,6 +246,53 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('reads literal prop destructuring keys with computed access', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      function Child({
+        "foo-bar": value,
+        0: first,
+        nested: { "aria-label": label = 'fallback' },
+        ...rest
+      }: any) {
+        return (
+          <span data-id="literal">
+            {value}:{first}:{label}:{String('extra' in rest)}:{String('foo-bar' in rest)}
+          </span>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => ({
+          type: Child,
+          props: {
+            "foo-bar": "dash",
+            0: "zero",
+            nested: {},
+            extra: "kept",
+          },
+        }), el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(container.querySelector('[data-id="literal"]')?.textContent).toBe(
+      'dash:zero:fallback:true:false',
+    )
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps function-as-child callbacks inert when passed to components', async () => {
     const source = `
       import { render } from 'fict'

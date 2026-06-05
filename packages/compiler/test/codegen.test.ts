@@ -630,6 +630,21 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).toContain('prop(() => count() * 2 + count())')
   })
 
+  it('lowers literal prop destructuring keys with computed members', () => {
+    const ast = parseFile(`
+      function Child({ "foo-bar": value, 0: first, nested: { "aria-label": label = 'fallback' } }) {
+        return <span>{value}:{first}:{label}</span>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('__props["foo-bar"]')
+    expect(code).toContain('__props[0]')
+    expect(code).toContain('__props.nested["aria-label"]')
+  })
+
   it('lowers props rest destructuring to runtime helper', () => {
     const ast = parseFile(`
       function Comp(props) {

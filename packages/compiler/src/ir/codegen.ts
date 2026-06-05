@@ -6923,7 +6923,17 @@ function lowerFunctionWithRegions(
       const memberExprForKey = (
         base: BabelCore.types.Expression,
         key: string,
-      ): BabelCore.types.MemberExpression => t.memberExpression(base, t.identifier(key), false)
+      ): BabelCore.types.MemberExpression => {
+        if (t.isValidIdentifier(key)) {
+          return t.memberExpression(base, t.identifier(key), false)
+        }
+        const numericKey = Number(key)
+        const keyExpr =
+          Number.isFinite(numericKey) && String(numericKey) === key
+            ? t.numericLiteral(numericKey)
+            : t.stringLiteral(key)
+        return t.memberExpression(base, keyExpr, true)
+      }
       const buildDefaultValueExpression = (
         valueExpr: BabelCore.types.Expression,
         defaultExpr: BabelCore.types.Expression,
