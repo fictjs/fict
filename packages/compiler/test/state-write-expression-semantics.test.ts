@@ -6,15 +6,20 @@ import { transformCommonJS } from './test-utils'
 
 const require = createRequire(import.meta.url)
 
+type TestSignal<T> = ((next?: T) => T | void) & { __writes: () => number }
+
 function createRuntimeStub() {
   const createContext = () => ({ slots: [] as unknown[], cursor: 0, rendering: true })
   const createSignal = <T>(initial: T) => {
     let value = initial
+    let writes = 0
     const accessor = function (this: unknown, next?: T) {
       if (arguments.length === 0) return value
+      writes++
       value = next as T
       return
-    } as (next?: T) => T | void
+    } as TestSignal<T>
+    accessor.__writes = () => writes
     return accessor
   }
 
@@ -285,6 +290,139 @@ describe('state write expression semantics', () => {
       typeof value === 'function' ? (value as () => unknown)() : value,
     )
     expect(values).toEqual([2, 8, 0, 5, 5, 7, 7])
+  })
+
+  it('preserves logical assignment short-circuit semantics on ordinary locals', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useLogicalAssignmentOrdinaryLocals() {
+        let statementOr = 2
+        let statementAnd = 0
+        let statementNullish = 0
+        let valueOr = 2
+        let valueAnd = 0
+        let valueNullish = 0
+        let calls = 0
+        const rhs = () => {
+          calls++
+          return 5
+        }
+
+        statementOr ||= rhs()
+        statementAnd &&= rhs()
+        statementNullish ??= rhs()
+        const orValue = (valueOr ||= rhs())
+        const andValue = (valueAnd &&= rhs())
+        const nullishValue = (valueNullish ??= rhs())
+
+        return [
+          statementOr,
+          statementAnd,
+          statementNullish,
+          valueOr,
+          valueAnd,
+          valueNullish,
+          orValue,
+          andValue,
+          nullishValue,
+          calls,
+        ]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    expect(compiledFunction(mod, 'useLogicalAssignmentOrdinaryLocals')()).toEqual([
+      2, 0, 0, 2, 0, 0, 2, 0, 0, 0,
+    ])
+  })
+
+  it('avoids state writes when logical assignment short-circuits', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useLogicalAssignmentStateShortCircuit() {
+        let truthy = $state(2)
+        let falsy = $state(0)
+        let zero = $state(0)
+        let calls = 0
+        const rhs = () => {
+          calls++
+          return 5
+        }
+
+        const orValue = (truthy ||= rhs())
+        const andValue = (falsy &&= rhs())
+        const nullishValue = (zero ??= rhs())
+        const getCalls = () => calls
+
+        return [orValue, andValue, nullishValue, truthy, falsy, zero, getCalls]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useLogicalAssignmentStateShortCircuit')() as [
+      () => number,
+      () => number,
+      () => number,
+      TestSignal<number>,
+      TestSignal<number>,
+      TestSignal<number>,
+      () => number,
+    ]
+    const [orValue, andValue, nullishValue, truthy, falsy, zero, getCalls] = raw
+
+    expect([orValue(), andValue(), nullishValue(), truthy(), falsy(), zero(), getCalls()]).toEqual([
+      2, 0, 0, 2, 0, 0, 0,
+    ])
+    expect([truthy.__writes(), falsy.__writes(), zero.__writes()]).toEqual([0, 0, 0])
+  })
+
+  it('writes state once when logical assignment conditions require it', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useLogicalAssignmentStateWrites() {
+        let falsy = $state(0)
+        let truthy = $state(2)
+        let missing = $state(null)
+        let calls = 0
+        const rhs = () => {
+          calls++
+          return 5
+        }
+
+        const orValue = (falsy ||= rhs())
+        const andValue = (truthy &&= rhs())
+        const nullishValue = (missing ??= rhs())
+        const getCalls = () => calls
+
+        return [orValue, andValue, nullishValue, falsy, truthy, missing, getCalls]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useLogicalAssignmentStateWrites')() as [
+      () => number,
+      () => number,
+      () => number,
+      TestSignal<number>,
+      TestSignal<number>,
+      TestSignal<number | null>,
+      () => number,
+    ]
+    const [orValue, andValue, nullishValue, falsy, truthy, missing, getCalls] = raw
+
+    expect([
+      orValue(),
+      andValue(),
+      nullishValue(),
+      falsy(),
+      truthy(),
+      missing(),
+      getCalls(),
+    ]).toEqual([5, 5, 5, 5, 5, 5, 3])
+    expect([falsy.__writes(), truthy.__writes(), missing.__writes()]).toEqual([1, 1, 1])
   })
 
   it('evaluates computed hook member assignment targets exactly once', () => {

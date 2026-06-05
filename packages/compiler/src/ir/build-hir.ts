@@ -5,6 +5,7 @@ import traverseModule from '@babel/traverse'
 import * as t from '@babel/types'
 
 import type { CompilerWarning } from '../types'
+import { isLogicalAssignmentOperator } from '../utils'
 
 import {
   HIRError,
@@ -1856,6 +1857,7 @@ function handleExpressionStatement(
 ): boolean {
   const unwrapped = unwrapExpression(expr)
   if (!t.isAssignmentExpression(unwrapped)) return false
+  if (isLogicalAssignmentOperator(unwrapped.operator)) return false
 
   if (t.isIdentifier(unwrapped.left)) {
     push({

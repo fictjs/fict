@@ -5,6 +5,7 @@ import { debugLog } from '../debug'
 import { applyRegionMetadata, shouldMemoizeRegion, type RegionMetadata } from '../fine-grained-dom'
 import { setModuleMetadata } from '../module-metadata'
 import type { FictCompilerOptions, ModuleReactiveMetadata } from '../types'
+import { isLogicalAssignmentOperator } from '../utils'
 import { DiagnosticCode, reportDiagnostic } from '../validation'
 
 import { convertStatementsToHIRFunction } from './build-hir'
@@ -1329,6 +1330,35 @@ function lowerExpressionImpl(
       [nextValue],
     )
   }
+  const lowerTrackedLogicalAssignment = (
+    callee: BabelCore.types.Expression,
+    current: BabelCore.types.Expression,
+    operator: '||=' | '&&=' | '??=',
+    right: BabelCore.types.Expression,
+  ): BabelCore.types.Expression => {
+    const prevId = genTemp(ctx, 'prev')
+    const prev = () => t.identifier(prevId.name)
+    const write = lowerTrackedWriteCall(callee, right)
+    const body =
+      operator === '&&='
+        ? t.logicalExpression('&&', prev(), write)
+        : operator === '||='
+          ? t.logicalExpression('||', prev(), write)
+          : t.logicalExpression('??', prev(), write)
+
+    return t.callExpression(t.arrowFunctionExpression([t.cloneNode(prevId, true)], body), [current])
+  }
+  const lowerTrackedAssignmentWrite = (
+    callee: BabelCore.types.Expression,
+    operator: BabelCore.types.AssignmentExpression['operator'],
+    current: BabelCore.types.Expression,
+    right: BabelCore.types.Expression,
+  ): BabelCore.types.Expression => {
+    if (isLogicalAssignmentOperator(operator)) {
+      return lowerTrackedLogicalAssignment(callee, current, operator, right)
+    }
+    return lowerTrackedWriteCall(callee, buildTrackedAssignmentNext(operator, current, right))
+  }
   const buildTrackedAssignmentNext = (
     operator: string,
     current: BabelCore.types.Expression,
@@ -1405,9 +1435,11 @@ function lowerExpressionImpl(
     )
     const current = t.callExpression(t.cloneNode(memberForAccessor, true), [])
     const right = lowerExpression(rightExpr, ctx)
-    const signalWrite = lowerTrackedWriteCall(
+    const signalWrite = lowerTrackedAssignmentWrite(
       memberForAccessor,
-      buildTrackedAssignmentNext(operator, current, t.cloneNode(right, true)),
+      operator,
+      current,
+      t.cloneNode(right, true),
     )
     const fallback = t.assignmentExpression(
       operator,
@@ -2142,8 +2174,12 @@ function lowerExpressionImpl(
             )
             const current = t.callExpression(t.cloneNode(member, true), [])
             const right = lowerExpression(expr.right, ctx)
-            const next = buildTrackedAssignmentNext(expr.operator, current, right)
-            return lowerTrackedWriteCall(member, next)
+            return lowerTrackedAssignmentWrite(
+              member,
+              expr.operator as BabelCore.types.AssignmentExpression['operator'],
+              current,
+              right,
+            )
           }
           if (expr.left.computed) {
             const signalKeys: (string | number)[] = []
@@ -2174,8 +2210,12 @@ function lowerExpressionImpl(
           const callee = t.identifier(baseName)
           const current = t.callExpression(t.identifier(baseName), [])
           const right = lowerExpression(expr.right, ctx)
-          const next = buildTrackedAssignmentNext(expr.operator, current, right)
-          return lowerTrackedWriteCall(callee, next)
+          return lowerTrackedAssignmentWrite(
+            callee,
+            expr.operator as BabelCore.types.AssignmentExpression['operator'],
+            current,
+            right,
+          )
         }
       }
 

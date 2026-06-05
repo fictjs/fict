@@ -5,6 +5,7 @@ import {
   createGetterCall,
   isTrackedAndNotShadowed,
   collectBindingNames,
+  isLogicalAssignmentOperator,
   toBinaryOperator,
 } from './utils'
 
@@ -354,6 +355,28 @@ export function transformExpression(
           if (operator === '=') {
             // count = 5 -> count(5)
             return t.callExpression(t.identifier(name), [transformedRight])
+          } else if (isLogicalAssignmentOperator(operator)) {
+            const prevId = t.identifier('__prev')
+            const nextId = t.identifier('__next')
+            const write = t.callExpression(
+              t.arrowFunctionExpression(
+                [nextId],
+                t.sequenceExpression([
+                  t.callExpression(t.identifier(name), [t.identifier(nextId.name)]),
+                  t.identifier(nextId.name),
+                ]),
+              ),
+              [transformedRight],
+            )
+            const body =
+              operator === '&&='
+                ? t.logicalExpression('&&', t.identifier(prevId.name), write)
+                : operator === '||='
+                  ? t.logicalExpression('||', t.identifier(prevId.name), write)
+                  : t.logicalExpression('??', t.identifier(prevId.name), write)
+            return t.callExpression(t.arrowFunctionExpression([prevId], body), [
+              createGetterCall(t, name),
+            ])
           } else {
             // count += 1 -> count(count() + 1)
             const binaryOp = toBinaryOperator(operator)

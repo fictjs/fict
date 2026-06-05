@@ -265,6 +265,10 @@ export function isAssignmentOperator(operator: string): boolean {
   ].includes(operator)
 }
 
+export function isLogicalAssignmentOperator(operator: string): operator is '||=' | '&&=' | '??=' {
+  return operator === '||=' || operator === '&&=' || operator === '??='
+}
+
 /**
  * Check if an operator is ++ or --
  */
