@@ -663,6 +663,44 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).not.toContain('$effect')
     })
 
+    it('strips TypeScript wrappers from default-exported expressions', () => {
+      const output = transform(`
+        const x: string | undefined = 'x'
+        export default [
+          1 as number,
+          { a: 1 } as const,
+          ({ b: 2 } satisfies { b: number }),
+          x!,
+        ]
+      `)
+
+      expect(output).not.toContain(' as number')
+      expect(output).not.toContain(' as const')
+      expect(output).not.toContain('satisfies')
+      expect(output).not.toContain('x!')
+    })
+
+    it('strips TypeScript wrappers around default-exported JSX expressions', () => {
+      const output = transform(`
+        export default (<div /> as HTMLElement)
+      `)
+
+      expect(output).toContain('template("<div></div>")')
+      expect(output).not.toContain(' as HTMLElement')
+      expect(output).not.toMatch(/exports\.default\s*=\s*</)
+    })
+
+    it('keeps local TypeScript wrapper defaults lowered before export', () => {
+      const output = transform(`
+        const x = (1 as number)
+        export default x
+      `)
+
+      expect(output).toContain('const x = 1')
+      expect(output).toContain('export default')
+      expect(output).not.toContain(' as number')
+    })
+
     it('lowers JSX returned from class expression methods', () => {
       const output = transform(`
         export function make() {

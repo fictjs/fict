@@ -174,6 +174,26 @@ describe('lowerHIRWithRegions', () => {
     expect(code).toContain('value')
   })
 
+  it('strips TypeScript wrappers from emitted default export expressions', () => {
+    const ast = parseFile(`
+      const x: string | undefined = 'x'
+      export default [
+        1 as number,
+        { a: 1 } as const,
+        ({ b: 2 } satisfies { b: number }),
+        x!,
+      ]
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain(' as number')
+    expect(code).not.toContain(' as const')
+    expect(code).not.toContain('satisfies')
+    expect(code).not.toContain('x!')
+  })
+
   it('should handle control flow', () => {
     const ast = parseFile(`
       function Foo(props) {
