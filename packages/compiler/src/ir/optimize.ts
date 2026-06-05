@@ -4603,6 +4603,7 @@ function inlineSingleUse(fn: HIRFunction, purity: PurityContext): HIRFunction {
       if (!info || info.uses.length !== 1) continue
       if (!isPureExpression(instr.value, purity)) continue
       if (isExplicitMemoCall(instr.value, purity)) continue
+      if (instr.value.kind === 'Identifier' && instr.value.name === 'eval') continue
       if (hasNestedTargetUse(instr.value, target)) continue
       const use = info.uses[0]!
       if (use.inFunctionBody) continue
@@ -5049,6 +5050,186 @@ function buildDependencyGraph(fn: HIRFunction): Map<string, Set<string>> {
   return depsByVar
 }
 
+function collectDirectEvalLiveBindings(fn: HIRFunction): Set<string> {
+  if (!functionContainsDirectEvalCall(fn)) return new Set<string>()
+  return collectFunctionLocalBindings(fn)
+}
+
+function collectFunctionLocalBindings(fn: HIRFunction): Set<string> {
+  const bindings = new Set<string>()
+  fn.params.forEach(param => bindings.add(param.name))
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' && instr.declarationKind) {
+        bindings.add(instr.target.name)
+      }
+    }
+    const term = block.terminator
+    if (term.kind === 'ForOf' || term.kind === 'ForIn') {
+      if (term.leftKind !== 'assignment') bindings.add(term.variable)
+    } else if (term.kind === 'Try' && term.catchParam) {
+      bindings.add(term.catchParam)
+    }
+  }
+  return bindings
+}
+
+function functionContainsDirectEvalCall(fn: HIRFunction): boolean {
+  return blocksContainDirectEvalCall(fn.blocks)
+}
+
+function blocksContainDirectEvalCall(blocks: BasicBlock[]): boolean {
+  for (const block of blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+        if (expressionContainsDirectEvalCall(instr.value)) return true
+      }
+    }
+    if (terminatorContainsDirectEvalCall(block.terminator)) return true
+  }
+  return false
+}
+
+function terminatorContainsDirectEvalCall(term: Terminator): boolean {
+  switch (term.kind) {
+    case 'Return':
+      return term.argument ? expressionContainsDirectEvalCall(term.argument as Expression) : false
+    case 'Throw':
+      return expressionContainsDirectEvalCall(term.argument as Expression)
+    case 'Branch':
+      return expressionContainsDirectEvalCall(term.test as Expression)
+    case 'Switch':
+      return (
+        expressionContainsDirectEvalCall(term.discriminant as Expression) ||
+        term.cases.some(c =>
+          c.test ? expressionContainsDirectEvalCall(c.test as Expression) : false,
+        )
+      )
+    case 'ForOf':
+      return (
+        expressionContainsDirectEvalCall(term.iterable as Expression) ||
+        (!!term.assignmentTarget && expressionContainsDirectEvalCall(term.assignmentTarget))
+      )
+    case 'ForIn':
+      return (
+        expressionContainsDirectEvalCall(term.object as Expression) ||
+        (!!term.assignmentTarget && expressionContainsDirectEvalCall(term.assignmentTarget))
+      )
+    default:
+      return false
+  }
+}
+
+function expressionContainsDirectEvalCall(expr: Expression): boolean {
+  switch (expr.kind) {
+    case 'CallExpression':
+      if (expr.callee.kind === 'Identifier' && expr.callee.name === 'eval') return true
+      return (
+        expressionContainsDirectEvalCall(expr.callee as Expression) ||
+        expr.arguments.some(arg => expressionContainsDirectEvalCall(arg as Expression))
+      )
+    case 'OptionalCallExpression':
+      return (
+        (expr.callee.kind === 'Identifier' && expr.callee.name === 'eval') ||
+        expressionContainsDirectEvalCall(expr.callee as Expression) ||
+        expr.arguments.some(arg => expressionContainsDirectEvalCall(arg as Expression))
+      )
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      return (
+        expressionContainsDirectEvalCall(expr.object as Expression) ||
+        (!!expr.computed && expressionContainsDirectEvalCall(expr.property as Expression))
+      )
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      return (
+        expressionContainsDirectEvalCall(expr.left as Expression) ||
+        expressionContainsDirectEvalCall(expr.right as Expression)
+      )
+    case 'UnaryExpression':
+      return expressionContainsDirectEvalCall(expr.argument as Expression)
+    case 'ConditionalExpression':
+      return (
+        expressionContainsDirectEvalCall(expr.test as Expression) ||
+        expressionContainsDirectEvalCall(expr.consequent as Expression) ||
+        expressionContainsDirectEvalCall(expr.alternate as Expression)
+      )
+    case 'ArrayExpression':
+      return expr.elements.some(el =>
+        el ? expressionContainsDirectEvalCall(el as Expression) : false,
+      )
+    case 'ObjectExpression':
+      return expr.properties.some(prop => {
+        if (prop.kind === 'SpreadElement') {
+          return expressionContainsDirectEvalCall(prop.argument as Expression)
+        }
+        return (
+          (!!prop.computed && expressionContainsDirectEvalCall(prop.key as Expression)) ||
+          expressionContainsDirectEvalCall(prop.value as Expression)
+        )
+      })
+    case 'TemplateLiteral':
+      return expr.expressions.some(e => expressionContainsDirectEvalCall(e as Expression))
+    case 'TaggedTemplateExpression':
+      return (
+        expressionContainsDirectEvalCall(expr.tag as Expression) ||
+        expressionContainsDirectEvalCall(expr.quasi)
+      )
+    case 'SpreadElement':
+      return expressionContainsDirectEvalCall(expr.argument as Expression)
+    case 'SequenceExpression':
+      return expr.expressions.some(e => expressionContainsDirectEvalCall(e as Expression))
+    case 'AwaitExpression':
+      return expressionContainsDirectEvalCall(expr.argument as Expression)
+    case 'YieldExpression':
+      return expr.argument ? expressionContainsDirectEvalCall(expr.argument as Expression) : false
+    case 'ImportExpression':
+      return (
+        expressionContainsDirectEvalCall(expr.source as Expression) ||
+        (!!expr.options && expressionContainsDirectEvalCall(expr.options as Expression))
+      )
+    case 'NewExpression':
+      return (
+        expressionContainsDirectEvalCall(expr.callee as Expression) ||
+        expr.arguments.some(arg => expressionContainsDirectEvalCall(arg as Expression))
+      )
+    case 'ArrowFunction':
+      if (expr.isExpression) return expressionContainsDirectEvalCall(expr.body as Expression)
+      return blocksContainDirectEvalCall(expr.body as BasicBlock[])
+    case 'FunctionExpression':
+      return blocksContainDirectEvalCall(expr.body)
+    case 'ClassExpression':
+      return expr.superClass ? expressionContainsDirectEvalCall(expr.superClass) : false
+    case 'AssignmentExpression':
+      return (
+        expressionContainsDirectEvalCall(expr.left as Expression) ||
+        expressionContainsDirectEvalCall(expr.right as Expression)
+      )
+    case 'UpdateExpression':
+      return expressionContainsDirectEvalCall(expr.argument as Expression)
+    case 'JSXElement':
+      if (typeof expr.tagName !== 'string' && expressionContainsDirectEvalCall(expr.tagName)) {
+        return true
+      }
+      if (
+        expr.attributes.some(attr => {
+          if (attr.isSpread && attr.spreadExpr)
+            return expressionContainsDirectEvalCall(attr.spreadExpr)
+          return attr.value ? expressionContainsDirectEvalCall(attr.value) : false
+        })
+      ) {
+        return true
+      }
+      return expr.children.some(child =>
+        child.kind === 'expression' || child.kind === 'element'
+          ? expressionContainsDirectEvalCall(child.value as Expression)
+          : false,
+      )
+    default:
+      return false
+  }
+}
+
 function computeLiveVariables(
   fn: HIRFunction,
   depsByVar: Map<string, Set<string>>,
@@ -5056,6 +5237,7 @@ function computeLiveVariables(
   readSafety: IdentifierReadSafety,
 ): Set<string> {
   const roots = new Set<string>()
+  collectDirectEvalLiveBindings(fn).forEach(name => roots.add(name))
   for (const block of fn.blocks) {
     for (let index = 0; index < block.instructions.length; index++) {
       const instr = block.instructions[index]

@@ -2363,6 +2363,90 @@ describe('control flow runtime regressions', () => {
     ).toBe(1)
   })
 
+  it('keeps local bindings observable through direct eval under optimization', () => {
+    expect(
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            const x = 1
+            return eval('x')
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toBe(1)
+
+    expect(
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            let x = 2
+            return eval('x')
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toBe(2)
+
+    expect(
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            var x = 3
+            return eval('x')
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toBe(3)
+
+    expect(
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            const x = 4
+            function inner() {
+              return eval('x')
+            }
+            return inner()
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toBe(4)
+
+    expect(
+      compileAndRunHook<string>(
+        `
+          export function useRun() {
+            const x = 5
+            return (0, eval)('typeof x')
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toBe('undefined')
+
+    expect(
+      compileAndRunHook<string>(
+        `
+          export function useRun() {
+            const x = 6
+            const evalAlias = eval
+            return evalAlias('typeof x')
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toBe('undefined')
+  })
+
   it('preserves tagged template unicode raw and cooked values with optimization', () => {
     const result = compileAndRunHook<string>(
       `
