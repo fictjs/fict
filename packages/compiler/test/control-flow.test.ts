@@ -669,6 +669,33 @@ describe('Fict Compiler - Control Flow', () => {
         /while\s*\(i < n\(\)\)\s*\{[\s\S]*?if\s*\(i === 1\)\s*\{\s*continue;\s*\}/,
       )
     })
+
+    it('does not emit effects inside reactive while loop bodies', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let n = $state(2)
+          let out = ''
+          let i = 0
+          while (i < n) {
+            out += i
+            i++
+          }
+
+          let j = 0
+          do {
+            j++
+          } while (j < n)
+
+          return out + j
+        }
+      `
+      const output = runTransform(input)
+
+      expect(output).toContain('while')
+      expect(output).toContain('do')
+      expect(output).not.toContain('__fictUseEffect')
+    })
   })
 
   describe('Nested control flow', () => {

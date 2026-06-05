@@ -1160,6 +1160,257 @@ function instructionListCoversRegion(
   return true
 }
 
+function collectInstructionDependencies(instr: Instruction): Set<string> {
+  if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+    return collectExprDependencies(instr.value)
+  }
+  return new Set()
+}
+
+function collectExpressionWrites(expr: Expression): Set<string> {
+  const writes = new Set<string>()
+  const addTarget = (target: Expression): void => {
+    if (target.kind === 'Identifier') {
+      writes.add(deSSAVarName(target.name))
+    }
+  }
+  const visit = (current: Expression): void => {
+    switch (current.kind) {
+      case 'AssignmentExpression':
+        addTarget(current.left)
+        visit(current.right)
+        return
+      case 'UpdateExpression':
+        addTarget(current.argument)
+        return
+      case 'SequenceExpression':
+        current.expressions.forEach(visit)
+        return
+      case 'ConditionalExpression':
+        visit(current.test)
+        visit(current.consequent)
+        visit(current.alternate)
+        return
+      case 'LogicalExpression':
+      case 'BinaryExpression':
+        visit(current.left)
+        visit(current.right)
+        return
+      case 'UnaryExpression':
+      case 'AwaitExpression':
+      case 'SpreadElement':
+        visit(current.argument)
+        return
+      case 'CallExpression':
+      case 'OptionalCallExpression':
+        visit(current.callee)
+        current.arguments.forEach(visit)
+        return
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        visit(current.object)
+        if (current.computed) visit(current.property)
+        return
+      case 'ArrayExpression':
+        current.elements.forEach(element => {
+          if (element) visit(element)
+        })
+        return
+      case 'ObjectExpression':
+        current.properties.forEach(prop => {
+          if (prop.kind === 'SpreadElement') {
+            visit(prop.argument)
+          } else {
+            if (prop.computed) visit(prop.key)
+            visit(prop.value)
+          }
+        })
+        return
+      case 'TemplateLiteral':
+        current.expressions.forEach(visit)
+        return
+      case 'TaggedTemplateExpression':
+        visit(current.tag)
+        current.quasi.expressions.forEach(visit)
+        return
+      case 'NewExpression':
+        visit(current.callee)
+        current.arguments.forEach(visit)
+        return
+      case 'YieldExpression':
+        if (current.argument) visit(current.argument)
+        return
+      default:
+        return
+    }
+  }
+  visit(expr)
+  return writes
+}
+
+function collectInstructionWrites(instr: Instruction): Set<string> {
+  const writes = new Set<string>()
+  if (instr.kind === 'Assign') {
+    writes.add(deSSAVarName(instr.target.name))
+    collectExpressionWrites(instr.value).forEach(name => writes.add(name))
+  } else if (instr.kind === 'Expression') {
+    collectExpressionWrites(instr.value).forEach(name => writes.add(name))
+  }
+  return writes
+}
+
+function collectStructuredNodeDependencies(node: StructuredNode): Set<string> {
+  const deps = new Set<string>()
+  const add = (values: Set<string>) => values.forEach(value => deps.add(value))
+  const visit = (current: StructuredNode | null | undefined): void => {
+    if (!current) return
+    switch (current.kind) {
+      case 'instruction':
+        add(collectInstructionDependencies(current.instruction))
+        return
+      case 'sequence':
+        current.nodes.forEach(visit)
+        return
+      case 'block':
+        current.statements.forEach(visit)
+        return
+      case 'labeled':
+        visit(current.statement)
+        return
+      case 'if':
+        add(collectExprDependencies(current.test))
+        visit(current.consequent)
+        visit(current.alternate)
+        return
+      case 'while':
+      case 'doWhile':
+        add(collectExprDependencies(current.test))
+        visit(current.body)
+        return
+      case 'for':
+        current.init?.forEach(instr => add(collectInstructionDependencies(instr)))
+        if (current.test) add(collectExprDependencies(current.test))
+        current.update?.forEach(instr => add(collectInstructionDependencies(instr)))
+        visit(current.body)
+        return
+      case 'forOf':
+        add(collectExprDependencies(current.iterable))
+        visit(current.body)
+        return
+      case 'forIn':
+        add(collectExprDependencies(current.object))
+        visit(current.body)
+        return
+      case 'switch':
+        add(collectExprDependencies(current.discriminant))
+        current.cases.forEach(item => {
+          if (item.test) add(collectExprDependencies(item.test))
+          visit(item.body)
+        })
+        return
+      case 'try':
+        visit(current.block)
+        visit(current.handler?.body)
+        visit(current.finalizer)
+        return
+      case 'return':
+      case 'throw':
+        if (current.argument) add(collectExprDependencies(current.argument))
+        return
+      case 'stateMachine':
+        current.blocks.forEach(block => {
+          block.instructions.forEach(instr => add(collectInstructionDependencies(instr)))
+        })
+        return
+      default:
+        return
+    }
+  }
+  visit(node)
+  return deps
+}
+
+function collectStructuredNodeWrites(node: StructuredNode): Set<string> {
+  const writes = new Set<string>()
+  const add = (values: Set<string>) => values.forEach(value => writes.add(value))
+  const visit = (current: StructuredNode | null | undefined): void => {
+    if (!current) return
+    switch (current.kind) {
+      case 'instruction':
+        add(collectInstructionWrites(current.instruction))
+        return
+      case 'sequence':
+        current.nodes.forEach(visit)
+        return
+      case 'block':
+        current.statements.forEach(visit)
+        return
+      case 'labeled':
+        visit(current.statement)
+        return
+      case 'if':
+        visit(current.consequent)
+        visit(current.alternate)
+        return
+      case 'while':
+      case 'doWhile':
+        visit(current.body)
+        return
+      case 'for':
+        current.update?.forEach(instr => add(collectInstructionWrites(instr)))
+        visit(current.body)
+        return
+      case 'forOf':
+      case 'forIn':
+        visit(current.body)
+        return
+      case 'switch':
+        current.cases.forEach(item => visit(item.body))
+        return
+      case 'try':
+        visit(current.block)
+        visit(current.handler?.body)
+        visit(current.finalizer)
+        return
+      case 'stateMachine':
+        current.blocks.forEach(block => {
+          block.instructions.forEach(instr => add(collectInstructionWrites(instr)))
+        })
+        return
+      default:
+        return
+    }
+  }
+  visit(node)
+  return writes
+}
+
+function getLocalDeclarationName(instr: Instruction): string | null {
+  if (instr.kind !== 'Assign' || !instr.declarationKind) return null
+  return deSSAVarName(instr.target.name)
+}
+
+function isReactiveCreationExpression(expr: Expression): boolean {
+  return (
+    expr.kind === 'CallExpression' &&
+    expr.callee.kind === 'Identifier' &&
+    (expr.callee.name === '$state' || expr.callee.name === '$store')
+  )
+}
+
+function shouldDeferControlFlowPrefixInstruction(
+  instr: Instruction,
+  controlFlowDependencies: Set<string>,
+  controlFlowWrites: Set<string>,
+): boolean {
+  const localName = getLocalDeclarationName(instr)
+  if (!localName || !controlFlowDependencies.has(localName) || !controlFlowWrites.has(localName)) {
+    return false
+  }
+  if (instr.kind === 'Assign' && isReactiveCreationExpression(instr.value)) return false
+  return true
+}
+
 function buildDirectRegionEmitCandidate(
   nodes: StructuredNode[],
   startIndex: number,
@@ -1171,6 +1422,7 @@ function buildDirectRegionEmitCandidate(
   rootNode: StructuredNode
   consumedUntil: number
   bufferedRegionInstructions: Instruction[]
+  prefixInstructions: Instruction[]
 } | null {
   const region = state.region
   if (!regionCtx || !region) return null
@@ -1178,6 +1430,21 @@ function buildDirectRegionEmitCandidate(
   const bufferedRegionInstructions = instructionBuffer
     .filter(item => item.region?.id === region.id)
     .map(item => item.instr)
+  const buildPrefixInstructions = (): Instruction[] => {
+    const deps = new Set<string>()
+    const writes = new Set<string>()
+    selectedNodes.forEach(node => {
+      collectStructuredNodeDependencies(node).forEach(dep => deps.add(dep))
+      collectStructuredNodeWrites(node).forEach(name => writes.add(name))
+    })
+    return instructionBuffer
+      .filter(
+        item =>
+          item.region?.id === region.id ||
+          shouldDeferControlFlowPrefixInstruction(item.instr, deps, writes),
+      )
+      .map(item => item.instr)
+  }
   const coveredInstructions = [
     ...bufferedRegionInstructions,
     ...(state.ownedInstructionsByRegion?.get(region.id) ?? []),
@@ -1190,6 +1457,7 @@ function buildDirectRegionEmitCandidate(
       rootNode: combineDirectEmitNodes(selectedNodes),
       consumedUntil: startIndex,
       bufferedRegionInstructions,
+      prefixInstructions: buildPrefixInstructions(),
     }
   }
 
@@ -1218,6 +1486,7 @@ function buildDirectRegionEmitCandidate(
         rootNode: combineDirectEmitNodes(selectedNodes),
         consumedUntil: index,
         bufferedRegionInstructions,
+        prefixInstructions: buildPrefixInstructions(),
       }
     }
   }
@@ -1481,6 +1750,9 @@ function lowerNodeWithRegionContext(
               canDirectlyEmitRegion && controlFlowRegion
                 ? new Set([controlFlowRegion.id])
                 : undefined,
+              canDirectlyEmitRegion && directEmitCandidate
+                ? new Set(directEmitCandidate.prefixInstructions)
+                : undefined,
             ),
           )
           instructionBuffer.length = 0
@@ -1498,7 +1770,7 @@ function lowerNodeWithRegionContext(
                     rootNode: directEmitCandidate.rootNode,
                     inlineUnownedInRegionBody: true,
                   },
-                  directEmitCandidate.bufferedRegionInstructions,
+                  directEmitCandidate.prefixInstructions,
                 ),
               )
             }
@@ -2713,10 +2985,14 @@ function flushInstructionBuffer(
   regionCtx?: RegionEmitContext,
   suppressedRegionIds?: Set<number>,
   deferredRegionIds?: Set<number>,
+  deferredInstructions?: Set<Instruction>,
 ): BabelCore.types.Statement[] {
   const stmts: BabelCore.types.Statement[] = []
 
   for (const item of buffer) {
+    if (deferredInstructions?.has(item.instr)) {
+      continue
+    }
     if (item.region && deferredRegionIds?.has(item.region.id)) {
       continue
     }

@@ -381,6 +381,47 @@ describe('control flow runtime regressions', () => {
     expect(resolved).toBe(3)
   })
 
+  it('recomputes reactive while loop bounds synchronously', () => {
+    const result = compileAndRunHook<{
+      set: (next: number) => void
+      view: () => string
+    }>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let n = $state(2)
+          let out = ''
+          let i = 0
+
+          while (i < n) {
+            out += i
+            i++
+          }
+
+          return {
+            set: (next: number) => {
+              n = next
+            },
+            view: () => out,
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result.view()).toBe('01')
+
+    result.set(3)
+    expect(result.view()).toBe('012')
+
+    result.set(1)
+    expect(result.view()).toBe('0')
+
+    result.set(3)
+    expect(result.view()).toBe('012')
+  })
+
   it('preserves immediate while break before trailing return', () => {
     const result = compileAndRunHook<number>(
       `
