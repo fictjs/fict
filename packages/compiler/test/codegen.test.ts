@@ -1042,6 +1042,30 @@ describe('event handler transformation', () => {
     expect(code).not.toMatch(/const key = makeKey/)
   })
 
+  it('falls back when list key aliases are reassigned', () => {
+    const ast = parseFile(`
+      function List() {
+        const items = [1, 2]
+        return (
+          <ul>
+            {items.map(item => {
+              let key = item
+              key += 10
+              return <li key={key}>{item}</li>
+            })}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain('createKeyedList')
+    expect(code).toContain('items.map')
+    expect(code).toContain('key = key + 10')
+  })
+
   it('keeps throwing inline list keys only in the extracted key function', () => {
     const ast = parseFile(`
       function List() {

@@ -186,7 +186,7 @@ function collectMapCallbackAliasDeclarations(callback: Expression): Map<string, 
     effectiveBlocks.length === 1 && effectiveBlocks[0]?.terminator.kind === 'Return'
   for (const [name, state] of declarationState) {
     if (isSingleLinearBlock) {
-      if (state.declarationCount <= 1) {
+      if (state.declarationCount <= 1 && !state.hasNonDeclarationWrite) {
         aliasMap.set(name, state.lastAssignedValue)
       }
       continue

@@ -3956,6 +3956,45 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('renders mutable key aliases without leaking callback locals into key functions', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const items = [1, 2]
+        return (
+          <ul>
+            {items.map(item => {
+              let key = item
+              key += 10
+              return <li key={key} data-key={key}>{item}</li>
+            })}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const items = Array.from(container.querySelectorAll('li'))
+    expect(items.map(li => li.textContent)).toEqual(['1', '2'])
+    expect(items.map(li => li.getAttribute('data-key'))).toEqual(['11', '12'])
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves sparse array hole semantics in specialized map children', async () => {
     const source = `
       import { $state, render } from 'fict'

@@ -140,7 +140,7 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*meta\.id\b/)
     })
 
-    it('preserves reassigned key alias semantics in block-bodied map callbacks', () => {
+    it('falls back for reassigned key aliases in block-bodied map callbacks', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {
@@ -158,9 +158,9 @@ describe('Fict Compiler - Control Flow', () => {
         }
       `
       const output = runTransform(input)
-      expect(output).toContain('createKeyedList')
-      expect(output).toMatch(/createKeyedList\([\s\S]*?=>\s*42\b/)
-      expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*user\(\)\.id\b/)
+      expect(output).not.toContain('createKeyedList')
+      expect(output).toContain('users().map')
+      expect(output).toContain('id = 42')
     })
 
     it('does not emit unresolved local key helper callees in block-bodied map callbacks', () => {
@@ -184,7 +184,7 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*makeKey\s*\(/)
     })
 
-    it('does not emit unresolved key identifiers for control-flow-derived aliases in map callbacks', () => {
+    it('falls back for control-flow-derived key aliases in map callbacks', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {
@@ -206,8 +206,9 @@ describe('Fict Compiler - Control Flow', () => {
         }
       `
       const output = runTransform(input)
-      expect(output).toContain('createKeyedList')
-      expect(output).not.toMatch(/createKeyedList\([\s\S]*?=>\s*id\b/)
+      expect(output).not.toContain('createKeyedList')
+      expect(output).toContain('users().map')
+      expect(output).toContain('if (user.id > 1)')
     })
 
     it('handles list without key via keyed list with index keys', () => {
