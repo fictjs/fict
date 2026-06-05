@@ -4447,6 +4447,17 @@ function inlineSingleUse(fn: HIRFunction, purity: PurityContext): HIRFunction {
   const defUse = buildDefUse(fn)
   const blockMap = new Map<number, BasicBlock>()
   fn.blocks.forEach(block => blockMap.set(block.id, block))
+  const hasNestedTargetUse = (expr: Expression, target: string): boolean => {
+    const targetBase = getSSABaseName(target)
+    let found = false
+    collectUsesFromExpression(expr, (name, inFunctionBody) => {
+      if (!inFunctionBody) return
+      if (name === target || getSSABaseName(name) === targetBase) {
+        found = true
+      }
+    })
+    return found
+  }
   const writesTarget = (writes: Set<string>, target: string): boolean => {
     const targetBase = getSSABaseName(target)
     for (const name of writes) {
@@ -4470,6 +4481,7 @@ function inlineSingleUse(fn: HIRFunction, purity: PurityContext): HIRFunction {
       if (!info || info.uses.length !== 1) continue
       if (!isPureExpression(instr.value, purity)) continue
       if (isExplicitMemoCall(instr.value, purity)) continue
+      if (hasNestedTargetUse(instr.value, target)) continue
       const use = info.uses[0]!
       if (use.inFunctionBody) continue
       if (use.blockId !== block.id) continue

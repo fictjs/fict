@@ -2063,6 +2063,129 @@ describe('control flow runtime regressions', () => {
     }
   })
 
+  it('preserves arrow function self-references with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        export function useRun() {
+          "use pure"
+          const fn = () => fn.name
+          return fn()
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('fn')
+  })
+
+  it('preserves function expression self-references with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        export function useRun() {
+          "use pure"
+          const fn = function () {
+            return fn.name
+          }
+          return fn()
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('fn')
+  })
+
+  it('preserves named function expression self-references with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        export function useRun() {
+          "use pure"
+          const fn = function inner() {
+            return fn.name + ':' + inner.name
+          }
+          return fn()
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('inner:inner')
+  })
+
+  it('preserves object method self-references with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        export function useRun() {
+          "use pure"
+          const obj = {
+            m() {
+              return obj.m.name
+            },
+          }
+          return obj.m()
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('m')
+  })
+
+  it('preserves object function property and getter self-references with optimization', () => {
+    const result = compileAndRunHook<boolean>(
+      `
+        export function useRun() {
+          "use pure"
+          const obj = {
+            m: () => obj,
+            get self() {
+              return obj
+            },
+          }
+          return obj.m() === obj && obj.self === obj
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(true)
+  })
+
+  it('preserves invalid eager self-references with optimization', () => {
+    expect(() =>
+      compileAndRunHook<unknown>(
+        `
+          export function useRun() {
+            "use pure"
+            const obj = obj
+            return obj
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow(ReferenceError)
+
+    expect(() =>
+      compileAndRunHook<unknown>(
+        `
+          export function useRun() {
+            "use pure"
+            const obj = (() => obj)()
+            return obj
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow()
+  })
+
   it('preserves untagged template cooked escapes with optimization', () => {
     const result = compileAndRunHook<string>(
       `

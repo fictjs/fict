@@ -46,7 +46,10 @@ export function detectDerivedCycles(
       if ((declInfo.count ?? 0) !== 1) continue
       const deps = graph.get(target) ?? new Set<string>()
       const rawDeps = new Set<string>()
-      collectExpressionDependencies(instr.value, rawDeps)
+      collectExpressionDependencies(instr.value, rawDeps, {
+        includeFunctionBodies: false,
+        includeImmediatelyInvokedFunctionBodies: true,
+      })
       for (const dep of rawDeps) {
         const base = deSSAVarName(dep.split('.')[0] ?? dep)
         const depInfo = declared.get(base)
