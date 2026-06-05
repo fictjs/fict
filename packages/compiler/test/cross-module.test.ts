@@ -1177,6 +1177,47 @@ describe('Cross-Module Reactivity', () => {
       })
     })
 
+    it('preserves hook return accessors inside branch returns before publishing metadata', () => {
+      const hookPath = path.join(baseDir, 'branch-hook-returns.tsx')
+      const moduleMetadata = new Map()
+      const hookSource = `
+        import { $state } from 'fict'
+
+        export function useObj(flag: boolean) {
+          const count = $state(0)
+          if (flag) {
+            return { count }
+          }
+          return { count }
+        }
+
+        export function useVal(flag: boolean) {
+          const count = $state(0)
+          switch (flag) {
+            case true:
+              return count
+            default:
+              return count
+          }
+        }
+
+        export function useCond(flag: boolean) {
+          const count = $state(0)
+          return flag ? count : count
+        }
+      `
+
+      const output = transform(hookSource, { moduleMetadata }, hookPath)
+
+      expect(output).not.toMatch(/count:\s*count\(\)/)
+      expect(output).not.toMatch(/return count\(\)/)
+      expect(output).not.toMatch(/flag \? count\(\) : count\(\)/)
+      expect(moduleMetadata.get(path.resolve(hookPath))?.hooks).toMatchObject({
+        useObj: { objectProps: { count: 'signal' } },
+        useVal: { directAccessor: 'signal' },
+      })
+    })
+
     it('propagates createSignal exports from advanced modules (namespace)', () => {
       const storeSource = `
         import * as runtime from 'fict/advanced'

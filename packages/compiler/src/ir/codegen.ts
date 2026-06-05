@@ -3422,7 +3422,86 @@ function unwrapAccessorCalls(
     return t.arrayExpression(elements)
   }
 
+  if (t.isConditionalExpression(expr)) {
+    return t.conditionalExpression(
+      expr.test,
+      unwrapAccessorCalls(expr.consequent, ctx),
+      unwrapAccessorCalls(expr.alternate, ctx),
+    )
+  }
+
   return expr
+}
+
+function preserveHookReturnAccessorsInStatement(
+  stmt: BabelCore.types.Statement,
+  ctx: CodegenContext,
+): BabelCore.types.Statement {
+  const { t } = ctx
+  if (t.isReturnStatement(stmt)) {
+    if (stmt.argument && t.isExpression(stmt.argument)) {
+      stmt.argument = unwrapAccessorCalls(stmt.argument, ctx)
+    }
+    return stmt
+  }
+  if (t.isBlockStatement(stmt)) {
+    stmt.body = stmt.body.map(child => preserveHookReturnAccessorsInStatement(child, ctx))
+    return stmt
+  }
+  if (t.isIfStatement(stmt)) {
+    stmt.consequent = preserveHookReturnAccessorsInStatement(stmt.consequent, ctx)
+    if (stmt.alternate) {
+      stmt.alternate = preserveHookReturnAccessorsInStatement(stmt.alternate, ctx)
+    }
+    return stmt
+  }
+  if (t.isSwitchStatement(stmt)) {
+    for (const switchCase of stmt.cases) {
+      switchCase.consequent = switchCase.consequent.map(child =>
+        preserveHookReturnAccessorsInStatement(child, ctx),
+      )
+    }
+    return stmt
+  }
+  if (t.isTryStatement(stmt)) {
+    stmt.block = preserveHookReturnAccessorsInStatement(
+      stmt.block,
+      ctx,
+    ) as BabelCore.types.BlockStatement
+    if (stmt.handler) {
+      stmt.handler.body = preserveHookReturnAccessorsInStatement(
+        stmt.handler.body,
+        ctx,
+      ) as BabelCore.types.BlockStatement
+    }
+    if (stmt.finalizer) {
+      stmt.finalizer = preserveHookReturnAccessorsInStatement(
+        stmt.finalizer,
+        ctx,
+      ) as BabelCore.types.BlockStatement
+    }
+    return stmt
+  }
+  if (t.isLabeledStatement(stmt)) {
+    stmt.body = preserveHookReturnAccessorsInStatement(stmt.body, ctx)
+    return stmt
+  }
+  if (t.isWhileStatement(stmt) || t.isDoWhileStatement(stmt)) {
+    stmt.body = preserveHookReturnAccessorsInStatement(stmt.body, ctx)
+    return stmt
+  }
+  if (t.isForStatement(stmt) || t.isForInStatement(stmt) || t.isForOfStatement(stmt)) {
+    stmt.body = preserveHookReturnAccessorsInStatement(stmt.body, ctx)
+    return stmt
+  }
+  return stmt
+}
+
+function preserveHookReturnAccessorsInStatements(
+  statements: BabelCore.types.Statement[],
+  ctx: CodegenContext,
+): BabelCore.types.Statement[] {
+  return statements.map(stmt => preserveHookReturnAccessorsInStatement(stmt, ctx))
 }
 
 /**
@@ -6630,12 +6709,7 @@ function lowerFunctionWithRegions(
   statements = restoreLexicalDeclarationUseOrder(statements, t)
 
   if (ctx.currentFnIsHook) {
-    statements = statements.map(stmt => {
-      if (t.isReturnStatement(stmt) && stmt.argument && t.isExpression(stmt.argument)) {
-        return t.returnStatement(unwrapAccessorCalls(stmt.argument, ctx))
-      }
-      return stmt
-    })
+    statements = preserveHookReturnAccessorsInStatements(statements, ctx)
   }
 
   // Ensure context if signals/effects are used in HIR path
