@@ -2987,6 +2987,9 @@ function analyzeHIRConditionalUsage(
 
     // Check for if-like patterns (ternary or logical &&)
     if (expr.kind === 'ConditionalExpression') {
+      if (dependenciesIntersect(collectExprDependencies(expr.test), declarations)) {
+        continue
+      }
       const trueBranchDeps = collectExprDependencies(expr.consequent)
       const falseBranchDeps = collectExprDependencies(expr.alternate)
 
@@ -3016,6 +3019,9 @@ function analyzeHIRConditionalUsage(
 
     // Check for logical && patterns
     if (expr.kind === 'LogicalExpression' && expr.operator === '&&') {
+      if (dependenciesIntersect(collectExprDependencies(expr.left), declarations)) {
+        continue
+      }
       const rightDeps = collectExprDependencies(expr.right)
       const trueBranchOnlyDerived = new Set<string>()
 
@@ -3036,6 +3042,13 @@ function analyzeHIRConditionalUsage(
   }
 
   return null
+}
+
+function dependenciesIntersect(deps: Set<string>, declarations: Set<string>): boolean {
+  for (const dep of deps) {
+    if (declarations.has(dep)) return true
+  }
+  return false
 }
 
 /**

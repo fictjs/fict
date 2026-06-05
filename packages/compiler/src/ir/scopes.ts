@@ -254,10 +254,23 @@ function mergeOverlappingScopes(
       for (let i = 1; i < scopesInBlock.length; i++) {
         const otherScope = scopesInBlock[i]
         if (!otherScope) continue
-        // Only merge if they have overlapping dependencies
+        // Preserve the established same-block merge behavior.
         const hasOverlap = hasOverlappingDependencies(firstScope, otherScope)
         if (hasOverlap) {
           union(firstScope.id, otherScope.id)
+        }
+      }
+
+      for (let i = 0; i < scopesInBlock.length; i++) {
+        const leftScope = scopesInBlock[i]
+        if (!leftScope || !scopeIncludesDestructuringTemp(leftScope)) continue
+        for (let j = 0; j < scopesInBlock.length; j++) {
+          if (i === j) continue
+          const rightScope = scopesInBlock[j]
+          if (!rightScope) continue
+          if (hasOverlappingDependencies(leftScope, rightScope)) {
+            union(leftScope.id, rightScope.id)
+          }
         }
       }
     }
@@ -338,6 +351,21 @@ function hasOverlappingDependencies(a: ReactiveScope, b: ReactiveScope): boolean
     if (a.reads.has(write)) return true
   }
   return false
+}
+
+function scopeIncludesDestructuringTemp(scope: ReactiveScope): boolean {
+  for (const name of scope.declarations) {
+    if (isDestructuringTempName(name)) return true
+  }
+  for (const name of scope.writes) {
+    if (isDestructuringTempName(name)) return true
+  }
+  return false
+}
+
+function isDestructuringTempName(name: string): boolean {
+  const base = baseName(name)
+  return base.startsWith('__destruct_') || /^_(?:[A-Za-z$][\w$]*|)$/.test(base)
 }
 
 /**

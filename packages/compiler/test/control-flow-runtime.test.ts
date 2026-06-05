@@ -510,6 +510,122 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe('true:false')
   })
 
+  it('preserves object destructuring assignment order in reactive hooks', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          ;({ a: x } = { a: 2 })
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: false },
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves object destructuring assignment defaults in reactive hooks', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          ;({ a: x = 3 } = { a: undefined })
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: false },
+    )
+
+    expect(result).toBe(3)
+  })
+
+  it('preserves null values in object destructuring assignment defaults', () => {
+    const result = compileAndRunHook<null | number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          ;({ a: x = 3 } = { a: null })
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: false },
+    )
+
+    expect(result).toBeNull()
+  })
+
+  it('preserves array destructuring assignment hole defaults in reactive hooks', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          ;[, x = 3] = [1, undefined]
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: false },
+    )
+
+    expect(result).toBe(3)
+  })
+
+  it('preserves object rest destructuring assignment order in reactive hooks', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let a = 0
+          let rest = {}
+          ;({ a, ...rest } = { a: 1, b: 2 })
+          return rest.b
+        }
+      `,
+      'useRun',
+      { optimize: false },
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves array rest destructuring assignment order in reactive hooks', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let first = 0
+          let rest = []
+          ;[first, ...rest] = [1, 2, 3]
+          return rest.join(',')
+        }
+      `,
+      'useRun',
+      { optimize: false },
+    )
+
+    expect(result).toBe('2,3')
+  })
+
   it('preserves immediate do-while break before trailing return', () => {
     const result = compileAndRunHook<number>(
       `
