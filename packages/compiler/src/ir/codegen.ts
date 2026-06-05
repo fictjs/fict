@@ -91,6 +91,7 @@ import {
 } from './codegen-template-extraction'
 import {
   HIRError,
+  type AssignmentExpression as HIRAssignmentExpression,
   type BabelClassMember,
   type BabelDirective,
   type BabelParamNode,
@@ -104,6 +105,7 @@ import {
   type OptionalMemberExpression as HIROptionalMemberExpression,
   type TemplateQuasi,
   type Terminator,
+  type UpdateExpression as HIRUpdateExpression,
 } from './hir'
 import { isHookLikeFunction, isHookName } from './hook-utils'
 import { buildPropsExpression } from './props-plan'
@@ -715,10 +717,10 @@ function getHookReturnAccessorKind(
   return !info && propName !== null ? 'signal' : null
 }
 
-function resolveHookReturnMemberAccessorKind(
+function resolveHookReturnMemberInfo(
   expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
   ctx: CodegenContext,
-): HookAccessorKind | null {
+): { info: HookReturnInfo | null } | null {
   let info: HookReturnInfo | null | undefined
   if (expr.object.kind === 'Identifier') {
     const hookName = ctx.hookResultVarMap?.get(deSSAVarName(expr.object.name))
@@ -735,8 +737,17 @@ function resolveHookReturnMemberAccessorKind(
     return null
   }
 
+  return { info: info ?? null }
+}
+
+function resolveHookReturnMemberAccessorKind(
+  expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+  ctx: CodegenContext,
+): HookAccessorKind | null {
+  const hookMemberInfo = resolveHookReturnMemberInfo(expr, ctx)
+  if (!hookMemberInfo) return null
   const propName = getStaticPropName(expr.property as Expression, expr.computed)
-  return getHookReturnAccessorKind(info ?? null, propName)
+  return getHookReturnAccessorKind(hookMemberInfo.info, propName)
 }
 
 function withNonReactiveScope<T>(ctx: CodegenContext, fn: () => T): T {
@@ -1730,8 +1741,8 @@ function lowerExpressionImpl(
     }
     return test
   }
-  const lowerComputedHookSignalAssignment = (
-    objectName: string,
+  const lowerComputedHookSignalAssignmentForObject = (
+    objectExpr: BabelCore.types.Expression,
     keyExpr: Expression,
     signalKeys: (string | number)[],
     operator: BabelCore.types.AssignmentExpression['operator'],
@@ -1745,7 +1756,7 @@ function lowerExpressionImpl(
     const keyId = genTemp(ctx, 'key')
     const keyRef = t.identifier(keyId.name)
     const memberForAccessor = t.memberExpression(
-      t.identifier(objectName),
+      t.cloneNode(objectExpr, true),
       t.identifier(keyId.name),
       true,
     )
@@ -1759,7 +1770,7 @@ function lowerExpressionImpl(
     )
     const fallback = t.assignmentExpression(
       operator,
-      t.memberExpression(t.identifier(objectName), t.identifier(keyId.name), true),
+      t.memberExpression(t.cloneNode(objectExpr, true), t.identifier(keyId.name), true),
       right,
     )
     const keyTest = buildStaticSignalKeyTest(keyRef, keyTestKeys)
@@ -1772,8 +1783,8 @@ function lowerExpressionImpl(
       [lowerExpression(keyExpr, ctx)],
     )
   }
-  const lowerComputedHookSignalUpdate = (
-    objectName: string,
+  const lowerComputedHookSignalUpdateForObject = (
+    objectExpr: BabelCore.types.Expression,
     keyExpr: Expression,
     signalKeys: (string | number)[],
     operator: '++' | '--',
@@ -1787,13 +1798,13 @@ function lowerExpressionImpl(
     const keyId = genTemp(ctx, 'key')
     const keyRef = t.identifier(keyId.name)
     const signalUpdate = lowerTrackedUpdateCall(
-      t.memberExpression(t.identifier(objectName), t.identifier(keyId.name), true),
+      t.memberExpression(t.cloneNode(objectExpr, true), t.identifier(keyId.name), true),
       operator,
       prefix,
     )
     const fallback = t.updateExpression(
       operator,
-      t.memberExpression(t.identifier(objectName), t.identifier(keyId.name), true),
+      t.memberExpression(t.cloneNode(objectExpr, true), t.identifier(keyId.name), true),
       prefix,
     )
     const keyTest = buildStaticSignalKeyTest(keyRef, keyTestKeys)
@@ -2164,8 +2175,9 @@ function lowerExpressionImpl(
 
   const lowerMemberExpressionWithoutAccessorCall = (
     member: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+    objectOverride?: BabelCore.types.Expression,
   ): BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression => {
-    const object = lowerExpression(member.object, ctx)
+    const object = objectOverride ?? lowerExpression(member.object, ctx)
     const property = member.computed
       ? lowerExpression(member.property, ctx)
       : member.property.kind === 'Identifier'
@@ -2178,6 +2190,115 @@ function lowerExpressionImpl(
       return t.optionalMemberExpression(object, property, member.computed, member.optional)
     }
     return t.memberExpression(object, property, member.computed, member.optional)
+  }
+
+  const lowerWithHookReturnObject = (
+    member: Extract<Expression, { kind: 'MemberExpression' }>,
+    build: (object: BabelCore.types.Expression) => BabelCore.types.Expression | null,
+  ): BabelCore.types.Expression | null => {
+    if (member.object.kind === 'Identifier') {
+      return build(t.identifier(deSSAVarName(member.object.name)))
+    }
+    if (
+      member.object.kind === 'CallExpression' ||
+      member.object.kind === 'OptionalCallExpression'
+    ) {
+      const hookId = genTemp(ctx, 'hook')
+      const body = build(t.identifier(hookId.name))
+      if (!body) return null
+      return t.callExpression(t.arrowFunctionExpression([t.cloneNode(hookId, true)], body), [
+        lowerExpression(member.object, ctx),
+      ])
+    }
+    return null
+  }
+
+  const collectHookSignalKeys = (info: HookReturnInfo | null): (string | number)[] => {
+    const signalKeys: (string | number)[] = []
+    if (info?.objectProps) {
+      for (const [key, accessorKind] of info.objectProps.entries()) {
+        if (accessorKind === 'signal') signalKeys.push(key)
+      }
+    }
+    if (info?.arrayProps) {
+      for (const [key, accessorKind] of info.arrayProps.entries()) {
+        if (accessorKind === 'signal') signalKeys.push(key)
+      }
+    }
+    return signalKeys
+  }
+
+  const lowerHookReturnSignalMemberAssignment = (
+    expr: HIRAssignmentExpression,
+  ): BabelCore.types.Expression | null => {
+    if (expr.left.kind !== 'MemberExpression') return null
+    const left = expr.left
+    const hookMemberInfo = resolveHookReturnMemberInfo(left, ctx)
+    if (!hookMemberInfo) return null
+
+    const accessorKind = resolveHookReturnMemberAccessorKind(left, ctx)
+    if (accessorKind === 'signal') {
+      return lowerWithHookReturnObject(left, object => {
+        const member = lowerMemberExpressionWithoutAccessorCall(left, object)
+        const current = t.callExpression(t.cloneNode(member, true), [])
+        const right = lowerExpression(expr.right, ctx)
+        return lowerTrackedAssignmentWrite(
+          member,
+          expr.operator as BabelCore.types.AssignmentExpression['operator'],
+          current,
+          right,
+        )
+      })
+    }
+
+    if (left.computed) {
+      const signalKeys = collectHookSignalKeys(hookMemberInfo.info)
+      if (signalKeys.length === 0) return null
+      return lowerWithHookReturnObject(left, object =>
+        lowerComputedHookSignalAssignmentForObject(
+          object,
+          left.property as Expression,
+          signalKeys,
+          expr.operator as BabelCore.types.AssignmentExpression['operator'],
+          expr.right,
+        ),
+      )
+    }
+
+    return null
+  }
+
+  const lowerHookReturnSignalMemberUpdate = (
+    expr: HIRUpdateExpression,
+  ): BabelCore.types.Expression | null => {
+    if (expr.argument.kind !== 'MemberExpression') return null
+    const argument = expr.argument
+    const hookMemberInfo = resolveHookReturnMemberInfo(argument, ctx)
+    if (!hookMemberInfo) return null
+
+    const accessorKind = resolveHookReturnMemberAccessorKind(argument, ctx)
+    if (accessorKind === 'signal') {
+      return lowerWithHookReturnObject(argument, object => {
+        const member = lowerMemberExpressionWithoutAccessorCall(argument, object)
+        return lowerTrackedUpdateCall(member, expr.operator, expr.prefix)
+      })
+    }
+
+    if (argument.computed) {
+      const signalKeys = collectHookSignalKeys(hookMemberInfo.info)
+      if (signalKeys.length === 0) return null
+      return lowerWithHookReturnObject(argument, object =>
+        lowerComputedHookSignalUpdateForObject(
+          object,
+          argument.property as Expression,
+          signalKeys,
+          expr.operator,
+          expr.prefix,
+        ),
+      )
+    }
+
+    return null
   }
 
   const isNamespaceReactiveAccessorMember = (
@@ -2744,67 +2865,9 @@ function lowerExpressionImpl(
     }
 
     case 'AssignmentExpression':
-      if (expr.left.kind === 'MemberExpression') {
-        if (
-          expr.left.object.kind === 'Identifier' &&
-          ctx.hookResultVarMap?.has(deSSAVarName(expr.left.object.name))
-        ) {
-          const hookName = ctx.hookResultVarMap.get(deSSAVarName(expr.left.object.name))!
-          const info = getHookReturnInfo(hookName, ctx)
-          const propName = getStaticPropName(expr.left.property as Expression, expr.left.computed)
-          let kind: HookAccessorKind | undefined =
-            typeof propName === 'string'
-              ? info?.objectProps?.get(propName)
-              : typeof propName === 'number'
-                ? info?.arrayProps?.get(propName)
-                : undefined
-          if (!info && propName !== null) {
-            kind = 'signal'
-          }
-          if (kind === 'signal') {
-            const member = t.memberExpression(
-              t.identifier(deSSAVarName(expr.left.object.name)),
-              expr.left.computed
-                ? lowerExpression(expr.left.property as Expression, ctx)
-                : expr.left.property.kind === 'Identifier'
-                  ? t.identifier(expr.left.property.name)
-                  : t.stringLiteral(
-                      String(expr.left.property.kind === 'Literal' ? expr.left.property.value : ''),
-                    ),
-              expr.left.computed,
-              expr.left.optional,
-            )
-            const current = t.callExpression(t.cloneNode(member, true), [])
-            const right = lowerExpression(expr.right, ctx)
-            return lowerTrackedAssignmentWrite(
-              member,
-              expr.operator as BabelCore.types.AssignmentExpression['operator'],
-              current,
-              right,
-            )
-          }
-          if (expr.left.computed) {
-            const signalKeys: (string | number)[] = []
-            if (info?.objectProps) {
-              for (const [key, accessorKind] of info.objectProps.entries()) {
-                if (accessorKind === 'signal') signalKeys.push(key)
-              }
-            }
-            if (info?.arrayProps) {
-              for (const [key, accessorKind] of info.arrayProps.entries()) {
-                if (accessorKind === 'signal') signalKeys.push(key)
-              }
-            }
-            const lowered = lowerComputedHookSignalAssignment(
-              deSSAVarName(expr.left.object.name),
-              expr.left.property as Expression,
-              signalKeys,
-              expr.operator as BabelCore.types.AssignmentExpression['operator'],
-              expr.right,
-            )
-            if (lowered) return lowered
-          }
-        }
+      {
+        const hookMemberAssignment = lowerHookReturnSignalMemberAssignment(expr)
+        if (hookMemberAssignment) return hookMemberAssignment
       }
       if (expr.left.kind === 'Identifier') {
         const baseName = deSSAVarName(expr.left.name)
@@ -2836,67 +2899,9 @@ function lowerExpressionImpl(
       )
 
     case 'UpdateExpression':
-      if (expr.argument.kind === 'MemberExpression') {
-        if (
-          expr.argument.object.kind === 'Identifier' &&
-          ctx.hookResultVarMap?.has(deSSAVarName(expr.argument.object.name))
-        ) {
-          const hookName = ctx.hookResultVarMap.get(deSSAVarName(expr.argument.object.name))!
-          const info = getHookReturnInfo(hookName, ctx)
-          const propName = getStaticPropName(
-            expr.argument.property as Expression,
-            expr.argument.computed,
-          )
-          let kind: HookAccessorKind | undefined =
-            typeof propName === 'string'
-              ? info?.objectProps?.get(propName)
-              : typeof propName === 'number'
-                ? info?.arrayProps?.get(propName)
-                : undefined
-          if (!info && propName !== null) {
-            kind = 'signal'
-          }
-          if (kind === 'signal') {
-            const member = t.memberExpression(
-              t.identifier(deSSAVarName(expr.argument.object.name)),
-              expr.argument.computed
-                ? lowerExpression(expr.argument.property as Expression, ctx)
-                : expr.argument.property.kind === 'Identifier'
-                  ? t.identifier(expr.argument.property.name)
-                  : t.stringLiteral(
-                      String(
-                        expr.argument.property.kind === 'Literal'
-                          ? expr.argument.property.value
-                          : '',
-                      ),
-                    ),
-              expr.argument.computed,
-              expr.argument.optional,
-            )
-            return lowerTrackedUpdateCall(member, expr.operator, expr.prefix)
-          }
-          if (expr.argument.computed) {
-            const signalKeys: (string | number)[] = []
-            if (info?.objectProps) {
-              for (const [key, accessorKind] of info.objectProps.entries()) {
-                if (accessorKind === 'signal') signalKeys.push(key)
-              }
-            }
-            if (info?.arrayProps) {
-              for (const [key, accessorKind] of info.arrayProps.entries()) {
-                if (accessorKind === 'signal') signalKeys.push(key)
-              }
-            }
-            const lowered = lowerComputedHookSignalUpdate(
-              deSSAVarName(expr.argument.object.name),
-              expr.argument.property as Expression,
-              signalKeys,
-              expr.operator,
-              expr.prefix,
-            )
-            if (lowered) return lowered
-          }
-        }
+      {
+        const hookMemberUpdate = lowerHookReturnSignalMemberUpdate(expr)
+        if (hookMemberUpdate) return hookMemberUpdate
       }
       if (expr.argument.kind === 'Identifier') {
         const baseName = deSSAVarName(expr.argument.name)

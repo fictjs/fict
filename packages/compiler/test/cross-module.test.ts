@@ -366,6 +366,215 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toContain('return useCounter().count;')
     })
 
+    it('routes direct hook-call member assignments through signal setters', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-direct-write'
+
+        export function App() {
+          useCounter().count = 2
+          return useCounter().count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'use-counter-direct-write.tsx'))
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-direct-write.tsx'),
+      )
+
+      expect(output).toMatch(/\(__hook_\d+ => __hook_\d+\.count\(2\)\)\(useCounter\(\)\)/)
+      expect(output).toContain('return useCounter().count();')
+      expect(output).not.toContain('useCounter().count = 2')
+    })
+
+    it('evaluates direct hook-call compound assignment targets once', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-direct-compound-write'
+
+        export function App() {
+          useCounter().count += 2
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-direct-compound-write.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-direct-compound-write.tsx'),
+      )
+
+      expect(output).toContain('useCounter()')
+      expect(output).toContain('.count(__')
+      expect(output).toContain('.count() + 2')
+      expect(output.match(/useCounter\(\)/g)).toHaveLength(1)
+      expect(output).not.toContain('useCounter().count += 2')
+    })
+
+    it('evaluates computed direct hook-call assignment targets once', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-direct-computed-write'
+
+        export function App() {
+          const key = 'count'
+          useCounter()[key] += 2
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-direct-computed-write.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-direct-computed-write.tsx'),
+      )
+
+      expect(output).toContain('=== "count"')
+      expect(output).toContain('() + 2')
+      expect(output.match(/useCounter\(\)/g)).toHaveLength(1)
+      expect(output).not.toContain('useCounter()[key] += 2')
+    })
+
+    it('evaluates direct hook-call update targets once', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-direct-update'
+
+        export function App() {
+          return useCounter().count++
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'use-counter-direct-update.tsx'))
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-direct-update.tsx'),
+      )
+
+      expect(output).toContain('useCounter()')
+      expect(output).toContain('.count()')
+      expect(output).toContain('.count(__prev_')
+      expect(output.match(/useCounter\(\)/g)).toHaveLength(1)
+      expect(output).not.toContain('useCounter().count++')
+    })
+
+    it('routes namespace direct hook-call member updates through signal setters', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import * as hooks from './use-counter-direct-namespace-update'
+
+        export function App() {
+          hooks.useCounter().count--
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-direct-namespace-update.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-direct-namespace-update.tsx'),
+      )
+
+      expect(output).toContain('hooks.useCounter()')
+      expect(output).toContain('.count(__prev_')
+      expect(output.match(/hooks\.useCounter\(\)/g)).toHaveLength(1)
+      expect(output).not.toContain('hooks.useCounter().count--')
+    })
+
+    it('routes default-import direct hook-call member assignments through signal setters', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export default function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import useCounter from './use-counter-direct-default-write'
+
+        export function App() {
+          useCounter().count = 3
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-direct-default-write.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-direct-default-write.tsx'),
+      )
+
+      expect(output).toMatch(/\(__hook_\d+ => __hook_\d+\.count\(3\)\)\(useCounter\(\)\)/)
+      expect(output).not.toContain('useCounter().count = 3')
+    })
+
     it('propagates hook return metadata through pass-through wrapper modules', () => {
       const hookSource = `
         import { $state } from 'fict'
