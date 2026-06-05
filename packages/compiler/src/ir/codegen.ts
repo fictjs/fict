@@ -5210,6 +5210,33 @@ export function lowerHIRWithRegions(
       continue
     }
 
+    if (t.isExportDefaultDeclaration(stmt) && t.isExpression(stmt.declaration)) {
+      flushLowerableBuffer()
+      const name = `__default_export_value_${segmentCounter++}`
+      const declaration = t.variableDeclaration('const', [
+        t.variableDeclarator(t.identifier(name), stmt.declaration),
+      ])
+      const { statements, aliases } = lowerTopLevelStatementBlock(
+        [declaration],
+        ctx,
+        t,
+        `__default_export_segment_${segmentCounter++}`,
+        topLevelAliases,
+      )
+      topLevelAliases.clear()
+      aliases.forEach(a => topLevelAliases.add(a))
+      if (statements.length > 0) {
+        if (ctx.needsCtx && !topLevelCtxInjected) {
+          ensureTopLevelCtx()
+        }
+        body.push(...statements)
+        body.push(t.exportDefaultDeclaration(t.identifier(name)))
+        continue
+      }
+      body.push(lowerRawStatement(stmt))
+      continue
+    }
+
     if (t.isExportDefaultDeclaration(stmt) || t.isExportAllDeclaration(stmt)) {
       flushLowerableBuffer()
       body.push(lowerRawStatement(stmt))

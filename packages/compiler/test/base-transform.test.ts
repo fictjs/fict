@@ -461,6 +461,61 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).not.toContain('return <span')
     })
 
+    it('lowers direct default-exported JSX expressions', () => {
+      const output = transform(`
+        export default <div />
+      `)
+
+      expect(output).toContain('template("<div></div>")')
+      expect(output).not.toMatch(/exports\.default\s*=\s*</)
+    })
+
+    it('lowers nested JSX inside default-exported expressions', () => {
+      const output = transform(`
+        export default {
+          view: <div />,
+          items: [<span />],
+        }
+      `)
+
+      expect(output).toContain('template("<div></div>")')
+      expect(output).toContain('template("<span></span>")')
+      expect(output).not.toMatch(/:\s*</)
+      expect(output).not.toMatch(/\[\s*</)
+    })
+
+    it('lowers conditional JSX inside default-exported expressions', () => {
+      const output = transform(`
+        const flag = true
+        export default flag ? <div /> : <span />
+      `)
+
+      expect(output).toContain('template("<div></div>")')
+      expect(output).toContain('template("<span></span>")')
+      expect(output).not.toMatch(/\?\s*</)
+      expect(output).not.toMatch(/:\s*</)
+    })
+
+    it('lowers JSX callbacks inside default-exported memo calls', () => {
+      const output = transform(`
+        import { createMemo } from 'fict'
+        export default createMemo(() => <div />)
+      `)
+
+      expect(output).toContain('template("<div></div>")')
+      expect(output).not.toContain('=> <div')
+    })
+
+    it('lowers default-exported effect macro calls', () => {
+      const output = transform(`
+        import { $effect } from 'fict'
+        export default $effect(() => {})
+      `)
+
+      expect(output).toContain('createEffect')
+      expect(output).not.toContain('$effect')
+    })
+
     it('lowers JSX returned from class expression methods', () => {
       const output = transform(`
         export function make() {

@@ -2236,6 +2236,15 @@ function createHIREntrypointVisitor(
             isImmediateFunctionBodyStatement(parentPath)
           )
         }
+        const isImmediateDefaultExportExpression = (
+          callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
+        ): boolean => {
+          const parentPath = callPath.parentPath
+          return !!(
+            parentPath?.isExportDefaultDeclaration() &&
+            parentPath.node.declaration === callPath.node
+          )
+        }
         path.traverse({
           VariableDeclarator(varPath) {
             const init = varPath.node.init
@@ -2417,7 +2426,10 @@ function createHIREntrypointVisitor(
                     `or extract the nested logic into a custom hook (useXxx).`,
                 )
               }
-              if (!isImmediateEffectStatement(callPath)) {
+              if (
+                !isImmediateEffectStatement(callPath) &&
+                !isImmediateDefaultExportExpression(callPath)
+              ) {
                 throw callPath.buildCodeFrameError(
                   `$effect() cannot be called inside loops or conditionals.\n\n` +
                     `Effects must be registered at the top level of components.\n` +
