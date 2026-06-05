@@ -7,6 +7,7 @@ import { debugLog } from './debug'
 import { createCompilerExplainArtifact, emitCompilerExplainArtifact } from './explain'
 import { buildHIR } from './ir/build-hir'
 import { lowerHIRWithRegions } from './ir/codegen'
+import { isComponentName, isHookName } from './ir/hook-utils'
 import { getFictMacroKind, markFictMacroCall, type FictMacroKind } from './ir/macro-bindings'
 import { optimizeHIR } from './ir/optimize'
 import { resolveModuleMetadata } from './module-metadata'
@@ -338,10 +339,6 @@ function emitWarning(
     },
     'node' in nodeOrPath ? nodeOrPath : undefined,
   )
-}
-
-function isComponentName(name: string | undefined): boolean {
-  return !!name && name[0] === name[0]?.toUpperCase()
 }
 
 type CompletionKind = 'normal' | 'abrupt'
@@ -1839,7 +1836,6 @@ function createHIREntrypointVisitor(
           onWarn: warn,
           filename: fileName,
         }
-        const isHookName = (name: string | undefined): boolean => !!name && /^use[A-Z]/.test(name)
         // Reactive scopes: function calls whose callbacks are treated as component-like contexts
         const reactiveScopesSet = new Set(options.reactiveScopes ?? [])
 

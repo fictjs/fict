@@ -1,13 +1,14 @@
 import type { Expression, HIRFunction } from './hir'
 
 export const HOOK_NAME_PATTERN = /^use[A-Z]/
+export const COMPONENT_NAME_PATTERN = /^[A-Z]/
 
 export function isHookName(name: string | undefined): boolean {
   return !!name && HOOK_NAME_PATTERN.test(name)
 }
 
 export function isComponentName(name: string | undefined): boolean {
-  return !!name && name[0] === name[0]?.toUpperCase()
+  return !!name && COMPONENT_NAME_PATTERN.test(name)
 }
 
 function isReactivePrimitiveCall(expr: Expression): boolean {

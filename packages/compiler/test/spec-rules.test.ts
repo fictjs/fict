@@ -650,6 +650,33 @@ describe('Rule I: Component-only state placement', () => {
     )
   })
 
+  it('uses only uppercase-leading names as component names for $state placement', () => {
+    const uppercase = transform(`
+      import { $state } from 'fict'
+      function Helper() {
+        let count = $state(0)
+        return count
+      }
+    `)
+
+    expect(uppercase).toContain('__fictUseSignal')
+
+    for (const name of ['helper', '_helper', '$helper']) {
+      expect(() =>
+        transform(`
+          import { $state } from 'fict'
+          function ${name}() {
+            let count = $state(0)
+            return count
+          }
+          export function App() {
+            return <div>{${name}()}</div>
+          }
+        `),
+      ).toThrow('must be declared inside a component or hook function body')
+    }
+  })
+
   it('keeps component-scoped derived values memoized for event usage', () => {
     const output = transform(`
       import { $state } from 'fict'
