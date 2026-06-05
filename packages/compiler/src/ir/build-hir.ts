@@ -1707,11 +1707,13 @@ function convertFunction(
       if (stmt.init && t.isVariableDeclaration(stmt.init)) {
         const initKind = normalizeVarKind(stmt.init.kind)
         for (const decl of stmt.init.declarations) {
-          if (!t.isIdentifier(decl.id) || !decl.init) continue
+          if (!t.isIdentifier(decl.id)) continue
           const instr: Instruction = {
             kind: 'Assign',
             target: { kind: 'Identifier', name: decl.id.name },
-            value: convertExpression(decl.init),
+            value: decl.init
+              ? convertExpression(decl.init)
+              : ({ kind: 'Literal', value: undefined } as HLiteral),
             declarationKind: initKind,
           }
           current.block.instructions.push(instr)
@@ -2743,11 +2745,13 @@ function processStatement(
     if (stmt.init && t.isVariableDeclaration(stmt.init)) {
       const initKind = normalizeVarKind(stmt.init.kind)
       for (const decl of stmt.init.declarations) {
-        if (!t.isIdentifier(decl.id) || !decl.init) continue
+        if (!t.isIdentifier(decl.id)) continue
         const instr: Instruction = {
           kind: 'Assign',
           target: { kind: 'Identifier', name: decl.id.name },
-          value: convertExpression(decl.init),
+          value: decl.init
+            ? convertExpression(decl.init)
+            : ({ kind: 'Literal', value: undefined } as HLiteral),
           declarationKind: initKind,
         }
         push(instr)

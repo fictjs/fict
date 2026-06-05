@@ -521,6 +521,84 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(4)
   })
 
+  it('preserves classic for let declarations without initializers', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          for (let i; i === undefined; i = 1) {
+            return typeof i
+          }
+          return 'no'
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe('undefined')
+  })
+
+  it('preserves classic for var declarations without initializers', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          for (var i; i === undefined; i = 1) {
+            return typeof i
+          }
+          return 'no'
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe('undefined')
+  })
+
+  it('preserves multiple classic for declarators when some lack initializers', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          for (let a, b = 1; a === undefined && b === 1; a = 0) {
+            return typeof a + ':' + b
+          }
+          return 'no'
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe('undefined:1')
+  })
+
+  it('preserves nested classic for declarations without initializers', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          if (count === 0) {
+            for (let inner; inner === undefined; inner = 1) {
+              return typeof inner
+            }
+          }
+          return 'no'
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe('undefined')
+  })
+
   for (const optimize of optimizeModes) {
     it(`preserves const function declarations before calls with optimize=${optimize}`, () => {
       const result = compileAndRunHook<number>(
