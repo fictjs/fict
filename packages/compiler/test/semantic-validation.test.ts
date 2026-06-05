@@ -789,6 +789,52 @@ describe('semantic validation', () => {
     expect(() => transform(source)).toThrow(/Alias reassignment/)
   })
 
+  it('throws when assigning to a captured reactive alias inside a nested function', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        let alias = count
+        function update() {
+          alias = 2
+        }
+        return <button onClick={update}>{count}</button>
+      }
+    `
+    expect(() => transform(source)).toThrow(/Alias reassignment/)
+  })
+
+  it('throws when updating a captured reactive alias inside a nested function', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        let alias = count
+        const update = () => {
+          alias++
+        }
+        return <button onClick={update}>{count}</button>
+      }
+    `
+    expect(() => transform(source)).toThrow(/Alias reassignment/)
+  })
+
+  it('allows nested function parameters that shadow reactive aliases', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        let alias = count
+        function update(alias: number) {
+          alias = 2
+          return alias
+        }
+        return <button>{update(1)}</button>
+      }
+    `
+    expect(() => transform(source)).not.toThrow()
+  })
+
   it('allows loop counters initialized from reactive expressions', () => {
     const source = `
       import { $state } from 'fict'

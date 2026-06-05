@@ -2285,8 +2285,6 @@ function createHIREntrypointVisitor(
         })
 
         // Validate alias reassignments now that state variables are known
-        const aliasStack: Set<BabelCore.types.Identifier>[] = [new Set()]
-        const currentAliasSet = () => aliasStack[aliasStack.length - 1]
         const getBindingIdentifier = (
           path: BabelCore.NodePath,
           name: string,
@@ -2295,11 +2293,8 @@ function createHIREntrypointVisitor(
           return binding ? (binding.identifier as BabelCore.types.Identifier) : null
         }
         const addAliasBinding = (path: BabelCore.NodePath, name: string): void => {
-          const aliasSet = currentAliasSet()
-          if (!aliasSet) return
           const bindingId = getBindingIdentifier(path, name)
           if (!bindingId) return
-          aliasSet.add(bindingId)
           aliasBindingIds.add(bindingId)
         }
         const addStateAliasBinding = (path: BabelCore.NodePath, name: string): void => {
@@ -2308,10 +2303,8 @@ function createHIREntrypointVisitor(
           stateAliasBindingIds.add(bindingId)
         }
         const isAliasBinding = (path: BabelCore.NodePath, name: string): boolean => {
-          const aliasSet = currentAliasSet()
-          if (!aliasSet) return false
           const bindingId = getBindingIdentifier(path, name)
-          return !!(bindingId && aliasSet.has(bindingId))
+          return !!(bindingId && aliasBindingIds.has(bindingId))
         }
         const isDestructuredAliasBinding = (path: BabelCore.NodePath, name: string): boolean => {
           const bindingId = getBindingIdentifier(path, name)
@@ -2327,14 +2320,6 @@ function createHIREntrypointVisitor(
         }
         debugLog('alias', 'state vars', Array.from(stateVars))
         path.traverse({
-          Function: {
-            enter() {
-              aliasStack.push(new Set())
-            },
-            exit() {
-              aliasStack.pop()
-            },
-          },
           VariableDeclarator(varPath) {
             const initPath = varPath.get('init') as BabelCore.NodePath | null
             const stateRootId = isStateRootIdentifier(initPath)
