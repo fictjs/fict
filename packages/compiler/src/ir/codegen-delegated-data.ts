@@ -3,6 +3,7 @@ import type * as BabelCore from '@babel/core'
 import type { CodegenContext } from './codegen'
 import type { Expression } from './hir'
 import { deSSAVarName } from './regions'
+import { walkExpression } from './walk-expression'
 
 export function expressionUsesIdentifier(
   expr: BabelCore.types.Node,
@@ -63,6 +64,18 @@ export function expressionUsesIdentifier(
       node.expressions.forEach(expr => visit(expr))
       return
     }
+    if (t.isTaggedTemplateExpression(node)) {
+      visit(node.tag)
+      node.quasi.expressions.forEach(expr => visit(expr))
+      return
+    }
+    if (t.isNewExpression(node)) {
+      visit(node.callee)
+      node.arguments.forEach(arg => {
+        if (t.isExpression(arg) || t.isSpreadElement(arg)) visit(arg)
+      })
+      return
+    }
     if (t.isArrayExpression(node)) {
       node.elements.forEach(el => {
         if (t.isExpression(el)) visit(el)
@@ -84,6 +97,19 @@ export function expressionUsesIdentifier(
     }
     if (t.isParenthesizedExpression(node)) {
       visit(node.expression)
+      return
+    }
+    if (t.isAwaitExpression(node)) {
+      visit(node.argument)
+      return
+    }
+    if (t.isYieldExpression(node)) {
+      visit(node.argument)
+      return
+    }
+    if (t.isImportExpression(node)) {
+      visit(node.source)
+      visit(node.options)
       return
     }
     if (t.isTSAsExpression(node) || t.isTSTypeAssertion(node) || t.isTSNonNullExpression(node)) {
@@ -141,57 +167,16 @@ export function extractDelegatedEventData(
 }
 
 export function hirExpressionUsesIdentifiers(expr: Expression, names: Set<string>): boolean {
-  if (expr.kind === 'Identifier') {
-    return names.has(deSSAVarName(expr.name))
-  }
-
-  switch (expr.kind) {
-    case 'BinaryExpression':
-    case 'LogicalExpression':
-      return (
-        hirExpressionUsesIdentifiers(expr.left, names) ||
-        hirExpressionUsesIdentifiers(expr.right, names)
-      )
-    case 'UnaryExpression':
-      return hirExpressionUsesIdentifiers(expr.argument, names)
-    case 'ConditionalExpression':
-      return (
-        hirExpressionUsesIdentifiers(expr.test, names) ||
-        hirExpressionUsesIdentifiers(expr.consequent, names) ||
-        hirExpressionUsesIdentifiers(expr.alternate, names)
-      )
-    case 'CallExpression':
-    case 'OptionalCallExpression':
-      return (
-        hirExpressionUsesIdentifiers(expr.callee, names) ||
-        expr.arguments.some(arg => hirExpressionUsesIdentifiers(arg, names))
-      )
-    case 'MemberExpression':
-    case 'OptionalMemberExpression':
-      return (
-        hirExpressionUsesIdentifiers(expr.object, names) ||
-        (expr.computed && hirExpressionUsesIdentifiers(expr.property, names))
-      )
-    case 'ArrayExpression':
-      return expr.elements.some(el => el && hirExpressionUsesIdentifiers(el, names))
-    case 'ObjectExpression':
-      return expr.properties.some(prop => {
-        if (prop.kind === 'SpreadElement') {
-          return hirExpressionUsesIdentifiers(prop.argument, names)
-        }
-        return (
-          ((prop.computed ?? false) && hirExpressionUsesIdentifiers(prop.key, names)) ||
-          hirExpressionUsesIdentifiers(prop.value, names)
-        )
-      })
-    case 'TemplateLiteral':
-      return expr.expressions.some(e => hirExpressionUsesIdentifiers(e, names))
-    case 'ArrowFunction':
-    case 'FunctionExpression':
-      return false
-    default:
-      return false
-  }
+  let found = false
+  walkExpression(
+    expr,
+    node => {
+      if (found || node.kind !== 'Identifier') return
+      found = names.has(deSSAVarName(node.name))
+    },
+    { includeFunctionBodies: false },
+  )
+  return found
 }
 
 /**

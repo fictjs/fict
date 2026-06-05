@@ -2757,6 +2757,44 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps delegated event-param data expressions inside the handler scope', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const seen: string[] = []
+
+      function select(value: string) {
+        seen.push(value)
+      }
+
+      export function App() {
+        return <button data-id="btn" onClick={(event) => select((0, event.type))}>Click</button>
+      }
+
+      export function mount(el: HTMLElement) {
+        seen.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      seen: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const button = container.querySelector('[data-id="btn"]') as HTMLButtonElement
+    button.click()
+    await flushUpdates()
+
+    expect(mod.seen).toEqual(['click'])
+
+    teardown()
+    container.remove()
+  })
+
   it('wires namespaced on: event handlers in fine-grained mode', async () => {
     const source = `
       import { render } from 'fict'

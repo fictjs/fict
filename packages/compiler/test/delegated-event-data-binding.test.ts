@@ -84,6 +84,34 @@ describe('Delegated event data binding', () => {
     expect(output).not.toContain('handler.call(this')
   })
 
+  it.each([
+    ['sequence expression', 'select((0, event.type))'],
+    ['new expression', 'select(new Box(event.type))'],
+    ['assignment expression', 'select((last = event.type))'],
+    ['tagged template expression', 'select(tag`${event.type}`)'],
+  ])('does not extract data that reads the event param through %s', (_name, expression) => {
+    const source = `
+      export function App() {
+        let last = ''
+        function Box(value) {
+          this.value = value
+        }
+        function tag(strings, value) {
+          return strings[0] + value
+        }
+        function select(value) {
+          last = String(value)
+        }
+        return <button onClick={(event) => ${expression}}>Click</button>
+      }
+    `
+    const output = transform(source)
+
+    expect(output).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(output).not.toContain('__fictDataOnly')
+    expect(output).not.toMatch(/addEventListener\([^,]+,\s*"click",\s*\[select,/)
+  })
+
   it('keeps delegated $state handler accessors swappable', () => {
     const source = `
       import { $state } from 'fict'
