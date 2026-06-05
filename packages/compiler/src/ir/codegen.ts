@@ -358,6 +358,8 @@ export interface CodegenContext {
   importedNamespaces?: Map<string, ModuleReactiveMetadata> | undefined
   /** Variables initialized with $state (signal accessors) */
   signalVars?: Set<string> | undefined
+  /** Signal bindings whose current value is known to be callable. */
+  callableSignalVars?: Set<string> | undefined
   /** Variables assigned to function expressions (should not be treated as reactive accessors) */
   functionVars?: Set<string> | undefined
   /** Variables that are memos (derived values) - these shouldn't be cached by getter cache */
@@ -483,6 +485,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     storeVars: new Set(),
     importedNamespaces: new Map(),
     signalVars: new Set(),
+    callableSignalVars: new Set(),
     functionVars: new Set(),
     memoVars: new Set(),
     memoMacroNames: new Set(['$memo', 'createMemo']),
@@ -669,9 +672,15 @@ function lowerFunction(
 ): BabelCore.types.FunctionDeclaration | null {
   const { t } = ctx
   const prevTracked = ctx.trackedVars
+  const prevCallableSignalVars = ctx.callableSignalVars
   const scopedTracked = new Set(ctx.trackedVars)
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
   ctx.trackedVars = scopedTracked
+  ctx.callableSignalVars = new Set(prevCallableSignalVars ?? [])
+  fn.params.forEach(p => ctx.callableSignalVars?.delete(deSSAVarName(p.name)))
+  for (const name of collectLocalDeclaredNames(fn.params, fn.blocks, t)) {
+    ctx.callableSignalVars?.delete(name)
+  }
   ctx.needsCtx = false
   const params = buildOutputParams(fn, t)
   const statements: BabelCore.types.Statement[] = []
@@ -705,6 +714,7 @@ function lowerFunction(
   result.async = !!fn.meta?.isAsync || functionHasAsyncAwait(fn)
   result.generator = !!fn.meta?.isGenerator || functionHasYield(fn)
   ctx.trackedVars = prevTracked
+  ctx.callableSignalVars = prevCallableSignalVars
   return result
 }
 
@@ -744,6 +754,25 @@ function lowerTrackedExpression(
     )
   }
   return applyRegionMetadataToExpression(lowered, ctx, regionOverride ?? undefined)
+}
+
+function isFunctionExpressionValue(expr: Expression | undefined): boolean {
+  return expr?.kind === 'ArrowFunction' || expr?.kind === 'FunctionExpression'
+}
+
+function isCallableSignalInitializer(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
+  return getReactiveCallKind(expr, ctx) === 'signal' && isFunctionExpressionValue(expr.arguments[0])
+}
+
+function markCallableSignalIfFunctionValue(
+  name: string,
+  value: Expression,
+  ctx: CodegenContext,
+): void {
+  if (isFunctionExpressionValue(value) || isCallableSignalInitializer(value, ctx)) {
+    ctx.callableSignalVars?.add(name)
+  }
 }
 
 function lowerInstruction(
@@ -832,6 +861,7 @@ function lowerInstruction(
       if (initKind === 'signal') {
         ctx.signalVars?.add(baseName)
         ctx.trackedVars.add(baseName)
+        markCallableSignalIfFunctionValue(baseName, instr.value, ctx)
         ctx.currentAssignmentName = baseName
         const loweredValue = (() => {
           try {
@@ -848,6 +878,7 @@ function lowerInstruction(
       }
     }
     if (ctx.signalVars?.has(baseName)) {
+      markCallableSignalIfFunctionValue(baseName, instr.value, ctx)
       ctx.currentAssignmentName = baseName
       const loweredValue = (() => {
         try {
@@ -1214,6 +1245,9 @@ function lowerExpressionImpl(
   ): T => {
     const prevTracked = ctx.trackedVars
     const prevAlias = ctx.aliasVars
+    const prevSignals = ctx.signalVars
+    const prevMemos = ctx.memoVars
+    const prevCallableSignals = ctx.callableSignalVars
     const prevExternal = ctx.externalTracked
     const prevShadowed = ctx.shadowedNames
     const prevLocalDeclared = ctx.localDeclaredNames
@@ -1225,6 +1259,27 @@ function lowerExpressionImpl(
       }
     }
     ctx.trackedVars = scoped
+    ctx.signalVars = new Set(ctx.signalVars)
+    paramNames.forEach(n => ctx.signalVars?.delete(deSSAVarName(n)))
+    if (localDeclared) {
+      for (const name of localDeclared) {
+        ctx.signalVars?.delete(deSSAVarName(name))
+      }
+    }
+    ctx.memoVars = new Set(ctx.memoVars)
+    paramNames.forEach(n => ctx.memoVars?.delete(deSSAVarName(n)))
+    if (localDeclared) {
+      for (const name of localDeclared) {
+        ctx.memoVars?.delete(deSSAVarName(name))
+      }
+    }
+    ctx.callableSignalVars = new Set(ctx.callableSignalVars)
+    paramNames.forEach(n => ctx.callableSignalVars?.delete(deSSAVarName(n)))
+    if (localDeclared) {
+      for (const name of localDeclared) {
+        ctx.callableSignalVars?.delete(deSSAVarName(name))
+      }
+    }
     ctx.aliasVars = new Set(ctx.aliasVars)
     ctx.externalTracked = new Set(prevTracked)
     const shadowed = new Set(prevShadowed ?? [])
@@ -1245,6 +1300,9 @@ function lowerExpressionImpl(
     const result = fn()
     ctx.trackedVars = prevTracked
     ctx.aliasVars = prevAlias
+    ctx.signalVars = prevSignals
+    ctx.memoVars = prevMemos
+    ctx.callableSignalVars = prevCallableSignals
     ctx.externalTracked = prevExternal
     ctx.shadowedNames = prevShadowed
     ctx.localDeclaredNames = prevLocalDeclared
@@ -1714,6 +1772,16 @@ function lowerExpressionImpl(
       const calleeIsMemoAccessor = !!calleeName && ctx.memoVars?.has(calleeName)
       const calleeIsSignalLike =
         !!calleeName && (ctx.signalVars?.has(calleeName) || ctx.storeVars?.has(calleeName))
+      const calleeIsCallableSignal =
+        !!calleeName &&
+        (ctx.signalVars?.has(calleeName) ?? false) &&
+        (ctx.callableSignalVars?.has(calleeName) ?? false)
+      if (calleeIsCallableSignal) {
+        return t.callExpression(
+          t.callExpression(t.identifier(calleeName), []),
+          lowerCallArguments(expr.arguments),
+        )
+      }
       if (calleeIsMemoAccessor && !calleeIsSignalLike && expr.arguments.length > 0) {
         const loweredArgs = lowerCallArguments(expr.arguments)
         return t.callExpression(t.callExpression(t.identifier(calleeName), []), loweredArgs)
@@ -2245,6 +2313,19 @@ function lowerExpressionImpl(
       )
 
     case 'OptionalCallExpression':
+      if (expr.callee.kind === 'Identifier') {
+        const calleeName = deSSAVarName(expr.callee.name)
+        const calleeIsCallableSignal =
+          (ctx.signalVars?.has(calleeName) ?? false) &&
+          (ctx.callableSignalVars?.has(calleeName) ?? false)
+        if (calleeIsCallableSignal) {
+          return t.optionalCallExpression(
+            t.callExpression(t.identifier(calleeName), []),
+            lowerCallArguments(expr.arguments),
+            expr.optional,
+          )
+        }
+      }
       return t.optionalCallExpression(
         lowerExpression(expr.callee, ctx),
         lowerCallArguments(expr.arguments),
@@ -4001,11 +4082,13 @@ function lowerTopLevelStatementBlock(
 
   const functionVars = ctx.functionVars ?? new Set<string>()
   const signalVars = ctx.signalVars ?? new Set<string>()
+  const callableSignalVars = ctx.callableSignalVars ?? new Set<string>()
   const storeVars = ctx.storeVars ?? new Set<string>()
   const memoVars = ctx.memoVars ?? new Set<string>()
   const mutatedVars = new Set<string>()
   ctx.functionVars = functionVars
   ctx.signalVars = signalVars
+  ctx.callableSignalVars = callableSignalVars
   ctx.storeVars = storeVars
   ctx.memoVars = memoVars
   ctx.mutatedVars = mutatedVars
@@ -4023,6 +4106,9 @@ function lowerTopLevelStatementBlock(
           functionVars.add(target)
           // Store the HIR expression for potential hoisting in handlers
           componentFunctionDefs.set(target, instr.value)
+          if (signalVars.has(target)) {
+            callableSignalVars.add(target)
+          }
         }
         if (
           instr.value.kind === 'CallExpression' ||
@@ -4031,6 +4117,9 @@ function lowerTopLevelStatementBlock(
           const callKind = getReactiveCallKind(instr.value, ctx)
           if (callKind === 'signal') {
             signalVars.add(target)
+            if (isCallableSignalInitializer(instr.value, ctx)) {
+              callableSignalVars.add(target)
+            }
           } else if (callKind === 'store') {
             storeVars.add(target)
           } else if (callKind === 'memo') {
@@ -4727,6 +4816,7 @@ function lowerFunctionWithRegions(
   const { t } = ctx
   const prevTracked = ctx.trackedVars
   const prevSignalVars = ctx.signalVars
+  const prevCallableSignalVars = ctx.callableSignalVars
   const prevFunctionVars = ctx.functionVars
   const prevMemoVars = ctx.memoVars
   const prevStoreVars = ctx.storeVars
@@ -4760,6 +4850,11 @@ function lowerFunctionWithRegions(
   // Always ensure context exists to support memo/region wrappers
   ctx.aliasVars = new Set(prevAliasVars ?? [])
   ctx.signalVars = new Set(prevSignalVars ?? [])
+  ctx.callableSignalVars = new Set(prevCallableSignalVars ?? [])
+  shadowedParams.forEach(name => ctx.callableSignalVars?.delete(name))
+  for (const name of localDeclared) {
+    ctx.callableSignalVars?.delete(name)
+  }
   ctx.functionVars = new Set(prevFunctionVars ?? [])
   ctx.memoVars = new Set(prevMemoVars ?? [])
   ctx.storeVars = new Set(prevStoreVars ?? [])
@@ -4793,6 +4888,9 @@ function lowerFunctionWithRegions(
           ctx.functionVars?.add(target)
           // Store HIR expression for potential hoisting in resumable handlers
           ctx.componentFunctionDefs?.set(target, instr.value)
+          if (ctx.signalVars?.has(target)) {
+            ctx.callableSignalVars?.add(target)
+          }
         }
         if (
           instr.value.kind === 'CallExpression' ||
@@ -4801,6 +4899,9 @@ function lowerFunctionWithRegions(
           const callKind = getReactiveCallKind(instr.value, ctx)
           if (callKind === 'signal') {
             ctx.signalVars?.add(target)
+            if (isCallableSignalInitializer(instr.value, ctx)) {
+              ctx.callableSignalVars?.add(target)
+            }
           } else if (callKind === 'store') {
             ctx.storeVars?.add(target)
           } else if (callKind === 'memo') {
@@ -5213,6 +5314,7 @@ function lowerFunctionWithRegions(
       ctx.trackedVars = prevTracked
       ctx.externalTracked = prevExternalTracked
       ctx.signalVars = prevSignalVars
+      ctx.callableSignalVars = prevCallableSignalVars
       ctx.functionVars = prevFunctionVars
       ctx.componentFunctionDefs = prevComponentFunctionDefs
       ctx.memoVars = prevMemoVars
@@ -5233,6 +5335,7 @@ function lowerFunctionWithRegions(
     ctx.trackedVars = prevTracked
     ctx.externalTracked = prevExternalTracked
     ctx.signalVars = prevSignalVars
+    ctx.callableSignalVars = prevCallableSignalVars
     ctx.functionVars = prevFunctionVars
     ctx.componentFunctionDefs = prevComponentFunctionDefs
     ctx.memoVars = prevMemoVars
@@ -5352,6 +5455,7 @@ function lowerFunctionWithRegions(
   ctx.trackedVars = prevTracked
   ctx.externalTracked = prevExternalTracked
   ctx.signalVars = prevSignalVars
+  ctx.callableSignalVars = prevCallableSignalVars
   ctx.functionVars = prevFunctionVars
   ctx.componentFunctionDefs = prevComponentFunctionDefs
   ctx.memoVars = prevMemoVars

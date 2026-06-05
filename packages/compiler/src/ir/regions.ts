@@ -1140,6 +1140,7 @@ function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, f
   const prevTracked = ctx.trackedVars
   const prevShadowed = ctx.shadowedNames
   const prevSignals = ctx.signalVars
+  const prevCallableSignals = ctx.callableSignalVars
   const prevMemos = ctx.memoVars
   const prevAliases = ctx.aliasVars
   const tracked = new Set(ctx.trackedVars)
@@ -1149,6 +1150,11 @@ function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, f
     const signals = new Set(ctx.signalVars)
     bindingNames.forEach(name => signals.delete(name))
     ctx.signalVars = signals
+  }
+  if (ctx.callableSignalVars) {
+    const callableSignals = new Set(ctx.callableSignalVars)
+    bindingNames.forEach(name => callableSignals.delete(name))
+    ctx.callableSignalVars = callableSignals
   }
   if (ctx.memoVars) {
     const memos = new Set(ctx.memoVars)
@@ -1170,6 +1176,7 @@ function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, f
     ctx.trackedVars = prevTracked
     ctx.shadowedNames = prevShadowed
     ctx.signalVars = prevSignals
+    ctx.callableSignalVars = prevCallableSignals
     ctx.memoVars = prevMemos
     ctx.aliasVars = prevAliases
   }
@@ -3266,6 +3273,25 @@ function createNonReactiveVarDecl(
   return t.variableDeclaration('let', [t.variableDeclarator(t.identifier(baseName), derivedExpr)])
 }
 
+function isFunctionExpressionValue(expr: Expression | undefined): boolean {
+  return expr?.kind === 'ArrowFunction' || expr?.kind === 'FunctionExpression'
+}
+
+function isCallableSignalInitializer(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
+  return getReactiveCallKind(expr, ctx) === 'signal' && isFunctionExpressionValue(expr.arguments[0])
+}
+
+function markCallableSignalIfFunctionValue(
+  name: string,
+  value: Expression,
+  ctx: CodegenContext,
+): void {
+  if (isFunctionExpressionValue(value) || isCallableSignalInitializer(value, ctx)) {
+    ctx.callableSignalVars?.add(name)
+  }
+}
+
 function instructionToStatement(
   instr: Instruction,
   t: typeof BabelCore.types,
@@ -3338,6 +3364,9 @@ function instructionToStatement(
     const inRegionMemo = ctx.inRegionMemo ?? false
     const isFunctionValue =
       instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression'
+    if (isStateCall || isSignal) {
+      markCallableSignalIfFunctionValue(baseName, instr.value, ctx)
+    }
     const isHoistedDeclarationInitializer = hoistedDeclarationInitializers?.has(baseName) ?? false
     // Detect accessor-returning calls ($memo, createMemo, prop) - these return accessors and should be added to memoVars
     const isAccessorReturningCall =

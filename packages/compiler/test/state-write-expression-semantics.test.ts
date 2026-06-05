@@ -180,6 +180,67 @@ describe('state write expression semantics', () => {
     expect(key()).toBe('b')
   })
 
+  it('invokes function values stored in $state bindings', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useFunctionValuedStateCall() {
+        let fn = $state((value) => value + 1)
+        return fn(2)
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    expect(compiledFunction(mod, 'useFunctionValuedStateCall')()).toBe(3)
+  })
+
+  it('preserves optional calls to function values stored in $state bindings', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useOptionalFunctionValuedStateCall() {
+        let fn = $state(() => 2)
+        return fn?.()
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    expect(compiledFunction(mod, 'useOptionalFunctionValuedStateCall')()).toBe(2)
+  })
+
+  it('invokes function values assigned into existing $state bindings', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useAssignedFunctionValuedStateCall() {
+        let fn = $state(null)
+        fn = () => 3
+        return fn()
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    expect(compiledFunction(mod, 'useAssignedFunctionValuedStateCall')()).toBe(3)
+  })
+
+  it('keeps local function calls from inheriting callable $state metadata', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useCallableStateShadowing() {
+        let fn = $state(() => 1)
+        const run = () => {
+          const fn = () => 2
+          return fn()
+        }
+        return run()
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    expect(compiledFunction(mod, 'useCallableStateShadowing')()).toBe(2)
+  })
+
   it('preserves JS return values for update/assignment expressions on $state', () => {
     const source = `
       import { $state } from 'fict'
