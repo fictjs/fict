@@ -510,6 +510,96 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe('true:false')
   })
 
+  it('preserves class field side effects with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          class A {
+            field = (x = 1)
+          }
+          new A()
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('preserves static class field side effects with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          class A {
+            static field = (x = 1)
+          }
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('preserves static class block side effects with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          class A {
+            static {
+              x = 1
+            }
+          }
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('preserves class method side effects with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          class A {
+            run() {
+              x = 1
+            }
+          }
+          new A().run()
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(1)
+  })
+
   it('preserves object destructuring assignment order in reactive hooks', () => {
     const result = compileAndRunHook<number>(
       `

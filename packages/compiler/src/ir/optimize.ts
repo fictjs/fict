@@ -1880,8 +1880,59 @@ function collectWriteTargets(expr: Expression): Set<string> {
       writes.add(name)
     }
   }
+  const collectBabelBindingBases = (
+    node: t.Node | null | undefined,
+    declared: Set<string>,
+  ): void => {
+    if (!node) return
+    if (t.isIdentifier(node)) {
+      declared.add(getSSABaseName(node.name))
+      return
+    }
+    if (t.isRestElement(node)) {
+      collectBabelBindingBases(node.argument, declared)
+      return
+    }
+    if (t.isAssignmentPattern(node)) {
+      collectBabelBindingBases(node.left, declared)
+      return
+    }
+    if (t.isArrayPattern(node)) {
+      node.elements.forEach(item => collectBabelBindingBases(item, declared))
+      return
+    }
+    if (t.isObjectPattern(node)) {
+      node.properties.forEach(prop => {
+        if (t.isRestElement(prop)) {
+          collectBabelBindingBases(prop.argument, declared)
+        } else {
+          collectBabelBindingBases(prop.value, declared)
+        }
+      })
+      return
+    }
+    if (t.isTSParameterProperty(node)) {
+      collectBabelBindingBases(node.parameter, declared)
+    }
+  }
   const collectFromBabelNode = (node: t.Node | null | undefined, shadowed: Set<string>): void => {
     if (!node) return
+    if (t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)) {
+      collectFromBabelFunction(
+        t.isFunctionExpression(node) ? node.id?.name : undefined,
+        node.params,
+        node.body,
+        shadowed,
+      )
+      return
+    }
+    if (t.isClassExpression(node) || t.isClassDeclaration(node)) {
+      if (node.superClass) collectFromBabelNode(node.superClass, shadowed)
+      const classShadowed = new Set(shadowed)
+      if (node.id) classShadowed.add(getSSABaseName(node.id.name))
+      collectFromBabelClassBody(node.body.body, classShadowed)
+      return
+    }
     if (t.isAssignmentExpression(node)) {
       collectFromBabelAssignmentTarget(node.left, shadowed)
       collectFromBabelNode(node.right, shadowed)
@@ -1942,7 +1993,7 @@ function collectWriteTargets(expr: Expression): Set<string> {
         if (t.isObjectProperty(prop)) {
           collectFromBabelNode(prop.value, shadowed)
         } else if (t.isObjectMethod(prop)) {
-          collectFromRawParams(prop.params, shadowed)
+          collectFromBabelFunction(undefined, prop.params, prop.body, shadowed)
         }
       })
       return
@@ -1958,6 +2009,155 @@ function collectWriteTargets(expr: Expression): Set<string> {
     }
     if (t.isYieldExpression(node)) {
       collectFromBabelNode(node.argument, shadowed)
+    }
+  }
+  const collectFromBabelFunction = (
+    name: string | undefined,
+    params: t.Node[] | undefined,
+    body: t.Node | null | undefined,
+    shadowed: Set<string>,
+  ): void => {
+    const functionShadowed = new Set(shadowed)
+    if (name) functionShadowed.add(getSSABaseName(name))
+    params?.forEach(param => collectBabelBindingBases(param, functionShadowed))
+    collectFromRawParams(params, functionShadowed)
+    if (!body) return
+    if (t.isBlockStatement(body)) {
+      collectFromBabelStatements(body.body, functionShadowed)
+      return
+    }
+    collectFromBabelNode(body, functionShadowed)
+  }
+  const collectFromBabelClassBody = (members: t.ClassBody['body'], shadowed: Set<string>): void => {
+    members.forEach(member => {
+      const keyedMember = member as t.Node & { computed?: boolean; key?: t.Node | null }
+      if (keyedMember.computed) collectFromBabelNode(keyedMember.key, shadowed)
+      if (
+        t.isClassProperty(member) ||
+        t.isClassPrivateProperty(member) ||
+        t.isClassAccessorProperty(member)
+      ) {
+        collectFromBabelNode(member.value, shadowed)
+        return
+      }
+      if (t.isStaticBlock(member)) {
+        collectFromBabelStatements(member.body, shadowed)
+        return
+      }
+      if (t.isClassMethod(member) || t.isClassPrivateMethod(member)) {
+        collectFromBabelFunction(undefined, member.params, member.body, shadowed)
+      }
+    })
+  }
+  const collectDeclaredBasesInBabelStatements = (statements: t.Statement[]): Set<string> => {
+    const declared = new Set<string>()
+    statements.forEach(statement => {
+      if (t.isVariableDeclaration(statement)) {
+        statement.declarations.forEach(decl => collectBabelBindingBases(decl.id, declared))
+        return
+      }
+      if (t.isFunctionDeclaration(statement) || t.isClassDeclaration(statement)) {
+        if (statement.id) declared.add(getSSABaseName(statement.id.name))
+      }
+    })
+    return declared
+  }
+  const collectFromBabelStatements = (statements: t.Statement[], shadowed: Set<string>): void => {
+    const blockShadowed = new Set(shadowed)
+    collectDeclaredBasesInBabelStatements(statements).forEach(name => blockShadowed.add(name))
+    statements.forEach(statement => collectFromBabelStatement(statement, blockShadowed))
+  }
+  const collectFromBabelVariableDeclaration = (
+    declaration: t.VariableDeclaration,
+    shadowed: Set<string>,
+  ): void => {
+    declaration.declarations.forEach(decl => {
+      collectFromBabelNode(decl.init, shadowed)
+    })
+  }
+  const collectFromBabelStatement = (statement: t.Statement, shadowed: Set<string>): void => {
+    if (t.isExpressionStatement(statement)) {
+      collectFromBabelNode(statement.expression, shadowed)
+      return
+    }
+    if (t.isVariableDeclaration(statement)) {
+      collectFromBabelVariableDeclaration(statement, shadowed)
+      return
+    }
+    if (t.isFunctionDeclaration(statement)) {
+      collectFromBabelFunction(statement.id?.name, statement.params, statement.body, shadowed)
+      return
+    }
+    if (t.isClassDeclaration(statement)) {
+      collectFromBabelNode(statement, shadowed)
+      return
+    }
+    if (t.isBlockStatement(statement)) {
+      collectFromBabelStatements(statement.body, shadowed)
+      return
+    }
+    if (t.isReturnStatement(statement) || t.isThrowStatement(statement)) {
+      collectFromBabelNode(statement.argument, shadowed)
+      return
+    }
+    if (t.isIfStatement(statement)) {
+      collectFromBabelNode(statement.test, shadowed)
+      collectFromBabelStatement(statement.consequent, shadowed)
+      if (statement.alternate) collectFromBabelStatement(statement.alternate, shadowed)
+      return
+    }
+    if (t.isForStatement(statement)) {
+      const loopShadowed = new Set(shadowed)
+      if (t.isVariableDeclaration(statement.init)) {
+        statement.init.declarations.forEach(decl => collectBabelBindingBases(decl.id, loopShadowed))
+        collectFromBabelVariableDeclaration(statement.init, loopShadowed)
+      } else {
+        collectFromBabelNode(statement.init, loopShadowed)
+      }
+      collectFromBabelNode(statement.test, loopShadowed)
+      collectFromBabelNode(statement.update, loopShadowed)
+      collectFromBabelStatement(statement.body, loopShadowed)
+      return
+    }
+    if (t.isForInStatement(statement) || t.isForOfStatement(statement)) {
+      const loopShadowed = new Set(shadowed)
+      if (t.isVariableDeclaration(statement.left)) {
+        statement.left.declarations.forEach(decl => collectBabelBindingBases(decl.id, loopShadowed))
+        collectFromBabelVariableDeclaration(statement.left, loopShadowed)
+      } else {
+        collectFromBabelAssignmentTarget(statement.left, loopShadowed)
+      }
+      collectFromBabelNode(statement.right, loopShadowed)
+      collectFromBabelStatement(statement.body, loopShadowed)
+      return
+    }
+    if (t.isWhileStatement(statement)) {
+      collectFromBabelNode(statement.test, shadowed)
+      collectFromBabelStatement(statement.body, shadowed)
+      return
+    }
+    if (t.isDoWhileStatement(statement)) {
+      collectFromBabelStatement(statement.body, shadowed)
+      collectFromBabelNode(statement.test, shadowed)
+      return
+    }
+    if (t.isSwitchStatement(statement)) {
+      collectFromBabelNode(statement.discriminant, shadowed)
+      statement.cases.forEach(item => collectFromBabelStatements(item.consequent, shadowed))
+      return
+    }
+    if (t.isTryStatement(statement)) {
+      collectFromBabelStatement(statement.block, shadowed)
+      if (statement.handler) {
+        const catchShadowed = new Set(shadowed)
+        collectBabelBindingBases(statement.handler.param, catchShadowed)
+        collectFromBabelStatement(statement.handler.body, catchShadowed)
+      }
+      if (statement.finalizer) collectFromBabelStatement(statement.finalizer, shadowed)
+      return
+    }
+    if (t.isLabeledStatement(statement) || t.isWithStatement(statement)) {
+      collectFromBabelStatement(statement.body, shadowed)
     }
   }
   const collectFromBabelAssignmentTarget = (
@@ -2156,6 +2356,13 @@ function collectWriteTargets(expr: Expression): Set<string> {
         node.params.forEach(param => paramShadowed.add(getSSABaseName(param.name)))
         collectFromRawParams(node.rawParams, paramShadowed)
         visitBlocks(node.body, paramShadowed)
+        return
+      }
+      case 'ClassExpression': {
+        if (node.superClass) visit(node.superClass as Expression, shadowed)
+        const classShadowed = new Set(shadowed)
+        if (node.name) classShadowed.add(getSSABaseName(node.name))
+        collectFromBabelClassBody(node.body, classShadowed)
         return
       }
       default:
