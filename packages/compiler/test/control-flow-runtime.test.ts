@@ -232,6 +232,88 @@ describe('control flow runtime regressions', () => {
     expect(result.view()).toBe('A-0')
   })
 
+  it('preserves trailing statements after a matching no-default switch break', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          switch (1) {
+            case 1:
+              break
+          }
+          return 2
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves trailing statements after a no-default switch miss', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          switch (2) {
+            case 1:
+              return 1
+          }
+          return 2
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves trailing statements after an explicit default switch break', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          switch (2) {
+            case 1:
+              break
+            default:
+              break
+          }
+          return 2
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves direct switch case returns', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          switch (1) {
+            case 1:
+              return 1
+          }
+          return 2
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(1)
+  })
+
   it('preserves labeled while-continue targets', () => {
     const result = compileAndRunHook<number | (() => number)>(
       `

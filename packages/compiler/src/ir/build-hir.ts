@@ -1498,7 +1498,7 @@ function convertFunction(
         blocks.push(caseBlock.block)
       }
 
-      const cases: { test?: Expression; target: number }[] = []
+      const cases: { test?: Expression; target: number; syntheticDefault?: boolean }[] = []
       let defaultTarget: number | undefined
 
       for (let index = 0; index < stmt.cases.length; index++) {
@@ -1542,7 +1542,7 @@ function convertFunction(
 
       // Add default case
       if (defaultTarget === undefined) {
-        cases.push({ target: exitBlock.block.id })
+        cases.push({ target: exitBlock.block.id, syntheticDefault: true })
       } else {
         cases.push({ target: defaultTarget })
       }
@@ -2571,7 +2571,7 @@ function processStatement(
       ctx.blocks.push(caseBlock.block)
     }
 
-    const cases: { test?: Expression; target: number }[] = []
+    const cases: { test?: Expression; target: number; syntheticDefault?: boolean }[] = []
     let defaultTarget: number | undefined
 
     for (let index = 0; index < stmt.cases.length; index++) {
@@ -2616,7 +2616,7 @@ function processStatement(
 
     // Add default case if not present
     if (defaultTarget === undefined) {
-      cases.push({ target: exitBlock.block.id })
+      cases.push({ target: exitBlock.block.id, syntheticDefault: true })
     } else {
       cases.push({ target: defaultTarget })
     }

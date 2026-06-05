@@ -1236,13 +1236,22 @@ function structurizeSwitch(
   term: {
     kind: 'Switch'
     discriminant: Expression
-    cases: { test?: Expression | undefined; target: BlockId }[]
+    cases: { test?: Expression | undefined; target: BlockId; syntheticDefault?: boolean }[]
   },
   outerJoin?: BlockId,
 ): StructuredNode {
-  const uniqueTargets = Array.from(new Set(term.cases.map(c => c.target)))
-  let joinBlock = findSwitchJoinBlock(ctx, uniqueTargets)
-  if (outerJoin !== undefined && (joinBlock === undefined || joinBlock === outerJoin)) {
+  const syntheticDefaultTarget = term.cases.find(c => c.syntheticDefault)?.target
+  const sourceCases = term.cases.filter(c => !c.syntheticDefault)
+  const uniqueTargets = Array.from(new Set(sourceCases.map(c => c.target)))
+  let joinBlock =
+    syntheticDefaultTarget !== undefined
+      ? syntheticDefaultTarget
+      : findSwitchJoinBlock(ctx, uniqueTargets)
+  if (
+    syntheticDefaultTarget === undefined &&
+    outerJoin !== undefined &&
+    (joinBlock === undefined || joinBlock === outerJoin)
+  ) {
     const localExit = findSwitchLocalExitBlock(ctx, uniqueTargets, outerJoin)
     if (localExit !== undefined) {
       joinBlock = localExit
@@ -1252,7 +1261,7 @@ function structurizeSwitch(
   const emittedBeforeSwitch = new Set(ctx.emitted)
   const emittedBySwitchCases = new Set<BlockId>()
 
-  for (const c of term.cases) {
+  for (const c of sourceCases) {
     const caseCtx: StructurizeContext = {
       ...ctx,
       emitted: new Set(emittedBeforeSwitch),

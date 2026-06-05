@@ -171,7 +171,7 @@ export type Terminator =
   | ({
       kind: 'Switch'
       discriminant: Expression
-      cases: { test?: Expression | undefined; target: BlockId }[]
+      cases: { test?: Expression | undefined; target: BlockId; syntheticDefault?: boolean }[]
     } & SourceInfo)
   | ({ kind: 'Unreachable' } & SourceInfo)
   | ({ kind: 'Break'; target: BlockId; label?: string | undefined } & SourceInfo)
