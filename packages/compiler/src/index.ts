@@ -625,6 +625,17 @@ function runWarningPass(
     'sort',
     'toSorted',
   ])
+  const MUTATING_ARRAY_METHODS = new Set([
+    'copyWithin',
+    'fill',
+    'pop',
+    'push',
+    'reverse',
+    'shift',
+    'sort',
+    'splice',
+    'unshift',
+  ])
   const NON_ESCAPING_CALLBACK_FUNCTION_IMPORTS = new Set([
     'untrack',
     'batch',
@@ -1214,6 +1225,28 @@ function runWarningPass(
 
       const isSafe = calleeName && SAFE_FUNCTIONS.has(calleeName)
       if (isSafe) return
+
+      const memberCallee =
+        t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee) ? callee : null
+      if (memberCallee) {
+        const methodName = getStaticPropertyName(memberCallee.property, memberCallee.computed)
+        if (methodName && MUTATING_ARRAY_METHODS.has(methodName)) {
+          const stateRoot = isStateRoot(memberCallee.object as BabelCore.types.Expression, path)
+          const reactiveRoot = isReactiveRoot(
+            memberCallee.object as BabelCore.types.Expression,
+            path,
+          )
+          if (stateRoot || reactiveRoot) {
+            emitWarning(
+              path,
+              'FICT-M',
+              'Direct mutation of nested property detected; use immutable update or $store helpers',
+              warn,
+              fileName,
+            )
+          }
+        }
+      }
 
       const argPaths = path.get('arguments') as BabelCore.NodePath[]
       const nonEscapingCallbackHost = isNonEscapingCallbackHost(path, callee)

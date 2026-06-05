@@ -114,6 +114,40 @@ describe('state write expression semantics', () => {
     expect(user()).toEqual({ count: 2 })
   })
 
+  it('preserves non-strict length assignment semantics on $state arrays', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useStateArrayLengthAssignment() {
+        let items = $state([1, 2, 3])
+        items.length = 1
+        return items
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toContain('items().length = 1')
+    const mod = runCompiled(output)
+    const items = compiledFunction(mod, 'useStateArrayLengthAssignment')() as () => number[]
+    expect(items()).toEqual([1])
+  })
+
+  it('preserves non-strict index assignment semantics on $state arrays', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useStateArrayIndexAssignment() {
+        let items = $state([1, 2, 3])
+        items[1] = 9
+        return items
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toContain('items()[1] = 9')
+    const mod = runCompiled(output)
+    const items = compiledFunction(mod, 'useStateArrayIndexAssignment')() as () => number[]
+    expect(items()).toEqual([1, 9, 3])
+  })
+
   it('preserves JS return values for update/assignment expressions on $state', () => {
     const source = `
       import { $state } from 'fict'

@@ -864,6 +864,46 @@ describe('semantic validation', () => {
     expect(() => transform(source)).not.toThrow()
   })
 
+  it('warns on mutating array methods through state', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const items = $state([1, 2])
+        items.push(3)
+        return <div>{items.length}</div>
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-M')).toBe(true)
+  })
+
+  it('throws under strictGuarantee for mutating array methods through state', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const items = $state([1, 2])
+        items.push(3)
+        return <div>{items.length}</div>
+      }
+    `
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-M/)
+  })
+
+  it('does not warn for non-mutating array methods through state', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const items = $state([1, 2])
+        const doubled = items.map(item => item * 2)
+        return <div>{doubled.length}</div>
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.filter(w => w.code === 'FICT-M')).toHaveLength(0)
+  })
+
   it('throws when writing to a destructured alias from a state alias', () => {
     const source = `
       import { $state } from 'fict'
