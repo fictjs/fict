@@ -13,6 +13,7 @@ import {
 } from '../src/ir/codegen'
 import { analyzeReactiveScopes } from '../src/ir/scopes'
 import { firstFunction } from './hir-test-utils'
+import { transform } from './test-utils'
 
 const parseFile = (code: string) =>
   parseSync(code, {
@@ -112,6 +113,42 @@ describe('lowerHIRWithRegions', () => {
     expect(code).toContain('function* declared()')
     expect(code).toContain('function* ()')
     expect(code).toContain('*gen()')
+  })
+
+  it('does not treat Object.prototype names as region overrides', () => {
+    const inheritedNames = [
+      'valueOf',
+      'hasOwnProperty',
+      'propertyIsEnumerable',
+      'toLocaleString',
+      'toString',
+      'constructor',
+    ]
+
+    for (const name of inheritedNames) {
+      expect(() =>
+        transform(`
+          import { $state } from 'fict'
+
+          export function useIdentifier() {
+            const s = $state(0)
+            const ${name} = 1
+            return ${name} + s
+          }
+        `),
+      ).not.toThrow()
+
+      expect(() =>
+        transform(`
+          import { $state } from 'fict'
+
+          export function useMethod() {
+            const s = $state(0)
+            return ({ ${name}() { return 1 } }).${name}() + s
+          }
+        `),
+      ).not.toThrow()
+    }
   })
 })
 

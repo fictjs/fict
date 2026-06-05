@@ -5,6 +5,8 @@ import { normalizeDependencyKey as normalizeDependencyKeyImpl } from './dependen
 export type RegionOverrideMap = Record<string, () => BabelCore.types.Expression>
 
 const SKIP_REGION_OVERRIDE_EXTRA_KEY = '__fictSkipRegionOverride'
+const hasOwn = (obj: object, key: PropertyKey): boolean =>
+  Object.prototype.hasOwnProperty.call(obj, key)
 
 export function markSkipRegionOverride<T extends BabelCore.types.Node>(node: T): T {
   const extra = (node.extra ?? {}) as Record<string, unknown>
@@ -240,7 +242,7 @@ export function replaceIdentifiersWithOverrides(
 
   const scopeOverrides = (names: Set<string>): RegionOverrideMap => {
     if (names.size === 0) return overrides
-    const scopedOverrides: RegionOverrideMap = {}
+    const scopedOverrides = Object.create(null) as RegionOverrideMap
     for (const key of Object.keys(overrides)) {
       const base = normalizeDependencyKey(key).split('.')[0] ?? key
       if (!names.has(base)) {
@@ -258,7 +260,12 @@ export function replaceIdentifiersWithOverrides(
       !t.isNumericLiteral(propertyNode)
     const path = getDependencyPathFromNode(node, t)
     const normalized = path ? normalizeDependencyKey(path) : null
-    const override = (normalized && overrides[normalized]) || (path ? overrides[path] : undefined)
+    const override =
+      normalized && hasOwn(overrides, normalized)
+        ? overrides[normalized]
+        : path && hasOwn(overrides, path)
+          ? overrides[path]
+          : undefined
     if (override && !isCallTarget && !isDynamicComputed) {
       const replacement = override()
       Object.assign(node, replacement)
@@ -268,7 +275,11 @@ export function replaceIdentifiersWithOverrides(
 
   if (!skipCurrentNode && t.isIdentifier(node)) {
     const key = normalizeDependencyKey(node.name)
-    const override = overrides[key] ?? overrides[node.name]
+    const override = hasOwn(overrides, key)
+      ? overrides[key]
+      : hasOwn(overrides, node.name)
+        ? overrides[node.name]
+        : undefined
     if (override && !isCallTarget) {
       const replacement = override()
       Object.assign(node, replacement)
@@ -361,7 +372,7 @@ export function replaceIdentifiersWithOverrides(
 
   for (const key of Object.keys(node)) {
     if (key === 'type' || key === 'loc' || key === 'start' || key === 'end') continue
-    if (t.isObjectProperty(node) && key === 'key' && !node.computed) {
+    if ((t.isObjectProperty(node) || t.isObjectMethod(node)) && key === 'key' && !node.computed) {
       continue
     }
     if (
