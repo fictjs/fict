@@ -5310,6 +5310,8 @@ function transformControlFlowReturns(
 
   const containsReturnStatement = (nodes: BabelCore.types.Node[]) =>
     hasNodeMatch(nodes, node => t.isReturnStatement(node))
+  const containsNonNestedReturnStatement = (nodes: BabelCore.types.Node[]) =>
+    hasNodeMatch(nodes, node => t.isReturnStatement(node), { skipNestedFunctions: true })
 
   const getMemberRootIdentifier = (
     expr: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
@@ -5400,6 +5402,38 @@ function transformControlFlowReturns(
       },
       { skipNestedFunctions: true },
     )
+
+  const findUnsafeReactiveLoopReturn = (
+    nodes: BabelCore.types.Node[],
+  ): BabelCore.types.Statement | null => {
+    let found: BabelCore.types.Statement | null = null
+    hasNodeMatch(
+      nodes,
+      node => {
+        if (
+          !(
+            t.isForStatement(node) ||
+            t.isWhileStatement(node) ||
+            t.isDoWhileStatement(node) ||
+            t.isForOfStatement(node) ||
+            t.isForInStatement(node)
+          )
+        ) {
+          return false
+        }
+        if (!containsNonNestedReturnStatement([node.body])) {
+          return false
+        }
+        if (!containsReactiveAccessorRead([node], { skipNestedFunctions: true })) {
+          return false
+        }
+        found = node
+        return true
+      },
+      { skipNestedFunctions: true },
+    )
+    return found
+  }
 
   const hasRiskyBranchControlFlow = (stmts: BabelCore.types.Statement[]): boolean => {
     if (stmts.length === 0) return false
@@ -5858,6 +5892,20 @@ function transformControlFlowReturns(
       nextFinalizer ? (t.cloneNode(nextFinalizer, true) as BabelCore.types.BlockStatement) : null,
     )
   })
+
+  const unsafeLoopReturn = findUnsafeReactiveLoopReturn(rewrittenStatements)
+  if (unsafeLoopReturn) {
+    const loc = unsafeLoopReturn.loc?.start
+    throw new HIRError(
+      `Unsafe reactive loop return: return branches inside reactive loops cannot be lowered ` +
+        `to reactive conditionals yet and would render stale output.`,
+      'BUILD_ERROR',
+      {
+        file: ctx.options?.filename,
+        line: loc?.line,
+      },
+    )
+  }
 
   for (let i = 0; i < rewrittenStatements.length; i++) {
     const stmt = rewrittenStatements[i]

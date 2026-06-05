@@ -696,6 +696,25 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toContain('do')
       expect(output).not.toContain('__fictUseEffect')
     })
+
+    it('rejects reactive loop-contained return branches that would be one-shot', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let n = $state(0)
+
+          for (let i = 0; i < n; i++) {
+            if (i === 1) {
+              return <span>hit</span>
+            }
+          }
+
+          return <div>none</div>
+        }
+      `
+
+      expect(() => runTransform(input)).toThrow(/Unsafe reactive loop return/)
+    })
   })
 
   describe('Nested control flow', () => {
