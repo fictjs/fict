@@ -1,8 +1,11 @@
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { transform } from './test-utils'
 
 describe('$store memoization and dynamic access', () => {
+  const baseDir = path.join(process.cwd(), '__fict_store_memo__')
+
   it('memoizes derived store computations automatically', () => {
     const output = transform(`
       import { $store } from 'fict/plus'
@@ -68,6 +71,64 @@ describe('$store memoization and dynamic access', () => {
 
     expect(output).toContain(`const doubled = __fictUseMemo(__fictCtx, () => store.count * 2`)
     expect(output).toContain(`insertBetween(__el_`)
+  })
+
+  it('memoizes namespace imported store members in derived computations', () => {
+    const storeSource = `
+      import { $store } from 'fict/plus'
+      export const shared = $store({ count: 1 })
+    `
+    const appSource = `
+      import * as mod from './store-ns-store'
+
+      export function Component() {
+        const doubled = mod.shared.count * 2
+        return <span>{doubled}</span>
+      }
+    `
+    const moduleMetadata = new Map()
+    transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-store.ts'))
+    const output = transform(
+      appSource,
+      { fineGrainedDom: true, moduleMetadata },
+      path.join(baseDir, 'app-ns-store.tsx'),
+    )
+
+    expect(output).toContain(`const doubled = __fictUseMemo(__fictCtx, () => mod.shared.count * 2`)
+  })
+
+  it('wraps namespace imported store members passed as component props', () => {
+    const storeSource = `
+      import { $store } from 'fict/plus'
+      export const shared = $store({ count: 1 })
+    `
+    const appSource = `
+      import * as mod from './store-ns-props'
+
+      function Child(props) {
+        return <span>{props.value}</span>
+      }
+
+      export function Component() {
+        const key = 'count'
+        return (
+          <>
+            <Child value={mod.shared.count} />
+            <Child value={mod.shared[key]} />
+          </>
+        )
+      }
+    `
+    const moduleMetadata = new Map()
+    transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-props.ts'))
+    const output = transform(
+      appSource,
+      { fineGrainedDom: true, moduleMetadata },
+      path.join(baseDir, 'app-ns-props.tsx'),
+    )
+
+    expect(output).toContain(`__fictProp(() => mod.shared.count)`)
+    expect(output).toContain(`prop(() => mod.shared[key])`)
   })
 
   it('memoizes nested store property access in derived computation', () => {

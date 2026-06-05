@@ -768,6 +768,26 @@ function containsJSXExpr(expr: Expression | null | undefined): boolean {
 }
 
 export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): boolean {
+  const getStaticPropertyName = (property: Expression, computed: boolean): string | null => {
+    if (!computed && property.kind === 'Identifier') return property.name
+    if (property.kind === 'Literal') {
+      if (typeof property.value === 'string' || typeof property.value === 'number') {
+        return String(property.value)
+      }
+    }
+    return null
+  }
+  const isNamespaceStoreMember = (candidate: Expression): boolean => {
+    if (candidate.kind !== 'MemberExpression' && candidate.kind !== 'OptionalMemberExpression') {
+      return false
+    }
+    if (candidate.object.kind !== 'Identifier') return false
+    const nsMeta = ctx.importedNamespaces?.get(deSSAVarName(candidate.object.name))
+    if (!nsMeta) return false
+    const propName = getStaticPropertyName(candidate.property as Expression, candidate.computed)
+    return !!propName && nsMeta.exports[propName] === 'store'
+  }
+
   switch (expr.kind) {
     case 'Identifier':
       return (
@@ -778,6 +798,7 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
       )
     case 'MemberExpression':
     case 'OptionalMemberExpression':
+      if (isNamespaceStoreMember(expr)) return true
       if (expressionUsesTracked(expr.object as Expression, ctx)) return true
       if (expr.computed && expr.property.kind !== 'Literal') {
         return expressionUsesTracked(expr.property as Expression, ctx)

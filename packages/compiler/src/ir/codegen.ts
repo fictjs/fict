@@ -5159,6 +5159,30 @@ function transformControlFlowReturns(
     }
     return t.isIdentifier(current) ? current : null
   }
+  const getStaticBabelPropertyName = (
+    property: BabelCore.types.Expression | BabelCore.types.PrivateName,
+    computed: boolean | null | undefined,
+  ): string | null => {
+    if (!computed && t.isIdentifier(property)) return property.name
+    if (t.isStringLiteral(property) || t.isNumericLiteral(property)) return String(property.value)
+    return null
+  }
+  const isNamespaceStoreMemberExpression = (
+    expr: BabelCore.types.Expression | null | undefined,
+  ): boolean => {
+    if (!expr) return false
+    if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr)) {
+      if (t.isIdentifier(expr.object)) {
+        const nsMeta = ctx.importedNamespaces?.get(expr.object.name)
+        const propName = getStaticBabelPropertyName(expr.property, expr.computed)
+        if (nsMeta && propName && nsMeta.exports[propName] === 'store') {
+          return true
+        }
+      }
+      return isNamespaceStoreMemberExpression(expr.object as BabelCore.types.Expression)
+    }
+    return false
+  }
 
   const containsReactiveAccessorRead = (
     nodes: BabelCore.types.Node[],
@@ -5173,7 +5197,10 @@ function transformControlFlowReturns(
         }
         if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
           const root = getMemberRootIdentifier(node)
-          return !!(root && reactiveAccessorNames.has(root.name))
+          return (
+            !!(root && reactiveAccessorNames.has(root.name)) ||
+            isNamespaceStoreMemberExpression(node)
+          )
         }
         return false
       },
@@ -5226,6 +5253,7 @@ function transformControlFlowReturns(
       return !!ctx.storeVars?.has(expr.name)
     }
     if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr)) {
+      if (isNamespaceStoreMemberExpression(expr)) return true
       const root = getMemberRootIdentifier(expr)
       return !!(root && ctx.storeVars?.has(root.name))
     }

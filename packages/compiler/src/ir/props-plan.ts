@@ -178,12 +178,40 @@ export function buildPropsPlan(
       return false
     }
 
-    const getBaseIdentifier = (expr: Expression): string | null => {
-      if (expr.kind === 'Identifier') return expr.name
-      if (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') {
-        return getBaseIdentifier(expr.object as Expression)
+    const getStaticPropertyName = (property: Expression, computed: boolean): string | null => {
+      if (!computed && property.kind === 'Identifier') return property.name
+      if (property.kind === 'Literal') {
+        if (typeof property.value === 'string' || typeof property.value === 'number') {
+          return String(property.value)
+        }
       }
       return null
+    }
+    const isNamespaceStoreMember = (expr: Expression): boolean => {
+      if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') {
+        return false
+      }
+      if (expr.object.kind === 'Identifier') {
+        const nsMeta = ctx.importedNamespaces?.get(helpers.deSSAVarName(expr.object.name))
+        const propName = getStaticPropertyName(expr.property as Expression, expr.computed)
+        if (nsMeta && propName && nsMeta.exports[propName] === 'store') {
+          return true
+        }
+      }
+      return isNamespaceStoreExpression(expr.object as Expression)
+    }
+    const isNamespaceStoreExpression = (expr: Expression): boolean =>
+      expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression'
+        ? isNamespaceStoreMember(expr)
+        : false
+    const isStoreExpression = (expr: Expression): boolean => {
+      if (expr.kind === 'Identifier') {
+        return ctx.storeVars?.has(helpers.deSSAVarName(expr.name)) ?? false
+      }
+      if (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') {
+        return isNamespaceStoreMember(expr)
+      }
+      return false
     }
 
     const isDynamicStoreMember = (expr: Expression): boolean => {
@@ -195,9 +223,7 @@ export function buildPropsPlan(
       ) {
         return false
       }
-      const base = getBaseIdentifier(expr.object as Expression)
-      if (!base) return false
-      return ctx.storeVars?.has(helpers.deSSAVarName(base)) ?? false
+      return isStoreExpression(expr.object as Expression)
     }
 
     const getKeyedCandidate = (expr: Expression): { base: Expression; key: Expression } | null => {
