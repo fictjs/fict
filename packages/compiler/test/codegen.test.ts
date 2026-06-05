@@ -2196,6 +2196,24 @@ describe('array/map rendering', () => {
     expect(code).toMatch(/props/)
   })
 
+  it('preserves non-trusted map receivers instead of list-specializing them', () => {
+    const ast = parseFile(`
+      function List(props) {
+        return (
+          <ul>
+            {props.items.map(item => <li key={item.id}>{item.name}</li>)}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain('createKeyedList')
+    expect(code).toContain('props.items.map')
+  })
+
   it('should handle map with index', () => {
     const ast = parseFile(`
       function IndexedList(props) {

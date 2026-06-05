@@ -588,6 +588,8 @@ export interface CodegenContext {
   importedNamespaces?: Map<string, ModuleReactiveMetadata> | undefined
   /** Variables initialized with $state (signal accessors) */
   signalVars?: Set<string> | undefined
+  /** Variables initialized directly from array literals and still trusted as arrays. */
+  knownArrayVars?: Set<string> | undefined
   /** Signal bindings whose current value is known to be callable. */
   callableSignalVars?: Set<string> | undefined
   /** Variables assigned to function expressions (should not be treated as reactive accessors) */
@@ -732,6 +734,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     namespaceStoreAliasVars: new Set(),
     importedNamespaces: new Map(),
     signalVars: new Set(),
+    knownArrayVars: new Set(),
     callableSignalVars: new Set(),
     functionVars: new Set(),
     memoVars: new Set(),
@@ -1299,6 +1302,19 @@ function markCallableSignalIfFunctionValue(
   }
 }
 
+function markKnownArrayInitializer(
+  name: string,
+  value: Expression,
+  ctx: CodegenContext,
+  isDeclaration: boolean,
+): void {
+  if (isDeclaration && value.kind === 'ArrayExpression') {
+    ctx.knownArrayVars?.add(name)
+    return
+  }
+  ctx.knownArrayVars?.delete(name)
+}
+
 function lowerLoopAssignmentTarget(
   target: Expression,
   ctx: CodegenContext,
@@ -1345,6 +1361,7 @@ function lowerInstruction(
     }
 
     const declKind = instr.declarationKind === 'function' ? undefined : instr.declarationKind
+    markKnownArrayInitializer(baseName, instr.value, ctx, !!declKind)
     propagateHookResultAlias(baseName, instr.value, ctx)
     const hookMember = resolveHookMemberValue(instr.value, ctx)
     if (hookMember) {
@@ -5044,6 +5061,9 @@ function lowerFunctionWithScopes(
   ctx: CodegenContext,
 ): BabelCore.types.FunctionDeclaration | null {
   const { t } = ctx
+  const prevKnownArrayVars = ctx.knownArrayVars
+  ctx.knownArrayVars = new Set(prevKnownArrayVars ?? [])
+  fn.params.forEach(p => ctx.knownArrayVars?.delete(deSSAVarName(p.name)))
   const params = buildOutputParams(fn, ctx)
   const statements: BabelCore.types.Statement[] = []
 
@@ -5066,6 +5086,7 @@ function lowerFunctionWithScopes(
   )
   result.async = !!fn.meta?.isAsync || functionHasAsyncAwait(fn)
   result.generator = !!fn.meta?.isGenerator || functionHasYield(fn)
+  ctx.knownArrayVars = prevKnownArrayVars
   return result
 }
 
@@ -5107,6 +5128,7 @@ function lowerInstructionWithScopes(
       }
     }
     const declKind = instr.declarationKind === 'function' ? undefined : instr.declarationKind
+    markKnownArrayInitializer(targetBase, instr.value, ctx, !!declKind)
     let valueExpr: BabelCore.types.Expression
     if (declKind && getReactiveCallKind(instr.value, ctx) === 'signal') {
       ctx.signalVars?.add(targetBase)
@@ -6625,6 +6647,7 @@ function lowerFunctionWithRegions(
   const { t } = ctx
   const prevTracked = ctx.trackedVars
   const prevSignalVars = ctx.signalVars
+  const prevKnownArrayVars = ctx.knownArrayVars
   const prevCallableSignalVars = ctx.callableSignalVars
   const prevFunctionVars = ctx.functionVars
   const prevMemoVars = ctx.memoVars
@@ -6641,6 +6664,8 @@ function lowerFunctionWithRegions(
   const shadowedParams = new Set(fn.params.map(p => deSSAVarName(p.name)))
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
   ctx.trackedVars = scopedTracked
+  ctx.knownArrayVars = new Set(prevKnownArrayVars ?? [])
+  fn.params.forEach(p => ctx.knownArrayVars?.delete(deSSAVarName(p.name)))
   const prevNeedsCtx = ctx.needsCtx
   ctx.needsCtx = false
   ctx.inModule = false
@@ -6699,6 +6724,7 @@ function lowerFunctionWithRegions(
     for (const instr of block.instructions) {
       if (instr.kind === 'Assign') {
         const target = deSSAVarName(instr.target.name)
+        markKnownArrayInitializer(target, instr.value, ctx, !!instr.declarationKind)
         propagateHookResultAlias(target, instr.value, ctx)
         if (ctx.hookResultVarMap?.has(target)) {
           hookResultVars.add(target)
@@ -7146,6 +7172,7 @@ function lowerFunctionWithRegions(
       ctx.trackedVars = prevTracked
       ctx.externalTracked = prevExternalTracked
       ctx.signalVars = prevSignalVars
+      ctx.knownArrayVars = prevKnownArrayVars
       ctx.callableSignalVars = prevCallableSignalVars
       ctx.functionVars = prevFunctionVars
       ctx.componentFunctionDefs = prevComponentFunctionDefs
@@ -7291,6 +7318,7 @@ function lowerFunctionWithRegions(
   ctx.trackedVars = prevTracked
   ctx.externalTracked = prevExternalTracked
   ctx.signalVars = prevSignalVars
+  ctx.knownArrayVars = prevKnownArrayVars
   ctx.callableSignalVars = prevCallableSignalVars
   ctx.functionVars = prevFunctionVars
   ctx.componentFunctionDefs = prevComponentFunctionDefs

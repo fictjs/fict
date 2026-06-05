@@ -289,6 +289,58 @@ function isDefinitelyNonCallableMapCallback(expr: Expression): boolean {
   }
 }
 
+const ARRAY_RETURNING_METHODS = new Set(['filter', 'map', 'slice', 'toReversed', 'toSorted'])
+
+function getStaticMemberName(expr: Expression): string | null {
+  if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') return null
+  if (!expr.computed && expr.property.kind === 'Identifier') return expr.property.name
+  if (expr.property.kind === 'Literal') return String(expr.property.value)
+  return null
+}
+
+function getRootIdentifierName(expr: Expression): string | null {
+  let current = expr
+  while (current.kind === 'MemberExpression' || current.kind === 'OptionalMemberExpression') {
+    current = current.object
+  }
+  return current.kind === 'Identifier' ? deSSAVarName(current.name) : null
+}
+
+function isTrustedArrayMapReceiver(expr: Expression, ctx: CodegenContext): boolean {
+  switch (expr.kind) {
+    case 'ArrayExpression':
+      return true
+    case 'Identifier':
+      return !!(
+        ctx.signalVars?.has(deSSAVarName(expr.name)) ||
+        ctx.knownArrayVars?.has(deSSAVarName(expr.name))
+      )
+    case 'MemberExpression':
+    case 'OptionalMemberExpression': {
+      const rootName = getRootIdentifierName(expr)
+      return !!(rootName && ctx.storeVars?.has(rootName))
+    }
+    case 'CallExpression':
+    case 'OptionalCallExpression': {
+      if (expr.kind === 'OptionalCallExpression' && expr.optional) return false
+      if (
+        expr.callee.kind !== 'MemberExpression' &&
+        expr.callee.kind !== 'OptionalMemberExpression'
+      ) {
+        return false
+      }
+      const methodName = getStaticMemberName(expr.callee)
+      return !!(
+        methodName &&
+        ARRAY_RETURNING_METHODS.has(methodName) &&
+        isTrustedArrayMapReceiver(expr.callee.object, ctx)
+      )
+    }
+    default:
+      return false
+  }
+}
+
 function blocksUseArguments(blocks: BasicBlock[]): boolean {
   for (const block of blocks) {
     for (const instr of block.instructions) {
@@ -503,6 +555,12 @@ export function buildListCallExpression(
     return null
   }
   if (expr.callee.property.kind !== 'Identifier' || expr.callee.property.name !== 'map') {
+    return null
+  }
+  if (expr.kind === 'OptionalCallExpression' && expr.optional) {
+    return null
+  }
+  if (!isTrustedArrayMapReceiver(expr.callee.object, ctx)) {
     return null
   }
 

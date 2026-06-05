@@ -1730,6 +1730,118 @@ describe('compiled templates DOM integration', () => {
     expect(() => mod.mount(container)).toThrow(TypeError)
   })
 
+  it('preserves custom map receiver lookup and return values', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        const custom = {
+          map(callback: (item: string) => unknown) {
+            calls.push('custom')
+            return ['custom'].map(callback)
+          },
+        }
+        const proxy = new Proxy(['proxy'], {
+          get(target, key, receiver) {
+            if (key === 'map') calls.push('proxy')
+            const value = Reflect.get(target, key, receiver)
+            return typeof value === 'function' ? value.bind(target) : value
+          },
+        })
+        const inherited = Object.create({
+          map(callback: (item: string) => unknown) {
+            calls.push('inherited')
+            return ['inherited'].map(callback)
+          },
+        })
+
+        return (
+          <section>
+            <ul data-id="custom">{custom.map(item => <li>{item}</li>)}</ul>
+            <ul data-id="proxy">{proxy.map(item => <li>{item}</li>)}</ul>
+            <ul data-id="inherited">{inherited.map((item: string) => <li>{item}</li>)}</ul>
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        calls.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      calls: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(mod.calls).toEqual(['custom', 'proxy', 'inherited'])
+    expect(Array.from(container.querySelectorAll('li')).map(node => node.textContent)).toEqual([
+      'custom',
+      'proxy',
+      'inherited',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
+  it('preserves runtime errors for non-callable map methods', () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const items = { map: 123 }
+        return <div>{items.map((item: string) => <span>{item}</span>)}</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+
+    expect(() => mod.mount(container)).toThrow(TypeError)
+  })
+
+  it('preserves optional map method calls on non-trusted receivers', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const items: { map?: (callback: (item: string) => unknown) => unknown[] } = {}
+        return <ul>{items.map?.(item => <li>{item}</li>)}</ul>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(container.querySelectorAll('li')).toHaveLength(0)
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves map callback arguments semantics by falling back from list specialization', async () => {
     const source = `
       import { render } from 'fict'
