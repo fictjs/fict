@@ -1202,11 +1202,7 @@ describe('Rule L: Getter cache in same sync block', () => {
       import { $state } from 'fict'
       function Component() {
         let count = $state(0)
-        const click = () => {
-          console.log(count)
-          console.log(count)
-          console.log(count)
-        }
+        const click = () => count + count + count
         return click
       }
     `

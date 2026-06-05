@@ -36,7 +36,7 @@ export function withGetterCache<T>(
   if (ctx.getterCacheDeclarations && ctx.getterCacheDeclarations.size > 0) {
     for (const [varName, initExpr] of ctx.getterCacheDeclarations) {
       cacheDeclarations.push(
-        ctx.t.variableDeclaration('const', [
+        ctx.t.variableDeclaration('let', [
           ctx.t.variableDeclarator(ctx.t.identifier(varName), initExpr),
         ]),
       )
@@ -83,8 +83,8 @@ export function getCachedGetterExpression(
   if (existingEntry === '') {
     const cacheVar = `__cached_${getterName}_${ctx.tempCounter++}`
     ctx.getterCache.set(getterName, cacheVar)
-    ctx.getterCacheDeclarations.set(cacheVar, callExpr)
-    return ctx.t.identifier(cacheVar)
+    ctx.getterCacheDeclarations.set(cacheVar, null)
+    return ctx.t.assignmentExpression('=', ctx.t.identifier(cacheVar), callExpr)
   }
 
   return ctx.t.identifier(existingEntry)
@@ -94,6 +94,11 @@ export function invalidateCachedGetter(ctx: CodegenContext, getterName: string):
   if (!ctx.getterCacheEnabled) return
   ctx.getterCache?.delete(getterName)
   ctx.getterCacheInvalidated?.add(getterName)
+}
+
+export function clearCachedGetters(ctx: CodegenContext): void {
+  if (!ctx.getterCacheEnabled) return
+  ctx.getterCache?.clear()
 }
 
 /**

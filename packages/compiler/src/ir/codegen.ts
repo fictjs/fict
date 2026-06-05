@@ -18,6 +18,7 @@ import {
   structuredNodeHasComplexControlFlow,
 } from './codegen-analysis'
 import {
+  clearCachedGetters,
   getCachedGetterExpression,
   getOrCreateHoistedTemplate,
   invalidateCachedGetter,
@@ -468,7 +469,7 @@ export interface CodegenContext {
    */
   getterCache?: Map<string, string> | undefined
   /** Pending cache declarations to insert at the start of a function body */
-  getterCacheDeclarations?: Map<string, BabelCore.types.Expression> | undefined
+  getterCacheDeclarations?: Map<string, BabelCore.types.Expression | null> | undefined
   /** Getter names written in this cache scope; future reads must not use hoisted cache values. */
   getterCacheInvalidated?: Set<string> | undefined
   /** Whether getter caching is enabled for the current scope */
@@ -1340,6 +1341,10 @@ function lowerExpressionImpl(
       }
       return mapArg ? mapArg(arg, idx) : lowerExpression(arg, ctx)
     })
+  const withCallCacheBarrier = <T extends BabelCore.types.Expression>(node: T): T => {
+    clearCachedGetters(ctx)
+    return node
+  }
   const withFunctionScope = <T>(
     paramNames: Set<string>,
     fn: () => T,
@@ -1664,6 +1669,124 @@ function lowerExpressionImpl(
       }
     }
     return written
+  }
+  const collectCacheableGetterNames = (): Set<string> => {
+    const names = new Set<string>()
+    ctx.signalVars?.forEach(name => names.add(name))
+    ctx.aliasVars?.forEach(name => names.add(name))
+    return names
+  }
+  const expressionHasCallBarrier = (value: Expression | null | undefined): boolean => {
+    if (!value) return false
+    switch (value.kind) {
+      case 'CallExpression':
+      case 'OptionalCallExpression':
+      case 'NewExpression':
+      case 'TaggedTemplateExpression':
+      case 'ImportExpression':
+        return true
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        return (
+          expressionHasCallBarrier(value.object) ||
+          (value.computed && expressionHasCallBarrier(value.property))
+        )
+      case 'BinaryExpression':
+      case 'LogicalExpression':
+        return expressionHasCallBarrier(value.left) || expressionHasCallBarrier(value.right)
+      case 'UnaryExpression':
+      case 'SpreadElement':
+      case 'AwaitExpression':
+        return expressionHasCallBarrier(value.argument)
+      case 'ConditionalExpression':
+        return (
+          expressionHasCallBarrier(value.test) ||
+          expressionHasCallBarrier(value.consequent) ||
+          expressionHasCallBarrier(value.alternate)
+        )
+      case 'ArrayExpression':
+        return value.elements.some(expressionHasCallBarrier)
+      case 'ObjectExpression':
+        return value.properties.some(prop =>
+          prop.kind === 'SpreadElement'
+            ? expressionHasCallBarrier(prop.argument)
+            : expressionHasCallBarrier(prop.key) || expressionHasCallBarrier(prop.value),
+        )
+      case 'JSXElement':
+        return (
+          expressionHasCallBarrier(typeof value.tagName === 'string' ? undefined : value.tagName) ||
+          value.attributes.some(attr =>
+            attr.isSpread
+              ? expressionHasCallBarrier(attr.spreadExpr)
+              : expressionHasCallBarrier(attr.value),
+          ) ||
+          value.children.some(child =>
+            child.kind === 'expression'
+              ? expressionHasCallBarrier(child.value)
+              : child.kind === 'element'
+                ? expressionHasCallBarrier(child.value)
+                : false,
+          )
+        )
+      case 'AssignmentExpression':
+        return expressionHasCallBarrier(value.left) || expressionHasCallBarrier(value.right)
+      case 'UpdateExpression':
+        return expressionHasCallBarrier(value.argument)
+      case 'TemplateLiteral':
+        return value.expressions.some(expressionHasCallBarrier)
+      case 'SequenceExpression':
+        return value.expressions.some(expressionHasCallBarrier)
+      case 'YieldExpression':
+        return expressionHasCallBarrier(value.argument)
+      case 'ClassExpression':
+        return !!value.superClass && expressionHasCallBarrier(value.superClass)
+      case 'ArrowFunction':
+      case 'FunctionExpression':
+      case 'Identifier':
+      case 'Literal':
+      case 'MetaProperty':
+      case 'ThisExpression':
+      case 'SuperExpression':
+        return false
+    }
+  }
+  const blocksHaveCallBarrier = (blocks: BasicBlock[]): boolean =>
+    blocks.some(block => {
+      if (
+        block.instructions.some(instr =>
+          instr.kind === 'Assign' || instr.kind === 'Expression'
+            ? expressionHasCallBarrier(instr.value)
+            : false,
+        )
+      ) {
+        return true
+      }
+      switch (block.terminator.kind) {
+        case 'Return':
+          return expressionHasCallBarrier(block.terminator.argument)
+        case 'Throw':
+          return expressionHasCallBarrier(block.terminator.argument)
+        case 'Branch':
+          return expressionHasCallBarrier(block.terminator.test)
+        case 'Switch':
+          return (
+            expressionHasCallBarrier(block.terminator.discriminant) ||
+            block.terminator.cases.some(c => expressionHasCallBarrier(c.test))
+          )
+        case 'ForOf':
+          return expressionHasCallBarrier(block.terminator.iterable)
+        case 'ForIn':
+          return expressionHasCallBarrier(block.terminator.object)
+        default:
+          return false
+      }
+    })
+  const collectDisabledGetterNames = (blocks: BasicBlock[]): Set<string> => {
+    const disabled = collectWrittenGetterNames(blocks)
+    if (blocksHaveCallBarrier(blocks)) {
+      collectCacheableGetterNames().forEach(name => disabled.add(name))
+    }
+    return disabled
   }
   const lowerStructuredBlocks = (
     blocks: BasicBlock[],
@@ -2009,14 +2132,18 @@ function lowerExpressionImpl(
         (ctx.signalVars?.has(calleeName) ?? false) &&
         (ctx.callableSignalVars?.has(calleeName) ?? false)
       if (calleeIsCallableSignal) {
-        return t.callExpression(
-          t.callExpression(t.identifier(calleeName), []),
-          lowerCallArguments(expr.arguments),
+        return withCallCacheBarrier(
+          t.callExpression(
+            t.callExpression(t.identifier(calleeName), []),
+            lowerCallArguments(expr.arguments),
+          ),
         )
       }
       if (calleeIsMemoAccessor && !calleeIsSignalLike && expr.arguments.length > 0) {
         const loweredArgs = lowerCallArguments(expr.arguments)
-        return t.callExpression(t.callExpression(t.identifier(calleeName), []), loweredArgs)
+        return withCallCacheBarrier(
+          t.callExpression(t.callExpression(t.identifier(calleeName), []), loweredArgs),
+        )
       }
       const lowerCallee = () =>
         isIIFE
@@ -2042,7 +2169,7 @@ function lowerExpressionImpl(
         }
         return lowerExpression(a, ctx)
       })
-      return t.callExpression(lowerCallee(), loweredArgs)
+      return withCallCacheBarrier(t.callExpression(lowerCallee(), loweredArgs))
     }
 
     case 'MemberExpression':
@@ -2253,8 +2380,13 @@ function lowerExpressionImpl(
             try {
               if (expr.isExpression && !Array.isArray(expr.body)) {
                 // Rule L: Enable getter caching for sync arrow functions with expression body
-                const { result: bodyExpr, cacheDeclarations } = withGetterCache(ctx, () =>
-                  lowerTrackedExpression(expr.body as Expression, ctx),
+                const disabledGetters = expressionHasCallBarrier(expr.body as Expression)
+                  ? collectCacheableGetterNames()
+                  : undefined
+                const { result: bodyExpr, cacheDeclarations } = withGetterCache(
+                  ctx,
+                  () => lowerTrackedExpression(expr.body as Expression, ctx),
+                  disabledGetters,
                 )
                 if (cacheDeclarations.length > 0) {
                   // Need to convert to block body to include cache declarations
@@ -2268,11 +2400,11 @@ function lowerExpressionImpl(
               } else if (Array.isArray(expr.body)) {
                 // Rule L: Enable getter caching for sync arrow functions with block body
                 const bodyBlocks = expr.body as BasicBlock[]
-                const writtenGetters = collectWrittenGetterNames(bodyBlocks)
+                const disabledGetters = collectDisabledGetterNames(bodyBlocks)
                 const { result: stmts, cacheDeclarations } = withGetterCache(
                   ctx,
                   () => lowerStructuredBlocks(bodyBlocks, expr.params, paramIds),
-                  writtenGetters,
+                  disabledGetters,
                 )
                 fn = t.arrowFunctionExpression(
                   paramIds,
@@ -2317,11 +2449,11 @@ function lowerExpressionImpl(
               if (Array.isArray(expr.body)) {
                 // Rule L: Enable getter caching for sync function expressions
                 const bodyBlocks = expr.body as BasicBlock[]
-                const writtenGetters = collectWrittenGetterNames(bodyBlocks)
+                const disabledGetters = collectDisabledGetterNames(bodyBlocks)
                 const { result: stmts, cacheDeclarations } = withGetterCache(
                   ctx,
                   () => lowerStructuredBlocks(bodyBlocks, expr.params, paramIds),
-                  writtenGetters,
+                  disabledGetters,
                 )
                 fn = t.functionExpression(
                   expr.name ? t.identifier(deSSAVarName(expr.name)) : null,
@@ -2543,7 +2675,9 @@ function lowerExpressionImpl(
       return t.awaitExpression(lowerExpression(expr.argument, ctx))
 
     case 'NewExpression':
-      return t.newExpression(lowerExpression(expr.callee, ctx), lowerCallArguments(expr.arguments))
+      return withCallCacheBarrier(
+        t.newExpression(lowerExpression(expr.callee, ctx), lowerCallArguments(expr.arguments)),
+      )
 
     case 'SequenceExpression':
       return t.sequenceExpression(
@@ -2565,17 +2699,21 @@ function lowerExpressionImpl(
           (ctx.signalVars?.has(calleeName) ?? false) &&
           (ctx.callableSignalVars?.has(calleeName) ?? false)
         if (calleeIsCallableSignal) {
-          return t.optionalCallExpression(
-            t.callExpression(t.identifier(calleeName), []),
-            lowerCallArguments(expr.arguments),
-            expr.optional,
+          return withCallCacheBarrier(
+            t.optionalCallExpression(
+              t.callExpression(t.identifier(calleeName), []),
+              lowerCallArguments(expr.arguments),
+              expr.optional,
+            ),
           )
         }
       }
-      return t.optionalCallExpression(
-        lowerCallCalleeExpression(expr.callee),
-        lowerCallArguments(expr.arguments),
-        expr.optional,
+      return withCallCacheBarrier(
+        t.optionalCallExpression(
+          lowerCallCalleeExpression(expr.callee),
+          lowerCallArguments(expr.arguments),
+          expr.optional,
+        ),
       )
 
     case 'TaggedTemplateExpression':

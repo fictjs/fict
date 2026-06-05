@@ -437,6 +437,69 @@ describe('state write expression semantics', () => {
     expect(fn()).toBe('1:1')
   })
 
+  it('does not hoist cached signal getter reads before earlier calls', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useGetterCacheAfterEarlierCall() {
+        let count = $state(1)
+        const set = () => {
+          count = 2
+        }
+        const fn = () => {
+          set()
+          return count + ':' + count
+        }
+        return fn
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const fn = compiledFunction(mod, 'useGetterCacheAfterEarlierCall')() as () => string
+    expect(output).not.toMatch(/const __cached_count_\d+ = count\(\)/)
+    expect(fn()).toBe('2:2')
+  })
+
+  it('clears cached signal getter values across ordinary calls', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useGetterCacheAcrossCallBarrier() {
+        let count = $state(1)
+        const set = () => {
+          count = 2
+          return 'set'
+        }
+        const fn = () => count + ':' + count + ':' + set() + ':' + count + ':' + count
+        return fn
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const fn = compiledFunction(mod, 'useGetterCacheAcrossCallBarrier')() as () => string
+    expect(fn()).toBe('1:1:set:2:2')
+  })
+
+  it('does not hoist cached signal getter reads out of conditional branches', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useGetterCacheInConditionalBranch() {
+        let count = $state(1)
+        const fn = (ok: boolean) => ok ? count + ':' + count : 'skip'
+        return fn
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const fn = compiledFunction(mod, 'useGetterCacheInConditionalBranch')() as (
+      ok: boolean,
+    ) => string
+    expect(output).not.toMatch(/const __cached_count_\d+ = count\(\)/)
+    expect(fn(false)).toBe('skip')
+    expect(fn(true)).toBe('1:1')
+  })
+
   it('preserves logical assignment short-circuit semantics on ordinary locals', () => {
     const source = `
       import { $state } from 'fict'
