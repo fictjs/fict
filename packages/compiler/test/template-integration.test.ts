@@ -2705,6 +2705,72 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('unwraps direct reads of nested reactive object and array props', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function Direct(props: any) {
+        return (
+          <>
+            <span data-id="object">{props.a.b}</span>
+            <span data-id="array">{props.items[0]}</span>
+            <span data-id="deep">{props.nested.inner.value}</span>
+            <span data-id="grid">{props.grid[0][0]}</span>
+          </>
+        )
+      }
+
+      function Destructured({ a: { b } }: any) {
+        return <span data-id="destructured">{b}</span>
+      }
+
+      export function App() {
+        let count = $state(1)
+
+        return (
+          <>
+            <Direct
+              a={{ b: count }}
+              items={[count]}
+              nested={{ inner: { value: count } }}
+              grid={[[count]]}
+            />
+            <Destructured a={{ b: count }} />
+            <button data-id="inc" onClick={() => count += 1}>inc</button>
+          </>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    const readTexts = () =>
+      ['object', 'array', 'deep', 'grid', 'destructured'].map(
+        id => container.querySelector(`[data-id="${id}"]`)?.textContent,
+      )
+
+    expect(readTexts()).toEqual(['1', '1', '1', '1', '1'])
+
+    const inc = container.querySelector('[data-id="inc"]') as HTMLButtonElement
+    inc.click()
+    await flushUpdates()
+
+    expect(readTexts()).toEqual(['2', '2', '2', '2', '2'])
+
+    teardown()
+    container.remove()
+  })
+
   it('cleans up and reapplies reactive callback refs in fine-grained mode', async () => {
     const source = `
       import { $state, render } from 'fict'

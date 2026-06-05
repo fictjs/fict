@@ -57,6 +57,17 @@ export function buildPropsPlan(
       (t.isArrowFunctionExpression(expr) || t.isFunctionExpression(expr)) &&
       expr.params.length === 0
 
+    const withPropsContextDisabled = <T>(disabled: boolean, fn: () => T): T => {
+      if (!disabled) return fn()
+      const prevPropsCtx = ctx.inPropsContext
+      ctx.inPropsContext = false
+      try {
+        return fn()
+      } finally {
+        ctx.inPropsContext = prevPropsCtx
+      }
+    }
+
     const wrapNonReactiveFunction = (
       expr: BabelCore.types.Expression,
     ): BabelCore.types.Expression => {
@@ -304,15 +315,8 @@ export function buildPropsPlan(
       if (attr.value) {
         const isFunctionLike =
           attr.value.kind === 'ArrowFunction' || attr.value.kind === 'FunctionExpression'
-        const prevPropsCtx: boolean | undefined = ctx.inPropsContext
-        // Avoid treating function bodies as props context to prevent wrapping internal values
-        if (isFunctionLike) {
-          ctx.inPropsContext = false
-        }
-        const lowered = helpers.lowerDomExpression(attr.value, ctx)
-        if (isFunctionLike) {
-          ctx.inPropsContext = prevPropsCtx
-        }
+        const isCompositeValue =
+          attr.value.kind === 'ObjectExpression' || attr.value.kind === 'ArrayExpression'
         const baseIdent =
           attr.value.kind === 'Identifier' ? helpers.deSSAVarName(attr.value.name) : undefined
         const keyedCandidate = getKeyedCandidate(attr.value)
@@ -338,10 +342,13 @@ export function buildPropsPlan(
           (!ctx.nonReactiveScopeDepth || ctx.nonReactiveScopeDepth === 0) &&
           helpers.expressionUsesTracked(attr.value, ctx) &&
           !alreadyGetter
+        const lowered = withPropsContextDisabled(
+          isFunctionLike || (usesTracked && isCompositeValue),
+          () => helpers.lowerDomExpression(attr.value!, ctx),
+        )
         const trackedExpr = usesTracked
-          ? (helpers.lowerTrackedExpression(
-              attr.value as Expression,
-              ctx,
+          ? (withPropsContextDisabled(usesTracked && isCompositeValue, () =>
+              helpers.lowerTrackedExpression(attr.value as Expression, ctx),
             ) as BabelCore.types.Expression)
           : null
         const useMemoProp =
