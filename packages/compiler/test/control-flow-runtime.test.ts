@@ -534,6 +534,108 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(1)
   })
 
+  it('preserves switch case-to-case fallthrough', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+
+          switch (1) {
+            case 1:
+              x++
+            case 2:
+              x++
+              break
+          }
+
+          return x
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves switch case-to-default fallthrough', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+
+          switch (1) {
+            case 1:
+              x += 1
+            default:
+              x += 10
+              break
+          }
+
+          return x
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(11)
+  })
+
+  it('preserves switch default-in-middle fallthrough', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+
+          switch (0) {
+            default:
+              x++
+            case 1:
+              break
+          }
+
+          return x
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('preserves no-default switch fallthrough before a trailing return', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+
+          switch (1) {
+            case 1:
+              x++
+            case 2:
+              x++
+          }
+
+          return x
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
   it('preserves labeled while-continue targets', () => {
     const result = compileAndRunHook<number | (() => number)>(
       `

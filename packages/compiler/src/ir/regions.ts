@@ -889,7 +889,9 @@ function lowerStructuredNodeInternal(
 function ensureSwitchCaseBreak(
   stmts: BabelCore.types.Statement[],
   t: typeof BabelCore.types,
+  fallsThrough = false,
 ): BabelCore.types.Statement[] {
+  if (fallsThrough) return stmts
   if (stmts.length === 0) {
     // Preserve label-only cases (`case 'a': case 'b': ...`) by keeping the
     // consequent empty, which allows intentional fallthrough.
@@ -1649,6 +1651,7 @@ function lowerNodeWithRegionContext(
           const stmts = ensureSwitchCaseBreak(
             lowerNodeWithRegionContext(c.body, t, ctx, declaredVars, regionCtx),
             t,
+            c.fallsThrough === true,
           )
           return t.switchCase(c.test ? lowerExpressionWithDeSSA(c.test, ctx) : null, stmts)
         })
@@ -2215,6 +2218,7 @@ function lowerStructuredNodeForRegion(
                 skipInstructions,
               ),
               t,
+              c.fallsThrough === true,
             )
             if (stmts.length === 0) return null
             return t.switchCase(c.test ? lowerExpressionWithDeSSA(c.test, ctx) : null, stmts)

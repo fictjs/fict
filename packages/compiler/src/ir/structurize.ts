@@ -121,7 +121,7 @@ export type StructuredNode =
   | {
       kind: 'switch'
       discriminant: Expression
-      cases: { test: Expression | null; body: StructuredNode }[]
+      cases: { test: Expression | null; body: StructuredNode; fallsThrough?: boolean }[]
     }
   | {
       kind: 'try'
@@ -1394,27 +1394,32 @@ function structurizeSwitch(
       joinBlock = localExit
     }
   }
-  const cases: { test: Expression | null; body: StructuredNode }[] = []
+  const cases: { test: Expression | null; body: StructuredNode; fallsThrough?: boolean }[] = []
   const emittedBeforeSwitch = new Set(ctx.emitted)
   const emittedBySwitchCases = new Set<BlockId>()
+  const sourceCaseTargets = new Set(sourceCases.map(c => c.target))
 
-  for (const c of sourceCases) {
+  for (let index = 0; index < sourceCases.length; index++) {
+    const c = sourceCases[index]!
+    const nextCaseTarget = sourceCases[index + 1]?.target
+    const caseJoinBlock = nextCaseTarget ?? joinBlock
+    const fallsThrough = caseFallsThroughToTarget(ctx, c.target, nextCaseTarget, sourceCaseTargets)
     const caseCtx: StructurizeContext = {
       ...ctx,
       emitted: new Set(emittedBeforeSwitch),
       processing: new Set(ctx.processing),
     }
     const body =
-      joinBlock !== undefined
-        ? structurizeBlockUntilJoin(caseCtx, c.target, joinBlock)
+      caseJoinBlock !== undefined
+        ? structurizeBlockUntilJoin(caseCtx, c.target, caseJoinBlock)
         : structurizeBlock(caseCtx, c.target)
     for (const emittedBlock of caseCtx.emitted) {
       if (!emittedBeforeSwitch.has(emittedBlock)) {
         emittedBySwitchCases.add(emittedBlock)
       }
     }
-    const normalizedBody = appendSwitchCaseBreak(body)
-    cases.push({ test: c.test ?? null, body: normalizedBody })
+    const normalizedBody = fallsThrough ? body : appendSwitchCaseBreak(body)
+    cases.push({ test: c.test ?? null, body: normalizedBody, fallsThrough })
   }
 
   for (const emittedBlock of emittedBySwitchCases) {
@@ -1440,6 +1445,46 @@ function structurizeSwitch(
   }
 
   return labeledSwitchNode
+}
+
+function caseFallsThroughToTarget(
+  ctx: StructurizeContext,
+  start: BlockId,
+  target: BlockId | undefined,
+  sourceCaseTargets: Set<BlockId>,
+): boolean {
+  if (target === undefined) return false
+  const visited = new Set<BlockId>()
+
+  const visit = (blockId: BlockId): boolean => {
+    if (blockId === target) return true
+    if (visited.has(blockId) || ctx.reservedBlocks.has(blockId)) return false
+    if (blockId !== start && sourceCaseTargets.has(blockId)) return false
+    visited.add(blockId)
+
+    const block = ctx.blockMap.get(blockId)
+    if (!block) return false
+    if (
+      block.terminator.kind === 'Return' ||
+      block.terminator.kind === 'Throw' ||
+      block.terminator.kind === 'Break' ||
+      block.terminator.kind === 'Continue' ||
+      block.terminator.kind === 'Unreachable'
+    ) {
+      return false
+    }
+
+    const succs = ctx.successors.get(blockId) ?? []
+    for (const succ of succs) {
+      const edgeKey = `${blockId}->${succ}`
+      if (!ctx.backEdges.has(edgeKey) && visit(succ)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  return visit(start)
 }
 
 function findSwitchJoinBlock(ctx: StructurizeContext, caseTargets: BlockId[]): BlockId | undefined {

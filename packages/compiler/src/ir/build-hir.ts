@@ -1522,7 +1522,7 @@ function convertFunction(
       }
 
       const cases: { test?: Expression; target: number; syntheticDefault?: boolean }[] = []
-      let defaultTarget: number | undefined
+      let hasDefault = false
 
       for (let index = 0; index < stmt.cases.length; index++) {
         const switchCase = stmt.cases[index]!
@@ -1533,7 +1533,10 @@ function convertFunction(
             target: caseBlock.block.id,
           })
         } else {
-          defaultTarget = caseBlock.block.id
+          hasDefault = true
+          cases.push({
+            target: caseBlock.block.id,
+          })
         }
       }
 
@@ -1564,10 +1567,8 @@ function convertFunction(
       cfgContext.loopStack.pop()
 
       // Add default case
-      if (defaultTarget === undefined) {
+      if (!hasDefault) {
         cases.push({ target: exitBlock.block.id, syntheticDefault: true })
-      } else {
-        cases.push({ target: defaultTarget })
       }
 
       current.block.terminator = {
@@ -2616,7 +2617,7 @@ function processStatement(
     }
 
     const cases: { test?: Expression; target: number; syntheticDefault?: boolean }[] = []
-    let defaultTarget: number | undefined
+    let hasDefault = false
 
     for (let index = 0; index < stmt.cases.length; index++) {
       const switchCase = stmt.cases[index]!
@@ -2627,7 +2628,10 @@ function processStatement(
           target: caseBlock.block.id,
         })
       } else {
-        defaultTarget = caseBlock.block.id
+        hasDefault = true
+        cases.push({
+          target: caseBlock.block.id,
+        })
       }
     }
 
@@ -2659,10 +2663,8 @@ function processStatement(
     ctx.loopStack.pop()
 
     // Add default case if not present
-    if (defaultTarget === undefined) {
+    if (!hasDefault) {
       cases.push({ target: exitBlock.block.id, syntheticDefault: true })
-    } else {
-      cases.push({ target: defaultTarget })
     }
 
     bb.block.terminator = {
