@@ -320,6 +320,100 @@ describe('control flow runtime regressions', () => {
       expect(result).toBe(1)
     })
 
+    it(`preserves hoisted function declarations after return with optimize=${optimize}`, () => {
+      const result = compileAndRunHook<number>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            return fn()
+
+            function fn() {
+              return 1
+            }
+          }
+        `,
+        'useRun',
+        { optimize },
+      )
+
+      expect(result).toBe(1)
+    })
+
+    it(`preserves block hoisted function declarations after return with optimize=${optimize}`, () => {
+      const result = compileAndRunHook<number>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            if (true) {
+              return fn()
+
+              function fn() {
+                return 2
+              }
+            }
+            return 0
+          }
+        `,
+        'useRun',
+        { optimize },
+      )
+
+      expect(result).toBe(2)
+    })
+
+    it(`preserves try-block hoisted function declarations after throw with optimize=${optimize}`, () => {
+      const result = compileAndRunHook<string>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            try {
+              throw makeError()
+
+              function makeError() {
+                return new Error('ok')
+              }
+            } catch (err) {
+              return err.message
+            }
+          }
+        `,
+        'useRun',
+        { optimize },
+      )
+
+      expect(result).toBe('ok')
+    })
+
+    it(`preserves nested function hoisting after return with optimize=${optimize}`, () => {
+      const result = compileAndRunHook<number>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            const run = () => {
+              return fn()
+
+              function fn() {
+                return 3
+              }
+            }
+            return run()
+          }
+        `,
+        'useRun',
+        { optimize },
+      )
+
+      expect(result).toBe(3)
+    })
+
     it(`preserves const object declarations before optional member calls with optimize=${optimize}`, () => {
       const result = compileAndRunHook<number>(
         `

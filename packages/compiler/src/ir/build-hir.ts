@@ -262,6 +262,37 @@ function normalizeVarKind(
   return kind === 'const' || kind === 'let' || kind === 'var' ? kind : 'let'
 }
 
+function functionDeclarationToAssign(
+  stmt: BabelCore.types.FunctionDeclaration,
+): Instruction | null {
+  if (!stmt.id) return null
+  const fnExpr = t.functionExpression(
+    stmt.id,
+    toFunctionExpressionParams(stmt.params),
+    stmt.body,
+    stmt.generator,
+    stmt.async,
+  )
+  return {
+    kind: 'Assign',
+    target: { kind: 'Identifier', name: stmt.id.name },
+    value: convertExpression(fnExpr),
+    declarationKind: 'function',
+    loc: stmt.loc,
+  }
+}
+
+function emitHoistedFunctionDeclarations(
+  statements: BabelCore.types.Statement[],
+  push: (instr: Instruction) => void,
+): void {
+  for (const stmt of statements) {
+    if (!t.isFunctionDeclaration(stmt)) continue
+    const instr = functionDeclarationToAssign(stmt)
+    if (instr) push(instr)
+  }
+}
+
 function hasNoMemoDirective(directives?: BabelCore.types.Directive[] | null): boolean {
   if (!directives) return false
   return directives.some(d => d.value.value === 'use no memo')
@@ -533,8 +564,12 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
 
   // Simple recursive processor for nested statements
   const processStmts = (stmts: BabelCore.types.Statement[], target: BasicBlock): void => {
+    emitHoistedFunctionDeclarations(stmts, instr => target.instructions.push(instr))
     for (let index = 0; index < stmts.length; index++) {
       const stmt = stmts[index]
+      if (t.isFunctionDeclaration(stmt)) {
+        continue
+      }
       if (t.isReturnStatement(stmt)) {
         target.terminator = {
           kind: 'Return',
@@ -713,22 +748,6 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
             })
           }
         }
-        continue
-      }
-      if (t.isFunctionDeclaration(stmt) && stmt.id) {
-        target.instructions.push({
-          kind: 'Assign',
-          target: { kind: 'Identifier', name: stmt.id.name },
-          value: convertExpression(
-            t.functionExpression(
-              stmt.id,
-              toFunctionExpressionParams(stmt.params),
-              stmt.body,
-              stmt.generator,
-              stmt.async,
-            ),
-          ),
-        })
         continue
       }
       if (t.isBlockStatement(stmt)) {
@@ -1105,7 +1124,12 @@ function convertFunction(
     labeledStatements: new Map(),
   }
 
+  emitHoistedFunctionDeclarations(bodyStatements, instr => current.block.instructions.push(instr))
+
   for (const stmt of bodyStatements) {
+    if (t.isFunctionDeclaration(stmt)) {
+      continue
+    }
     if (t.isReturnStatement(stmt)) {
       const returnExpr = stmt.argument ? convertExpression(stmt.argument) : undefined
       sealCurrent({ kind: 'Return', argument: returnExpr })
@@ -1288,22 +1312,6 @@ function convertFunction(
           })
         }
       }
-      continue
-    }
-    if (t.isFunctionDeclaration(stmt) && stmt.id) {
-      // Nested function declarations are converted to assignments of function expressions
-      const fnExpr = t.functionExpression(
-        stmt.id,
-        toFunctionExpressionParams(stmt.params),
-        stmt.body,
-        stmt.generator,
-        stmt.async,
-      )
-      current.block.instructions.push({
-        kind: 'Assign',
-        target: { kind: 'Identifier', name: stmt.id.name },
-        value: convertExpression(fnExpr),
-      })
       continue
     }
     if (t.isBlockStatement(stmt)) {
@@ -1960,7 +1968,11 @@ function fillStatements(
 
   if (t.isBlockStatement(stmt)) {
     let current = bb
+    emitHoistedFunctionDeclarations(stmt.body, instr => current.block.instructions.push(instr))
     for (const s of stmt.body) {
+      if (t.isFunctionDeclaration(s)) {
+        continue
+      }
       current = processStatement(s, current, jumpTarget, ctx)
       if (current.sealed) {
         // If sealed with return/throw, stop processing
@@ -2071,7 +2083,11 @@ function processStatement(
       return processLexicalBlockStatement(stmt, bb, ctx)
     }
     let current = bb
+    emitHoistedFunctionDeclarations(stmt.body, instr => current.block.instructions.push(instr))
     for (const inner of stmt.body) {
+      if (t.isFunctionDeclaration(inner)) {
+        continue
+      }
       current = processStatement(inner, current, jumpTarget, ctx, labelOverride)
       if (current.sealed) {
         return current
