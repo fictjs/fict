@@ -617,7 +617,7 @@ export interface BasicBlock {
   /** Source loop shape for loops that may not have a natural back-edge, e.g. immediate break. */
   sourceLoop?:
     | { kind: 'while'; body: BlockId; exit: BlockId }
-    | { kind: 'for'; body: BlockId; update: BlockId; exit: BlockId }
+    | { kind: 'for'; body: BlockId; update: BlockId; exit: BlockId; init?: Instruction[] }
     | { kind: 'doWhile'; condition: BlockId; exit: BlockId }
     | undefined
 }

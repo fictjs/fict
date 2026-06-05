@@ -627,9 +627,11 @@ function structurizeBlock(
   ctx.depth++
 
   const nodes: StructuredNode[] = []
+  const skippedInstructions = getForLoopInitInstructionsForJump(ctx, block)
 
   // Emit instructions
   for (const instr of block.instructions) {
+    if (skippedInstructions?.has(instr)) continue
     nodes.push({ kind: 'instruction', instruction: instr })
   }
 
@@ -655,6 +657,33 @@ function structurizeBlock(
 function toStructuredStatements(node: StructuredNode): StructuredNode[] {
   if (node.kind === 'sequence') return node.nodes
   return [node]
+}
+
+function getForLoopInitInstructionsForJump(
+  ctx: StructurizeContext,
+  block: BasicBlock,
+): Set<Instruction> | null {
+  if (block.terminator.kind !== 'Jump') return null
+  const targetBlock = ctx.blockMap.get(block.terminator.target)
+  const initInstructions =
+    targetBlock?.sourceLoop?.kind === 'for' ? targetBlock.sourceLoop.init : undefined
+  if (!initInstructions || initInstructions.length === 0) return null
+
+  const startIndex = block.instructions.length - initInstructions.length
+  if (startIndex < 0) return null
+  const candidateInstructions = block.instructions.slice(startIndex)
+  const matches = candidateInstructions.every((candidate, index) =>
+    isMatchingForLoopInitInstruction(candidate, initInstructions[index]!),
+  )
+  return matches ? new Set(candidateInstructions) : null
+}
+
+function isMatchingForLoopInitInstruction(candidate: Instruction, init: Instruction): boolean {
+  if (candidate.kind !== init.kind) return false
+  if (candidate.kind !== 'Assign' || init.kind !== 'Assign') return candidate === init
+  return (
+    candidate.target.name === init.target.name && candidate.declarationKind === init.declarationKind
+  )
 }
 
 function structurizeLexicalScopeBlock(
@@ -771,6 +800,7 @@ function structurizeBranch(
         exitBlockId: block.sourceLoop.exit,
         updateBlockId: block.sourceLoop.update,
         updateInstructions: updateBlock.instructions,
+        initInstructions: block.sourceLoop.init ?? null,
       })
     }
   }
@@ -828,6 +858,7 @@ interface CanonicalForLoop {
   exitBlockId: BlockId
   updateBlockId: BlockId
   updateInstructions: Instruction[]
+  initInstructions: Instruction[] | null
 }
 
 function detectForLoop(
@@ -867,6 +898,7 @@ function detectForLoop(
     exitBlockId: alternateId,
     updateBlockId,
     updateInstructions: updateBlock.instructions,
+    initInstructions: null,
   }
 }
 
@@ -881,7 +913,7 @@ function structurizeForLoop(
 
   const forNode: StructuredNode = {
     kind: 'for',
-    init: null,
+    init: loop.initInstructions,
     test,
     update: loop.updateInstructions,
     body,
@@ -1148,9 +1180,11 @@ function structurizeBlockUntilJoin(
 
   ctx.emitted.add(blockId)
   const nodes: StructuredNode[] = []
+  const skippedInstructions = getForLoopInitInstructionsForJump(ctx, block)
 
   // Emit instructions
   for (const instr of block.instructions) {
+    if (skippedInstructions?.has(instr)) continue
     nodes.push({ kind: 'instruction', instruction: instr })
   }
 
@@ -1263,6 +1297,7 @@ function structurizeBranchUntilJoin(
           exitBlockId: block.sourceLoop.exit,
           updateBlockId: block.sourceLoop.update,
           updateInstructions: updateBlock.instructions,
+          initInstructions: block.sourceLoop.init ?? null,
         },
         outerJoin,
       )

@@ -22,6 +22,7 @@ import {
   type HIRFunction,
   type HIRProgram,
   type Identifier as HIdentifier,
+  type Instruction,
   type JSXAttribute as HJSXAttribute,
   type JSXChild as HJSXChild,
   type JSXElementExpression as HJSXElementExpression,
@@ -1387,30 +1388,34 @@ function convertFunction(
       const exitBlock = createBlock()
 
       blocks.push(condBlock.block, bodyBlock.block, updateBlock.block, exitBlock.block)
-      condBlock.block.sourceLoop = {
-        kind: 'for',
-        body: bodyBlock.block.id,
-        update: updateBlock.block.id,
-        exit: exitBlock.block.id,
-      }
+      const initInstructions: Instruction[] = []
 
       // init in current block
       if (stmt.init && t.isVariableDeclaration(stmt.init)) {
         const initKind = normalizeVarKind(stmt.init.kind)
         for (const decl of stmt.init.declarations) {
           if (!t.isIdentifier(decl.id) || !decl.init) continue
-          current.block.instructions.push({
+          const instr: Instruction = {
             kind: 'Assign',
             target: { kind: 'Identifier', name: decl.id.name },
             value: convertExpression(decl.init),
             declarationKind: initKind,
-          })
+          }
+          current.block.instructions.push(instr)
+          initInstructions.push(instr)
         }
       } else if (stmt.init && t.isExpression(stmt.init)) {
         current.block.instructions.push({
           kind: 'Expression',
           value: convertExpression(stmt.init),
         })
+      }
+      condBlock.block.sourceLoop = {
+        kind: 'for',
+        body: bodyBlock.block.id,
+        update: updateBlock.block.id,
+        exit: exitBlock.block.id,
+        ...(initInstructions.length > 0 ? { init: initInstructions } : null),
       }
 
       // jump to condition
@@ -2353,31 +2358,35 @@ function processStatement(
     const exitBlock = ctx.createBlock()
 
     ctx.blocks.push(condBlock.block, bodyBlock.block, updateBlock.block, exitBlock.block)
-    condBlock.block.sourceLoop = {
-      kind: 'for',
-      body: bodyBlock.block.id,
-      update: updateBlock.block.id,
-      exit: exitBlock.block.id,
-    }
     markLabeledStatement(ctx, condBlock.block.id, labelOverride)
+    const initInstructions: Instruction[] = []
 
     // Init in current block
     if (stmt.init && t.isVariableDeclaration(stmt.init)) {
       const initKind = normalizeVarKind(stmt.init.kind)
       for (const decl of stmt.init.declarations) {
         if (!t.isIdentifier(decl.id) || !decl.init) continue
-        push({
+        const instr: Instruction = {
           kind: 'Assign',
           target: { kind: 'Identifier', name: decl.id.name },
           value: convertExpression(decl.init),
           declarationKind: initKind,
-        })
+        }
+        push(instr)
+        initInstructions.push(instr)
       }
     } else if (stmt.init && t.isExpression(stmt.init)) {
       push({
         kind: 'Expression',
         value: convertExpression(stmt.init),
       })
+    }
+    condBlock.block.sourceLoop = {
+      kind: 'for',
+      body: bodyBlock.block.id,
+      update: updateBlock.block.id,
+      exit: exitBlock.block.id,
+      ...(initInstructions.length > 0 ? { init: initInstructions } : null),
     }
 
     // Jump to condition

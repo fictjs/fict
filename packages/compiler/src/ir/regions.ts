@@ -2469,7 +2469,15 @@ function lowerInstructionsToInitExpr(
       }
       return t.variableDeclarator(t.identifier('_'))
     })
-    return t.variableDeclaration('let', decls)
+    const firstDeclKind =
+      instrs[0]?.kind === 'Assign' && instrs[0].declarationKind !== 'function'
+        ? instrs[0].declarationKind
+        : undefined
+    const declKind =
+      firstDeclKind && instrs.every(i => i.kind === 'Assign' && i.declarationKind === firstDeclKind)
+        ? firstDeclKind
+        : 'let'
+    return t.variableDeclaration(declKind, decls)
   }
 
   // Otherwise use sequence expression

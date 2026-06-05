@@ -198,6 +198,60 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(5)
   })
 
+  it('keeps classic for let initializer bindings scoped to the loop', () => {
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            for (let i = 0; i < 1; i++) {}
+            return i
+          }
+        `,
+        'useRun',
+      ),
+    ).toThrow(/i is not defined/)
+  })
+
+  it('keeps classic for const initializer bindings scoped to the loop', () => {
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            for (const item = 0; item < 1;) {
+              break
+            }
+            return item
+          }
+        `,
+        'useRun',
+      ),
+    ).toThrow(/item is not defined/)
+  })
+
+  it('allows redeclaration after classic for let initializer bindings', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          for (let i = 0; i < 1; i++) {}
+          let i = 4
+          return i
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(4)
+  })
+
   it('preserves immediate do-while break before trailing return', () => {
     const result = compileAndRunHook<number>(
       `
