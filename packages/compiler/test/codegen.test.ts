@@ -2258,6 +2258,26 @@ describe('array/map rendering', () => {
     expect(code).not.toContain('fn.call(this')
   })
 
+  it('preserves function-valued list item calls without list specialization', () => {
+    const ast = parseFile(`
+      function List() {
+        const handlers = [() => 'child']
+        return (
+          <div>
+            {handlers.map(fn => <span>{fn()}</span>)}
+          </div>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain('createKeyedList')
+    expect(code).toContain('handlers.map')
+    expect(code).toContain('fn()')
+  })
+
   it('should handle map with index', () => {
     const ast = parseFile(`
       function IndexedList(props) {

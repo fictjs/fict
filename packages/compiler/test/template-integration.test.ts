@@ -3654,6 +3654,62 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('invokes function-valued list items used as child calls', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      export function App() {
+        const handlers = [
+          () => {
+            log.push('called')
+            return 'child'
+          },
+        ]
+        const optionalHandlers = [
+          () => {
+            log.push('optional')
+            return 'maybe'
+          },
+        ]
+
+        return (
+          <div>
+            {handlers.map(fn => <span data-id="direct">{fn()}</span>)}
+            {optionalHandlers.map(fn => <span data-id="optional">{fn?.()}</span>)}
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      log: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect((container.querySelector('[data-id="direct"]') as HTMLSpanElement).textContent).toBe(
+      'child',
+    )
+    expect((container.querySelector('[data-id="optional"]') as HTMLSpanElement).textContent).toBe(
+      'maybe',
+    )
+    expect(mod.log).toEqual(['called', 'optional'])
+
+    teardown()
+    container.remove()
+  })
+
   it(
     'switches conditional branches and updates attributes in fine-grained mode',
     { timeout: 10000 },
