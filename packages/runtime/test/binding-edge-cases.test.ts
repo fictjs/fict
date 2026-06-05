@@ -755,6 +755,67 @@ describe('Binding Edge Cases', () => {
       expect(ref.current).toBe(null)
     })
 
+    it('sets innerHTML from dangerouslySetInnerHTML spread props', async () => {
+      const el = document.createElement('div')
+
+      const { dispose } = createRoot(() => {
+        spread(el, { dangerouslySetInnerHTML: { __html: '<strong>Bold</strong>' } })
+      })
+
+      await tick()
+      expect(el.innerHTML).toBe('<strong>Bold</strong>')
+      expect(el.hasAttribute('dangerouslysetinnerhtml')).toBe(false)
+      dispose()
+    })
+
+    it('updates innerHTML from reactive dangerouslySetInnerHTML spread props', async () => {
+      const el = document.createElement('div')
+      const html = createSignal('<span>a</span>')
+
+      const { dispose } = createRoot(() => {
+        spread(el, () => ({ dangerouslySetInnerHTML: { __html: html() } }))
+      })
+
+      await tick()
+      expect(el.innerHTML).toBe('<span>a</span>')
+
+      html('<em>b</em>')
+      await tick()
+      expect(el.innerHTML).toBe('<em>b</em>')
+      dispose()
+    })
+
+    it('updates innerHTML from reactive __html spread getters', async () => {
+      const el = document.createElement('div')
+      const html = createSignal('<span>a</span>')
+
+      const { dispose } = createRoot(() => {
+        spread(el, { dangerouslySetInnerHTML: { __html: reactive(() => html()) } })
+      })
+
+      await tick()
+      expect(el.innerHTML).toBe('<span>a</span>')
+
+      html('<em>b</em>')
+      await tick()
+      expect(el.innerHTML).toBe('<em>b</em>')
+      dispose()
+    })
+
+    it('does not write innerHTML when spread dangerouslySetInnerHTML lacks __html', async () => {
+      const el = document.createElement('div')
+      el.innerHTML = '<span>keep</span>'
+
+      const { dispose } = createRoot(() => {
+        spread(el, { dangerouslySetInnerHTML: {} })
+      })
+
+      await tick()
+      expect(el.innerHTML).toBe('<span>keep</span>')
+      expect(el.hasAttribute('dangerouslysetinnerhtml')).toBe(false)
+      dispose()
+    })
+
     it('renders children from spread props', async () => {
       const el = document.createElement('div')
 

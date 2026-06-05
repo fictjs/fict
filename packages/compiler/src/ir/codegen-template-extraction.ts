@@ -8,6 +8,7 @@ export interface HIRBinding {
   name?: string | undefined // for attributes/events
   expr?: Expression | undefined // the dynamic expression
   exclude?: string[] | undefined // spread-only: keys overridden by following explicit attrs
+  hasChildren?: boolean | undefined // content-prop bindings that conflict with JSX children
   eventOptions?: { capture?: boolean; passive?: boolean; once?: boolean } | undefined
   resumable?: boolean | undefined
   resumableExplicit?: boolean | undefined
@@ -100,6 +101,9 @@ export function extractHIRStaticHtml(
   const resolvedNamespace = resolveNamespaceContext(tagName, namespace)
   let html = `<${tagName}`
   const bindings: HIRBinding[] = []
+  const hasRenderableChildren = jsx.children.some(
+    child => child.kind !== 'text' || child.value.trim().length > 0,
+  )
 
   // Process attributes
   for (let attrIndex = 0; attrIndex < jsx.attributes.length; attrIndex++) {
@@ -207,6 +211,17 @@ export function extractHIRStaticHtml(
         path: [...parentPath],
         name: 'ref',
         expr: attr.value ?? undefined,
+      })
+      continue
+    }
+
+    if (name === 'dangerouslySetInnerHTML') {
+      bindings.push({
+        type: 'attr',
+        path: [...parentPath],
+        name,
+        expr: attr.value ?? undefined,
+        hasChildren: hasRenderableChildren,
       })
       continue
     }

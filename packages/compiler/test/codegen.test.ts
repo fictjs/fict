@@ -177,6 +177,67 @@ describe('region metadata → DOM', () => {
     expect(code).toMatch(/bindClass|setClass/)
   })
 
+  it('lowers dangerouslySetInnerHTML to guarded innerHTML writes', () => {
+    const ast = parseFile(`
+      function View() {
+        return <div dangerouslySetInnerHTML={{ __html: '<span>x</span>' }} />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('setProp')
+    expect(code).toContain('"innerHTML"')
+    expect(code).toContain('"__html" in')
+    expect(code).not.toContain('setAttr')
+    expect(code).not.toContain('dangerouslySetInnerHTML')
+  })
+
+  it('updates reactive dangerouslySetInnerHTML through innerHTML effects', () => {
+    const ast = parseFile(`
+      function View() {
+        let html = $state('<span>x</span>')
+        return <div dangerouslySetInnerHTML={{ __html: html }} />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { optimizeLevel: 'safe' })
+    const { code } = generate(file)
+
+    expect(code).toContain('createRenderEffect')
+    expect(code).toContain('setProp')
+    expect(code).toContain('"innerHTML"')
+    expect(code).toMatch(/html\(\)/)
+    expect(code).not.toContain('bindAttribute')
+  })
+
+  it('preserves missing dangerouslySetInnerHTML __html as a no-op guard', () => {
+    const ast = parseFile(`
+      function View() {
+        return <div dangerouslySetInnerHTML={{}} />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('"__html" in')
+    expect(code).toContain('"innerHTML"')
+    expect(code).not.toContain('dangerouslySetInnerHTML')
+  })
+
+  it('rejects dangerouslySetInnerHTML with JSX children in fine-grained output', () => {
+    const ast = parseFile(`
+      function View() {
+        return <div dangerouslySetInnerHTML={{ __html: '<span>x</span>' }}>child</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t)).toThrow(/cannot be used with JSX children/)
+  })
+
   it('fuses multiple reactive bindings sharing deps in safe mode', () => {
     const ast = parseFile(`
       function View() {

@@ -106,6 +106,14 @@ const PROPERTY_BINDING_KEYS = new Set([
 const STYLE_PROP_CACHE = new Map<string, string>()
 const hasOwn = Object.prototype.hasOwnProperty
 
+function readDangerouslySetInnerHTML(
+  value: unknown,
+): { found: true; html: unknown } | { found: false } {
+  if (value == null || typeof value !== 'object') return { found: false }
+  if (!hasOwn.call(value, '__html')) return { found: false }
+  return { found: true, html: (value as Record<string, unknown>).__html }
+}
+
 function getNonReactiveFnRegistry(): WeakSet<(...args: unknown[]) => unknown> {
   const host = globalThis as NonReactiveRegistryHost
   let registry = host[NON_REACTIVE_FN_REGISTRY_KEY]
@@ -2123,6 +2131,17 @@ function assignProp(
       node.removeAttribute('class')
     } else {
       setClass(node, value as string | Record<string, boolean>)
+    }
+    return value
+  }
+
+  if (prop === 'dangerouslySetInnerHTML') {
+    const htmlValue = readDangerouslySetInnerHTML(value)
+    if (htmlValue.found) {
+      const nextHtml = isReactive(htmlValue.html) ? htmlValue.html() : htmlValue.html
+      setProp(node, 'innerHTML', nextHtml)
+    } else if (value == null && prev !== undefined) {
+      setProp(node, 'innerHTML', '')
     }
     return value
   }

@@ -452,6 +452,116 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('sets dangerouslySetInnerHTML in fine-grained intrinsic output', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return <div data-testid="box" dangerouslySetInnerHTML={{ __html: '<span>x</span>' }} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(box.innerHTML).toBe('<span>x</span>')
+    expect(box.hasAttribute('dangerouslysetinnerhtml')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
+  it('updates reactive dangerouslySetInnerHTML in fine-grained intrinsic output', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: string): void }
+
+      export function App() {
+        let html = $state('<span>a</span>')
+        api = { set: value => (html = value) }
+        return <div data-testid="box" dangerouslySetInnerHTML={{ __html: html }} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: string): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(box.innerHTML).toBe('<span>a</span>')
+
+    mod.api.set('<em>b</em>')
+    await flushUpdates()
+    expect(box.innerHTML).toBe('<em>b</em>')
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps missing dangerouslySetInnerHTML __html from writing an attribute', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return <div data-testid="box" dangerouslySetInnerHTML={{}} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(box.innerHTML).toBe('')
+    expect(box.hasAttribute('dangerouslysetinnerhtml')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
+  it('rejects dangerouslySetInnerHTML with explicit JSX children', () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return <div dangerouslySetInnerHTML={{ __html: '<span>x</span>' }}>child</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    expect(() => compileAndLoad(source, { fineGrainedDom: true })).toThrow(
+      /cannot be used with JSX children/,
+    )
+  })
+
   it('does not invoke function-valued intrinsic spread expressions', async () => {
     const source = `
       import { render } from 'fict'

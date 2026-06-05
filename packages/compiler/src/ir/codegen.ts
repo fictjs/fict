@@ -3109,6 +3109,41 @@ function lowerIntrinsicElement(
       : valueExpr
   }
 
+  const buildDangerouslySetInnerHTMLStatements = (
+    targetId: BabelCore.types.Identifier,
+    valueExpr: BabelCore.types.Expression,
+  ): BabelCore.types.Statement[] => {
+    const htmlValueId = genTemp(ctx, 'html')
+    const hasHtmlValue = t.logicalExpression(
+      '&&',
+      t.binaryExpression('!=', t.cloneNode(htmlValueId), t.nullLiteral()),
+      t.logicalExpression(
+        '&&',
+        t.binaryExpression(
+          '===',
+          t.unaryExpression('typeof', t.cloneNode(htmlValueId)),
+          t.stringLiteral('object'),
+        ),
+        t.binaryExpression('in', t.stringLiteral('__html'), t.cloneNode(htmlValueId)),
+      ),
+    )
+    const htmlMember = t.memberExpression(t.cloneNode(htmlValueId), t.identifier('__html'))
+
+    return [
+      t.variableDeclaration('const', [t.variableDeclarator(htmlValueId, valueExpr)]),
+      t.ifStatement(
+        hasHtmlValue,
+        t.expressionStatement(
+          t.callExpression(runtimeIdentifier(ctx, 'setProp'), [
+            t.cloneNode(targetId),
+            t.stringLiteral('innerHTML'),
+            htmlMember,
+          ]),
+        ),
+      ),
+    ]
+  }
+
   const flushFusedPatchGroups = (): void => {
     if (fusedPatchGroups.size === 0) return
     for (const groupEntries of fusedPatchGroups.values()) {
@@ -3458,7 +3493,36 @@ function lowerIntrinsicElement(
         !isListKeyConstExpression(binding.expr, ctx) &&
         isExpressionReactive(binding.expr, ctx)
 
-      if (attrName === 'ref') {
+      if (attrName === 'dangerouslySetInnerHTML') {
+        if (binding.hasChildren) {
+          const loc = binding.expr?.loc?.start
+          throw new HIRError(
+            'dangerouslySetInnerHTML cannot be used with JSX children in fine-grained DOM output.',
+            'BUILD_ERROR',
+            {
+              file: ctx.options?.filename ?? '<unknown>',
+              line: loc?.line,
+              variable: attrName,
+            },
+          )
+        }
+        if (!binding.expr) continue
+
+        ctx.helpersUsed.add('setProp')
+        const patchStatements = buildDangerouslySetInnerHTMLStatements(targetId, valueWithRegion)
+        if (isReactiveAttr) {
+          ctx.helpersUsed.add('renderEffect')
+          statements.push(
+            t.expressionStatement(
+              t.callExpression(runtimeIdentifier(ctx, 'renderEffect'), [
+                t.arrowFunctionExpression([], t.blockStatement(patchStatements)),
+              ]),
+            ),
+          )
+        } else {
+          statements.push(...patchStatements)
+        }
+      } else if (attrName === 'ref') {
         ctx.helpersUsed.add('bindRef')
         statements.push(
           t.expressionStatement(
