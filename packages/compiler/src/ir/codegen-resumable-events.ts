@@ -18,6 +18,84 @@ export interface ResumableEventBindingOps {
   ) => BabelCore.types.Expression
 }
 
+function isBabelNode(value: unknown): value is BabelCore.types.Node {
+  return typeof value === 'object' && value !== null && 'type' in value
+}
+
+function visitBabelNode(
+  node: BabelCore.types.Node,
+  t: typeof BabelCore.types,
+  visit: (node: BabelCore.types.Node) => void,
+): void {
+  visit(node)
+  const visitorKeys = (t as unknown as { VISITOR_KEYS?: Record<string, string[]> }).VISITOR_KEYS
+  const keys = visitorKeys?.[node.type] ?? []
+  const record = node as unknown as Record<string, unknown>
+  for (const key of keys) {
+    const value = record[key]
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (isBabelNode(item)) visitBabelNode(item, t, visit)
+      }
+      continue
+    }
+    if (isBabelNode(value)) {
+      visitBabelNode(value, t, visit)
+    }
+  }
+}
+
+function getMemberRootName(
+  expr: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): string | null {
+  if (t.isIdentifier(expr)) return expr.name
+  if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr)) {
+    return getMemberRootName(expr.object as BabelCore.types.Expression, t)
+  }
+  return null
+}
+
+function getStaticMemberSegment(
+  expr: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
+  t: typeof BabelCore.types,
+): string {
+  if (!expr.computed && t.isIdentifier(expr.property)) return expr.property.name
+  if (t.isStringLiteral(expr.property)) return expr.property.value
+  if (t.isNumericLiteral(expr.property)) return String(expr.property.value)
+  return '*'
+}
+
+function formatMemberPath(
+  expr: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): string | null {
+  if (t.isIdentifier(expr)) return expr.name
+  if (t.isMemberExpression(expr) || t.isOptionalMemberExpression(expr)) {
+    const base = formatMemberPath(expr.object as BabelCore.types.Expression, t)
+    if (!base) return null
+    return `${base}.${getStaticMemberSegment(expr, t)}`
+  }
+  return null
+}
+
+function collectCalledPropMembers(
+  expr: BabelCore.types.Expression,
+  propsName: string | null,
+  t: typeof BabelCore.types,
+): string[] {
+  if (!propsName) return []
+  const paths = new Set<string>()
+  visitBabelNode(expr, t, node => {
+    if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node)) return
+    const callee = node.callee
+    if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) return
+    if (getMemberRootName(callee, t) !== propsName) return
+    paths.add(formatMemberPath(callee, t) ?? `${propsName}.*`)
+  })
+  return Array.from(paths).sort()
+}
+
 export function emitResumableEventBinding(
   targetId: BabelCore.types.Identifier,
   eventName: string,
@@ -83,6 +161,7 @@ export function emitResumableEventBinding(
     !propRestRestores.has(ctx.propsParamName)
       ? ctx.propsParamName
       : null
+  const calledPropMembers = collectCalledPropMembers(handlerExpr, propsName, t)
   const unsupportedLocals = Array.from(captured).filter(name => {
     if (ctx.inListRender && ctx.listKeyParamName && name === ctx.listKeyParamName) return true
     if (!ctx.localDeclaredNames?.has(name)) return false
@@ -124,13 +203,20 @@ export function emitResumableEventBinding(
     loweredFunctionDeps.set(name, loweredFn)
   }
 
-  if (unsupportedLocals.length > 0 || unsafeFunctionCaptures.length > 0) {
+  if (
+    unsupportedLocals.length > 0 ||
+    unsafeFunctionCaptures.length > 0 ||
+    calledPropMembers.length > 0
+  ) {
     const detailParts: string[] = []
     if (unsupportedLocals.length > 0) {
       detailParts.push(`direct: ${unsupportedLocals.sort().join(', ')}`)
     }
     if (unsafeFunctionCaptures.length > 0) {
       detailParts.push(`function deps: ${unsafeFunctionCaptures.sort().join('; ')}`)
+    }
+    if (calledPropMembers.length > 0) {
+      detailParts.push(`function props: ${calledPropMembers.join(', ')}`)
     }
     const detail = `Resumable handlers cannot capture non-serializable local variables (${detailParts.join(' | ')}).`
     if (options?.explicit) {

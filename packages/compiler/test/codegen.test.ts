@@ -759,6 +759,65 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('console.log(rest.title)')
   })
 
+  it('throws for explicit resumable handlers that call function props', () => {
+    const ast = parseFile(`
+      function Button(props) {
+        return <button onClick$={() => props.onClick()}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+      /function props: props\.onClick/i,
+    )
+  })
+
+  it('throws for explicit resumable handlers that optionally call nested function props', () => {
+    const ast = parseFile(`
+      function Button(props) {
+        return <button onClick$={() => props.handlers.save?.()}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+      /function props: props\.handlers\.save/i,
+    )
+  })
+
+  it('allows explicit resumable handlers that read scalar props', () => {
+    const ast = parseFile(`
+      function Button(props) {
+        return <button onClick$={() => console.log(props.id)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('setAttribute("on:click"')
+    expect(code).toContain('const props = __scopeProps')
+    expect(code).toContain('console.log(props.id)')
+  })
+
+  it('falls back for auto-extracted handlers that call function props', () => {
+    const ast = parseFile(`
+      function Button(props) {
+        return <button onClick={() => {
+          if (props.enabled) {
+            props.onClick()
+          }
+        }}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(code).not.toContain('setAttribute("on:click"')
+  })
+
   it('throws for explicit resumable handlers that capture non-serializable locals', () => {
     const ast = parseFile(`
       function Comp() {
