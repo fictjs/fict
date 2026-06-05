@@ -2569,6 +2569,187 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('updates signal and conditional object refs in fine-grained mode', async () => {
+    const source = `
+      import { $state, createRef, render } from 'fict'
+
+      export const liveOne = createRef<HTMLInputElement>()
+      export const liveTwo = createRef<HTMLInputElement>()
+      export const conditionalOne = createRef<HTMLInputElement>()
+      export const conditionalTwo = createRef<HTMLInputElement>()
+
+      export function App() {
+        const live = $state(liveOne)
+        const useFirst = $state(true)
+
+        return (
+          <>
+            <input data-id="live" ref={live} />
+            <input data-id="conditional" ref={useFirst() ? conditionalOne : conditionalTwo} />
+            <button data-id="swap-live" onClick={() => live(liveTwo)}>swap live</button>
+            <button data-id="swap-conditional" onClick={() => useFirst(false)}>
+              swap conditional
+            </button>
+          </>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      liveOne: { current: HTMLInputElement | null }
+      liveTwo: { current: HTMLInputElement | null }
+      conditionalOne: { current: HTMLInputElement | null }
+      conditionalTwo: { current: HTMLInputElement | null }
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    const liveInput = container.querySelector('[data-id="live"]') as HTMLInputElement
+    const conditionalInput = container.querySelector('[data-id="conditional"]') as HTMLInputElement
+    const swapLive = container.querySelector('[data-id="swap-live"]') as HTMLButtonElement
+    const swapConditional = container.querySelector(
+      '[data-id="swap-conditional"]',
+    ) as HTMLButtonElement
+
+    expect(mod.liveOne.current).toBe(liveInput)
+    expect(mod.liveTwo.current).toBe(null)
+    expect(mod.conditionalOne.current).toBe(conditionalInput)
+    expect(mod.conditionalTwo.current).toBe(null)
+
+    swapLive.click()
+    swapConditional.click()
+    await flushUpdates()
+
+    expect(mod.liveOne.current).toBe(null)
+    expect(mod.liveTwo.current).toBe(liveInput)
+    expect(mod.conditionalOne.current).toBe(null)
+    expect(mod.conditionalTwo.current).toBe(conditionalInput)
+
+    teardown()
+    container.remove()
+  })
+
+  it('updates prop and destructured prop refs in fine-grained mode', async () => {
+    const source = `
+      import { $state, createRef, render } from 'fict'
+
+      export const propOne = createRef<HTMLInputElement>()
+      export const propTwo = createRef<HTMLInputElement>()
+      export const destructuredOne = createRef<HTMLInputElement>()
+      export const destructuredTwo = createRef<HTMLInputElement>()
+
+      function Child(props: { inputRef: any }) {
+        return <input data-id="prop" ref={props.inputRef} />
+      }
+
+      function Destructured({ inputRef }: { inputRef: any }) {
+        return <input data-id="destructured" ref={inputRef} />
+      }
+
+      export function App() {
+        const useFirst = $state(true)
+
+        return (
+          <>
+            <Child inputRef={useFirst() ? propOne : propTwo} />
+            <Destructured inputRef={useFirst() ? destructuredOne : destructuredTwo} />
+            <button data-id="swap" onClick={() => useFirst(false)}>swap</button>
+          </>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      propOne: { current: HTMLInputElement | null }
+      propTwo: { current: HTMLInputElement | null }
+      destructuredOne: { current: HTMLInputElement | null }
+      destructuredTwo: { current: HTMLInputElement | null }
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    const propInput = container.querySelector('[data-id="prop"]') as HTMLInputElement
+    const destructuredInput = container.querySelector(
+      '[data-id="destructured"]',
+    ) as HTMLInputElement
+    const swap = container.querySelector('[data-id="swap"]') as HTMLButtonElement
+
+    expect(mod.propOne.current).toBe(propInput)
+    expect(mod.propTwo.current).toBe(null)
+    expect(mod.destructuredOne.current).toBe(destructuredInput)
+    expect(mod.destructuredTwo.current).toBe(null)
+
+    swap.click()
+    await flushUpdates()
+
+    expect(mod.propOne.current).toBe(null)
+    expect(mod.propTwo.current).toBe(propInput)
+    expect(mod.destructuredOne.current).toBe(null)
+    expect(mod.destructuredTwo.current).toBe(destructuredInput)
+
+    teardown()
+    container.remove()
+  })
+
+  it('cleans up and reapplies reactive callback refs in fine-grained mode', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        const first = (el: HTMLInputElement | null) => calls.push('first:' + (el ? 'set' : 'clear'))
+        const second = (el: HTMLInputElement | null) => calls.push('second:' + (el ? 'set' : 'clear'))
+        const current = $state(first)
+
+        return (
+          <>
+            <input data-id="callback" ref={current} />
+            <button data-id="swap-callback" onClick={() => current(second)}>swap</button>
+          </>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      calls: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(mod.calls).toEqual(['first:set'])
+
+    const swap = container.querySelector('[data-id="swap-callback"]') as HTMLButtonElement
+    swap.click()
+    await flushUpdates()
+
+    expect(mod.calls).toEqual(['first:set', 'first:clear', 'second:set'])
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps keyed list DOM in sync in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'

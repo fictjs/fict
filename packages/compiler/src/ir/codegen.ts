@@ -120,6 +120,7 @@ import { generateRegions, generateRegionCode, regionToMetadata } from './regions
 import type { ReactiveScopeResult } from './scopes'
 import { analyzeReactiveScopesWithSSA } from './scopes'
 import { structurizeCFG, structurizeCFGWithDiagnostics } from './structurize'
+import { walkExpression } from './walk-expression'
 
 export { getReactiveCallKind } from './codegen-reactive-kind'
 
@@ -3630,6 +3631,37 @@ function lowerIntrinsicElement(
       : valueExpr
   }
 
+  const refExpressionUsesReactiveSource = (expr?: Expression): boolean => {
+    if (!expr) return false
+    let usesReactiveSource = false
+    const isReactiveRefDependency = (name: string): boolean => {
+      const baseName = deSSAVarName(name).split('.')[0] ?? name
+      if (ctx.functionVars?.has(baseName)) return false
+      return (
+        ctx.signalVars?.has(baseName) ||
+        ctx.memoVars?.has(baseName) ||
+        ctx.aliasVars?.has(baseName) ||
+        ctx.trackedVars.has(baseName)
+      )
+    }
+
+    walkExpression(
+      expr,
+      node => {
+        if (usesReactiveSource) return
+        if (node.kind === 'Identifier') {
+          usesReactiveSource = isReactiveRefDependency(node.name)
+          return
+        }
+        if (node.kind === 'MemberExpression' || node.kind === 'OptionalMemberExpression') {
+          usesReactiveSource = !!resolveHookReturnMemberAccessorKind(node, ctx)
+        }
+      },
+      { includeFunctionBodies: false },
+    )
+    return usesReactiveSource
+  }
+
   const buildDangerouslySetInnerHTMLStatements = (
     targetId: BabelCore.types.Identifier,
     valueExpr: BabelCore.types.Expression,
@@ -4242,9 +4274,12 @@ function lowerIntrinsicElement(
         }
       } else if (attrName === 'ref') {
         ctx.helpersUsed.add('bindRef')
+        const refValue = refExpressionUsesReactiveSource(binding.expr)
+          ? markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], valueWithRegion))
+          : valueWithRegion
         statements.push(
           t.expressionStatement(
-            t.callExpression(runtimeIdentifier(ctx, 'bindRef'), [targetId, valueWithRegion]),
+            t.callExpression(runtimeIdentifier(ctx, 'bindRef'), [targetId, refValue]),
           ),
         )
       } else if (attrName === 'class' || attrName === 'className' || attrName === 'classList') {

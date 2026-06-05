@@ -1512,10 +1512,9 @@ describe('component ref handling', () => {
     const { code } = generate(file)
 
     expect(code).toContain('bindRef')
-    expect(code).toMatch(/bindRef\([^,]+,\s*props(?:\(\))?\.inputRef\)/)
-    expect(code).toMatch(/bindRef\([^,]+,\s*liveRef\(\)\)/)
+    expect(code).toMatch(/bindRef\([^,]+,\s*__fictReactive\(\(\)\s*=>\s*props\.inputRef\)\)/)
+    expect(code).toMatch(/bindRef\([^,]+,\s*__fictReactive\(\(\)\s*=>\s*liveRef\(\)\)\)/)
     expect(code).toMatch(/bindRef\([^,]+,\s*cb\)/)
-    expect(code).not.toMatch(/bindRef\([^,]+,\s*\(\)\s*=>/)
   })
 })
 
