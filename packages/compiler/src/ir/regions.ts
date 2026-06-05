@@ -4204,6 +4204,18 @@ function instructionToStatement(
     const namespaceMemberKind = getNamespaceReactiveMemberKind(instr.value, ctx)
     const isNamespaceAccessorAlias =
       namespaceMemberKind === 'signal' || namespaceMemberKind === 'memo'
+    const isNamespaceStoreAlias =
+      namespaceMemberKind === 'store' ||
+      (instr.value.kind === 'Identifier' &&
+        (ctx.namespaceStoreAliasVars?.has(deSSAVarName(instr.value.name)) ?? false))
+    const markNamespaceStoreAlias = (): void => {
+      const namespaceStoreAliasVars =
+        ctx.namespaceStoreAliasVars ?? (ctx.namespaceStoreAliasVars = new Set())
+      namespaceStoreAliasVars.add(baseName)
+      const storeVars = ctx.storeVars ?? (ctx.storeVars = new Set())
+      storeVars.add(baseName)
+      ctx.trackedVars.add(baseName)
+    }
     const markReactiveAliasIfNeeded = (): void => {
       if (isDestructuringTemp) return
       if (isNamespaceAccessorAlias) {
@@ -4316,6 +4328,19 @@ function instructionToStatement(
     if (isHoistedDeclarationInitializer) {
       return t.expressionStatement(
         t.assignmentExpression('=', t.identifier(baseName), buildHoistedInitializer()),
+      )
+    }
+
+    if (isNamespaceStoreAlias && !isDestructuringTemp) {
+      markNamespaceStoreAlias()
+      if (declKind) {
+        declaredVars.add(baseName)
+        return t.variableDeclaration(declKind, [
+          t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
+        ])
+      }
+      return t.expressionStatement(
+        t.assignmentExpression('=', t.identifier(baseName), lowerAssignedValue(true)),
       )
     }
 

@@ -1382,6 +1382,67 @@ describe('Cross-Module Reactivity', () => {
       expect(consumerOutput).toMatch(/memoAlias\(\)/)
     })
 
+    it('publishes namespace imported store aliases as store metadata', () => {
+      const sourcePath = path.join(baseDir, 'reactive-namespace-store-source.ts')
+      const producerPath = path.join(baseDir, 'reactive-namespace-store-alias-producer.ts')
+      const consumerPath = path.join(baseDir, 'reactive-namespace-store-alias-consumer.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(sourcePath), {
+        version: 1,
+        exports: {
+          state: 'store',
+        },
+      })
+
+      const producerSource = `
+        import * as source from './reactive-namespace-store-source'
+
+        const storeAlias = source.state
+        export const directAlias = source.state
+        const defaultAlias = source.state
+
+        export { storeAlias }
+        export default defaultAlias
+      `
+
+      const producerOutput = transform(producerSource, { moduleMetadata }, producerPath)
+
+      expect(producerOutput).toContain('const storeAlias = source.state;')
+      expect(producerOutput).toContain('export const directAlias = source.state;')
+      expect(producerOutput).not.toContain('source.state()')
+      expect(moduleMetadata.get(path.resolve(producerPath))?.exports).toEqual({
+        storeAlias: 'store',
+        directAlias: 'store',
+        default: 'store',
+      })
+
+      const consumerSource = `
+        import defaultAlias, { directAlias, storeAlias } from './reactive-namespace-store-alias-producer'
+
+        export function App() {
+          const doubled = storeAlias.count * 2
+          const tripled = directAlias.count * 3
+          const fallback = defaultAlias.count * 4
+          return <div>{doubled}{tripled}{fallback}</div>
+        }
+      `
+      const consumerOutput = transform(
+        consumerSource,
+        { fineGrainedDom: true, moduleMetadata },
+        consumerPath,
+      )
+
+      expect(consumerOutput).toContain(
+        'const doubled = __fictUseMemo(__fictCtx, () => storeAlias.count * 2',
+      )
+      expect(consumerOutput).toContain(
+        'const tripled = __fictUseMemo(__fictCtx, () => directAlias.count * 3',
+      )
+      expect(consumerOutput).toContain(
+        'const fallback = __fictUseMemo(__fictCtx, () => defaultAlias.count * 4',
+      )
+    })
+
     it('publishes hook metadata for imported accessor returns', () => {
       const sourcePath = path.join(baseDir, 'imported-accessor-source.ts')
       const hookPath = path.join(baseDir, 'imported-accessor-hooks.tsx')

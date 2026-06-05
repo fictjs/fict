@@ -540,6 +540,8 @@ export interface CodegenContext {
   externalTracked?: Set<string> | undefined
   /** Variables initialized with $store (need path-level reactivity, no getter transformation) */
   storeVars?: Set<string> | undefined
+  /** Local aliases that forward namespace-imported store proxies. */
+  namespaceStoreAliasVars?: Set<string> | undefined
   /** Namespace import metadata for reactive exports (used for obj.signal access) */
   importedNamespaces?: Map<string, ModuleReactiveMetadata> | undefined
   /** Variables initialized with $state (signal accessors) */
@@ -683,6 +685,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     aliasVars: new Set(),
     externalTracked: new Set(),
     storeVars: new Set(),
+    namespaceStoreAliasVars: new Set(),
     importedNamespaces: new Map(),
     signalVars: new Set(),
     callableSignalVars: new Set(),
@@ -6413,6 +6416,7 @@ function lowerFunctionWithRegions(
   const prevFunctionVars = ctx.functionVars
   const prevMemoVars = ctx.memoVars
   const prevStoreVars = ctx.storeVars
+  const prevNamespaceStoreAliasVars = ctx.namespaceStoreAliasVars
   const prevMutatedVars = ctx.mutatedVars
   const prevAliasVars = ctx.aliasVars
   const prevNoMemo = ctx.noMemo
@@ -6451,6 +6455,7 @@ function lowerFunctionWithRegions(
   ctx.functionVars = new Set(prevFunctionVars ?? [])
   ctx.memoVars = new Set(prevMemoVars ?? [])
   ctx.storeVars = new Set(prevStoreVars ?? [])
+  ctx.namespaceStoreAliasVars = new Set(prevNamespaceStoreAliasVars ?? [])
   ctx.mutatedVars = new Set()
   ctx.noMemo = !!(prevNoMemo || fn.meta?.noMemo)
   ctx.hookResultVarMap = new Map()
@@ -7078,6 +7083,7 @@ function lowerFunctionWithRegions(
   ctx.componentFunctionDefs = prevComponentFunctionDefs
   ctx.memoVars = prevMemoVars
   ctx.storeVars = prevStoreVars
+  ctx.namespaceStoreAliasVars = prevNamespaceStoreAliasVars
   ctx.mutatedVars = prevMutatedVars
   ctx.aliasVars = prevAliasVars
   ctx.noMemo = prevNoMemo
