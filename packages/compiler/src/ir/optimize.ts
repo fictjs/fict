@@ -2859,6 +2859,8 @@ function expressionContainsImpureMarkers(expr: Expression): boolean {
     case 'FunctionExpression':
       if (expr.pure) return false
       return blocksContainImpureMarkers(expr.body)
+    case 'ClassExpression':
+      return true
     case 'AssignmentExpression':
       return (
         expressionContainsImpureMarkers(expr.left as Expression) ||

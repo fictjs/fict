@@ -683,6 +683,14 @@ function compareInstructionSourceOrder(
   return (instructionOrder.get(a) ?? 0) - (instructionOrder.get(b) ?? 0)
 }
 
+function isClassEvaluationBarrier(instr: Instruction): boolean {
+  return (
+    instr.kind === 'Assign' &&
+    instr.declarationKind !== undefined &&
+    instr.value.kind === 'ClassExpression'
+  )
+}
+
 /**
  * Check if an instruction belongs to the given scope
  */
@@ -1369,6 +1377,22 @@ function lowerNodeWithRegionContext(
       for (let index = 0; index < node.nodes.length; index++) {
         const child = node.nodes[index]!
         if (child.kind === 'instruction') {
+          if (isClassEvaluationBarrier(child.instruction)) {
+            const disabledRegionIds = new Set<number>()
+            for (const item of instructionBuffer) {
+              if (item.region) disabledRegionIds.add(item.region.id)
+            }
+            const classRegion = findRegionForInstruction(child.instruction, regionCtx)
+            if (classRegion) disabledRegionIds.add(classRegion.id)
+            disabledRegionIds.forEach(id => regionCtx?.disabledRegions.add(id))
+            stmts.push(
+              ...flushInstructionBuffer(instructionBuffer, t, ctx, declaredVars, regionCtx),
+            )
+            instructionBuffer.length = 0
+            const stmt = instructionToStatement(child.instruction, t, declaredVars, ctx)
+            if (stmt) stmts.push(stmt)
+            continue
+          }
           const region = findRegionForInstruction(child.instruction, regionCtx)
           instructionBuffer.push({ instr: child.instruction, region })
         } else {
