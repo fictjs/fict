@@ -1003,6 +1003,7 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
             t.variableDeclaration('const', [t.variableDeclarator(loopValue)]),
             lowerExpression(term.iterable, ctx),
             t.blockStatement(bodyStatements),
+            !!term.await,
           ),
         ])
       }
@@ -1011,6 +1012,7 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
           left,
           lowerExpression(term.iterable, ctx),
           t.blockStatement(bodyStatements),
+          !!term.await,
         ),
       ])
     }

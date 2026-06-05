@@ -185,6 +185,8 @@ export type Terminator =
       variableKind: 'const' | 'let' | 'var'
       /** Original pattern for destructuring (stored as Babel AST node) */
       pattern?: LVal | undefined
+      /** Whether this is a `for await...of` loop. */
+      await?: boolean | undefined
       iterable: Expression
       body: BlockId
       exit: BlockId

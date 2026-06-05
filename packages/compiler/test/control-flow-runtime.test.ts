@@ -1030,6 +1030,105 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe('a\nb')
   })
 
+  it('preserves for-await over promise arrays with optimization', async () => {
+    const result = await compileAndRunHook<Promise<number>>(
+      `
+        import { $state } from 'fict'
+
+        export async function useRun() {
+          let count = $state(0)
+          let x = 0
+          for await (const value of [Promise.resolve(1), Promise.resolve(2)]) {
+            x += value
+          }
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(3)
+  })
+
+  it('preserves for-await over async generators with optimization', async () => {
+    const result = await compileAndRunHook<Promise<number>>(
+      `
+        import { $state } from 'fict'
+
+        async function* gen() {
+          yield 1
+          yield 2
+        }
+
+        export async function useRun() {
+          let count = $state(0)
+          let x = 0
+          for await (const value of gen()) {
+            x += value
+          }
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(3)
+  })
+
+  it('preserves for-await break and continue with optimization', async () => {
+    const result = await compileAndRunHook<Promise<number>>(
+      `
+        import { $state } from 'fict'
+
+        export async function useRun() {
+          let count = $state(0)
+          let x = 0
+          for await (const value of [
+            Promise.resolve(1),
+            Promise.resolve(2),
+            Promise.resolve(3),
+          ]) {
+            if (value === 2) {
+              continue
+            }
+            x += value
+            if (x > 2) {
+              break
+            }
+          }
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(4)
+  })
+
+  it('preserves for-await destructuring loop variables with optimization', async () => {
+    const result = await compileAndRunHook<Promise<number>>(
+      `
+        import { $state } from 'fict'
+
+        export async function useRun() {
+          let count = $state(0)
+          let x = 0
+          for await (const [value] of [Promise.resolve([1]), Promise.resolve([2])]) {
+            x += value
+          }
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(3)
+  })
+
   it('preserves object destructuring assignment order in reactive hooks', () => {
     const result = compileAndRunHook<number>(
       `

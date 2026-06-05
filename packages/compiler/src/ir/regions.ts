@@ -54,6 +54,8 @@ export interface Region {
   hasControlFlow: boolean
   /** Whether this region contains JSX */
   hasJSX: boolean
+  /** Whether this region contains syntax that must remain in an async execution context. */
+  hasAsyncSyntax: boolean
   /** Whether this region should be memoized */
   shouldMemoize: boolean
   /** Child regions (for nested scopes) */
@@ -73,6 +75,126 @@ function templateElementFromQuasi(
     cooked === null ? t.templateElement({ raw }, tail) : t.templateElement({ raw, cooked }, tail)
   ;(element.value as { raw: string; cooked: string | null }).cooked = cooked
   return element
+}
+
+function expressionNeedsAsyncContext(expr: Expression): boolean {
+  switch (expr.kind) {
+    case 'AwaitExpression':
+      return true
+    case 'CallExpression':
+    case 'OptionalCallExpression':
+      return (
+        expressionNeedsAsyncContext(expr.callee) ||
+        expr.arguments.some(arg => expressionNeedsAsyncContext(arg))
+      )
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      return (
+        expressionNeedsAsyncContext(expr.object) ||
+        (expr.computed ? expressionNeedsAsyncContext(expr.property) : false)
+      )
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      return expressionNeedsAsyncContext(expr.left) || expressionNeedsAsyncContext(expr.right)
+    case 'UnaryExpression':
+      return expressionNeedsAsyncContext(expr.argument)
+    case 'ConditionalExpression':
+      return (
+        expressionNeedsAsyncContext(expr.test) ||
+        expressionNeedsAsyncContext(expr.consequent) ||
+        expressionNeedsAsyncContext(expr.alternate)
+      )
+    case 'ArrayExpression':
+      return expr.elements.some(element => expressionNeedsAsyncContext(element))
+    case 'ObjectExpression':
+      return expr.properties.some(prop =>
+        prop.kind === 'SpreadElement'
+          ? expressionNeedsAsyncContext(prop.argument)
+          : (prop.computed && expressionNeedsAsyncContext(prop.key)) ||
+            expressionNeedsAsyncContext(prop.value),
+      )
+    case 'AssignmentExpression':
+      return expressionNeedsAsyncContext(expr.left) || expressionNeedsAsyncContext(expr.right)
+    case 'UpdateExpression':
+      return expressionNeedsAsyncContext(expr.argument)
+    case 'TemplateLiteral':
+      return expr.expressions.some(part => expressionNeedsAsyncContext(part))
+    case 'SpreadElement':
+      return expressionNeedsAsyncContext(expr.argument)
+    case 'NewExpression':
+      return (
+        expressionNeedsAsyncContext(expr.callee) ||
+        expr.arguments.some(arg => expressionNeedsAsyncContext(arg))
+      )
+    case 'ImportExpression':
+      return expressionNeedsAsyncContext(expr.source)
+    case 'SequenceExpression':
+      return expr.expressions.some(part => expressionNeedsAsyncContext(part))
+    case 'YieldExpression':
+      return expr.argument ? expressionNeedsAsyncContext(expr.argument) : false
+    case 'TaggedTemplateExpression':
+      return (
+        expressionNeedsAsyncContext(expr.tag) ||
+        expr.quasi.expressions.some(part => expressionNeedsAsyncContext(part))
+      )
+    case 'ClassExpression':
+      return expr.superClass ? expressionNeedsAsyncContext(expr.superClass) : false
+    case 'JSXElement':
+      return (
+        (typeof expr.tagName !== 'string' && expressionNeedsAsyncContext(expr.tagName)) ||
+        expr.attributes.some(attr =>
+          attr.isSpread
+            ? !!attr.spreadExpr && expressionNeedsAsyncContext(attr.spreadExpr)
+            : attr.value
+              ? expressionNeedsAsyncContext(attr.value)
+              : false,
+        ) ||
+        expr.children.some(child =>
+          child.kind === 'expression' ? expressionNeedsAsyncContext(child.value) : false,
+        )
+      )
+    case 'ArrowFunction':
+    case 'FunctionExpression':
+    case 'Identifier':
+    case 'Literal':
+    case 'MetaProperty':
+    case 'ThisExpression':
+    case 'SuperExpression':
+      return false
+  }
+}
+
+function instructionNeedsAsyncContext(instr: Instruction): boolean {
+  if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+    return expressionNeedsAsyncContext(instr.value)
+  }
+  return false
+}
+
+function terminatorNeedsAsyncContext(term: Terminator): boolean {
+  switch (term.kind) {
+    case 'Branch':
+      return expressionNeedsAsyncContext(term.test)
+    case 'Switch':
+      return (
+        expressionNeedsAsyncContext(term.discriminant) ||
+        term.cases.some(c => (c.test ? expressionNeedsAsyncContext(c.test) : false))
+      )
+    case 'ForOf':
+      return !!term.await || expressionNeedsAsyncContext(term.iterable)
+    case 'ForIn':
+      return expressionNeedsAsyncContext(term.object)
+    case 'Return':
+      return term.argument ? expressionNeedsAsyncContext(term.argument) : false
+    case 'Throw':
+      return expressionNeedsAsyncContext(term.argument)
+    case 'Jump':
+    case 'Unreachable':
+    case 'Break':
+    case 'Continue':
+    case 'Try':
+      return false
+  }
 }
 
 /**
@@ -469,6 +591,7 @@ function createRegionFromScope(
   const instructions: Instruction[] = []
   let hasControlFlow = false
   let hasJSX = false
+  let hasAsyncSyntax = false
   const instructionOrder = new Map<Instruction, number>()
   let order = 0
   for (const block of fn.blocks) {
@@ -488,6 +611,9 @@ function createRegionFromScope(
         if (containsJSX(instr)) {
           hasJSX = true
         }
+        if (instructionNeedsAsyncContext(instr)) {
+          hasAsyncSyntax = true
+        }
       }
     }
 
@@ -500,6 +626,9 @@ function createRegionFromScope(
       if (containsJSXExpr(block.terminator.argument)) {
         hasJSX = true
       }
+    }
+    if (terminatorNeedsAsyncContext(block.terminator)) {
+      hasAsyncSyntax = true
     }
   }
   instructions.sort((a, b) => compareInstructionSourceOrder(a, b, instructionOrder))
@@ -534,6 +663,7 @@ function createRegionFromScope(
     declarations: new Set(scope.declarations),
     hasControlFlow,
     hasJSX,
+    hasAsyncSyntax,
     shouldMemoize: scope.shouldMemoize,
     children: [],
   }
@@ -1594,10 +1724,18 @@ function lowerNodeWithRegionContext(
                 ),
                 ...bodyStmts,
               ]),
+              !!node.await,
             ),
           ]
         }
-        return [t.forOfStatement(t.identifier(targetName), right, t.blockStatement(bodyStmts))]
+        return [
+          t.forOfStatement(
+            t.identifier(targetName),
+            right,
+            t.blockStatement(bodyStmts),
+            !!node.await,
+          ),
+        ]
       }
       const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
       const bindingNames = new Set<string>()
@@ -1609,7 +1747,7 @@ function lowerNodeWithRegionContext(
         )
       })
 
-      return [t.forOfStatement(left, right, body)]
+      return [t.forOfStatement(left, right, body, !!node.await)]
     }
 
     case 'forIn': {
@@ -2154,15 +2292,18 @@ function lowerStructuredNodeForRegion(
               ),
               ...body,
             ]),
+            !!node.await,
           ),
         ]
       }
       if (isAssignmentTarget) {
-        return [t.forOfStatement(t.identifier(targetName), right, t.blockStatement(body))]
+        return [
+          t.forOfStatement(t.identifier(targetName), right, t.blockStatement(body), !!node.await),
+        ]
       }
       if (body.length === 0) return []
       const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
-      return [t.forOfStatement(left, right, t.blockStatement(body))]
+      return [t.forOfStatement(left, right, t.blockStatement(body), !!node.await)]
     }
 
     case 'forIn': {
@@ -2712,6 +2853,7 @@ function generateRegionStatements(
   const shouldInline =
     (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) ||
     ctx.noMemo ||
+    region.hasAsyncSyntax ||
     !region.shouldMemoize ||
     (region.dependencies.size === 0 && !hasTrackedOutputs)
 

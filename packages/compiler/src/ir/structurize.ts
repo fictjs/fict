@@ -106,6 +106,7 @@ export type StructuredNode =
       leftKind?: 'declaration' | 'assignment' | undefined
       variableKind: 'const' | 'let' | 'var'
       pattern?: LVal | undefined
+      await?: boolean | undefined
       iterable: Expression
       body: StructuredNode
     }
@@ -1641,6 +1642,7 @@ function structurizeForOf(
     leftKind?: 'declaration' | 'assignment' | undefined
     variableKind: 'const' | 'let' | 'var'
     pattern?: LVal | undefined
+    await?: boolean | undefined
     iterable: Expression
     body: BlockId
     exit: BlockId
@@ -1663,6 +1665,7 @@ function structurizeForOf(
     leftKind: term.leftKind,
     variableKind: term.variableKind,
     pattern: term.pattern,
+    ...(term.await ? { await: true } : null),
     iterable: term.iterable,
     body,
   }

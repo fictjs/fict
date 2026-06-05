@@ -148,7 +148,7 @@ function terminatorHasAwait(term: BasicBlock['terminator']): boolean {
       if (expressionHasAwait(term.discriminant)) return true
       return term.cases.some(c => (c.test ? expressionHasAwait(c.test) : false))
     case 'ForOf':
-      return expressionHasAwait(term.iterable)
+      return !!term.await || expressionHasAwait(term.iterable)
     case 'ForIn':
       return expressionHasAwait(term.object)
     case 'Return':
