@@ -6944,6 +6944,34 @@ function lowerFunctionWithRegions(
           [valueExpr],
         )
       }
+      const buildEagerDefaultedPropAccessor = (
+        valueExpr: BabelCore.types.Expression,
+        defaultExpr: BabelCore.types.Expression,
+      ): BabelCore.types.Expression => {
+        const defaultId = genTemp(ctx, 'propDefault')
+        stmts.push(
+          t.variableDeclaration('const', [
+            t.variableDeclarator(
+              defaultId,
+              t.conditionalExpression(
+                t.binaryExpression('===', t.cloneNode(valueExpr, true), t.identifier('undefined')),
+                t.cloneNode(defaultExpr, true) as BabelCore.types.Expression,
+                t.identifier('undefined'),
+              ),
+            ),
+          ]),
+        )
+        return t.callExpression(runtimeIdentifier(ctx, 'prop'), [
+          t.arrowFunctionExpression(
+            [],
+            t.conditionalExpression(
+              t.binaryExpression('===', t.cloneNode(valueExpr, true), t.identifier('undefined')),
+              t.cloneNode(defaultId),
+              t.cloneNode(valueExpr, true),
+            ),
+          ),
+        ])
+      }
 
       const buildDestructure = (
         objectPattern: BabelCore.types.ObjectPattern,
@@ -7020,9 +7048,7 @@ function lowerFunctionWithRegions(
                 }
                 const baseInit = buildDefaultValueExpression(member, value.right)
                 const init = shouldWrapProp
-                  ? t.callExpression(runtimeIdentifier(ctx, 'prop'), [
-                      t.arrowFunctionExpression([], baseInit),
-                    ])
+                  ? buildEagerDefaultedPropAccessor(member, value.right)
                   : baseInit
                 stmts.push(
                   t.variableDeclaration('const', [

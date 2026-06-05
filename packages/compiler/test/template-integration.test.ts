@@ -192,6 +192,60 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('evaluates destructured prop defaults during component invocation', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      function side(label: string) {
+        log.push(label)
+        return label
+      }
+
+      function Unused({ name = side('unused') }: { name?: string | null }) {
+        return <span data-id="unused">static</span>
+      }
+
+      function ReadTwice({ name = side('read') }: { name?: string | null }) {
+        return <span data-id="read">{name}:{name}</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => (
+          <>
+            <Unused />
+            <Unused name={null} />
+            <Unused name="present" />
+            <ReadTwice />
+          </>
+        ), el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      log: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect((container.querySelector('[data-id="unused"]') as HTMLSpanElement).textContent).toBe(
+      'static',
+    )
+    expect((container.querySelector('[data-id="read"]') as HTMLSpanElement).textContent).toBe(
+      'read:read',
+    )
+    expect(mod.log).toEqual(['unused', 'read'])
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps function-as-child callbacks inert when passed to components', async () => {
     const source = `
       import { render } from 'fict'
