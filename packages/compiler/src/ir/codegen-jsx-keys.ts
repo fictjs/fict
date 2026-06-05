@@ -121,7 +121,7 @@ function getReturnedJSXFromCallback(callback: Expression): JSXElementExpression[
   return returned
 }
 
-function keyExpressionSignature(expression: Expression): string {
+export function keyExpressionSignature(expression: Expression): string {
   try {
     return (
       JSON.stringify(expression, (key, value) => {
@@ -133,6 +133,14 @@ function keyExpressionSignature(expression: Expression): string {
   } catch {
     return ''
   }
+}
+
+export function getReturnedKeyAttributeExpressionsFromMapCallback(
+  callback: Expression,
+): Expression[] {
+  return getReturnedJSXFromCallback(callback)
+    .map(jsx => extractKeyFromAttributes(jsx.attributes))
+    .filter((expr): expr is Expression => !!expr)
 }
 
 export function extractKeyFromMapCallback(callback: Expression): Expression | undefined {

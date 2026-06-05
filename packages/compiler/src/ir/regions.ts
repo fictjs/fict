@@ -4146,6 +4146,18 @@ function instructionToStatement(
     const ssaName = instr.target.name
     const baseName = deSSAVarName(ssaName)
     const declKindRaw = instr.declarationKind
+    const listKeyAliasReplacement =
+      ctx.inListRender && ctx.listKeyParamName && ctx.listKeyAliasNames?.has(baseName)
+        ? ctx.listKeyParamName
+        : null
+    if (listKeyAliasReplacement && declKindRaw && declKindRaw !== 'function') {
+      declaredVars.add(baseName)
+      return applyLoc(
+        t.variableDeclaration(declKindRaw, [
+          t.variableDeclarator(t.identifier(baseName), t.identifier(listKeyAliasReplacement)),
+        ]),
+      )
+    }
     propagateHookResultAlias(baseName, instr.value, ctx)
     const hookMember = resolveHookMemberValue(instr.value, ctx)
     if (hookMember) {

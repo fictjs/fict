@@ -3850,6 +3850,112 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('evaluates inline keyed list keys once per rendered item', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      export function App() {
+        const items = [1, 2]
+        return (
+          <ul>
+            {items.map(item => (
+              <li key={(log.push('key ' + item), item)}>{item}</li>
+            ))}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(mod.log).toEqual(['key 1', 'key 2'])
+    expect(Array.from(container.querySelectorAll('li')).map(li => li.textContent)).toEqual([
+      '1',
+      '2',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
+  it('evaluates aliased keyed list keys once before item body work', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      export function App() {
+        const items = [
+          {
+            get id() {
+              log.push('key 1')
+              return 1
+            },
+            get text() {
+              log.push('body 1')
+              return '1'
+            },
+          },
+          {
+            get id() {
+              log.push('key 2')
+              return 2
+            },
+            get text() {
+              log.push('body 2')
+              return '2'
+            },
+          },
+        ]
+        return (
+          <ul>
+            {items.map(item => {
+              const key = item.id
+              return <li key={key}>{item.text}</li>
+            })}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(mod.log).toEqual(['key 1', 'body 1', 'key 2', 'body 2'])
+    expect(Array.from(container.querySelectorAll('li')).map(li => li.textContent)).toEqual([
+      '1',
+      '2',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves sparse array hole semantics in specialized map children', async () => {
     const source = `
       import { $state, render } from 'fict'

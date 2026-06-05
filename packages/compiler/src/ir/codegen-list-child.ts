@@ -2,7 +2,11 @@ import type * as BabelCore from '@babel/core'
 
 import type { CodegenContext } from './codegen'
 import { collectExpressionDependencies } from './codegen-expression-deps'
-import { extractKeyFromMapCallback } from './codegen-jsx-keys'
+import {
+  extractKeyFromMapCallback,
+  getReturnedKeyAttributeExpressionsFromMapCallback,
+  keyExpressionSignature,
+} from './codegen-jsx-keys'
 import { replaceIdentifiersWithOverrides, type RegionOverrideMap } from './codegen-overrides'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 import { applySelectorHoist } from './codegen-selector-hoist'
@@ -195,12 +199,13 @@ function collectMapCallbackAliasDeclarations(callback: Expression): Map<string, 
   return aliasMap
 }
 
-function resolveMapCallbackKeyExpression(keyExpr: Expression, callback: Expression): Expression {
+function resolveMapCallbackKeyExpression(
+  keyExpr: Expression,
+  aliasMap: Map<string, Expression>,
+): Expression {
   if (keyExpr.kind !== 'Identifier') {
     return keyExpr
   }
-
-  const aliasMap = collectMapCallbackAliasDeclarations(callback)
 
   if (aliasMap.size === 0) {
     return keyExpr
@@ -215,6 +220,68 @@ function resolveMapCallbackKeyExpression(keyExpr: Expression, callback: Expressi
     resolved = next
   }
   return resolved
+}
+
+function getAliasDeclaration(
+  aliasMap: Map<string, Expression>,
+  name: string,
+): Expression | undefined {
+  return aliasMap.get(name) ?? aliasMap.get(deSSAVarName(name))
+}
+
+function collectResolvedKeyAliasNames(
+  keyExpr: Expression,
+  aliasMap: Map<string, Expression>,
+): Set<string> {
+  const aliases = new Set<string>()
+  if (aliasMap.size === 0) {
+    return aliases
+  }
+
+  const visitIdentifier = (name: string, seen: Set<string>): void => {
+    const baseName = deSSAVarName(name)
+    if (seen.has(baseName)) {
+      return
+    }
+    const aliasValue = getAliasDeclaration(aliasMap, name)
+    if (!aliasValue) {
+      return
+    }
+    seen.add(baseName)
+    aliases.add(baseName)
+    walkExpression(
+      aliasValue,
+      expr => {
+        if (expr.kind === 'Identifier') {
+          visitIdentifier(expr.name, new Set(seen))
+        }
+      },
+      { includeFunctionBodies: false },
+    )
+  }
+
+  walkExpression(
+    keyExpr,
+    expr => {
+      if (expr.kind === 'Identifier') {
+        visitIdentifier(expr.name, new Set())
+      }
+    },
+    { includeFunctionBodies: false },
+  )
+
+  return aliases
+}
+
+function collectReturnedKeyBindingSignatures(callback: Expression): Set<string> {
+  const signatures = new Set<string>()
+  for (const keyExpr of getReturnedKeyAttributeExpressionsFromMapCallback(callback)) {
+    const signature = keyExpressionSignature(keyExpr)
+    if (signature) {
+      signatures.add(signature)
+    }
+  }
+  return signatures
 }
 
 function collectMapCallbackLocalNames(callback: Expression): Set<string> {
@@ -341,12 +408,49 @@ function isTrustedArrayMapReceiver(expr: Expression, ctx: CodegenContext): boole
   }
 }
 
-function expressionHasObservableMapCallbackEffect(expr: Expression): boolean {
+function collectExpressionNodes(expr: Expression, nodes: Set<Expression>): void {
+  walkExpression(
+    expr,
+    node => {
+      nodes.add(node)
+    },
+    { includeFunctionBodies: false },
+  )
+}
+
+function collectIgnoredKeyEffectNodes(
+  callback: Expression,
+  extractedKeyExpr: Expression | undefined,
+  aliasMap: Map<string, Expression>,
+): Set<Expression> | undefined {
+  if (!extractedKeyExpr) {
+    return undefined
+  }
+
+  const ignoredNodes = new Set<Expression>()
+  for (const keyExpr of getReturnedKeyAttributeExpressionsFromMapCallback(callback)) {
+    collectExpressionNodes(keyExpr, ignoredNodes)
+  }
+  for (const aliasName of collectResolvedKeyAliasNames(extractedKeyExpr, aliasMap)) {
+    const aliasValue = getAliasDeclaration(aliasMap, aliasName)
+    if (aliasValue) {
+      collectExpressionNodes(aliasValue, ignoredNodes)
+    }
+  }
+
+  return ignoredNodes.size > 0 ? ignoredNodes : undefined
+}
+
+function expressionHasObservableMapCallbackEffect(
+  expr: Expression,
+  ignoredNodes?: Set<Expression> | undefined,
+): boolean {
   let hasEffect = false
   walkExpression(
     expr,
     node => {
       if (hasEffect) return
+      if (ignoredNodes?.has(node)) return
       switch (node.kind) {
         case 'CallExpression':
         case 'OptionalCallExpression':
@@ -368,9 +472,12 @@ function expressionHasObservableMapCallbackEffect(expr: Expression): boolean {
   return hasEffect
 }
 
-function mapCallbackHasObservableEffects(callback: Expression): boolean {
+function mapCallbackHasObservableEffects(
+  callback: Expression,
+  ignoredNodes?: Set<Expression> | undefined,
+): boolean {
   if (callback.kind === 'ArrowFunction' && callback.isExpression && !Array.isArray(callback.body)) {
-    return expressionHasObservableMapCallbackEffect(callback.body)
+    return expressionHasObservableMapCallbackEffect(callback.body, ignoredNodes)
   }
   if (callback.kind !== 'ArrowFunction' && callback.kind !== 'FunctionExpression') return false
 
@@ -379,14 +486,19 @@ function mapCallbackHasObservableEffects(callback: Expression): boolean {
       if (instr.kind === 'Debugger' || instr.kind === 'Expression') return true
       if (instr.kind === 'Assign') {
         if (!instr.declarationKind) return true
-        if (expressionHasObservableMapCallbackEffect(instr.value)) return true
+        if (expressionHasObservableMapCallbackEffect(instr.value, ignoredNodes)) return true
       }
     }
 
     const term = block.terminator
     switch (term.kind) {
       case 'Return':
-        if (term.argument && expressionHasObservableMapCallbackEffect(term.argument)) return true
+        if (
+          term.argument &&
+          expressionHasObservableMapCallbackEffect(term.argument, ignoredNodes)
+        ) {
+          return true
+        }
         break
       case 'Jump':
       case 'Unreachable':
@@ -645,22 +757,35 @@ export function buildListCallExpression(
   }
   if (hasUnsupportedMapCallbackParams(mapCallback, ctx)) return null
   if (isDefinitelyNonCallableMapCallback(mapCallback)) return null
-  if (mapCallbackHasObservableEffects(mapCallback)) return null
+  const extractedKeyExpr = extractKeyFromMapCallback(mapCallback)
+  const keyAliasDeclarations = extractedKeyExpr
+    ? collectMapCallbackAliasDeclarations(mapCallback)
+    : new Map<string, Expression>()
+  const ignoredKeyEffectNodes = collectIgnoredKeyEffectNodes(
+    mapCallback,
+    extractedKeyExpr,
+    keyAliasDeclarations,
+  )
+  if (mapCallbackHasObservableEffects(mapCallback, ignoredKeyEffectNodes)) return null
   if (callbackUsesArguments(mapCallback, ctx)) return null
   if (callbackUsesThis(mapCallback, ctx)) return null
   const callbackSignature = getMapCallbackSignature(mapCallback, ctx)
   if (!callbackSignature) return null
   if (callbackSignature.hasRest || callbackSignature.paramCount >= 3) return null
-  const extractedKeyExpr = extractKeyFromMapCallback(mapCallback)
   const keyExpr = extractedKeyExpr
-    ? resolveMapCallbackKeyExpression(extractedKeyExpr, mapCallback)
+    ? resolveMapCallbackKeyExpression(extractedKeyExpr, keyAliasDeclarations)
     : undefined
   const isKeyed = !!keyExpr
   const hasRestParam =
     (mapCallback.kind === 'ArrowFunction' || mapCallback.kind === 'FunctionExpression') &&
     Array.isArray(mapCallback.rawParams) &&
     mapCallback.rawParams.some(param => t.isRestElement(param))
-  const canConstifyKey = isKeyed && keyExpr && !hasRestParam
+  const hasUnresolvedLocalKeyDeps =
+    isKeyed && keyExpr
+      ? hasUnresolvedCallbackLocalKeyDependencies(keyExpr, mapCallback, keyAliasDeclarations)
+      : false
+  const canReuseComputedKey = !!(isKeyed && keyExpr && !hasUnresolvedLocalKeyDeps)
+  const canConstifyKey = canReuseComputedKey && !hasRestParam
   const generatedNameReservations = collectCallbackVisibleNames(mapCallback, ctx, t)
   const generatedItemParamName = reserveFreshName('__item', generatedNameReservations)
   const generatedIndexParamName = reserveFreshName('__index', generatedNameReservations)
@@ -683,10 +808,16 @@ export function buildListCallExpression(
   const prevListKeyExpr = ctx.listKeyExpr
   const prevListItemParamName = ctx.listItemParamName
   const prevListKeyParamName = ctx.listKeyParamName
+  const prevListKeyBindingSignatures = ctx.listKeyBindingSignatures
+  const prevListKeyAliasNames = ctx.listKeyAliasNames
 
   if (canConstifyKey && keyExpr) {
     ctx.listKeyExpr = keyExpr
     ctx.listKeyParamName = generatedKeyParamName
+    ctx.listKeyBindingSignatures = collectReturnedKeyBindingSignatures(mapCallback)
+    ctx.listKeyAliasNames = extractedKeyExpr
+      ? collectResolvedKeyAliasNames(extractedKeyExpr, keyAliasDeclarations)
+      : undefined
     // Extract item param name from callback.
     if (mapCallback.kind === 'ArrowFunction' || mapCallback.kind === 'FunctionExpression') {
       const firstParam = mapCallback.params[0]
@@ -732,6 +863,8 @@ export function buildListCallExpression(
   ctx.listKeyExpr = prevListKeyExpr
   ctx.listItemParamName = prevListItemParamName
   ctx.listKeyParamName = prevListKeyParamName
+  ctx.listKeyBindingSignatures = prevListKeyBindingSignatures
+  ctx.listKeyAliasNames = prevListKeyAliasNames
 
   callbackExpr = ops.applyRegionMetadataToExpression(callbackExpr, ctx)
 
@@ -794,12 +927,6 @@ export function buildListCallExpression(
 
   let listCall: BabelCore.types.Expression
   if (isKeyed && keyExpr) {
-    const keyAliasDeclarations = collectMapCallbackAliasDeclarations(mapCallback)
-    const hasUnresolvedLocalKeyDeps = hasUnresolvedCallbackLocalKeyDependencies(
-      keyExpr,
-      mapCallback,
-      keyAliasDeclarations,
-    )
     let keyExprAst = ops.lowerExpression(keyExpr, ctx)
     if (keyAliasDeclarations.size > 0) {
       const keyOverrides: RegionOverrideMap = {}

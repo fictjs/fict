@@ -994,6 +994,100 @@ describe('event handler transformation', () => {
     expect(code).not.toMatch(/\.data\s*=\s*String\(__key\)/)
   })
 
+  it('does not re-emit extracted inline list key expressions in render callbacks', () => {
+    const ast = parseFile(`
+      function List() {
+        const items = [1, 2]
+        const makeKey = (item) => item
+        return (
+          <ul>
+            {items.map(item => (
+              <li key={makeKey(item)}>{item}</li>
+            ))}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('createKeyedList')
+    expect(code).toMatch(/=>\s*makeKey\(item\)/)
+    expect(code).not.toMatch(/makeKey\(item\(\)\)/)
+  })
+
+  it('initializes extracted alias list keys from the computed key param', () => {
+    const ast = parseFile(`
+      function List() {
+        const items = [1, 2]
+        const makeKey = (item) => item
+        return (
+          <ul>
+            {items.map(item => {
+              const key = makeKey(item)
+              return <li key={key}>{item}</li>
+            })}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('createKeyedList')
+    expect(code).toMatch(/=>\s*makeKey\(item\)/)
+    expect(code).toMatch(/const key = __key/)
+    expect(code).not.toMatch(/const key = makeKey/)
+  })
+
+  it('keeps throwing inline list keys only in the extracted key function', () => {
+    const ast = parseFile(`
+      function List() {
+        const items = [1]
+        const failKey = (item) => {
+          throw new Error(String(item))
+        }
+        return (
+          <ul>
+            {items.map(item => (
+              <li key={failKey(item)}>{item}</li>
+            ))}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('createKeyedList')
+    expect(code).toMatch(/=>\s*failKey\(item\)/)
+    expect(code).not.toMatch(/failKey\(item\(\)\)/)
+  })
+
+  it('does not add render-time key evaluation for literal list keys', () => {
+    const ast = parseFile(`
+      function List() {
+        const items = [1]
+        return (
+          <ul>
+            {items.map(item => (
+              <li key="static">{item}</li>
+            ))}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/=>\s*"static"/)
+    expect(code).not.toContain('"static";')
+  })
+
   it('freshens generated list parameters around source internal-like names', () => {
     const ast = parseFile(`
       function Table() {

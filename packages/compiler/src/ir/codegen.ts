@@ -53,9 +53,11 @@ import {
 import { attachHelperImports, collectDeclaredNames } from './codegen-imports'
 import { buildListCallExpression, emitListChild, type ListChildOps } from './codegen-list-child'
 import {
+  getListKeyAliasReplacementName,
   isListKeyConstExpression,
   isStaticDelegatedDataExpression,
   matchesListKeyPattern,
+  shouldSuppressListKeyBindingExpression,
 } from './codegen-list-keys'
 import {
   applyImportedReactiveMetadata,
@@ -699,6 +701,10 @@ export interface CodegenContext {
   listKeyParamName?: string | undefined
   /** The key expression HIR (e.g., row.id) for comparison when replacing with __key */
   listKeyExpr?: Expression | undefined
+  /** Actual returned JSX key attribute signatures already evaluated by the list key function. */
+  listKeyBindingSignatures?: Set<string> | undefined
+  /** Local callback aliases whose initializer has already been evaluated by the list key function. */
+  listKeyAliasNames?: Set<string> | undefined
   /** The item parameter name in list render (e.g., "row") for key expression matching */
   listItemParamName?: string | undefined
   /** Current namespace context for SVG/MathML element creation */
@@ -1363,6 +1369,14 @@ function lowerInstruction(
     }
 
     const declKind = instr.declarationKind === 'function' ? undefined : instr.declarationKind
+    const listKeyAliasReplacement = declKind ? getListKeyAliasReplacementName(baseName, ctx) : null
+    if (declKind && listKeyAliasReplacement) {
+      return applyLoc(
+        t.variableDeclaration(declKind, [
+          t.variableDeclarator(t.identifier(baseName), t.identifier(listKeyAliasReplacement)),
+        ]),
+      )
+    }
     markKnownArrayInitializer(baseName, instr.value, ctx, !!declKind)
     propagateHookResultAlias(baseName, instr.value, ctx)
     const hookMember = resolveHookMemberValue(instr.value, ctx)
@@ -4925,9 +4939,11 @@ function lowerIntrinsicElement(
         }
       }
     } else if (binding.type === 'key' && binding.expr) {
-      statements.push(
-        t.expressionStatement(lowerDomExpression(binding.expr, ctx, containingRegion)),
-      )
+      if (!shouldSuppressListKeyBindingExpression(binding.expr, ctx)) {
+        statements.push(
+          t.expressionStatement(lowerDomExpression(binding.expr, ctx, containingRegion)),
+        )
+      }
     } else if (binding.type === 'text' && binding.expr) {
       const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion)
       // Only use bindText for reactive expressions; static text uses direct assignment
@@ -5141,6 +5157,17 @@ function lowerInstructionWithScopes(
       }
     }
     const declKind = instr.declarationKind === 'function' ? undefined : instr.declarationKind
+    const listKeyAliasReplacement = declKind
+      ? getListKeyAliasReplacementName(targetBase, ctx)
+      : null
+    if (declKind && listKeyAliasReplacement) {
+      markKnownArrayInitializer(targetBase, instr.value, ctx, true)
+      return applyLoc(
+        t.variableDeclaration(declKind, [
+          t.variableDeclarator(t.identifier(targetBase), t.identifier(listKeyAliasReplacement)),
+        ]),
+      )
+    }
     markKnownArrayInitializer(targetBase, instr.value, ctx, !!declKind)
     let valueExpr: BabelCore.types.Expression
     if (declKind && getReactiveCallKind(instr.value, ctx) === 'signal') {

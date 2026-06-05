@@ -1,4 +1,5 @@
 import type { CodegenContext } from './codegen'
+import { keyExpressionSignature } from './codegen-jsx-keys'
 import type { Expression } from './hir'
 import { deSSAVarName } from './regions'
 
@@ -82,6 +83,23 @@ function memberPropertiesMatch(
 export function isListKeyParamIdentifier(name: string, ctx: CodegenContext): boolean {
   if (!ctx.listKeyParamName) return false
   return deSSAVarName(name) === deSSAVarName(ctx.listKeyParamName)
+}
+
+export function getListKeyAliasReplacementName(name: string, ctx: CodegenContext): string | null {
+  if (!ctx.inListRender || !ctx.listKeyParamName || !ctx.listKeyAliasNames) return null
+  return ctx.listKeyAliasNames.has(deSSAVarName(name)) ? ctx.listKeyParamName : null
+}
+
+export function shouldSuppressListKeyBindingExpression(
+  expr: Expression,
+  ctx: CodegenContext,
+): boolean {
+  if (!ctx.inListRender || !ctx.listKeyParamName || !ctx.listKeyBindingSignatures) {
+    return false
+  }
+
+  const signature = keyExpressionSignature(expr)
+  return !!signature && ctx.listKeyBindingSignatures.has(signature)
 }
 
 export function isListKeyConstExpression(expr: Expression, ctx: CodegenContext): boolean {
