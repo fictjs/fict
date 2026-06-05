@@ -1594,15 +1594,21 @@ function createHIREntrypointVisitor(
         const getFunctionName = (
           fnPath: BabelCore.NodePath<BabelCore.types.Function>,
         ): string | undefined => {
-          return fnPath.isFunctionDeclaration() && fnPath.node.id
-            ? fnPath.node.id.name
-            : fnPath.isFunctionExpression() && fnPath.node.id
-              ? fnPath.node.id.name
-              : fnPath.parentPath.isVariableDeclarator() &&
-                  t.isIdentifier(fnPath.parentPath.node.id) &&
-                  fnPath.parentPath.node.init === fnPath.node
-                ? fnPath.parentPath.node.id.name
-                : undefined
+          if (fnPath.isFunctionDeclaration() && fnPath.node.id) {
+            return fnPath.node.id.name
+          }
+          if (
+            (fnPath.isFunctionExpression() || fnPath.isArrowFunctionExpression()) &&
+            fnPath.parentPath.isVariableDeclarator() &&
+            t.isIdentifier(fnPath.parentPath.node.id) &&
+            fnPath.parentPath.node.init === fnPath.node
+          ) {
+            return fnPath.parentPath.node.id.name
+          }
+          if (fnPath.isFunctionExpression() && fnPath.node.id) {
+            return fnPath.node.id.name
+          }
+          return undefined
         }
         const isComponentDefinition = (
           fnPath: BabelCore.NodePath<BabelCore.types.Function>,

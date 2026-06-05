@@ -3778,7 +3778,14 @@ function buildFunctionDeclaratorExpression(
   }
 
   if (fn.meta?.fromExpression) {
-    return t.functionExpression(null, stmt.params, stmt.body, isGenerator, isAsync)
+    const expressionName = fn.meta.functionExpressionName
+    return t.functionExpression(
+      expressionName ? t.identifier(expressionName) : null,
+      stmt.params,
+      stmt.body,
+      isGenerator,
+      isAsync,
+    )
   }
 
   return t.functionExpression(

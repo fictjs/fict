@@ -926,6 +926,9 @@ export function buildHIR(
               fnHIR.meta = {
                 ...(fnHIR.meta ?? {}),
                 fromExpression: true,
+                ...(!isArrow && t.isFunctionExpression(v.init) && v.init.id
+                  ? { functionExpressionName: v.init.id.name }
+                  : null),
                 isArrow,
                 hasExpressionBody,
                 ...(!isArrow && t.isFunctionExpression(v.init) && v.init.generator
@@ -1014,6 +1017,9 @@ export function buildHIR(
             fnHIR.meta = {
               ...(fnHIR.meta ?? {}),
               fromExpression: true,
+              ...(!isArrow && t.isFunctionExpression(decl.init) && decl.init.id
+                ? { functionExpressionName: decl.init.id.name }
+                : null),
               isArrow,
               hasExpressionBody,
               ...(!isArrow && t.isFunctionExpression(decl.init) && decl.init.generator

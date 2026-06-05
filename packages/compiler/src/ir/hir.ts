@@ -647,6 +647,7 @@ export interface HIRFunction extends SourceInfo {
   meta?:
     | {
         fromExpression?: boolean | undefined
+        functionExpressionName?: string | undefined
         isArrow?: boolean | undefined
         hasExpressionBody?: boolean | undefined
         isAsync?: boolean | undefined
