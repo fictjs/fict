@@ -58,6 +58,40 @@ describe('Hook Return Annotation (@fictReturn)', () => {
       expect(result?.directAccessor).toBe('memo')
     })
 
+    it('parses object-style direct accessor annotation', () => {
+      const node = createAnnotatedNode('* @fictReturn { directAccessor: "signal" } ')
+
+      const result = parseFictReturnAnnotation(node)
+      expect(result).not.toBeNull()
+      expect(result?.directAccessor).toBe('signal')
+      expect(result?.objectProps).toBeUndefined()
+    })
+
+    it('parses object-style direct memo annotation', () => {
+      const node = createAnnotatedNode("* @fictReturn { directAccessor: 'memo' } ")
+
+      const result = parseFictReturnAnnotation(node)
+      expect(result).not.toBeNull()
+      expect(result?.directAccessor).toBe('memo')
+      expect(result?.objectProps).toBeUndefined()
+    })
+
+    it('ignores invalid object-style direct accessor values', () => {
+      const node = createAnnotatedNode('* @fictReturn { directAccessor: "store" } ')
+
+      const result = parseFictReturnAnnotation(node)
+      expect(result).toBeNull()
+    })
+
+    it('keeps ordinary object annotations as object properties', () => {
+      const node = createAnnotatedNode('* @fictReturn { value: "signal" } ')
+
+      const result = parseFictReturnAnnotation(node)
+      expect(result).not.toBeNull()
+      expect(result?.directAccessor).toBeUndefined()
+      expect(result?.objectProps?.get('value')).toBe('signal')
+    })
+
     it('returns null for node without annotation', () => {
       const node = createAnnotatedNode('* This is a regular comment ')
 
@@ -185,6 +219,29 @@ describe('Hook Return Annotation (@fictReturn)', () => {
       `
       const output = transform(source)
       expect(output).toContain('useCounter')
+    })
+
+    it('consumes object-style direct accessor annotations for opaque hooks', () => {
+      const source = `
+        import { readCount } from './external'
+
+        /**
+         * @fictReturn { directAccessor: "signal" }
+         */
+        function useCounter() {
+          return readCount()
+        }
+
+        function App() {
+          const count = useCounter()
+          return <div>{count}</div>
+        }
+      `
+
+      const output = transform(source, { fineGrainedDom: true })
+
+      expect(output).toMatch(/count\(\)/)
+      expect(output).not.toMatch(/=> count[,)]/)
     })
   })
 })

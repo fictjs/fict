@@ -365,12 +365,11 @@ describe('fict vite-plugin', () => {
       }
 
       const source = `
-        import { $state } from 'fict'
+        import { readCount } from './external'
 
         /** @fictReturn { directAccessor: "signal" } */
         export function useCounter() {
-          const count = $state(0)
-          return count
+          return readCount()
         }
       `
 

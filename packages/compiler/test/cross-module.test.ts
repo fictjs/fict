@@ -115,6 +115,41 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('propagates object-style direct accessor annotations for opaque hooks', () => {
+      const hookSource = `
+        import { readCount } from './external'
+
+        /** @fictReturn { directAccessor: "signal" } */
+        export function useCounter() {
+          return readCount()
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-opaque'
+
+        export function App() {
+          const count = useCounter()
+          return <div>{count}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'use-counter-opaque.tsx'))
+
+      expect(moduleMetadata.get(path.resolve(baseDir, 'use-counter-opaque.tsx'))?.hooks).toEqual({
+        useCounter: { directAccessor: 'signal' },
+      })
+
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-opaque.tsx'),
+      )
+
+      expect(output).toMatch(/count\(\)/)
+      expect(output).not.toMatch(/=> count[,)]/)
+    })
+
     it('unwraps optional hook-return signal member reads across modules', () => {
       const hookSource = `
         import { $state } from 'fict'

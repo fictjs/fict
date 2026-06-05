@@ -537,6 +537,7 @@ export interface ParsedFictReturn {
  * - Object return: @fictReturn { count: 'signal', double: 'memo' }
  * - Array return: @fictReturn [0: 'signal', 1: 'memo']
  * - Direct accessor: @fictReturn 'signal' or @fictReturn 'memo'
+ * - Direct accessor object: @fictReturn { directAccessor: 'signal' }
  *
  * @param node - The function node to parse annotations from
  * @returns Parsed return info or null if no annotation found
@@ -577,6 +578,12 @@ export function parseFictReturnAnnotation(
         const objectProps = new Map<string, 'signal' | 'memo'>()
         const propsStr = objectMatch[1]
         if (!propsStr) continue
+        const directAccessorMatch = propsStr.match(
+          /^\s*directAccessor\s*:\s*['"]?(signal|memo)['"]?\s*,?\s*$/,
+        )
+        if (directAccessorMatch) {
+          return { directAccessor: directAccessorMatch[1] as 'signal' | 'memo' }
+        }
         // Parse key: 'value' pairs
         const propPattern = /(\w+)\s*:\s*['"]?(signal|memo)['"]?/g
         let propMatch
