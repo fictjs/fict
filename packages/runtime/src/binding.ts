@@ -106,6 +106,7 @@ const PROPERTY_BINDING_KEYS = new Set([
 
 const STYLE_PROP_CACHE = new Map<string, string>()
 const hasOwn = Object.prototype.hasOwnProperty
+const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
 
 function readDangerouslySetInnerHTML(
   value: unknown,
@@ -2067,12 +2068,13 @@ export function spread(
     if (!next || typeof next !== 'object') return {}
     return next
   }
+  const resolveRef = (): unknown => {
+    const next = resolveProps()
+    return propertyIsEnumerable.call(next, 'ref') ? next.ref : null
+  }
 
   // Handle ref
-  bindRef(
-    node,
-    (typeof props === 'function' ? reactive(() => resolveProps().ref) : resolveProps().ref) ?? null,
-  )
+  bindRef(node, (typeof props === 'function' ? reactive(resolveRef) : resolveRef()) ?? null)
 
   // Handle all other props
   createRenderEffect(() => {
@@ -2103,11 +2105,12 @@ export function assign(
   excludedProps?: ReadonlySet<string>,
 ): void {
   props = props || {}
+  const propKeys = Object.keys(props)
 
   // Remove props that are no longer present
-  for (const prop in prevProps) {
+  for (const prop of Object.keys(prevProps)) {
     if (excludedProps?.has(prop)) continue
-    if (!(prop in props)) {
+    if (!propertyIsEnumerable.call(props, prop)) {
       if (prop === 'children') {
         if (!skipChildren) {
           updateChildrenBinding(node, undefined)
@@ -2120,7 +2123,7 @@ export function assign(
   }
 
   // Set or update props
-  for (const prop in props) {
+  for (const prop of propKeys) {
     if (excludedProps?.has(prop)) continue
     const value = props[prop]
     if (prop === 'children') {

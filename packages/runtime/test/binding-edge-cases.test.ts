@@ -700,6 +700,64 @@ describe('Binding Edge Cases', () => {
       expect(el.getAttribute('data-id')).toBe('123')
     })
 
+    it('ignores inherited enumerable props in spread sources', () => {
+      const el = document.createElement('button')
+      container.appendChild(el)
+      const inheritedClick = vi.fn()
+      const inheritedRef = vi.fn()
+      const proto = {
+        title: 'leaked',
+        onClick: inheritedClick,
+        children: 'leaked',
+        ref: inheritedRef,
+      }
+      const props = Object.create(proto) as Record<string, unknown>
+      props.id = 'own'
+
+      const { dispose } = createRoot(() => {
+        spread(el, props, false, false)
+      })
+
+      expect(el.id).toBe('own')
+      expect(el.hasAttribute('title')).toBe(false)
+      expect(el.textContent).toBe('')
+      expect(inheritedRef).not.toHaveBeenCalled()
+
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(inheritedClick).not.toHaveBeenCalled()
+
+      dispose()
+    })
+
+    it('removes stale spread props when the next source only inherits them', async () => {
+      const el = document.createElement('div')
+      const props = createSignal<Record<string, unknown>>({
+        title: 'own',
+        children: 'own child',
+      })
+
+      const { dispose } = createRoot(() => {
+        spread(el, () => props(), false, false)
+      })
+
+      expect(el.getAttribute('title')).toBe('own')
+      expect(el.textContent).toBe('own child')
+
+      const next = Object.create({ title: 'leaked', children: 'leaked child' }) as Record<
+        string,
+        unknown
+      >
+      next.id = 'next'
+      props(next)
+      await tick()
+
+      expect(el.id).toBe('next')
+      expect(el.hasAttribute('title')).toBe(false)
+      expect(el.textContent).toBe('')
+
+      dispose()
+    })
+
     it('applies object class maps from spread class props', () => {
       const el = document.createElement('div')
 
