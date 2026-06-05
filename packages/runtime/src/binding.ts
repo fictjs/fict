@@ -456,6 +456,10 @@ function formatTextValue(value: unknown): string {
 /** Attribute setter function type */
 export type AttributeSetter = (el: Element, key: string, value: unknown) => void
 
+function shouldStringifyBooleanAttribute(key: string): boolean {
+  return key.startsWith('aria-') || key.startsWith('data-')
+}
+
 /**
  * Create a reactive attribute binding on an element.
  *
@@ -512,6 +516,11 @@ export function setAttr(el: Element, key: string, value: unknown): void {
     } else {
       el.setAttributeNS(namespaced.namespace, namespaced.localName, String(value))
     }
+    return
+  }
+
+  if (typeof value === 'boolean' && shouldStringifyBooleanAttribute(key)) {
+    el.setAttribute(key, String(value))
     return
   }
 

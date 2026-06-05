@@ -3204,6 +3204,28 @@ function lowerIntrinsicElement(
     ]
   }
 
+  const buildBooleanAttributeStatements = (
+    targetId: BabelCore.types.Identifier,
+    attrName: string,
+    valueExpr: BabelCore.types.Expression,
+  ): BabelCore.types.Statement[] => [
+    t.ifStatement(
+      valueExpr,
+      t.expressionStatement(
+        t.callExpression(t.memberExpression(t.cloneNode(targetId), t.identifier('setAttribute')), [
+          t.stringLiteral(attrName),
+          t.stringLiteral(''),
+        ]),
+      ),
+      t.expressionStatement(
+        t.callExpression(
+          t.memberExpression(t.cloneNode(targetId), t.identifier('removeAttribute')),
+          [t.stringLiteral(attrName)],
+        ),
+      ),
+    ),
+  ]
+
   const flushFusedPatchGroups = (): void => {
     if (fusedPatchGroups.size === 0) return
     for (const groupEntries of fusedPatchGroups.values()) {
@@ -3648,6 +3670,25 @@ function lowerIntrinsicElement(
               t.callExpression(runtimeIdentifier(ctx, 'setStyle'), [targetId, valueWithRegion]),
             ),
           )
+        }
+      } else if (attrName.startsWith('bool:')) {
+        const boolAttrName = attrName.slice(5)
+        const patchStatements = buildBooleanAttributeStatements(
+          targetId,
+          boolAttrName,
+          valueWithRegion,
+        )
+        if (isReactiveAttr) {
+          ctx.helpersUsed.add('renderEffect')
+          statements.push(
+            t.expressionStatement(
+              t.callExpression(runtimeIdentifier(ctx, 'renderEffect'), [
+                t.arrowFunctionExpression([], t.blockStatement(patchStatements)),
+              ]),
+            ),
+          )
+        } else {
+          statements.push(...patchStatements)
         }
       } else if (isDOMProperty(attrName)) {
         if (isReactiveAttr && binding.expr) {

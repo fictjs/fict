@@ -101,6 +101,10 @@ function escapeHtmlText(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
+function shouldStringifyBooleanAttribute(name: string): boolean {
+  return name.startsWith('aria-') || name.startsWith('data-')
+}
+
 /**
  * Extract static HTML from HIR JSXElementExpression.
  * Similar to extractStaticHtml from fine-grained-dom.ts but works with HIR types.
@@ -259,6 +263,16 @@ export function extractHIRStaticHtml(
       continue
     }
 
+    if (name.startsWith('bool:')) {
+      bindings.push({
+        type: 'attr',
+        path: [...parentPath],
+        name,
+        expr: attr.value ?? undefined,
+      })
+      continue
+    }
+
     if (isDOMContentProperty(name)) {
       bindings.push({
         type: 'attr',
@@ -275,7 +289,13 @@ export function extractHIRStaticHtml(
       if (typeof value === 'string') {
         html += ` ${name}="${escapeHtmlAttributeValue(value)}"`
       } else if (typeof value === 'boolean' && value) {
-        html += ` ${name}`
+        if (shouldStringifyBooleanAttribute(name)) {
+          html += ` ${name}="${value}"`
+        } else {
+          html += ` ${name}`
+        }
+      } else if (typeof value === 'boolean' && shouldStringifyBooleanAttribute(name)) {
+        html += ` ${name}="${value}"`
       } else if (typeof value === 'number') {
         html += ` ${name}="${value}"`
       }

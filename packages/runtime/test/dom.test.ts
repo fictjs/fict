@@ -909,7 +909,31 @@ describe('DOM Module', () => {
         })
 
         expect((result as HTMLButtonElement).getAttribute('aria-label')).toBe('Close')
-        expect((result as HTMLButtonElement).getAttribute('aria-hidden')).toBe('')
+        expect((result as HTMLButtonElement).getAttribute('aria-hidden')).toBe('true')
+      })
+
+      it('stringifies boolean aria and data attributes', () => {
+        const result = createElement({
+          type: 'div',
+          props: {
+            'aria-hidden': true,
+            'aria-expanded': false,
+            'data-active': true,
+            'data-off': false,
+            hidden: true,
+            disabled: false,
+            'bool:data-forced': true,
+          },
+          key: undefined,
+        }) as HTMLDivElement
+
+        expect(result.getAttribute('aria-hidden')).toBe('true')
+        expect(result.getAttribute('aria-expanded')).toBe('false')
+        expect(result.getAttribute('data-active')).toBe('true')
+        expect(result.getAttribute('data-off')).toBe('false')
+        expect(result.hasAttribute('hidden')).toBe(true)
+        expect(result.hasAttribute('disabled')).toBe(false)
+        expect(result.getAttribute('data-forced')).toBe('')
       })
     })
 

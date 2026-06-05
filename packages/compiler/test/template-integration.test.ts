@@ -628,6 +628,79 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('stringifies boolean aria and data attributes in fine-grained output', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: boolean): void }
+
+      export function App() {
+        let on = $state(true)
+        api = { set: value => (on = value) }
+        return (
+          <section>
+            <div
+              data-testid="static"
+              aria-hidden={true}
+              aria-expanded={false}
+              data-active={true}
+              data-off={false}
+              hidden={true}
+              disabled={false}
+              bool:data-forced={true}
+            />
+            <div
+              data-testid="dynamic"
+              aria-live={on}
+              data-on={on}
+              hidden={on}
+              bool:data-flag={on}
+            />
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: boolean): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const staticEl = container.querySelector('[data-testid="static"]') as HTMLDivElement
+    const dynamicEl = container.querySelector('[data-testid="dynamic"]') as HTMLDivElement
+
+    expect(staticEl.getAttribute('aria-hidden')).toBe('true')
+    expect(staticEl.getAttribute('aria-expanded')).toBe('false')
+    expect(staticEl.getAttribute('data-active')).toBe('true')
+    expect(staticEl.getAttribute('data-off')).toBe('false')
+    expect(staticEl.hasAttribute('hidden')).toBe(true)
+    expect(staticEl.hasAttribute('disabled')).toBe(false)
+    expect(staticEl.getAttribute('data-forced')).toBe('')
+
+    expect(dynamicEl.getAttribute('aria-live')).toBe('true')
+    expect(dynamicEl.getAttribute('data-on')).toBe('true')
+    expect(dynamicEl.hasAttribute('hidden')).toBe(true)
+    expect(dynamicEl.getAttribute('data-flag')).toBe('')
+
+    mod.api.set(false)
+    await flushUpdates()
+
+    expect(dynamicEl.getAttribute('aria-live')).toBe('false')
+    expect(dynamicEl.getAttribute('data-on')).toBe('false')
+    expect(dynamicEl.hasAttribute('hidden')).toBe(false)
+    expect(dynamicEl.hasAttribute('data-flag')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
   it('rejects dangerouslySetInnerHTML with explicit JSX children', () => {
     const source = `
       import { render } from 'fict'

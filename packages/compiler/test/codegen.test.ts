@@ -1769,6 +1769,42 @@ describe('spread operator in JSX', () => {
     expect(code).toContain('data-id=\\"ok\\"')
   })
 
+  it('stringifies boolean aria and data attributes', () => {
+    const ast = parseFile(`
+      function BooleanAttrs() {
+        let on = $state(true)
+        return (
+          <section>
+            <div
+              aria-hidden={true}
+              aria-expanded={false}
+              data-active={true}
+              data-off={false}
+              hidden={true}
+              disabled={false}
+            />
+            <div aria-live={on} data-on={on} hidden={on} bool:data-forced={on} />
+          </section>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('aria-hidden=\\"true\\"')
+    expect(code).toContain('aria-expanded=\\"false\\"')
+    expect(code).toContain('data-active=\\"true\\"')
+    expect(code).toContain('data-off=\\"false\\"')
+    expect(code).toContain(
+      '<div aria-hidden=\\"true\\" aria-expanded=\\"false\\" data-active=\\"true\\" data-off=\\"false\\" hidden></div>',
+    )
+    expect(code).toMatch(/setAttr\([^,]+,\s*"aria-live",\s*on\(\)\)/)
+    expect(code).toMatch(/setAttr\([^,]+,\s*"data-on",\s*on\(\)\)/)
+    expect(code).toContain('setAttribute("data-forced", "")')
+    expect(code).not.toContain('bool:data-forced')
+  })
+
   it('escapes static JSX text in template HTML', () => {
     const ast = parseFile(`
       function EscapedText() {

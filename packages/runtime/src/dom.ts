@@ -900,7 +900,16 @@ function toPropertyName(name: string): string {
 /**
  * Set an attribute on an element, handling various value types.
  */
+function shouldStringifyBooleanAttribute(key: string): boolean {
+  return key.startsWith('aria-') || key.startsWith('data-')
+}
+
 const setAttribute: AttributeSetter = (el: Element, key: string, value: unknown): void => {
+  if (typeof value === 'boolean' && shouldStringifyBooleanAttribute(key)) {
+    el.setAttribute(key, String(value))
+    return
+  }
+
   // Remove attribute for nullish/false values
   if (value === undefined || value === null || value === false) {
     el.removeAttribute(key)
