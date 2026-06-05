@@ -333,6 +333,58 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('reads destructured prop properties during component invocation', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      const props = {
+        get name() {
+          log.push('get')
+          return 'Ada'
+        },
+      }
+
+      const throwingProps = {
+        get name() {
+          throw new Error('name getter')
+        },
+      }
+
+      function Child({ name }: any) {
+        return <span data-id="plain">static</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => ({ type: Child, props }), el)
+      }
+
+      export function mountThrowing(el: HTMLElement) {
+        return render(() => ({ type: Child, props: throwingProps }), el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      mountThrowing: (el: HTMLElement) => () => void
+      log: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(container.querySelector('[data-id="plain"]')?.textContent).toBe('static')
+    expect(mod.log).toEqual(['get'])
+    expect(() => mod.mountThrowing(container)).toThrow(/name getter/)
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps function-as-child callbacks inert when passed to components', async () => {
     const source = `
       import { render } from 'fict'

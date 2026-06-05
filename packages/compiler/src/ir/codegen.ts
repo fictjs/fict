@@ -6998,6 +6998,9 @@ function lowerFunctionWithRegions(
           ),
         )
       }
+      const emitEagerPropRead = (valueExpr: BabelCore.types.Expression): void => {
+        stmts.push(t.expressionStatement(t.cloneNode(valueExpr, true)))
+      }
 
       const buildDestructure = (
         objectPattern: BabelCore.types.ObjectPattern,
@@ -7039,6 +7042,7 @@ function lowerFunctionWithRegions(
                 usesProp = true
                 propsPlanAliases.add(value.name)
                 ctx.resumablePropAccessors?.set(value.name, { path: nextPropPath })
+                emitEagerPropRead(member)
               }
               stmts.push(
                 t.variableDeclaration('const', [
