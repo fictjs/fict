@@ -125,6 +125,10 @@ const walkExpression = (expr: Expression | null | undefined, visit: (expr: Expre
     case 'AwaitExpression':
       walkExpression(expr.argument as Expression, visit)
       return
+    case 'ImportExpression':
+      walkExpression(expr.source as Expression, visit)
+      if (expr.options) walkExpression(expr.options as Expression, visit)
+      return
     case 'NewExpression':
       walkExpression(expr.callee as Expression, visit)
       expr.arguments.forEach(arg => walkExpression(arg as Expression, visit))
@@ -315,6 +319,67 @@ describe('optimizeHIR', () => {
     const optimized = optimizeHIR(buildHIR(ast))
     expect(hasDanglingIdentifierReference(optimized, 'key')).toBe(false)
     expect(hasDanglingIdentifierReference(optimized, 'tags')).toBe(false)
+  })
+
+  it('keeps dynamic import identifier source dependencies alive', () => {
+    const ast = parseFile(`
+      function useDyn() {
+        const spec = './dep.js'
+        return import(spec)
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasDanglingIdentifierReference(optimized, 'spec')).toBe(false)
+  })
+
+  it('keeps dynamic import template source dependencies alive', () => {
+    const ast = parseFile(`
+      function useDyn() {
+        const name = 'dep'
+        return import(\`./\${name}.js\`)
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasDanglingIdentifierReference(optimized, 'name')).toBe(false)
+  })
+
+  it('keeps dynamic import conditional source dependencies alive', () => {
+    const ast = parseFile(`
+      function useDyn(flag) {
+        const left = './a.js'
+        const right = './b.js'
+        return import(flag ? left : right)
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasDanglingIdentifierReference(optimized, 'left')).toBe(false)
+    expect(hasDanglingIdentifierReference(optimized, 'right')).toBe(false)
+  })
+
+  it('keeps dynamic import member source dependencies alive', () => {
+    const ast = parseFile(`
+      function useDyn() {
+        const key = 'dep'
+        const registry = { dep: './dep.js' }
+        return import(registry[key])
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasDanglingIdentifierReference(optimized, 'key')).toBe(false)
+    expect(hasDanglingIdentifierReference(optimized, 'registry')).toBe(false)
+  })
+
+  it('keeps dynamic import option dependencies alive', () => {
+    const ast = parseFile(`
+      function useDyn() {
+        const spec = './data.json'
+        const options = { with: { type: 'json' } }
+        return import(spec, options)
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasDanglingIdentifierReference(optimized, 'spec')).toBe(false)
+    expect(hasDanglingIdentifierReference(optimized, 'options')).toBe(false)
   })
 
   it('drops unused derived values from reactive graph DCE', () => {

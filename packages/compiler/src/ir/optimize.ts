@@ -514,6 +514,10 @@ function collectRootNodesFromExpression(
       case 'AwaitExpression':
         visit(node.argument as Expression, shadowed)
         return
+      case 'ImportExpression':
+        visit(node.source as Expression, shadowed)
+        if (node.options) visit(node.options as Expression, shadowed)
+        return
       case 'NewExpression':
         visit(node.callee as Expression, shadowed)
         node.arguments.forEach(arg => visit(arg as Expression, shadowed))
@@ -705,6 +709,22 @@ function collectDependenciesFromExpression(
         includeFunctionBodies,
         shadowed,
       )
+      return
+    case 'ImportExpression':
+      collectDependenciesFromExpression(
+        expr.source as Expression,
+        deps,
+        includeFunctionBodies,
+        shadowed,
+      )
+      if (expr.options) {
+        collectDependenciesFromExpression(
+          expr.options as Expression,
+          deps,
+          includeFunctionBodies,
+          shadowed,
+        )
+      }
       return
     case 'NewExpression':
       collectDependenciesFromExpression(
@@ -2012,6 +2032,11 @@ function expressionDependsOnReactive(expr: Expression, ctx: ReactiveContext): bo
       return expr.expressions.some(e => expressionDependsOnReactive(e as Expression, ctx))
     case 'AwaitExpression':
       return expressionDependsOnReactive(expr.argument as Expression, ctx)
+    case 'ImportExpression':
+      return (
+        expressionDependsOnReactive(expr.source as Expression, ctx) ||
+        (expr.options ? expressionDependsOnReactive(expr.options as Expression, ctx) : false)
+      )
     case 'NewExpression':
       if (expressionDependsOnReactive(expr.callee as Expression, ctx)) return true
       return expr.arguments.some(arg => expressionDependsOnReactive(arg as Expression, ctx))
@@ -2511,6 +2536,10 @@ function collectWriteTargets(expr: Expression): Set<string> {
       case 'AwaitExpression':
         visit(node.argument as Expression, shadowed)
         return
+      case 'ImportExpression':
+        visit(node.source as Expression, shadowed)
+        if (node.options) visit(node.options as Expression, shadowed)
+        return
       case 'NewExpression':
         visit(node.callee as Expression, shadowed)
         node.arguments.forEach(arg => visit(arg as Expression, shadowed))
@@ -2703,6 +2732,10 @@ function collectPotentialMutationTargets(expr: Expression): Set<string> {
         return
       case 'AwaitExpression':
         visit(node.argument as Expression)
+        return
+      case 'ImportExpression':
+        visit(node.source as Expression)
+        if (node.options) visit(node.options as Expression)
         return
       case 'AssignmentExpression':
         visit(node.left as Expression)
@@ -3093,6 +3126,11 @@ function expressionContainsImpureMarkers(expr: Expression): boolean {
       return expr.expressions.some(e => expressionContainsImpureMarkers(e as Expression))
     case 'AwaitExpression':
       return expressionContainsImpureMarkers(expr.argument as Expression)
+    case 'ImportExpression':
+      return (
+        expressionContainsImpureMarkers(expr.source as Expression) ||
+        (expr.options ? expressionContainsImpureMarkers(expr.options as Expression) : false)
+      )
     case 'NewExpression':
       if (expressionContainsImpureMarkers(expr.callee as Expression)) return true
       return expr.arguments.some(arg => expressionContainsImpureMarkers(arg as Expression))
@@ -3542,6 +3580,20 @@ function replaceConstMemberExpressions(
           constObjects,
           constArrays,
         ),
+      }
+    case 'ImportExpression':
+      return {
+        ...expr,
+        source: replaceConstMemberExpressions(expr.source as Expression, constObjects, constArrays),
+        ...(expr.options
+          ? {
+              options: replaceConstMemberExpressions(
+                expr.options as Expression,
+                constObjects,
+                constArrays,
+              ),
+            }
+          : null),
       }
     case 'NewExpression':
       return {
@@ -4752,6 +4804,10 @@ function walkExpression(
     case 'AwaitExpression':
       walkExpression(expr.argument as Expression, add, ctx)
       return
+    case 'ImportExpression':
+      walkExpression(expr.source as Expression, add, ctx)
+      if (expr.options) walkExpression(expr.options as Expression, add, ctx)
+      return
     case 'NewExpression':
       walkExpression(expr.callee as Expression, add, ctx)
       expr.arguments.forEach(arg => walkExpression(arg as Expression, add, ctx))
@@ -4915,6 +4971,10 @@ function hashExpression(expr: Expression): string {
       return `seq:${expr.expressions.map(e => hashExpression(e as Expression)).join(',')}`
     case 'AwaitExpression':
       return `await:${hashExpression(expr.argument as Expression)}`
+    case 'ImportExpression':
+      return `import:${hashExpression(expr.source as Expression)}${
+        expr.options ? `:${hashExpression(expr.options as Expression)}` : ''
+      }`
     case 'NewExpression':
       return `new:${hashExpression(expr.callee as Expression)}(${expr.arguments
         .map(a => hashExpression(a as Expression))
@@ -5271,6 +5331,21 @@ function replaceIdentifier(
           replacement,
           inFunctionBody,
         ),
+      }
+    case 'ImportExpression':
+      return {
+        ...expr,
+        source: replaceIdentifier(expr.source as Expression, target, replacement, inFunctionBody),
+        ...(expr.options
+          ? {
+              options: replaceIdentifier(
+                expr.options as Expression,
+                target,
+                replacement,
+                inFunctionBody,
+              ),
+            }
+          : null),
       }
     case 'NewExpression':
       return {
