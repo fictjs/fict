@@ -19,6 +19,7 @@ import {
   ChildProperties,
   getPropAlias,
   SVGNamespace,
+  normalizeSVGAttributeName,
 } from './constants'
 import { isNodeLike } from './dom-guards'
 import { createRenderEffect } from './effect'
@@ -112,6 +113,16 @@ function readDangerouslySetInnerHTML(
   if (value == null || typeof value !== 'object') return { found: false }
   if (!hasOwn.call(value, '__html')) return { found: false }
   return { found: true, html: (value as Record<string, unknown>).__html }
+}
+
+function getNamespacedAttribute(key: string): { namespace: string; localName: string } | undefined {
+  const colonIndex = key.indexOf(':')
+  if (colonIndex <= 0) return undefined
+  const prefix = key.slice(0, colonIndex)
+  const localName = key.slice(colonIndex + 1)
+  const namespace = SVGNamespace[prefix]
+  if (!namespace || !localName) return undefined
+  return { namespace, localName }
 }
 
 function getNonReactiveFnRegistry(): WeakSet<(...args: unknown[]) => unknown> {
@@ -491,6 +502,18 @@ export function setAttr(el: Element, key: string, value: unknown): void {
     (cacheTarget[ATTR_CACHE] = Object.create(null))
   if (attrCache[key] === value) return
   attrCache[key] = value
+
+  const namespaced = getNamespacedAttribute(key)
+  if (namespaced) {
+    if (value === undefined || value === null || value === false) {
+      el.removeAttributeNS(namespaced.namespace, namespaced.localName)
+    } else if (value === true) {
+      el.setAttributeNS(namespaced.namespace, namespaced.localName, '')
+    } else {
+      el.setAttributeNS(namespaced.namespace, namespaced.localName, String(value))
+    }
+    return
+  }
 
   if (value === undefined || value === null || value === false) {
     el.removeAttribute(key)
@@ -2225,6 +2248,10 @@ function assignProp(
   if (prop.slice(0, 5) === 'prop:') {
     ;(node as unknown as Record<string, unknown>)[prop.slice(5)] = value
     return value
+  }
+
+  if (isSVG) {
+    prop = normalizeSVGAttributeName(prop)
   }
 
   // Check if custom element

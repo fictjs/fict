@@ -695,6 +695,39 @@ describe('DOM Module', () => {
         const rect = (result as SVGSVGElement).querySelector('rect')
         expect(rect!.namespaceURI).toBe('http://www.w3.org/2000/svg')
       })
+
+      it('normalizes SVG camelCase and namespaced props', () => {
+        const xlinkNS = 'http://www.w3.org/1999/xlink'
+        const result = createElement({
+          type: 'svg',
+          props: {
+            viewBox: '0 0 10 10',
+            children: {
+              type: 'path',
+              props: {
+                strokeWidth: 2,
+                strokeLinecap: 'round',
+                fillRule: 'evenodd',
+                clipRule: 'evenodd',
+                xlinkHref: '#a',
+              },
+              key: undefined,
+            },
+          },
+          key: undefined,
+        })
+
+        const svg = result as SVGSVGElement
+        const path = svg.querySelector('path')!
+        expect(svg.getAttribute('viewBox')).toBe('0 0 10 10')
+        expect(path.getAttribute('stroke-width')).toBe('2')
+        expect(path.getAttribute('stroke-linecap')).toBe('round')
+        expect(path.getAttribute('fill-rule')).toBe('evenodd')
+        expect(path.getAttribute('clip-rule')).toBe('evenodd')
+        expect(path.getAttributeNS(xlinkNS, 'href')).toBe('#a')
+        expect(path.hasAttribute('strokeWidth')).toBe(false)
+        expect(path.hasAttribute('xlinkHref')).toBe(false)
+      })
     })
 
     describe('Binding Handle', () => {

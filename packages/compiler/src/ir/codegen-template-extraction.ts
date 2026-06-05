@@ -36,9 +36,37 @@ export interface TemplateExtractionOps {
 /**
  * Normalize attribute names for special cases.
  */
-export function normalizeHIRAttrName(name: string): string {
+const SVG_ATTRIBUTE_ALIASES: Record<string, string> = {
+  xmlnsXlink: 'xmlns:xlink',
+  strokeWidth: 'stroke-width',
+  strokeLinecap: 'stroke-linecap',
+  strokeLinejoin: 'stroke-linejoin',
+  strokeDasharray: 'stroke-dasharray',
+  strokeDashoffset: 'stroke-dashoffset',
+  strokeOpacity: 'stroke-opacity',
+  fillOpacity: 'fill-opacity',
+  fillRule: 'fill-rule',
+  clipRule: 'clip-rule',
+  transformOrigin: 'transform-origin',
+  clipPath: 'clip-path',
+  textAnchor: 'text-anchor',
+  dominantBaseline: 'dominant-baseline',
+  fontSize: 'font-size',
+  fontFamily: 'font-family',
+  fontWeight: 'font-weight',
+  xlinkHref: 'xlink:href',
+  stopColor: 'stop-color',
+  stopOpacity: 'stop-opacity',
+  markerStart: 'marker-start',
+  markerMid: 'marker-mid',
+  markerEnd: 'marker-end',
+  vectorEffect: 'vector-effect',
+}
+
+export function normalizeHIRAttrName(name: string, namespace: NamespaceContext = null): string {
   if (name === 'className') return 'class'
   if (name === 'htmlFor') return 'for'
+  if (namespace === 'svg') return SVG_ATTRIBUTE_ALIASES[name] ?? name
   return name
 }
 
@@ -115,7 +143,7 @@ export function extractHIRStaticHtml(
           const nextAttr = jsx.attributes[nextIndex]!
           if (nextAttr.isSpread) continue
 
-          let nextName = normalizeHIRAttrName(nextAttr.name)
+          let nextName = normalizeHIRAttrName(nextAttr.name, resolvedNamespace)
           if (nextName.endsWith('$')) {
             nextName = nextName.slice(0, -1)
           }
@@ -137,7 +165,7 @@ export function extractHIRStaticHtml(
       continue
     }
 
-    let name = normalizeHIRAttrName(attr.name)
+    let name = normalizeHIRAttrName(attr.name, resolvedNamespace)
     const isResumableEvent = name.endsWith('$')
     if (isResumableEvent) {
       name = name.slice(0, -1)

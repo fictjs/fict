@@ -69,6 +69,59 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).toMatch(/template\([^)]*rect[^)]*,\s*undefined,\s*true\)/)
     })
 
+    it('normalizes static SVG JSX attribute aliases in templates', () => {
+      const source = `
+        export function App() {
+          return (
+            <svg viewBox="0 0 10 10">
+              <path
+                strokeWidth={2}
+                strokeLinecap="round"
+                fillRule="evenodd"
+                clipRule="evenodd"
+                xlinkHref="#a"
+              />
+              <use xlink:href="#b" />
+            </svg>
+          )
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toContain('viewBox')
+      expect(output).toContain('stroke-width=\\"2\\"')
+      expect(output).toContain('stroke-linecap=\\"round\\"')
+      expect(output).toContain('fill-rule=\\"evenodd\\"')
+      expect(output).toContain('clip-rule=\\"evenodd\\"')
+      expect(output).toContain('xlink:href=\\"#a\\"')
+      expect(output).toContain('xlink:href=\\"#b\\"')
+      expect(output).not.toContain('strokeWidth')
+      expect(output).not.toContain('strokeLinecap')
+      expect(output).not.toContain('xlinkHref')
+    })
+
+    it('normalizes dynamic SVG JSX attribute aliases in bindings', () => {
+      const source = `
+        import { $state } from 'fict'
+        export function App() {
+          const width = $state(2)
+          const href = $state('#a')
+          return (
+            <svg>
+              <path strokeWidth={width} strokeLinecap="round" xlinkHref={href} />
+            </svg>
+          )
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toContain('"stroke-width"')
+      expect(output).toContain('"xlink:href"')
+      expect(output).toContain('stroke-linecap=\\"round\\"')
+      expect(output).not.toContain('strokeWidth')
+      expect(output).not.toContain('xlinkHref')
+    })
+
     it('exits SVG namespace inside foreignObject', () => {
       const source = `
         import { $state } from 'fict'

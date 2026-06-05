@@ -369,6 +369,38 @@ export const SVGElements = new Set<string>(svgElements)
 export const SVGNamespace: Record<string, string> = {
   xlink: 'http://www.w3.org/1999/xlink',
   xml: 'http://www.w3.org/XML/1998/namespace',
+  xmlns: 'http://www.w3.org/2000/xmlns/',
+}
+
+export const SVGAttributeAliases: Record<string, string> = {
+  xmlnsXlink: 'xmlns:xlink',
+  strokeWidth: 'stroke-width',
+  strokeLinecap: 'stroke-linecap',
+  strokeLinejoin: 'stroke-linejoin',
+  strokeDasharray: 'stroke-dasharray',
+  strokeDashoffset: 'stroke-dashoffset',
+  strokeOpacity: 'stroke-opacity',
+  fillOpacity: 'fill-opacity',
+  fillRule: 'fill-rule',
+  clipRule: 'clip-rule',
+  transformOrigin: 'transform-origin',
+  clipPath: 'clip-path',
+  textAnchor: 'text-anchor',
+  dominantBaseline: 'dominant-baseline',
+  fontSize: 'font-size',
+  fontFamily: 'font-family',
+  fontWeight: 'font-weight',
+  xlinkHref: 'xlink:href',
+  stopColor: 'stop-color',
+  stopOpacity: 'stop-opacity',
+  markerStart: 'marker-start',
+  markerMid: 'marker-mid',
+  markerEnd: 'marker-end',
+  vectorEffect: 'vector-effect',
+}
+
+export function normalizeSVGAttributeName(name: string): string {
+  return SVGAttributeAliases[name] ?? name
 }
 
 // ============================================================================

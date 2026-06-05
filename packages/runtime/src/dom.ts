@@ -26,7 +26,14 @@ import {
   type AttributeSetter,
   type BindingHandle,
 } from './binding'
-import { Properties, ChildProperties, getPropAlias, SVGElements, SVGNamespace } from './constants'
+import {
+  Properties,
+  ChildProperties,
+  getPropAlias,
+  SVGElements,
+  SVGNamespace,
+  normalizeSVGAttributeName,
+} from './constants'
 import { getDevtoolsHook } from './devtools'
 import { isDocumentFragmentLike, isHTMLElementLike, isNodeLike } from './dom-guards'
 import { __fictPushContext, __fictPopContext, __fictGetCurrentComponentId } from './hooks'
@@ -725,7 +732,8 @@ function applyProps(el: Element, props: Record<string, unknown>, isSVG = false):
   // Check if this is a custom element
   const isCE = tagName.includes('-') || 'is' in props
 
-  for (const [key, value] of Object.entries(props)) {
+  for (const [rawKey, value] of Object.entries(props)) {
+    let key = rawKey
     if (key === 'children') continue
 
     // Ref handling
@@ -798,6 +806,10 @@ function applyProps(el: Element, props: Record<string, unknown>, isSVG = false):
         }
       }
       continue
+    }
+
+    if (isSVG) {
+      key = normalizeSVGAttributeName(key)
     }
 
     // Child properties (innerHTML, textContent, etc.)

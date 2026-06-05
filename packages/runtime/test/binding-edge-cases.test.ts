@@ -422,6 +422,20 @@ describe('Binding Edge Cases', () => {
       await tick()
       expect(el.hasAttribute('data-test')).toBe(false)
     })
+
+    it('sets and removes namespaced SVG attributes', async () => {
+      const xlinkNS = 'http://www.w3.org/1999/xlink'
+      const el = document.createElementNS('http://www.w3.org/2000/svg', 'use')
+      const href = createSignal<string | null>('#a')
+
+      bindAttribute(el, 'xlink:href', () => href())
+      await tick()
+      expect(el.getAttributeNS(xlinkNS, 'href')).toBe('#a')
+
+      href(null)
+      await tick()
+      expect(el.hasAttributeNS(xlinkNS, 'href')).toBe(false)
+    })
   })
 
   describe('bindProperty', () => {
@@ -813,6 +827,37 @@ describe('Binding Edge Cases', () => {
       await tick()
       expect(el.innerHTML).toBe('<span>keep</span>')
       expect(el.hasAttribute('dangerouslysetinnerhtml')).toBe(false)
+      dispose()
+    })
+
+    it('normalizes SVG camelCase and namespaced spread props', async () => {
+      const xlinkNS = 'http://www.w3.org/1999/xlink'
+      const el = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+
+      const { dispose } = createRoot(() => {
+        spread(
+          el,
+          {
+            strokeWidth: 2,
+            strokeLinecap: 'round',
+            fillRule: 'evenodd',
+            clipRule: 'evenodd',
+            xlinkHref: '#a',
+            viewBox: '0 0 10 10',
+          },
+          true,
+        )
+      })
+
+      await tick()
+      expect(el.getAttribute('stroke-width')).toBe('2')
+      expect(el.getAttribute('stroke-linecap')).toBe('round')
+      expect(el.getAttribute('fill-rule')).toBe('evenodd')
+      expect(el.getAttribute('clip-rule')).toBe('evenodd')
+      expect(el.getAttribute('viewBox')).toBe('0 0 10 10')
+      expect(el.getAttributeNS(xlinkNS, 'href')).toBe('#a')
+      expect(el.hasAttribute('strokeWidth')).toBe(false)
+      expect(el.hasAttribute('xlinkHref')).toBe(false)
       dispose()
     })
 
