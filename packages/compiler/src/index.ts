@@ -2711,6 +2711,12 @@ function createHIREntrypointVisitor(
             : nodePath.findParent(parentPath => parentPath.isStatement())
           return !!statementPath && statementPath.parentPath?.node === bodyPath.node
         }
+        const isImmediateProgramStatement = (nodePath: BabelCore.NodePath): boolean => {
+          const statementPath = nodePath.isStatement()
+            ? nodePath
+            : nodePath.findParent(parentPath => parentPath.isStatement())
+          return !!statementPath && statementPath.parentPath?.isProgram() === true
+        }
         const isImmediateEffectStatement = (
           callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
         ): boolean => {
@@ -2718,7 +2724,8 @@ function createHIREntrypointVisitor(
           return !!(
             parentPath?.isExpressionStatement() &&
             parentPath.node.expression === callPath.node &&
-            isImmediateFunctionBodyStatement(parentPath)
+            (isImmediateFunctionBodyStatement(parentPath) ||
+              isImmediateProgramStatement(parentPath))
           )
         }
         const isImmediateDefaultExportExpression = (
