@@ -606,6 +606,8 @@ export interface CodegenContext {
   inRegionMemo?: boolean | undefined
   /** Whether we are lowering a list item render callback */
   inListRender?: boolean | undefined
+  /** List render callback item parameters that lower to runtime accessors. */
+  listItemAccessorParamNames?: Set<string> | undefined
   /** Whether we are lowering top-level module statements */
   inModule?: boolean | undefined
   /** Next explicit slot index for nested memo hooks */
@@ -4473,6 +4475,12 @@ function lowerIntrinsicElement(
           }
           return null
         })()
+        const listItemHandlerName =
+          binding.expr.kind === 'Identifier' &&
+          ctx.inListRender &&
+          ctx.listItemAccessorParamNames?.has(deSSAVarName(binding.expr.name))
+            ? deSSAVarName(binding.expr.name)
+            : null
         const ensureHandlerParam = (fn: BabelCore.types.Expression): BabelCore.types.Expression => {
           if (t.isArrowFunctionExpression(fn)) {
             return fn
@@ -4496,12 +4504,20 @@ function lowerIntrinsicElement(
           )
         }
         const shouldTreatAsReactiveHandler =
-          !!reactiveGetterIdentifierName || (!isFn && shouldWrapHandler)
-        const handlerExpr = reactiveGetterIdentifierName
-          ? t.identifier(reactiveGetterIdentifierName)
-          : !isFn && shouldWrapHandler
-            ? markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], valueExpr))
-            : ensureHandlerParam(valueExpr)
+          !!reactiveGetterIdentifierName || !!listItemHandlerName || (!isFn && shouldWrapHandler)
+        const handlerExpr = listItemHandlerName
+          ? markCompilerReactiveGetter(
+              ctx,
+              t.arrowFunctionExpression(
+                [],
+                t.callExpression(t.identifier(listItemHandlerName), []),
+              ),
+            )
+          : reactiveGetterIdentifierName
+            ? t.identifier(reactiveGetterIdentifierName)
+            : !isFn && shouldWrapHandler
+              ? markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], valueExpr))
+              : ensureHandlerParam(valueExpr)
 
         let dataBinding =
           isDelegated && !shouldTreatAsReactiveHandler

@@ -697,9 +697,19 @@ export function buildListCallExpression(
   }
 
   const prevInListRender = ctx.inListRender
+  const prevListItemAccessorParamNames = ctx.listItemAccessorParamNames
   ctx.inListRender = true
-  let callbackExpr = ops.lowerExpression(mapCallback, ctx)
-  ctx.inListRender = prevInListRender
+  if (mapCallback.params[0]) {
+    ctx.listItemAccessorParamNames = new Set(prevListItemAccessorParamNames ?? [])
+    ctx.listItemAccessorParamNames.add(deSSAVarName(mapCallback.params[0].name))
+  }
+  let callbackExpr: BabelCore.types.Expression
+  try {
+    callbackExpr = ops.lowerExpression(mapCallback, ctx)
+  } finally {
+    ctx.inListRender = prevInListRender
+    ctx.listItemAccessorParamNames = prevListItemAccessorParamNames
+  }
 
   const shouldDeferOptionalCallbackEvaluation =
     isOptional &&

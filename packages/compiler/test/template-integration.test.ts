@@ -3610,6 +3610,50 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('invokes function-valued list items used as event handlers', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      export function App() {
+        const handlers = [() => log.push('clicked')]
+        const objectListener = { handleEvent: () => log.push('object') }
+        const listeners = [objectListener]
+
+        return (
+          <div>
+            {handlers.map(fn => <button data-id="fn" onClick={fn}>fn</button>)}
+            {listeners.map(listener => <button data-id="object" onClick={listener}>object</button>)}
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      log: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+    ;(container.querySelector('[data-id="fn"]') as HTMLButtonElement).click()
+    ;(container.querySelector('[data-id="object"]') as HTMLButtonElement).click()
+    await flushUpdates()
+
+    expect(mod.log).toEqual(['clicked', 'object'])
+
+    teardown()
+    container.remove()
+  })
+
   it(
     'switches conditional branches and updates attributes in fine-grained mode',
     { timeout: 10000 },

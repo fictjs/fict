@@ -2238,6 +2238,26 @@ describe('array/map rendering', () => {
     expect(code).toContain('log.push')
   })
 
+  it('reads function-valued list items before assigning event handlers', () => {
+    const ast = parseFile(`
+      function List() {
+        const handlers = [() => {}]
+        return (
+          <div>
+            {handlers.map(fn => <button onClick={fn}>x</button>)}
+          </div>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('createKeyedList')
+    expect(code).toMatch(/__fictReactive\(\(\) => fn\(\)\)/)
+    expect(code).not.toContain('fn.call(this')
+  })
+
   it('should handle map with index', () => {
     const ast = parseFile(`
       function IndexedList(props) {
