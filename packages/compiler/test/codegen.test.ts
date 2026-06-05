@@ -1704,6 +1704,55 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('App.__fictMeta = __fict_meta_App_1')
   })
 
+  it('allocates handler body names around restored signal captures', () => {
+    const ast = parseFile(`
+      function App() {
+        const __handler = $state(0)
+        const __result = $state(1)
+        const event = $state(2)
+        const el = $state(3)
+        const scopeId = $state(4)
+        return (
+          <button
+            onClick$={() => {
+              __handler(__handler() + 1)
+              __result(__result() + 1)
+              event(event() + 1)
+              el(el() + 1)
+              scopeId(scopeId() + 1)
+            }}
+          >
+            Click
+          </button>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/export const __fict_e0 = \(scopeId_1, event_1, el_1\) =>/)
+    expect(code).toContain('__fictUseLexicalScope(scopeId_1')
+    expect(code).toContain('const __handler_1 = () => {')
+    expect(code).toContain('const __result_1 = __handler_1.call(el_1, event_1)')
+  })
+
+  it('allocates handler locals around restored props captures', () => {
+    const ast = parseFile(`
+      function App(__handler) {
+        return <button onClick$={() => __handler.id}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('const __scopeProps = __fictGetScopeProps(scopeId) || {}')
+    expect(code).toContain('const __handler = __scopeProps')
+    expect(code).toContain('const __handler_1 = () => __handler.id')
+    expect(code).toContain('const __result = __handler_1.call(el, event)')
+  })
+
   it('keeps loop-based resumable handlers structurized instead of truncating after setup', () => {
     const ast = parseFile(`
       const taskRows = [

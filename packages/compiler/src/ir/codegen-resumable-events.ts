@@ -124,10 +124,6 @@ export function emitResumableEventBinding(
   })
   ctx.wrapTrackedExpressions = prevWrapTracked
 
-  const eventParam = t.identifier('event')
-  const elParam = t.identifier('el')
-  const scopeParam = t.identifier('scopeId')
-
   const ensureHandlerParam = (fn: BabelCore.types.Expression): BabelCore.types.Expression => {
     if (t.isArrowFunctionExpression(fn)) {
       return fn
@@ -284,8 +280,33 @@ export function emitResumableEventBinding(
     finalHandlerExpr = renameIdentifiersInExpr(handlerExpr, functionDepRenames, t)
   }
 
+  const handlerReservedNames = new Set<string>(captured)
+  for (const name of functionDepRenames.values()) {
+    handlerReservedNames.add(name)
+  }
+  const reserveHandlerName = (baseName: string): string => {
+    if (!handlerReservedNames.has(baseName)) {
+      handlerReservedNames.add(baseName)
+      return baseName
+    }
+
+    let index = 1
+    while (true) {
+      const candidate = `${baseName}_${index++}`
+      if (handlerReservedNames.has(candidate)) continue
+      handlerReservedNames.add(candidate)
+      return candidate
+    }
+  }
+
+  const scopeParam = t.identifier(reserveHandlerName('scopeId'))
+  const eventParam = t.identifier(reserveHandlerName('event'))
+  const elParam = t.identifier(reserveHandlerName('el'))
+  const scopePropsId = t.identifier(reserveHandlerName('__scopeProps'))
+  const handlerVar = t.identifier(reserveHandlerName('__handler'))
+  const resultVar = t.identifier(reserveHandlerName('__result'))
+
   const bodyStatements: BabelCore.types.Statement[] = []
-  const scopePropsId = t.identifier('__scopeProps')
   let scopePropsDeclared = false
   const ensureScopeProps = (): BabelCore.types.Identifier => {
     if (!scopePropsDeclared) {
@@ -373,8 +394,6 @@ export function emitResumableEventBinding(
     )
   }
 
-  const handlerVar = t.identifier('__handler')
-  const resultVar = t.identifier('__result')
   bodyStatements.push(
     t.variableDeclaration('const', [t.variableDeclarator(handlerVar, finalHandlerExpr)]),
   )
