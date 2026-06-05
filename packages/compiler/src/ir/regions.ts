@@ -1532,8 +1532,29 @@ function lowerNodeWithRegionContext(
       } else {
         leftPattern = t.identifier(deSSAVarName(node.variable))
       }
-      const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
       const right = lowerExpressionWithDeSSA(node.iterable, ctx)
+      const isAssignmentTarget = node.leftKind === 'assignment' && !node.pattern
+      const targetName = deSSAVarName(node.variable)
+      if (isAssignmentTarget) {
+        const bodyStmts = lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx)
+        if (ctx.trackedVars.has(targetName)) {
+          const valueId = t.identifier(`__forOf_${ctx.tempCounter++}`)
+          return [
+            t.forOfStatement(
+              t.variableDeclaration('const', [t.variableDeclarator(valueId)]),
+              right,
+              t.blockStatement([
+                t.expressionStatement(
+                  t.callExpression(t.identifier(targetName), [t.identifier(valueId.name)]),
+                ),
+                ...bodyStmts,
+              ]),
+            ),
+          ]
+        }
+        return [t.forOfStatement(t.identifier(targetName), right, t.blockStatement(bodyStmts))]
+      }
+      const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
       const bindingNames = new Set<string>()
       collectPatternBindingNames(leftPattern, t, bindingNames)
       let body: BabelCore.types.BlockStatement = t.blockStatement([])
@@ -1555,8 +1576,29 @@ function lowerNodeWithRegionContext(
       } else {
         leftPattern = t.identifier(deSSAVarName(node.variable))
       }
-      const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
       const right = lowerExpressionWithDeSSA(node.object, ctx)
+      const isAssignmentTarget = node.leftKind === 'assignment' && !node.pattern
+      const targetName = deSSAVarName(node.variable)
+      if (isAssignmentTarget) {
+        const bodyStmts = lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx)
+        if (ctx.trackedVars.has(targetName)) {
+          const valueId = t.identifier(`__forIn_${ctx.tempCounter++}`)
+          return [
+            t.forInStatement(
+              t.variableDeclaration('const', [t.variableDeclarator(valueId)]),
+              right,
+              t.blockStatement([
+                t.expressionStatement(
+                  t.callExpression(t.identifier(targetName), [t.identifier(valueId.name)]),
+                ),
+                ...bodyStmts,
+              ]),
+            ),
+          ]
+        }
+        return [t.forInStatement(t.identifier(targetName), right, t.blockStatement(bodyStmts))]
+      }
+      const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
       const bindingNames = new Set<string>()
       collectPatternBindingNames(leftPattern, t, bindingNames)
       let body: BabelCore.types.BlockStatement = t.blockStatement([])
@@ -2033,10 +2075,10 @@ function lowerStructuredNodeForRegion(
       const leftPattern = node.pattern
         ? (node.pattern as BabelCore.types.LVal)
         : t.identifier(deSSAVarName(node.variable))
-      collectPatternBindingNames(leftPattern, t, bindingNames)
+      const isAssignmentTarget = node.leftKind === 'assignment' && !node.pattern
       let body: BabelCore.types.Statement[] = []
-      withShadowedBindings(ctx, bindingNames, () => {
-        body = lowerStructuredNodeForRegion(
+      const lowerBody = () =>
+        (body = lowerStructuredNodeForRegion(
           node.body,
           region,
           t,
@@ -2044,12 +2086,36 @@ function lowerStructuredNodeForRegion(
           declaredVars,
           regionCtx,
           skipInstructions,
-        )
-      })
-      if (body.length === 0) return []
+        ))
+      if (isAssignmentTarget) {
+        lowerBody()
+      } else {
+        collectPatternBindingNames(leftPattern, t, bindingNames)
+        withShadowedBindings(ctx, bindingNames, lowerBody)
+      }
       const varKind = node.variableKind ?? 'const'
-      const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
       const right = lowerExpressionWithDeSSA(node.iterable, ctx)
+      const targetName = deSSAVarName(node.variable)
+      if (isAssignmentTarget && ctx.trackedVars.has(targetName)) {
+        const valueId = t.identifier(`__forOf_${ctx.tempCounter++}`)
+        return [
+          t.forOfStatement(
+            t.variableDeclaration('const', [t.variableDeclarator(valueId)]),
+            right,
+            t.blockStatement([
+              t.expressionStatement(
+                t.callExpression(t.identifier(targetName), [t.identifier(valueId.name)]),
+              ),
+              ...body,
+            ]),
+          ),
+        ]
+      }
+      if (isAssignmentTarget) {
+        return [t.forOfStatement(t.identifier(targetName), right, t.blockStatement(body))]
+      }
+      if (body.length === 0) return []
+      const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
       return [t.forOfStatement(left, right, t.blockStatement(body))]
     }
 
@@ -2058,10 +2124,10 @@ function lowerStructuredNodeForRegion(
         ? (node.pattern as BabelCore.types.LVal)
         : t.identifier(deSSAVarName(node.variable))
       const bindingNames = new Set<string>()
-      collectPatternBindingNames(leftPattern, t, bindingNames)
+      const isAssignmentTarget = node.leftKind === 'assignment' && !node.pattern
       let body: BabelCore.types.Statement[] = []
-      withShadowedBindings(ctx, bindingNames, () => {
-        body = lowerStructuredNodeForRegion(
+      const lowerBody = () =>
+        (body = lowerStructuredNodeForRegion(
           node.body,
           region,
           t,
@@ -2069,12 +2135,36 @@ function lowerStructuredNodeForRegion(
           declaredVars,
           regionCtx,
           skipInstructions,
-        )
-      })
-      if (body.length === 0) return []
+        ))
+      if (isAssignmentTarget) {
+        lowerBody()
+      } else {
+        collectPatternBindingNames(leftPattern, t, bindingNames)
+        withShadowedBindings(ctx, bindingNames, lowerBody)
+      }
       const varKind = node.variableKind ?? 'const'
-      const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
       const right = lowerExpressionWithDeSSA(node.object, ctx)
+      const targetName = deSSAVarName(node.variable)
+      if (isAssignmentTarget && ctx.trackedVars.has(targetName)) {
+        const valueId = t.identifier(`__forIn_${ctx.tempCounter++}`)
+        return [
+          t.forInStatement(
+            t.variableDeclaration('const', [t.variableDeclarator(valueId)]),
+            right,
+            t.blockStatement([
+              t.expressionStatement(
+                t.callExpression(t.identifier(targetName), [t.identifier(valueId.name)]),
+              ),
+              ...body,
+            ]),
+          ),
+        ]
+      }
+      if (isAssignmentTarget) {
+        return [t.forInStatement(t.identifier(targetName), right, t.blockStatement(body))]
+      }
+      if (body.length === 0) return []
+      const left = t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
       return [t.forInStatement(left, right, t.blockStatement(body))]
     }
 

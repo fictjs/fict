@@ -1572,6 +1572,7 @@ function convertFunction(
       let varName = '_item'
       let varKind: 'const' | 'let' | 'var' = 'const'
       let pattern: BabelCore.types.LVal | undefined
+      let leftKind: 'declaration' | 'assignment' = 'declaration'
 
       if (t.isVariableDeclaration(left) && left.declarations[0]) {
         varKind = left.kind as 'const' | 'let' | 'var'
@@ -1586,6 +1587,7 @@ function convertFunction(
       } else if (t.isIdentifier(left)) {
         varName = left.name
         varKind = 'let' // Existing variable assignment
+        leftKind = 'assignment'
       }
 
       // Create ForOf terminator
@@ -1594,6 +1596,7 @@ function convertFunction(
       current.block.terminator = {
         kind: 'ForOf',
         variable: varName,
+        leftKind,
         variableKind: varKind,
         pattern,
         iterable: iterableExpr,
@@ -1629,6 +1632,7 @@ function convertFunction(
       let varName = '_item'
       let varKind: 'const' | 'let' | 'var' = 'const'
       let pattern: BabelCore.types.LVal | undefined
+      let leftKind: 'declaration' | 'assignment' = 'declaration'
 
       if (t.isVariableDeclaration(left) && left.declarations[0]) {
         varKind = left.kind as 'const' | 'let' | 'var'
@@ -1643,6 +1647,7 @@ function convertFunction(
       } else if (t.isIdentifier(left)) {
         varName = left.name
         varKind = 'let' // Existing variable assignment
+        leftKind = 'assignment'
       }
 
       // Create ForIn terminator
@@ -1651,6 +1656,7 @@ function convertFunction(
       current.block.terminator = {
         kind: 'ForIn',
         variable: varName,
+        leftKind,
         variableKind: varKind,
         pattern,
         object: objectExpr,
@@ -2428,6 +2434,7 @@ function processStatement(
     let varName = '_item'
     let varKind: 'const' | 'let' | 'var' = 'const'
     let pattern: BabelCore.types.LVal | undefined
+    let leftKind: 'declaration' | 'assignment' = 'declaration'
 
     if (t.isVariableDeclaration(left) && left.declarations[0]) {
       varKind = left.kind as 'const' | 'let' | 'var'
@@ -2441,6 +2448,7 @@ function processStatement(
     } else if (t.isIdentifier(left)) {
       varName = left.name
       varKind = 'let'
+      leftKind = 'assignment'
     }
 
     // Create ForIn terminator
@@ -2449,6 +2457,7 @@ function processStatement(
     bb.block.terminator = {
       kind: 'ForIn',
       variable: varName,
+      leftKind,
       variableKind: varKind,
       pattern,
       object: objectExpr,
@@ -2486,6 +2495,7 @@ function processStatement(
     let varName = '_item'
     let varKind: 'const' | 'let' | 'var' = 'const'
     let pattern: BabelCore.types.LVal | undefined
+    let leftKind: 'declaration' | 'assignment' = 'declaration'
 
     if (t.isVariableDeclaration(left) && left.declarations[0]) {
       varKind = left.kind as 'const' | 'let' | 'var'
@@ -2499,6 +2509,7 @@ function processStatement(
     } else if (t.isIdentifier(left)) {
       varName = left.name
       varKind = 'let'
+      leftKind = 'assignment'
     }
 
     // Create ForOf terminator
@@ -2507,6 +2518,7 @@ function processStatement(
     bb.block.terminator = {
       kind: 'ForOf',
       variable: varName,
+      leftKind,
       variableKind: varKind,
       pattern,
       iterable: iterableExpr,

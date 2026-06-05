@@ -936,11 +936,35 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
       const term = block.terminator
       const varKind = term.variableKind ?? 'const'
       const leftPattern = term.pattern ? term.pattern : t.identifier(term.variable)
+      const isAssignmentTarget = term.leftKind === 'assignment' && !term.pattern
+      const bodyStatements: BabelCore.types.Statement[] = [
+        t.expressionStatement(t.stringLiteral(`body ${term.body}`)),
+      ]
+      const left = isAssignmentTarget
+        ? t.identifier(term.variable)
+        : t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
+      if (isAssignmentTarget && ctx.trackedVars.has(deSSAVarName(term.variable))) {
+        const loopValue = genTemp(ctx, 'forOf')
+        bodyStatements.unshift(
+          t.expressionStatement(
+            t.callExpression(t.identifier(deSSAVarName(term.variable)), [
+              t.identifier(loopValue.name),
+            ]),
+          ),
+        )
+        return applyLoc([
+          t.forOfStatement(
+            t.variableDeclaration('const', [t.variableDeclarator(loopValue)]),
+            lowerExpression(term.iterable, ctx),
+            t.blockStatement(bodyStatements),
+          ),
+        ])
+      }
       return applyLoc([
         t.forOfStatement(
-          t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)]),
+          left,
           lowerExpression(term.iterable, ctx),
-          t.blockStatement([t.expressionStatement(t.stringLiteral(`body ${term.body}`))]),
+          t.blockStatement(bodyStatements),
         ),
       ])
     }
@@ -948,12 +972,32 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
       const term = block.terminator
       const varKind = term.variableKind ?? 'const'
       const leftPattern = term.pattern ? term.pattern : t.identifier(term.variable)
+      const isAssignmentTarget = term.leftKind === 'assignment' && !term.pattern
+      const bodyStatements: BabelCore.types.Statement[] = [
+        t.expressionStatement(t.stringLiteral(`body ${term.body}`)),
+      ]
+      const left = isAssignmentTarget
+        ? t.identifier(term.variable)
+        : t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
+      if (isAssignmentTarget && ctx.trackedVars.has(deSSAVarName(term.variable))) {
+        const loopValue = genTemp(ctx, 'forIn')
+        bodyStatements.unshift(
+          t.expressionStatement(
+            t.callExpression(t.identifier(deSSAVarName(term.variable)), [
+              t.identifier(loopValue.name),
+            ]),
+          ),
+        )
+        return applyLoc([
+          t.forInStatement(
+            t.variableDeclaration('const', [t.variableDeclarator(loopValue)]),
+            lowerExpression(term.object, ctx),
+            t.blockStatement(bodyStatements),
+          ),
+        ])
+      }
       return applyLoc([
-        t.forInStatement(
-          t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)]),
-          lowerExpression(term.object, ctx),
-          t.blockStatement([t.expressionStatement(t.stringLiteral(`body ${term.body}`))]),
-        ),
+        t.forInStatement(left, lowerExpression(term.object, ctx), t.blockStatement(bodyStatements)),
       ])
     }
     case 'Try': {
@@ -1048,8 +1092,10 @@ function collectLocalDeclaredNames(
     }
     const term = block.terminator
     if (term.kind === 'ForOf' || term.kind === 'ForIn') {
-      declared.add(deSSAVarName(term.variable))
-      if (term.pattern) {
+      if (term.leftKind !== 'assignment') {
+        declared.add(deSSAVarName(term.variable))
+      }
+      if (term.leftKind !== 'assignment' && term.pattern) {
         addPatternNames(term.pattern as BabelCore.types.PatternLike)
       }
     } else if (term.kind === 'Try' && term.catchParam) {

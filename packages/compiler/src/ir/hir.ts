@@ -179,6 +179,8 @@ export type Terminator =
   | ({
       kind: 'ForOf'
       variable: string
+      /** Whether the loop left side declared a new binding or assigned an existing target. */
+      leftKind?: 'declaration' | 'assignment' | undefined
       /** Variable declaration kind (const, let, var) */
       variableKind: 'const' | 'let' | 'var'
       /** Original pattern for destructuring (stored as Babel AST node) */
@@ -190,6 +192,8 @@ export type Terminator =
   | ({
       kind: 'ForIn'
       variable: string
+      /** Whether the loop left side declared a new binding or assigned an existing target. */
+      leftKind?: 'declaration' | 'assignment' | undefined
       /** Variable declaration kind (const, let, var) */
       variableKind: 'const' | 'let' | 'var'
       /** Original pattern for destructuring (stored as Babel AST node) */

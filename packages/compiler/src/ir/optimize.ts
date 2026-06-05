@@ -4031,7 +4031,9 @@ function functionBodyDeclaresName(blocks: BasicBlock[], targetBase: string): boo
     }
     const term = block.terminator
     if (term.kind === 'ForOf' || term.kind === 'ForIn') {
-      if (getSSABaseName(term.variable) === targetBase) return true
+      if (term.leftKind !== 'assignment' && getSSABaseName(term.variable) === targetBase) {
+        return true
+      }
     } else if (term.kind === 'Try') {
       if (term.catchParam && getSSABaseName(term.catchParam) === targetBase) return true
     }

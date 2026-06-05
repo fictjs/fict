@@ -177,8 +177,6 @@ export function replaceIdentifiersWithOverrides(
           current.left.declarations.forEach(decl => {
             collectPatternNames(decl.id as BabelCore.types.PatternLike, names)
           })
-        } else if (t.isPatternLike(current.left)) {
-          collectPatternNames(current.left as BabelCore.types.PatternLike, names)
         }
         visit(current.right)
         visit(current.body)

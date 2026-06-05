@@ -148,6 +148,38 @@ describe('state write expression semantics', () => {
     expect(items()).toEqual([1, 9, 3])
   })
 
+  it('preserves for-of assignment semantics on $state bindings', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useForOfStateAssignment() {
+        let item = $state(0)
+        for (item of [1, 2]) {}
+        return item
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const item = compiledFunction(mod, 'useForOfStateAssignment')() as () => number
+    expect(item()).toBe(2)
+  })
+
+  it('preserves for-in assignment semantics on $state bindings', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useForInStateAssignment() {
+        let key = $state('')
+        for (key in { a: 1, b: 2 }) {}
+        return key
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const key = compiledFunction(mod, 'useForInStateAssignment')() as () => string
+    expect(key()).toBe('b')
+  })
+
   it('preserves JS return values for update/assignment expressions on $state', () => {
     const source = `
       import { $state } from 'fict'

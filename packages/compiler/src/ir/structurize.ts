@@ -103,6 +103,7 @@ export type StructuredNode =
   | {
       kind: 'forOf'
       variable: string
+      leftKind?: 'declaration' | 'assignment' | undefined
       variableKind: 'const' | 'let' | 'var'
       pattern?: LVal | undefined
       iterable: Expression
@@ -111,6 +112,7 @@ export type StructuredNode =
   | {
       kind: 'forIn'
       variable: string
+      leftKind?: 'declaration' | 'assignment' | undefined
       variableKind: 'const' | 'let' | 'var'
       pattern?: LVal | undefined
       object: Expression
@@ -1412,6 +1414,7 @@ function structurizeForOf(
   term: {
     kind: 'ForOf'
     variable: string
+    leftKind?: 'declaration' | 'assignment' | undefined
     variableKind: 'const' | 'let' | 'var'
     pattern?: LVal | undefined
     iterable: Expression
@@ -1433,6 +1436,7 @@ function structurizeForOf(
   const forOfNode: StructuredNode = {
     kind: 'forOf',
     variable: term.variable,
+    leftKind: term.leftKind,
     variableKind: term.variableKind,
     pattern: term.pattern,
     iterable: term.iterable,
@@ -1458,6 +1462,7 @@ function structurizeForIn(
   term: {
     kind: 'ForIn'
     variable: string
+    leftKind?: 'declaration' | 'assignment' | undefined
     variableKind: 'const' | 'let' | 'var'
     pattern?: LVal | undefined
     object: Expression
@@ -1479,6 +1484,7 @@ function structurizeForIn(
   const forInNode: StructuredNode = {
     kind: 'forIn',
     variable: term.variable,
+    leftKind: term.leftKind,
     variableKind: term.variableKind,
     pattern: term.pattern,
     object: term.object,
