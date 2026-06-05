@@ -176,7 +176,10 @@ export function replaceIdentifiersWithOverrides(
       if (
         t.isFunctionExpression(current) ||
         t.isArrowFunctionExpression(current) ||
-        t.isFunctionDeclaration(current)
+        t.isFunctionDeclaration(current) ||
+        t.isObjectMethod(current) ||
+        t.isClassMethod(current) ||
+        t.isClassPrivateMethod(current)
       ) {
         return
       }
@@ -314,6 +317,32 @@ export function replaceIdentifiersWithOverrides(
         allowCallCalleeReplacement,
       )
     }
+    return
+  }
+
+  if (t.isObjectMethod(node)) {
+    if (node.computed) {
+      replaceIdentifiersWithOverrides(
+        node.key,
+        overrides,
+        t,
+        node.type,
+        'key',
+        false,
+        allowCallCalleeReplacement,
+      )
+    }
+    const names = collectParamNames(node.params)
+    collectFunctionLocalNames(node.body).forEach(name => names.add(name))
+    replaceIdentifiersWithOverrides(
+      node.body,
+      scopeOverrides(names),
+      t,
+      node.type,
+      'body',
+      false,
+      allowCallCalleeReplacement,
+    )
     return
   }
 

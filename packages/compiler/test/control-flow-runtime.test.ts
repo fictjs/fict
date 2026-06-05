@@ -1198,6 +1198,71 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(2)
   })
 
+  it('keeps object method parameters shadowed from outer reactive values', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          return {
+            method(count) {
+              return count
+            }
+          }.method(2)
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('keeps object method locals shadowed from outer reactive values', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          return {
+            method() {
+              const count = 2
+              return count
+            }
+          }.method()
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('keeps object method catch parameters shadowed from outer reactive values', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          return {
+            method() {
+              try {
+                throw 2
+              } catch (count) {
+                return count
+              }
+            }
+          }.method()
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
   it('keeps static block locals shadowed from outer reactive values', () => {
     const result = compileAndRunHook<number>(
       `
