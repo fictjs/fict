@@ -140,6 +140,40 @@ function buildProgram(
   return t.program(body, cloneDirectives(program.directives, t))
 }
 
+function isTypeScriptEnumRuntimeDeclaration(
+  node: BabelCore.types.Node,
+  t: typeof BabelCore.types,
+): boolean {
+  if (!t.isVariableDeclaration(node) || node.kind !== 'var' || node.declarations.length === 0) {
+    return false
+  }
+  return node.declarations.every(decl => {
+    if (!t.isIdentifier(decl.id) || !decl.init || !t.isCallExpression(decl.init)) {
+      return false
+    }
+    if (!t.isFunctionExpression(decl.init.callee) || decl.init.arguments.length !== 1) {
+      return false
+    }
+    const arg = decl.init.arguments[0]
+    return (
+      t.isLogicalExpression(arg) &&
+      arg.operator === '||' &&
+      t.isIdentifier(arg.left, { name: decl.id.name }) &&
+      t.isObjectExpression(arg.right)
+    )
+  })
+}
+
+function isTypeScriptOnlyTopLevelStatement(
+  node: BabelCore.types.Node,
+  t: typeof BabelCore.types,
+): boolean {
+  if (node.type.startsWith('TS') || isTypeScriptEnumRuntimeDeclaration(node, t)) {
+    return true
+  }
+  return (node as { declare?: boolean }).declare === true
+}
+
 const cloneLoc = (loc?: BabelCore.types.SourceLocation | null) =>
   loc === undefined
     ? undefined
@@ -3946,6 +3980,12 @@ export function lowerHIRWithRegions(
 
   // Rebuild program body preserving original order
   for (const stmt of originalBody as BabelCore.types.Statement[]) {
+    if (isTypeScriptOnlyTopLevelStatement(stmt, t)) {
+      flushLowerableBuffer()
+      body.push(stmt)
+      continue
+    }
+
     if (t.isImportDeclaration(stmt)) {
       flushLowerableBuffer()
       body.push(stmt)
@@ -3985,6 +4025,10 @@ export function lowerHIRWithRegions(
     // Export named with function declaration
     if (t.isExportNamedDeclaration(stmt) && stmt.declaration) {
       flushLowerableBuffer()
+      if (isTypeScriptOnlyTopLevelStatement(stmt.declaration, t)) {
+        body.push(stmt)
+        continue
+      }
       if (t.isFunctionDeclaration(stmt.declaration) && stmt.declaration.id?.name) {
         const name = stmt.declaration.id.name
         const generated = generatedFunctions.get(name)
