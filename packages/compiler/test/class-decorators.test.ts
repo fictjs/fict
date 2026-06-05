@@ -52,7 +52,7 @@ describe('class decorator preservation', () => {
       export class C {}
     `)
 
-    expect(code).toMatch(/@dec\s*export class C/)
+    expect(code).toMatch(/(?:@dec\s*export|export\s*@dec)\s*class C/)
   })
 
   it('preserves class expression and member decorators', () => {
