@@ -1761,6 +1761,29 @@ describe('spread operator in JSX', () => {
     expect(code).toContain('&lt;icon&gt;')
   })
 
+  it('preserves whitespace-only JSX text in template HTML', () => {
+    const ast = parseFile(`
+      function WhitespaceText() {
+        return (
+          <section>
+            <pre>  </pre>
+            <span> </span>
+            <p>&nbsp;</p>
+            <div>A <strong>B</strong> C</div>
+          </section>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('<pre>  </pre>')
+    expect(code).toContain('<span> </span>')
+    expect(code).toContain('<p>\\xA0</p>')
+    expect(code).toContain('<div>A <strong>B</strong> C</div>')
+  })
+
   it('skips spread children when explicit host children are present', () => {
     const ast = parseFile(`
       function Wrapper(props) {

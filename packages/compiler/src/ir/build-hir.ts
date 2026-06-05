@@ -511,10 +511,25 @@ type BabelJSXChild =
   | BabelCore.types.JSXElement
   | BabelCore.types.JSXFragment
 
-function appendJSXChild(children: HJSXChild[], child: BabelJSXChild): void {
+interface AppendJSXChildOptions {
+  preserveWhitespaceText?: boolean
+}
+
+function isMeaningfulJSXText(text: string, preserveWhitespaceText = false): boolean {
+  if (text.length === 0) return false
+  if (text.trim().length > 0) return true
+  if (preserveWhitespaceText) return true
+  return !/[\r\n]/.test(text)
+}
+
+function appendJSXChild(
+  children: HJSXChild[],
+  child: BabelJSXChild,
+  options: AppendJSXChildOptions = {},
+): void {
   if (t.isJSXText(child)) {
     const text = child.value
-    if (text.trim()) {
+    if (isMeaningfulJSXText(text, options.preserveWhitespaceText)) {
       children.push({ kind: 'text', value: text, loc: getLoc(child) })
     }
     return
@@ -548,8 +563,15 @@ function appendJSXChild(children: HJSXChild[], child: BabelJSXChild): void {
   }
 
   for (const fragmentChild of child.children) {
-    appendJSXChild(children, fragmentChild)
+    appendJSXChild(children, fragmentChild, options)
   }
+}
+
+function isWhitespaceSensitiveJSXTag(tagName: string | Expression): boolean {
+  return (
+    typeof tagName === 'string' &&
+    (tagName === 'pre' || tagName === 'textarea' || tagName === 'script' || tagName === 'style')
+  )
 }
 
 /**
@@ -3485,8 +3507,9 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
   }
 
   const children: HJSXChild[] = []
+  const childOptions = { preserveWhitespaceText: isWhitespaceSensitiveJSXTag(tagName) }
   for (const child of node.children) {
-    appendJSXChild(children, child)
+    appendJSXChild(children, child, childOptions)
   }
 
   return {

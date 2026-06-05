@@ -745,6 +745,44 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves whitespace-only static JSX text in template output', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return (
+          <section>
+            <pre data-testid="pre">  </pre>
+            <span data-testid="span"> </span>
+            <p data-testid="nbsp">&nbsp;</p>
+            <div data-testid="inline">A <strong>B</strong> C</div>
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(container.querySelector('[data-testid="pre"]')?.textContent).toBe('  ')
+    expect(container.querySelector('[data-testid="span"]')?.textContent).toBe(' ')
+    expect(container.querySelector('[data-testid="nbsp"]')?.textContent).toBe('\u00a0')
+    expect(container.querySelector('[data-testid="inline"]')?.textContent).toBe('A B C')
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps non-enumerable spread props hidden from merged component props', async () => {
     const source = `
       import { render } from 'fict'

@@ -134,7 +134,7 @@ export function extractHIRStaticHtml(
   let html = `<${tagName}`
   const bindings: HIRBinding[] = []
   const hasRenderableChildren = jsx.children.some(
-    child => child.kind !== 'text' || child.value.trim().length > 0,
+    child => child.kind !== 'text' || child.value.length > 0,
   )
 
   // Process attributes
@@ -287,8 +287,7 @@ export function extractHIRStaticHtml(
   // Process children
   let childIndex = 0
   const children = jsx.children
-  const isNonEmptyText = (node: JSXChild): boolean =>
-    node.kind === 'text' && node.value.trim().length > 0
+  const isNonEmptyText = (node: JSXChild): boolean => node.kind === 'text' && node.value.length > 0
   const hasAdjacentInline = (index: number): boolean => {
     const prev = children[index - 1]
     const next = children[index + 1]
@@ -302,7 +301,7 @@ export function extractHIRStaticHtml(
     const child = children[i]!
     if (child.kind === 'text') {
       const text = child.value
-      if (text.trim()) {
+      if (text.length > 0) {
         html += escapeHtmlText(text)
         childIndex++
       }
