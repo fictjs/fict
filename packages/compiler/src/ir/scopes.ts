@@ -802,9 +802,11 @@ export function analyzeControlFlowReads(
     } else if (term.kind === 'ForOf' && term.iterable) {
       // ForOf iterable is a control flow read - changes to iterable affect loop execution
       collectExprReads(term.iterable, controlFlowReads)
+      if (term.assignmentTarget) collectExprReads(term.assignmentTarget, controlFlowReads)
     } else if (term.kind === 'ForIn' && term.object) {
       // ForIn object is a control flow read - changes to object affect loop execution
       collectExprReads(term.object, controlFlowReads)
+      if (term.assignmentTarget) collectExprReads(term.assignmentTarget, controlFlowReads)
     }
     // Return/Throw arguments are expression reads
     if (term.kind === 'Return' && term.argument) {

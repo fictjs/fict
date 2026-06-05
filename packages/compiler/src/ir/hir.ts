@@ -203,6 +203,8 @@ export type Terminator =
       variableKind: 'const' | 'let' | 'var'
       /** Original pattern for destructuring (stored as Babel AST node) */
       pattern?: LVal | undefined
+      /** Original non-identifier assignment target, such as `obj.value`. */
+      assignmentTarget?: Expression | undefined
       /** Whether this is a `for await...of` loop. */
       await?: boolean | undefined
       iterable: Expression
@@ -218,6 +220,8 @@ export type Terminator =
       variableKind: 'const' | 'let' | 'var'
       /** Original pattern for destructuring (stored as Babel AST node) */
       pattern?: LVal | undefined
+      /** Original non-identifier assignment target, such as `obj.key`. */
+      assignmentTarget?: Expression | undefined
       object: Expression
       body: BlockId
       exit: BlockId

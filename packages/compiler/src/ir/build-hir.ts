@@ -1669,6 +1669,7 @@ function convertFunction(
       let varKind: 'const' | 'let' | 'var' = 'const'
       let pattern: BabelCore.types.LVal | undefined
       let leftKind: 'declaration' | 'assignment' = 'declaration'
+      let assignmentTarget: Expression | undefined
 
       if (t.isVariableDeclaration(left) && left.declarations[0]) {
         varKind = left.kind as 'const' | 'let' | 'var'
@@ -1684,6 +1685,9 @@ function convertFunction(
         varName = left.name
         varKind = 'let' // Existing variable assignment
         leftKind = 'assignment'
+      } else if (t.isMemberExpression(left)) {
+        assignmentTarget = convertExpression(left)
+        leftKind = 'assignment'
       }
 
       // Create ForOf terminator
@@ -1695,6 +1699,7 @@ function convertFunction(
         leftKind,
         variableKind: varKind,
         pattern,
+        ...(assignmentTarget ? { assignmentTarget } : null),
         ...(stmt.await ? { await: true } : null),
         iterable: iterableExpr,
         body: bodyBlock.block.id,
@@ -1730,6 +1735,7 @@ function convertFunction(
       let varKind: 'const' | 'let' | 'var' = 'const'
       let pattern: BabelCore.types.LVal | undefined
       let leftKind: 'declaration' | 'assignment' = 'declaration'
+      let assignmentTarget: Expression | undefined
 
       if (t.isVariableDeclaration(left) && left.declarations[0]) {
         varKind = left.kind as 'const' | 'let' | 'var'
@@ -1745,6 +1751,9 @@ function convertFunction(
         varName = left.name
         varKind = 'let' // Existing variable assignment
         leftKind = 'assignment'
+      } else if (t.isMemberExpression(left)) {
+        assignmentTarget = convertExpression(left)
+        leftKind = 'assignment'
       }
 
       // Create ForIn terminator
@@ -1756,6 +1765,7 @@ function convertFunction(
         leftKind,
         variableKind: varKind,
         pattern,
+        ...(assignmentTarget ? { assignmentTarget } : null),
         object: objectExpr,
         body: bodyBlock.block.id,
         exit: exitBlock.block.id,
@@ -2600,6 +2610,7 @@ function processStatement(
     let varKind: 'const' | 'let' | 'var' = 'const'
     let pattern: BabelCore.types.LVal | undefined
     let leftKind: 'declaration' | 'assignment' = 'declaration'
+    let assignmentTarget: Expression | undefined
 
     if (t.isVariableDeclaration(left) && left.declarations[0]) {
       varKind = left.kind as 'const' | 'let' | 'var'
@@ -2614,6 +2625,9 @@ function processStatement(
       varName = left.name
       varKind = 'let'
       leftKind = 'assignment'
+    } else if (t.isMemberExpression(left)) {
+      assignmentTarget = convertExpression(left)
+      leftKind = 'assignment'
     }
 
     // Create ForIn terminator
@@ -2625,6 +2639,7 @@ function processStatement(
       leftKind,
       variableKind: varKind,
       pattern,
+      ...(assignmentTarget ? { assignmentTarget } : null),
       object: objectExpr,
       body: bodyBlock.block.id,
       exit: exitBlock.block.id,
@@ -2661,6 +2676,7 @@ function processStatement(
     let varKind: 'const' | 'let' | 'var' = 'const'
     let pattern: BabelCore.types.LVal | undefined
     let leftKind: 'declaration' | 'assignment' = 'declaration'
+    let assignmentTarget: Expression | undefined
 
     if (t.isVariableDeclaration(left) && left.declarations[0]) {
       varKind = left.kind as 'const' | 'let' | 'var'
@@ -2675,6 +2691,9 @@ function processStatement(
       varName = left.name
       varKind = 'let'
       leftKind = 'assignment'
+    } else if (t.isMemberExpression(left)) {
+      assignmentTarget = convertExpression(left)
+      leftKind = 'assignment'
     }
 
     // Create ForOf terminator
@@ -2686,6 +2705,7 @@ function processStatement(
       leftKind,
       variableKind: varKind,
       pattern,
+      ...(assignmentTarget ? { assignmentTarget } : null),
       ...(stmt.await ? { await: true } : null),
       iterable: iterableExpr,
       body: bodyBlock.block.id,

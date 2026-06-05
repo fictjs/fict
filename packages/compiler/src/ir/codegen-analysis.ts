@@ -148,9 +148,16 @@ function terminatorHasAwait(term: BasicBlock['terminator']): boolean {
       if (expressionHasAwait(term.discriminant)) return true
       return term.cases.some(c => (c.test ? expressionHasAwait(c.test) : false))
     case 'ForOf':
-      return !!term.await || expressionHasAwait(term.iterable)
+      return (
+        !!term.await ||
+        expressionHasAwait(term.iterable) ||
+        (!!term.assignmentTarget && expressionHasAwait(term.assignmentTarget))
+      )
     case 'ForIn':
-      return expressionHasAwait(term.object)
+      return (
+        expressionHasAwait(term.object) ||
+        (!!term.assignmentTarget && expressionHasAwait(term.assignmentTarget))
+      )
     case 'Return':
       return term.argument ? expressionHasAwait(term.argument) : false
     case 'Throw':
@@ -346,9 +353,15 @@ function terminatorHasYield(term: Terminator): boolean {
         term.cases.some(c => (c.test ? expressionHasYield(c.test as Expression) : false))
       )
     case 'ForOf':
-      return expressionHasYield(term.iterable as Expression)
+      return (
+        expressionHasYield(term.iterable as Expression) ||
+        (!!term.assignmentTarget && expressionHasYield(term.assignmentTarget as Expression))
+      )
     case 'ForIn':
-      return expressionHasYield(term.object as Expression)
+      return (
+        expressionHasYield(term.object as Expression) ||
+        (!!term.assignmentTarget && expressionHasYield(term.assignmentTarget as Expression))
+      )
     case 'Try':
     case 'Jump':
     case 'Break':
@@ -466,9 +479,11 @@ export function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
         return
       case 'ForOf':
         visitExpr(term.iterable)
+        visitExpr(term.assignmentTarget ?? null)
         return
       case 'ForIn':
         visitExpr(term.object)
+        visitExpr(term.assignmentTarget ?? null)
         return
       case 'Return':
         visitExpr(term.argument ?? null)
@@ -513,6 +528,21 @@ function collectMutatedIdentifiersFromExpression(
   )
 }
 
+function collectMutatedIdentifiersFromAssignmentTarget(
+  target: Expression | null | undefined,
+  into: Set<string>,
+): void {
+  if (!target) return
+  if (target.kind === 'Identifier') {
+    into.add(deSSAVarName(target.name))
+    return
+  }
+  if (target.kind === 'MemberExpression' || target.kind === 'OptionalMemberExpression') {
+    collectMutatedIdentifiersFromAssignmentTarget(target.object, into)
+    if (target.computed) collectMutatedIdentifiersFromExpression(target.property, into)
+  }
+}
+
 function collectMutatedIdentifiersFromTerminator(term: Terminator, into: Set<string>): void {
   switch (term.kind) {
     case 'Return':
@@ -530,9 +560,13 @@ function collectMutatedIdentifiersFromTerminator(term: Terminator, into: Set<str
       return
     case 'ForOf':
       collectMutatedIdentifiersFromExpression(term.iterable, into)
+      collectMutatedIdentifiersFromExpression(term.assignmentTarget ?? null, into)
+      collectMutatedIdentifiersFromAssignmentTarget(term.assignmentTarget ?? null, into)
       return
     case 'ForIn':
       collectMutatedIdentifiersFromExpression(term.object, into)
+      collectMutatedIdentifiersFromExpression(term.assignmentTarget ?? null, into)
+      collectMutatedIdentifiersFromAssignmentTarget(term.assignmentTarget ?? null, into)
       return
     case 'Jump':
     case 'Unreachable':

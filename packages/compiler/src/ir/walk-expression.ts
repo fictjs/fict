@@ -38,9 +38,11 @@ function walkTerminator(
       return
     case 'ForOf':
       visitNode(term.iterable, null, inFunctionBody)
+      if (term.assignmentTarget) visitNode(term.assignmentTarget, null, inFunctionBody)
       return
     case 'ForIn':
       visitNode(term.object, null, inFunctionBody)
+      if (term.assignmentTarget) visitNode(term.assignmentTarget, null, inFunctionBody)
       return
     case 'Jump':
     case 'Unreachable':

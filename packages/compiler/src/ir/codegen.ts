@@ -877,6 +877,17 @@ function markCallableSignalIfFunctionValue(
   }
 }
 
+function lowerLoopAssignmentTarget(
+  target: Expression,
+  ctx: CodegenContext,
+): BabelCore.types.Identifier | BabelCore.types.MemberExpression {
+  const lowered = lowerExpression(target, ctx)
+  if (ctx.t.isIdentifier(lowered) || ctx.t.isMemberExpression(lowered)) {
+    return lowered
+  }
+  return ctx.t.identifier('_item')
+}
+
 function lowerInstruction(
   instr: Instruction,
   ctx: CodegenContext,
@@ -1078,9 +1089,15 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
         t.expressionStatement(t.stringLiteral(`body ${term.body}`)),
       ]
       const left = isAssignmentTarget
-        ? t.identifier(term.variable)
+        ? term.assignmentTarget
+          ? lowerLoopAssignmentTarget(term.assignmentTarget, ctx)
+          : t.identifier(term.variable)
         : t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
-      if (isAssignmentTarget && ctx.trackedVars.has(deSSAVarName(term.variable))) {
+      if (
+        isAssignmentTarget &&
+        !term.assignmentTarget &&
+        ctx.trackedVars.has(deSSAVarName(term.variable))
+      ) {
         const loopValue = genTemp(ctx, 'forOf')
         bodyStatements.unshift(
           t.expressionStatement(
@@ -1116,9 +1133,15 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
         t.expressionStatement(t.stringLiteral(`body ${term.body}`)),
       ]
       const left = isAssignmentTarget
-        ? t.identifier(term.variable)
+        ? term.assignmentTarget
+          ? lowerLoopAssignmentTarget(term.assignmentTarget, ctx)
+          : t.identifier(term.variable)
         : t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
-      if (isAssignmentTarget && ctx.trackedVars.has(deSSAVarName(term.variable))) {
+      if (
+        isAssignmentTarget &&
+        !term.assignmentTarget &&
+        ctx.trackedVars.has(deSSAVarName(term.variable))
+      ) {
         const loopValue = genTemp(ctx, 'forIn')
         bodyStatements.unshift(
           t.expressionStatement(

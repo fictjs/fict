@@ -106,6 +106,7 @@ export type StructuredNode =
       leftKind?: 'declaration' | 'assignment' | undefined
       variableKind: 'const' | 'let' | 'var'
       pattern?: LVal | undefined
+      assignmentTarget?: Expression | undefined
       await?: boolean | undefined
       iterable: Expression
       body: StructuredNode
@@ -116,6 +117,7 @@ export type StructuredNode =
       leftKind?: 'declaration' | 'assignment' | undefined
       variableKind: 'const' | 'let' | 'var'
       pattern?: LVal | undefined
+      assignmentTarget?: Expression | undefined
       object: Expression
       body: StructuredNode
     }
@@ -1642,6 +1644,7 @@ function structurizeForOf(
     leftKind?: 'declaration' | 'assignment' | undefined
     variableKind: 'const' | 'let' | 'var'
     pattern?: LVal | undefined
+    assignmentTarget?: Expression | undefined
     await?: boolean | undefined
     iterable: Expression
     body: BlockId
@@ -1665,6 +1668,7 @@ function structurizeForOf(
     leftKind: term.leftKind,
     variableKind: term.variableKind,
     pattern: term.pattern,
+    assignmentTarget: term.assignmentTarget,
     ...(term.await ? { await: true } : null),
     iterable: term.iterable,
     body,
@@ -1692,6 +1696,7 @@ function structurizeForIn(
     leftKind?: 'declaration' | 'assignment' | undefined
     variableKind: 'const' | 'let' | 'var'
     pattern?: LVal | undefined
+    assignmentTarget?: Expression | undefined
     object: Expression
     body: BlockId
     exit: BlockId
@@ -1714,6 +1719,7 @@ function structurizeForIn(
     leftKind: term.leftKind,
     variableKind: term.variableKind,
     pattern: term.pattern,
+    assignmentTarget: term.assignmentTarget,
     object: term.object,
     body,
   }

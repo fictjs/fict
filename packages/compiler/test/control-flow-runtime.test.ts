@@ -224,6 +224,86 @@ describe('control flow runtime regressions', () => {
     expect(resolved).toBe(2)
   })
 
+  it('preserves for-of member expression loop targets', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let tick = $state(0)
+          const obj = { value: 0 }
+
+          for (obj.value of [1, 2]) {}
+
+          return obj.value
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves for-in member expression loop targets', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let tick = $state(0)
+          const obj = { key: '' }
+
+          for (obj.key in { a: 1, b: 2 }) {}
+
+          return obj.key
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe('b')
+  })
+
+  it('preserves computed member loop targets', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let tick = $state(0)
+          const prop = 'value'
+          const obj = { value: 0 }
+
+          for (obj[prop] of [1, 2]) {}
+
+          return obj.value
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves store member loop targets', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { createStore } from 'fict'
+
+        export function useRun() {
+          const [state] = createStore({ value: 0 })
+
+          for (state.value of [1, 2]) {}
+
+          return state.value
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
   it('keeps partial while-loop control flow inline when memoization would be incomplete', () => {
     const result = compileAndRunHook<number | (() => number)>(
       `

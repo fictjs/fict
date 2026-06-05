@@ -337,8 +337,14 @@ function buildReactiveGraph(
       })
     } else if (term.kind === 'ForOf') {
       addRootNode('binding', collectDependenciesDeep(term.iterable))
+      if (term.assignmentTarget) {
+        addRootNode('binding', collectDependenciesDeep(term.assignmentTarget))
+      }
     } else if (term.kind === 'ForIn') {
       addRootNode('binding', collectDependenciesDeep(term.object))
+      if (term.assignmentTarget) {
+        addRootNode('binding', collectDependenciesDeep(term.assignmentTarget))
+      }
     } else if (term.kind === 'Throw' && term.argument) {
       addRootNode('impure', collectDependenciesDeep(term.argument))
     }
@@ -863,6 +869,14 @@ function collectDependenciesFromBlocks(
         includeFunctionBodies,
         shadowed,
       )
+      if (term.assignmentTarget) {
+        collectDependenciesFromExpression(
+          term.assignmentTarget as Expression,
+          deps,
+          includeFunctionBodies,
+          shadowed,
+        )
+      }
     } else if (term.kind === 'ForIn') {
       collectDependenciesFromExpression(
         term.object as Expression,
@@ -870,6 +884,14 @@ function collectDependenciesFromBlocks(
         includeFunctionBodies,
         shadowed,
       )
+      if (term.assignmentTarget) {
+        collectDependenciesFromExpression(
+          term.assignmentTarget as Expression,
+          deps,
+          includeFunctionBodies,
+          shadowed,
+        )
+      }
     }
   }
 }
@@ -2361,12 +2383,16 @@ function collectWriteTargets(expr: Expression): Set<string> {
         })
         return
       case 'ForOf':
-        if (term.leftKind === 'assignment') addWrite(term.variable, shadowed)
+        if (term.leftKind === 'assignment' && !term.assignmentTarget)
+          addWrite(term.variable, shadowed)
         visit(term.iterable, shadowed)
+        if (term.assignmentTarget) visit(term.assignmentTarget, shadowed)
         return
       case 'ForIn':
-        if (term.leftKind === 'assignment') addWrite(term.variable, shadowed)
+        if (term.leftKind === 'assignment' && !term.assignmentTarget)
+          addWrite(term.variable, shadowed)
         visit(term.object, shadowed)
+        if (term.assignmentTarget) visit(term.assignmentTarget, shadowed)
         return
       default:
         return
@@ -2901,9 +2927,11 @@ function collectTerminatorAccessorMutationTargets(
       break
     case 'ForOf':
       add(term.iterable)
+      if (term.assignmentTarget) add(term.assignmentTarget)
       break
     case 'ForIn':
       add(term.object)
+      if (term.assignmentTarget) add(term.assignmentTarget)
       break
     default:
       break
@@ -2964,9 +2992,15 @@ function terminatorContainsImpureMarkers(term: Terminator): boolean {
       if (expressionContainsImpureMarkers(term.discriminant)) return true
       return term.cases.some(c => (c.test ? expressionContainsImpureMarkers(c.test) : false))
     case 'ForOf':
-      return expressionContainsImpureMarkers(term.iterable)
+      return (
+        expressionContainsImpureMarkers(term.iterable) ||
+        (!!term.assignmentTarget && expressionContainsImpureMarkers(term.assignmentTarget))
+      )
     case 'ForIn':
-      return expressionContainsImpureMarkers(term.object)
+      return (
+        expressionContainsImpureMarkers(term.object) ||
+        (!!term.assignmentTarget && expressionContainsImpureMarkers(term.assignmentTarget))
+      )
     default:
       return false
   }
@@ -3959,6 +3993,70 @@ function replaceIdentifiersWithConstants(
   }
 }
 
+function replaceIdentifiersWithConstantsInAssignmentTarget(
+  expr: Expression,
+  constants: Map<string, ConstantValue>,
+): Expression {
+  switch (expr.kind) {
+    case 'Identifier':
+      return expr
+    case 'MemberExpression':
+    case 'OptionalMemberExpression': {
+      const member = expr
+      return {
+        ...member,
+        object: replaceIdentifiersWithConstantsInAssignmentTarget(
+          member.object as Expression,
+          constants,
+        ),
+        property: member.computed
+          ? replaceIdentifiersWithConstants(member.property as Expression, constants)
+          : member.property,
+      }
+    }
+    default:
+      return replaceIdentifiersWithConstants(expr, constants)
+  }
+}
+
+function foldAssignmentTargetWithConstants(
+  expr: Expression,
+  constants: Map<string, ConstantValue>,
+  options: OptimizeOptions,
+  constObjects?: Map<string, ConstObjectFields>,
+  constArrays?: Map<string, ConstArrayElements>,
+): Expression {
+  switch (expr.kind) {
+    case 'Identifier':
+      return expr
+    case 'MemberExpression':
+    case 'OptionalMemberExpression': {
+      const member = expr
+      return {
+        ...member,
+        object: foldAssignmentTargetWithConstants(
+          member.object as Expression,
+          constants,
+          options,
+          constObjects,
+          constArrays,
+        ),
+        property: member.computed
+          ? foldExpressionWithConstants(
+              member.property as Expression,
+              constants,
+              options,
+              constObjects,
+              constArrays,
+            )
+          : member.property,
+      }
+    }
+    default:
+      return foldExpressionWithConstants(expr, constants, options, constObjects, constArrays)
+  }
+}
+
 function replaceConstantsInTerminator(
   term: Terminator,
   constants: Map<string, ConstantValue>,
@@ -3994,11 +4092,27 @@ function replaceConstantsInTerminator(
       return {
         ...term,
         iterable: replaceIdentifiersWithConstants(term.iterable as Expression, constants),
+        ...(term.assignmentTarget
+          ? {
+              assignmentTarget: replaceIdentifiersWithConstantsInAssignmentTarget(
+                term.assignmentTarget as Expression,
+                constants,
+              ),
+            }
+          : null),
       }
     case 'ForIn':
       return {
         ...term,
         object: replaceIdentifiersWithConstants(term.object as Expression, constants),
+        ...(term.assignmentTarget
+          ? {
+              assignmentTarget: replaceIdentifiersWithConstantsInAssignmentTarget(
+                term.assignmentTarget as Expression,
+                constants,
+              ),
+            }
+          : null),
       }
     case 'Try':
       return term
@@ -4039,9 +4153,37 @@ function foldTerminatorWithConstants(
         })),
       }
     case 'ForOf':
-      return { ...term, iterable: fold(term.iterable as Expression) }
+      return {
+        ...term,
+        iterable: fold(term.iterable as Expression),
+        ...(term.assignmentTarget
+          ? {
+              assignmentTarget: foldAssignmentTargetWithConstants(
+                term.assignmentTarget as Expression,
+                constants,
+                options,
+                constObjects,
+                constArrays,
+              ),
+            }
+          : null),
+      }
     case 'ForIn':
-      return { ...term, object: fold(term.object as Expression) }
+      return {
+        ...term,
+        object: fold(term.object as Expression),
+        ...(term.assignmentTarget
+          ? {
+              assignmentTarget: foldAssignmentTargetWithConstants(
+                term.assignmentTarget as Expression,
+                constants,
+                options,
+                constObjects,
+                constArrays,
+              ),
+            }
+          : null),
+      }
     case 'Try':
       return term
     default:
@@ -4467,9 +4609,15 @@ function collectUsesFromTerminator(
       return
     case 'ForOf':
       collectUsesFromExpression(term.iterable as Expression, add, inFunctionBody)
+      if (term.assignmentTarget) {
+        collectUsesFromExpression(term.assignmentTarget as Expression, add, inFunctionBody)
+      }
       return
     case 'ForIn':
       collectUsesFromExpression(term.object as Expression, add, inFunctionBody)
+      if (term.assignmentTarget) {
+        collectUsesFromExpression(term.assignmentTarget as Expression, add, inFunctionBody)
+      }
       return
     case 'Try':
       return
@@ -5209,6 +5357,34 @@ function replaceIdentifier(
   }
 }
 
+function replaceIdentifierInAssignmentTarget(
+  expr: Expression,
+  target: string,
+  replacement: Expression,
+): Expression {
+  switch (expr.kind) {
+    case 'Identifier':
+      return expr
+    case 'MemberExpression':
+    case 'OptionalMemberExpression': {
+      const member = expr
+      return {
+        ...member,
+        object: replaceIdentifierInAssignmentTarget(
+          member.object as Expression,
+          target,
+          replacement,
+        ),
+        property: member.computed
+          ? replaceIdentifier(member.property as Expression, target, replacement, false)
+          : member.property,
+      }
+    }
+    default:
+      return replaceIdentifier(expr, target, replacement, false)
+  }
+}
+
 function replaceIdentifierInTerminator(
   term: Terminator,
   target: string,
@@ -5252,11 +5428,29 @@ function replaceIdentifierInTerminator(
       return {
         ...term,
         iterable: replaceIdentifier(term.iterable as Expression, target, replacement, false),
+        ...(term.assignmentTarget
+          ? {
+              assignmentTarget: replaceIdentifierInAssignmentTarget(
+                term.assignmentTarget as Expression,
+                target,
+                replacement,
+              ),
+            }
+          : null),
       }
     case 'ForIn':
       return {
         ...term,
         object: replaceIdentifier(term.object as Expression, target, replacement, false),
+        ...(term.assignmentTarget
+          ? {
+              assignmentTarget: replaceIdentifierInAssignmentTarget(
+                term.assignmentTarget as Expression,
+                target,
+                replacement,
+              ),
+            }
+          : null),
       }
     case 'Try':
       return term

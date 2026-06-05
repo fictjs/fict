@@ -1365,6 +1365,17 @@ function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, f
   }
 }
 
+function lowerLoopAssignmentTargetWithDeSSA(
+  target: Expression,
+  ctx: CodegenContext,
+): BabelCore.types.Identifier | BabelCore.types.MemberExpression {
+  const lowered = lowerExpressionWithDeSSA(target, ctx)
+  if (ctx.t.isIdentifier(lowered) || ctx.t.isMemberExpression(lowered)) {
+    return lowered
+  }
+  return ctx.t.identifier('_item')
+}
+
 /**
  * Lower a node with region context
  */
@@ -1750,6 +1761,17 @@ function lowerNodeWithRegionContext(
       const right = lowerExpressionWithDeSSA(node.iterable, ctx)
       const isAssignmentTarget = node.leftKind === 'assignment' && !node.pattern
       const targetName = deSSAVarName(node.variable)
+      if (isAssignmentTarget && node.assignmentTarget) {
+        const bodyStmts = lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx)
+        return [
+          t.forOfStatement(
+            lowerLoopAssignmentTargetWithDeSSA(node.assignmentTarget, ctx),
+            right,
+            t.blockStatement(bodyStmts),
+            !!node.await,
+          ),
+        ]
+      }
       if (isAssignmentTarget) {
         const bodyStmts = lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx)
         if (ctx.trackedVars.has(targetName)) {
@@ -1802,6 +1824,16 @@ function lowerNodeWithRegionContext(
       const right = lowerExpressionWithDeSSA(node.object, ctx)
       const isAssignmentTarget = node.leftKind === 'assignment' && !node.pattern
       const targetName = deSSAVarName(node.variable)
+      if (isAssignmentTarget && node.assignmentTarget) {
+        const bodyStmts = lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx)
+        return [
+          t.forInStatement(
+            lowerLoopAssignmentTargetWithDeSSA(node.assignmentTarget, ctx),
+            right,
+            t.blockStatement(bodyStmts),
+          ),
+        ]
+      }
       if (isAssignmentTarget) {
         const bodyStmts = lowerNodeWithRegionContext(node.body, t, ctx, declaredVars, regionCtx)
         if (ctx.trackedVars.has(targetName)) {
@@ -2320,6 +2352,16 @@ function lowerStructuredNodeForRegion(
       const varKind = node.variableKind ?? 'const'
       const right = lowerExpressionWithDeSSA(node.iterable, ctx)
       const targetName = deSSAVarName(node.variable)
+      if (isAssignmentTarget && node.assignmentTarget) {
+        return [
+          t.forOfStatement(
+            lowerLoopAssignmentTargetWithDeSSA(node.assignmentTarget, ctx),
+            right,
+            t.blockStatement(body),
+            !!node.await,
+          ),
+        ]
+      }
       if (isAssignmentTarget && ctx.trackedVars.has(targetName)) {
         const valueId = t.identifier(`__forOf_${ctx.tempCounter++}`)
         return [
@@ -2372,6 +2414,15 @@ function lowerStructuredNodeForRegion(
       const varKind = node.variableKind ?? 'const'
       const right = lowerExpressionWithDeSSA(node.object, ctx)
       const targetName = deSSAVarName(node.variable)
+      if (isAssignmentTarget && node.assignmentTarget) {
+        return [
+          t.forInStatement(
+            lowerLoopAssignmentTargetWithDeSSA(node.assignmentTarget, ctx),
+            right,
+            t.blockStatement(body),
+          ),
+        ]
+      }
       if (isAssignmentTarget && ctx.trackedVars.has(targetName)) {
         const valueId = t.identifier(`__forIn_${ctx.tempCounter++}`)
         return [
