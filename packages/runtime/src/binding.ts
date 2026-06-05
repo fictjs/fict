@@ -2117,6 +2117,16 @@ function assignProp(
     return applyClass(node, value, prev)
   }
 
+  // Class/className handling
+  if (prop === 'class' || prop === 'className') {
+    if (value == null) {
+      node.removeAttribute('class')
+    } else {
+      setClass(node, value as string | Record<string, boolean>)
+    }
+    return value
+  }
+
   // Skip if value unchanged
   if (value === prev) return prev
 
@@ -2195,13 +2205,6 @@ function assignProp(
   // Explicit property: prop:name
   if (prop.slice(0, 5) === 'prop:') {
     ;(node as unknown as Record<string, unknown>)[prop.slice(5)] = value
-    return value
-  }
-
-  // Class/className handling
-  if (prop === 'class' || prop === 'className') {
-    if (value == null) node.removeAttribute('class')
-    else node.className = String(value)
     return value
   }
 

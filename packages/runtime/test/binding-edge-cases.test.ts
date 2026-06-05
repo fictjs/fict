@@ -674,6 +674,65 @@ describe('Binding Edge Cases', () => {
       expect(el.getAttribute('data-id')).toBe('123')
     })
 
+    it('applies object class maps from spread class props', () => {
+      const el = document.createElement('div')
+
+      spread(el, { class: { active: true, disabled: false } })
+
+      expect(el.classList.contains('active')).toBe(true)
+      expect(el.classList.contains('disabled')).toBe(false)
+      expect(el.className).not.toBe('[object Object]')
+    })
+
+    it('applies object class maps from spread className props', () => {
+      const el = document.createElement('div')
+
+      spread(el, { className: { selected: true, hidden: false } })
+
+      expect(el.classList.contains('selected')).toBe(true)
+      expect(el.classList.contains('hidden')).toBe(false)
+      expect(el.className).not.toBe('[object Object]')
+    })
+
+    it('updates reactive spread class maps', async () => {
+      const el = document.createElement('div')
+      const active = createSignal(true)
+
+      const { dispose } = createRoot(() => {
+        spread(el, () => ({ class: { active: active(), inactive: !active() } }))
+      })
+
+      expect(el.classList.contains('active')).toBe(true)
+      expect(el.classList.contains('inactive')).toBe(false)
+
+      active(false)
+      await tick()
+
+      expect(el.classList.contains('active')).toBe(false)
+      expect(el.classList.contains('inactive')).toBe(true)
+      dispose()
+    })
+
+    it('transitions spread class values from object to string and null', async () => {
+      const el = document.createElement('div')
+      const props = createSignal<Record<string, unknown>>({ class: { active: true } })
+
+      const { dispose } = createRoot(() => {
+        spread(el, () => props())
+      })
+
+      expect(el.classList.contains('active')).toBe(true)
+
+      props({ class: 'plain' })
+      await tick()
+      expect(el.className).toBe('plain')
+
+      props({ class: null })
+      await tick()
+      expect(el.hasAttribute('class')).toBe(false)
+      dispose()
+    })
+
     it('handles ref callback in props', () => {
       const el = document.createElement('div')
       let refElement: Element | null = null
