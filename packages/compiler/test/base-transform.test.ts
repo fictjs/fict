@@ -342,6 +342,84 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).not.toContain('return undefined')
     })
 
+    it('strips TypeScript annotations from function parameters', () => {
+      const output = transform(`
+        export function f(x: number): number {
+          return x + 1
+        }
+      `)
+
+      expect(output).toContain('function f(x)')
+      expect(output).not.toContain('x: number')
+      expect(output).not.toContain(': number')
+    })
+
+    it('strips TypeScript annotations from arrow function parameters', () => {
+      const output = transform(`
+        export const f = (x: number): number => x + 1
+      `)
+
+      expect(output).toContain('x => x + 1')
+      expect(output).not.toContain('x: number')
+      expect(output).not.toContain(': number')
+    })
+
+    it('strips TypeScript annotations from component props parameters', () => {
+      const output = transform(`
+        export function App(props: { name?: string }) {
+          return <div>{props.name}</div>
+        }
+      `)
+
+      expect(output).toContain('function App(props)')
+      expect(output).toContain('template("<div>')
+      expect(output).not.toContain('props: {')
+      expect(output).not.toContain('name?: string')
+    })
+
+    it('strips TypeScript generic parameter annotations', () => {
+      const output = transform(`
+        export function id<T>(x: T): T {
+          return x
+        }
+      `)
+
+      expect(output).toContain('function id(x)')
+      expect(output).not.toContain('<T>')
+      expect(output).not.toContain('x: T')
+      expect(output).not.toContain(': T')
+    })
+
+    it('strips TypeScript annotations from default rest and destructured params', () => {
+      const output = transform(`
+        export function f(
+          value: number = 1,
+          { name = 'x' }: { name?: string },
+          ...rest: number[]
+        ) {
+          return value + name.length + rest.length
+        }
+      `)
+
+      expect(output).toContain('function f(value = 1, {')
+      expect(output).toContain('...rest')
+      expect(output).not.toContain(': number')
+      expect(output).not.toContain('name?: string')
+      expect(output).not.toContain('number[]')
+    })
+
+    it('continues to strip local variable annotations', () => {
+      const output = transform(`
+        export function f() {
+          const x: number = 1
+          return x
+        }
+      `)
+
+      expect(output).toContain('return 1')
+      expect(output).not.toContain('x: number')
+    })
+
     it('preserves import expressions and meta properties', () => {
       const output = transform(`
         async function load() {

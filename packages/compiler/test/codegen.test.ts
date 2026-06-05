@@ -73,6 +73,65 @@ describe('lowerHIRWithRegions', () => {
     expect(result.program.body.length).toBeGreaterThan(0)
   })
 
+  it('strips TypeScript annotations from emitted function parameters', () => {
+    const ast = parseFile(`
+      export function f(x: number): number {
+        return x + 1
+      }
+
+      export function id<T>(value: T): T {
+        return value
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('function f(x)')
+    expect(code).toContain('function id(value)')
+    expect(code).not.toContain('x: number')
+    expect(code).not.toContain('value: T')
+    expect(code).not.toContain('<T>')
+    expect(code).not.toContain(': T')
+  })
+
+  it('strips TypeScript annotations from emitted expression function parameters', () => {
+    const ast = parseFile(`
+      export const f = (x: number): number => x + 1
+      export const g = function (value: string): string {
+        return value
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain('x: number')
+    expect(code).not.toContain('value: string')
+    expect(code).not.toContain(': string')
+  })
+
+  it('strips TypeScript annotations from emitted destructured params', () => {
+    const ast = parseFile(`
+      export function f(
+        value: number = 1,
+        { name = 'x' }: { name?: string },
+        ...rest: number[]
+      ) {
+        return value + name.length + rest.length
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('function f(value = 1, {')
+    expect(code).toContain('...rest')
+    expect(code).not.toContain(': number')
+    expect(code).not.toContain('name?: string')
+    expect(code).not.toContain('number[]')
+  })
+
   it('should handle control flow', () => {
     const ast = parseFile(`
       function Foo(props) {

@@ -984,6 +984,90 @@ function lowerParameterPattern(
   return pattern
 }
 
+function stripTypeScriptExpressionSyntax(
+  expr: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): BabelCore.types.Expression {
+  if (t.isTSAsExpression(expr) || t.isTSTypeAssertion(expr) || t.isTSSatisfiesExpression(expr)) {
+    return stripTypeScriptExpressionSyntax(expr.expression as BabelCore.types.Expression, t)
+  }
+  if (t.isTSNonNullExpression(expr)) {
+    return stripTypeScriptExpressionSyntax(expr.expression as BabelCore.types.Expression, t)
+  }
+  return expr
+}
+
+function stripTypeScriptPatternSyntax(
+  pattern: BabelCore.types.FunctionParameter | BabelCore.types.PatternLike,
+  t: typeof BabelCore.types,
+): BabelCore.types.FunctionParameter | BabelCore.types.PatternLike {
+  const node = pattern
+
+  if (t.isIdentifier(node)) {
+    delete node.typeAnnotation
+    delete node.optional
+    return node
+  }
+  if (t.isAssignmentPattern(node)) {
+    delete node.typeAnnotation
+    node.left = stripTypeScriptPatternSyntax(
+      node.left as BabelCore.types.PatternLike,
+      t,
+    ) as typeof node.left
+    node.right = stripTypeScriptExpressionSyntax(node.right, t)
+    return node
+  }
+  if (t.isRestElement(node)) {
+    delete node.typeAnnotation
+    node.argument = stripTypeScriptPatternSyntax(
+      node.argument as BabelCore.types.PatternLike,
+      t,
+    ) as typeof node.argument
+    return node
+  }
+  if (t.isObjectPattern(node)) {
+    delete node.typeAnnotation
+    delete node.optional
+    node.properties = node.properties.map(prop => {
+      if (t.isRestElement(prop)) {
+        return stripTypeScriptPatternSyntax(prop, t) as BabelCore.types.RestElement
+      }
+      if (t.isObjectProperty(prop)) {
+        delete (prop as { optional?: boolean }).optional
+        if (prop.computed && t.isExpression(prop.key)) {
+          prop.key = stripTypeScriptExpressionSyntax(prop.key, t)
+        }
+        prop.value = stripTypeScriptPatternSyntax(
+          prop.value as BabelCore.types.PatternLike,
+          t,
+        ) as typeof prop.value
+      }
+      return prop
+    })
+    return node
+  }
+  if (t.isArrayPattern(node)) {
+    delete node.typeAnnotation
+    delete node.optional
+    node.elements = node.elements.map(element =>
+      element && t.isPatternLike(element)
+        ? (stripTypeScriptPatternSyntax(element, t) as BabelCore.types.PatternLike)
+        : element,
+    )
+    return node
+  }
+  return node
+}
+
+function sanitizeFunctionParameter(
+  param: BabelParamNode,
+  t: typeof BabelCore.types,
+): BabelCore.types.FunctionParameter {
+  const unwrapped = t.isTSParameterProperty(param) ? param.parameter : param
+  const cloned = t.cloneNode(unwrapped, true) as BabelCore.types.FunctionParameter
+  return stripTypeScriptPatternSyntax(cloned, t) as BabelCore.types.FunctionParameter
+}
+
 function buildFunctionParams(
   params: { name: string }[],
   rawParams: BabelParamNode[] | undefined,
@@ -992,11 +1076,7 @@ function buildFunctionParams(
   if (rawParams && rawParams.length > 0) {
     const paramNames = collectParamBindingNames(params, rawParams, ctx.t)
     return rawParams.map(param =>
-      lowerParameterPattern(
-        ctx.t.cloneNode(param, true) as BabelCore.types.FunctionParameter,
-        ctx,
-        paramNames,
-      ),
+      lowerParameterPattern(sanitizeFunctionParameter(param, ctx.t), ctx, paramNames),
     ) as BabelCore.types.FunctionParameter[]
   }
   return params.map(p => ctx.t.identifier(deSSAVarName(p.name)))
