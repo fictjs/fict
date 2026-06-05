@@ -244,6 +244,10 @@ export interface ExpressionInstruction extends SourceInfo {
   value: Expression
 }
 
+export interface DebuggerInstruction extends SourceInfo {
+  kind: 'Debugger'
+}
+
 export interface PhiInstruction extends SourceInfo {
   kind: 'Phi'
   variable: string
@@ -252,7 +256,11 @@ export interface PhiInstruction extends SourceInfo {
 }
 
 /** A single HIR instruction */
-export type Instruction = AssignInstruction | ExpressionInstruction | PhiInstruction
+export type Instruction =
+  | AssignInstruction
+  | ExpressionInstruction
+  | DebuggerInstruction
+  | PhiInstruction
 
 /** Type guard for Phi instructions */
 export function isPhiInstruction(instr: Instruction): instr is PhiInstruction {

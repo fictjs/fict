@@ -1009,6 +1009,9 @@ function lowerInstruction(
   if (instr.kind === 'Expression') {
     return applyLoc(t.expressionStatement(lowerTrackedExpression(instr.value, ctx, false)))
   }
+  if (instr.kind === 'Debugger') {
+    return applyLoc(t.debuggerStatement())
+  }
   if (instr.kind === 'Phi') {
     // Phi nodes are typically eliminated in SSA-out pass; emit comment for debugging
     return null
@@ -4305,6 +4308,10 @@ function lowerInstructionWithScopes(
 
   if (instr.kind === 'Expression') {
     return applyLoc(t.expressionStatement(lowerExpression(instr.value, ctx)))
+  }
+
+  if (instr.kind === 'Debugger') {
+    return applyLoc(t.debuggerStatement())
   }
 
   return applyLoc(null)

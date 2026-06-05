@@ -213,6 +213,35 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).toContain('async function noop')
     })
 
+    it('preserves debugger statements in HIR-lowered functions', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+
+        export function useProbe() {
+          let flag = $state(true)
+          debugger
+
+          if (flag) {
+            debugger
+          }
+
+          while (flag) {
+            debugger
+            break
+          }
+
+          function nested() {
+            debugger
+            return 2
+          }
+
+          return nested()
+        }
+      `)
+
+      expect(output.match(/\bdebugger;/g)).toHaveLength(4)
+    })
+
     it('preserves regex literals in function bodies', () => {
       const output = transform(`
         function validateEmail(email: string) {

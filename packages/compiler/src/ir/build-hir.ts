@@ -605,6 +605,13 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
       if (t.isFunctionDeclaration(stmt)) {
         continue
       }
+      if (t.isDebuggerStatement(stmt)) {
+        target.instructions.push({
+          kind: 'Debugger',
+          loc: stmt.loc,
+        })
+        continue
+      }
       if (t.isReturnStatement(stmt)) {
         target.terminator = {
           kind: 'Return',
@@ -1181,6 +1188,13 @@ function convertFunction(
 
   for (const stmt of bodyStatements) {
     if (t.isFunctionDeclaration(stmt)) {
+      continue
+    }
+    if (t.isDebuggerStatement(stmt)) {
+      current.block.instructions.push({
+        kind: 'Debugger',
+        loc: stmt.loc,
+      })
       continue
     }
     if (t.isReturnStatement(stmt)) {
@@ -2141,6 +2155,11 @@ function processStatement(
   }
 
   if (t.isEmptyStatement(stmt)) {
+    return bb
+  }
+
+  if (t.isDebuggerStatement(stmt)) {
+    push({ kind: 'Debugger', loc: stmt.loc })
     return bb
   }
 

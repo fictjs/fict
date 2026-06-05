@@ -745,13 +745,17 @@ function containsJSXExpr(expr: Expression | null | undefined): boolean {
       }
       if (Array.isArray(expr.body)) {
         return expr.body.some(block =>
-          block.instructions.some(i => i.kind !== 'Phi' && containsJSXExpr(i.value)),
+          block.instructions.some(
+            i => (i.kind === 'Assign' || i.kind === 'Expression') && containsJSXExpr(i.value),
+          ),
         )
       }
       return false
     case 'FunctionExpression':
       return expr.body.some(block =>
-        block.instructions.some(i => i.kind !== 'Phi' && containsJSXExpr(i.value)),
+        block.instructions.some(
+          i => (i.kind === 'Assign' || i.kind === 'Expression') && containsJSXExpr(i.value),
+        ),
       )
     case 'SpreadElement':
       return containsJSXExpr(expr.argument)
@@ -4071,6 +4075,9 @@ function instructionToStatement(
       return applyLoc(t.expressionStatement(buildEffectCall(ctx, t, effectFn, { slot })))
     }
     return applyLoc(t.expressionStatement(lowerExpressionWithDeSSA(instr.value, ctx)))
+  }
+  if (instr.kind === 'Debugger') {
+    return applyLoc(t.debuggerStatement())
   }
   // Phi nodes are handled by SSA elimination pass
   return null

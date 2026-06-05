@@ -66,6 +66,8 @@ function walkInstruction(
     case 'Phi':
       instr.sources.forEach(source => visitNode(source.id, null, inFunctionBody))
       return
+    case 'Debugger':
+      return
     default:
       assertNever(instr)
   }
