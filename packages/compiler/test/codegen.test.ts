@@ -818,6 +818,51 @@ describe('resumable event handler transformation', () => {
     expect(code).not.toContain('setAttribute("on:click"')
   })
 
+  it.each(['onClickCapture$', 'onClickPassive$', 'onClickOnce$'])(
+    'throws for explicit resumable handlers with %s modifiers',
+    attrName => {
+      const ast = parseFile(`
+        function Button() {
+          return <button ${attrName}={() => console.log("x")}>Click</button>
+        }
+      `)
+      const hir = buildHIR(ast)
+
+      expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+        /does not support event options/i,
+      )
+    },
+  )
+
+  it('throws for explicit resumable handlers with combined event modifiers', () => {
+    const ast = parseFile(`
+      function Button() {
+        return <button onClickCapturePassiveOnce$={() => console.log("x")}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(/capture, passive, once/)
+  })
+
+  it('falls back for auto-extracted handlers with event modifiers', () => {
+    const ast = parseFile(`
+      function Button() {
+        return <button onClickCapture={() => {
+          console.log("before")
+          console.log("after")
+        }}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('bindEvent')
+    expect(code).toMatch(/\{\s*capture: true\s*\}/)
+    expect(code).not.toContain('setAttribute("on:click"')
+  })
+
   it('throws for explicit resumable handlers that capture non-serializable locals', () => {
     const ast = parseFile(`
       function Comp() {

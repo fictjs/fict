@@ -3170,6 +3170,23 @@ function lowerIntrinsicElement(
         binding.eventOptions &&
         (binding.eventOptions.capture || binding.eventOptions.passive || binding.eventOptions.once)
       const isDelegated = DelegatedEvents.has(eventName) && !hasEventOptions
+      if (binding.resumableExplicit && hasEventOptions) {
+        const modifiers = [
+          binding.eventOptions?.capture ? 'capture' : null,
+          binding.eventOptions?.passive ? 'passive' : null,
+          binding.eventOptions?.once ? 'once' : null,
+        ].filter((value): value is string => value !== null)
+        const loc = binding.expr.loc?.start
+        throw new HIRError(
+          `Resumable event handler on:${eventName} does not support event options (${modifiers.join(', ')}). Remove the '$' suffix or the event modifier.`,
+          'BUILD_ERROR',
+          {
+            file: ctx.options?.filename ?? '<unknown>',
+            line: loc?.line,
+            variable: eventName,
+          },
+        )
+      }
 
       if (binding.resumable && !hasEventOptions) {
         const emitted = emitResumableEventBinding(
