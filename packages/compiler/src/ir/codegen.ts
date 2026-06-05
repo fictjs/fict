@@ -2581,14 +2581,13 @@ function lowerIntrinsicElementAsVNode(
   ctx: CodegenContext,
 ): BabelCore.types.Expression {
   const { t } = ctx
-  const props: BabelCore.types.ObjectProperty[] = []
-  const spreads: BabelCore.types.SpreadElement[] = []
+  const props: (BabelCore.types.ObjectProperty | BabelCore.types.SpreadElement)[] = []
   const toPropKey = (name: string) =>
     /^[a-zA-Z_$][\w$]*$/.test(name) ? t.identifier(name) : t.stringLiteral(name)
 
   for (const attr of jsx.attributes) {
     if (attr.isSpread && attr.spreadExpr) {
-      spreads.push(t.spreadElement(lowerDomExpression(attr.spreadExpr, ctx)))
+      props.push(t.spreadElement(lowerDomExpression(attr.spreadExpr, ctx)))
       continue
     }
 
@@ -2627,12 +2626,7 @@ function lowerIntrinsicElementAsVNode(
     props.push(t.objectProperty(t.identifier('children'), t.arrayExpression(children)))
   }
 
-  const propsExpr =
-    spreads.length > 0
-      ? t.objectExpression([...spreads, ...props])
-      : props.length > 0
-        ? t.objectExpression(props)
-        : t.nullLiteral()
+  const propsExpr = props.length > 0 ? t.objectExpression(props) : t.nullLiteral()
 
   return t.objectExpression([
     t.objectProperty(t.identifier('type'), t.stringLiteral(String(jsx.tagName))),
