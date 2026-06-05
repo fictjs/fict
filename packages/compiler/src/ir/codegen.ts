@@ -1803,17 +1803,46 @@ function lowerExpressionImpl(
     )
   }
   const lowerRawClassReactiveWrites = <T extends BabelCore.types.Node>(node: T): T => {
-    const visit = (current: unknown): unknown => {
+    const bindingNames = (current: BabelCore.types.Node | null | undefined): Set<string> => {
+      const names = new Set<string>()
+      if (!current) return names
+      const ids = t.getBindingIdentifiers(current)
+      Object.keys(ids).forEach(name => names.add(deSSAVarName(name)))
+      return names
+    }
+    const scopedWithBindings = (
+      shadowed: Set<string>,
+      nodes: (BabelCore.types.Node | null | undefined)[],
+    ): Set<string> => {
+      const scoped = new Set(shadowed)
+      nodes.forEach(current => bindingNames(current).forEach(name => scoped.add(name)))
+      return scoped
+    }
+    const visit = (current: unknown, shadowed: Set<string>): unknown => {
       if (!current || typeof current !== 'object') return current
-      if (Array.isArray(current)) return current.map(item => visit(item))
+      if (Array.isArray(current)) return current.map(item => visit(item, shadowed))
       if (!('type' in current)) return current
 
       const astNode = current as BabelCore.types.Node
+      if (t.isClassMethod(astNode) || t.isClassPrivateMethod(astNode)) {
+        if (astNode.computed) {
+          astNode.key = visit(astNode.key, shadowed) as typeof astNode.key
+        }
+        const scoped = scopedWithBindings(shadowed, [astNode.body, ...astNode.params])
+        astNode.body = visit(astNode.body, scoped) as typeof astNode.body
+        return astNode
+      }
+      if (t.isStaticBlock(astNode)) {
+        const scoped = scopedWithBindings(shadowed, [astNode])
+        astNode.body = astNode.body.map(stmt => visit(stmt, scoped) as typeof stmt)
+        return astNode
+      }
+
       if (t.isAssignmentExpression(astNode)) {
-        astNode.right = visit(astNode.right) as BabelCore.types.Expression
+        astNode.right = visit(astNode.right, shadowed) as BabelCore.types.Expression
         if (t.isIdentifier(astNode.left)) {
           const baseName = deSSAVarName(astNode.left.name)
-          if (ctx.trackedVars.has(baseName)) {
+          if (!shadowed.has(baseName) && ctx.trackedVars.has(baseName)) {
             const callee = t.identifier(baseName)
             const currentValue = t.callExpression(t.identifier(baseName), [])
             return lowerTrackedAssignmentWrite(
@@ -1828,7 +1857,7 @@ function lowerExpressionImpl(
 
       if (t.isUpdateExpression(astNode) && t.isIdentifier(astNode.argument)) {
         const baseName = deSSAVarName(astNode.argument.name)
-        if (ctx.trackedVars.has(baseName)) {
+        if (!shadowed.has(baseName) && ctx.trackedVars.has(baseName)) {
           return lowerTrackedUpdateCall(t.identifier(baseName), astNode.operator, astNode.prefix)
         }
       }
@@ -1838,15 +1867,15 @@ function lowerExpressionImpl(
         if (key === 'type' || key === 'loc' || key === 'start' || key === 'end') continue
         const value = record[key]
         if (Array.isArray(value)) {
-          record[key] = value.map(item => visit(item))
+          record[key] = value.map(item => visit(item, shadowed))
         } else if (value && typeof value === 'object' && 'type' in value) {
-          record[key] = visit(value)
+          record[key] = visit(value, shadowed)
         }
       }
       return astNode
     }
 
-    return visit(node) as T
+    return visit(node, new Set(ctx.shadowedNames ?? [])) as T
   }
   const lowerBlocksToStatements = (blocks: BasicBlock[]): BabelCore.types.Statement[] => {
     const stmts: BabelCore.types.Statement[] = []

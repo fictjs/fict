@@ -221,6 +221,18 @@ export function replaceIdentifiersWithOverrides(
     return names
   }
 
+  const scopeOverrides = (names: Set<string>): RegionOverrideMap => {
+    if (names.size === 0) return overrides
+    const scopedOverrides: RegionOverrideMap = {}
+    for (const key of Object.keys(overrides)) {
+      const base = normalizeDependencyKey(key).split('.')[0] ?? key
+      if (!names.has(base)) {
+        scopedOverrides[key] = overrides[key]!
+      }
+    }
+    return scopedOverrides
+  }
+
   if (!skipCurrentNode && (t.isMemberExpression(node) || t.isOptionalMemberExpression(node))) {
     const propertyNode = node.property as BabelCore.types.Node
     const isDynamicComputed =
@@ -251,16 +263,7 @@ export function replaceIdentifiersWithOverrides(
     const paramNames = collectParamNames(node.params)
     const localNames = collectFunctionLocalNames(node.body)
     localNames.forEach(name => paramNames.add(name))
-    let scopedOverrides = overrides
-    if (paramNames.size > 0) {
-      scopedOverrides = {}
-      for (const key of Object.keys(overrides)) {
-        const base = normalizeDependencyKey(key).split('.')[0] ?? key
-        if (!paramNames.has(base)) {
-          scopedOverrides[key] = overrides[key]!
-        }
-      }
-    }
+    const scopedOverrides = scopeOverrides(paramNames)
     // Avoid replacing parameter identifiers; only walk the body
     if (t.isBlockStatement(node.body)) {
       replaceIdentifiersWithOverrides(
@@ -283,6 +286,48 @@ export function replaceIdentifiersWithOverrides(
         allowCallCalleeReplacement,
       )
     }
+    return
+  }
+
+  if (t.isClassMethod(node) || t.isClassPrivateMethod(node)) {
+    if (node.computed) {
+      replaceIdentifiersWithOverrides(
+        node.key,
+        overrides,
+        t,
+        node.type,
+        'key',
+        false,
+        allowCallCalleeReplacement,
+      )
+    }
+    const names = collectParamNames(node.params)
+    collectFunctionLocalNames(node.body).forEach(name => names.add(name))
+    replaceIdentifiersWithOverrides(
+      node.body,
+      scopeOverrides(names),
+      t,
+      node.type,
+      'body',
+      false,
+      allowCallCalleeReplacement,
+    )
+    return
+  }
+
+  if (t.isStaticBlock(node)) {
+    const names = collectFunctionLocalNames(node)
+    node.body.forEach(stmt =>
+      replaceIdentifiersWithOverrides(
+        stmt,
+        scopeOverrides(names),
+        t,
+        node.type,
+        'body',
+        false,
+        allowCallCalleeReplacement,
+      ),
+    )
     return
   }
 

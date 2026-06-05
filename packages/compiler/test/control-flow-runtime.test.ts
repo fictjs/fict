@@ -1037,6 +1037,132 @@ describe('control flow runtime regressions', () => {
     expect(result).toEqual([1, 2])
   })
 
+  it('keeps class method parameters shadowed from outer reactive values', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          class A {
+            method(count) {
+              return count
+            }
+          }
+          return new A().method(2)
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('keeps class method locals shadowed from outer reactive values', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          class A {
+            method() {
+              const count = 2
+              return count
+            }
+          }
+          return new A().method()
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('keeps class method catch parameters shadowed from outer reactive values', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          class A {
+            method() {
+              try {
+                throw 2
+              } catch (count) {
+                return count
+              }
+            }
+          }
+          return new A().method()
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('keeps static block locals shadowed from outer reactive values', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          class A {
+            static {
+              const count = 2
+              A.value = count
+            }
+          }
+          return A.value
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('keeps class accessors and private methods shadowed from outer reactive values', () => {
+    const result = compileAndRunHook<number[]>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          class A {
+            seen = 0
+            static read(count) {
+              return count
+            }
+            #echo(count) {
+              return count
+            }
+            get value() {
+              const count = 4
+              return count
+            }
+            set value(count) {
+              this.seen = count
+            }
+            run() {
+              this.value = 5
+              return [A.read(2), this.#echo(3), this.value, this.seen]
+            }
+          }
+          return new A().run()
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toEqual([2, 3, 4, 5])
+  })
+
   it('preserves Object.assign mutations of const object fields with optimization', () => {
     const result = compileAndRunHook<number>(
       `
