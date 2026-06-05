@@ -2366,6 +2366,85 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('snapshots object component spread sources at render time', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+      export let getterReads = 0
+
+      const single = { kind: 'single', label: 'a' }
+      const merged = { kind: 'merged', label: 'm' }
+      let getterLabel = 'g'
+      const getterSource = {
+        kind: 'getter',
+        get label() {
+          getterReads += 1
+          return getterLabel
+        },
+      }
+
+      function Child(props: Record<string, unknown>) {
+        return (
+          <button
+            data-testid={String(props.kind)}
+            onClick={() => log.push(String(props.kind) + ':' + String(props.label))}
+          >
+            go
+          </button>
+        )
+      }
+
+      export function App() {
+        return (
+          <section>
+            <Child {...single} />
+            <Child {...merged} extra="x" />
+            <Child {...getterSource} extra="y" />
+          </section>
+        )
+      }
+
+      export function mutate() {
+        single.label = 'b'
+        merged.label = 'n'
+        getterLabel = 'h'
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        getterReads = 0
+        single.label = 'a'
+        merged.label = 'm'
+        getterLabel = 'g'
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      mutate: () => void
+      log: string[]
+      getterReads: number
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(mod.getterReads).toBe(1)
+
+    mod.mutate()
+    ;(container.querySelector('[data-testid="single"]') as HTMLButtonElement).click()
+    ;(container.querySelector('[data-testid="merged"]') as HTMLButtonElement).click()
+    ;(container.querySelector('[data-testid="getter"]') as HTMLButtonElement).click()
+
+    expect(mod.log).toEqual(['single:a', 'merged:m', 'getter:g'])
+    expect(mod.getterReads).toBe(1)
+
+    teardown()
+    container.remove()
+  })
+
   it.each([
     { tag: 'div', spreadKey: 'class', explicitAttr: 'class', expectedAttr: 'class' },
     { tag: 'div', spreadKey: 'className', explicitAttr: 'class', expectedAttr: 'class' },

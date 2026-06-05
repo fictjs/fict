@@ -26,6 +26,19 @@ export interface PropsPlanHelpers {
   deSSAVarName: (name: string) => string
 }
 
+function isMarkedLazySourceExpression(
+  expr: BabelCore.types.Expression,
+  ctx: CodegenContext,
+): boolean {
+  const { t } = ctx
+  return (
+    t.isCallExpression(expr) &&
+    t.isIdentifier(expr.callee) &&
+    (expr.callee.name === RUNTIME_ALIASES.propGetter ||
+      expr.callee.name === ctx.runtimeHelperLocalNames?.get('propGetter'))
+  )
+}
+
 export function buildPropsPlan(
   attributes: JSXAttribute[],
   children: BabelCore.types.Expression[],
@@ -80,10 +93,7 @@ export function buildPropsPlan(
     }
 
     const isMarkedLazySource = (expr: BabelCore.types.Expression): boolean =>
-      t.isCallExpression(expr) &&
-      t.isIdentifier(expr.callee) &&
-      (expr.callee.name === RUNTIME_ALIASES.propGetter ||
-        expr.callee.name === ctx.runtimeHelperLocalNames?.get('propGetter'))
+      isMarkedLazySourceExpression(expr, ctx)
 
     const wrapAccessorSource = (node: BabelCore.types.Expression): BabelCore.types.Expression => {
       if (t.isCallExpression(node) && t.isIdentifier(node.callee) && node.arguments.length === 0) {
@@ -447,6 +457,18 @@ export function lowerPropsPlan(
   ctx: CodegenContext,
 ): BabelCore.types.Expression | null {
   const { t } = ctx
+  const snapshotSegments = (): BabelCore.types.ObjectExpression => {
+    const properties: Array<BabelCore.types.ObjectProperty | BabelCore.types.SpreadElement> = []
+    for (const segment of plan.segments) {
+      if (segment.kind === 'object') {
+        properties.push(...segment.properties)
+        continue
+      }
+      properties.push(t.spreadElement(segment.expr))
+    }
+    return t.objectExpression(properties)
+  }
+
   const args: BabelCore.types.Expression[] = []
 
   for (const segment of plan.segments) {
@@ -455,7 +477,11 @@ export function lowerPropsPlan(
       args.push(t.objectExpression(segment.properties))
       continue
     }
-    args.push(segment.expr)
+    args.push(
+      isMarkedLazySourceExpression(segment.expr, ctx)
+        ? segment.expr
+        : t.objectExpression([t.spreadElement(segment.expr)]),
+    )
   }
 
   if (args.length === 0) return null
@@ -464,12 +490,8 @@ export function lowerPropsPlan(
     return args[0] ?? null
   }
 
-  if (args.length === 1 && !plan.flags.hasLazySource) {
-    const segment = plan.segments.find(entry => entry.kind === 'spread')
-    if (segment?.kind === 'spread') {
-      return t.objectExpression([t.spreadElement(args[0]!)])
-    }
-    return args[0] ?? null
+  if (!plan.flags.hasLazySource) {
+    return snapshotSegments()
   }
 
   ctx.helpersUsed.add('mergeProps')
