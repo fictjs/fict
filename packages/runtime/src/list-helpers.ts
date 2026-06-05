@@ -108,6 +108,20 @@ type FineGrainedRenderItem<T> = (
   key: string | number,
 ) => Node[]
 
+interface ListEntry<T> {
+  item: T
+  index: number
+}
+
+function collectListEntries<T>(items: T[], skipHoles: boolean): ListEntry<T>[] {
+  const entries: ListEntry<T>[] = []
+  for (let index = 0; index < items.length; index++) {
+    if (skipHoles && !(index in items)) continue
+    entries.push({ item: items[index]!, index })
+  }
+  return entries
+}
+
 // ============================================================================
 // DOM Manipulation Primitives
 // ============================================================================
@@ -486,6 +500,7 @@ export function createKeyedList<T>(
   needsIndex?: boolean,
   startMarker?: Comment,
   endMarker?: Comment,
+  skipHoles?: boolean,
 ): KeyedListBinding {
   const resolvedNeedsIndex =
     arguments.length >= 4 ? !!needsIndex : renderItem.length > 1 /* has index param */
@@ -496,6 +511,7 @@ export function createKeyedList<T>(
     resolvedNeedsIndex,
     startMarker,
     endMarker,
+    !!skipHoles,
   )
 }
 
@@ -506,6 +522,7 @@ function createFineGrainedKeyedList<T>(
   needsIndex: boolean,
   startOverride?: Comment,
   endOverride?: Comment,
+  skipHoles = false,
 ): KeyedListBinding {
   const hostRoot = getCurrentRoot()
   const container = createKeyedListContainer<T>(
@@ -576,6 +593,8 @@ function createFineGrainedKeyedList<T>(
       const nextOrderedBlocks = container.nextOrderedBlocks
       const orderedIndexByKey = container.orderedIndexByKey
       const newItems = getItems()
+      const newEntries = collectListEntries(newItems, skipHoles)
+      const newCount = newEntries.length
 
       if (initialHydrating && isHydratingActive()) {
         initialHydrating = false
@@ -583,7 +602,7 @@ function createFineGrainedKeyedList<T>(
         nextOrderedBlocks.length = 0
         orderedIndexByKey.clear()
 
-        if (newItems.length === 0) {
+        if (newCount === 0) {
           oldBlocks.clear()
           prevOrderedBlocks.length = 0
           container.currentNodes = [container.startMarker, container.endMarker]
@@ -597,8 +616,8 @@ function createFineGrainedKeyedList<T>(
           container.endMarker,
           parent.ownerDocument ?? markerOwnerDocument,
           () => {
-            for (let index = 0; index < newItems.length; index++) {
-              const item = newItems[index]!
+            for (let entryIndex = 0; entryIndex < newEntries.length; entryIndex++) {
+              const { item, index } = newEntries[entryIndex]!
               const key = keyFn(item, index)
               if (newBlocks.has(key)) {
                 if (isDev) {
@@ -640,7 +659,7 @@ function createFineGrainedKeyedList<T>(
         return
       }
 
-      if (newItems.length === 0) {
+      if (newCount === 0) {
         if (oldBlocks.size > 0) {
           // Destroy all block roots first
           for (const block of oldBlocks.values()) {
@@ -664,12 +683,12 @@ function createFineGrainedKeyedList<T>(
       }
 
       const prevCount = prevOrderedBlocks.length
-      if (prevCount > 0 && newItems.length === prevCount && orderedIndexByKey.size === prevCount) {
+      if (prevCount > 0 && newCount === prevCount && orderedIndexByKey.size === prevCount) {
         let stableOrder = true
         const seen = new Set<string | number>()
         for (let i = 0; i < prevCount; i++) {
-          const item = newItems[i]!
-          const key = keyFn(item, i)
+          const { item, index } = newEntries[i]!
+          const key = keyFn(item, index)
           if (seen.has(key) || prevOrderedBlocks[i]!.key !== key) {
             stableOrder = false
             break
@@ -678,15 +697,15 @@ function createFineGrainedKeyedList<T>(
         }
         if (stableOrder) {
           for (let i = 0; i < prevCount; i++) {
-            const item = newItems[i]!
+            const { item, index } = newEntries[i]!
             const block = prevOrderedBlocks[i]!
             if (block.rawItem !== item) {
               block.rawItem = item
               block.item(item)
             }
-            if (needsIndex && block.rawIndex !== i) {
-              block.rawIndex = i
-              block.index(i)
+            if (needsIndex && block.rawIndex !== index) {
+              block.rawIndex = index
+              block.index(index)
             }
           }
           return
@@ -697,7 +716,7 @@ function createFineGrainedKeyedList<T>(
       nextOrderedBlocks.length = 0
       orderedIndexByKey.clear()
       const createdBlocks: KeyedBlock<T>[] = []
-      let appendCandidate = prevCount > 0 && newItems.length >= prevCount
+      let appendCandidate = prevCount > 0 && newCount >= prevCount
       const appendedBlocks: KeyedBlock<T>[] = []
       let mismatchCount = 0
       let mismatchFirst = -1
@@ -705,7 +724,7 @@ function createFineGrainedKeyedList<T>(
       let hasDuplicateKey = false
 
       // Phase 1: Build new blocks map (reuse or create)
-      newItems.forEach((item, index) => {
+      newEntries.forEach(({ item, index }) => {
         const key = keyFn(item, index)
         // Micro-optimization: single Map.get instead of has+get
         let block = oldBlocks.get(key)
@@ -793,7 +812,7 @@ function createFineGrainedKeyedList<T>(
       const canAppend =
         appendCandidate &&
         prevCount > 0 &&
-        newItems.length > prevCount &&
+        newCount > prevCount &&
         oldBlocks.size === 0 &&
         appendedBlocks.length > 0
       if (canAppend) {

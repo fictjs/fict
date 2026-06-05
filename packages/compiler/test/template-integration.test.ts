@@ -3325,6 +3325,58 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves sparse array hole semantics in specialized map children', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { deleteFirst(): void }
+
+      export function App() {
+        let items = $state<Array<string | undefined>>([undefined, 'b'])
+        api = {
+          deleteFirst() {
+            const next = items.slice()
+            delete next[0]
+            items = next
+          },
+        }
+
+        return (
+          <ul>
+            {items.map((item, index) => (
+              <li key={index}>{String(item)}:{index}</li>
+            ))}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      api: { deleteFirst(): void }
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    const readItems = () => Array.from(container.querySelectorAll('li')).map(li => li.textContent)
+
+    expect(readItems()).toEqual(['undefined:0', 'b:1'])
+
+    mod.api.deleteFirst()
+    await flushUpdates()
+
+    expect(readItems()).toEqual(['b:1'])
+
+    teardown()
+    container.remove()
+  })
+
   it('does not constify static member reads from dynamic computed list keys', async () => {
     const source = `
       import { render } from 'fict'

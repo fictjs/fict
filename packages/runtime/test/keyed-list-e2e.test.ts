@@ -108,6 +108,43 @@ describe('Keyed List E2E', () => {
     listBinding.dispose()
   })
 
+  it('can skip sparse array holes while preserving source indices', async () => {
+    const initial = ['a', undefined, 'c'] as Array<string | undefined>
+    const items = createSignal<Array<string | undefined>>(initial)
+
+    const listBinding = createKeyedList(
+      () => items(),
+      (_item, index) => index,
+      (itemSig, indexSig) => {
+        const li = document.createElement('li')
+        createEffect(() => {
+          li.textContent = `${String(itemSig())}:${indexSig()}`
+        })
+        return [li]
+      },
+      true,
+      undefined,
+      undefined,
+      true,
+    )
+
+    container.appendChild(listBinding.marker)
+    await tick()
+
+    const readItems = () => Array.from(container.querySelectorAll('li')).map(li => li.textContent)
+
+    expect(readItems()).toEqual(['a:0', 'undefined:1', 'c:2'])
+
+    const sparse = initial.slice()
+    delete sparse[1]
+    items(sparse)
+    await tick()
+
+    expect(readItems()).toEqual(['a:0', 'c:2'])
+
+    listBinding.dispose()
+  })
+
   it('preserves DOM nodes during reorder', async () => {
     const items = createSignal([
       { id: 1, name: 'Alice' },

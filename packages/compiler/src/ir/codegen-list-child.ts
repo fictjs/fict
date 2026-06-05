@@ -1003,7 +1003,7 @@ export function emitListChild(
   if (!listCall) return false
 
   if (t.isCallExpression(listCall)) {
-    listCall.arguments.push(startMarkerId, endMarkerId)
+    listCall.arguments.push(startMarkerId, endMarkerId, t.booleanLiteral(true))
   }
 
   ctx.helpersUsed.add('onDestroy')
