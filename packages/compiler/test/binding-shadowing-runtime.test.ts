@@ -124,6 +124,72 @@ describe('binding shadowing runtime regressions', () => {
     expect(value).toBe('undefined')
   })
 
+  it('keeps bare-block class declarations from leaking after the block', () => {
+    const value = compileAndRun<string>(
+      `
+        export function Comp() {
+          {
+            class Local {}
+          }
+          return typeof Local
+        }
+      `,
+      'Comp',
+    )
+
+    expect(value).toBe('undefined')
+  })
+
+  it('keeps untaken branch class declarations from leaking or throwing', () => {
+    const value = compileAndRun<string>(
+      `
+        export function Comp() {
+          if (false) {
+            class Local {}
+          }
+          return typeof Local
+        }
+      `,
+      'Comp',
+    )
+
+    expect(value).toBe('undefined')
+  })
+
+  it('keeps loop class declarations from leaking after the loop', () => {
+    const value = compileAndRun<string>(
+      `
+        export function Comp() {
+          for (const item of []) {
+            class Local {}
+          }
+          return typeof Local
+        }
+      `,
+      'Comp',
+    )
+
+    expect(value).toBe('undefined')
+  })
+
+  it('keeps switch case class declarations from leaking after the switch', () => {
+    const value = compileAndRun<string>(
+      `
+        export function Comp() {
+          switch (0) {
+            case 1:
+              class Local {}
+              break
+          }
+          return typeof Local
+        }
+      `,
+      'Comp',
+    )
+
+    expect(value).toBe('undefined')
+  })
+
   it('keeps var declarations function-scoped through bare blocks', () => {
     const value = compileAndRun<number>(
       `
