@@ -47,7 +47,7 @@ describe('Spec rule coverage', () => {
     const output = transform(input)
     expect(output).toContain('function Greeting(__props')
     expect(output).toContain('prop(() => __props.name)')
-    expect(output).toContain('prop(() => __props.age ?? 18)')
+    expect(output).toContain('=== undefined ? 18')
     expect(output).toContain('__fictUseMemo')
   })
 

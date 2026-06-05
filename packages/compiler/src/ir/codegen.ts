@@ -4921,6 +4921,23 @@ function lowerFunctionWithRegions(
         base: BabelCore.types.Expression,
         key: string,
       ): BabelCore.types.MemberExpression => t.memberExpression(base, t.identifier(key), false)
+      const buildDefaultValueExpression = (
+        valueExpr: BabelCore.types.Expression,
+        defaultExpr: BabelCore.types.Expression,
+      ): BabelCore.types.Expression => {
+        const valueId = genTemp(ctx, 'propDefault')
+        return t.callExpression(
+          t.arrowFunctionExpression(
+            [valueId],
+            t.conditionalExpression(
+              t.binaryExpression('===', t.cloneNode(valueId), t.identifier('undefined')),
+              defaultExpr,
+              t.cloneNode(valueId),
+            ),
+          ),
+          [valueExpr],
+        )
+      }
 
       const buildDestructure = (
         objectPattern: BabelCore.types.ObjectPattern,
@@ -4988,7 +5005,7 @@ function lowerFunctionWithRegions(
                   usesProp = true
                   propsPlanAliases.add(value.left.name)
                 }
-                const baseInit = t.logicalExpression('??', member, value.right)
+                const baseInit = buildDefaultValueExpression(member, value.right)
                 const init = shouldWrapProp
                   ? t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [
                       t.arrowFunctionExpression([], baseInit),

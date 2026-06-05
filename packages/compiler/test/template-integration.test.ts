@@ -156,6 +156,42 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('applies destructured prop defaults only for undefined values', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      function Greeting({ name = 'Anon' }: { name?: string | null }) {
+        return <span data-testid="name">{name}</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => (
+          <>
+            <Greeting name={null} />
+            <Greeting name={undefined} />
+            <Greeting />
+          </>
+        ), el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+    const names = Array.from(container.querySelectorAll('[data-testid="name"]')).map(
+      node => node.textContent,
+    )
+    expect(names).toEqual(['', 'Anon', 'Anon'])
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps function-as-child callbacks inert when passed to components', async () => {
     const source = `
       import { render } from 'fict'
