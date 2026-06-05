@@ -1,4 +1,8 @@
 import type { CodegenContext } from './codegen'
+import {
+  reserveGeneratedIndexedModuleName,
+  reserveGeneratedModuleName,
+} from './codegen-name-allocation'
 import { genModuleUrlExpr } from './codegen-resumable-utils'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 
@@ -8,8 +12,13 @@ export function registerResumableComponent(componentName: string, ctx: CodegenCo
   if (ctx.resumableComponents.has(componentName)) return
 
   const { t } = ctx
-  const resumeExport = `__fict_r${ctx.resumableComponentCounter ?? 0}`
-  ctx.resumableComponentCounter = (ctx.resumableComponentCounter ?? 0) + 1
+  const allocatedResume = reserveGeneratedIndexedModuleName(
+    ctx,
+    '__fict_r',
+    ctx.resumableComponentCounter ?? 0,
+  )
+  const resumeExport = allocatedResume.name
+  ctx.resumableComponentCounter = allocatedResume.nextIndex
 
   const scopeParam = t.identifier('scopeId')
   const hostParam = t.identifier('host')
@@ -101,7 +110,7 @@ export function registerResumableComponent(componentName: string, ctx: CodegenCo
     ]),
   )
 
-  const metaId = t.identifier(`__fict_meta_${componentName}`)
+  const metaId = t.identifier(reserveGeneratedModuleName(ctx, `__fict_meta_${componentName}`))
   const moduleUrlExpr = genModuleUrlExpr(ctx)
   const typeKeyExpr = t.binaryExpression('+', t.stringLiteral(`${componentName}@`), moduleUrlExpr)
   const resumeQrlExpr = t.callExpression(runtimeIdentifier(ctx, 'qrl'), [

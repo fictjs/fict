@@ -1311,6 +1311,41 @@ describe('resumable event handler transformation', () => {
     expect(code).not.toContain('() => () => helper()')
   })
 
+  it('allocates resumable event exports around existing module bindings', () => {
+    const ast = parseFile(`
+      export const __fict_e0 = 'user'
+
+      export function App() {
+        return <button onClick$={() => 1}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('export const __fict_e0 = "user"')
+    expect(code).toContain('__fictQrl(import.meta.url, "__fict_e1")')
+    expect(code).toContain('export const __fict_e1')
+  })
+
+  it('allocates resumable function dependency exports around existing module bindings', () => {
+    const ast = parseFile(`
+      export const __fict_fn_helper_0 = 'user'
+
+      function Comp() {
+        const helper = () => 1
+        return <button onClick$={() => helper()}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('export const __fict_fn_helper_0 = "user"')
+    expect(code).toContain('export const __fict_fn_helper_1')
+    expect(code).toContain('const __handler = () => __fict_fn_helper_1()')
+  })
+
   it('restores destructured prop captures as accessors in resumable handlers', () => {
     const ast = parseFile(`
       function Button({ id }) {
@@ -1645,6 +1680,28 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain(
       '__fictRegisterResume(__fictQrl(import.meta.url, "__fict_r1"), __fict_r1)',
     )
+  })
+
+  it('allocates resumable component exports and metadata around existing module bindings', () => {
+    const ast = parseFile(`
+      export const __fict_r0 = 'resume'
+      export const __fict_meta_App = 'meta'
+
+      export function App() {
+        return <button>x</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('export const __fict_r0 = "resume"')
+    expect(code).toContain('export const __fict_meta_App = "meta"')
+    expect(code).toContain(
+      '__fictRegisterResume(__fictQrl(import.meta.url, "__fict_r1"), __fict_r1)',
+    )
+    expect(code).toContain('const __fict_meta_App_1 =')
+    expect(code).toContain('App.__fictMeta = __fict_meta_App_1')
   })
 
   it('keeps loop-based resumable handlers structurized instead of truncating after setup', () => {

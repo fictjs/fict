@@ -1,6 +1,7 @@
 import type * as BabelCore from '@babel/core'
 
 import type { CodegenContext, RegionInfo } from './codegen'
+import { reserveGeneratedIndexedModuleName } from './codegen-name-allocation'
 import {
   collectFreeIdentifiersInExpr,
   genModuleUrlExpr,
@@ -146,8 +147,13 @@ export function emitResumableEventBinding(
   }
 
   const handlerExpr = ensureHandlerParam(valueExpr)
-  const handlerId = t.identifier(`__fict_e${ctx.resumableHandlerCounter ?? 0}`)
-  ctx.resumableHandlerCounter = (ctx.resumableHandlerCounter ?? 0) + 1
+  const handlerName = reserveGeneratedIndexedModuleName(
+    ctx,
+    '__fict_e',
+    ctx.resumableHandlerCounter ?? 0,
+  )
+  ctx.resumableHandlerCounter = handlerName.nextIndex
+  const handlerId = t.identifier(handlerName.name)
 
   const captured = collectFreeIdentifiersInExpr(handlerExpr, t)
   const propAccessorRestores = new Map(
@@ -249,9 +255,13 @@ export function emitResumableEventBinding(
         const loweredFn = loweredFunctionDeps.get(name)
         if (!loweredFn) continue
 
-        // Generate a unique hoisted name.
-        hoistedName = `__fict_fn_${name}_${ctx.hoistedFunctionDepCounter ?? 0}`
-        ctx.hoistedFunctionDepCounter = (ctx.hoistedFunctionDepCounter ?? 0) + 1
+        const allocated = reserveGeneratedIndexedModuleName(
+          ctx,
+          `__fict_fn_${name}_`,
+          ctx.hoistedFunctionDepCounter ?? 0,
+        )
+        hoistedName = allocated.name
+        ctx.hoistedFunctionDepCounter = allocated.nextIndex
         ctx.hoistedFunctionDepNames?.set(name, hoistedName)
 
         // Create a module-level const declaration for the hoisted function.
