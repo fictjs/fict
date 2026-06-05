@@ -462,6 +462,88 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
   })
 
+  it('warns when SAFE_FUNCTIONS callees are locally shadowed', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        const Object = {
+          keys(value) {
+            return value
+          }
+        }
+        function App() {
+          let count = $state({ value: 0 })
+          Object.keys({ count })
+          return <div>{count.value}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        const JSON = {
+          stringify(value) {
+            return value
+          }
+        }
+        function App() {
+          let count = $state({ value: 0 })
+          JSON.stringify({ count })
+          return <div>{count.value}</div>
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      const warnings: Array<{ code: string }> = []
+      transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+      expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
+      expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-R002/)
+    }
+  })
+
+  it('warns when SAFE_FUNCTIONS callees are imported or parameter-shadowed', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        import { Object } from './dep'
+        function App() {
+          let count = $state({ value: 0 })
+          Object.keys({ count })
+          return <div>{count.value}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function App(Object) {
+          let count = $state({ value: 0 })
+          Object.keys({ count })
+          return <div>{count.value}</div>
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      const warnings: Array<{ code: string }> = []
+      transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+      expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
+      expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-R002/)
+    }
+  })
+
+  it('does not warn when SAFE_FUNCTIONS callees are unshadowed globals', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state({ value: 0 })
+        Object.keys({ count })
+        return <div>{count.value}</div>
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).not.toThrow(/FICT-R002/)
+  })
+
   it('warns when passing reactive value inside optional-call argument to unknown function', () => {
     const source = `
       import { $state } from 'fict'

@@ -1367,16 +1367,26 @@ function runWarningPass(
       const callee = (path.node as unknown as BabelCore.types.CallExpression)
         .callee as BabelCore.types.Expression
       let calleeName = ''
+      let calleeRootName = ''
       if (t.isIdentifier(callee)) {
         calleeName = callee.name
-      } else if (t.isMemberExpression(callee) && t.isIdentifier(callee.property)) {
+        calleeRootName = callee.name
+      } else if (
+        (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+        t.isIdentifier(callee.property)
+      ) {
         const root = getRootIdentifier(callee.object as BabelCore.types.Expression, t)
         if (root) {
           calleeName = `${root.name}.${callee.property.name}`
+          calleeRootName = root.name
         }
       }
 
-      const isSafe = calleeName && SAFE_FUNCTIONS.has(calleeName)
+      const isSafe =
+        calleeName &&
+        SAFE_FUNCTIONS.has(calleeName) &&
+        !!calleeRootName &&
+        !path.scope.getBinding(calleeRootName)
       if (isSafe) return
 
       const memberCallee =
