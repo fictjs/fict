@@ -1266,6 +1266,69 @@ describe('Cross-Module Reactivity', () => {
       }
     })
 
+    it('clears star-export metadata when explicit local exports shadow it', () => {
+      const sourcePath = path.join(baseDir, 'shadow-star-source.tsx')
+      const plainBarrelPath = path.join(baseDir, 'shadow-star-plain-barrel.ts')
+      const reactiveBarrelPath = path.join(baseDir, 'shadow-star-reactive-barrel.tsx')
+      const moduleMetadata = new Map()
+      const source = `
+        import { $state } from 'fict'
+        import { createSignal } from 'fict/advanced'
+
+        export const value = createSignal(1)
+
+        export function useCounter() {
+          const count = $state(0)
+          return count
+        }
+
+        export function useAlias() {
+          const count = $state(1)
+          return count
+        }
+      `
+      const plainBarrel = `
+        export * from './shadow-star-source'
+
+        export const value = 123
+
+        export function useCounter() {
+          return 123
+        }
+
+        const useAlias = () => 123
+        export { useAlias }
+      `
+      const reactiveBarrel = `
+        import { $state } from 'fict'
+        import { createMemo } from 'fict/advanced'
+
+        export * from './shadow-star-source'
+
+        export const value = createMemo(() => 2)
+
+        export function useCounter() {
+          const count = $state(2)
+          return count
+        }
+      `
+
+      transform(source, { moduleMetadata }, sourcePath)
+      transform(plainBarrel, { moduleMetadata }, plainBarrelPath)
+      transform(reactiveBarrel, { moduleMetadata }, reactiveBarrelPath)
+
+      const plainMeta = moduleMetadata.get(path.resolve(plainBarrelPath))
+      expect(plainMeta?.exports).toEqual({})
+      expect(plainMeta?.hooks).toBeUndefined()
+
+      const reactiveMeta = moduleMetadata.get(path.resolve(reactiveBarrelPath))
+      expect(reactiveMeta?.exports).toEqual({ value: 'memo' })
+      expect(reactiveMeta?.hooks).toMatchObject({
+        useCounter: { directAccessor: 'signal' },
+        useAlias: { directAccessor: 'signal' },
+      })
+    })
+
     it('propagates quoted source names in re-export metadata', () => {
       const sourcePath = path.join(baseDir, 'quoted-reexport-source.tsx')
       const barrelPath = path.join(baseDir, 'quoted-reexport-barrel.ts')
