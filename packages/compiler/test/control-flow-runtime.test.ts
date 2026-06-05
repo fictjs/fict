@@ -1944,6 +1944,48 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe('4:1:1:2:2')
   })
 
+  it('preserves observable spread operations with optimization', () => {
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            "use pure"
+            const source = {
+              get value() {
+                throw new Error('spread getter')
+              },
+            }
+            const copy = { ...source }
+            void copy
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow('spread getter')
+
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            "use pure"
+            const iterable = {
+              [Symbol.iterator]() {
+                throw new Error('spread iterator')
+              },
+            }
+            const copy = [...iterable]
+            void copy
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow('spread iterator')
+  })
+
   it('preserves tagged template unicode raw and cooked values with optimization', () => {
     const result = compileAndRunHook<string>(
       `

@@ -5744,10 +5744,14 @@ function isPureExpression(expr: Expression, ctx: PurityContext): boolean {
         isPureExpression(expr.alternate as Expression, ctx)
       )
     case 'ArrayExpression':
-      return expr.elements.every(el => (el ? isPureExpression(el as Expression, ctx) : true))
+      return expr.elements.every(el => {
+        if (!el) return true
+        if (el.kind === 'SpreadElement') return false
+        return isPureExpression(el as Expression, ctx)
+      })
     case 'ObjectExpression':
       return expr.properties.every(prop => {
-        if (prop.kind === 'SpreadElement') return isPureExpression(prop.argument as Expression, ctx)
+        if (prop.kind === 'SpreadElement') return false
         return (
           (!prop.computed || isPureExpression(prop.key as Expression, ctx)) &&
           isPureExpression(prop.value as Expression, ctx)
@@ -5764,7 +5768,7 @@ function isPureExpression(expr: Expression, ctx: PurityContext): boolean {
     case 'TemplateLiteral':
       return expr.expressions.every(e => isKnownPrimitivePureExpression(e as Expression, ctx))
     case 'SpreadElement':
-      return isPureExpression(expr.argument as Expression, ctx)
+      return false
     case 'SequenceExpression':
       return expr.expressions.every(e => isPureExpression(e as Expression, ctx))
     case 'ArrowFunction':
