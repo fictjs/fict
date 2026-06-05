@@ -1,13 +1,12 @@
 import type * as BabelCore from '@babel/core'
 
-import { RUNTIME_ALIASES } from '../constants'
-
 import type { CodegenContext, RegionInfo } from './codegen'
 import {
   collectFreeIdentifiersInExpr,
   genModuleUrlExpr,
   renameIdentifiersInExpr,
 } from './codegen-resumable-utils'
+import { runtimeIdentifier } from './codegen-runtime-helpers'
 import { HIRError, type Expression } from './hir'
 
 export interface ResumableEventBindingOps {
@@ -180,7 +179,7 @@ export function emitResumableEventBinding(
       t.variableDeclaration('const', [
         t.variableDeclarator(
           t.arrayPattern(lexicalNames.map(name => t.identifier(name))),
-          t.callExpression(t.identifier(RUNTIME_ALIASES.useLexicalScope), [
+          t.callExpression(runtimeIdentifier(ctx, 'useLexicalScope'), [
             scopeParam,
             t.arrayExpression(lexicalNames.map(name => t.stringLiteral(name))),
           ]),
@@ -197,7 +196,7 @@ export function emitResumableEventBinding(
           t.identifier(propsName),
           t.logicalExpression(
             '||',
-            t.callExpression(t.identifier(RUNTIME_ALIASES.getScopeProps), [scopeParam]),
+            t.callExpression(runtimeIdentifier(ctx, 'getScopeProps'), [scopeParam]),
             t.objectExpression([]),
           ),
         ),
@@ -316,7 +315,7 @@ export function emitResumableEventBinding(
   ctx.hoistedResumableStatements?.push(exportedHandler)
 
   ctx.helpersUsed.add('qrl')
-  const qrlExpr = t.callExpression(t.identifier(RUNTIME_ALIASES.qrl), [
+  const qrlExpr = t.callExpression(runtimeIdentifier(ctx, 'qrl'), [
     genModuleUrlExpr(ctx),
     t.stringLiteral(handlerId.name),
   ])

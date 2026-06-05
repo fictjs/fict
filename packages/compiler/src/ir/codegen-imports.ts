@@ -4,11 +4,12 @@ import {
   detectRuntimeImportFamily,
   getRuntimeHelperModule,
   getRuntimeModule,
-  RUNTIME_ALIASES,
   RUNTIME_HELPERS,
 } from '../constants'
+import type { RUNTIME_ALIASES } from '../constants'
 
 import type { CodegenContext } from './codegen'
+import { inlineHelperName, runtimeHelperLocalName } from './codegen-runtime-helpers'
 
 export function collectDeclaredNames(
   body: BabelCore.types.Statement[],
@@ -97,7 +98,7 @@ export function attachHelperImports(
   body: BabelCore.types.Statement[],
   t: typeof BabelCore.types,
 ): BabelCore.types.Statement[] {
-  if (ctx.helpersUsed.size === 0) return body
+  if (ctx.helpersUsed.size === 0 && !ctx.needsForOfHelper && !ctx.needsForInHelper) return body
   const declared = collectDeclaredNames(body, t)
   const runtimeImportFamily = detectRuntimeImportFamily(body)
   const runtimeModule = getRuntimeModule(runtimeImportFamily)
@@ -105,30 +106,33 @@ export function attachHelperImports(
   const specifiersByModule = new Map<string, BabelCore.types.ImportSpecifier[]>()
 
   for (const name of ctx.helpersUsed) {
-    const alias = (RUNTIME_ALIASES as Record<string, string>)[name]
     const helper = (RUNTIME_HELPERS as Record<string, string>)[name]
-    if (alias && helper) {
-      if (declared.has(alias)) continue
+    if (helper) {
+      const localName = runtimeHelperLocalName(ctx, name as keyof typeof RUNTIME_ALIASES)
+      if (declared.has(localName) && ctx.moduleRuntimeImportMap?.get(localName) === helper) {
+        continue
+      }
       const modulePath = getRuntimeHelperModule(
         runtimeImportFamily,
         name as keyof typeof RUNTIME_HELPERS,
       )
       const moduleSpecifiers = specifiersByModule.get(modulePath) ?? []
-      moduleSpecifiers.push(t.importSpecifier(t.identifier(alias), t.identifier(helper)))
+      moduleSpecifiers.push(t.importSpecifier(t.identifier(localName), t.identifier(helper)))
       specifiersByModule.set(modulePath, moduleSpecifiers)
     }
   }
 
-  if (specifiersByModule.size === 0) return body
+  if (specifiersByModule.size === 0 && !ctx.needsForOfHelper && !ctx.needsForInHelper) return body
 
   const helpers: BabelCore.types.Statement[] = []
   if (ctx.needsForOfHelper) {
+    const helperId = t.identifier(inlineHelperName(ctx, 'forOf'))
     const itemId = t.identifier('item')
     const iterableId = t.identifier('iterable')
     const cbId = t.identifier('cb')
     helpers.push(
       t.functionDeclaration(
-        t.identifier('__fictForOf'),
+        helperId,
         [iterableId, cbId],
         t.blockStatement([
           t.forOfStatement(
@@ -141,12 +145,13 @@ export function attachHelperImports(
     )
   }
   if (ctx.needsForInHelper) {
+    const helperId = t.identifier(inlineHelperName(ctx, 'forIn'))
     const keyId = t.identifier('key')
     const objId = t.identifier('obj')
     const cbId = t.identifier('cb')
     helpers.push(
       t.functionDeclaration(
-        t.identifier('__fictForIn'),
+        helperId,
         [objId, cbId],
         t.blockStatement([
           t.forInStatement(

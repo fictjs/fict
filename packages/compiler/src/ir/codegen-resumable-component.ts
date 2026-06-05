@@ -1,7 +1,6 @@
-import { RUNTIME_ALIASES } from '../constants'
-
 import type { CodegenContext } from './codegen'
 import { genModuleUrlExpr } from './codegen-resumable-utils'
+import { runtimeIdentifier } from './codegen-runtime-helpers'
 
 export function registerResumableComponent(componentName: string, ctx: CodegenContext): void {
   if (!ctx.resumableEnabled) return
@@ -32,31 +31,25 @@ export function registerResumableComponent(componentName: string, ctx: CodegenCo
   const snapshotDecl = t.variableDeclaration('const', [
     t.variableDeclarator(
       snapshotId,
-      t.callExpression(t.identifier(RUNTIME_ALIASES.getSSRScope), [scopeParam]),
+      t.callExpression(runtimeIdentifier(ctx, 'getSSRScope'), [scopeParam]),
     ),
   ])
   const earlyReturn = t.ifStatement(t.unaryExpression('!', snapshotId), t.returnStatement())
   const ensureCtxDecl = t.variableDeclaration('const', [
     t.variableDeclarator(
       ctxId,
-      t.callExpression(t.identifier(RUNTIME_ALIASES.ensureScope), [
-        scopeParam,
-        hostParam,
-        snapshotId,
-      ]),
+      t.callExpression(runtimeIdentifier(ctx, 'ensureScope'), [scopeParam, hostParam, snapshotId]),
     ),
   ])
   // Prepare context so __fictPushContext will use it.
   const prepareCtx = t.expressionStatement(
-    t.callExpression(t.identifier(RUNTIME_ALIASES.prepareContext), [ctxId]),
+    t.callExpression(runtimeIdentifier(ctx, 'prepareContext'), [ctxId]),
   )
   // Push context onto ctxStack so __fictUseContext can find it.
-  const pushCtx = t.expressionStatement(
-    t.callExpression(t.identifier(RUNTIME_ALIASES.pushContext), []),
-  )
+  const pushCtx = t.expressionStatement(t.callExpression(runtimeIdentifier(ctx, 'pushContext'), []))
   // Use hydrateComponent which runs view INSIDE withHydration for proper DOM claiming.
   const hydrateCall = t.expressionStatement(
-    t.callExpression(t.identifier(RUNTIME_ALIASES.hydrateComponent), [
+    t.callExpression(runtimeIdentifier(ctx, 'hydrateComponent'), [
       t.arrowFunctionExpression(
         [],
         t.callExpression(t.identifier(componentName), [
@@ -70,9 +63,7 @@ export function registerResumableComponent(componentName: string, ctx: CodegenCo
       hostParam,
     ]),
   )
-  const popCtx = t.expressionStatement(
-    t.callExpression(t.identifier(RUNTIME_ALIASES.popContext), []),
-  )
+  const popCtx = t.expressionStatement(t.callExpression(runtimeIdentifier(ctx, 'popContext'), []))
 
   const resumeFnId = t.identifier(resumeExport)
   const resumeFn = t.exportNamedDeclaration(
@@ -101,8 +92,8 @@ export function registerResumableComponent(componentName: string, ctx: CodegenCo
   // This creates a side effect that keeps the export alive.
   ctx.helpersUsed.add('registerResume')
   const registerCall = t.expressionStatement(
-    t.callExpression(t.identifier(RUNTIME_ALIASES.registerResume), [
-      t.callExpression(t.identifier(RUNTIME_ALIASES.qrl), [
+    t.callExpression(runtimeIdentifier(ctx, 'registerResume'), [
+      t.callExpression(runtimeIdentifier(ctx, 'qrl'), [
         runtimeModuleUrlExpr,
         t.stringLiteral(resumeExport),
       ]),
@@ -113,7 +104,7 @@ export function registerResumableComponent(componentName: string, ctx: CodegenCo
   const metaId = t.identifier(`__fict_meta_${componentName}`)
   const moduleUrlExpr = genModuleUrlExpr(ctx)
   const typeKeyExpr = t.binaryExpression('+', t.stringLiteral(`${componentName}@`), moduleUrlExpr)
-  const resumeQrlExpr = t.callExpression(t.identifier(RUNTIME_ALIASES.qrl), [
+  const resumeQrlExpr = t.callExpression(runtimeIdentifier(ctx, 'qrl'), [
     genModuleUrlExpr(ctx),
     t.stringLiteral(resumeExport),
   ])

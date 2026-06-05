@@ -1,8 +1,7 @@
 import type * as BabelCore from '@babel/core'
 
-import { RUNTIME_ALIASES } from '../constants'
-
 import type { CodegenContext } from './codegen'
+import { runtimeIdentifier } from './codegen-runtime-helpers'
 
 function genTemp(ctx: CodegenContext, prefix = 'tmp'): BabelCore.types.Identifier {
   return ctx.t.identifier(`__${prefix}_${ctx.tempCounter++}`)
@@ -120,7 +119,7 @@ export function getOrCreateHoistedTemplate(
     t.variableDeclaration('const', [
       t.variableDeclarator(
         tmplId,
-        t.callExpression(t.identifier(RUNTIME_ALIASES.template), templateArgs),
+        t.callExpression(runtimeIdentifier(ctx, 'template'), templateArgs),
       ),
     ]),
   )

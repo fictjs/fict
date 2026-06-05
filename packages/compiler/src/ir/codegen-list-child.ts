@@ -1,11 +1,10 @@
 import type * as BabelCore from '@babel/core'
 
-import { RUNTIME_ALIASES } from '../constants'
-
 import type { CodegenContext } from './codegen'
 import { collectExpressionDependencies } from './codegen-expression-deps'
 import { extractKeyFromMapCallback } from './codegen-jsx-keys'
 import { replaceIdentifiersWithOverrides, type RegionOverrideMap } from './codegen-overrides'
+import { runtimeIdentifier } from './codegen-runtime-helpers'
 import { applySelectorHoist } from './codegen-selector-hoist'
 import type { BasicBlock, Expression } from './hir'
 import { deSSAVarName } from './regions'
@@ -715,7 +714,7 @@ export function buildListCallExpression(
         )
       : callbackExpr
 
-    listCall = t.callExpression(t.identifier(RUNTIME_ALIASES.keyedList), [
+    listCall = t.callExpression(runtimeIdentifier(ctx, 'keyedList'), [
       getItemsExpr,
       keyFn,
       renderExpr,
@@ -806,7 +805,7 @@ export function buildListCallExpression(
       t.identifier(indexParamName),
     )
 
-    listCall = t.callExpression(t.identifier(RUNTIME_ALIASES.keyedList), [
+    listCall = t.callExpression(runtimeIdentifier(ctx, 'keyedList'), [
       getItemsExpr,
       keyFn,
       renderExpr,
@@ -852,7 +851,7 @@ export function emitListChild(
       ),
     ),
     t.expressionStatement(
-      t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [
+      t.callExpression(runtimeIdentifier(ctx, 'onDestroy'), [
         t.memberExpression(listId, t.identifier('dispose')),
       ]),
     ),

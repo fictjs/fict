@@ -4,6 +4,7 @@ import { RUNTIME_ALIASES } from '../constants'
 import { DiagnosticCode, reportDiagnostic } from '../validation'
 
 import type { CodegenContext } from './codegen'
+import { runtimeIdentifier } from './codegen-runtime-helpers'
 import type { Expression, JSXAttribute } from './hir'
 
 export type PropsSegment =
@@ -61,7 +62,7 @@ export function buildPropsPlan(
     ): BabelCore.types.Expression => {
       if (t.isArrowFunctionExpression(expr) || t.isFunctionExpression(expr)) {
         ctx.helpersUsed.add('nonReactive')
-        return t.callExpression(t.identifier(RUNTIME_ALIASES.nonReactive), [expr])
+        return t.callExpression(runtimeIdentifier(ctx, 'nonReactive'), [expr])
       }
       return expr
     }
@@ -339,7 +340,7 @@ export function buildPropsPlan(
             ? (() => {
                 // Preserve accessor laziness for signals/memos passed as props
                 ctx.helpersUsed.add('propGetter')
-                return t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
+                return t.callExpression(runtimeIdentifier(ctx, 'propGetter'), [
                   t.arrowFunctionExpression([], t.callExpression(t.identifier(baseIdent), [])),
                 ])
               })()
@@ -348,19 +349,19 @@ export function buildPropsPlan(
                   if (canKeyed && keyedCandidate) {
                     ctx.helpersUsed.add('keyed')
                     const keyExpr = helpers.lowerDomExpression(keyedCandidate.key, ctx)
-                    return t.callExpression(t.identifier(RUNTIME_ALIASES.keyed), [
+                    return t.callExpression(runtimeIdentifier(ctx, 'keyed'), [
                       t.identifier(keyedBaseIdent!),
                       t.arrowFunctionExpression([], keyExpr),
                     ])
                   }
                   if (shouldMemoProp) {
                     ctx.helpersUsed.add('prop')
-                    return t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [
+                    return t.callExpression(runtimeIdentifier(ctx, 'prop'), [
                       t.arrowFunctionExpression([], trackedExpr ?? lowered),
                     ])
                   }
                   ctx.helpersUsed.add('propGetter')
-                  return t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
+                  return t.callExpression(runtimeIdentifier(ctx, 'propGetter'), [
                     t.arrowFunctionExpression([], trackedExpr ?? lowered),
                   ])
                 })()
@@ -426,7 +427,7 @@ export function lowerPropsPlan(
   }
 
   ctx.helpersUsed.add('mergeProps')
-  return t.callExpression(t.identifier(RUNTIME_ALIASES.mergeProps), args)
+  return t.callExpression(runtimeIdentifier(ctx, 'mergeProps'), args)
 }
 
 export function buildPropsExpression(

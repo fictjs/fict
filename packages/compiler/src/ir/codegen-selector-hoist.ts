@@ -4,6 +4,7 @@ import { RUNTIME_ALIASES } from '../constants'
 
 import type { CodegenContext } from './codegen'
 import { expressionUsesIdentifier } from './codegen-delegated-data'
+import { runtimeIdentifier } from './codegen-runtime-helpers'
 import { deSSAVarName } from './regions'
 
 function genTemp(ctx: CodegenContext, prefix = 'tmp'): BabelCore.types.Identifier {
@@ -302,7 +303,7 @@ export function applySelectorHoist(
         t.variableDeclaration('const', [
           t.variableDeclarator(
             selectorId,
-            t.callExpression(t.identifier(RUNTIME_ALIASES.createSelector), [
+            t.callExpression(runtimeIdentifier(ctx, 'createSelector'), [
               t.arrowFunctionExpression([], t.callExpression(t.identifier(name), [])),
             ]),
           ),

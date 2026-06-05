@@ -1,8 +1,7 @@
 import type * as BabelCore from '@babel/core'
 
-import { RUNTIME_ALIASES } from '../constants'
-
 import type { CodegenContext } from './codegen'
+import { runtimeIdentifier } from './codegen-runtime-helpers'
 import type { Expression } from './hir'
 
 export interface ConditionalChildOps {
@@ -66,7 +65,7 @@ export function emitConditionalChild(
   const args: BabelCore.types.Expression[] = [
     t.arrowFunctionExpression([], condition),
     t.arrowFunctionExpression([], consequent),
-    t.identifier(RUNTIME_ALIASES.createElement),
+    runtimeIdentifier(ctx, 'createElement'),
   ]
   if (alternate) {
     args.push(t.arrowFunctionExpression([], alternate))
@@ -79,7 +78,7 @@ export function emitConditionalChild(
     t.variableDeclaration('const', [
       t.variableDeclarator(
         bindingId,
-        t.callExpression(t.identifier(RUNTIME_ALIASES.conditional), args),
+        t.callExpression(runtimeIdentifier(ctx, 'conditional'), args),
       ),
     ]),
   )
@@ -94,7 +93,7 @@ export function emitConditionalChild(
       ),
     ),
     t.expressionStatement(
-      t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [
+      t.callExpression(runtimeIdentifier(ctx, 'onDestroy'), [
         t.memberExpression(bindingId, t.identifier('dispose')),
       ]),
     ),

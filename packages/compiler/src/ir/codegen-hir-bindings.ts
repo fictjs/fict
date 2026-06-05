@@ -1,8 +1,7 @@
 import type * as BabelCore from '@babel/core'
 
-import { RUNTIME_ALIASES } from '../constants'
-
 import type { CodegenContext, RegionInfo } from './codegen'
+import { runtimeIdentifier } from './codegen-runtime-helpers'
 import type { NamespaceContext } from './codegen-template-extraction'
 import type { Expression } from './hir'
 
@@ -75,7 +74,7 @@ export function resolveHIRBindingPath(
   // Navigate relative path using runtime helper that skips slot ranges
   ctx.helpersUsed.add('resolvePath')
   const pathExpr = t.arrayExpression(relativePath.map(index => t.numericLiteral(index)))
-  const currentExpr = t.callExpression(t.identifier(RUNTIME_ALIASES.resolvePath), [
+  const currentExpr = t.callExpression(runtimeIdentifier(ctx, 'resolvePath'), [
     ancestorId,
     pathExpr,
   ])
@@ -106,7 +105,7 @@ export function emitHIRChildBinding(
     t.variableDeclaration('const', [
       t.variableDeclarator(
         endMarkerId,
-        t.callExpression(t.identifier(RUNTIME_ALIASES.getSlotEnd), [markerId]),
+        t.callExpression(runtimeIdentifier(ctx, 'getSlotEnd'), [markerId]),
       ),
     ]),
   )
@@ -128,7 +127,7 @@ export function emitHIRChildBinding(
     statements.push(
       t.variableDeclaration('const', [t.variableDeclarator(portalId, portalExpr)]),
       t.expressionStatement(
-        t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [
+        t.callExpression(runtimeIdentifier(ctx, 'onDestroy'), [
           t.memberExpression(portalId, t.identifier('dispose')),
         ]),
       ),
@@ -166,11 +165,11 @@ export function emitHIRChildBinding(
     ctx.helpersUsed.add('createElement')
     statements.push(
       t.expressionStatement(
-        t.callExpression(t.identifier(RUNTIME_ALIASES.insertBetween), [
+        t.callExpression(runtimeIdentifier(ctx, 'insertBetween'), [
           markerId,
           endMarkerId,
           t.arrowFunctionExpression([], childExpr),
-          t.identifier(RUNTIME_ALIASES.createElement),
+          runtimeIdentifier(ctx, 'createElement'),
         ]),
       ),
     )
@@ -183,11 +182,11 @@ export function emitHIRChildBinding(
   ctx.helpersUsed.add('createElement')
   statements.push(
     t.expressionStatement(
-      t.callExpression(t.identifier(RUNTIME_ALIASES.insertBetween), [
+      t.callExpression(runtimeIdentifier(ctx, 'insertBetween'), [
         markerId,
         endMarkerId,
         t.arrowFunctionExpression([], valueExpr),
-        t.identifier(RUNTIME_ALIASES.createElement),
+        runtimeIdentifier(ctx, 'createElement'),
       ]),
     ),
   )

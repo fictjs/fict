@@ -8,12 +8,12 @@
 import type * as BabelCore from '@babel/core'
 import type { LVal } from '@babel/types'
 
-import { RUNTIME_ALIASES } from '../constants'
 import { debugLog, debugWarn } from '../debug'
 import type { RegionMetadata } from '../fine-grained-dom'
 
 import type { CodegenContext, RegionInfo, RegionLoweringOps } from './codegen'
 import { markCompilerReactiveGetter } from './codegen-reactive-getter'
+import { runtimeIdentifier } from './codegen-runtime-helpers'
 import type {
   BlockId,
   HIRFunction,
@@ -251,7 +251,7 @@ function buildEffectCall(
 ): BabelCore.types.CallExpression {
   if (ctx.inModule) {
     ctx.helpersUsed.add('effect')
-    return t.callExpression(t.identifier(RUNTIME_ALIASES.effect), [effectFn])
+    return t.callExpression(runtimeIdentifier(ctx, 'effect'), [effectFn])
   }
   ctx.helpersUsed.add('useEffect')
   ctx.needsCtx = true
@@ -262,7 +262,7 @@ function buildEffectCall(
   } else if (slot !== undefined && slot >= 0) {
     args.push(t.numericLiteral(slot))
   }
-  return t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), args)
+  return t.callExpression(runtimeIdentifier(ctx, 'useEffect'), args)
 }
 
 function buildMemoCall(
@@ -298,7 +298,7 @@ function buildMemoCall(
     ctx.helpersUsed.add('memo')
     const args: BabelCore.types.Expression[] = [memoFn]
     if (memoOptions) args.push(memoOptions)
-    return t.callExpression(t.identifier(RUNTIME_ALIASES.memo), args)
+    return t.callExpression(runtimeIdentifier(ctx, 'memo'), args)
   }
   ctx.helpersUsed.add('useMemo')
   ctx.needsCtx = true
@@ -311,7 +311,7 @@ function buildMemoCall(
   } else if (slot !== undefined && slot >= 0) {
     args.push(t.numericLiteral(slot))
   }
-  return t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), args)
+  return t.callExpression(runtimeIdentifier(ctx, 'useMemo'), args)
 }
 
 function expressionCreatesReactive(expr: Expression, memoMacroNames?: Set<string>): boolean {
@@ -1595,7 +1595,7 @@ function lowerNodeWithRegionContext(
 
       if (conseqReactiveOnly || altReactiveOnly) {
         const stmts: BabelCore.types.Statement[] = []
-        const runInScopeId = t.identifier(RUNTIME_ALIASES.runInScope)
+        const runInScopeId = runtimeIdentifier(ctx, 'runInScope')
         const addScoped = (
           flagExpr: BabelCore.types.Expression,
           body: BabelCore.types.Statement[],

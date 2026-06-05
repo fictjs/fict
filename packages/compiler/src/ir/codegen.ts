@@ -1,6 +1,6 @@
 import type * as BabelCore from '@babel/core'
 
-import { DelegatedEvents, RUNTIME_ALIASES } from '../constants'
+import { DelegatedEvents } from '../constants'
 import { debugLog } from '../debug'
 import { applyRegionMetadata, shouldMemoizeRegion, type RegionMetadata } from '../fine-grained-dom'
 import { setModuleMetadata } from '../module-metadata'
@@ -79,6 +79,7 @@ import {
   emitResumableEventBinding,
   type ResumableEventBindingOps,
 } from './codegen-resumable-events'
+import { inlineHelperIdentifier, runtimeIdentifier } from './codegen-runtime-helpers'
 import { collectRuntimeImports } from './codegen-runtime-imports'
 import {
   extractHIRStaticHtml,
@@ -403,6 +404,10 @@ export interface CodegenContext {
   localDeclaredNames?: Set<string> | undefined
   /** Tracks which runtime helpers are used */
   helpersUsed: Set<string>
+  /** Runtime helper local names chosen to avoid source declarations. */
+  runtimeHelperLocalNames?: Map<string, string> | undefined
+  /** Local inlined helper names chosen to avoid source declarations. */
+  inlineHelperLocalNames?: Map<string, string> | undefined
   /** Counter for generating unique identifiers */
   tempCounter: number
   /** Set of tracked/reactive variable names (de-versioned) */
@@ -549,6 +554,8 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     stateMacroNames: new Set(),
     localDeclaredNames: new Set(),
     helpersUsed: new Set(),
+    runtimeHelperLocalNames: new Map(),
+    inlineHelperLocalNames: new Map(),
     tempCounter: 0,
     trackedVars: new Set(),
     shadowedNames: new Set(),
@@ -776,7 +783,7 @@ function lowerFunction(
       t.variableDeclaration('const', [
         t.variableDeclarator(
           t.identifier('__fictCtx'),
-          t.callExpression(t.identifier(RUNTIME_ALIASES.useContext), []),
+          t.callExpression(runtimeIdentifier(ctx, 'useContext'), []),
         ),
       ]),
     )
@@ -1772,11 +1779,11 @@ function lowerExpressionImpl(
 
         if (ctx.inModule) {
           ctx.helpersUsed.add('signal')
-          return t.callExpression(t.identifier(RUNTIME_ALIASES.signal), args)
+          return t.callExpression(runtimeIdentifier(ctx, 'signal'), args)
         }
         ctx.helpersUsed.add('useSignal')
         ctx.needsCtx = true
-        return t.callExpression(t.identifier(RUNTIME_ALIASES.useSignal), [
+        return t.callExpression(runtimeIdentifier(ctx, 'useSignal'), [
           t.identifier('__fictCtx'),
           ...args,
         ])
@@ -1846,11 +1853,11 @@ function lowerExpressionImpl(
         }
         if (ctx.inModule) {
           ctx.helpersUsed.add('effect')
-          return t.callExpression(t.identifier(RUNTIME_ALIASES.effect), args)
+          return t.callExpression(runtimeIdentifier(ctx, 'effect'), args)
         }
         ctx.helpersUsed.add('useEffect')
         ctx.needsCtx = true
-        return t.callExpression(t.identifier(RUNTIME_ALIASES.useEffect), [
+        return t.callExpression(runtimeIdentifier(ctx, 'useEffect'), [
           t.identifier('__fictCtx'),
           ...args,
         ])
@@ -1858,7 +1865,7 @@ function lowerExpressionImpl(
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '__forOf') {
         ctx.needsForOfHelper = true
         const [iterable, cb] = lowerArgsAsExpressions(expr.arguments)
-        return t.callExpression(t.identifier('__fictForOf'), [
+        return t.callExpression(inlineHelperIdentifier(ctx, 'forOf'), [
           iterable ?? t.identifier('undefined'),
           cb ?? t.arrowFunctionExpression([], t.identifier('undefined')),
         ])
@@ -1866,7 +1873,7 @@ function lowerExpressionImpl(
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '__forIn') {
         ctx.needsForInHelper = true
         const [obj, cb] = lowerArgsAsExpressions(expr.arguments)
-        return t.callExpression(t.identifier('__fictForIn'), [
+        return t.callExpression(inlineHelperIdentifier(ctx, 'forIn'), [
           obj ?? t.identifier('undefined'),
           cb ?? t.arrowFunctionExpression([], t.identifier('undefined')),
         ])
@@ -1874,7 +1881,7 @@ function lowerExpressionImpl(
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '__fictPropsRest') {
         ctx.helpersUsed.add('propsRest')
         const args = lowerCallArguments(expr.arguments)
-        return t.callExpression(t.identifier(RUNTIME_ALIASES.propsRest), args)
+        return t.callExpression(runtimeIdentifier(ctx, 'propsRest'), args)
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '__fictObjectRest') {
         const sourceArg = expr.arguments[0]
@@ -1886,15 +1893,15 @@ function lowerExpressionImpl(
         const args = lowerCallArguments(expr.arguments)
         if (isComponentPropsRest) {
           ctx.helpersUsed.add('propsRest')
-          return t.callExpression(t.identifier(RUNTIME_ALIASES.propsRest), args)
+          return t.callExpression(runtimeIdentifier(ctx, 'propsRest'), args)
         }
         ctx.helpersUsed.add('objectRest')
-        return t.callExpression(t.identifier(RUNTIME_ALIASES.objectRest), args)
+        return t.callExpression(runtimeIdentifier(ctx, 'objectRest'), args)
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === 'mergeProps') {
         ctx.helpersUsed.add('mergeProps')
         const args = lowerCallArguments(expr.arguments)
-        return t.callExpression(t.identifier(RUNTIME_ALIASES.mergeProps), args)
+        return t.callExpression(runtimeIdentifier(ctx, 'mergeProps'), args)
       }
       const isIIFE =
         (expr.callee.kind === 'ArrowFunction' || expr.callee.kind === 'FunctionExpression') &&
@@ -2095,12 +2102,12 @@ function lowerExpressionImpl(
               ? (() => {
                   if (shouldMemoProp) {
                     ctx.helpersUsed.add('prop')
-                    return t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [
+                    return t.callExpression(runtimeIdentifier(ctx, 'prop'), [
                       t.arrowFunctionExpression([], valueExprRaw),
                     ])
                   }
                   ctx.helpersUsed.add('propGetter')
-                  return t.callExpression(t.identifier(RUNTIME_ALIASES.propGetter), [
+                  return t.callExpression(runtimeIdentifier(ctx, 'propGetter'), [
                     t.arrowFunctionExpression([], valueExprRaw),
                   ])
                 })()
@@ -2975,7 +2982,7 @@ function lowerIntrinsicElement(
       t.variableDeclaration('const', [
         t.variableDeclarator(
           tmplId,
-          t.callExpression(t.identifier(RUNTIME_ALIASES.template), templateArgs),
+          t.callExpression(runtimeIdentifier(ctx, 'template'), templateArgs),
         ),
       ]),
     )
@@ -3117,7 +3124,7 @@ function lowerIntrinsicElement(
       }
       statements.push(
         t.expressionStatement(
-          t.callExpression(t.identifier(RUNTIME_ALIASES.renderEffect), [
+          t.callExpression(runtimeIdentifier(ctx, 'renderEffect'), [
             t.arrowFunctionExpression([], t.blockStatement(patchStatements)),
           ]),
         ),
@@ -3151,7 +3158,7 @@ function lowerIntrinsicElement(
         spreadArgs.push(t.arrayExpression(binding.exclude.map(name => t.stringLiteral(name))))
       }
       statements.push(
-        t.expressionStatement(t.callExpression(t.identifier(RUNTIME_ALIASES.spread), spreadArgs)),
+        t.expressionStatement(t.callExpression(runtimeIdentifier(ctx, 'spread'), spreadArgs)),
       )
     } else if (binding.type === 'event' && binding.expr && binding.name) {
       // Event binding
@@ -3207,7 +3214,7 @@ function lowerIntrinsicElement(
         ctx.helpersUsed.add('addEventListener')
         statements.push(
           t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.addEventListener), [
+            t.callExpression(runtimeIdentifier(ctx, 'addEventListener'), [
               targetId,
               t.stringLiteral(eventName),
               t.arrayExpression([handlerExpr, dataValue]),
@@ -3357,7 +3364,7 @@ function lowerIntrinsicElement(
             : handlerToAssign
           statements.push(
             t.expressionStatement(
-              t.callExpression(t.identifier(RUNTIME_ALIASES.addEventListener), [
+              t.callExpression(runtimeIdentifier(ctx, 'addEventListener'), [
                 targetId,
                 t.stringLiteral(eventName),
                 delegatedValue,
@@ -3392,11 +3399,11 @@ function lowerIntrinsicElement(
             t.variableDeclaration('const', [
               t.variableDeclarator(
                 cleanupId,
-                t.callExpression(t.identifier(RUNTIME_ALIASES.bindEvent), args),
+                t.callExpression(runtimeIdentifier(ctx, 'bindEvent'), args),
               ),
             ]),
             t.expressionStatement(
-              t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [cleanupId]),
+              t.callExpression(runtimeIdentifier(ctx, 'onDestroy'), [cleanupId]),
             ),
           )
         }
@@ -3414,16 +3421,16 @@ function lowerIntrinsicElement(
         ctx.helpersUsed.add('bindRef')
         statements.push(
           t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.bindRef), [targetId, valueWithRegion]),
+            t.callExpression(runtimeIdentifier(ctx, 'bindRef'), [targetId, valueWithRegion]),
           ),
         )
       } else if (attrName === 'class' || attrName === 'className') {
         if (isReactiveAttr && binding.expr) {
           const patch = t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.setClass), [targetId, valueWithRegion]),
+            t.callExpression(runtimeIdentifier(ctx, 'setClass'), [targetId, valueWithRegion]),
           )
           const fallback = t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.bindClass), [
+            t.callExpression(runtimeIdentifier(ctx, 'bindClass'), [
               targetId,
               t.arrowFunctionExpression([], valueWithRegion),
             ]),
@@ -3443,17 +3450,17 @@ function lowerIntrinsicElement(
           ctx.helpersUsed.add('setClass')
           statements.push(
             t.expressionStatement(
-              t.callExpression(t.identifier(RUNTIME_ALIASES.setClass), [targetId, valueWithRegion]),
+              t.callExpression(runtimeIdentifier(ctx, 'setClass'), [targetId, valueWithRegion]),
             ),
           )
         }
       } else if (attrName === 'style') {
         if (isReactiveAttr && binding.expr) {
           const patch = t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.setStyle), [targetId, valueWithRegion]),
+            t.callExpression(runtimeIdentifier(ctx, 'setStyle'), [targetId, valueWithRegion]),
           )
           const fallback = t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.bindStyle), [
+            t.callExpression(runtimeIdentifier(ctx, 'bindStyle'), [
               targetId,
               t.arrowFunctionExpression([], valueWithRegion),
             ]),
@@ -3473,21 +3480,21 @@ function lowerIntrinsicElement(
           ctx.helpersUsed.add('setStyle')
           statements.push(
             t.expressionStatement(
-              t.callExpression(t.identifier(RUNTIME_ALIASES.setStyle), [targetId, valueWithRegion]),
+              t.callExpression(runtimeIdentifier(ctx, 'setStyle'), [targetId, valueWithRegion]),
             ),
           )
         }
       } else if (isDOMProperty(attrName)) {
         if (isReactiveAttr && binding.expr) {
           const patch = t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.setProp), [
+            t.callExpression(runtimeIdentifier(ctx, 'setProp'), [
               targetId,
               t.stringLiteral(attrName),
               valueWithRegion,
             ]),
           )
           const fallback = t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.bindProperty), [
+            t.callExpression(runtimeIdentifier(ctx, 'bindProperty'), [
               targetId,
               t.stringLiteral(attrName),
               t.arrowFunctionExpression([], valueWithRegion),
@@ -3508,7 +3515,7 @@ function lowerIntrinsicElement(
           ctx.helpersUsed.add('setProp')
           statements.push(
             t.expressionStatement(
-              t.callExpression(t.identifier(RUNTIME_ALIASES.setProp), [
+              t.callExpression(runtimeIdentifier(ctx, 'setProp'), [
                 targetId,
                 t.stringLiteral(attrName),
                 valueWithRegion,
@@ -3519,14 +3526,14 @@ function lowerIntrinsicElement(
       } else {
         if (isReactiveAttr && binding.expr) {
           const patch = t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.setAttr), [
+            t.callExpression(runtimeIdentifier(ctx, 'setAttr'), [
               targetId,
               t.stringLiteral(attrName),
               valueWithRegion,
             ]),
           )
           const fallback = t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.bindAttribute), [
+            t.callExpression(runtimeIdentifier(ctx, 'bindAttribute'), [
               targetId,
               t.stringLiteral(attrName),
               t.arrowFunctionExpression([], valueWithRegion),
@@ -3547,7 +3554,7 @@ function lowerIntrinsicElement(
           ctx.helpersUsed.add('setAttr')
           statements.push(
             t.expressionStatement(
-              t.callExpression(t.identifier(RUNTIME_ALIASES.setAttr), [
+              t.callExpression(runtimeIdentifier(ctx, 'setAttr'), [
                 targetId,
                 t.stringLiteral(attrName),
                 valueWithRegion,
@@ -3565,10 +3572,10 @@ function lowerIntrinsicElement(
       // Only use bindText for reactive expressions; static text uses direct assignment
       if (!isListKeyConstExpression(binding.expr, ctx) && isExpressionReactive(binding.expr, ctx)) {
         const patch = t.expressionStatement(
-          t.callExpression(t.identifier(RUNTIME_ALIASES.setText), [targetId, valueExpr]),
+          t.callExpression(runtimeIdentifier(ctx, 'setText'), [targetId, valueExpr]),
         )
         const fallback = t.expressionStatement(
-          t.callExpression(t.identifier(RUNTIME_ALIASES.bindText), [
+          t.callExpression(runtimeIdentifier(ctx, 'bindText'), [
             targetId,
             t.arrowFunctionExpression([], valueExpr),
           ]),
@@ -3629,7 +3636,7 @@ function lowerIntrinsicElement(
     // __fictUseMemo returns a getter function - invoke it to get the actual DOM element
     const memoBody = t.arrowFunctionExpression([], body)
     if (ctx.inModule) {
-      return t.callExpression(t.callExpression(t.identifier(RUNTIME_ALIASES.memo), [memoBody]), [])
+      return t.callExpression(t.callExpression(runtimeIdentifier(ctx, 'memo'), [memoBody]), [])
     }
     const memoArgs: BabelCore.types.Expression[] = [t.identifier('__fictCtx'), memoBody]
     if (ctx.isComponentFn) {
@@ -3638,7 +3645,7 @@ function lowerIntrinsicElement(
         memoArgs.push(t.numericLiteral(slot))
       }
     }
-    return t.callExpression(t.callExpression(t.identifier(RUNTIME_ALIASES.useMemo), memoArgs), [])
+    return t.callExpression(t.callExpression(runtimeIdentifier(ctx, 'useMemo'), memoArgs), [])
   }
 
   // Wrap in IIFE
@@ -3794,7 +3801,7 @@ function lowerInstructionWithScopes(
         t.variableDeclaration('const', [
           t.variableDeclarator(
             t.identifier(targetName),
-            t.callExpression(t.identifier('__fictUseMemo'), [
+            t.callExpression(runtimeIdentifier(ctx, 'useMemo'), [
               t.arrowFunctionExpression([], valueExpr),
             ]),
           ),
@@ -3979,7 +3986,7 @@ export function lowerHIRWithRegions(
       t.variableDeclaration('const', [
         t.variableDeclarator(
           t.identifier('__fictCtx'),
-          t.callExpression(t.identifier(RUNTIME_ALIASES.pushContext), []),
+          t.callExpression(runtimeIdentifier(ctx, 'pushContext'), []),
         ),
       ]),
     )
@@ -4214,7 +4221,7 @@ export function lowerHIRWithRegions(
 
   if (topLevelCtxInjected) {
     ctx.helpersUsed.add('popContext')
-    body.push(t.expressionStatement(t.callExpression(t.identifier(RUNTIME_ALIASES.popContext), [])))
+    body.push(t.expressionStatement(t.callExpression(runtimeIdentifier(ctx, 'popContext'), [])))
   }
 
   const moduleMeta = buildModuleReactiveMetadata(originalBody, ctx, t, options, {
@@ -4681,7 +4688,7 @@ function transformControlFlowReturns(
     const args: BabelCore.types.Expression[] = [
       t.arrowFunctionExpression([], testExpr),
       trueFn,
-      t.identifier(RUNTIME_ALIASES.createElement),
+      runtimeIdentifier(ctx, 'createElement'),
       falseFn,
     ]
     if (options?.trackBranchReads) {
@@ -4694,7 +4701,7 @@ function transformControlFlowReturns(
         ]),
       )
     }
-    const bindingCall = t.callExpression(t.identifier(RUNTIME_ALIASES.conditional), args)
+    const bindingCall = t.callExpression(runtimeIdentifier(ctx, 'conditional'), args)
 
     return t.callExpression(
       t.arrowFunctionExpression(
@@ -4702,7 +4709,7 @@ function transformControlFlowReturns(
         t.blockStatement([
           t.variableDeclaration('const', [t.variableDeclarator(bindingId, bindingCall)]),
           t.expressionStatement(
-            t.callExpression(t.identifier(RUNTIME_ALIASES.onDestroy), [
+            t.callExpression(runtimeIdentifier(ctx, 'onDestroy'), [
               t.memberExpression(bindingId, t.identifier('dispose')),
             ]),
           ),
@@ -4849,7 +4856,7 @@ function transformControlFlowReturns(
     const discriminantMemoDecl = t.variableDeclaration('const', [
       t.variableDeclarator(
         discriminantAccessor,
-        t.callExpression(t.identifier(RUNTIME_ALIASES.memo), [
+        t.callExpression(runtimeIdentifier(ctx, 'memo'), [
           t.arrowFunctionExpression(
             [],
             t.cloneNode(discriminant, true) as BabelCore.types.Expression,
@@ -5410,7 +5417,7 @@ function lowerFunctionWithRegions(
                   t.variableDeclarator(
                     t.identifier(value.name),
                     shouldWrapProp
-                      ? t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [
+                      ? t.callExpression(runtimeIdentifier(ctx, 'prop'), [
                           t.arrowFunctionExpression([], member),
                         ])
                       : member,
@@ -5435,7 +5442,7 @@ function lowerFunctionWithRegions(
                 }
                 const baseInit = buildDefaultValueExpression(member, value.right)
                 const init = shouldWrapProp
-                  ? t.callExpression(t.identifier(RUNTIME_ALIASES.prop), [
+                  ? t.callExpression(runtimeIdentifier(ctx, 'prop'), [
                       t.arrowFunctionExpression([], baseInit),
                     ])
                   : baseInit
@@ -5477,7 +5484,7 @@ function lowerFunctionWithRegions(
               t.variableDeclaration('const', [
                 t.variableDeclarator(
                   t.identifier(prop.argument.name),
-                  t.callExpression(t.identifier(RUNTIME_ALIASES.propsRest), [
+                  t.callExpression(runtimeIdentifier(ctx, 'propsRest'), [
                     baseExpr,
                     t.arrayExpression(excludeKeys),
                   ]),
@@ -5573,7 +5580,7 @@ function lowerFunctionWithRegions(
           t.variableDeclaration('const', [
             t.variableDeclarator(
               t.identifier('__fictCtx'),
-              t.callExpression(t.identifier(RUNTIME_ALIASES.useContext), []),
+              t.callExpression(runtimeIdentifier(ctx, 'useContext'), []),
             ),
           ]),
         )
@@ -5651,7 +5658,7 @@ function lowerFunctionWithRegions(
       t.variableDeclaration('const', [
         t.variableDeclarator(
           t.identifier('__fictCtx'),
-          t.callExpression(t.identifier(RUNTIME_ALIASES.useContext), []),
+          t.callExpression(runtimeIdentifier(ctx, 'useContext'), []),
         ),
       ]),
     )
