@@ -2843,4 +2843,36 @@ describe('control flow runtime regressions', () => {
     const resolved = typeof result === 'function' ? result() : result
     expect(resolved).toBe(5)
   })
+
+  it('rejects reactive do-while state-machine fallback with stale derived locals', () => {
+    expect(() =>
+      compileAndRunHook(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let n = $state(2)
+            let out = ''
+            let i = 0
+
+            do {
+              out += i
+              i++
+              if (i === 1) {
+                continue
+              }
+            } while (i < n)
+
+            return {
+              set: (next: number) => {
+                n = next
+              },
+              view: () => out,
+            }
+          }
+        `,
+        'useRun',
+      ),
+    ).toThrow(/Unsafe reactive state-machine fallback/)
+  })
 })

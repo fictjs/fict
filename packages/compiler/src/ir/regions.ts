@@ -1167,6 +1167,39 @@ function collectInstructionDependencies(instr: Instruction): Set<string> {
   return new Set()
 }
 
+function collectTerminatorDependencies(term: Terminator): Set<string> {
+  const deps = new Set<string>()
+  const add = (values: Set<string>) => values.forEach(value => deps.add(value))
+
+  switch (term.kind) {
+    case 'Return':
+      if (term.argument) add(collectExprDependencies(term.argument))
+      break
+    case 'Throw':
+      add(collectExprDependencies(term.argument))
+      break
+    case 'Branch':
+      add(collectExprDependencies(term.test))
+      break
+    case 'Switch':
+      add(collectExprDependencies(term.discriminant))
+      term.cases.forEach(item => {
+        if (item.test) add(collectExprDependencies(item.test))
+      })
+      break
+    case 'ForOf':
+      add(collectExprDependencies(term.iterable))
+      break
+    case 'ForIn':
+      add(collectExprDependencies(term.object))
+      break
+    default:
+      break
+  }
+
+  return deps
+}
+
 function collectExpressionWrites(expr: Expression): Set<string> {
   const writes = new Set<string>()
   const addTarget = (target: Expression): void => {
@@ -1395,6 +1428,12 @@ function isReactiveCreationExpression(expr: Expression): boolean {
     expr.kind === 'CallExpression' &&
     expr.callee.kind === 'Identifier' &&
     (expr.callee.name === '$state' || expr.callee.name === '$store')
+  )
+}
+
+function isReactiveCreationInstruction(instr: Instruction): instr is ReactiveCreationInstruction {
+  return (
+    instr.kind === 'Assign' && !!instr.declarationKind && isReactiveCreationExpression(instr.value)
   )
 }
 
@@ -2238,6 +2277,21 @@ function lowerNodeWithRegionContext(
         )
       }
 
+      const unsafeReactiveFallback = getUnsafeReactiveStateMachineFallback(node, ctx)
+      if (unsafeReactiveFallback) {
+        throw new HIRError(
+          `Unsafe reactive state-machine fallback: local "${unsafeReactiveFallback.localName}" ` +
+            `is recomputed from reactive control flow, but the fallback would return stale output. ` +
+            `Rewrite the do...while control flow or remove the continue that forces fallback.`,
+          'BUILD_ERROR',
+          {
+            blockId: unsafeReactiveFallback.blockId,
+            file: ctx.options?.filename,
+            line: unsafeReactiveFallback.line,
+          },
+        )
+      }
+
       const hoisted: string[] = []
       const normalizedBlocks = node.blocks.map(block => {
         const instructions = block.instructions.map(instr => {
@@ -2376,6 +2430,70 @@ function lowerTerminatorForStateMachine(
       // The state machine fallback is mainly for simple CFG issues
       return [t.breakStatement(t.identifier('__cfgLoop'))]
   }
+}
+
+type StateMachineNode = Extract<StructuredNode, { kind: 'stateMachine' }>
+
+function getUnsafeReactiveStateMachineFallback(
+  node: StateMachineNode,
+  ctx: CodegenContext,
+): { localName: string; blockId: BlockId; line?: number | undefined } | null {
+  const reactiveNames = new Set(Array.from(ctx.trackedVars, name => deSSAVarName(name)))
+  for (const block of node.blocks) {
+    for (const instr of block.instructions) {
+      if (isReactiveCreationInstruction(instr)) {
+        reactiveNames.add(deSSAVarName(instr.target.name))
+      }
+    }
+  }
+  if (reactiveNames.size === 0) return null
+
+  const localDeclarations = new Set<string>()
+  const laterWrites = new Set<string>()
+  let hasReturn = false
+  let reactiveReadBlock: StateMachineNode['blocks'][number] | undefined
+
+  const noteDependencies = (deps: Set<string>, block: StateMachineNode['blocks'][number]) => {
+    if (reactiveReadBlock) return
+    for (const dep of deps) {
+      if (reactiveNames.has(deSSAVarName(dep))) {
+        reactiveReadBlock = block
+        return
+      }
+    }
+  }
+
+  for (const block of node.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' && instr.declarationKind) {
+        if (!isReactiveCreationInstruction(instr)) {
+          localDeclarations.add(deSSAVarName(instr.target.name))
+        }
+        collectExpressionWrites(instr.value).forEach(name => laterWrites.add(name))
+      } else {
+        collectInstructionWrites(instr).forEach(name => laterWrites.add(name))
+      }
+      noteDependencies(collectInstructionDependencies(instr), block)
+    }
+    if (block.terminator.kind === 'Return') {
+      hasReturn = true
+    }
+    noteDependencies(collectTerminatorDependencies(block.terminator), block)
+  }
+
+  if (!hasReturn || !reactiveReadBlock) return null
+
+  for (const localName of localDeclarations) {
+    if (laterWrites.has(localName)) {
+      return {
+        localName,
+        blockId: reactiveReadBlock.blockId,
+        line: reactiveReadBlock.terminator.loc?.start.line,
+      }
+    }
+  }
+
+  return null
 }
 
 function lowerStructuredNodeForRegion(
@@ -3308,14 +3426,6 @@ function generateRegionStatements(
       declarationByName.set(deSSAVarName(instr.target.name), instr)
     }
   })
-  const isReactiveCreationInstruction = (
-    instr: Instruction,
-  ): instr is ReactiveCreationInstruction =>
-    instr.kind === 'Assign' &&
-    !!instr.declarationKind &&
-    instr.value.kind === 'CallExpression' &&
-    instr.value.callee.kind === 'Identifier' &&
-    (instr.value.callee.name === '$state' || instr.value.callee.name === '$store')
   const emitHoistedInstruction = (instr: Instruction): void => {
     if (hoistedInstructionSet.has(instr)) return
     const stmt = instructionToStatement(instr, t, declaredVars, ctx)
