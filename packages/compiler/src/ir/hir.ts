@@ -241,6 +241,8 @@ export interface AssignInstruction extends SourceInfo {
   target: Identifier
   value: Expression
   declarationKind?: 'const' | 'let' | 'var' | 'function' | undefined
+  /** Function declaration came from a lexical block and must not flow outside it. */
+  blockScopedFunction?: boolean | undefined
 }
 
 export interface ExpressionInstruction extends SourceInfo {

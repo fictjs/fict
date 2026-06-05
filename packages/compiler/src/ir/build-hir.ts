@@ -271,6 +271,7 @@ function normalizeVarKind(
 
 function functionDeclarationToAssign(
   stmt: BabelCore.types.FunctionDeclaration,
+  options?: { blockScoped?: boolean },
 ): Instruction | null {
   if (!stmt.id) return null
   const fnExpr = t.functionExpression(
@@ -285,6 +286,7 @@ function functionDeclarationToAssign(
     target: { kind: 'Identifier', name: stmt.id.name },
     value: convertExpression(fnExpr),
     declarationKind: 'function',
+    blockScopedFunction: options?.blockScoped ? true : undefined,
     loc: stmt.loc,
   }
 }
@@ -292,10 +294,11 @@ function functionDeclarationToAssign(
 function emitHoistedFunctionDeclarations(
   statements: BabelCore.types.Statement[],
   push: (instr: Instruction) => void,
+  options?: { blockScoped?: boolean },
 ): void {
   for (const stmt of statements) {
     if (!t.isFunctionDeclaration(stmt)) continue
-    const instr = functionDeclarationToAssign(stmt)
+    const instr = functionDeclarationToAssign(stmt, options)
     if (instr) push(instr)
   }
 }
@@ -2066,7 +2069,9 @@ function fillStatements(
 
   if (t.isBlockStatement(stmt)) {
     let current = bb
-    emitHoistedFunctionDeclarations(stmt.body, instr => current.block.instructions.push(instr))
+    emitHoistedFunctionDeclarations(stmt.body, instr => current.block.instructions.push(instr), {
+      blockScoped: true,
+    })
     for (const s of stmt.body) {
       if (t.isFunctionDeclaration(s)) {
         continue
@@ -2182,7 +2187,9 @@ function processStatement(
       return processLexicalBlockStatement(stmt, bb, ctx)
     }
     let current = bb
-    emitHoistedFunctionDeclarations(stmt.body, instr => current.block.instructions.push(instr))
+    emitHoistedFunctionDeclarations(stmt.body, instr => current.block.instructions.push(instr), {
+      blockScoped: true,
+    })
     for (const inner of stmt.body) {
       if (t.isFunctionDeclaration(inner)) {
         continue

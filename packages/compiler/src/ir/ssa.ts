@@ -306,6 +306,7 @@ function toSSA(fn: HIRFunction): HIRFunction {
   fn.blocks.forEach(block => {
     block.instructions.forEach(instr => {
       if (instr.kind === 'Assign') {
+        if (instr.blockScopedFunction) return
         const set = defSites.get(instr.target.name) ?? new Set<BlockId>()
         set.add(block.id)
         defSites.set(instr.target.name, set)
@@ -466,6 +467,7 @@ function toSSA(fn: HIRFunction): HIRFunction {
         const renamedValue = renameExpr(instr.value)
         const newName = renameVar(getSSABaseName(instr.target.name))
         newInstr.push({
+          ...instr,
           kind: 'Assign',
           target: { ...instr.target, name: newName },
           value: renamedValue,

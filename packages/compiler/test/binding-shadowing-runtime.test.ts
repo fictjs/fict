@@ -88,6 +88,42 @@ describe('binding shadowing runtime regressions', () => {
     ).toThrow(/value is not defined/)
   })
 
+  it('keeps bare-block function declarations from leaking after the block', () => {
+    const value = compileAndRun<string>(
+      `
+        export function Comp() {
+          {
+            function local() {
+              return 1
+            }
+          }
+          return typeof local
+        }
+      `,
+      'Comp',
+    )
+
+    expect(value).toBe('undefined')
+  })
+
+  it('keeps untaken branch function declarations from leaking or throwing', () => {
+    const value = compileAndRun<string>(
+      `
+        export function Comp() {
+          if (false) {
+            function local() {
+              return 1
+            }
+          }
+          return typeof local
+        }
+      `,
+      'Comp',
+    )
+
+    expect(value).toBe('undefined')
+  })
+
   it('keeps var declarations function-scoped through bare blocks', () => {
     const value = compileAndRun<number>(
       `
