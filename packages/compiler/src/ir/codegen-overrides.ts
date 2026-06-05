@@ -58,8 +58,14 @@ export function replaceIdentifiersWithOverrides(
     !allowCallCalleeReplacement &&
     parentKey === 'callee' &&
     (parentKind === 'CallExpression' || parentKind === 'OptionalCallExpression')
+  const isWriteTarget =
+    (parentKind === 'AssignmentExpression' && parentKey === 'left') ||
+    (parentKind === 'UpdateExpression' && parentKey === 'argument')
 
   if (parentKind === 'VariableDeclarator' && parentKey === 'id') {
+    return
+  }
+  if (isWriteTarget) {
     return
   }
 

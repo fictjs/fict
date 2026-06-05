@@ -91,6 +91,7 @@ import {
 } from './codegen-template-extraction'
 import {
   HIRError,
+  type BabelClassMember,
   type BabelDirective,
   type BabelParamNode,
   type BasicBlock,
@@ -1801,6 +1802,52 @@ function lowerExpressionImpl(
       [current],
     )
   }
+  const lowerRawClassReactiveWrites = <T extends BabelCore.types.Node>(node: T): T => {
+    const visit = (current: unknown): unknown => {
+      if (!current || typeof current !== 'object') return current
+      if (Array.isArray(current)) return current.map(item => visit(item))
+      if (!('type' in current)) return current
+
+      const astNode = current as BabelCore.types.Node
+      if (t.isAssignmentExpression(astNode)) {
+        astNode.right = visit(astNode.right) as BabelCore.types.Expression
+        if (t.isIdentifier(astNode.left)) {
+          const baseName = deSSAVarName(astNode.left.name)
+          if (ctx.trackedVars.has(baseName)) {
+            const callee = t.identifier(baseName)
+            const currentValue = t.callExpression(t.identifier(baseName), [])
+            return lowerTrackedAssignmentWrite(
+              callee,
+              astNode.operator,
+              currentValue,
+              astNode.right,
+            )
+          }
+        }
+      }
+
+      if (t.isUpdateExpression(astNode) && t.isIdentifier(astNode.argument)) {
+        const baseName = deSSAVarName(astNode.argument.name)
+        if (ctx.trackedVars.has(baseName)) {
+          return lowerTrackedUpdateCall(t.identifier(baseName), astNode.operator, astNode.prefix)
+        }
+      }
+
+      const record = astNode as unknown as Record<string, unknown>
+      for (const key of Object.keys(astNode)) {
+        if (key === 'type' || key === 'loc' || key === 'start' || key === 'end') continue
+        const value = record[key]
+        if (Array.isArray(value)) {
+          record[key] = value.map(item => visit(item))
+        } else if (value && typeof value === 'object' && 'type' in value) {
+          record[key] = visit(value)
+        }
+      }
+      return astNode
+    }
+
+    return visit(node) as T
+  }
   const lowerBlocksToStatements = (blocks: BasicBlock[]): BabelCore.types.Statement[] => {
     const stmts: BabelCore.types.Statement[] = []
     for (const block of blocks) {
@@ -2892,11 +2939,15 @@ function lowerExpressionImpl(
       )
 
     case 'ClassExpression':
-      // For now, just return the class body as-is (stored as Babel AST)
+      // Class bodies are stored as Babel AST, so patch tracked writes before read overrides run.
       return t.classExpression(
         expr.name ? t.identifier(expr.name) : null,
         expr.superClass ? lowerExpression(expr.superClass, ctx) : null,
-        t.classBody(expr.body ?? []),
+        t.classBody(
+          (expr.body ?? []).map(member =>
+            lowerRawClassReactiveWrites(t.cloneNode(member, true) as BabelClassMember),
+          ),
+        ),
         expr.decorators?.map(decorator => t.cloneNode(decorator, true)) ?? null,
       )
 

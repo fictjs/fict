@@ -944,6 +944,99 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(1)
   })
 
+  it('lowers reactive writes inside class methods', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          class A {
+            inc() {
+              count = 2
+              return count
+            }
+          }
+          return new A().inc()
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('lowers reactive writes inside class fields', () => {
+    const result = compileAndRunHook<number[]>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          class A {
+            field = (count = 2)
+            static value = (count = 3)
+          }
+          const instance = new A()
+          const read = () => count
+          return [A.value, instance.field, read()]
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toEqual([3, 2, 2])
+  })
+
+  it('lowers reactive writes inside class static blocks and setters', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          class A {
+            static {
+              count = 2
+            }
+            set value(next) {
+              count = next
+            }
+          }
+          new A().value = 3
+          const read = () => count
+          return read()
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(3)
+  })
+
+  it('lowers reactive updates inside class bodies', () => {
+    const result = compileAndRunHook<number[]>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          class A {
+            inc() {
+              return count++
+            }
+          }
+          const previous = new A().inc()
+          const read = () => count
+          return [previous, read()]
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toEqual([1, 2])
+  })
+
   it('preserves Object.assign mutations of const object fields with optimization', () => {
     const result = compileAndRunHook<number>(
       `
