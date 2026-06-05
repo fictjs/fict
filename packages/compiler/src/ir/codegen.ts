@@ -642,23 +642,14 @@ export function resolveHookMemberValue(
   ctx: CodegenContext,
 ): { member: BabelCore.types.MemberExpression; kind: HookAccessorKind } | null {
   if (expr.kind !== 'MemberExpression') return null
-  if (expr.object.kind !== 'Identifier') return null
-  const hookName = ctx.hookResultVarMap?.get(deSSAVarName(expr.object.name))
-  if (!hookName) return null
-  const info = getHookReturnInfo(hookName, ctx)
-  const propName = getStaticPropName(expr.property as Expression, expr.computed)
-  let kind: HookAccessorKind | undefined =
-    typeof propName === 'string'
-      ? info?.objectProps?.get(propName)
-      : typeof propName === 'number'
-        ? info?.arrayProps?.get(propName)
-        : undefined
-  if (!info && propName !== null) {
-    kind = 'signal'
-  }
+  const kind = resolveHookReturnMemberAccessorKind(expr, ctx)
   if (!kind) return null
 
-  const obj = ctx.t.identifier(deSSAVarName(expr.object.name))
+  const propName = getStaticPropName(expr.property as Expression, expr.computed)
+  const obj =
+    expr.object.kind === 'Identifier'
+      ? ctx.t.identifier(deSSAVarName(expr.object.name))
+      : lowerExpression(expr.object, ctx)
   const prop = expr.computed
     ? lowerExpression(expr.property as Expression, ctx)
     : ctx.t.identifier(String(propName))
@@ -690,6 +681,62 @@ function resolveNamespaceHookCallInfo(
   ctx.hookReturnInfo = ctx.hookReturnInfo ?? new Map()
   ctx.hookReturnInfo.set(hookName, info)
   return { hookName, info }
+}
+
+function resolveDirectHookCallInfo(
+  expr: Expression,
+  ctx: CodegenContext,
+): { hookName: string; info: HookReturnInfo | null } | null {
+  const namespaceHookCall = resolveNamespaceHookCallInfo(expr, ctx)
+  if (namespaceHookCall) return namespaceHookCall
+
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return null
+  if (expr.callee.kind !== 'Identifier') return null
+
+  const hookName = deSSAVarName(expr.callee.name)
+  const cached = ctx.hookReturnInfo?.get(hookName)
+  if (cached) return { hookName, info: cached }
+  if (!isHookName(hookName)) return null
+
+  return { hookName, info: getHookReturnInfo(hookName, ctx) }
+}
+
+function getHookReturnAccessorKind(
+  info: HookReturnInfo | null,
+  propName: string | number | null,
+): HookAccessorKind | null {
+  if (typeof propName === 'string') {
+    const kind = info?.objectProps?.get(propName)
+    if (kind) return kind
+  } else if (typeof propName === 'number') {
+    const kind = info?.arrayProps?.get(propName)
+    if (kind) return kind
+  }
+  return !info && propName !== null ? 'signal' : null
+}
+
+function resolveHookReturnMemberAccessorKind(
+  expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+  ctx: CodegenContext,
+): HookAccessorKind | null {
+  let info: HookReturnInfo | null | undefined
+  if (expr.object.kind === 'Identifier') {
+    const hookName = ctx.hookResultVarMap?.get(deSSAVarName(expr.object.name))
+    if (!hookName) return null
+    info = getHookReturnInfo(hookName, ctx)
+  } else if (
+    expr.object.kind === 'CallExpression' ||
+    expr.object.kind === 'OptionalCallExpression'
+  ) {
+    const hookCall = resolveDirectHookCallInfo(expr.object, ctx)
+    if (!hookCall) return null
+    info = hookCall.info
+  } else {
+    return null
+  }
+
+  const propName = getStaticPropName(expr.property as Expression, expr.computed)
+  return getHookReturnAccessorKind(info ?? null, propName)
 }
 
 function withNonReactiveScope<T>(ctx: CodegenContext, fn: () => T): T {
@@ -2154,18 +2201,7 @@ function lowerExpressionImpl(
     if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') {
       return false
     }
-    if (callee.object.kind !== 'Identifier') return false
-    const hookName = ctx.hookResultVarMap?.get(deSSAVarName(callee.object.name))
-    if (!hookName) return false
-    const info = getHookReturnInfo(hookName, ctx)
-    const propName = getStaticPropName(callee.property as Expression, callee.computed)
-    let accessorKind: HookAccessorKind | undefined
-    if (typeof propName === 'string') {
-      accessorKind = info?.objectProps?.get(propName)
-    } else if (typeof propName === 'number') {
-      accessorKind = info?.arrayProps?.get(propName)
-    }
-    return !!(accessorKind || (!info && propName !== null))
+    return !!resolveHookReturnMemberAccessorKind(callee, ctx)
   }
 
   const lowerCallCalleeExpression = (callee: Expression): BabelCore.types.Expression => {
@@ -2437,27 +2473,13 @@ function lowerExpressionImpl(
         }
       }
       if (
-        expr.object.kind === 'Identifier' &&
-        ctx.hookResultVarMap?.has(deSSAVarName(expr.object.name))
+        expr.object.kind === 'Identifier' ||
+        expr.object.kind === 'CallExpression' ||
+        expr.object.kind === 'OptionalCallExpression'
       ) {
-        const hookName = ctx.hookResultVarMap.get(deSSAVarName(expr.object.name))!
-        const info = getHookReturnInfo(hookName, ctx)
-        const propName = getStaticPropName(expr.property as Expression, expr.computed)
-        let accessorKind: HookAccessorKind | undefined
-        if (typeof propName === 'string') {
-          accessorKind = info?.objectProps?.get(propName)
-        } else if (typeof propName === 'number') {
-          accessorKind = info?.arrayProps?.get(propName)
-        }
-        const shouldTreatAccessor = accessorKind || (!info && propName !== null)
-        if (shouldTreatAccessor) {
-          const member = t.memberExpression(
-            t.identifier(deSSAVarName(expr.object.name)),
-            expr.computed ? lowerExpression(expr.property, ctx) : t.identifier(String(propName)),
-            expr.computed,
-            expr.optional,
-          )
-          return t.callExpression(member, [])
+        const accessorKind = resolveHookReturnMemberAccessorKind(expr, ctx)
+        if (accessorKind) {
+          return t.callExpression(lowerMemberExpressionWithoutAccessorCall(expr), [])
         }
       }
       return t.memberExpression(

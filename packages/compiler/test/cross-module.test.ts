@@ -185,6 +185,187 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toContain('return state?.["count"];')
     })
 
+    it('unwraps direct hook-call signal member reads across modules', () => {
+      const hookSource = `
+        import { $state, $memo } from 'fict'
+
+        /** @fictReturn { count: 'signal', doubled: 'memo' } */
+        export function useCounter() {
+          const count = $state(0)
+          const doubled = $memo(() => count * 2)
+          return { count, doubled }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-direct-member'
+
+        export function App() {
+          return useCounter().count
+        }
+      `
+      const memoAppSource = `
+        import { useCounter } from './use-counter-direct-member'
+
+        export function App() {
+          return useCounter().doubled
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'use-counter-direct-member.tsx'))
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-direct-member.tsx'),
+      )
+      const memoOutput = transform(
+        memoAppSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-direct-memo-member.tsx'),
+      )
+
+      expect(output).toContain('return useCounter().count();')
+      expect(output).not.toContain('return useCounter().count;')
+      expect(memoOutput).toContain('return useCounter().doubled();')
+      expect(memoOutput).not.toContain('return useCounter().doubled;')
+    })
+
+    it('unwraps computed direct hook-call member reads across modules', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-direct-computed-member'
+
+        export function App() {
+          return useCounter()['count']
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-direct-computed-member.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-direct-computed-member.tsx'),
+      )
+
+      expect(output).toContain('return useCounter()["count"]();')
+      expect(output).not.toContain('return useCounter()["count"];')
+    })
+
+    it('unwraps optional direct hook-call member reads across modules', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-direct-optional-member'
+
+        export function App() {
+          return useCounter()?.count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-direct-optional-member.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-direct-optional-member.tsx'),
+      )
+
+      expect(output).toContain('return useCounter()?.count?.();')
+      expect(output).not.toContain('return useCounter()?.count;')
+    })
+
+    it('unwraps namespace direct hook-call member reads across modules', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import * as hooks from './use-counter-direct-namespace-member'
+
+        export function App() {
+          return hooks.useCounter().count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-direct-namespace-member.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-direct-namespace-member.tsx'),
+      )
+
+      expect(output).toContain('return hooks.useCounter().count();')
+      expect(output).not.toContain('return hooks.useCounter().count;')
+    })
+
+    it('unwraps default-import direct hook-call member reads across modules', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export default function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import useCounter from './use-counter-direct-default-member'
+
+        export function App() {
+          return useCounter().count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-direct-default-member.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-direct-default-member.tsx'),
+      )
+
+      expect(output).toContain('return useCounter().count();')
+      expect(output).not.toContain('return useCounter().count;')
+    })
+
     it('propagates hook return metadata through pass-through wrapper modules', () => {
       const hookSource = `
         import { $state } from 'fict'
