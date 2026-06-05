@@ -1963,6 +1963,22 @@ describe('spread operator in JSX', () => {
     expect(code).not.toContain('defaultChecked=\\"')
   })
 
+  it('routes textarea expression children through the value property', () => {
+    const ast = parseFile(`
+      function TextareaChildValue() {
+        let text = $state('hi')
+        return <textarea>{text}</textarea>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/bindProperty\([^,]+,\s*"value",\s*\(\)\s*=>\s*text\(\)\)/)
+    expect(code).not.toContain('bindText')
+    expect(code).not.toContain('<textarea> ')
+  })
+
   it('routes custom element JSX props through DOM properties', () => {
     const ast = parseFile(`
       function CustomElementProps() {

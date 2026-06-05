@@ -703,6 +703,45 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('binds textarea expression children through the visible value property', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: string): void }
+
+      export function App() {
+        let text = $state('hi')
+        api = { set: value => (text = value) }
+        return <textarea data-testid="textarea">{text}</textarea>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: string): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const textarea = container.querySelector('[data-testid="textarea"]') as HTMLTextAreaElement
+    expect(textarea.value).toBe('hi')
+
+    textarea.value = 'user edit'
+    mod.api.set('bye')
+    await flushUpdates()
+
+    expect(textarea.value).toBe('bye')
+    expect(textarea.textContent).toBe('')
+
+    teardown()
+    container.remove()
+  })
+
   it('renders intrinsic children props as child content in fine-grained output', async () => {
     const source = `
       import { $state, render } from 'fict'

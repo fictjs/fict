@@ -253,6 +253,7 @@ export function extractHIRStaticHtml(
     (isCustomElementTagName(tagName) || hasExplicitIsAttribute(jsx, resolvedNamespace))
   let html = `<${tagName}`
   const bindings: HIRBinding[] = []
+  let hasExplicitTextareaValue = false
   const hasRenderableChildren = jsx.children.some(
     child => child.kind !== 'text' || child.value.length > 0,
   )
@@ -302,6 +303,14 @@ export function extractHIRStaticHtml(
     const isResumableEvent = name.endsWith('$')
     if (isResumableEvent) {
       name = name.slice(0, -1)
+    }
+    const forcedBinding = parseForcedBindingName(name)
+    if (
+      tagName === 'textarea' &&
+      resolvedNamespace === null &&
+      (name === 'value' || (forcedBinding?.prefix === 'prop' && forcedBinding.name === 'value'))
+    ) {
+      hasExplicitTextareaValue = true
     }
 
     // Key attribute is for list reconciliation only; keep expression for evaluation
@@ -374,7 +383,7 @@ export function extractHIRStaticHtml(
       continue
     }
 
-    if (parseForcedBindingName(name)) {
+    if (forcedBinding) {
       bindings.push({
         type: 'attr',
         path: [...parentPath],
@@ -469,6 +478,14 @@ export function extractHIRStaticHtml(
   // Process children
   let childIndex = 0
   const children = jsx.children
+  const textareaValueChild =
+    tagName === 'textarea' &&
+    resolvedNamespace === null &&
+    !hasExplicitTextareaValue &&
+    children.length === 1 &&
+    children[0]?.kind === 'expression'
+      ? children[0].value
+      : null
   const isNonEmptyText = (node: JSXChild): boolean => node.kind === 'text' && node.value.length > 0
   const hasAdjacentInline = (index: number): boolean => {
     const prev = children[index - 1]
@@ -479,7 +496,15 @@ export function extractHIRStaticHtml(
     )
   }
 
-  if (childrenPropExpr && !hasRenderableChildren) {
+  if (textareaValueChild) {
+    bindings.push({
+      type: 'attr',
+      path: [...parentPath],
+      name: 'value',
+      expr: textareaValueChild,
+      bindingTarget: 'property',
+    })
+  } else if (childrenPropExpr && !hasRenderableChildren) {
     html += '<!--fict:slot:start--><!--fict:slot:end-->'
     bindings.push({
       type: 'child',
@@ -490,46 +515,54 @@ export function extractHIRStaticHtml(
     childIndex++
   }
 
-  for (let i = 0; i < children.length; i++) {
-    const child = children[i]!
-    if (child.kind === 'text') {
-      const text = child.value
-      if (text.length > 0) {
-        html += escapeHtmlText(text)
+  if (!textareaValueChild) {
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i]!
+      if (child.kind === 'text') {
+        const text = child.value
+        if (text.length > 0) {
+          html += escapeHtmlText(text)
+          childIndex++
+        }
+      } else if (child.kind === 'element') {
+        const childPath = [...parentPath, childIndex]
+        // Pass namespace context to child elements
+        const childResult = extractHIRStaticHtml(
+          child.value,
+          ctx,
+          ops,
+          childPath,
+          resolvedNamespace,
+        )
+        html += childResult.html
+        bindings.push(...childResult.bindings)
+        childIndex += childResult.nodeCount
+      } else if (child.kind === 'expression') {
+        const inline = hasAdjacentInline(i)
+        if (!inline && ops.isLikelyTextExpression(child.value, ctx)) {
+          html += ' '
+          bindings.push({
+            type: 'text',
+            path: [...parentPath, childIndex],
+            expr: child.value,
+            // Track namespace for dynamic text bindings
+            namespace: resolvedNamespace,
+          })
+        } else {
+          // Dynamic expression - insert placeholder comments
+          html += '<!--fict:slot:start--><!--fict:slot:end-->'
+          bindings.push({
+            type: 'child',
+            path: [...parentPath, childIndex],
+            expr: child.value,
+            // Track namespace for dynamic child bindings
+            namespace: resolvedNamespace,
+          })
+          childIndex++
+          continue
+        }
         childIndex++
       }
-    } else if (child.kind === 'element') {
-      const childPath = [...parentPath, childIndex]
-      // Pass namespace context to child elements
-      const childResult = extractHIRStaticHtml(child.value, ctx, ops, childPath, resolvedNamespace)
-      html += childResult.html
-      bindings.push(...childResult.bindings)
-      childIndex += childResult.nodeCount
-    } else if (child.kind === 'expression') {
-      const inline = hasAdjacentInline(i)
-      if (!inline && ops.isLikelyTextExpression(child.value, ctx)) {
-        html += ' '
-        bindings.push({
-          type: 'text',
-          path: [...parentPath, childIndex],
-          expr: child.value,
-          // Track namespace for dynamic text bindings
-          namespace: resolvedNamespace,
-        })
-      } else {
-        // Dynamic expression - insert placeholder comments
-        html += '<!--fict:slot:start--><!--fict:slot:end-->'
-        bindings.push({
-          type: 'child',
-          path: [...parentPath, childIndex],
-          expr: child.value,
-          // Track namespace for dynamic child bindings
-          namespace: resolvedNamespace,
-        })
-        childIndex++
-        continue
-      }
-      childIndex++
     }
   }
 
