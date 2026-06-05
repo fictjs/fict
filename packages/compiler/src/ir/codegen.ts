@@ -87,6 +87,7 @@ import {
 } from './codegen-template-extraction'
 import {
   HIRError,
+  type BabelDirective,
   type BasicBlock,
   type Expression,
   type HIRFunction,
@@ -113,6 +114,31 @@ import { structurizeCFG, structurizeCFGWithDiagnostics } from './structurize'
 export { getReactiveCallKind } from './codegen-reactive-kind'
 
 const HOOK_SLOT_BASE = 1000
+
+function cloneDirectives(
+  directives: BabelDirective[] | undefined,
+  t: typeof BabelCore.types,
+): BabelCore.types.Directive[] {
+  return (directives ?? []).map(
+    directive => t.cloneNode(directive, true) as BabelCore.types.Directive,
+  )
+}
+
+function buildFunctionBlock(
+  fn: HIRFunction,
+  statements: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): BabelCore.types.BlockStatement {
+  return t.blockStatement(statements, cloneDirectives(fn.meta?.directives, t))
+}
+
+function buildProgram(
+  program: HIRProgram,
+  body: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): BabelCore.types.Program {
+  return t.program(body, cloneDirectives(program.directives, t))
+}
 
 const cloneLoc = (loc?: BabelCore.types.SourceLocation | null) =>
   loc === undefined
@@ -668,7 +694,7 @@ export function lowerHIRToBabel(
     return true
   })
 
-  return t.file(t.program(attachHelperImports(ctx, filteredBody, t)))
+  return t.file(buildProgram(program, attachHelperImports(ctx, filteredBody, t), t))
 }
 
 function buildOutputParams(
@@ -723,7 +749,11 @@ function lowerFunction(
   }
 
   const result = setNodeLoc(
-    t.functionDeclaration(t.identifier(fn.name ?? 'fn'), params, t.blockStatement(statements)),
+    t.functionDeclaration(
+      t.identifier(fn.name ?? 'fn'),
+      params,
+      buildFunctionBlock(fn, statements, t),
+    ),
     fn.loc,
   )
   result.async = !!fn.meta?.isAsync || functionHasAsyncAwait(fn)
@@ -3613,7 +3643,7 @@ export function codegenWithScopes(
     if (funcStmt) body.push(funcStmt)
   }
 
-  return t.file(t.program(body))
+  return t.file(buildProgram(program, body, t))
 }
 
 /**
@@ -3637,7 +3667,11 @@ function lowerFunctionWithScopes(
   }
 
   const result = setNodeLoc(
-    t.functionDeclaration(t.identifier(fn.name ?? 'fn'), params, t.blockStatement(statements)),
+    t.functionDeclaration(
+      t.identifier(fn.name ?? 'fn'),
+      params,
+      buildFunctionBlock(fn, statements, t),
+    ),
     fn.loc,
   )
   result.async = !!fn.meta?.isAsync || functionHasAsyncAwait(fn)
@@ -4105,7 +4139,7 @@ export function lowerHIRWithRegions(
     },
   })
   setModuleMetadata(options?.filename, moduleMeta, options)
-  return t.file(t.program(attachHelperImports(ctx, body, t)))
+  return t.file(buildProgram(program, attachHelperImports(ctx, body, t), t))
 }
 
 /**
@@ -5464,7 +5498,7 @@ function lowerFunctionWithRegions(
         t.functionDeclaration(
           t.identifier(fn.name ?? 'fn'),
           params,
-          t.blockStatement(pureStatements),
+          buildFunctionBlock(fn, pureStatements, t),
         ),
         fn.loc,
       )
@@ -5604,7 +5638,11 @@ function lowerFunctionWithRegions(
   // De-version param names for clean output
   const params = finalParams
   const funcDecl = setNodeLoc(
-    t.functionDeclaration(t.identifier(fn.name ?? 'fn'), params, t.blockStatement(statements)),
+    t.functionDeclaration(
+      t.identifier(fn.name ?? 'fn'),
+      params,
+      buildFunctionBlock(fn, statements, t),
+    ),
     fn.loc,
   )
   funcDecl.async = isAsync

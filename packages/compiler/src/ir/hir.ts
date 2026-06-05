@@ -1,4 +1,4 @@
-import type { ClassBody, LVal, Node, SourceLocation, Statement } from '@babel/types'
+import type { ClassBody, Directive, LVal, Node, SourceLocation, Statement } from '@babel/types'
 
 import type { FictMacroKind } from './macro-bindings'
 
@@ -19,6 +19,11 @@ import type { FictMacroKind } from './macro-bindings'
  * These represent preamble (imports) and postamble (exports) statements.
  */
 export type BabelStatement = Statement
+
+/**
+ * Type alias for Babel directive prologue entries that should be re-emitted.
+ */
+export type BabelDirective = Directive
 
 /**
  * Type alias for class body members from Babel AST.
@@ -648,6 +653,7 @@ export interface HIRFunction extends SourceInfo {
     | {
         fromExpression?: boolean | undefined
         functionExpressionName?: string | undefined
+        directives?: BabelDirective[] | undefined
         isArrow?: boolean | undefined
         hasExpressionBody?: boolean | undefined
         isAsync?: boolean | undefined
@@ -677,4 +683,6 @@ export interface HIRProgram {
   postamble: PostambleItem[]
   /** Original program body for stable reordering during codegen (Babel Statement nodes) */
   originalBody?: BabelStatement[]
+  /** Program directive prologue entries preserved during codegen. */
+  directives?: BabelDirective[] | undefined
 }

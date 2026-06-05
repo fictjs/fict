@@ -12,6 +12,7 @@ import {
   type ArrayExpression as HArrayExpression,
   type ArrowFunctionExpression as HArrowFunctionExpression,
   type AssignmentExpression as HAssignmentExpression,
+  type BabelDirective,
   type BabelStatement,
   type BasicBlock,
   type BinaryExpression as HBinaryExpression,
@@ -323,6 +324,18 @@ function hasPureDirectiveInStatements(body: BabelCore.types.Statement[]): boolea
     t.isStringLiteral(first.expression) &&
     first.expression.value === PURE_DIRECTIVE_TEXT
   )
+}
+
+function isConsumedFictDirective(value: string): boolean {
+  return value === 'use no memo' || value === PURE_DIRECTIVE_TEXT
+}
+
+function clonePreservedDirectives(
+  directives?: BabelCore.types.Directive[] | null,
+): BabelDirective[] {
+  return (directives ?? [])
+    .filter(directive => !isConsumedFictDirective(directive.value.value))
+    .map(directive => t.cloneNode(directive, true) as BabelDirective)
 }
 
 function hasPureAnnotation(node: BabelCore.types.Node | null | undefined): boolean {
@@ -837,6 +850,7 @@ export function buildHIR(
     const preamble: PreambleItem[] = []
     const postamble: PostambleItem[] = []
     const originalBody = [...expandedAst.program.body] as BabelStatement[]
+    const directives = clonePreservedDirectives(expandedAst.program.directives)
     const programNoMemo =
       hasNoMemoDirective(expandedAst.program.directives) ||
       hasNoMemoDirectiveInStatements(expandedAst.program.body as BabelCore.types.Statement[])
@@ -1040,7 +1054,13 @@ export function buildHIR(
       postamble.push(stmt)
     }
 
-    return { functions, preamble, postamble, originalBody }
+    return {
+      functions,
+      preamble,
+      postamble,
+      originalBody,
+      ...(directives.length > 0 ? { directives } : null),
+    }
   } finally {
     activeMacroAliases = prevMacroAliases
     activeBuildOptions = prevOptions
@@ -1783,6 +1803,7 @@ function convertFunction(
   const hasNoMemo =
     !!options?.noMemo || hasNoMemoDirective(options?.directives ?? null) || hasNoMemoInBody
   const hasPure = !!options?.pure || hasPureDirective(options?.directives ?? null) || hasPureInBody
+  const directives = clonePreservedDirectives(options?.directives ?? null)
   const isAsync = !!options?.isAsync
   const isGenerator = !!options?.isGenerator
 
@@ -1791,7 +1812,13 @@ function convertFunction(
 
   const hasLabeledStatements = cfgContext.labeledStatements.size > 0
   const hasMeta =
-    hasNoMemo || hasPure || fictReturnInfo || isAsync || isGenerator || hasLabeledStatements
+    hasNoMemo ||
+    hasPure ||
+    directives.length > 0 ||
+    fictReturnInfo ||
+    isAsync ||
+    isGenerator ||
+    hasLabeledStatements
 
   return {
     rawParams: params,
@@ -1802,6 +1829,7 @@ function convertFunction(
       ? {
           ...(hasNoMemo ? { noMemo: true } : null),
           ...(hasPure ? { pure: true } : null),
+          ...(directives.length > 0 ? { directives } : null),
           ...(fictReturnInfo ? { hookReturnInfo: fictReturnInfo } : null),
           ...(isAsync ? { isAsync: true } : null),
           ...(isGenerator ? { isGenerator: true } : null),
