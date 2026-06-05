@@ -3837,6 +3837,85 @@ function lowerIntrinsicElement(
           ),
         )
       } else {
+        const explicitEventTuple =
+          binding.expr.kind === 'ArrayExpression' &&
+          binding.expr.elements.length === 2 &&
+          binding.expr.elements[0] &&
+          binding.expr.elements[1]
+            ? {
+                handler: binding.expr.elements[0],
+                data: binding.expr.elements[1],
+              }
+            : null
+
+        if (explicitEventTuple) {
+          const tupleHandler =
+            explicitEventTuple.handler.kind === 'Identifier'
+              ? t.identifier(deSSAVarName(explicitEventTuple.handler.name))
+              : lowerExpression(explicitEventTuple.handler, ctx)
+          const tupleData = lowerDomExpression(explicitEventTuple.data, ctx, containingRegion, {
+            skipHookAccessors: false,
+            skipRegionRootOverride: true,
+          })
+          const tupleDataValue = isStaticDelegatedDataExpression(explicitEventTuple.data, ctx)
+            ? tupleData
+            : markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], tupleData))
+          const tupleValue = t.arrayExpression([tupleHandler, tupleDataValue])
+
+          if (isDelegated) {
+            ctx.delegatedEventsUsed?.add(eventName)
+            ctx.helpersUsed.add('addEventListener')
+            statements.push(
+              t.expressionStatement(
+                t.callExpression(runtimeIdentifier(ctx, 'addEventListener'), [
+                  targetId,
+                  t.stringLiteral(eventName),
+                  tupleValue,
+                  t.booleanLiteral(true),
+                ]),
+              ),
+            )
+          } else {
+            ctx.helpersUsed.add('bindEvent')
+            ctx.helpersUsed.add('onDestroy')
+            const cleanupId = genTemp(ctx, 'evt')
+            const args: BabelCore.types.Expression[] = [
+              targetId,
+              t.stringLiteral(eventName),
+              tupleValue,
+            ]
+            if (hasEventOptions && binding.eventOptions) {
+              const optionProps: BabelCore.types.ObjectProperty[] = []
+              if (binding.eventOptions.capture) {
+                optionProps.push(t.objectProperty(t.identifier('capture'), t.booleanLiteral(true)))
+              }
+              if (binding.eventOptions.passive) {
+                optionProps.push(t.objectProperty(t.identifier('passive'), t.booleanLiteral(true)))
+              }
+              if (binding.eventOptions.once) {
+                optionProps.push(t.objectProperty(t.identifier('once'), t.booleanLiteral(true)))
+              }
+              if (optionProps.length > 0) {
+                args.push(t.objectExpression(optionProps))
+              }
+            }
+            statements.push(
+              t.variableDeclaration('const', [
+                t.variableDeclarator(
+                  cleanupId,
+                  t.callExpression(runtimeIdentifier(ctx, 'bindEvent'), args),
+                ),
+              ]),
+            )
+            statements.push(
+              t.expressionStatement(
+                t.callExpression(runtimeIdentifier(ctx, 'onDestroy'), [cleanupId]),
+              ),
+            )
+          }
+          continue
+        }
+
         // Standard path - lower the entire expression
         const shouldWrapHandler = isExpressionReactive(binding.expr, ctx)
         const prevWrapTracked = ctx.wrapTrackedExpressions
