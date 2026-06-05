@@ -394,6 +394,83 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toContain('return useCounter()?.count;')
     })
 
+    it('tracks optional direct hook-call accessor returns across modules', () => {
+      const hookPath = path.join(baseDir, 'use-counter-optional-direct.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(hookPath), {
+        version: 1,
+        exports: {},
+        hooks: { useCounter: { directAccessor: 'signal' } },
+      })
+      const appSource = `
+        import { useCounter } from './use-counter-optional-direct'
+
+        export function App() {
+          const count = useCounter?.()
+          return <div>{count}</div>
+        }
+      `
+
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-optional-direct.tsx'),
+      )
+
+      expect(output).toMatch(/useCounter\?\.\(\)/)
+      expect(output).toMatch(/count\(\)/)
+      expect(output).not.toMatch(/=> count[,)]/)
+    })
+
+    it('keeps optional direct hook calls opaque without metadata', () => {
+      const appSource = `
+        import { useCounter } from './use-counter-optional-direct-missing'
+
+        export function App() {
+          const count = useCounter?.()
+          return <div>{count}</div>
+        }
+      `
+
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true },
+        path.join(baseDir, 'app-hook-optional-direct-missing.tsx'),
+      )
+
+      expect(output).toMatch(/useCounter\?\.\(\)/)
+      expect(output).not.toMatch(/count\(\)/)
+      expect(output).toMatch(/=> count[,)]/)
+    })
+
+    it('tracks optional namespace hook-call accessor returns across modules', () => {
+      const hookPath = path.join(baseDir, 'use-counter-optional-namespace.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(hookPath), {
+        version: 1,
+        exports: {},
+        hooks: { useCounter: { directAccessor: 'signal' } },
+      })
+      const appSource = `
+        import * as hooks from './use-counter-optional-namespace'
+
+        export function App() {
+          const count = hooks.useCounter?.()
+          return <div>{count}</div>
+        }
+      `
+
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-optional-namespace.tsx'),
+      )
+
+      expect(output).toMatch(/hooks\.useCounter\?\.\(\)/)
+      expect(output).toMatch(/count\(\)/)
+      expect(output).not.toMatch(/=> count[,)]/)
+    })
+
     it('unwraps namespace direct hook-call member reads across modules', () => {
       const hookSource = `
         import { $state } from 'fict'

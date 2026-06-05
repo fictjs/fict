@@ -2575,6 +2575,49 @@ function createHIREntrypointVisitor(
             )
           }
         }
+        const validateDirectHookPlacement = (
+          callPath: BabelCore.NodePath<
+            BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+          >,
+        ): void => {
+          const callee = callPath.node.callee
+          if (!t.isIdentifier(callee)) return
+          const calleeId = callee.name
+          if (!isHookName(calleeId)) return
+
+          const binding = callPath.scope.getBinding(calleeId)
+          const bindingPath = binding?.path
+          const bindingIsHook =
+            (!bindingPath && isHookName(calleeId)) ||
+            bindingPath?.isImportSpecifier() ||
+            bindingPath?.isImportDefaultSpecifier() ||
+            (bindingPath?.isFunctionDeclaration() &&
+              isHookDefinition(bindingPath as BabelCore.NodePath<BabelCore.types.Function>)) ||
+            (bindingPath?.isVariableDeclarator() &&
+              (() => {
+                const init = bindingPath.get('init')
+                if (!init?.isFunction()) return false
+                return isHookDefinition(init as BabelCore.NodePath<BabelCore.types.Function>)
+              })())
+
+          if (!bindingIsHook) return
+
+          const ownerFunction = callPath.getFunctionParent()
+          if (!ownerFunction || !isComponentOrHookDefinition(ownerFunction)) {
+            throw callPath.buildCodeFrameError(
+              `${calleeId}() must be called inside a component or hook (useX)`,
+            )
+          }
+          if (
+            isInsideLoop(callPath) ||
+            isInsideConditional(callPath) ||
+            isInsideNestedFunctionWithReactiveScopes(callPath)
+          ) {
+            throw callPath.buildCodeFrameError(
+              `${calleeId}() must be called at the top level of a component or hook (no loops/conditions/nested functions)`,
+            )
+          }
+        }
         const isImportedReactiveCreationCall = (
           callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
         ): boolean => {
@@ -2892,8 +2935,6 @@ function createHIREntrypointVisitor(
                 )
               }
             }
-            const callee = callPath.node.callee
-            const calleeId = t.isIdentifier(callee) ? callee.name : null
             if (
               isImportedReactiveCreationCall(callPath) &&
               (isInsideLoop(callPath) || isInsideConditional(callPath)) &&
@@ -2908,40 +2949,7 @@ function createHIREntrypointVisitor(
               )
             }
             validateMemberHookPlacement(callPath)
-            if (calleeId && isHookName(calleeId)) {
-              const binding = callPath.scope.getBinding(calleeId)
-              const bindingPath = binding?.path
-              const bindingIsHook =
-                (!bindingPath && isHookName(calleeId)) ||
-                bindingPath?.isImportSpecifier() ||
-                bindingPath?.isImportDefaultSpecifier() ||
-                (bindingPath?.isFunctionDeclaration() &&
-                  isHookDefinition(bindingPath as BabelCore.NodePath<BabelCore.types.Function>)) ||
-                (bindingPath?.isVariableDeclarator() &&
-                  (() => {
-                    const init = bindingPath.get('init')
-                    if (!init?.isFunction()) return false
-                    return isHookDefinition(init as BabelCore.NodePath<BabelCore.types.Function>)
-                  })())
-
-              if (bindingIsHook) {
-                const ownerFunction = callPath.getFunctionParent()
-                if (!ownerFunction || !isComponentOrHookDefinition(ownerFunction)) {
-                  throw callPath.buildCodeFrameError(
-                    `${calleeId}() must be called inside a component or hook (useX)`,
-                  )
-                }
-                if (
-                  isInsideLoop(callPath) ||
-                  isInsideConditional(callPath) ||
-                  isInsideNestedFunctionWithReactiveScopes(callPath)
-                ) {
-                  throw callPath.buildCodeFrameError(
-                    `${calleeId}() must be called at the top level of a component or hook (no loops/conditions/nested functions)`,
-                  )
-                }
-              }
-            }
+            validateDirectHookPlacement(callPath)
             const isAllowedStateCallee =
               macroKind === 'effect' ||
               macroKind === 'memo' ||
@@ -3006,6 +3014,7 @@ function createHIREntrypointVisitor(
           OptionalCallExpression(callPath) {
             rejectUnsupportedNamespaceMacroCall(callPath)
             validateMemberHookPlacement(callPath)
+            validateDirectHookPlacement(callPath)
             emitDirectStateArgumentWarnings(callPath, isImportedStateArgumentAllowedCall(callPath))
           },
         })

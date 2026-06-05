@@ -709,6 +709,19 @@ describe('Rule I: Component-only state placement', () => {
     expect(() => transform(input)).toThrow(/top level of a component or hook/)
   })
 
+  it('throws when optional direct hook calls are conditional', () => {
+    const input = `
+      import { useCounter } from './hooks'
+      function Component() {
+        if (true) {
+          useCounter?.()
+        }
+        return null
+      }
+    `
+    expect(() => transform(input)).toThrow(/useCounter\(\) must be called at the top level/)
+  })
+
   it('throws when hook-style useX is called in logical conditional branches', () => {
     const input = `
       import { $state } from 'fict'
