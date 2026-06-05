@@ -773,27 +773,33 @@ function containsJSXExpr(expr: Expression | null | undefined): boolean {
   }
 }
 
-export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): boolean {
-  const getStaticPropertyName = (property: Expression, computed: boolean): string | null => {
-    if (!computed && property.kind === 'Identifier') return property.name
-    if (property.kind === 'Literal') {
-      if (typeof property.value === 'string' || typeof property.value === 'number') {
-        return String(property.value)
-      }
+function getStaticPropertyName(property: Expression, computed: boolean): string | null {
+  if (!computed && property.kind === 'Identifier') return property.name
+  if (property.kind === 'Literal') {
+    if (typeof property.value === 'string' || typeof property.value === 'number') {
+      return String(property.value)
     }
+  }
+  return null
+}
+
+function getNamespaceReactiveMemberKind(
+  candidate: Expression,
+  ctx: CodegenContext,
+): 'signal' | 'memo' | 'store' | null {
+  if (candidate.kind !== 'MemberExpression' && candidate.kind !== 'OptionalMemberExpression') {
     return null
   }
-  const isNamespaceStoreMember = (candidate: Expression): boolean => {
-    if (candidate.kind !== 'MemberExpression' && candidate.kind !== 'OptionalMemberExpression') {
-      return false
-    }
-    if (candidate.object.kind !== 'Identifier') return false
-    const nsMeta = ctx.importedNamespaces?.get(deSSAVarName(candidate.object.name))
-    if (!nsMeta) return false
-    const propName = getStaticPropertyName(candidate.property as Expression, candidate.computed)
-    return !!propName && nsMeta.exports[propName] === 'store'
-  }
+  if (candidate.object.kind !== 'Identifier') return null
+  const nsMeta = ctx.importedNamespaces?.get(deSSAVarName(candidate.object.name))
+  if (!nsMeta) return null
+  const propName = getStaticPropertyName(candidate.property as Expression, candidate.computed)
+  if (!propName) return null
+  const kind = nsMeta.exports[propName]
+  return kind === 'signal' || kind === 'memo' || kind === 'store' ? kind : null
+}
 
+export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): boolean {
   switch (expr.kind) {
     case 'Identifier':
       return (
@@ -804,7 +810,7 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
       )
     case 'MemberExpression':
     case 'OptionalMemberExpression':
-      if (isNamespaceStoreMember(expr)) return true
+      if (getNamespaceReactiveMemberKind(expr, ctx)) return true
       if (expressionUsesTracked(expr.object as Expression, ctx)) return true
       if (expr.computed && expr.property.kind !== 'Literal') {
         return expressionUsesTracked(expr.property as Expression, ctx)
@@ -4195,6 +4201,22 @@ function instructionToStatement(
     const isShadowDeclaration = !!declKind && declaredVars.has(baseName)
     const treatAsTracked = !isShadowDeclaration && isTracked
     const isDestructuringTemp = baseName.startsWith('__destruct_')
+    const namespaceMemberKind = getNamespaceReactiveMemberKind(instr.value, ctx)
+    const isNamespaceAccessorAlias =
+      namespaceMemberKind === 'signal' || namespaceMemberKind === 'memo'
+    const markReactiveAliasIfNeeded = (): void => {
+      if (isDestructuringTemp) return
+      if (isNamespaceAccessorAlias) {
+        aliasVars.add(baseName)
+        return
+      }
+      if (
+        instr.value.kind === 'Identifier' &&
+        ctx.trackedVars.has(deSSAVarName(instr.value.name))
+      ) {
+        aliasVars.add(baseName)
+      }
+    }
     const callKind = getReactiveCallKind(instr.value, ctx)
     const isStateCall = callKind === 'signal'
     const inRegionMemo = ctx.inRegionMemo ?? false
@@ -4271,13 +4293,7 @@ function instructionToStatement(
       }
 
       if (dependsOnTracked && !isDestructuringTemp) {
-        if (
-          instr.value.kind === 'Identifier' &&
-          ctx.trackedVars.has(deSSAVarName(instr.value.name)) &&
-          !isDestructuringTemp
-        ) {
-          aliasVars.add(baseName)
-        }
+        markReactiveAliasIfNeeded()
         const derivedExpr = lowerAssignedValue(true)
         if (needsMutable) {
           ctx.memoVars?.delete(baseName)
@@ -4333,13 +4349,7 @@ function instructionToStatement(
         }
 
         if (dependsOnTracked) {
-          if (
-            instr.value.kind === 'Identifier' &&
-            ctx.trackedVars.has(deSSAVarName(instr.value.name)) &&
-            !isDestructuringTemp
-          ) {
-            aliasVars.add(baseName)
-          }
+          markReactiveAliasIfNeeded()
           const derivedExpr = lowerAssignedValue(true)
           if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
             return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
@@ -4368,13 +4378,7 @@ function instructionToStatement(
       }
 
       if (dependsOnTracked && !isDestructuringTemp) {
-        if (
-          instr.value.kind === 'Identifier' &&
-          ctx.trackedVars.has(deSSAVarName(instr.value.name)) &&
-          !isDestructuringTemp
-        ) {
-          aliasVars.add(baseName)
-        }
+        markReactiveAliasIfNeeded()
         const derivedExpr = lowerAssignedValue(true)
         if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
           return createNonReactiveVarDecl(baseName, derivedExpr, ctx, t)
@@ -4430,11 +4434,11 @@ function instructionToStatement(
       !isDestructuringTemp &&
       !isTracked &&
       !isSignal &&
-      instr.value.kind === 'Identifier' &&
-      ctx.trackedVars.has(deSSAVarName(instr.value.name))
+      (isNamespaceAccessorAlias ||
+        (instr.value.kind === 'Identifier' && ctx.trackedVars.has(deSSAVarName(instr.value.name))))
     ) {
       const derivedExpr = lowerAssignedValue(true)
-      aliasVars.add(baseName)
+      markReactiveAliasIfNeeded()
 
       if (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) {
         return t.expressionStatement(

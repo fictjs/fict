@@ -1319,6 +1319,69 @@ describe('Cross-Module Reactivity', () => {
       })
     })
 
+    it('publishes namespace imported signal and memo aliases as memo metadata', () => {
+      const sourcePath = path.join(baseDir, 'reactive-namespace-source.ts')
+      const producerPath = path.join(baseDir, 'reactive-namespace-alias-producer.ts')
+      const consumerPath = path.join(baseDir, 'reactive-namespace-alias-consumer.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(sourcePath), {
+        version: 1,
+        exports: {
+          count: 'signal',
+          doubled: 'memo',
+        },
+      })
+
+      const producerSource = `
+        import * as source from './reactive-namespace-source'
+
+        const countAlias = source.count
+        const memoAlias = source.doubled
+        export const directAlias = source.count
+        const defaultAlias = source.doubled
+
+        export { countAlias, memoAlias }
+        export default defaultAlias
+
+        export function readCount() {
+          return source.count
+        }
+      `
+
+      const producerOutput = transform(producerSource, { moduleMetadata }, producerPath)
+
+      expect(producerOutput).not.toContain('const countAlias = source.count();')
+      expect(producerOutput).not.toContain('const memoAlias = source.doubled();')
+      expect(producerOutput).not.toContain('export const directAlias = source.count();')
+      expect(producerOutput).toMatch(/countAlias\s*=\s*createMemo\(\(\) => source\.count\(\)/)
+      expect(producerOutput).toMatch(/memoAlias\s*=\s*createMemo\(\(\) => source\.doubled\(\)/)
+      expect(producerOutput).toMatch(/directAlias\s*=\s*createMemo\(\(\) => source\.count\(\)/)
+      expect(producerOutput).toMatch(/return source\.count\(\)/)
+      expect(moduleMetadata.get(path.resolve(producerPath))?.exports).toEqual({
+        countAlias: 'memo',
+        memoAlias: 'memo',
+        directAlias: 'memo',
+        default: 'memo',
+      })
+
+      const consumerSource = `
+        import { countAlias, directAlias, memoAlias } from './reactive-namespace-alias-producer'
+
+        export function App() {
+          return <div>{countAlias}{directAlias}{memoAlias}</div>
+        }
+      `
+      const consumerOutput = transform(
+        consumerSource,
+        { fineGrainedDom: true, moduleMetadata },
+        consumerPath,
+      )
+
+      expect(consumerOutput).toMatch(/countAlias\(\)/)
+      expect(consumerOutput).toMatch(/directAlias\(\)/)
+      expect(consumerOutput).toMatch(/memoAlias\(\)/)
+    })
+
     it('publishes hook metadata for imported accessor returns', () => {
       const sourcePath = path.join(baseDir, 'imported-accessor-source.ts')
       const hookPath = path.join(baseDir, 'imported-accessor-hooks.tsx')
