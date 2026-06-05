@@ -204,12 +204,19 @@ export function collectExpressionIdentifiersDeep(
       // E.g., for `numbers.find(n => n === target)`: detect `target`
       // But for `(() => { return () => count })()`: don't detect `count` in the inner function
       const tempSet = new Set<string>()
+      const localFunctions = new Map<string, Expression>()
       if (expr.isExpression && expr.body && !Array.isArray(expr.body)) {
         collectExpressionIdentifiers(expr.body as Expression, tempSet)
       } else if (Array.isArray(expr.body)) {
         for (const block of expr.body) {
           for (const instr of block.instructions) {
             if (instr.kind === 'Assign') {
+              if (
+                instr.target.kind === 'Identifier' &&
+                (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression')
+              ) {
+                localFunctions.set(deSSAVarName(instr.target.name), instr.value)
+              }
               collectExpressionIdentifiers(instr.value, tempSet)
             } else if (instr.kind === 'Expression') {
               collectExpressionIdentifiers(instr.value, tempSet)
@@ -231,6 +238,12 @@ export function collectExpressionIdentifiersDeep(
             collectExpressionIdentifiers(term.object, tempSet)
           } else if (term.kind === 'Return' && term.argument) {
             collectExpressionIdentifiers(term.argument, tempSet)
+            if (term.argument.kind === 'Identifier') {
+              const returnedFunction = localFunctions.get(deSSAVarName(term.argument.name))
+              if (returnedFunction) {
+                collectExpressionIdentifiersDeep(returnedFunction, tempSet, bound)
+              }
+            }
           } else if (term.kind === 'Throw') {
             collectExpressionIdentifiers(term.argument, tempSet)
           }
@@ -247,9 +260,16 @@ export function collectExpressionIdentifiersDeep(
     case 'FunctionExpression': {
       // Same logic as ArrowFunction - use shallow traversal inside function bodies
       const tempSet = new Set<string>()
+      const localFunctions = new Map<string, Expression>()
       for (const block of expr.body) {
         for (const instr of block.instructions) {
           if (instr.kind === 'Assign') {
+            if (
+              instr.target.kind === 'Identifier' &&
+              (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression')
+            ) {
+              localFunctions.set(deSSAVarName(instr.target.name), instr.value)
+            }
             collectExpressionIdentifiers(instr.value, tempSet)
           } else if (instr.kind === 'Expression') {
             collectExpressionIdentifiers(instr.value, tempSet)
@@ -271,6 +291,12 @@ export function collectExpressionIdentifiersDeep(
           collectExpressionIdentifiers(term.object, tempSet)
         } else if (term.kind === 'Return' && term.argument) {
           collectExpressionIdentifiers(term.argument, tempSet)
+          if (term.argument.kind === 'Identifier') {
+            const returnedFunction = localFunctions.get(deSSAVarName(term.argument.name))
+            if (returnedFunction) {
+              collectExpressionIdentifiersDeep(returnedFunction, tempSet, bound)
+            }
+          }
         } else if (term.kind === 'Throw') {
           collectExpressionIdentifiers(term.argument, tempSet)
         }
