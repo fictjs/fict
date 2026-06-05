@@ -923,6 +923,76 @@ describe('semantic validation', () => {
     }
   })
 
+  it('warns FICT-R005 when callback-producing expressions escape', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        function consume(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          consume((() => () => count)())
+          return <div />
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function consume(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          function makeRead() {
+            return () => count
+          }
+          consume(makeRead())
+          return <div />
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function consume(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          consume(true ? () => count : () => 0)
+          return <div />
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function consume(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          consume(true && (() => count))
+          return <div />
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function consume(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          consume((0, () => count))
+          return <div />
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      const warnings: Array<{ code: string }> = []
+      transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+      expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
+      expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-R005/)
+    }
+  })
+
   it('warns FICT-R005 when inline closure escapes via optional callback boundary', () => {
     const cases = [
       `

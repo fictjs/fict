@@ -673,6 +673,7 @@ function runWarningPass(
     BabelCore.types.Identifier,
     { instance: Map<string, Set<string>>; static: Map<string, Set<string>> }
   >()
+  const capturedClosureReturnByBinding = new Map<BabelCore.types.Identifier, Set<string>>()
   interface CaptureOptions {
     includeNestedFunctions?: boolean
   }
@@ -738,6 +739,7 @@ function runWarningPass(
   }
   type ScopeBinding = NonNullable<ReturnType<BabelCore.NodePath['scope']['getBinding']>>
   const resolvingClosureBindings = new Set<BabelCore.types.Identifier>()
+  const resolvingClosureReturnBindings = new Set<BabelCore.types.Identifier>()
   const mergeCapturedSets = (
     target: Set<string> | null,
     captured: Set<string> | null,
@@ -851,6 +853,48 @@ function runWarningPass(
     exprPath: BabelCore.NodePath,
     options: CaptureOptions = {},
   ): Set<string> | null => {
+    if (
+      exprPath.isParenthesizedExpression() ||
+      exprPath.isTSAsExpression() ||
+      exprPath.isTSTypeAssertion() ||
+      exprPath.isTSNonNullExpression() ||
+      exprPath.isTSSatisfiesExpression() ||
+      exprPath.isTypeCastExpression()
+    ) {
+      return getCapturedFromExpression(exprPath.get('expression') as BabelCore.NodePath, options)
+    }
+    if (exprPath.isConditionalExpression()) {
+      let captured: Set<string> | null = null
+      captured = mergeCapturedSets(
+        captured,
+        getCapturedFromExpression(exprPath.get('consequent') as BabelCore.NodePath, options),
+      )
+      captured = mergeCapturedSets(
+        captured,
+        getCapturedFromExpression(exprPath.get('alternate') as BabelCore.NodePath, options),
+      )
+      return captured
+    }
+    if (exprPath.isLogicalExpression()) {
+      let captured: Set<string> | null = null
+      captured = mergeCapturedSets(
+        captured,
+        getCapturedFromExpression(exprPath.get('left') as BabelCore.NodePath, options),
+      )
+      captured = mergeCapturedSets(
+        captured,
+        getCapturedFromExpression(exprPath.get('right') as BabelCore.NodePath, options),
+      )
+      return captured
+    }
+    if (exprPath.isSequenceExpression()) {
+      const expressions = exprPath.get('expressions') as BabelCore.NodePath[]
+      const tail = expressions[expressions.length - 1]
+      return tail ? getCapturedFromExpression(tail, options) : null
+    }
+    if (exprPath.isCallExpression() || exprPath.isOptionalCallExpression()) {
+      return getCapturedFromCallResult(exprPath, options)
+    }
     if (exprPath.isArrowFunctionExpression() || exprPath.isFunctionExpression()) {
       const captured = collectCapturedReactiveNames(exprPath, options)
       return captured.size > 0 ? captured : null
@@ -864,6 +908,77 @@ function runWarningPass(
     if (!exprPath.isIdentifier()) return null
     const binding = exprPath.scope.getBinding(exprPath.node.name)
     return binding ? getCapturedFromBinding(binding, options) : null
+  }
+  const getCapturedFromFunctionReturn = (
+    fnPath: BabelCore.NodePath<
+      | BabelCore.types.FunctionDeclaration
+      | BabelCore.types.FunctionExpression
+      | BabelCore.types.ArrowFunctionExpression
+    >,
+    options: CaptureOptions = {},
+  ): Set<string> | null => {
+    if (fnPath.isArrowFunctionExpression() && !t.isBlockStatement(fnPath.node.body)) {
+      return getCapturedFromExpression(fnPath.get('body') as BabelCore.NodePath, options)
+    }
+
+    let captured: Set<string> | null = null
+    const bodyPath = fnPath.get('body') as BabelCore.NodePath
+    if (!bodyPath.isBlockStatement()) return null
+    bodyPath.traverse({
+      Function(innerPath) {
+        innerPath.skip()
+      },
+      ReturnStatement(returnPath) {
+        const argumentPath = returnPath.get('argument') as BabelCore.NodePath | null
+        if (!argumentPath?.node) return
+        captured = mergeCapturedSets(captured, getCapturedFromExpression(argumentPath, options))
+      },
+    })
+    return captured
+  }
+  const getCapturedFromFunctionReturnBinding = (
+    binding: ScopeBinding,
+    options: CaptureOptions = {},
+  ): Set<string> | null => {
+    const bindingId = binding.identifier as BabelCore.types.Identifier
+    const cached = options.includeNestedFunctions
+      ? undefined
+      : capturedClosureReturnByBinding.get(bindingId)
+    if (cached) return cached.size > 0 ? cached : null
+    if (resolvingClosureReturnBindings.has(bindingId)) return null
+    resolvingClosureReturnBindings.add(bindingId)
+
+    try {
+      let captured: Set<string> | null = null
+      if (binding.path.isFunctionDeclaration()) {
+        captured = getCapturedFromFunctionReturn(binding.path, options)
+      } else if (binding.path.isVariableDeclarator()) {
+        const initPath = binding.path.get('init') as BabelCore.NodePath | null
+        if (initPath?.isFunctionExpression() || initPath?.isArrowFunctionExpression()) {
+          captured = getCapturedFromFunctionReturn(initPath, options)
+        }
+      }
+      if (!options.includeNestedFunctions) {
+        capturedClosureReturnByBinding.set(bindingId, captured ?? new Set())
+      }
+      return captured
+    } finally {
+      resolvingClosureReturnBindings.delete(bindingId)
+    }
+  }
+  const getCapturedFromCallResult = (
+    callPath: BabelCore.NodePath<
+      BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+    >,
+    options: CaptureOptions = {},
+  ): Set<string> | null => {
+    const calleePath = callPath.get('callee') as BabelCore.NodePath
+    if (calleePath.isArrowFunctionExpression() || calleePath.isFunctionExpression()) {
+      return getCapturedFromFunctionReturn(calleePath, options)
+    }
+    if (!calleePath.isIdentifier()) return null
+    const binding = calleePath.scope.getBinding(calleePath.node.name)
+    return binding ? getCapturedFromFunctionReturnBinding(binding, options) : null
   }
   const getCapturedFromObjectPropertyPath = (
     propertyPath: BabelCore.NodePath,
