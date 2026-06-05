@@ -487,6 +487,12 @@ export function extractHIRStaticHtml(
       ? children[0].value
       : null
   const isNonEmptyText = (node: JSXChild): boolean => node.kind === 'text' && node.value.length > 0
+  const isImplicitTableRow = (node: JSXChild | undefined): boolean =>
+    tagName === 'table' &&
+    resolvedNamespace === null &&
+    node?.kind === 'element' &&
+    !node.value.isComponent &&
+    node.value.tagName === 'tr'
   const hasAdjacentInline = (index: number): boolean => {
     const prev = children[index - 1]
     const next = children[index + 1]
@@ -530,6 +536,30 @@ export function extractHIRStaticHtml(
         }
       } else if (child.kind === 'element') {
         previousStaticTextChild = false
+        if (isImplicitTableRow(child)) {
+          const tbodyPath = [...parentPath, childIndex]
+          html += '<tbody>'
+          let rowIndex = 0
+          while (true) {
+            const row = children[i]
+            if (row?.kind !== 'element' || !isImplicitTableRow(row)) break
+            const rowResult = extractHIRStaticHtml(
+              row.value,
+              ctx,
+              ops,
+              [...tbodyPath, rowIndex],
+              resolvedNamespace,
+            )
+            html += rowResult.html
+            bindings.push(...rowResult.bindings)
+            rowIndex += rowResult.nodeCount
+            i++
+          }
+          i--
+          html += '</tbody>'
+          childIndex++
+          continue
+        }
         const childPath = [...parentPath, childIndex]
         // Pass namespace context to child elements
         const childResult = extractHIRStaticHtml(

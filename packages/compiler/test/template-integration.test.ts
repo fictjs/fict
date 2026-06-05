@@ -934,6 +934,78 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps table row binding paths aligned with implicit tbody insertion', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const clicks: string[] = []
+      export let refTag = ''
+      export let api: { set(title: string, active: boolean): void }
+
+      export function App() {
+        let title = $state('first')
+        let active = $state(true)
+        api = {
+          set(nextTitle, nextActive) {
+            title = nextTitle
+            active = nextActive
+          },
+        }
+        return (
+          <table data-testid="table">
+            <tr data-testid="row">
+              <td
+                data-testid="cell"
+                title={title}
+                classList={{ active }}
+                ref={el => { refTag = el ? (el as HTMLElement).tagName : '' }}
+                onClick={event => clicks.push((event.currentTarget as HTMLElement).tagName)}
+              >
+                cell
+              </td>
+            </tr>
+          </table>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(title: string, active: boolean): void }
+      clicks: string[]
+      refTag: string
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const table = container.querySelector('[data-testid="table"]') as HTMLTableElement
+    const row = container.querySelector('[data-testid="row"]') as HTMLTableRowElement
+    const cell = container.querySelector('[data-testid="cell"]') as HTMLTableCellElement
+
+    expect(table.children[0]?.tagName).toBe('TBODY')
+    expect(row.getAttribute('title')).toBeNull()
+    expect(cell.getAttribute('title')).toBe('first')
+    expect(cell.classList.contains('active')).toBe(true)
+    expect(mod.refTag).toBe('TD')
+
+    cell.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(mod.clicks).toEqual(['TD'])
+
+    mod.api.set('next', false)
+    await flushUpdates()
+    expect(row.getAttribute('title')).toBeNull()
+    expect(cell.getAttribute('title')).toBe('next')
+    expect(cell.classList.contains('active')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
   it('binds textarea expression children through the visible value property', async () => {
     const source = `
       import { $state, render } from 'fict'
