@@ -1800,7 +1800,7 @@ function subgraphHasEscapingLoopControlTransfer(
   const block = ctx.blockMap.get(start)
   if (!block) return false
   if (
-    (block.terminator.kind === 'Break' || block.terminator.kind === 'Continue') &&
+    block.terminator.kind === 'Continue' &&
     !protectedBlocks.has(block.terminator.target) &&
     !(allowedTargets?.has(block.terminator.target) ?? false)
   ) {

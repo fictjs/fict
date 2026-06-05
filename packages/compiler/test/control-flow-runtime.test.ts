@@ -2078,6 +2078,86 @@ describe('control flow runtime regressions', () => {
     expect(result.view()).toBe(14)
   })
 
+  it('preserves for-loop breaks through try-finally blocks', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let tick = $state(0)
+          let x = 0
+
+          for (let i = 0; i < 3; i++) {
+            try {
+              break
+            } finally {
+              x = 1
+            }
+          }
+
+          return x
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('preserves while-loop breaks through try-finally blocks', () => {
+    const result = compileAndRunHook<number | (() => number)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let tick = $state(0)
+          let x = 0
+
+          while (tick < 1) {
+            try {
+              break
+            } finally {
+              x = 1
+            }
+          }
+
+          return x
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe(1)
+  })
+
+  it('preserves labeled breaks through try-finally blocks', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let tick = $state(0)
+          let x = 0
+
+          outer: {
+            try {
+              break outer
+            } finally {
+              x = 1
+            }
+            x = 2
+          }
+
+          return x
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(1)
+  })
+
   it('rejects unsafe state-machine fallback for try-finally control flow', () => {
     expect(() =>
       transformCommonJS(
