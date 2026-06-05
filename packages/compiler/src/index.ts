@@ -1690,6 +1690,7 @@ function createHIREntrypointVisitor(
           memo: new Set(),
         }
         const reactiveCreationBindingIds = new Set<BabelCore.types.Identifier>()
+        const stateArgumentAllowedBindingIds = new Set<BabelCore.types.Identifier>()
         const importedReactiveBindingIds = new Set<BabelCore.types.Identifier>()
         path.traverse({
           ImportDeclaration(importPath) {
@@ -1729,6 +1730,10 @@ function createHIREntrypointVisitor(
                   importedName === 'createSelector'
                 ) {
                   addImportBinding(reactiveCreationBindingIds, spec.local.name)
+                  addImportBinding(stateArgumentAllowedBindingIds, spec.local.name)
+                }
+                if (importedName === 'render') {
+                  addImportBinding(stateArgumentAllowedBindingIds, spec.local.name)
                 }
               }
             }
@@ -2011,6 +2016,17 @@ function createHIREntrypointVisitor(
             reactiveCreationBindingIds.has(binding.identifier as BabelCore.types.Identifier)
           )
         }
+        const isImportedStateArgumentAllowedCall = (
+          callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
+        ): boolean => {
+          const callee = callPath.node.callee
+          if (!t.isIdentifier(callee)) return false
+          const binding = callPath.scope.getBinding(callee.name)
+          return !!(
+            binding &&
+            stateArgumentAllowedBindingIds.has(binding.identifier as BabelCore.types.Identifier)
+          )
+        }
         const hasReactiveAliasSourceBinding = (path: BabelCore.NodePath, name: string): boolean =>
           hasTrackedBinding(path, name, stateBindingIds) ||
           hasTrackedBinding(path, name, derivedBindingIds) ||
@@ -2278,8 +2294,7 @@ function createHIREntrypointVisitor(
             const isAllowedStateCallee =
               macroKind === 'effect' ||
               macroKind === 'memo' ||
-              isImportedReactiveCreationCall(callPath) ||
-              calleeId === 'render'
+              isImportedStateArgumentAllowedCall(callPath)
             callPath.node.arguments.forEach(arg => {
               if (
                 t.isIdentifier(arg) &&

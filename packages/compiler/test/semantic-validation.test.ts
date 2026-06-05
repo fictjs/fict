@@ -547,6 +547,48 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
   })
 
+  it('throws FICT-S002 for local render functions that receive state', () => {
+    const source = `
+      import { $state } from 'fict'
+      function render(value) {
+        return value
+      }
+      function App() {
+        let count = $state(0)
+        render(count)
+        return <div />
+      }
+    `
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-S002/)
+  })
+
+  it('throws FICT-S002 for local createMemo functions that receive state', () => {
+    const source = `
+      import { $state } from 'fict'
+      function createMemo(value) {
+        return value
+      }
+      function App() {
+        let count = $state(0)
+        createMemo(count)
+        return <div />
+      }
+    `
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-S002/)
+  })
+
+  it('keeps imported render bindings on the state-argument allowlist', () => {
+    const source = `
+      import { $state, render as mount } from 'fict'
+      function App() {
+        let count = $state(0)
+        mount(count)
+        return <div />
+      }
+    `
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).not.toThrow(/FICT-S002/)
+  })
+
   it('warns on nested mutation through a state member alias', () => {
     const source = `
       import { $state } from 'fict'
