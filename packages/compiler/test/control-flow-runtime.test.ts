@@ -2133,6 +2133,136 @@ describe('control flow runtime regressions', () => {
     ).toThrow('parameter Number')
   })
 
+  it('preserves unused identifier reads that can throw under optimization', () => {
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            const value = missing
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow(ReferenceError)
+
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            const value = void missing
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow(ReferenceError)
+
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            const value = !missing
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow(ReferenceError)
+
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            const value = y
+            let y = 1
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow(/Cannot access 'y' before initialization/)
+
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            const value = C
+            class C {}
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow(/Cannot access 'C' before initialization/)
+
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            const value = typeof y
+            let y = 1
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow(/Cannot access 'y' before initialization/)
+
+    expect(
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            const value = typeof missing
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toBe(1)
+
+    expect(
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            const value = y
+            var y = 1
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toBe(1)
+
+    expect(
+      compileAndRunHook<number>(
+        `
+          import { value } from './dep'
+
+          export function useRun(param) {
+            const fromImport = value
+            const fromParam = param
+            const declared = 1
+            const fromDeclared = declared
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+        [2],
+        { './dep': { value: 3 } },
+      ),
+    ).toBe(1)
+  })
+
   it('preserves tagged template unicode raw and cooked values with optimization', () => {
     const result = compileAndRunHook<string>(
       `

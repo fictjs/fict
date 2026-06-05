@@ -1,5 +1,7 @@
 import * as t from '@babel/types'
 
+import { RUNTIME_HELPERS } from '../constants'
+
 import type {
   BasicBlock,
   Expression,
@@ -52,8 +54,21 @@ interface DefUseInfo {
 interface PurityContext {
   functionPure?: boolean | undefined
   impureIdentifiers?: Set<string> | undefined
+  moduleBindings?: Set<string> | undefined
   shadowedBuiltins?: Set<string> | undefined
   strictMacroBindings?: boolean | undefined
+}
+
+interface IdentifierDeclarationPoint {
+  blockId: BlockId
+  instrIndex: number
+}
+
+interface IdentifierReadSafety {
+  safeFunctionScopeBases: Set<string>
+  lexicalBases: Set<string>
+  lexicalDeclarations: Map<string, IdentifierDeclarationPoint>
+  idom: Map<BlockId, BlockId>
 }
 
 const PURE_MATH_METHODS = new Set([
@@ -123,6 +138,35 @@ const BUILTIN_GLOBAL_NAMES = new Set([
   'parseInt',
   'parseFloat',
 ])
+const KNOWN_SAFE_GLOBAL_READS = new Set([
+  ...BUILTIN_GLOBAL_NAMES,
+  'Array',
+  'Date',
+  'Error',
+  'EvalError',
+  'Intl',
+  'JSON',
+  'Map',
+  'Object',
+  'Promise',
+  'Proxy',
+  'RangeError',
+  'ReferenceError',
+  'Reflect',
+  'RegExp',
+  'Set',
+  'SyntaxError',
+  'TypeError',
+  'URIError',
+  'WeakMap',
+  'WeakSet',
+  'console',
+  'globalThis',
+  'Infinity',
+  'NaN',
+  'undefined',
+])
+const COMPILER_SAFE_IDENTIFIER_READS = new Set<string>(Object.values(RUNTIME_HELPERS))
 const IMPURE_CALLEES = new Set([
   '$state',
   '$effect',
@@ -147,7 +191,8 @@ export interface OptimizeOptions {
 export function optimizeHIR(program: HIRProgram, options: OptimizeOptions = {}): HIRProgram {
   resetGeneratedSSANames()
   const exportedNames = collectExportedNames(program)
-  const moduleShadowedBuiltins = collectModuleShadowedBuiltins(program)
+  const moduleBindings = collectModuleBindings(program)
+  const moduleShadowedBuiltins = collectModuleShadowedBuiltins(moduleBindings)
   const functions = program.functions.map(fn => {
     if (isPureOptimizationCandidate(fn)) {
       const ssaProgram = enterSSA({
@@ -157,10 +202,18 @@ export function optimizeHIR(program: HIRProgram, options: OptimizeOptions = {}):
         originalBody: [],
       })
       const ssaFn = ssaProgram.functions[0]
-      return ssaFn ? optimizeSSAFunction(ssaFn, options, moduleShadowedBuiltins) : fn
+      return ssaFn
+        ? optimizeSSAFunction(ssaFn, options, moduleShadowedBuiltins, moduleBindings)
+        : fn
     }
     if (isReactiveOptimizationCandidate(fn)) {
-      return optimizeReactiveFunction(fn, exportedNames, options, moduleShadowedBuiltins)
+      return optimizeReactiveFunction(
+        fn,
+        exportedNames,
+        options,
+        moduleShadowedBuiltins,
+        moduleBindings,
+      )
     }
     return fn
   })
@@ -174,10 +227,11 @@ function optimizeSSAFunction(
   fn: HIRFunction,
   options: OptimizeOptions,
   moduleShadowedBuiltins: Set<string>,
+  moduleBindings: Set<string>,
 ): HIRFunction {
   let current = fn
   current = propagateConstants(current, options)
-  const purity = buildPurityContext(current, options, moduleShadowedBuiltins)
+  const purity = buildPurityContext(current, options, moduleShadowedBuiltins, moduleBindings)
   current = eliminateCommonSubexpressions(current, purity)
   current = inlineSingleUse(current, purity)
   current = eliminateDeadCode(current, purity)
@@ -982,10 +1036,11 @@ function optimizeReactiveFunction(
   exportedNames: Set<string>,
   options: OptimizeOptions,
   moduleShadowedBuiltins: Set<string>,
+  moduleBindings: Set<string>,
 ): HIRFunction {
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
   const reactive = buildReactiveContext(fn, options)
-  const purity = buildPurityContext(fn, options, moduleShadowedBuiltins)
+  const purity = buildPurityContext(fn, options, moduleShadowedBuiltins, moduleBindings)
   const hookLike = isHookLikeFunction(fn)
   const transformedBlocks = fn.blocks.map(block =>
     optimizeReactiveBlock(block, reactive, purity, options),
@@ -1818,16 +1873,21 @@ function collectBlockUseInfo(
   return info
 }
 
-function collectModuleShadowedBuiltins(program: HIRProgram): Set<string> {
-  const shadowed = new Set<string>()
-  const add = (name: string) => {
-    if (BUILTIN_GLOBAL_NAMES.has(name)) shadowed.add(name)
-  }
+function collectModuleBindings(program: HIRProgram): Set<string> {
+  const bindings = new Set<string>()
   for (const stmt of program.preamble) {
     if (!t.isImportDeclaration(stmt)) continue
     for (const spec of stmt.specifiers) {
-      add(spec.local.name)
+      bindings.add(spec.local.name)
     }
+  }
+  return bindings
+}
+
+function collectModuleShadowedBuiltins(moduleBindings: Set<string>): Set<string> {
+  const shadowed = new Set<string>()
+  for (const name of moduleBindings) {
+    if (BUILTIN_GLOBAL_NAMES.has(name)) shadowed.add(name)
   }
   return shadowed
 }
@@ -1859,11 +1919,13 @@ function buildPurityContext(
   fn: HIRFunction,
   options: OptimizeOptions = {},
   moduleShadowedBuiltins: Set<string> = new Set<string>(),
+  moduleBindings: Set<string> = new Set<string>(),
 ): PurityContext {
   const shadowedBuiltins = new Set<string>(moduleShadowedBuiltins)
   collectFunctionShadowedBuiltins(fn).forEach(name => shadowedBuiltins.add(name))
   const base: PurityContext = {
     functionPure: fn.meta?.pure,
+    moduleBindings: new Set<string>(moduleBindings),
     shadowedBuiltins,
     strictMacroBindings: options.strictMacroBindings,
   }
@@ -4599,18 +4661,334 @@ function hasSideEffectsBetween(
   return false
 }
 
+function buildIdentifierReadSafety(fn: HIRFunction, purity: PurityContext): IdentifierReadSafety {
+  const safeFunctionScopeBases = new Set<string>()
+  const lexicalBases = new Set<string>()
+  const lexicalDeclarations = new Map<string, IdentifierDeclarationPoint>()
+
+  purity.moduleBindings?.forEach(name => safeFunctionScopeBases.add(getSSABaseName(name)))
+  fn.params.forEach(param => safeFunctionScopeBases.add(getSSABaseName(param.name)))
+
+  for (const block of fn.blocks) {
+    for (let index = 0; index < block.instructions.length; index++) {
+      const instr = block.instructions[index]
+      if (!instr || instr.kind !== 'Assign' || !instr.declarationKind) continue
+      const base = getSSABaseName(instr.target.name)
+      if (instr.declarationKind === 'var' || instr.declarationKind === 'function') {
+        safeFunctionScopeBases.add(base)
+      } else {
+        lexicalBases.add(base)
+        lexicalDeclarations.set(instr.target.name, {
+          blockId: block.id,
+          instrIndex: index,
+        })
+      }
+    }
+    const term = block.terminator
+    if (term.kind === 'ForOf' || term.kind === 'ForIn') {
+      const base = getSSABaseName(term.variable)
+      if (term.variableKind === 'var') {
+        safeFunctionScopeBases.add(base)
+      } else if (term.leftKind !== 'assignment') {
+        lexicalBases.add(base)
+      }
+    } else if (term.kind === 'Try' && term.catchParam) {
+      lexicalBases.add(getSSABaseName(term.catchParam))
+    }
+  }
+
+  return {
+    safeFunctionScopeBases,
+    lexicalBases,
+    lexicalDeclarations,
+    idom: analyzeCFG(fn.blocks).dominatorTree.idom,
+  }
+}
+
+function isDCEPureExpression(
+  expr: Expression,
+  purity: PurityContext,
+  readSafety: IdentifierReadSafety,
+  blockId: BlockId,
+  instrIndex: number,
+): boolean {
+  return (
+    isPureExpression(expr, purity) &&
+    !expressionHasUnsafeIdentifierRead(expr, readSafety, blockId, instrIndex)
+  )
+}
+
+function expressionHasUnsafeIdentifierRead(
+  expr: Expression,
+  readSafety: IdentifierReadSafety,
+  blockId: BlockId,
+  instrIndex: number,
+  typeofBareIdentifier = false,
+): boolean {
+  switch (expr.kind) {
+    case 'Identifier':
+      return !isIdentifierReadSafe(expr.name, readSafety, blockId, instrIndex, typeofBareIdentifier)
+    case 'Literal':
+    case 'ThisExpression':
+    case 'SuperExpression':
+    case 'MetaProperty':
+      return false
+    case 'UnaryExpression':
+      if (expr.operator === 'typeof' && expr.argument.kind === 'Identifier') {
+        return expressionHasUnsafeIdentifierRead(
+          expr.argument,
+          readSafety,
+          blockId,
+          instrIndex,
+          true,
+        )
+      }
+      return expressionHasUnsafeIdentifierRead(
+        expr.argument as Expression,
+        readSafety,
+        blockId,
+        instrIndex,
+      )
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      return (
+        expressionHasUnsafeIdentifierRead(
+          expr.left as Expression,
+          readSafety,
+          blockId,
+          instrIndex,
+        ) ||
+        expressionHasUnsafeIdentifierRead(expr.right as Expression, readSafety, blockId, instrIndex)
+      )
+    case 'ConditionalExpression':
+      return (
+        expressionHasUnsafeIdentifierRead(
+          expr.test as Expression,
+          readSafety,
+          blockId,
+          instrIndex,
+        ) ||
+        expressionHasUnsafeIdentifierRead(
+          expr.consequent as Expression,
+          readSafety,
+          blockId,
+          instrIndex,
+        ) ||
+        expressionHasUnsafeIdentifierRead(
+          expr.alternate as Expression,
+          readSafety,
+          blockId,
+          instrIndex,
+        )
+      )
+    case 'ArrayExpression':
+      return expr.elements.some(el =>
+        el
+          ? expressionHasUnsafeIdentifierRead(el as Expression, readSafety, blockId, instrIndex)
+          : false,
+      )
+    case 'ObjectExpression':
+      return expr.properties.some(prop => {
+        if (prop.kind === 'SpreadElement') {
+          return expressionHasUnsafeIdentifierRead(
+            prop.argument as Expression,
+            readSafety,
+            blockId,
+            instrIndex,
+          )
+        }
+        return (
+          (!!prop.computed &&
+            expressionHasUnsafeIdentifierRead(
+              prop.key as Expression,
+              readSafety,
+              blockId,
+              instrIndex,
+            )) ||
+          expressionHasUnsafeIdentifierRead(
+            prop.value as Expression,
+            readSafety,
+            blockId,
+            instrIndex,
+          )
+        )
+      })
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      return (
+        expressionHasUnsafeIdentifierRead(
+          expr.object as Expression,
+          readSafety,
+          blockId,
+          instrIndex,
+        ) ||
+        (!!expr.computed &&
+          expressionHasUnsafeIdentifierRead(
+            expr.property as Expression,
+            readSafety,
+            blockId,
+            instrIndex,
+          ))
+      )
+    case 'TemplateLiteral':
+      return expr.expressions.some(e =>
+        expressionHasUnsafeIdentifierRead(e as Expression, readSafety, blockId, instrIndex),
+      )
+    case 'SpreadElement':
+      return expressionHasUnsafeIdentifierRead(
+        expr.argument as Expression,
+        readSafety,
+        blockId,
+        instrIndex,
+      )
+    case 'SequenceExpression':
+      return expr.expressions.some(e =>
+        expressionHasUnsafeIdentifierRead(e as Expression, readSafety, blockId, instrIndex),
+      )
+    case 'CallExpression':
+    case 'OptionalCallExpression':
+      return (
+        expressionHasUnsafeIdentifierRead(
+          expr.callee as Expression,
+          readSafety,
+          blockId,
+          instrIndex,
+        ) ||
+        expr.arguments.some(arg =>
+          expressionHasUnsafeIdentifierRead(arg as Expression, readSafety, blockId, instrIndex),
+        )
+      )
+    case 'ImportExpression':
+      return (
+        expressionHasUnsafeIdentifierRead(
+          expr.source as Expression,
+          readSafety,
+          blockId,
+          instrIndex,
+        ) ||
+        (!!expr.options &&
+          expressionHasUnsafeIdentifierRead(
+            expr.options as Expression,
+            readSafety,
+            blockId,
+            instrIndex,
+          ))
+      )
+    case 'NewExpression':
+      return (
+        expressionHasUnsafeIdentifierRead(
+          expr.callee as Expression,
+          readSafety,
+          blockId,
+          instrIndex,
+        ) ||
+        expr.arguments.some(arg =>
+          expressionHasUnsafeIdentifierRead(arg as Expression, readSafety, blockId, instrIndex),
+        )
+      )
+    case 'TaggedTemplateExpression':
+      return (
+        expressionHasUnsafeIdentifierRead(
+          expr.tag as Expression,
+          readSafety,
+          blockId,
+          instrIndex,
+        ) || expressionHasUnsafeIdentifierRead(expr.quasi, readSafety, blockId, instrIndex)
+      )
+    case 'AwaitExpression':
+      return expressionHasUnsafeIdentifierRead(
+        expr.argument as Expression,
+        readSafety,
+        blockId,
+        instrIndex,
+      )
+    case 'YieldExpression':
+      return expr.argument
+        ? expressionHasUnsafeIdentifierRead(
+            expr.argument as Expression,
+            readSafety,
+            blockId,
+            instrIndex,
+          )
+        : false
+    case 'ArrowFunction':
+    case 'FunctionExpression':
+    case 'ClassExpression':
+      return false
+    case 'AssignmentExpression':
+    case 'UpdateExpression':
+    case 'JSXElement':
+      return false
+    default:
+      return false
+  }
+}
+
+function isIdentifierReadSafe(
+  name: string,
+  readSafety: IdentifierReadSafety,
+  blockId: BlockId,
+  instrIndex: number,
+  typeofBareIdentifier: boolean,
+): boolean {
+  const base = getSSABaseName(name)
+  if (readSafety.safeFunctionScopeBases.has(base)) return true
+
+  const declaration = readSafety.lexicalDeclarations.get(name)
+  if (declaration) {
+    return declarationDominatesRead(declaration, readSafety.idom, blockId, instrIndex)
+  }
+
+  if (readSafety.lexicalBases.has(base)) return false
+  if (isCompilerGeneratedName(base) || COMPILER_SAFE_IDENTIFIER_READS.has(base)) return true
+  if (KNOWN_SAFE_GLOBAL_READS.has(base)) return true
+  return typeofBareIdentifier
+}
+
+function declarationDominatesRead(
+  declaration: IdentifierDeclarationPoint,
+  idom: Map<BlockId, BlockId>,
+  blockId: BlockId,
+  instrIndex: number,
+): boolean {
+  if (declaration.blockId === blockId) {
+    return declaration.instrIndex < instrIndex
+  }
+  return blockDominates(idom, declaration.blockId, blockId)
+}
+
+function blockDominates(
+  idom: Map<BlockId, BlockId>,
+  dominator: BlockId,
+  blockId: BlockId,
+): boolean {
+  let current = blockId
+  while (current !== dominator) {
+    const next = idom.get(current)
+    if (next === undefined || next === current) {
+      return current === dominator
+    }
+    current = next
+  }
+  return true
+}
+
 function eliminateDeadCode(fn: HIRFunction, purity: PurityContext): HIRFunction {
+  const readSafety = buildIdentifierReadSafety(fn, purity)
   const depsByVar = buildDependencyGraph(fn)
-  const live = computeLiveVariables(fn, depsByVar, purity)
+  const live = computeLiveVariables(fn, depsByVar, purity, readSafety)
   const baseLive = new Set<string>()
   live.forEach(name => baseLive.add(getSSABaseName(name)))
   const blocks = fn.blocks.map(block => {
-    const instructions = block.instructions.filter(instr => {
+    const instructions = block.instructions.filter((instr, index) => {
       if (instr.kind === 'Assign') {
         const name = instr.target.name
         if (live.has(name)) return true
         if (instr.declarationKind && baseLive.has(getSSABaseName(name))) return true
-        return !isPureExpression(instr.value, purity) || isExplicitMemoCall(instr.value, purity)
+        return (
+          !isDCEPureExpression(instr.value, purity, readSafety, block.id, index) ||
+          isExplicitMemoCall(instr.value, purity)
+        )
       }
       if (instr.kind === 'Phi') {
         return live.has(instr.target.name)
@@ -4642,14 +5020,17 @@ function computeLiveVariables(
   fn: HIRFunction,
   depsByVar: Map<string, Set<string>>,
   purity: PurityContext,
+  readSafety: IdentifierReadSafety,
 ): Set<string> {
   const roots = new Set<string>()
   for (const block of fn.blocks) {
-    for (const instr of block.instructions) {
+    for (let index = 0; index < block.instructions.length; index++) {
+      const instr = block.instructions[index]
+      if (!instr) continue
       if (instr.kind === 'Expression') {
         collectExpressionIdentifiers(instr.value, true).forEach(dep => roots.add(dep))
       } else if (instr.kind === 'Assign') {
-        if (!isPureExpression(instr.value, purity)) {
+        if (!isDCEPureExpression(instr.value, purity, readSafety, block.id, index)) {
           collectExpressionIdentifiers(instr.value, true).forEach(dep => roots.add(dep))
         } else if (isExplicitMemoCall(instr.value, purity)) {
           collectExpressionIdentifiers(instr.value, true).forEach(dep => roots.add(dep))
