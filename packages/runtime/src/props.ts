@@ -219,15 +219,20 @@ export function __fictObjectRest<T extends object>(
  * Uses lazy lookup strategy - properties are only accessed when read,
  * avoiding upfront iteration of all keys.
  */
-type MergeSource<T extends Record<string, unknown>> = T | (() => unknown)
+type MergeSource<T extends Record<string, unknown>> =
+  | T
+  | (() => unknown)
+  | string
+  | number
+  | boolean
+  | bigint
+  | symbol
 
 export function mergeProps<T extends Record<string, unknown>>(
   ...sources: (MergeSource<T> | null | undefined)[]
 ): Record<string, unknown> {
   // Filter out null/undefined sources upfront and store as concrete type
-  const validSources: MergeSource<T>[] = sources.filter(
-    (s): s is MergeSource<T> => s != null && (typeof s === 'object' || typeof s === 'function'),
-  )
+  const validSources: MergeSource<T>[] = sources.filter((s): s is MergeSource<T> => s != null)
 
   if (validSources.length === 0) {
     return {}
@@ -240,7 +245,7 @@ export function mergeProps<T extends Record<string, unknown>>(
 
   const resolveSource = (src: MergeSource<T>): T | undefined => {
     const value = isPropGetter(src) ? src() : src
-    if (!value || (typeof value !== 'object' && typeof value !== 'function')) return undefined
+    if (value == null) return undefined
     return unwrapProps(Object(value) as T)
   }
 

@@ -515,6 +515,18 @@ describe('mergeProps advanced', () => {
     expect(merged.bar).toBe('b')
     expect(calls).toBe(0)
   })
+
+  it('applies ToObject semantics to primitive sources', () => {
+    const merged = mergeProps('ab', { x: 'x' }, 42, false, 1n, Symbol('s'))
+
+    expect(Object.keys(merged)).toEqual(['0', '1', 'x'])
+    expect(merged[0]).toBe('a')
+    expect(merged[1]).toBe('b')
+    expect(merged.x).toBe('x')
+
+    const empty = mergeProps(42, true, 1n, Symbol('empty'))
+    expect(Object.keys(empty)).toEqual([])
+  })
 })
 
 describe('__fictPropsRest advanced', () => {

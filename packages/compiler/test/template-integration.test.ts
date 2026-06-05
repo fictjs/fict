@@ -2289,6 +2289,83 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('applies ToObject semantics to primitive component spread sources', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const seen: Array<{
+        type: string
+        keys: string[]
+        first: unknown
+        x: unknown
+      }> = []
+
+      const big = 1n
+      const sym = Symbol('source')
+
+      function Child(props: Record<string, unknown>) {
+        seen.push({
+          type: typeof props,
+          keys: Object.keys(props),
+          first: props[0],
+          x: props.x,
+        })
+        return <span />
+      }
+
+      export function App() {
+        return (
+          <section>
+            <Child {...'ab'} />
+            <Child {...'cd'} x="x" />
+            <Child {...42} />
+            <Child {...42} x="n" />
+            <Child {...true} />
+            <Child {...false} x="b" />
+            <Child {...big} />
+            <Child {...sym} x="s" />
+            <Child {...null} />
+            <Child {...undefined} x="u" />
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        seen.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      seen: Array<{
+        type: string
+        keys: string[]
+        first: unknown
+        x: unknown
+      }>
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(mod.seen).toEqual([
+      { type: 'object', keys: ['0', '1'], first: 'a', x: undefined },
+      { type: 'object', keys: ['0', '1', 'x'], first: 'c', x: 'x' },
+      { type: 'object', keys: [], first: undefined, x: undefined },
+      { type: 'object', keys: ['x'], first: undefined, x: 'n' },
+      { type: 'object', keys: [], first: undefined, x: undefined },
+      { type: 'object', keys: ['x'], first: undefined, x: 'b' },
+      { type: 'object', keys: [], first: undefined, x: undefined },
+      { type: 'object', keys: ['x'], first: undefined, x: 's' },
+      { type: 'object', keys: [], first: undefined, x: undefined },
+      { type: 'object', keys: ['x'], first: undefined, x: 'u' },
+    ])
+
+    teardown()
+    container.remove()
+  })
+
   it.each([
     { tag: 'div', spreadKey: 'class', explicitAttr: 'class', expectedAttr: 'class' },
     { tag: 'div', spreadKey: 'className', explicitAttr: 'class', expectedAttr: 'class' },
