@@ -2725,6 +2725,63 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(true)
   })
 
+  it('preserves inferred names for anonymous function bindings with optimization', () => {
+    const result = compileAndRunHook<string[]>(
+      `
+        export function useRun() {
+          const arrow = () => 1
+          const fn = function () {
+            return 1
+          }
+          const Ctor = class {}
+          const named = function inner() {
+            return 1
+          }
+          const sized = (value: unknown) => value
+          const protoFn = function () {}
+          const protoArrow = () => undefined
+          const called = () => 41
+
+          return [
+            arrow.name,
+            fn.name,
+            Ctor.name,
+            named.name,
+            String(sized.length),
+            String(Object.prototype.hasOwnProperty.call(protoFn, 'prototype')),
+            String(Object.prototype.hasOwnProperty.call(protoArrow, 'prototype')),
+            String(called() + 1),
+          ]
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toEqual(['arrow', 'fn', 'Ctor', 'inner', '1', 'true', 'false', '42'])
+  })
+
+  it('preserves inferred names through aliases and containers with optimization', () => {
+    const result = compileAndRunHook<string[]>(
+      `
+        export function useRun() {
+          const arrow = () => 1
+          const alias = arrow
+          const objectFn = () => 2
+          const object = { inner: objectFn }
+          const arrayFn = () => 3
+          const array = [arrayFn]
+
+          return [alias.name, object.inner.name, array[0].name]
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toEqual(['arrow', 'objectFn', 'arrayFn'])
+  })
+
   it('preserves invalid eager self-references with optimization', () => {
     expect(() =>
       compileAndRunHook<unknown>(

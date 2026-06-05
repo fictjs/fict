@@ -4573,6 +4573,7 @@ function eliminateCommonSubexpressions(fn: HIRFunction, purity: PurityContext): 
 
 function inlineSingleUse(fn: HIRFunction, purity: PurityContext): HIRFunction {
   const defUse = buildDefUse(fn)
+  const inferredNameObservedBindings = collectInferredNameObservedBindings(fn)
   const blockMap = new Map<number, BasicBlock>()
   fn.blocks.forEach(block => blockMap.set(block.id, block))
   const hasNestedTargetUse = (expr: Expression, target: string): boolean => {
@@ -4609,6 +4610,13 @@ function inlineSingleUse(fn: HIRFunction, purity: PurityContext): HIRFunction {
       if (!info || info.uses.length !== 1) continue
       if (!isPureExpression(instr.value, purity)) continue
       if (isExplicitMemoCall(instr.value, purity)) continue
+      if (
+        isAnonymousNameInferredExpression(instr.value) &&
+        (inferredNameObservedBindings.has(target) ||
+          inferredNameObservedBindings.has(getSSABaseName(target)))
+      ) {
+        continue
+      }
       if (instr.value.kind === 'Identifier' && instr.value.name === 'eval') continue
       if (hasNestedTargetUse(instr.value, target)) continue
       const use = info.uses[0]!
@@ -4699,6 +4707,332 @@ function hasSideEffectsBetween(
     }
   }
   return false
+}
+
+function isAnonymousNameInferredExpression(expr: Expression): boolean {
+  return (
+    expr.kind === 'ArrowFunction' ||
+    (expr.kind === 'FunctionExpression' && !expr.name) ||
+    (expr.kind === 'ClassExpression' && !expr.name)
+  )
+}
+
+function addShadowedName(shadowed: Set<string>, name: string): void {
+  shadowed.add(name)
+  shadowed.add(getSSABaseName(name))
+}
+
+function collectInferredNameObservedBindings(fn: HIRFunction): Set<string> {
+  const assignmentCounts = countAssignments(fn)
+  const definitions = new Map<string, Expression>()
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind !== 'Assign') continue
+      if ((assignmentCounts.get(instr.target.name) ?? 0) !== 1) continue
+      definitions.set(instr.target.name, instr.value)
+    }
+  }
+
+  const observed = new Set<string>()
+  const addObserved = (name: string): void => {
+    observed.add(name)
+    observed.add(getSSABaseName(name))
+  }
+  const addSources = (sources: Set<string>): void => {
+    sources.forEach(addObserved)
+  }
+
+  const arrayIndexForKey = (key: string | number): number | null => {
+    if (typeof key === 'number') return Number.isInteger(key) && key >= 0 ? key : null
+    if (!/^(0|[1-9]\d*)$/.test(key)) return null
+    return Number(key)
+  }
+
+  const resolveMemberValueSources = (
+    object: Expression,
+    key: string | number,
+    shadowed: Set<string>,
+    seen: Set<string>,
+  ): Set<string> => {
+    const sources = new Set<string>()
+    const add = (items: Set<string>): void => {
+      items.forEach(name => sources.add(name))
+    }
+
+    switch (object.kind) {
+      case 'Identifier': {
+        if (isNameShadowed(object.name, shadowed)) return sources
+        const seenKey = `member:${object.name}:${String(key)}`
+        if (seen.has(seenKey)) return sources
+        seen.add(seenKey)
+        const definition = definitions.get(object.name)
+        if (definition) add(resolveMemberValueSources(definition, key, shadowed, seen))
+        return sources
+      }
+      case 'ObjectExpression':
+        for (const prop of object.properties) {
+          if (prop.kind === 'SpreadElement') continue
+          const propKey = getStaticMemberKey(prop.key as Expression, prop.computed ?? false)
+          if (propKey !== key) continue
+          add(resolveNameSources(prop.value as Expression, shadowed, seen))
+        }
+        return sources
+      case 'ArrayExpression': {
+        const index = arrayIndexForKey(key)
+        if (index === null) return sources
+        const element = object.elements[index]
+        if (element) add(resolveNameSources(element as Expression, shadowed, seen))
+        return sources
+      }
+      case 'MemberExpression':
+      case 'OptionalMemberExpression': {
+        const memberKey = getStaticMemberKey(object.property as Expression, object.computed)
+        if (memberKey === null) return sources
+        const containerSources = resolveMemberValueSources(
+          object.object as Expression,
+          memberKey,
+          shadowed,
+          seen,
+        )
+        for (const name of containerSources) {
+          const definition = definitions.get(name)
+          if (definition) add(resolveMemberValueSources(definition, key, shadowed, seen))
+        }
+        return sources
+      }
+      default:
+        return sources
+    }
+  }
+
+  function resolveNameSources(
+    expr: Expression,
+    shadowed: Set<string>,
+    seen: Set<string>,
+  ): Set<string> {
+    const sources = new Set<string>()
+    const add = (items: Set<string>): void => {
+      items.forEach(name => sources.add(name))
+    }
+
+    switch (expr.kind) {
+      case 'Identifier': {
+        if (isNameShadowed(expr.name, shadowed)) return sources
+        sources.add(expr.name)
+        const seenKey = `id:${expr.name}`
+        if (seen.has(seenKey)) return sources
+        seen.add(seenKey)
+        const definition = definitions.get(expr.name)
+        if (definition) add(resolveNameSources(definition, shadowed, seen))
+        return sources
+      }
+      case 'MemberExpression':
+      case 'OptionalMemberExpression': {
+        const key = getStaticMemberKey(expr.property as Expression, expr.computed)
+        if (key !== null)
+          add(resolveMemberValueSources(expr.object as Expression, key, shadowed, seen))
+        return sources
+      }
+      case 'ConditionalExpression':
+        add(resolveNameSources(expr.consequent as Expression, shadowed, seen))
+        add(resolveNameSources(expr.alternate as Expression, shadowed, seen))
+        return sources
+      case 'LogicalExpression':
+        add(resolveNameSources(expr.left as Expression, shadowed, seen))
+        add(resolveNameSources(expr.right as Expression, shadowed, seen))
+        return sources
+      case 'SequenceExpression': {
+        const last = expr.expressions[expr.expressions.length - 1]
+        if (last) add(resolveNameSources(last as Expression, shadowed, seen))
+        return sources
+      }
+      default:
+        return sources
+    }
+  }
+
+  const visitTerminator = (term: Terminator, shadowed: Set<string>): void => {
+    switch (term.kind) {
+      case 'Return':
+        if (term.argument) visitExpression(term.argument as Expression, shadowed)
+        return
+      case 'Throw':
+        visitExpression(term.argument as Expression, shadowed)
+        return
+      case 'Branch':
+        visitExpression(term.test as Expression, shadowed)
+        return
+      case 'Switch':
+        visitExpression(term.discriminant as Expression, shadowed)
+        term.cases.forEach(c => {
+          if (c.test) visitExpression(c.test as Expression, shadowed)
+        })
+        return
+      case 'ForOf':
+        visitExpression(term.iterable as Expression, shadowed)
+        if (term.assignmentTarget) visitExpression(term.assignmentTarget as Expression, shadowed)
+        return
+      case 'ForIn':
+        visitExpression(term.object as Expression, shadowed)
+        if (term.assignmentTarget) visitExpression(term.assignmentTarget as Expression, shadowed)
+        return
+      case 'Try':
+      default:
+        return
+    }
+  }
+
+  const visitBlocks = (blocks: BasicBlock[], shadowed: Set<string>): void => {
+    for (const block of blocks) {
+      for (const instr of block.instructions) {
+        if (instr.kind === 'Assign') {
+          visitExpression(instr.value, shadowed)
+          if (instr.declarationKind) addShadowedName(shadowed, instr.target.name)
+        } else if (instr.kind === 'Expression') {
+          visitExpression(instr.value, shadowed)
+        }
+      }
+      visitTerminator(block.terminator, shadowed)
+    }
+  }
+
+  function visitExpression(expr: Expression, shadowed: Set<string>): void {
+    switch (expr.kind) {
+      case 'Identifier':
+      case 'Literal':
+      case 'ThisExpression':
+      case 'SuperExpression':
+      case 'MetaProperty':
+        return
+      case 'MemberExpression':
+      case 'OptionalMemberExpression': {
+        const key = getStaticMemberKey(expr.property as Expression, expr.computed)
+        if (key === 'name') {
+          addSources(resolveNameSources(expr.object as Expression, shadowed, new Set()))
+        }
+        visitExpression(expr.object as Expression, shadowed)
+        if (expr.computed) visitExpression(expr.property as Expression, shadowed)
+        return
+      }
+      case 'CallExpression':
+      case 'OptionalCallExpression':
+        visitExpression(expr.callee as Expression, shadowed)
+        expr.arguments.forEach(arg => visitExpression(arg as Expression, shadowed))
+        return
+      case 'BinaryExpression':
+      case 'LogicalExpression':
+        visitExpression(expr.left as Expression, shadowed)
+        visitExpression(expr.right as Expression, shadowed)
+        return
+      case 'UnaryExpression':
+        visitExpression(expr.argument as Expression, shadowed)
+        return
+      case 'ConditionalExpression':
+        visitExpression(expr.test as Expression, shadowed)
+        visitExpression(expr.consequent as Expression, shadowed)
+        visitExpression(expr.alternate as Expression, shadowed)
+        return
+      case 'ArrayExpression':
+        expr.elements.forEach(element => {
+          if (element) visitExpression(element as Expression, shadowed)
+        })
+        return
+      case 'ObjectExpression':
+        expr.properties.forEach(prop => {
+          if (prop.kind === 'SpreadElement') {
+            visitExpression(prop.argument as Expression, shadowed)
+            return
+          }
+          if (prop.computed) visitExpression(prop.key as Expression, shadowed)
+          visitExpression(prop.value as Expression, shadowed)
+        })
+        return
+      case 'TemplateLiteral':
+        expr.expressions.forEach(item => visitExpression(item as Expression, shadowed))
+        return
+      case 'TaggedTemplateExpression':
+        visitExpression(expr.tag as Expression, shadowed)
+        expr.quasi.expressions.forEach(item => visitExpression(item as Expression, shadowed))
+        return
+      case 'SpreadElement':
+        visitExpression(expr.argument as Expression, shadowed)
+        return
+      case 'SequenceExpression':
+        expr.expressions.forEach(item => visitExpression(item as Expression, shadowed))
+        return
+      case 'AwaitExpression':
+        visitExpression(expr.argument as Expression, shadowed)
+        return
+      case 'YieldExpression':
+        if (expr.argument) visitExpression(expr.argument as Expression, shadowed)
+        return
+      case 'ImportExpression':
+        visitExpression(expr.source as Expression, shadowed)
+        if (expr.options) visitExpression(expr.options as Expression, shadowed)
+        return
+      case 'NewExpression':
+        visitExpression(expr.callee as Expression, shadowed)
+        expr.arguments.forEach(arg => visitExpression(arg as Expression, shadowed))
+        return
+      case 'ArrowFunction': {
+        const nestedShadowed = new Set(shadowed)
+        expr.params.forEach(param => addShadowedName(nestedShadowed, param.name))
+        if (expr.isExpression) {
+          visitExpression(expr.body as Expression, nestedShadowed)
+        } else {
+          visitBlocks(expr.body as BasicBlock[], nestedShadowed)
+        }
+        return
+      }
+      case 'FunctionExpression': {
+        const nestedShadowed = new Set(shadowed)
+        if (expr.name) addShadowedName(nestedShadowed, expr.name)
+        expr.params.forEach(param => addShadowedName(nestedShadowed, param.name))
+        visitBlocks(expr.body, nestedShadowed)
+        return
+      }
+      case 'ClassExpression':
+        if (expr.superClass) visitExpression(expr.superClass as Expression, shadowed)
+        return
+      case 'AssignmentExpression':
+        visitExpression(expr.left as Expression, shadowed)
+        visitExpression(expr.right as Expression, shadowed)
+        return
+      case 'UpdateExpression':
+        visitExpression(expr.argument as Expression, shadowed)
+        return
+      case 'JSXElement':
+        if (typeof expr.tagName !== 'string') visitExpression(expr.tagName as Expression, shadowed)
+        expr.attributes.forEach(attr => {
+          if (attr.isSpread && attr.spreadExpr) {
+            visitExpression(attr.spreadExpr as Expression, shadowed)
+          } else if (attr.value) {
+            visitExpression(attr.value as Expression, shadowed)
+          }
+        })
+        expr.children.forEach(child => {
+          if (child.kind === 'expression') {
+            visitExpression(child.value as Expression, shadowed)
+          } else if (child.kind === 'element') {
+            visitExpression(child.value, shadowed)
+          }
+        })
+        return
+      default:
+        return
+    }
+  }
+
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+        visitExpression(instr.value, new Set())
+      }
+    }
+    visitTerminator(block.terminator, new Set())
+  }
+
+  return observed
 }
 
 function buildIdentifierReadSafety(fn: HIRFunction, purity: PurityContext): IdentifierReadSafety {
