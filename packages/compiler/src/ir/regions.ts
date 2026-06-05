@@ -15,6 +15,7 @@ import type { CodegenContext, RegionInfo, RegionLoweringOps } from './codegen'
 import { markCompilerReactiveGetter } from './codegen-reactive-getter'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 import type {
+  AssignInstruction,
   BlockId,
   HIRFunction,
   Expression,
@@ -62,6 +63,11 @@ export interface Region {
   children: Region[]
   /** Parent region ID if nested */
   parentId?: number | undefined
+}
+
+type ReactiveCreationInstruction = AssignInstruction & {
+  value: Extract<Expression, { kind: 'CallExpression' }>
+  declarationKind: NonNullable<AssignInstruction['declarationKind']>
 }
 
 function templateElementFromQuasi(
@@ -3018,19 +3024,58 @@ function generateRegionStatements(
   const memoInstructions: Instruction[] = []
   const memoDeclarations = new Set(region.declarations)
   const hoistedInstructionSet = new Set<Instruction>()
+  const instructionIndexes = new Map<Instruction, number>()
+  const declarationByName = new Map<string, Instruction>()
+  region.instructions.forEach((instr, index) => {
+    instructionIndexes.set(instr, index)
+    if (instr.kind === 'Assign' && instr.declarationKind) {
+      declarationByName.set(deSSAVarName(instr.target.name), instr)
+    }
+  })
+  const isReactiveCreationInstruction = (
+    instr: Instruction,
+  ): instr is ReactiveCreationInstruction =>
+    instr.kind === 'Assign' &&
+    !!instr.declarationKind &&
+    instr.value.kind === 'CallExpression' &&
+    instr.value.callee.kind === 'Identifier' &&
+    (instr.value.callee.name === '$state' || instr.value.callee.name === '$store')
+  const emitHoistedInstruction = (instr: Instruction): void => {
+    if (hoistedInstructionSet.has(instr)) return
+    const stmt = instructionToStatement(instr, t, declaredVars, ctx)
+    if (stmt) hoistedStatements.push(stmt)
+    hoistedInstructionSet.add(instr)
+    if (instr.kind === 'Assign') {
+      memoDeclarations.delete(instr.target.name)
+    }
+  }
+  const hoistPriorLocalDependencies = (
+    expr: Expression,
+    beforeIndex: number,
+    visiting = new Set<Instruction>(),
+  ): void => {
+    for (const dep of collectExprDependencies(expr)) {
+      const producer = declarationByName.get(dep)
+      if (!producer || hoistedInstructionSet.has(producer) || visiting.has(producer)) continue
+      const producerIndex = instructionIndexes.get(producer)
+      if (producerIndex === undefined || producerIndex >= beforeIndex) continue
+      visiting.add(producer)
+      if (producer.kind === 'Assign') {
+        hoistPriorLocalDependencies(producer.value, producerIndex, visiting)
+        emitHoistedInstruction(producer)
+      }
+      visiting.delete(producer)
+    }
+  }
 
   for (const instr of region.instructions) {
-    if (
-      instr.kind === 'Assign' &&
-      instr.declarationKind &&
-      instr.value.kind === 'CallExpression' &&
-      instr.value.callee.kind === 'Identifier' &&
-      (instr.value.callee.name === '$state' || instr.value.callee.name === '$store')
-    ) {
-      const stmt = instructionToStatement(instr, t, declaredVars, ctx)
-      if (stmt) hoistedStatements.push(stmt)
-      hoistedInstructionSet.add(instr)
-      memoDeclarations.delete(instr.target.name)
+    if (hoistedInstructionSet.has(instr)) {
+      continue
+    }
+    if (isReactiveCreationInstruction(instr)) {
+      const index = instructionIndexes.get(instr) ?? 0
+      instr.value.arguments.forEach(arg => hoistPriorLocalDependencies(arg, index))
+      emitHoistedInstruction(instr)
       continue
     }
     memoInstructions.push(instr)
