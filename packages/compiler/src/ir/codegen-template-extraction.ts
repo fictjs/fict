@@ -71,6 +71,21 @@ export function normalizeHIRAttrName(name: string, namespace: NamespaceContext =
   return name
 }
 
+export type ForcedBindingPrefix = 'attr' | 'bool' | 'prop'
+
+export interface ForcedBindingName {
+  prefix: ForcedBindingPrefix
+  name: string
+}
+
+export function parseForcedBindingName(name: string): ForcedBindingName | null {
+  if (name.length <= 5) return null
+  if (name.startsWith('attr:')) return { prefix: 'attr', name: name.slice(5) }
+  if (name.startsWith('bool:')) return { prefix: 'bool', name: name.slice(5) }
+  if (name.startsWith('prop:')) return { prefix: 'prop', name: name.slice(5) }
+  return null
+}
+
 function parseNamespacedEventName(name: string): { eventName: string; capture: boolean } | null {
   if (name.startsWith('oncapture:') && name.length > 'oncapture:'.length) {
     return { eventName: name.slice('oncapture:'.length), capture: true }
@@ -217,6 +232,10 @@ export function extractHIRStaticHtml(
           if (nextName !== nextAttr.name) {
             excluded.add(nextAttr.name)
           }
+          const forcedBinding = parseForcedBindingName(nextName)
+          if (forcedBinding) {
+            excluded.add(forcedBinding.name)
+          }
         }
 
         bindings.push({
@@ -305,6 +324,16 @@ export function extractHIRStaticHtml(
       continue
     }
 
+    if (parseForcedBindingName(name)) {
+      bindings.push({
+        type: 'attr',
+        path: [...parentPath],
+        name,
+        expr: attr.value ?? undefined,
+      })
+      continue
+    }
+
     // ref is always dynamic
     if (name === 'ref') {
       bindings.push({
@@ -329,16 +358,6 @@ export function extractHIRStaticHtml(
         name,
         expr: attr.value ?? undefined,
         hasChildren: hasRenderableChildren,
-      })
-      continue
-    }
-
-    if (name.startsWith('bool:')) {
-      bindings.push({
-        type: 'attr',
-        path: [...parentPath],
-        name,
-        expr: attr.value ?? undefined,
       })
       continue
     }

@@ -834,6 +834,139 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('applies forced binding prefixes in fine-grained output', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return (
+          <section>
+            <div
+              data-testid="static"
+              attr:title="static title"
+              bool:hidden={false}
+              bool:data-forced={true}
+              prop:textContent={'static text'}
+            />
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const staticEl = container.querySelector('[data-testid="static"]') as HTMLDivElement
+    expect(staticEl.getAttribute('title')).toBe('static title')
+    expect(staticEl.hasAttribute('hidden')).toBe(false)
+    expect(staticEl.getAttribute('data-forced')).toBe('')
+    expect(staticEl.textContent).toBe('static text')
+    expect(staticEl.hasAttribute('attr:title')).toBe(false)
+    expect(staticEl.hasAttribute('bool:hidden')).toBe(false)
+    expect(staticEl.hasAttribute('bool:data-forced')).toBe(false)
+    expect(staticEl.hasAttribute('prop:textContent')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
+  it('updates forced binding prefixes in fine-grained output', { timeout: 10000 }, async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(text: string, hidden: boolean): void }
+
+      export function App() {
+        let text = $state('initial')
+        let hidden = $state(false)
+        api = {
+          set: (nextText, nextHidden) => {
+            text = nextText
+            hidden = nextHidden
+          },
+        }
+        return <div data-testid="dynamic" attr:title={text} bool:hidden={hidden} prop:textContent={text} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      api: { set(text: string, hidden: boolean): void }
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const dynamicEl = container.querySelector('[data-testid="dynamic"]') as HTMLDivElement
+    expect(dynamicEl.getAttribute('title')).toBe('initial')
+    expect(dynamicEl.hasAttribute('hidden')).toBe(false)
+    expect(dynamicEl.textContent).toBe('initial')
+
+    mod.api.set('updated', true)
+    await flushUpdates()
+
+    expect(dynamicEl.getAttribute('title')).toBe('updated')
+    expect(dynamicEl.hasAttribute('hidden')).toBe(true)
+    expect(dynamicEl.textContent).toBe('updated')
+    expect(dynamicEl.hasAttribute('attr:title')).toBe(false)
+    expect(dynamicEl.hasAttribute('bool:hidden')).toBe(false)
+    expect(dynamicEl.hasAttribute('prop:textContent')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps forced binding prefixes aligned with VNode fallback', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return (
+          <div
+            data-testid="fallback"
+            attr:title="fallback title"
+            bool:hidden={false}
+            prop:textContent={'fallback text'}
+          />
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: false,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const fallback = container.querySelector('[data-testid="fallback"]') as HTMLDivElement
+    expect(fallback.getAttribute('title')).toBe('fallback title')
+    expect(fallback.hasAttribute('hidden')).toBe(false)
+    expect(fallback.textContent).toBe('fallback text')
+    expect(fallback.hasAttribute('attr:title')).toBe(false)
+    expect(fallback.hasAttribute('bool:hidden')).toBe(false)
+    expect(fallback.hasAttribute('prop:textContent')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
   it('rejects dangerouslySetInnerHTML with explicit JSX children', () => {
     const source = `
       import { render } from 'fict'

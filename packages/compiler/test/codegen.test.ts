@@ -1862,6 +1862,34 @@ describe('spread operator in JSX', () => {
     expect(code).not.toContain('bool:data-forced')
   })
 
+  it('routes forced JSX binding prefixes through their target bindings', () => {
+    const ast = parseFile(`
+      function ForcedPrefixes() {
+        let text = $state('hello')
+        let hidden = $state(false)
+        return (
+          <section>
+            <div attr:title="static title" bool:data-forced={true} prop:textContent={'static text'} />
+            <div attr:title={text} bool:hidden={hidden} prop:textContent={text} />
+          </section>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/setAttr\([^,]+,\s*"title",\s*"static title"\)/)
+    expect(code).toContain('setAttribute("data-forced", "")')
+    expect(code).toMatch(/setProp\([^,]+,\s*"textContent",\s*"static text"\)/)
+    expect(code).toMatch(/setAttr\([^,]+,\s*"title",\s*text\(\)\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"textContent",\s*text\(\)\)/)
+    expect(code).toContain('setAttribute("hidden", "")')
+    expect(code).not.toContain('attr:title')
+    expect(code).not.toContain('bool:data-forced')
+    expect(code).not.toContain('prop:textContent')
+  })
+
   it('escapes static JSX text in template HTML', () => {
     const ast = parseFile(`
       function EscapedText() {

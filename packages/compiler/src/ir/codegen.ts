@@ -85,6 +85,7 @@ import { inlineHelperIdentifier, runtimeIdentifier } from './codegen-runtime-hel
 import { collectRuntimeImports } from './codegen-runtime-imports'
 import {
   extractHIRStaticHtml,
+  parseForcedBindingName,
   resolveNamespaceContext,
   type NamespaceContext,
 } from './codegen-template-extraction'
@@ -3765,6 +3766,7 @@ function lowerIntrinsicElement(
     } else if (binding.type === 'attr' && binding.name) {
       // Attribute binding
       const attrName = binding.name
+      const forcedBinding = parseForcedBindingName(attrName)
       const valueWithRegion = lowerBindingValueExpression(binding.expr)
       const isReactiveAttr =
         !!binding.expr &&
@@ -3799,6 +3801,102 @@ function lowerIntrinsicElement(
           )
         } else {
           statements.push(...patchStatements)
+        }
+      } else if (forcedBinding?.prefix === 'attr') {
+        if (isReactiveAttr && binding.expr) {
+          const patch = t.expressionStatement(
+            t.callExpression(runtimeIdentifier(ctx, 'setAttr'), [
+              targetId,
+              t.stringLiteral(forcedBinding.name),
+              valueWithRegion,
+            ]),
+          )
+          const fallback = t.expressionStatement(
+            t.callExpression(runtimeIdentifier(ctx, 'bindAttribute'), [
+              targetId,
+              t.stringLiteral(forcedBinding.name),
+              t.arrowFunctionExpression([], valueWithRegion),
+            ]),
+          )
+          if (
+            !queueFusedPatch(binding.expr, {
+              patch,
+              fallback,
+              patchHelper: 'setAttr',
+              fallbackHelper: 'bindAttribute',
+            })
+          ) {
+            ctx.helpersUsed.add('bindAttribute')
+            statements.push(fallback)
+          }
+        } else {
+          ctx.helpersUsed.add('setAttr')
+          statements.push(
+            t.expressionStatement(
+              t.callExpression(runtimeIdentifier(ctx, 'setAttr'), [
+                targetId,
+                t.stringLiteral(forcedBinding.name),
+                valueWithRegion,
+              ]),
+            ),
+          )
+        }
+      } else if (forcedBinding?.prefix === 'bool') {
+        const patchStatements = buildBooleanAttributeStatements(
+          targetId,
+          forcedBinding.name,
+          valueWithRegion,
+        )
+        if (isReactiveAttr) {
+          ctx.helpersUsed.add('renderEffect')
+          statements.push(
+            t.expressionStatement(
+              t.callExpression(runtimeIdentifier(ctx, 'renderEffect'), [
+                t.arrowFunctionExpression([], t.blockStatement(patchStatements)),
+              ]),
+            ),
+          )
+        } else {
+          statements.push(...patchStatements)
+        }
+      } else if (forcedBinding?.prefix === 'prop') {
+        if (isReactiveAttr && binding.expr) {
+          const patch = t.expressionStatement(
+            t.callExpression(runtimeIdentifier(ctx, 'setProp'), [
+              targetId,
+              t.stringLiteral(forcedBinding.name),
+              valueWithRegion,
+            ]),
+          )
+          const fallback = t.expressionStatement(
+            t.callExpression(runtimeIdentifier(ctx, 'bindProperty'), [
+              targetId,
+              t.stringLiteral(forcedBinding.name),
+              t.arrowFunctionExpression([], valueWithRegion),
+            ]),
+          )
+          if (
+            !queueFusedPatch(binding.expr, {
+              patch,
+              fallback,
+              patchHelper: 'setProp',
+              fallbackHelper: 'bindProperty',
+            })
+          ) {
+            ctx.helpersUsed.add('bindProperty')
+            statements.push(fallback)
+          }
+        } else {
+          ctx.helpersUsed.add('setProp')
+          statements.push(
+            t.expressionStatement(
+              t.callExpression(runtimeIdentifier(ctx, 'setProp'), [
+                targetId,
+                t.stringLiteral(forcedBinding.name),
+                valueWithRegion,
+              ]),
+            ),
+          )
         }
       } else if (attrName === 'ref') {
         ctx.helpersUsed.add('bindRef')
@@ -3866,25 +3964,6 @@ function lowerIntrinsicElement(
               t.callExpression(runtimeIdentifier(ctx, 'setStyle'), [targetId, valueWithRegion]),
             ),
           )
-        }
-      } else if (attrName.startsWith('bool:')) {
-        const boolAttrName = attrName.slice(5)
-        const patchStatements = buildBooleanAttributeStatements(
-          targetId,
-          boolAttrName,
-          valueWithRegion,
-        )
-        if (isReactiveAttr) {
-          ctx.helpersUsed.add('renderEffect')
-          statements.push(
-            t.expressionStatement(
-              t.callExpression(runtimeIdentifier(ctx, 'renderEffect'), [
-                t.arrowFunctionExpression([], t.blockStatement(patchStatements)),
-              ]),
-            ),
-          )
-        } else {
-          statements.push(...patchStatements)
         }
       } else if (isDOMProperty(attrName)) {
         if (isReactiveAttr && binding.expr) {
