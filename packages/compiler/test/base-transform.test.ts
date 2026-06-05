@@ -342,6 +342,19 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).toContain(`console.log(count())`)
     })
 
+    it('declares context for effect-only components', () => {
+      const output = transform(`
+        import { $effect } from 'fict'
+        function Component() {
+          $effect(() => {})
+          return null
+        }
+      `)
+
+      expect(output).toContain('__fictUseEffect(__fictCtx')
+      expect(output).toContain('const __fictCtx = __fictUseContext()')
+    })
+
     it('rewrites aliased $effect to useEffect', () => {
       const output = transform(`
         import { $state, $effect as fx } from 'fict'

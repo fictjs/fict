@@ -5139,6 +5139,17 @@ function lowerFunctionWithRegions(
       // This ensures constant propagation, DCE, and algebraic simplifications are applied
       const pureDeclaredVars = new Set<string>()
       const pureStatements = lowerStructuredNodeWithoutRegions(structured, t, ctx, pureDeclaredVars)
+      if (ctx.needsCtx) {
+        ctx.helpersUsed.add('useContext')
+        pureStatements.unshift(
+          t.variableDeclaration('const', [
+            t.variableDeclarator(
+              t.identifier('__fictCtx'),
+              t.callExpression(t.identifier(RUNTIME_ALIASES.useContext), []),
+            ),
+          ]),
+        )
+      }
       const params = buildOutputParams(fn, t)
       const funcDecl = setNodeLoc(
         t.functionDeclaration(
