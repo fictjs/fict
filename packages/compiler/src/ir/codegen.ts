@@ -3170,6 +3170,7 @@ function lowerIntrinsicElement(
         binding.eventOptions &&
         (binding.eventOptions.capture || binding.eventOptions.passive || binding.eventOptions.once)
       const isDelegated = DelegatedEvents.has(eventName) && !hasEventOptions
+      const loaderObservesResumableEvent = DelegatedEvents.has(eventName)
       if (binding.resumableExplicit && hasEventOptions) {
         const modifiers = [
           binding.eventOptions?.capture ? 'capture' : null,
@@ -3187,8 +3188,20 @@ function lowerIntrinsicElement(
           },
         )
       }
+      if (binding.resumableExplicit && !loaderObservesResumableEvent) {
+        const loc = binding.expr.loc?.start
+        throw new HIRError(
+          `Resumable event handler on:${eventName} is not observed by the default loader. Remove the '$' suffix or configure the loader to listen for this event.`,
+          'BUILD_ERROR',
+          {
+            file: ctx.options?.filename ?? '<unknown>',
+            line: loc?.line,
+            variable: eventName,
+          },
+        )
+      }
 
-      if (binding.resumable && !hasEventOptions) {
+      if (binding.resumable && !hasEventOptions && loaderObservesResumableEvent) {
         const emitted = emitResumableEventBinding(
           targetId,
           eventName,

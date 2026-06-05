@@ -863,6 +863,40 @@ describe('resumable event handler transformation', () => {
     expect(code).not.toContain('setAttribute("on:click"')
   })
 
+  it.each(['onSubmit$', 'onChange$', 'onFocus$', 'onBlur$', 'onScroll$'])(
+    'throws for explicit resumable handlers on unobserved %s events',
+    attrName => {
+      const ast = parseFile(`
+        function Button() {
+          return <form ${attrName}={() => console.log("x")}>Save</form>
+        }
+      `)
+      const hir = buildHIR(ast)
+
+      expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+        /not observed by the default loader/i,
+      )
+    },
+  )
+
+  it('falls back for auto-extracted handlers on unobserved events', () => {
+    const ast = parseFile(`
+      function Form() {
+        return <form onSubmit={() => {
+          console.log("before")
+          console.log("after")
+        }}>Save</form>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('bindEvent')
+    expect(code).toContain('"submit"')
+    expect(code).not.toContain('setAttribute("on:submit"')
+  })
+
   it('throws for explicit resumable handlers that capture non-serializable locals', () => {
     const ast = parseFile(`
       function Comp() {
