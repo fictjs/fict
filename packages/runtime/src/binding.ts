@@ -59,6 +59,7 @@ const CLASS_VALUE_CACHE = Symbol('fict:class-value')
 const EVENT_LISTENER_CACHE = Symbol('fict:event-listener-cache')
 const REF_ASSIGN_CACHE = Symbol('fict:ref-assign-cache')
 const CHILDREN_BINDING_CACHE = Symbol('fict:children-binding-cache')
+const SPREAD_STATE_CACHE = Symbol('fict:spread-state-cache')
 const NON_REACTIVE_FN_MARKER = Symbol.for('fict:non-reactive-fn')
 const REACTIVE_FN_MARKER = Symbol.for('fict:reactive-fn')
 const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
@@ -90,6 +91,18 @@ interface AssignedRefState {
   owner: RootContext | undefined
   registeredCleanup: boolean
   value: ((next?: unknown) => unknown | void) | undefined
+}
+
+interface SpreadLayer {
+  props: Record<string, unknown>
+  excludedProps?: ReadonlySet<string> | undefined
+  isSVG: boolean
+  skipChildren: boolean
+}
+
+interface SpreadState {
+  layers: SpreadLayer[]
+  prevProps: Record<string, unknown>
 }
 
 type EventListenerStore = Map<string, StoredEventListener>
@@ -2078,6 +2091,55 @@ function updateAssignedRefBinding(node: Element, value: unknown): void {
   }
 }
 
+function getSpreadState(node: Element): SpreadState {
+  const host = node as {
+    [SPREAD_STATE_CACHE]?: SpreadState
+  }
+  const existing = host[SPREAD_STATE_CACHE]
+  if (existing) return existing
+
+  const state: SpreadState = {
+    layers: [],
+    prevProps: {},
+  }
+  host[SPREAD_STATE_CACHE] = state
+  return state
+}
+
+function clearSpreadStateIfEmpty(node: Element, state: SpreadState): void {
+  if (state.layers.length > 0) return
+  const host = node as {
+    [SPREAD_STATE_CACHE]?: SpreadState
+  }
+  if (host[SPREAD_STATE_CACHE] === state) {
+    delete host[SPREAD_STATE_CACHE]
+  }
+}
+
+function mergeSpreadLayers(state: SpreadState): {
+  props: Record<string, unknown>
+  isSVG: boolean
+} {
+  const merged: Record<string, unknown> = {}
+  let isSVG = false
+
+  for (const layer of state.layers) {
+    if (layer.isSVG) isSVG = true
+    for (const prop of Object.keys(layer.props)) {
+      if (layer.excludedProps?.has(prop)) continue
+      if (prop === 'children' && layer.skipChildren) continue
+      merged[prop] = layer.props[prop]
+    }
+  }
+
+  return { props: merged, isSVG }
+}
+
+function applySpreadLayers(node: Element, state: SpreadState): void {
+  const { props, isSVG } = mergeSpreadLayers(state)
+  assign(node, props, isSVG, false, state.prevProps, true)
+}
+
 // ============================================================================
 // Spread Props
 // ============================================================================
@@ -2105,8 +2167,23 @@ export function spread(
   skipChildren = false,
   exclude: readonly string[] = [],
 ): Record<string, unknown> {
-  const prevProps: Record<string, unknown> = {}
   const excludedProps = exclude.length > 0 ? new Set(exclude) : undefined
+  const spreadState = getSpreadState(node)
+  const layer: SpreadLayer = {
+    props: {},
+    excludedProps,
+    isSVG,
+    skipChildren,
+  }
+  spreadState.layers.push(layer)
+  registerRootCleanup(() => {
+    const index = spreadState.layers.indexOf(layer)
+    if (index >= 0) {
+      spreadState.layers.splice(index, 1)
+      applySpreadLayers(node, spreadState)
+      clearSpreadStateIfEmpty(node, spreadState)
+    }
+  })
   const resolveProps = (): Record<string, unknown> => {
     const next = typeof props === 'function' ? (props as () => Record<string, unknown>)() : props
     if (!next || typeof next !== 'object') return {}
@@ -2124,10 +2201,11 @@ export function spread(
 
   // Handle all other props
   createRenderEffect(() => {
-    assign(node, resolveProps(), isSVG, skipChildren, prevProps, true, excludedProps)
+    layer.props = resolveProps()
+    applySpreadLayers(node, spreadState)
   })
 
-  return prevProps
+  return spreadState.prevProps
 }
 
 /**

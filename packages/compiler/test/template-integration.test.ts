@@ -3836,6 +3836,147 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps later static spread precedence when an earlier spread updates', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { updateFirst(): void }
+
+      export function App() {
+        let first = $state({ title: 'first' })
+        const second = { title: 'second' }
+
+        api = {
+          updateFirst() {
+            first = { title: 'first-updated' }
+          },
+        }
+
+        return <div data-testid="target" {...first} {...second}>x</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      api: { updateFirst(): void }
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    const target = container.querySelector('[data-testid="target"]') as HTMLDivElement
+    expect(target.getAttribute('title')).toBe('second')
+
+    mod.api.updateFirst()
+    await flushUpdates()
+    expect(target.getAttribute('title')).toBe('second')
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps later dynamic spread precedence when an earlier spread updates', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { updateFirst(): void; updateSecond(): void }
+
+      export function App() {
+        let first = $state({ title: 'first' })
+        let second = $state({ title: 'second' })
+
+        api = {
+          updateFirst() {
+            first = { title: 'first-updated' }
+          },
+          updateSecond() {
+            second = { title: 'second-updated' }
+          },
+        }
+
+        return <div data-testid="target" {...first} {...second}>x</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      api: { updateFirst(): void; updateSecond(): void }
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    const target = container.querySelector('[data-testid="target"]') as HTMLDivElement
+    expect(target.getAttribute('title')).toBe('second')
+
+    mod.api.updateFirst()
+    await flushUpdates()
+    expect(target.getAttribute('title')).toBe('second')
+
+    mod.api.updateSecond()
+    await flushUpdates()
+    expect(target.getAttribute('title')).toBe('second-updated')
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps explicit props between spreads after earlier spread updates', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { updateFirst(): void }
+
+      export function App() {
+        let first = $state({ title: 'first' })
+        const second = { 'data-role': 'second' }
+
+        api = {
+          updateFirst() {
+            first = { title: 'first-updated' }
+          },
+        }
+
+        return <div data-testid="target" {...first} title="explicit" {...second}>x</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      api: { updateFirst(): void }
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    const target = container.querySelector('[data-testid="target"]') as HTMLDivElement
+    expect(target.getAttribute('title')).toBe('explicit')
+    expect(target.getAttribute('data-role')).toBe('second')
+
+    mod.api.updateFirst()
+    await flushUpdates()
+    expect(target.getAttribute('title')).toBe('explicit')
+    expect(target.getAttribute('data-role')).toBe('second')
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps keyed list DOM in sync in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'

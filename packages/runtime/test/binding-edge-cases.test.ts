@@ -1147,6 +1147,49 @@ describe('Binding Edge Cases', () => {
       expect(prevProps).toBeTypeOf('object')
     })
 
+    it('keeps later static spread precedence when earlier spread updates', async () => {
+      const el = document.createElement('div')
+      const first = createSignal<Record<string, unknown>>({ title: 'first' })
+
+      const { dispose } = createRoot(() => {
+        spread(el, () => first())
+        spread(el, { title: 'second' })
+      })
+
+      await tick()
+      expect(el.getAttribute('title')).toBe('second')
+
+      first({ title: 'first-updated' })
+      await tick()
+      expect(el.getAttribute('title')).toBe('second')
+
+      dispose()
+    })
+
+    it('keeps later dynamic spread precedence when earlier spread updates', async () => {
+      const el = document.createElement('div')
+      const first = createSignal<Record<string, unknown>>({ title: 'first' })
+      const second = createSignal<Record<string, unknown>>({ title: 'second' })
+
+      const { dispose } = createRoot(() => {
+        spread(el, () => first())
+        spread(el, () => second())
+      })
+
+      await tick()
+      expect(el.getAttribute('title')).toBe('second')
+
+      first({ title: 'first-updated' })
+      await tick()
+      expect(el.getAttribute('title')).toBe('second')
+
+      second({ title: 'second-updated' })
+      await tick()
+      expect(el.getAttribute('title')).toBe('second-updated')
+
+      dispose()
+    })
+
     it('supports getter props and updates assignments reactively', async () => {
       const el = document.createElement('button')
       container.appendChild(el)
