@@ -20,6 +20,7 @@ import {
 import {
   getCachedGetterExpression,
   getOrCreateHoistedTemplate,
+  invalidateCachedGetter,
   withGetterCache,
 } from './codegen-cache'
 import { emitConditionalChild } from './codegen-conditional-child'
@@ -468,6 +469,8 @@ export interface CodegenContext {
   getterCache?: Map<string, string> | undefined
   /** Pending cache declarations to insert at the start of a function body */
   getterCacheDeclarations?: Map<string, BabelCore.types.Expression> | undefined
+  /** Getter names written in this cache scope; future reads must not use hoisted cache values. */
+  getterCacheInvalidated?: Set<string> | undefined
   /** Whether getter caching is enabled for the current scope */
   getterCacheEnabled?: boolean | undefined
   /** Disable memoization for the current function (\"use no memo\" directive) */
@@ -589,6 +592,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     wrapTrackedExpressions: true,
     getterCache: new Map(),
     getterCacheDeclarations: new Map(),
+    getterCacheInvalidated: new Set(),
     getterCacheEnabled: false,
     inPropsContext: false,
     propsParamName: undefined,
@@ -982,6 +986,7 @@ function lowerInstruction(
           ctx.currentAssignmentName = undefined
         }
       })()
+      invalidateCachedGetter(ctx, baseName)
       return applyLoc(
         t.expressionStatement(t.callExpression(t.identifier(baseName), [loweredValue])),
       )
@@ -1409,6 +1414,9 @@ function lowerExpressionImpl(
     callee: BabelCore.types.Expression,
     nextValue: BabelCore.types.Expression,
   ): BabelCore.types.Expression => {
+    if (t.isIdentifier(callee)) {
+      invalidateCachedGetter(ctx, deSSAVarName(callee.name))
+    }
     if (!valueUsed) {
       return t.callExpression(t.cloneNode(callee, true), [nextValue])
     }
@@ -1640,6 +1648,22 @@ function lowerExpressionImpl(
       stmts.push(...lowerTerminator(block, ctx))
     }
     return stmts
+  }
+  const collectWrittenGetterNames = (blocks: BasicBlock[]): Set<string> => {
+    const written = new Set<string>()
+    const isGetterBinding = (name: string): boolean =>
+      !!(ctx.signalVars?.has(name) || ctx.memoVars?.has(name) || ctx.aliasVars?.has(name))
+
+    for (const block of blocks) {
+      for (const instr of block.instructions) {
+        if (instr.kind !== 'Assign' || instr.declarationKind) continue
+        const target = deSSAVarName(instr.target.name)
+        if (isGetterBinding(target)) {
+          written.add(target)
+        }
+      }
+    }
+    return written
   }
   const lowerStructuredBlocks = (
     blocks: BasicBlock[],
@@ -2243,8 +2267,12 @@ function lowerExpressionImpl(
                 }
               } else if (Array.isArray(expr.body)) {
                 // Rule L: Enable getter caching for sync arrow functions with block body
-                const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
-                  lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
+                const bodyBlocks = expr.body as BasicBlock[]
+                const writtenGetters = collectWrittenGetterNames(bodyBlocks)
+                const { result: stmts, cacheDeclarations } = withGetterCache(
+                  ctx,
+                  () => lowerStructuredBlocks(bodyBlocks, expr.params, paramIds),
+                  writtenGetters,
                 )
                 fn = t.arrowFunctionExpression(
                   paramIds,
@@ -2288,8 +2316,12 @@ function lowerExpressionImpl(
             try {
               if (Array.isArray(expr.body)) {
                 // Rule L: Enable getter caching for sync function expressions
-                const { result: stmts, cacheDeclarations } = withGetterCache(ctx, () =>
-                  lowerStructuredBlocks(expr.body as BasicBlock[], expr.params, paramIds),
+                const bodyBlocks = expr.body as BasicBlock[]
+                const writtenGetters = collectWrittenGetterNames(bodyBlocks)
+                const { result: stmts, cacheDeclarations } = withGetterCache(
+                  ctx,
+                  () => lowerStructuredBlocks(bodyBlocks, expr.params, paramIds),
+                  writtenGetters,
                 )
                 fn = t.functionExpression(
                   expr.name ? t.identifier(deSSAVarName(expr.name)) : null,

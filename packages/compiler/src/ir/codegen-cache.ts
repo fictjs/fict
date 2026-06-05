@@ -14,6 +14,7 @@ function genTemp(ctx: CodegenContext, prefix = 'tmp'): BabelCore.types.Identifie
 export function withGetterCache<T>(
   ctx: CodegenContext,
   fn: () => T,
+  disabledGetters?: Iterable<string>,
 ): { result: T; cacheDeclarations: BabelCore.types.Statement[] } {
   if (ctx.options?.getterCache === false) {
     return { result: fn(), cacheDeclarations: [] }
@@ -22,9 +23,11 @@ export function withGetterCache<T>(
   const prevCache = ctx.getterCache
   const prevDeclarations = ctx.getterCacheDeclarations
   const prevEnabled = ctx.getterCacheEnabled
+  const prevInvalidated = ctx.getterCacheInvalidated
 
   ctx.getterCache = new Map()
   ctx.getterCacheDeclarations = new Map()
+  ctx.getterCacheInvalidated = new Set(disabledGetters)
   ctx.getterCacheEnabled = true
 
   const result = fn()
@@ -42,6 +45,7 @@ export function withGetterCache<T>(
 
   ctx.getterCache = prevCache
   ctx.getterCacheDeclarations = prevDeclarations
+  ctx.getterCacheInvalidated = prevInvalidated
   ctx.getterCacheEnabled = prevEnabled
 
   return { result, cacheDeclarations }
@@ -56,7 +60,12 @@ export function getCachedGetterExpression(
   getterName: string,
   callExpr: BabelCore.types.Expression,
 ): BabelCore.types.Expression {
-  if (!ctx.getterCacheEnabled || !ctx.getterCache || !ctx.getterCacheDeclarations) {
+  if (
+    !ctx.getterCacheEnabled ||
+    !ctx.getterCache ||
+    !ctx.getterCacheDeclarations ||
+    ctx.getterCacheInvalidated?.has(getterName)
+  ) {
     return callExpr
   }
 
@@ -79,6 +88,12 @@ export function getCachedGetterExpression(
   }
 
   return ctx.t.identifier(existingEntry)
+}
+
+export function invalidateCachedGetter(ctx: CodegenContext, getterName: string): void {
+  if (!ctx.getterCacheEnabled) return
+  ctx.getterCache?.delete(getterName)
+  ctx.getterCacheInvalidated?.add(getterName)
 }
 
 /**

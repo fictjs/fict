@@ -340,6 +340,103 @@ describe('state write expression semantics', () => {
     expect(values).toEqual([3, 1, 6, 8, -4, 2147483647, 6])
   })
 
+  it('does not reuse cached signal getter values after writes in function bodies', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useGetterCacheAfterWrite() {
+        let count = $state(1)
+        const fn = () => {
+          const a = count
+          count = 2
+          const b = count
+          return a + ':' + b
+        }
+        return fn
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const fn = compiledFunction(mod, 'useGetterCacheAfterWrite')() as () => string
+    expect(fn()).toBe('1:2')
+  })
+
+  it('does not reuse cached signal getter values after writes in function expressions', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useGetterCacheAfterFunctionExpressionWrite() {
+        let count = $state(1)
+        const fn = function () {
+          const a = count
+          count = 2
+          const b = count
+          return a + ':' + b
+        }
+        return fn
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const fn = compiledFunction(mod, 'useGetterCacheAfterFunctionExpressionWrite')() as () => string
+    expect(fn()).toBe('1:2')
+  })
+
+  it('does not reuse cached signal getter values after writes in expression bodies', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useGetterCacheAfterExpressionWrite() {
+        let count = $state(1)
+        const fn = () => count + ':' + (count = 2) + ':' + count
+        return fn
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const fn = compiledFunction(mod, 'useGetterCacheAfterExpressionWrite')() as () => string
+    expect(fn()).toBe('1:2:2')
+  })
+
+  it('does not reuse cached alias getter values after source signal writes', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useGetterCacheAfterAliasSourceWrite() {
+        let count = $state(1)
+        const alias = count
+        const fn = () => {
+          const a = alias
+          count = 2
+          const b = alias
+          return a + ':' + b
+        }
+        return fn
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const fn = compiledFunction(mod, 'useGetterCacheAfterAliasSourceWrite')() as () => string
+    expect(fn()).toBe('1:2')
+  })
+
+  it('keeps caching repeated signal getter values when the function does not write them', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useGetterCacheWithoutWrite() {
+        let count = $state(1)
+        const fn = () => count + ':' + count
+        return fn
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const fn = compiledFunction(mod, 'useGetterCacheWithoutWrite')() as () => string
+    expect(output).toMatch(/__cached_count_\d+/)
+    expect(fn()).toBe('1:1')
+  })
+
   it('preserves logical assignment short-circuit semantics on ordinary locals', () => {
     const source = `
       import { $state } from 'fict'
