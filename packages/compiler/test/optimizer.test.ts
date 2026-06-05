@@ -560,6 +560,97 @@ describe('optimizeHIR', () => {
     expect(ret.value).toBe(3)
   })
 
+  it('does not fold object literal __proto__ initializer reads', () => {
+    const ast = parseFile(`
+      function Foo() {
+        const s = $state(0)
+        const obj = { __proto__: null, a: 1 }
+        return obj.__proto__ === undefined && obj.a === 1
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+
+    expect(
+      countExpression(
+        optimized,
+        expr =>
+          expr.kind === 'MemberExpression' &&
+          expr.object.kind === 'Identifier' &&
+          expr.object.name === 'obj' &&
+          expr.property.kind === 'Identifier' &&
+          expr.property.name === '__proto__',
+      ),
+    ).toBeGreaterThan(0)
+    expect(
+      countExpression(
+        optimized,
+        expr =>
+          expr.kind === 'MemberExpression' &&
+          expr.object.kind === 'Identifier' &&
+          expr.object.name === 'obj' &&
+          expr.property.kind === 'Identifier' &&
+          expr.property.name === 'a',
+      ),
+    ).toBe(0)
+  })
+
+  it('does not fold non-object __proto__ initializer values as data properties', () => {
+    const ast = parseFile(`
+      function Foo() {
+        const s = $state(0)
+        const obj = { __proto__: 'x' }
+        return obj.__proto__ === Object.prototype
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+
+    expect(
+      countExpression(
+        optimized,
+        expr =>
+          expr.kind === 'MemberExpression' &&
+          expr.object.kind === 'Identifier' &&
+          expr.object.name === 'obj' &&
+          expr.property.kind === 'Identifier' &&
+          expr.property.name === '__proto__',
+      ),
+    ).toBeGreaterThan(0)
+  })
+
+  it('does not treat computed __proto__ keys as foldable object fields', () => {
+    const ast = parseFile(`
+      function Foo() {
+        const s = $state(0)
+        const obj = { ['__proto__']: 'x' }
+        return obj['__proto__']
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+
+    expect(
+      countExpression(
+        optimized,
+        expr =>
+          expr.kind === 'MemberExpression' &&
+          expr.object.kind === 'Identifier' &&
+          expr.object.name === 'obj' &&
+          expr.property.kind === 'Literal' &&
+          expr.property.value === '__proto__',
+      ),
+    ).toBeGreaterThan(0)
+  })
+
+  it('surfaces duplicate object literal __proto__ syntax errors', () => {
+    expect(() =>
+      parseFile(`
+        function Foo() {
+          const obj = { __proto__: null, __proto__: {} }
+          return obj
+        }
+      `),
+    ).toThrow(/__proto__|Duplicate|Redefinition/i)
+  })
+
   it('inlines single-use derived memo to avoid useMemo for compiler temps', () => {
     const ast = parseFile(`
       function Foo() {

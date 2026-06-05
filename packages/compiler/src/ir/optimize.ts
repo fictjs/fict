@@ -3094,6 +3094,7 @@ function extractConstObjectFields(
     if (prop.computed) return null
     const key = getObjectLiteralKey(prop.key as Expression)
     if (!key) return null
+    if (key === '__proto__') continue
     const value = evaluateLiteral(prop.value as Expression, constants)
     if (value === UNKNOWN_CONST) return null
     fields.set(key, value as ConstantValue)
