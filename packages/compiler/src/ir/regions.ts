@@ -3025,7 +3025,7 @@ function wrapInMemo(
       if (!region.hasControlFlow) {
         return t.objectProperty(t.identifier(name), t.identifier(name), false, true)
       }
-      const guard = t.binaryExpression('!=', t.identifier(name), t.identifier('undefined'))
+      const guard = t.binaryExpression('!==', t.identifier(name), t.identifier('undefined'))
       const valueExpr = t.conditionalExpression(
         guard,
         t.identifier(name),

@@ -129,8 +129,8 @@ function Summary() {
       extra = count() * 10;
     }
     return {
-      heading: heading != undefined ? heading : undefined,
-      extra: extra != undefined ? extra : undefined
+      heading: heading !== undefined ? heading : undefined,
+      extra: extra !== undefined ? extra : undefined
     };
   }, {
     internal: true
