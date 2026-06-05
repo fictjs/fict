@@ -60,6 +60,34 @@ describe('setStyle', () => {
     expect(el.style.getPropertyValue('--name')).toBe('x')
     expect(el.style.marginTop).toBe('1px')
   })
+
+  it('removes deleted properties from reused style object references', () => {
+    const el = document.createElement('div')
+    const styles: Record<string, string | number> = { color: 'red', marginTop: 1 }
+
+    setStyle(el, styles)
+    expect(el.style.color).toBe('red')
+    expect(el.style.marginTop).toBe('1px')
+
+    delete styles.color
+    setStyle(el, styles)
+
+    expect(el.style.color).toBe('')
+    expect(el.style.marginTop).toBe('1px')
+  })
+
+  it('updates changed values from reused style object references', () => {
+    const el = document.createElement('div')
+    const styles: Record<string, string | number> = { color: 'red', marginTop: 1 }
+
+    setStyle(el, styles)
+    styles.color = 'blue'
+    styles.marginTop = 2
+    setStyle(el, styles)
+
+    expect(el.style.color).toBe('blue')
+    expect(el.style.marginTop).toBe('2px')
+  })
 })
 
 const pushCleanup = <T>(log: T[], value: T): void => {
@@ -560,6 +588,26 @@ describe('Binding Edge Cases', () => {
       await tick()
       expect(el.style.color).toBe('blue')
       expect(el.style.fontSize).toBe('')
+    })
+
+    it('removes styles deleted from a reused reactive style object', async () => {
+      const el = document.createElement('div')
+      const tickValue = createSignal(0)
+      const styles: Record<string, string | number> = { color: 'red', marginTop: 1 }
+
+      bindStyle(el, () => {
+        tickValue()
+        return styles
+      })
+      expect(el.style.color).toBe('red')
+      expect(el.style.marginTop).toBe('1px')
+
+      delete styles.color
+      tickValue(1)
+      await tick()
+
+      expect(el.style.color).toBe('')
+      expect(el.style.marginTop).toBe('1px')
     })
 
     it('handles null/undefined style values in object', async () => {

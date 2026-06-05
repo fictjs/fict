@@ -603,7 +603,20 @@ export function setStyle(
   if (typeof value === 'string' && prev === value) return
   if ((value === null || value === undefined) && (prev === null || prev === undefined)) return
   applyStyle(target, value, prev)
-  cache[STYLE_CACHE] = value
+  cache[STYLE_CACHE] = snapshotStyleValue(value)
+}
+
+function snapshotStyleValue(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value
+
+  const styles = value as Record<string, string | number | null | undefined>
+  const snapshot: Record<string, string | number | null | undefined> = {}
+  for (const key in styles) {
+    if (hasOwn.call(styles, key)) {
+      snapshot[key] = styles[key]
+    }
+  }
+  return snapshot
 }
 
 /**
