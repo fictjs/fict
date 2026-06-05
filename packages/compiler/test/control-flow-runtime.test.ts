@@ -142,6 +142,88 @@ describe('control flow runtime regressions', () => {
     expect(result.view()).toBe('b2')
   })
 
+  it('preserves for-in assignment targets on existing let bindings', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let tick = $state(0)
+          let key = ''
+
+          for (key in { a: 1, b: 2 }) {}
+
+          return key
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe('b')
+  })
+
+  it('preserves for-of assignment targets on existing var bindings', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let tick = $state(0)
+          var value = 0
+
+          for (value of [1, 2]) {}
+
+          return value
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves for-of assignment targets from outer scopes', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let tick = $state(0)
+          let value = ''
+
+          {
+            for (value of ['x', 'y']) {}
+          }
+
+          return value
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe('y')
+  })
+
+  it('preserves for-of assignment targets on state bindings', () => {
+    const result = compileAndRunHook<number | (() => number)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let value = $state(0)
+
+          for (value of [1, 2]) {}
+
+          return value
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe(2)
+  })
+
   it('keeps partial while-loop control flow inline when memoization would be incomplete', () => {
     const result = compileAndRunHook<number | (() => number)>(
       `
