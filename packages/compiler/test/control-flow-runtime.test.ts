@@ -1881,6 +1881,31 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe('undefined:\\u{}')
   })
 
+  it('preserves mixed tagged template raw and cooked quasis with optimization', () => {
+    const result = compileAndRunHook<Array<string | number>>(
+      `
+        import { $state } from 'fict'
+
+        const moduleTag = (strings, value) => [
+          strings[0],
+          strings.raw[0],
+          value,
+          strings[1],
+          strings.raw[1],
+        ]
+
+        export function useRun() {
+          let count = $state(0)
+          return moduleTag\`\\n-\${1}-\\u{41}\\\\\`
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toEqual(['\n-', '\\n-', 1, '-A\\', '-\\u{41}\\\\'])
+  })
+
   it('preserves untagged template cooked escapes with optimization', () => {
     const result = compileAndRunHook<string>(
       `
