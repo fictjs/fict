@@ -112,6 +112,10 @@ const walkExpression = (expr: Expression | null | undefined, visit: (expr: Expre
     case 'TemplateLiteral':
       expr.expressions.forEach(e => walkExpression(e as Expression, visit))
       return
+    case 'TaggedTemplateExpression':
+      walkExpression(expr.tag as Expression, visit)
+      walkExpression(expr.quasi as Expression, visit)
+      return
     case 'SpreadElement':
       walkExpression(expr.argument as Expression, visit)
       return
@@ -233,6 +237,8 @@ const findFirstArrowFunction = (program: HIRProgram): ArrowFunctionExpression | 
   return found
 }
 
+const getBaseName = (name: string): string => name.replace(/\$\$ssa\d+$/, '')
+
 const hasAssignTarget = (program: HIRProgram, name: string): boolean => {
   for (const fn of program.functions) {
     for (const block of fn.blocks) {
@@ -243,6 +249,24 @@ const hasAssignTarget = (program: HIRProgram, name: string): boolean => {
   }
   return false
 }
+
+const hasAssignTargetBase = (program: HIRProgram, name: string): boolean => {
+  for (const fn of program.functions) {
+    for (const block of fn.blocks) {
+      for (const instr of block.instructions) {
+        if (instr.kind === 'Assign' && getBaseName(instr.target.name) === name) return true
+      }
+    }
+  }
+  return false
+}
+
+const hasIdentifierReference = (program: HIRProgram, name: string): boolean =>
+  countExpression(program, expr => expr.kind === 'Identifier' && getBaseName(expr.name) === name) >
+  0
+
+const hasDanglingIdentifierReference = (program: HIRProgram, name: string): boolean =>
+  hasIdentifierReference(program, name) && !hasAssignTargetBase(program, name)
 
 describe('optimizeHIR', () => {
   it('removes unused pure assignments (DCE)', () => {
@@ -256,6 +280,41 @@ describe('optimizeHIR', () => {
     const optimized = optimizeHIR(buildHIR(ast))
     const printed = printHIR(optimized)
     expect(printed).not.toMatch(/Assign b\$\$ssa\d+/)
+  })
+
+  it('keeps local tagged template tag bindings alive', () => {
+    const ast = parseFile(`
+      function useTagged() {
+        const tag = strings => strings.raw[0]
+        return tag\`x\`
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasDanglingIdentifierReference(optimized, 'tag')).toBe(false)
+  })
+
+  it('keeps member tagged template tag objects alive', () => {
+    const ast = parseFile(`
+      function useTagged() {
+        const tags = { raw: strings => strings.raw[0] }
+        return tags.raw\`x\`
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasDanglingIdentifierReference(optimized, 'tags')).toBe(false)
+  })
+
+  it('keeps computed tagged template tag dependencies alive', () => {
+    const ast = parseFile(`
+      function useTagged() {
+        const key = 'raw'
+        const tags = { raw: strings => strings.raw[0] }
+        return tags[key]\`x\`
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasDanglingIdentifierReference(optimized, 'key')).toBe(false)
+    expect(hasDanglingIdentifierReference(optimized, 'tags')).toBe(false)
   })
 
   it('drops unused derived values from reactive graph DCE', () => {

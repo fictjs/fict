@@ -501,6 +501,10 @@ function collectRootNodesFromExpression(
       case 'TemplateLiteral':
         node.expressions.forEach(e => visit(e as Expression, shadowed))
         return
+      case 'TaggedTemplateExpression':
+        visit(node.tag as Expression, shadowed)
+        node.quasi.expressions.forEach(e => visit(e as Expression, shadowed))
+        return
       case 'SpreadElement':
         visit(node.argument as Expression, shadowed)
         return
@@ -667,6 +671,17 @@ function collectDependenciesFromExpression(
       return
     case 'TemplateLiteral':
       expr.expressions.forEach(e =>
+        collectDependenciesFromExpression(e as Expression, deps, includeFunctionBodies, shadowed),
+      )
+      return
+    case 'TaggedTemplateExpression':
+      collectDependenciesFromExpression(
+        expr.tag as Expression,
+        deps,
+        includeFunctionBodies,
+        shadowed,
+      )
+      expr.quasi.expressions.forEach(e =>
         collectDependenciesFromExpression(e as Expression, deps, includeFunctionBodies, shadowed),
       )
       return
@@ -1986,6 +2001,11 @@ function expressionDependsOnReactive(expr: Expression, ctx: ReactiveContext): bo
       })
     case 'TemplateLiteral':
       return expr.expressions.some(e => expressionDependsOnReactive(e as Expression, ctx))
+    case 'TaggedTemplateExpression':
+      return (
+        expressionDependsOnReactive(expr.tag as Expression, ctx) ||
+        expr.quasi.expressions.some(e => expressionDependsOnReactive(e as Expression, ctx))
+      )
     case 'SpreadElement':
       return expressionDependsOnReactive(expr.argument as Expression, ctx)
     case 'SequenceExpression':
@@ -2478,6 +2498,10 @@ function collectWriteTargets(expr: Expression): Set<string> {
       case 'TemplateLiteral':
         node.expressions.forEach(e => visit(e as Expression, shadowed))
         return
+      case 'TaggedTemplateExpression':
+        visit(node.tag as Expression, shadowed)
+        node.quasi.expressions.forEach(e => visit(e as Expression, shadowed))
+        return
       case 'SpreadElement':
         visit(node.argument as Expression, shadowed)
         return
@@ -2666,6 +2690,10 @@ function collectPotentialMutationTargets(expr: Expression): Set<string> {
         return
       case 'TemplateLiteral':
         node.expressions.forEach(e => visit(e as Expression))
+        return
+      case 'TaggedTemplateExpression':
+        visit(node.tag as Expression)
+        node.quasi.expressions.forEach(e => visit(e as Expression))
         return
       case 'SpreadElement':
         visit(node.argument as Expression)
@@ -3054,6 +3082,11 @@ function expressionContainsImpureMarkers(expr: Expression): boolean {
       })
     case 'TemplateLiteral':
       return expr.expressions.some(e => expressionContainsImpureMarkers(e as Expression))
+    case 'TaggedTemplateExpression':
+      return (
+        expressionContainsImpureMarkers(expr.tag as Expression) ||
+        expr.quasi.expressions.some(e => expressionContainsImpureMarkers(e as Expression))
+      )
     case 'SpreadElement':
       return expressionContainsImpureMarkers(expr.argument as Expression)
     case 'SequenceExpression':
@@ -3473,6 +3506,17 @@ function replaceConstMemberExpressions(
         expressions: expr.expressions.map(e =>
           replaceConstMemberExpressions(e as Expression, constObjects, constArrays),
         ),
+      }
+    case 'TaggedTemplateExpression':
+      return {
+        ...expr,
+        tag: replaceConstMemberExpressions(expr.tag as Expression, constObjects, constArrays),
+        quasi: {
+          ...expr.quasi,
+          expressions: expr.quasi.expressions.map(e =>
+            replaceConstMemberExpressions(e as Expression, constObjects, constArrays),
+          ),
+        },
       }
     case 'SpreadElement':
       return {
@@ -3954,6 +3998,17 @@ function replaceIdentifiersWithConstants(
         expressions: expr.expressions.map(e =>
           replaceIdentifiersWithConstants(e as Expression, constants),
         ),
+      }
+    case 'TaggedTemplateExpression':
+      return {
+        ...expr,
+        tag: replaceIdentifiersWithConstants(expr.tag as Expression, constants),
+        quasi: {
+          ...expr.quasi,
+          expressions: expr.quasi.expressions.map(e =>
+            replaceIdentifiersWithConstants(e as Expression, constants),
+          ),
+        },
       }
     case 'SpreadElement':
       return {
@@ -4684,6 +4739,10 @@ function walkExpression(
     case 'TemplateLiteral':
       expr.expressions.forEach(e => walkExpression(e as Expression, add, ctx))
       return
+    case 'TaggedTemplateExpression':
+      walkExpression(expr.tag as Expression, add, ctx)
+      expr.quasi.expressions.forEach(e => walkExpression(e as Expression, add, ctx))
+      return
     case 'SpreadElement':
       walkExpression(expr.argument as Expression, add, ctx)
       return
@@ -4848,6 +4907,8 @@ function hashExpression(expr: Expression): string {
       return `tpl:${expr.quasis
         .map(q => `${getTemplateQuasiRaw(q)}:${getTemplateQuasiCooked(q) ?? '<invalid>'}`)
         .join('|')}:${expr.expressions.map(e => hashExpression(e as Expression)).join('|')}`
+    case 'TaggedTemplateExpression':
+      return `tagged:${hashExpression(expr.tag as Expression)}:${hashExpression(expr.quasi)}`
     case 'SpreadElement':
       return `spread:${hashExpression(expr.argument as Expression)}`
     case 'SequenceExpression':
@@ -5172,6 +5233,17 @@ function replaceIdentifier(
         expressions: expr.expressions.map(e =>
           replaceIdentifier(e as Expression, target, replacement, inFunctionBody),
         ),
+      }
+    case 'TaggedTemplateExpression':
+      return {
+        ...expr,
+        tag: replaceIdentifier(expr.tag as Expression, target, replacement, inFunctionBody),
+        quasi: {
+          ...expr.quasi,
+          expressions: expr.quasi.expressions.map(e =>
+            replaceIdentifier(e as Expression, target, replacement, inFunctionBody),
+          ),
+        },
       }
     case 'SpreadElement':
       return {

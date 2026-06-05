@@ -1786,6 +1786,61 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe('a\\nb')
   })
 
+  it('preserves const tagged template tag bindings with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          const tag = strings => strings.raw[0]
+          return tag\`x\`
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('x')
+  })
+
+  it('preserves member tagged template tag bindings with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          const tags = { raw: strings => strings.raw[0] }
+          return tags.raw\`x\`
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('x')
+  })
+
+  it('preserves computed tagged template tag bindings with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          const key = 'raw'
+          const tags = { raw: strings => strings.raw[0] }
+          return tags[key]\`x\`
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('x')
+  })
+
   it('preserves tagged template unicode raw and cooked values with optimization', () => {
     const result = compileAndRunHook<string>(
       `
