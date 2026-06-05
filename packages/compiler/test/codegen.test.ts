@@ -777,6 +777,41 @@ describe('event handler transformation', () => {
     expect(code).not.toMatch(/\.data\s*=\s*String\(__key\)/)
   })
 
+  it('freshens generated list parameters around source internal-like names', () => {
+    const ast = parseFile(`
+      function Table() {
+        const __index = 'outer-index'
+        const __key = 'outer-key'
+        const __item = 'outer-item'
+        const rows = [{ id: 'a' }]
+        return (
+          <table>
+            <tbody>
+              {rows.map(item => (
+                <tr key={__index}>
+                  <td data-key={__key}>{__index}:{__key}</td>
+                </tr>
+              ))}
+              {rows.map(() => (
+                <tr key={__item}>
+                  <td>{__item}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('(item, __index_0) => __index')
+    expect(code).toContain('(item, __index_0, __key_0)')
+    expect(code).toContain('(__item_0, __index_0) => __item')
+    expect(code).toContain('(__item_0, __index_0, __key_0)')
+  })
+
   it('does not extract delegated data when handler comes from event param', () => {
     const ast = parseFile(`
       function Comp() {

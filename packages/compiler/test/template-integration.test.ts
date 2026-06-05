@@ -1786,6 +1786,64 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not shadow source internal-like names with generated list params', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export let clicked = ''
+
+      export function App() {
+        const __index = 'outer-index'
+        const __key = 'outer-key'
+        const __item = 'outer-item'
+        const items = [{ id: 'a' }]
+        return (
+          <ul>
+            {items.map(item => (
+              <li
+                key={__index}
+                data-key={__key}
+                onClick={() => {
+                  clicked = __key
+                }}
+              >
+                {__index}:{__key}
+              </li>
+            ))}
+            {items.map(() => (
+              <li key={__item}>{__item}</li>
+            ))}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      clicked: string
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const items = Array.from(container.querySelectorAll('li'))
+    expect(items.map(li => li.textContent)).toEqual(['outer-index:outer-key', 'outer-item'])
+    expect(items[0]?.getAttribute('data-key')).toBe('outer-key')
+
+    items[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushUpdates()
+    expect(mod.clicked).toBe('outer-key')
+
+    teardown()
+    container.remove()
+  })
+
   it(
     'switches conditional branches and updates attributes in fine-grained mode',
     { timeout: 10000 },

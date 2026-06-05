@@ -30,6 +30,102 @@ function getCallbackBlocks(callback: Expression): BasicBlock[] {
   return []
 }
 
+function addPatternNames(
+  pattern: BabelCore.types.LVal | BabelCore.types.PatternLike,
+  names: Set<string>,
+  t: typeof BabelCore.types,
+): void {
+  if (t.isIdentifier(pattern)) {
+    names.add(deSSAVarName(pattern.name))
+    return
+  }
+  if (t.isAssignmentPattern(pattern)) {
+    addPatternNames(pattern.left as BabelCore.types.PatternLike, names, t)
+    return
+  }
+  if (t.isRestElement(pattern)) {
+    addPatternNames(pattern.argument as BabelCore.types.PatternLike, names, t)
+    return
+  }
+  if (t.isObjectPattern(pattern)) {
+    for (const prop of pattern.properties) {
+      if (t.isRestElement(prop)) {
+        addPatternNames(prop.argument as BabelCore.types.PatternLike, names, t)
+      } else if (t.isObjectProperty(prop)) {
+        addPatternNames(prop.value as BabelCore.types.PatternLike, names, t)
+      }
+    }
+    return
+  }
+  if (t.isArrayPattern(pattern)) {
+    for (const el of pattern.elements) {
+      if (el && t.isPatternLike(el)) {
+        addPatternNames(el as BabelCore.types.PatternLike, names, t)
+      }
+    }
+  }
+}
+
+function collectCallbackVisibleNames(
+  callback: Expression,
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+): Set<string> {
+  const names = new Set<string>()
+  ctx.localDeclaredNames?.forEach(name => names.add(deSSAVarName(name)))
+  ctx.shadowedNames?.forEach(name => names.add(deSSAVarName(name)))
+
+  if (callback.kind === 'ArrowFunction' || callback.kind === 'FunctionExpression') {
+    callback.params.forEach(param => names.add(deSSAVarName(param.name)))
+    callback.rawParams?.forEach(param =>
+      addPatternNames(param as BabelCore.types.PatternLike, names, t),
+    )
+  }
+
+  for (const block of getCallbackBlocks(callback)) {
+    for (const instr of block.instructions) {
+      if (instr.kind !== 'Assign') continue
+      const target = deSSAVarName(instr.target.name)
+      const isFunctionDecl =
+        instr.value.kind === 'FunctionExpression' &&
+        !!instr.value.name &&
+        deSSAVarName(instr.value.name) === target
+      if (instr.declarationKind || isFunctionDecl) {
+        names.add(target)
+      }
+    }
+    const term = block.terminator
+    if (term.kind === 'ForOf' || term.kind === 'ForIn') {
+      if (term.leftKind !== 'assignment') {
+        names.add(deSSAVarName(term.variable))
+      }
+      if (term.leftKind !== 'assignment' && term.pattern) {
+        addPatternNames(term.pattern as BabelCore.types.PatternLike, names, t)
+      }
+    } else if (term.kind === 'Try' && term.catchParam) {
+      names.add(deSSAVarName(term.catchParam))
+    }
+  }
+
+  walkExpression(callback, expr => {
+    if (expr.kind === 'Identifier') {
+      names.add(deSSAVarName(expr.name))
+    }
+  })
+
+  return names
+}
+
+function reserveFreshName(baseName: string, reserved: Set<string>): string {
+  let name = baseName
+  let suffix = 0
+  while (reserved.has(name)) {
+    name = `${baseName}_${suffix++}`
+  }
+  reserved.add(name)
+  return name
+}
+
 function collectMapCallbackAliasDeclarations(callback: Expression): Map<string, Expression> {
   const blocks = getCallbackBlocks(callback)
   if (blocks.length === 0) {
@@ -446,6 +542,10 @@ export function buildListCallExpression(
     Array.isArray(mapCallback.rawParams) &&
     mapCallback.rawParams.some(param => t.isRestElement(param))
   const canConstifyKey = isKeyed && keyExpr && !hasRestParam
+  const generatedNameReservations = collectCallbackVisibleNames(mapCallback, ctx, t)
+  const generatedItemParamName = reserveFreshName('__item', generatedNameReservations)
+  const generatedIndexParamName = reserveFreshName('__index', generatedNameReservations)
+  const generatedKeyParamName = reserveFreshName('__key', generatedNameReservations)
 
   if (isKeyed) {
     ctx.helpersUsed.add('keyedList')
@@ -467,7 +567,7 @@ export function buildListCallExpression(
 
   if (canConstifyKey && keyExpr) {
     ctx.listKeyExpr = keyExpr
-    ctx.listKeyParamName = '__key'
+    ctx.listKeyParamName = generatedKeyParamName
     // Extract item param name from callback.
     if (mapCallback.kind === 'ArrowFunction' || mapCallback.kind === 'FunctionExpression') {
       const firstParam = mapCallback.params[0]
@@ -612,12 +712,14 @@ export function buildListCallExpression(
         ? callbackExpr.params[1]
         : null
     if (hasUnresolvedLocalKeyDeps) {
-      keyExprAst = t.identifier(t.isIdentifier(indexParamName) ? indexParamName.name : '__index')
+      keyExprAst = t.identifier(
+        t.isIdentifier(indexParamName) ? indexParamName.name : generatedIndexParamName,
+      )
     }
     const keyFn = t.arrowFunctionExpression(
       [
-        t.isIdentifier(itemParamName) ? itemParamName : t.identifier('__item'),
-        t.isIdentifier(indexParamName) ? indexParamName : t.identifier('__index'),
+        t.isIdentifier(itemParamName) ? itemParamName : t.identifier(generatedItemParamName),
+        t.isIdentifier(indexParamName) ? indexParamName : t.identifier(generatedIndexParamName),
       ],
       keyExprAst,
     )
@@ -635,10 +737,12 @@ export function buildListCallExpression(
       const newParams = [...callbackExpr.params]
       // Ensure we have at least 2 params (item, index) before adding key.
       while (newParams.length < 2) {
-        newParams.push(t.identifier(newParams.length === 0 ? '__item' : '__index'))
+        newParams.push(
+          t.identifier(newParams.length === 0 ? generatedItemParamName : generatedIndexParamName),
+        )
       }
       // Add __key as third param.
-      newParams.push(t.identifier('__key'))
+      newParams.push(t.identifier(generatedKeyParamName))
       if (t.isArrowFunctionExpression(callbackExpr)) {
         callbackExpr = t.arrowFunctionExpression(newParams, callbackExpr.body, callbackExpr.async)
       } else {
@@ -705,11 +809,15 @@ export function buildListCallExpression(
       : t.arrowFunctionExpression([], arrayExpr)
     const renderExpr = shouldDeferOptionalCallbackEvaluation
       ? t.arrowFunctionExpression(
-          [t.identifier('__item'), t.identifier('__index'), t.identifier('__key')],
+          [
+            t.identifier(generatedItemParamName),
+            t.identifier(generatedIndexParamName),
+            t.identifier(generatedKeyParamName),
+          ],
           t.callExpression(t.cloneNode(deferredCallbackId!, true), [
-            t.identifier('__item'),
-            t.identifier('__index'),
-            t.identifier('__key'),
+            t.identifier(generatedItemParamName),
+            t.identifier(generatedIndexParamName),
+            t.identifier(generatedKeyParamName),
           ]),
         )
       : callbackExpr
@@ -739,14 +847,14 @@ export function buildListCallExpression(
       t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)
         ? t.isIdentifier(callbackExpr.params[0])
           ? callbackExpr.params[0].name
-          : '__item'
-        : '__item'
+          : generatedItemParamName
+        : generatedItemParamName
     const indexParamName =
       t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)
         ? t.isIdentifier(callbackExpr.params[1])
           ? callbackExpr.params[1].name
-          : '__index'
-        : '__index'
+          : generatedIndexParamName
+        : generatedIndexParamName
     const hasIndexParam =
       shouldDeferOptionalCallbackEvaluation ||
       ((t.isArrowFunctionExpression(callbackExpr) || t.isFunctionExpression(callbackExpr)) &&
@@ -791,11 +899,15 @@ export function buildListCallExpression(
       : t.arrowFunctionExpression([], arrayExpr)
     const renderExpr = shouldDeferOptionalCallbackEvaluation
       ? t.arrowFunctionExpression(
-          [t.identifier('__item'), t.identifier('__index'), t.identifier('__key')],
+          [
+            t.identifier(generatedItemParamName),
+            t.identifier(generatedIndexParamName),
+            t.identifier(generatedKeyParamName),
+          ],
           t.callExpression(t.cloneNode(deferredCallbackId!, true), [
-            t.identifier('__item'),
-            t.identifier('__index'),
-            t.identifier('__key'),
+            t.identifier(generatedItemParamName),
+            t.identifier(generatedIndexParamName),
+            t.identifier(generatedKeyParamName),
           ]),
         )
       : callbackExpr
