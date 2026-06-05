@@ -31,9 +31,9 @@ function addImportedReactiveBinding(
 
 function classifyReactiveExport(name: string, ctx: CodegenContext): ReactiveExportKind | null {
   const base = deSSAVarName(name)
+  if (ctx.aliasVars?.has(base)) return 'memo'
   if (ctx.storeVars?.has(base)) return 'store'
   if (ctx.signalVars?.has(base)) return 'signal'
-  if (ctx.aliasVars?.has(base)) return 'signal'
   if (ctx.memoVars?.has(base)) return 'memo'
   return null
 }

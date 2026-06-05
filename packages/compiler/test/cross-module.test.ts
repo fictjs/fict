@@ -1142,6 +1142,41 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('publishes imported reactive aliases as memo metadata', () => {
+      const sourcePath = path.join(baseDir, 'reactive-source.ts')
+      const producerPath = path.join(baseDir, 'reactive-alias-producer.ts')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(sourcePath), {
+        version: 1,
+        exports: {
+          count: 'signal',
+          doubled: 'memo',
+          state: 'store',
+        },
+      })
+
+      const producerSource = `
+        import { count, doubled, state } from './reactive-source'
+
+        const countAlias = count
+        const memoAlias = doubled
+        const storeAlias = state
+        export const directAlias = count
+        export { countAlias, memoAlias, storeAlias }
+        export default countAlias
+      `
+
+      transform(producerSource, { moduleMetadata }, producerPath)
+
+      expect(moduleMetadata.get(path.resolve(producerPath))?.exports).toEqual({
+        countAlias: 'memo',
+        memoAlias: 'memo',
+        storeAlias: 'memo',
+        directAlias: 'memo',
+        default: 'memo',
+      })
+    })
+
     it('propagates createSignal exports from advanced modules (namespace)', () => {
       const storeSource = `
         import * as runtime from 'fict/advanced'
