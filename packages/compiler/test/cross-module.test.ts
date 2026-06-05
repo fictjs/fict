@@ -575,6 +575,287 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toContain('useCounter().count = 3')
     })
 
+    it('preserves hook-return object destructuring aliases', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-destructure-object'
+
+        export function App() {
+          const { count } = useCounter()
+          return count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-destructure-object.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-destructure-object.tsx'),
+      )
+
+      expect(output).toContain('return count();')
+      expect(output).not.toContain('return count;')
+    })
+
+    it('preserves aliased hook-return object destructuring aliases', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-destructure-alias'
+
+        export function App() {
+          const { count: c } = useCounter()
+          return c
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-destructure-alias.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-destructure-alias.tsx'),
+      )
+
+      expect(output).toContain('return c();')
+      expect(output).not.toContain('return c;')
+    })
+
+    it('preserves hook-return array destructuring aliases', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn [0: 'signal'] */
+        export function useCounter() {
+          const count = $state(0)
+          return [count]
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-destructure-array'
+
+        export function App() {
+          const [count] = useCounter()
+          return count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-destructure-array.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-destructure-array.tsx'),
+      )
+
+      expect(output).toContain('return count();')
+      expect(output).not.toContain('return count;')
+    })
+
+    it('reads hook result values for object rest destructuring', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count, label: 'ok' }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-destructure-rest'
+
+        export function App() {
+          const { count, ...rest } = useCounter()
+          return rest.label
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-destructure-rest.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-destructure-rest.tsx'),
+      )
+
+      expect(output).toContain('__fictObjectRest')
+      expect(output).toContain('["count"]')
+    })
+
+    it('preserves hook-return destructuring defaults', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-destructure-default-value'
+
+        export function App() {
+          const fallback = () => 1
+          const { count = fallback } = useCounter()
+          return count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-destructure-default-value.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-destructure-default-value.tsx'),
+      )
+
+      expect(output).toContain('return count();')
+      expect(output).not.toContain('return count;')
+    })
+
+    it('preserves hook-return array rest destructuring aliases', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn [0: 'signal'] */
+        export function useCounter() {
+          const count = $state(0)
+          return [count, 'tail']
+        }
+      `
+      const appSource = `
+        import { useCounter } from './use-counter-destructure-array-rest'
+
+        export function App() {
+          const [count, ...rest] = useCounter()
+          return [count, rest.length]
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-destructure-array-rest.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-destructure-array-rest.tsx'),
+      )
+
+      expect(output).toContain('count()')
+      expect(output).not.toContain('return [count,')
+    })
+
+    it('preserves namespace hook-return destructuring aliases', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import * as hooks from './use-counter-destructure-namespace'
+
+        export function App() {
+          const { count } = hooks.useCounter()
+          return count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-destructure-namespace.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-destructure-namespace.tsx'),
+      )
+
+      expect(output).toContain('return count();')
+      expect(output).not.toContain('return count;')
+    })
+
+    it('preserves default-import hook-return destructuring aliases', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        export default function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const appSource = `
+        import useCounter from './use-counter-destructure-default'
+
+        export function App() {
+          const { count } = useCounter()
+          return count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-destructure-default.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-destructure-default.tsx'),
+      )
+
+      expect(output).toContain('return count();')
+      expect(output).not.toContain('return count;')
+    })
+
     it('propagates hook return metadata through pass-through wrapper modules', () => {
       const hookSource = `
         import { $state } from 'fict'

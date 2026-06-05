@@ -258,6 +258,12 @@ export function propagateHookResultAlias(
   value: Expression,
   ctx: CodegenContext,
 ): void {
+  const hookResultPassthroughCalls = new Set([
+    '__fictPropsRest',
+    '__fictObjectRest',
+    '_slicedToArray',
+    '_toArray',
+  ])
   const mapSource = (source: string) => {
     const hookName = ctx.hookResultVarMap?.get(source)
     if (!hookName) return
@@ -279,7 +285,7 @@ export function propagateHookResultAlias(
   if (
     value.kind === 'CallExpression' &&
     value.callee.kind === 'Identifier' &&
-    (value.callee.name === '__fictPropsRest' || value.callee.name === '__fictObjectRest')
+    hookResultPassthroughCalls.has(value.callee.name)
   ) {
     const firstArg = value.arguments[0]
     if (firstArg && firstArg.kind === 'Identifier') {
@@ -293,7 +299,7 @@ export function propagateHookResultAlias(
       last &&
       last.kind === 'CallExpression' &&
       last.callee.kind === 'Identifier' &&
-      (last.callee.name === '__fictPropsRest' || last.callee.name === '__fictObjectRest')
+      hookResultPassthroughCalls.has(last.callee.name)
     ) {
       const firstArg = last.arguments[0]
       if (firstArg && firstArg.kind === 'Identifier') {
@@ -5943,6 +5949,10 @@ function lowerFunctionWithRegions(
     for (const instr of block.instructions) {
       if (instr.kind === 'Assign') {
         const target = deSSAVarName(instr.target.name)
+        propagateHookResultAlias(target, instr.value, ctx)
+        if (ctx.hookResultVarMap?.has(target)) {
+          hookResultVars.add(target)
+        }
         if (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression') {
           ctx.functionVars?.add(target)
           // Store HIR expression for potential hoisting in resumable handlers
