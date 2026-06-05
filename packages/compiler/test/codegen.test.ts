@@ -1800,6 +1800,35 @@ describe('spread operator in JSX', () => {
     expect(code).not.toContain('defaultChecked=\\"')
   })
 
+  it('routes custom element JSX props through DOM properties', () => {
+    const ast = parseFile(`
+      function CustomElementProps() {
+        let value = $state(1)
+        return (
+          <section>
+            <my-widget fooBar={value} foo-bar="dash" config={{ nested: true }} enabled />
+            <button is="fancy-button" foo-bar={value} />
+          </section>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/setProp\([^,]+,\s*"foobar",\s*value\(\)\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"fooBar",\s*"dash"\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"config",\s*\{\s*nested:\s*true\s*\}\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"enabled",\s*true\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"fooBar",\s*value\(\)\)/)
+    expect(code).toContain('createRenderEffect')
+    expect(code).toContain('is=\\"fancy-button\\"')
+    expect(code).not.toContain('fooBar=\\"')
+    expect(code).not.toContain('foo-bar=\\"')
+    expect(code).not.toContain('config=\\"')
+    expect(code).not.toContain('bindAttribute')
+  })
+
   it('routes intrinsic children props through child insertion', () => {
     const ast = parseFile(`
       function ChildrenProps() {

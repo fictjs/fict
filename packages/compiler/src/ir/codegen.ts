@@ -4142,6 +4142,7 @@ function lowerIntrinsicElement(
       // Attribute binding
       const attrName = binding.name
       const forcedBinding = parseForcedBindingName(attrName)
+      const isPropertyBinding = binding.bindingTarget === 'property'
       const valueWithRegion = lowerBindingValueExpression(binding.expr)
       const isReactiveAttr =
         !!binding.expr &&
@@ -4343,7 +4344,7 @@ function lowerIntrinsicElement(
             ),
           )
         }
-      } else if (isDOMProperty(attrName)) {
+      } else if (isPropertyBinding || isDOMProperty(attrName)) {
         if (isReactiveAttr && binding.expr) {
           const patch = t.expressionStatement(
             t.callExpression(runtimeIdentifier(ctx, 'setProp'), [

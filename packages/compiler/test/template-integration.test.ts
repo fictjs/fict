@@ -2771,6 +2771,80 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('sets custom element JSX props as properties in fine-grained mode', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export function App() {
+        let value = $state(1)
+        let active = $state(true)
+
+        return (
+          <>
+            <my-widget
+              fooBar={value}
+              foo-bar={value}
+              config={{ version: value }}
+              active={active}
+              static-prop="static"
+              enabled
+            />
+            <button is="fancy-button" foo-bar={value}>built in</button>
+            <button data-id="update" onClick={() => {
+              value += 1
+              active = false
+            }}>
+              update
+            </button>
+          </>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    const widget = container.querySelector('my-widget') as HTMLElement & Record<string, unknown>
+    const builtIn = container.querySelector('button[is="fancy-button"]') as HTMLButtonElement &
+      Record<string, unknown>
+    const update = container.querySelector('[data-id="update"]') as HTMLButtonElement
+
+    expect(widget.foobar).toBe(1)
+    expect(widget.fooBar).toBe(1)
+    expect(widget.config).toEqual({ version: 1 })
+    expect(widget.active).toBe(true)
+    expect(widget.staticProp).toBe('static')
+    expect(widget.enabled).toBe(true)
+    expect(widget.getAttribute('fooBar')).toBeNull()
+    expect(widget.getAttribute('foo-bar')).toBeNull()
+    expect(widget.getAttribute('config')).toBeNull()
+    expect(widget.getAttribute('active')).toBeNull()
+    expect(widget.getAttribute('static-prop')).toBeNull()
+    expect(builtIn.fooBar).toBe(1)
+    expect(builtIn.getAttribute('foo-bar')).toBeNull()
+
+    update.click()
+    await flushUpdates()
+
+    expect(widget.foobar).toBe(2)
+    expect(widget.fooBar).toBe(2)
+    expect(widget.config).toEqual({ version: 2 })
+    expect(widget.active).toBe(false)
+    expect(builtIn.fooBar).toBe(2)
+
+    teardown()
+    container.remove()
+  })
+
   it('cleans up and reapplies reactive callback refs in fine-grained mode', async () => {
     const source = `
       import { $state, render } from 'fict'

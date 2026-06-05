@@ -1,6 +1,11 @@
 import type { CodegenContext } from './codegen'
 import { shouldAutoExtract } from './codegen-auto-extract'
-import { isDOMTemplateProperty } from './codegen-dom-utils'
+import {
+  isCustomElementTagName,
+  isDOMProperty,
+  isDOMTemplateProperty,
+  toCustomElementPropertyName,
+} from './codegen-dom-utils'
 import type { Expression, JSXChild, JSXElementExpression } from './hir'
 
 export interface HIRBinding {
@@ -13,6 +18,7 @@ export interface HIRBinding {
   eventOptions?: { capture?: boolean; passive?: boolean; once?: boolean } | undefined
   resumable?: boolean | undefined
   resumableExplicit?: boolean | undefined
+  bindingTarget?: 'attribute' | 'property' | undefined
   /** Namespace context at this binding's location (for dynamic children) */
   namespace?: NamespaceContext | undefined
 }
@@ -174,6 +180,31 @@ function shouldStringifyBooleanAttribute(name: string): boolean {
   return name.startsWith('aria-') || name.startsWith('data-')
 }
 
+function literalExpression(value: unknown, loc?: Expression['loc']): Expression {
+  return { kind: 'Literal', value, loc } as Expression
+}
+
+function hasExplicitIsAttribute(jsx: JSXElementExpression, namespace: NamespaceContext): boolean {
+  return jsx.attributes.some(attr => {
+    if (attr.isSpread) return false
+    return normalizeHIRAttrName(attr.name, namespace) === 'is'
+  })
+}
+
+function getCustomElementPropertyBindingName(
+  name: string,
+  isCustomElement: boolean,
+): string | null {
+  if (!isCustomElement) return null
+  if (name === 'is') return null
+  if (name === 'class' || name === 'className' || name === 'classList' || name === 'style') {
+    return null
+  }
+  if (name === 'ref' || name === 'children' || name === 'dangerouslySetInnerHTML') return null
+  if (isDOMProperty(name) || isDOMTemplateProperty(name)) return name
+  return toCustomElementPropertyName(name)
+}
+
 /**
  * Extract static HTML from HIR JSXElementExpression.
  * Similar to extractStaticHtml from fine-grained-dom.ts but works with HIR types.
@@ -205,6 +236,9 @@ export function extractHIRStaticHtml(
   const tagName = jsx.tagName as string
   // Resolve namespace for this element
   const resolvedNamespace = resolveNamespaceContext(tagName, namespace)
+  const isCustomElement =
+    resolvedNamespace === null &&
+    (isCustomElementTagName(tagName) || hasExplicitIsAttribute(jsx, resolvedNamespace))
   let html = `<${tagName}`
   const bindings: HIRBinding[] = []
   const hasRenderableChildren = jsx.children.some(
@@ -231,6 +265,10 @@ export function extractHIRStaticHtml(
           excluded.add(nextName)
           if (nextName !== nextAttr.name) {
             excluded.add(nextAttr.name)
+          }
+          const customPropertyName = getCustomElementPropertyBindingName(nextName, isCustomElement)
+          if (customPropertyName) {
+            excluded.add(customPropertyName)
           }
           const forcedBinding = parseForcedBindingName(nextName)
           if (forcedBinding) {
@@ -368,6 +406,18 @@ export function extractHIRStaticHtml(
         path: [...parentPath],
         name,
         expr: attr.value ?? undefined,
+      })
+      continue
+    }
+
+    const customPropertyName = getCustomElementPropertyBindingName(name, isCustomElement)
+    if (customPropertyName) {
+      bindings.push({
+        type: 'attr',
+        path: [...parentPath],
+        name: customPropertyName,
+        expr: attr.value ?? literalExpression(true, attr.loc),
+        bindingTarget: 'property',
       })
       continue
     }

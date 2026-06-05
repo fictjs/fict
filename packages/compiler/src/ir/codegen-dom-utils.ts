@@ -60,3 +60,11 @@ export function isDOMProperty(name: string): boolean {
 export function isDOMTemplateProperty(name: string): boolean {
   return DOM_TEMPLATE_PROPERTY_NAMES.has(name)
 }
+
+export function isCustomElementTagName(tagName: string): boolean {
+  return tagName.includes('-')
+}
+
+export function toCustomElementPropertyName(name: string): string {
+  return name.toLowerCase().replace(/-([a-z])/g, (_, char: string) => char.toUpperCase())
+}
