@@ -81,7 +81,15 @@ export { __fictGetSSRStreamHooks, __fictSetSSRStreamHooks } from './ssr-stream'
 // Props Helpers (Compiler-generated code)
 // ============================================================================
 
-export { __fictProp, __fictPropsRest, createPropsProxy, mergeProps, prop, keyed } from './props'
+export {
+  __fictObjectRest,
+  __fictProp,
+  __fictPropsRest,
+  createPropsProxy,
+  mergeProps,
+  prop,
+  keyed,
+} from './props'
 
 // ============================================================================
 // DOM Bindings (Compiler-generated code)

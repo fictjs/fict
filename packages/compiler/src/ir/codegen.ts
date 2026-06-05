@@ -269,7 +269,7 @@ export function propagateHookResultAlias(
   if (
     value.kind === 'CallExpression' &&
     value.callee.kind === 'Identifier' &&
-    value.callee.name === '__fictPropsRest'
+    (value.callee.name === '__fictPropsRest' || value.callee.name === '__fictObjectRest')
   ) {
     const firstArg = value.arguments[0]
     if (firstArg && firstArg.kind === 'Identifier') {
@@ -283,7 +283,7 @@ export function propagateHookResultAlias(
       last &&
       last.kind === 'CallExpression' &&
       last.callee.kind === 'Identifier' &&
-      last.callee.name === '__fictPropsRest'
+      (last.callee.name === '__fictPropsRest' || last.callee.name === '__fictObjectRest')
     ) {
       const firstArg = last.arguments[0]
       if (firstArg && firstArg.kind === 'Identifier') {
@@ -1870,6 +1870,21 @@ function lowerExpressionImpl(
         ctx.helpersUsed.add('propsRest')
         const args = lowerCallArguments(expr.arguments)
         return t.callExpression(t.identifier(RUNTIME_ALIASES.propsRest), args)
+      }
+      if (expr.callee.kind === 'Identifier' && expr.callee.name === '__fictObjectRest') {
+        const sourceArg = expr.arguments[0]
+        const isComponentPropsRest =
+          ctx.isComponentFn === true &&
+          ctx.propsParamName !== undefined &&
+          sourceArg?.kind === 'Identifier' &&
+          deSSAVarName(sourceArg.name) === ctx.propsParamName
+        const args = lowerCallArguments(expr.arguments)
+        if (isComponentPropsRest) {
+          ctx.helpersUsed.add('propsRest')
+          return t.callExpression(t.identifier(RUNTIME_ALIASES.propsRest), args)
+        }
+        ctx.helpersUsed.add('objectRest')
+        return t.callExpression(t.identifier(RUNTIME_ALIASES.objectRest), args)
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === 'mergeProps') {
         ctx.helpersUsed.add('mergeProps')

@@ -186,6 +186,32 @@ export function __fictPropsRest<T extends Record<string, unknown>>(
   return createPropsProxy(out)
 }
 
+export function __fictObjectRest<T extends object>(
+  source: T,
+  exclude: (string | number | symbol)[],
+): Record<string | symbol, unknown> {
+  if (source == null) {
+    throw new TypeError('Cannot destructure null or undefined')
+  }
+
+  const raw = Object(source) as Record<string | symbol, unknown>
+  const out: Record<string | symbol, unknown> = {}
+  const excludeSet = new Set(exclude)
+
+  for (const key of Object.keys(raw)) {
+    if (excludeSet.has(key)) continue
+    out[key] = raw[key]
+  }
+
+  for (const key of Object.getOwnPropertySymbols(raw)) {
+    if (excludeSet.has(key)) continue
+    if (!Object.prototype.propertyIsEnumerable.call(raw, key)) continue
+    out[key] = raw[key]
+  }
+
+  return out
+}
+
 /**
  * Merge multiple props-like objects while preserving lazy getters.
  * Later sources override earlier ones.

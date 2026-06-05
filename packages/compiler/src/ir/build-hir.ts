@@ -115,7 +115,7 @@ const rewriteObjectRestHelpers = (ast: BabelCore.types.File): void => {
     CallExpression(path: BabelCore.NodePath<BabelCore.types.CallExpression>) {
       const { callee, arguments: args } = path.node
       if (t.isIdentifier(callee) && OBJECT_REST_HELPERS.has(callee.name)) {
-        path.node.callee = t.identifier('__fictPropsRest')
+        path.node.callee = t.identifier('__fictObjectRest')
         return
       }
 
@@ -142,7 +142,7 @@ const rewriteObjectRestHelpers = (ast: BabelCore.types.File): void => {
             isExpressionOrSpreadElement(checkArg) &&
             isSameIdentifier(checkArg, sourceExpr)
           ) {
-            const restCall = t.callExpression(t.identifier('__fictPropsRest'), [
+            const restCall = t.callExpression(t.identifier('__fictObjectRest'), [
               t.cloneNode(sourceExpr, true),
               t.arrayExpression([]),
             ])
@@ -688,7 +688,7 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
                   )
                   return
                 }
-                const restExpr = t.callExpression(t.identifier('__fictPropsRest'), [
+                const restExpr = t.callExpression(t.identifier('__fictObjectRest'), [
                   t.identifier(tempName),
                   t.arrayExpression(excludeKeys),
                 ])
@@ -1270,7 +1270,7 @@ function convertFunction(
                 )
                 return
               }
-              const restExpr = t.callExpression(t.identifier('__fictPropsRest'), [
+              const restExpr = t.callExpression(t.identifier('__fictObjectRest'), [
                 useTemp ? t.identifier(tempName) : (babelSourceExpr as BabelCore.types.Expression),
                 t.arrayExpression(excludeKeys),
               ])
@@ -2194,7 +2194,7 @@ function processStatement(
               })
             }
           } else if (t.isRestElement(prop) && t.isIdentifier(prop.argument)) {
-            const restExpr = t.callExpression(t.identifier('__fictPropsRest'), [
+            const restExpr = t.callExpression(t.identifier('__fictObjectRest'), [
               t.identifier(tempName),
               t.arrayExpression(excludeKeys),
             ])

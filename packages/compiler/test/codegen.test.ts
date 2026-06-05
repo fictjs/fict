@@ -341,7 +341,7 @@ describe('tracked reads/writes in HIR codegen', () => {
     const { code } = generate(file)
 
     expect(code).toMatch(/useCounter\(\)/)
-    expect(code).toMatch(/__fictPropsRest\([^,]+, \[\]\)/)
+    expect(code).toMatch(/__fictObjectRest\([^,]+, \[\]\)/)
     expect(code).toContain('props.count()')
     expect(code).toMatch(
       /props\.count\(__prev_\d+ \+ \(typeof __prev_\d+ === "bigint" \? 1n : 1\)\)/,
