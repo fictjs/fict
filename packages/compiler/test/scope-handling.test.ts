@@ -129,8 +129,8 @@ describe('Scope Handling', () => {
       `
       const output = transform(input)
 
-      expect(output).toContain('a: a !== undefined')
-      expect(output).toContain('b: b !== undefined')
+      expect(output).toContain('a: a !== void 0')
+      expect(output).toContain('b: b !== void 0')
     })
   })
 

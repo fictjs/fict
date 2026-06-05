@@ -43,10 +43,10 @@ describe('SVG/MathML Namespace Support ()', () => {
       // The circle template needs isSVG=true to be parsed in SVG namespace
       expect(output).toContain('template(')
       // The circle element is dynamic, so it should be a separate template with isSVG flag
-      // Check for the pattern: template("...circle...", undefined, true) for isSVG
+      // Check for the pattern: template("...circle...", void 0, true) for isSVG
       // Note: Use looser regex since output has escaped quotes
       expect(output).toContain('<circle')
-      expect(output).toMatch(/template\([^)]*circle[^)]*,\s*undefined,\s*true\)/)
+      expect(output).toMatch(/template\([^)]*circle[^)]*,\s*void 0,\s*true\)/)
     })
 
     it('handles nested SVG elements correctly', () => {
@@ -66,7 +66,7 @@ describe('SVG/MathML Namespace Support ()', () => {
       const output = transform(source)
       // rect is inside svg > g, so it needs isSVG flag
       expect(output).toContain('<rect')
-      expect(output).toMatch(/template\([^)]*rect[^)]*,\s*undefined,\s*true\)/)
+      expect(output).toMatch(/template\([^)]*rect[^)]*,\s*void 0,\s*true\)/)
     })
 
     it('normalizes static SVG JSX attribute aliases in templates', () => {
@@ -172,9 +172,9 @@ describe('SVG/MathML Namespace Support ()', () => {
       `
       const output = transform(source)
       // The mi element is dynamic, should have isMathML flag
-      // Check for pattern: template("...", undefined, undefined, true) for isMathML
+      // Check for pattern: template("...", void 0, void 0, true) for isMathML
       expect(output).toContain('<mi>')
-      expect(output).toMatch(/template\([^)]*mi[^)]*,\s*undefined,\s*undefined,\s*true\)/)
+      expect(output).toMatch(/template\([^)]*mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
     })
   })
 
@@ -194,7 +194,7 @@ describe('SVG/MathML Namespace Support ()', () => {
       const output = transform(source)
       // List items inside SVG should have isSVG flag in hoisted template
       expect(output).toContain('<circle')
-      expect(output).toMatch(/template\([^)]*circle[^)]*,\s*undefined,\s*true\)/)
+      expect(output).toMatch(/template\([^)]*circle[^)]*,\s*void 0,\s*true\)/)
     })
   })
 })

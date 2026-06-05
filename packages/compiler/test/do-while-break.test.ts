@@ -18,7 +18,7 @@ describe('loop break/continue fix verification', () => {
       expect(() => transform(source)).not.toThrow()
     })
 
-    it('should handle continue inside do-while body (simple)', () => {
+    it('rejects continue in reactive do-while bodies before a return', () => {
       const source = `
         import { $state } from 'fict'
         function Component() {
@@ -30,12 +30,12 @@ describe('loop break/continue fix verification', () => {
           return i
         }
       `
-      expect(() => transform(source)).not.toThrow()
+      expect(() => transform(source)).toThrow(/Unsafe reactive loop return/)
     })
   })
 
   describe('while', () => {
-    it('should handle break inside while body', () => {
+    it('rejects break in reactive while bodies before a return', () => {
       const source = `
         import { $state } from 'fict'
         function Component() {
@@ -47,7 +47,7 @@ describe('loop break/continue fix verification', () => {
           return i
         }
       `
-      expect(() => transform(source)).not.toThrow()
+      expect(() => transform(source)).toThrow(/Unsafe reactive loop return/)
     })
 
     it('should handle continue inside while body', () => {
@@ -67,7 +67,7 @@ describe('loop break/continue fix verification', () => {
   })
 
   describe('for', () => {
-    it('should handle break inside for body', () => {
+    it('rejects break in reactive for bodies before a return', () => {
       const source = `
         import { $state } from 'fict'
         function Component() {
@@ -79,7 +79,7 @@ describe('loop break/continue fix verification', () => {
           return sum
         }
       `
-      expect(() => transform(source)).not.toThrow()
+      expect(() => transform(source)).toThrow(/Unsafe reactive loop return/)
     })
 
     it('should handle continue inside for body', () => {

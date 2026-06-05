@@ -25,7 +25,7 @@ describe('compiler default options', () => {
     expect(withLazyConditionalDisabled).not.toContain('createConditional')
   })
 
-  it('enables getterCache by default', () => {
+  it('does not cache returned closure reads by default', () => {
     const source = `
       import { $state } from 'fict'
       function Component() {
@@ -40,7 +40,8 @@ describe('compiler default options', () => {
     `
 
     const output = transformWithCompilerDefaults(source, { strictGuarantee: false })
-    expect(output).toMatch(/__cached_count_\d+/)
+    expect(output).not.toMatch(/__cached_count_\d+/)
+    expect(output).toMatch(/console\.log\(count\(\)\)/)
   })
 
   it('enables strictGuarantee by default', () => {

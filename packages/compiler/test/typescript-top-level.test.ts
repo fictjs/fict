@@ -59,8 +59,9 @@ describe('TypeScript top-level declarations', () => {
     expect(output).toContain('export function useProbe')
   })
 
-  it('leaves TypeScript enums for the TypeScript transform', () => {
-    const output = transform(`
+  it('rejects TypeScript enums that have not been lowered first', () => {
+    expect(() =>
+      transform(`
       enum Status {
         Ready = 1,
       }
@@ -72,9 +73,7 @@ describe('TypeScript top-level declarations', () => {
       export function useProbe() {
         return Status.Ready + Flag.On
       }
-    `)
-
-    expect(output).toContain('Status')
-    expect(output).toContain('useProbe')
+    `),
+    ).toThrow(/TypeScript enum declarations must be lowered by TypeScript before Fict compilation/)
   })
 })
