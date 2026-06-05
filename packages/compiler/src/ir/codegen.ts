@@ -1345,6 +1345,12 @@ function lowerExpressionImpl(
     clearCachedGetters(ctx)
     return node
   }
+  const withOptionalGetterCache = <T>(
+    enabled: boolean,
+    fn: () => T,
+    disabledGetters?: Iterable<string>,
+  ): { result: T; cacheDeclarations: BabelCore.types.Statement[] } =>
+    enabled ? withGetterCache(ctx, fn, disabledGetters) : { result: fn(), cacheDeclarations: [] }
   const withFunctionScope = <T>(
     paramNames: Set<string>,
     fn: () => T,
@@ -2383,8 +2389,8 @@ function lowerExpressionImpl(
                 const disabledGetters = expressionHasCallBarrier(expr.body as Expression)
                   ? collectCacheableGetterNames()
                   : undefined
-                const { result: bodyExpr, cacheDeclarations } = withGetterCache(
-                  ctx,
+                const { result: bodyExpr, cacheDeclarations } = withOptionalGetterCache(
+                  !(expr.isAsync ?? false),
                   () => lowerTrackedExpression(expr.body as Expression, ctx),
                   disabledGetters,
                 )
@@ -2401,8 +2407,8 @@ function lowerExpressionImpl(
                 // Rule L: Enable getter caching for sync arrow functions with block body
                 const bodyBlocks = expr.body as BasicBlock[]
                 const disabledGetters = collectDisabledGetterNames(bodyBlocks)
-                const { result: stmts, cacheDeclarations } = withGetterCache(
-                  ctx,
+                const { result: stmts, cacheDeclarations } = withOptionalGetterCache(
+                  !(expr.isAsync ?? false),
                   () => lowerStructuredBlocks(bodyBlocks, expr.params, paramIds),
                   disabledGetters,
                 )
@@ -2450,8 +2456,8 @@ function lowerExpressionImpl(
                 // Rule L: Enable getter caching for sync function expressions
                 const bodyBlocks = expr.body as BasicBlock[]
                 const disabledGetters = collectDisabledGetterNames(bodyBlocks)
-                const { result: stmts, cacheDeclarations } = withGetterCache(
-                  ctx,
+                const { result: stmts, cacheDeclarations } = withOptionalGetterCache(
+                  !(expr.isAsync ?? false),
                   () => lowerStructuredBlocks(bodyBlocks, expr.params, paramIds),
                   disabledGetters,
                 )

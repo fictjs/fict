@@ -500,6 +500,68 @@ describe('state write expression semantics', () => {
     expect(fn(true)).toBe('1:1')
   })
 
+  it('does not cache signal getter reads in async arrow functions', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useAsyncArrowGetterCacheAfterAwait() {
+        let count = $state(1)
+        const set = (value: number) => {
+          count = value
+        }
+        const fn = async () => {
+          const a = count
+          await 0
+          const b = count
+          const c = count
+          return a + ':' + b + ':' + c
+        }
+        return [fn, set]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const [fn, set] = compiledFunction(mod, 'useAsyncArrowGetterCacheAfterAwait')() as [
+      () => Promise<string>,
+      (value: number) => void,
+    ]
+    const result = fn()
+    set(2)
+    expect(output).not.toContain('__cached_count_')
+    await expect(result).resolves.toBe('1:2:2')
+  })
+
+  it('does not cache signal getter reads in async function expressions', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useAsyncFunctionGetterCacheAfterAwait() {
+        let count = $state(1)
+        const set = (value: number) => {
+          count = value
+        }
+        const fn = async function () {
+          const a = count
+          await 0
+          const b = count
+          const c = count
+          return a + ':' + b + ':' + c
+        }
+        return [fn, set]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const [fn, set] = compiledFunction(mod, 'useAsyncFunctionGetterCacheAfterAwait')() as [
+      () => Promise<string>,
+      (value: number) => void,
+    ]
+    const result = fn()
+    set(2)
+    expect(output).not.toContain('__cached_count_')
+    await expect(result).resolves.toBe('1:2:2')
+  })
+
   it('preserves logical assignment short-circuit semantics on ordinary locals', () => {
     const source = `
       import { $state } from 'fict'
