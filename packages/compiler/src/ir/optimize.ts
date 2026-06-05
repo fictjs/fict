@@ -4611,6 +4611,7 @@ function inlineSingleUse(fn: HIRFunction, purity: PurityContext): HIRFunction {
       const useIndex = use.kind === 'Terminator' ? Number.POSITIVE_INFINITY : use.instrIndex
       if (useIndex <= i) continue
       if (hasSideEffectsBetween(instructions, i + 1, useIndex, purity)) continue
+      if (hasDependencyWritesBetween(instructions, i + 1, useIndex, instr.value)) continue
       // Inline into use location
       if (use.kind === 'Assign') {
         const useInstr = instructions[use.instrIndex]
@@ -4641,6 +4642,38 @@ function inlineSingleUse(fn: HIRFunction, purity: PurityContext): HIRFunction {
     return { ...block, instructions: filtered }
   })
   return { ...fn, blocks: newBlocks }
+}
+
+function hasDependencyWritesBetween(
+  instructions: Instruction[],
+  start: number,
+  end: number,
+  expr: Expression,
+): boolean {
+  const dependencyBases = new Set<string>()
+  collectUsesFromExpression(expr, (name, inFunctionBody) => {
+    if (!inFunctionBody) dependencyBases.add(getSSABaseName(name))
+  })
+  if (dependencyBases.size === 0) return false
+
+  const writesDependency = (name: string): boolean => dependencyBases.has(getSSABaseName(name))
+  for (let i = start; i < Math.min(end, instructions.length); i++) {
+    const instr = instructions[i]
+    if (!instr) continue
+    if (instr.kind === 'Assign') {
+      if (writesDependency(instr.target.name)) return true
+      for (const writtenName of collectWriteTargets(instr.value)) {
+        if (writesDependency(writtenName)) return true
+      }
+    } else if (instr.kind === 'Expression') {
+      for (const writtenName of collectWriteTargets(instr.value)) {
+        if (writesDependency(writtenName)) return true
+      }
+    } else if (instr.kind === 'Phi') {
+      if (writesDependency(instr.target.name)) return true
+    }
+  }
+  return false
 }
 
 function hasSideEffectsBetween(

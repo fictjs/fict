@@ -2263,6 +2263,106 @@ describe('control flow runtime regressions', () => {
     ).toBe(1)
   })
 
+  it('preserves declaration order for used identifier reads under optimization', () => {
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            const value = y
+            let y = 1
+            return value
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow(/Cannot access 'y' before initialization/)
+
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            const value = y + 1
+            const y = 1
+            return value
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow(/Cannot access 'y' before initialization/)
+
+    expect(() =>
+      compileAndRunHook<string>(
+        `
+          export function useRun() {
+            const value = typeof y
+            let y = 1
+            return value
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow(/Cannot access 'y' before initialization/)
+
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            const { value = y } = {}
+            let y = 1
+            return value
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow(/Cannot access 'y' before initialization/)
+
+    expect(
+      compileAndRunHook<undefined>(
+        `
+          export function useRun() {
+            const value = y
+            var y = 1
+            return value
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toBeUndefined()
+
+    expect(
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            let y = 1
+            const value = y + 1
+            return value
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toBe(2)
+
+    expect(
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            var y = 1
+            const value = y
+            return value
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toBe(1)
+  })
+
   it('preserves tagged template unicode raw and cooked values with optimization', () => {
     const result = compileAndRunHook<string>(
       `
