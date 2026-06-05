@@ -275,7 +275,7 @@ describe('region metadata → DOM', () => {
     expect(() => lowerHIRWithRegions(hir, t)).toThrow(/cannot be used with JSX children/)
   })
 
-  it('fuses multiple reactive bindings sharing deps in safe mode', () => {
+  it('keeps reactive class and ambiguous child bindings sharing deps in safe mode', () => {
     const ast = parseFile(`
       function View() {
         const count = $state(0)
@@ -286,12 +286,12 @@ describe('region metadata → DOM', () => {
     const file = lowerHIRWithRegions(hir, t, { optimizeLevel: 'safe' })
     const { code } = generate(file)
 
-    expect(code).toContain('createRenderEffect')
-    expect(code).toContain('setClass')
-    expect(code).toContain('setText')
+    expect(code).toContain('bindClass')
+    expect(code).toContain('insertBetween')
+    expect(code).not.toContain('setText')
   })
 
-  it('keeps single reactive text binding on bindText in safe mode', () => {
+  it('routes single ambiguous reactive children through child insertion in safe mode', () => {
     const ast = parseFile(`
       function View() {
         const count = $state(0)
@@ -302,11 +302,13 @@ describe('region metadata → DOM', () => {
     const file = lowerHIRWithRegions(hir, t, { optimizeLevel: 'safe' })
     const { code } = generate(file)
 
-    expect(code).toContain('bindText')
+    expect(code).toContain('insertBetween')
+    expect(code).toContain('createElement')
+    expect(code).not.toContain('bindText')
     expect(code).not.toContain('setText(')
   })
 
-  it('keeps optional member text bindings reactive', () => {
+  it('routes optional member children through child insertion', () => {
     const ast = parseFile(`
       function View() {
         let user = $state({ profile: { name: 'Ada' } })
@@ -317,7 +319,9 @@ describe('region metadata → DOM', () => {
     const file = lowerHIRWithRegions(hir, t, { optimizeLevel: 'safe' })
     const { code } = generate(file)
 
-    expect(code).toContain('bindText')
+    expect(code).toContain('insertBetween')
+    expect(code).toContain('user()?.profile?.name')
+    expect(code).not.toContain('bindText')
   })
 
   it('keeps optional member attribute bindings reactive', () => {
@@ -348,7 +352,8 @@ describe('region metadata → DOM', () => {
 
     expect(code).toContain('createRenderEffect')
     expect(code).toContain('setAttr')
-    expect(code).toContain('setText')
+    expect(code).toContain('insertBetween')
+    expect(code).not.toContain('setText')
   })
 })
 

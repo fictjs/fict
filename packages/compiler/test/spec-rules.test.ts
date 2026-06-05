@@ -97,7 +97,7 @@ describe('Spec rule coverage', () => {
     // Props destructuring uses reactive getters
     expect(output).toContain('prop(() => __props.count)')
     expect(output).toContain('count()')
-    expect(output).toContain('bindText')
+    expect(output).toContain('insertBetween')
   })
 
   it('keeps nested props destructuring reactive', () => {

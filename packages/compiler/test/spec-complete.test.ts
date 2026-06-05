@@ -248,7 +248,7 @@ describe('R006: JSX dynamic binding', () => {
     expect(output).toContain('disabled()')
   })
 
-  it('creates binding for dynamic children', () => {
+  it('creates child insertion for ambiguous dynamic children', () => {
     const output = transform(`
       import { $state } from 'fict'
       function Component() {
@@ -256,7 +256,7 @@ describe('R006: JSX dynamic binding', () => {
         return <span>{text}</span>
       }
     `)
-    expect(output).toContain('bindText')
+    expect(output).toContain('insertBetween')
   })
 
   it('handles event handlers', () => {

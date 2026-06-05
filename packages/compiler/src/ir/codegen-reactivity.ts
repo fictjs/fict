@@ -118,6 +118,31 @@ export function isLikelyTextExpression(
     }
     return false
   }
+  const getRootIdentifierName = (node: Expression): string | null => {
+    if (node.kind === 'Identifier') return node.name
+    if (node.kind === 'MemberExpression' || node.kind === 'OptionalMemberExpression') {
+      return getRootIdentifierName(node.object)
+    }
+    return null
+  }
+  const getStaticPropertyName = (node: Expression): string | null => {
+    if (node.kind !== 'MemberExpression' && node.kind !== 'OptionalMemberExpression') return null
+    if (!node.computed && node.property.kind === 'Identifier') return node.property.name
+    if (node.property.kind === 'Literal') return String(node.property.value)
+    return null
+  }
+  const isAmbiguousRootChildValue = (node: Expression): boolean => {
+    if (node.kind === 'Identifier') return isReactiveIdentifier(node.name)
+    if (node.kind === 'MemberExpression' || node.kind === 'OptionalMemberExpression') {
+      const rootName = getRootIdentifierName(node)
+      const propertyName = getStaticPropertyName(node)
+      return propertyName === 'children' || (!!rootName && isReactiveIdentifier(rootName))
+    }
+    return false
+  }
+  if (isAmbiguousRootChildValue(expr)) {
+    return false
+  }
   const visit = (node: Expression, allowNonSignalReference = false): void => {
     if (!ok) return
     switch (node.kind) {

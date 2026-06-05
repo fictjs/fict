@@ -530,7 +530,8 @@ describe('createFictPlugin (HIR)', () => {
         }
       `)
 
-      expect(output).toContain('bindText')
+      expect(output).toContain('insertBetween')
+      expect(output).toContain('createElement')
       expect(output).toContain('count()')
     })
 
@@ -617,7 +618,8 @@ describe('createFictPlugin (HIR)', () => {
       `)
 
       expect(output).toContain('document.title = `Count: ${count()}`')
-      expect(output).toContain('bindText')
+      expect(output).toContain('insertBetween')
+      expect(output).toContain('createElement')
       expect(output).toContain('count()')
     })
 

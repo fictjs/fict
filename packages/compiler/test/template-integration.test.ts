@@ -761,6 +761,103 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('renders ambiguous reactive JSX children through child insertion', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: {
+        text(): void
+        empty(): void
+        node(): void
+        array(): void
+      }
+
+      function Layout(props: { children?: unknown }) {
+        return <section data-testid="layout">{props.children}</section>
+      }
+
+      export function App() {
+        let value = $state<any>('text')
+        let node = $state<any>(<span>initial node</span>)
+        let list = $state<any>([<span>a</span>, <span>b</span>])
+        api = {
+          text: () => (value = 'next text'),
+          empty: () => (value = null),
+          node: () => (value = <span>next node</span>),
+          array: () => (value = [<span>x</span>, <span>y</span>]),
+        }
+        return (
+          <main>
+            <div data-testid="switching">{value}</div>
+            <div data-testid="node">{node}</div>
+            <div data-testid="list">{list}</div>
+            <Layout>
+              <span>layout one</span>
+              <span>layout two</span>
+            </Layout>
+          </main>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: {
+        text(): void
+        empty(): void
+        node(): void
+        array(): void
+      }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const switching = container.querySelector('[data-testid="switching"]') as HTMLDivElement
+    const node = container.querySelector('[data-testid="node"]') as HTMLDivElement
+    const list = container.querySelector('[data-testid="list"]') as HTMLDivElement
+    const layout = container.querySelector('[data-testid="layout"]') as HTMLElement
+
+    expect(switching.textContent).toBe('text')
+    expect(node.querySelector('span')?.textContent).toBe('initial node')
+    expect(Array.from(list.querySelectorAll('span')).map(span => span.textContent)).toEqual([
+      'a',
+      'b',
+    ])
+    expect(Array.from(layout.querySelectorAll('span')).map(span => span.textContent)).toEqual([
+      'layout one',
+      'layout two',
+    ])
+
+    mod.api.node()
+    await flushUpdates()
+    expect(switching.querySelector('span')?.textContent).toBe('next node')
+
+    mod.api.array()
+    await flushUpdates()
+    expect(Array.from(switching.querySelectorAll('span')).map(span => span.textContent)).toEqual([
+      'x',
+      'y',
+    ])
+
+    mod.api.empty()
+    await flushUpdates()
+    expect(switching.textContent).toBe('')
+
+    mod.api.text()
+    await flushUpdates()
+    expect(switching.textContent).toBe('next text')
+
+    teardown()
+    container.remove()
+  })
+
   it('stringifies boolean aria and data attributes in fine-grained output', async () => {
     const source = `
       import { $state, render } from 'fict'
