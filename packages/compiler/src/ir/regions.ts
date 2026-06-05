@@ -20,6 +20,7 @@ import type {
   Expression,
   Instruction,
   JSXElementExpression as HJSXElementExpression,
+  TemplateQuasi,
   Terminator,
 } from './hir'
 import { getSSABaseName, HIRError } from './hir'
@@ -59,6 +60,19 @@ export interface Region {
   children: Region[]
   /** Parent region ID if nested */
   parentId?: number | undefined
+}
+
+function templateElementFromQuasi(
+  quasi: TemplateQuasi,
+  tail: boolean,
+  t: typeof BabelCore.types,
+): BabelCore.types.TemplateElement {
+  const raw = typeof quasi === 'string' ? quasi : quasi.raw
+  const cooked = typeof quasi === 'string' ? quasi : quasi.cooked
+  const element =
+    cooked === null ? t.templateElement({ raw }, tail) : t.templateElement({ raw, cooked }, tail)
+  ;(element.value as { raw: string; cooked: string | null }).cooked = cooked
+  return element
 }
 
 /**
@@ -4365,7 +4379,7 @@ function exprToAST(
 
     case 'TemplateLiteral': {
       const quasis = expr.quasis.map((q, i, arr) =>
-        t.templateElement({ raw: q, cooked: q }, i === arr.length - 1),
+        templateElementFromQuasi(q, i === arr.length - 1, t),
       )
       const expressions = expr.expressions.map(e => exprToAST(e, t))
       return t.templateLiteral(quasis, expressions)

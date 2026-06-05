@@ -10,6 +10,7 @@ import type {
   Terminator,
   JSXElementExpression,
   BlockId,
+  TemplateQuasi,
 } from './hir'
 import { getSSABaseName, makeSSAName, resetGeneratedSSANames } from './hir'
 import { isHookLikeFunction } from './hook-utils'
@@ -3040,7 +3041,9 @@ function evaluateLiteral(
     case 'TemplateLiteral': {
       const parts: string[] = []
       for (let i = 0; i < expr.quasis.length; i++) {
-        parts.push(expr.quasis[i] ?? '')
+        const cooked = getTemplateQuasiCooked(expr.quasis[i] ?? '')
+        if (cooked === null) return UNKNOWN_CONST
+        parts.push(cooked)
         if (i < expr.expressions.length) {
           const value = evaluateLiteral(expr.expressions[i] as Expression, constants)
           if (value === UNKNOWN_CONST) return UNKNOWN_CONST
@@ -3113,6 +3116,14 @@ function getStaticMemberKey(expr: Expression, computed: boolean): string | numbe
     }
   }
   return null
+}
+
+function getTemplateQuasiRaw(quasi: TemplateQuasi): string {
+  return typeof quasi === 'string' ? quasi : quasi.raw
+}
+
+function getTemplateQuasiCooked(quasi: TemplateQuasi): string | null {
+  return typeof quasi === 'string' ? quasi : quasi.cooked
 }
 
 function replaceConstMemberExpressions(
@@ -4493,9 +4504,9 @@ function hashExpression(expr: Expression): string {
         )
         .join(',')}`
     case 'TemplateLiteral':
-      return `tpl:${expr.quasis.join('|')}:${expr.expressions
-        .map(e => hashExpression(e as Expression))
-        .join('|')}`
+      return `tpl:${expr.quasis
+        .map(q => `${getTemplateQuasiRaw(q)}:${getTemplateQuasiCooked(q) ?? '<invalid>'}`)
+        .join('|')}:${expr.expressions.map(e => hashExpression(e as Expression)).join('|')}`
     case 'SpreadElement':
       return `spread:${hashExpression(expr.argument as Expression)}`
     case 'SequenceExpression':

@@ -94,6 +94,7 @@ import {
   type Instruction,
   type JSXChild,
   type JSXElementExpression,
+  type TemplateQuasi,
   type Terminator,
 } from './hir'
 import { isHookLikeFunction, isHookName } from './hook-utils'
@@ -132,6 +133,19 @@ function setNodeLoc<T extends { loc?: BabelCore.types.SourceLocation | null }>(
   if (loc === undefined) return node
   node.loc = cloneLoc(loc) ?? null
   return node
+}
+
+function lowerTemplateElement(
+  quasi: TemplateQuasi,
+  tail: boolean,
+  t: typeof BabelCore.types,
+): BabelCore.types.TemplateElement {
+  const raw = typeof quasi === 'string' ? quasi : quasi.raw
+  const cooked = typeof quasi === 'string' ? quasi : quasi.cooked
+  const element =
+    cooked === null ? t.templateElement({ raw }, tail) : t.templateElement({ raw, cooked }, tail)
+  ;(element.value as { raw: string; cooked: string | null }).cooked = cooked
+  return element
 }
 
 function getTerminatorArgumentLoc(
@@ -2322,9 +2336,7 @@ function lowerExpressionImpl(
 
     case 'TemplateLiteral':
       return t.templateLiteral(
-        expr.quasis.map((q, i) =>
-          t.templateElement({ raw: q, cooked: q }, i === expr.quasis.length - 1),
-        ),
+        expr.quasis.map((q, i) => lowerTemplateElement(q, i === expr.quasis.length - 1, t)),
         expr.expressions.map(e => lowerExpression(e, ctx)),
       )
 
@@ -2377,7 +2389,7 @@ function lowerExpressionImpl(
         lowerExpression(expr.tag, ctx),
         t.templateLiteral(
           expr.quasi.quasis.map((q, i) =>
-            t.templateElement({ raw: q, cooked: q }, i === expr.quasi.quasis.length - 1),
+            lowerTemplateElement(q, i === expr.quasi.quasis.length - 1, t),
           ),
           expr.quasi.expressions.map(e => lowerExpression(e, ctx)),
         ),

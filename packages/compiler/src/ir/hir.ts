@@ -534,9 +534,11 @@ export interface UpdateExpression extends SourceInfo {
   prefix: boolean
 }
 
+export type TemplateQuasi = string | { raw: string; cooked: string | null }
+
 export interface TemplateLiteral extends SourceInfo {
   kind: 'TemplateLiteral'
-  quasis: string[]
+  quasis: TemplateQuasi[]
   expressions: Expression[]
 }
 

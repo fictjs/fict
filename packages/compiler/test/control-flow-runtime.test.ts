@@ -953,6 +953,83 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(1)
   })
 
+  it('preserves tagged template raw escapes with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          function tag(strings) {
+            return strings.raw[0]
+          }
+          return tag\`a\\nb\`
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('a\\nb')
+  })
+
+  it('preserves tagged template unicode raw and cooked values with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          function tag(strings) {
+            return strings.raw[0] + ':' + strings[0]
+          }
+          return tag\`\\u0061\`
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('\\u0061:a')
+  })
+
+  it('preserves invalid tagged template escape raw values with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          function tag(strings) {
+            return String(strings[0]) + ':' + strings.raw[0]
+          }
+          return tag\`\\u{}\`
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('undefined:\\u{}')
+  })
+
+  it('preserves untagged template cooked escapes with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          return \`a\\nb\`
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('a\nb')
+  })
+
   it('preserves object destructuring assignment order in reactive hooks', () => {
     const result = compileAndRunHook<number>(
       `

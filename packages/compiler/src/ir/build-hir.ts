@@ -3264,7 +3264,7 @@ function convertExpression(
   if (t.isTemplateLiteral(node)) {
     const template: HTemplateLiteral = {
       kind: 'TemplateLiteral',
-      quasis: node.quasis.map(q => q.value.cooked ?? q.value.raw),
+      quasis: node.quasis.map(q => ({ raw: q.value.raw, cooked: q.value.cooked ?? null })),
       expressions: node.expressions.map(e => convertExpression(e as BabelCore.types.Expression)),
       loc,
     }
@@ -3332,7 +3332,10 @@ function convertExpression(
       tag: convertExpression(node.tag),
       quasi: {
         kind: 'TemplateLiteral',
-        quasis: node.quasi.quasis.map(q => q.value.cooked ?? q.value.raw),
+        quasis: node.quasi.quasis.map(q => ({
+          raw: q.value.raw,
+          cooked: q.value.cooked ?? null,
+        })),
         expressions: node.quasi.expressions.map(e =>
           convertExpression(e as BabelCore.types.Expression),
         ),
