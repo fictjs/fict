@@ -63,6 +63,10 @@ function isStaticValue(expr: Expression | null): expr is Expression & { kind: 'L
   return expr.kind === 'Literal'
 }
 
+function escapeHtmlAttributeValue(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+}
+
 /**
  * Extract static HTML from HIR JSXElementExpression.
  * Similar to extractStaticHtml from fine-grained-dom.ts but works with HIR types.
@@ -211,9 +215,7 @@ export function extractHIRStaticHtml(
     if (isStaticValue(attr.value)) {
       const value = attr.value.value
       if (typeof value === 'string') {
-        // Escape HTML attribute value
-        const escaped = String(value).replace(/"/g, '&quot;')
-        html += ` ${name}="${escaped}"`
+        html += ` ${name}="${escapeHtmlAttributeValue(value)}"`
       } else if (typeof value === 'boolean' && value) {
         html += ` ${name}`
       } else if (typeof value === 'number') {

@@ -1485,6 +1485,31 @@ describe('spread operator in JSX', () => {
     expect(code).toMatch(/spread\([\s\S]*\["data-role"\]/)
   })
 
+  it('escapes static expression attributes in template HTML', () => {
+    const ast = parseFile(`
+      function EscapedAttrs() {
+        return (
+          <div
+            title={"&copy;"}
+            data-x={"a&b"}
+            data-tag={"<tag>"}
+            data-quote={'"quoted"'}
+            data-apos={"it's"}
+          />
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('title=\\"&amp;copy;\\"')
+    expect(code).toContain('data-x=\\"a&amp;b\\"')
+    expect(code).toContain('data-tag=\\"&lt;tag>\\"')
+    expect(code).toContain('data-quote=\\"&quot;quoted&quot;\\"')
+    expect(code).toContain('data-apos=\\"it\'s\\"')
+  })
+
   it('skips spread children when explicit host children are present', () => {
     const ast = parseFile(`
       function Wrapper(props) {
