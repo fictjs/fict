@@ -2380,6 +2380,78 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('dispatches EventListenerObject handlers in fine-grained mode', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      function makeListener(label: string) {
+        return {
+          handleEvent(event: Event) {
+            calls.push(label + ':' + event.type)
+          },
+        }
+      }
+
+      export function App() {
+        const listener = makeListener('identifier')
+        const conditional = true ? makeListener('conditional') : makeListener('unused')
+
+        return (
+          <>
+            <button data-id="identifier" onClick={listener}>identifier</button>
+            <button
+              data-id="inline"
+              onClick={{
+                handleEvent(event: Event) {
+                  calls.push('inline:' + event.type)
+                },
+              }}
+            >
+              inline
+            </button>
+            <button data-id="conditional" onClick={conditional}>conditional</button>
+            <button data-id="capture" onClickCapture={makeListener('capture')}>capture</button>
+          </>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      calls: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const click = (id: string) => {
+      const button = container.querySelector(`[data-id="${id}"]`) as HTMLButtonElement
+      button.click()
+    }
+
+    click('identifier')
+    click('inline')
+    click('conditional')
+    click('capture')
+    await flushUpdates()
+
+    expect(mod.calls).toEqual([
+      'identifier:click',
+      'inline:click',
+      'conditional:click',
+      'capture:click',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
   it('wires namespaced oncapture: event handlers in fine-grained mode', async () => {
     const source = `
       import { render } from 'fict'
