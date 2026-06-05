@@ -3747,6 +3747,49 @@ interface MacroAliases {
   strictMacroBindings?: boolean
 }
 
+interface GeneratedFunctionEntry {
+  fn: HIRFunction
+  stmt: BabelCore.types.FunctionDeclaration
+}
+
+function buildFunctionDeclaratorExpression(
+  entry: GeneratedFunctionEntry,
+  t: typeof BabelCore.types,
+): BabelCore.types.FunctionExpression | BabelCore.types.ArrowFunctionExpression {
+  const { fn, stmt } = entry
+  const isAsync = !!(fn.meta?.isAsync || stmt.async)
+  const isGenerator = !!(fn.meta?.isGenerator || stmt.generator)
+
+  if (fn.meta?.fromExpression && fn.meta.isArrow) {
+    let arrowBody: BabelCore.types.BlockStatement | BabelCore.types.Expression = stmt.body
+    if (fn.meta.hasExpressionBody) {
+      const bodyStatements = stmt.body.body
+      if (
+        bodyStatements.length === 1 &&
+        t.isReturnStatement(bodyStatements[0]) &&
+        bodyStatements[0].argument
+      ) {
+        arrowBody = bodyStatements[0].argument
+      }
+    }
+    const arrow = t.arrowFunctionExpression(stmt.params, arrowBody)
+    arrow.async = isAsync
+    return arrow
+  }
+
+  if (fn.meta?.fromExpression) {
+    return t.functionExpression(null, stmt.params, stmt.body, isGenerator, isAsync)
+  }
+
+  return t.functionExpression(
+    stmt.id ? t.identifier(stmt.id.name) : null,
+    stmt.params,
+    stmt.body,
+    isGenerator,
+    isAsync,
+  )
+}
+
 /**
  * Lower HIR to Babel AST with full region-based reactive scope analysis.
  * This is the P0 integration point that bridges:
@@ -3828,10 +3871,7 @@ export function lowerHIRWithRegions(
   }
 
   // Map generated functions by name for replacement when walking original body
-  const generatedFunctions = new Map<
-    string,
-    { fn: HIRFunction; stmt: BabelCore.types.FunctionDeclaration }
-  >()
+  const generatedFunctions = new Map<string, GeneratedFunctionEntry>()
   for (const fn of program.functions) {
     const funcStmt = lowerFunctionWithRegions(fn, ctx)
     if (funcStmt && fn.name) {
@@ -3915,36 +3955,32 @@ export function lowerHIRWithRegions(
         }
       }
       if (t.isVariableDeclaration(stmt.declaration)) {
-        // Split generated function declarations from remaining declarators
-        const remainingDeclarators: typeof stmt.declaration.declarations = []
-        const generated: { fn: HIRFunction; stmt: BabelCore.types.FunctionDeclaration }[] = []
+        const rebuiltDeclarators: typeof stmt.declaration.declarations = []
+        let rebuilt = false
 
         for (const decl of stmt.declaration.declarations) {
           if (t.isIdentifier(decl.id)) {
             const found = generatedFunctions.get(decl.id.name)
             if (found) {
-              generated.push(found)
+              rebuilt = true
+              rebuiltDeclarators.push(
+                t.variableDeclarator(decl.id, buildFunctionDeclaratorExpression(found, t)),
+              )
               generatedFunctions.delete(decl.id.name)
+              emittedFunctionNames.add(decl.id.name)
               continue
             }
           }
-          remainingDeclarators.push(decl)
+          rebuiltDeclarators.push(decl)
         }
 
-        if (generated.length > 0) {
-          flushLowerableBuffer()
-          for (const entry of generated) {
-            body.push(t.exportNamedDeclaration(entry.stmt, []))
-            if (entry.stmt.id?.name) emittedFunctionNames.add(entry.stmt.id.name)
-          }
-          if (remainingDeclarators.length > 0) {
-            body.push(
-              t.exportNamedDeclaration(
-                t.variableDeclaration(stmt.declaration.kind, remainingDeclarators),
-                [],
-              ),
-            )
-          }
+        if (rebuilt) {
+          body.push(
+            t.exportNamedDeclaration(
+              t.variableDeclaration(stmt.declaration.kind, rebuiltDeclarators),
+              [],
+            ),
+          )
           continue
         }
 
@@ -4010,44 +4046,7 @@ export function lowerHIRWithRegions(
           const found = generatedFunctions.get(decl.id.name)
           if (found) {
             rebuilt = true
-            let arrowBody: BabelCore.types.BlockStatement | BabelCore.types.Expression =
-              found.stmt.body
-            if (found.fn.meta?.isArrow && t.isBlockStatement(found.stmt.body)) {
-              const bodyStatements = found.stmt.body.body
-              if (
-                bodyStatements.length === 1 &&
-                t.isReturnStatement(bodyStatements[0]) &&
-                bodyStatements[0].argument
-              ) {
-                arrowBody = bodyStatements[0].argument
-              }
-            }
-            const shouldUseArrow = !!(found.fn.meta?.isArrow && found.fn.meta?.hasExpressionBody)
-            const funcExpr = found.fn.meta?.fromExpression
-              ? found.fn.meta.isArrow
-                ? shouldUseArrow
-                  ? t.arrowFunctionExpression(found.stmt.params, arrowBody)
-                  : t.functionExpression(
-                      t.isIdentifier(decl.id) ? t.identifier(decl.id.name) : null,
-                      found.stmt.params,
-                      found.stmt.body,
-                    )
-                : t.functionExpression(null, found.stmt.params, found.stmt.body)
-              : t.functionExpression(
-                  found.stmt.id ? t.identifier(found.stmt.id.name) : null,
-                  found.stmt.params,
-                  found.stmt.body,
-                  found.stmt.generator,
-                  found.stmt.async,
-                )
-            if (found.fn.meta?.isAsync) {
-              if (t.isArrowFunctionExpression(funcExpr) || t.isFunctionExpression(funcExpr)) {
-                funcExpr.async = true
-              }
-            }
-            if (t.isFunctionExpression(funcExpr)) {
-              funcExpr.generator = !!(found.fn.meta?.isGenerator || found.stmt.generator)
-            }
+            const funcExpr = buildFunctionDeclaratorExpression(found, t)
             rebuiltDeclarators.push(t.variableDeclarator(decl.id, funcExpr))
             generatedFunctions.delete(decl.id.name)
             continue
