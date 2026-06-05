@@ -458,6 +458,43 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('invokes call/apply destructured function props', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      function Child({ cb }: { cb: (value: string) => void }) {
+        cb.call(null, 'call')
+        cb.apply(null, ['apply'])
+        cb?.call(null, 'optcall')
+        return <div data-testid="child">child</div>
+      }
+
+      export function App() {
+        return <Child cb={value => calls.push(value)} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      calls: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="child"]')).toBeTruthy()
+    expect(mod.calls).toEqual(['call', 'apply', 'optcall'])
+
+    teardown()
+    container.remove()
+  })
+
   it('passes props to local components named Fragment', async () => {
     const source = `
       import { render } from 'fict'

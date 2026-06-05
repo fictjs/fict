@@ -648,6 +648,26 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).not.toContain('const cb = prop(() => __props.cb)')
   })
 
+  it('keeps call/apply destructured function props unwrapped', () => {
+    const ast = parseFile(`
+      function Child({ cb }) {
+        cb.call(null, 'call')
+        cb.apply(null, ['apply'])
+        cb?.call(null, 'optcall')
+        return <div>child</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('const cb = __props.cb')
+    expect(code).toContain('cb.call(null, "call")')
+    expect(code).toContain('cb.apply(null, ["apply"])')
+    expect(code).toContain('cb?.call(null, "optcall")')
+    expect(code).not.toContain('const cb = prop(() => __props.cb)')
+  })
+
   it('lowers literal prop destructuring keys with computed members', () => {
     const ast = parseFile(`
       function Child({ "foo-bar": value, 0: first, nested: { "aria-label": label = 'fallback' } }) {

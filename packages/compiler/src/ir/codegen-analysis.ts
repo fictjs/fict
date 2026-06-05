@@ -388,24 +388,48 @@ export function functionHasYield(fn: HIRFunction): boolean {
 export function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
   const called = new Set<string>()
 
+  const getStaticMemberName = (
+    expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+  ): string | null => {
+    if (!expr.computed && expr.property.kind === 'Identifier') return expr.property.name
+    if (expr.property.kind === 'Literal') {
+      return typeof expr.property.value === 'string' ? expr.property.value : null
+    }
+    return null
+  }
+
+  const recordCalledIdentifier = (callee: Expression): boolean => {
+    if (callee.kind === 'Identifier') {
+      called.add(deSSAVarName(callee.name))
+      return true
+    }
+    if (callee.kind === 'MemberExpression' || callee.kind === 'OptionalMemberExpression') {
+      const methodName = getStaticMemberName(callee)
+      if (
+        (methodName === 'call' || methodName === 'apply') &&
+        callee.object.kind === 'Identifier'
+      ) {
+        called.add(deSSAVarName(callee.object.name))
+        return true
+      }
+    }
+    return false
+  }
+
   const visitExpr = (expr: Expression | undefined | null) => {
     if (!expr) return
     switch (expr.kind) {
       case 'Identifier':
         return
       case 'CallExpression': {
-        if (expr.callee.kind === 'Identifier') {
-          called.add(deSSAVarName(expr.callee.name))
-        } else {
+        if (!recordCalledIdentifier(expr.callee as Expression)) {
           visitExpr(expr.callee as Expression)
         }
         expr.arguments.forEach(arg => visitExpr(arg as Expression))
         return
       }
       case 'OptionalCallExpression': {
-        if (expr.callee.kind === 'Identifier') {
-          called.add(deSSAVarName(expr.callee.name))
-        } else {
+        if (!recordCalledIdentifier(expr.callee as Expression)) {
           visitExpr(expr.callee as Expression)
         }
         expr.arguments.forEach(arg => visitExpr(arg as Expression))
