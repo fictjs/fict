@@ -114,7 +114,7 @@ import {
   type Terminator,
   type UpdateExpression as HIRUpdateExpression,
 } from './hir'
-import { isHookLikeFunction, isHookName } from './hook-utils'
+import { isComponentName, isHookLikeFunction, isHookName } from './hook-utils'
 import { buildPropsExpression } from './props-plan'
 import {
   deSSAVarName,
@@ -133,16 +133,81 @@ export { getReactiveCallKind } from './codegen-reactive-kind'
 
 const HOOK_SLOT_BASE = 1000
 const DELEGATED_DATA_ONLY_MARKER = '__fictDataOnly'
-const BABEL_DESTRUCTURING_HELPER_NAMES = new Set(['_toPrimitive', '_toPropertyKey'])
+const COMPONENT_CONTEXT_PRIMITIVE_CALLEES = new Set([
+  '$effect',
+  '$memo',
+  '$state',
+  '$store',
+  'createEffect',
+  'createMemo',
+  'createRenderEffect',
+  'createSignal',
+  'createStore',
+])
 
-function isBabelDestructuringHelperName(name: string | undefined): boolean {
-  return !!name && BABEL_DESTRUCTURING_HELPER_NAMES.has(deSSAVarName(name))
+function isComponentContextPrimitiveCall(expr: Expression): boolean {
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
+  if (expr.callee.kind !== 'Identifier') return false
+  return COMPONENT_CONTEXT_PRIMITIVE_CALLEES.has(deSSAVarName(expr.callee.name))
 }
 
-function isComponentFunctionNameByCurrentHeuristic(name: string | undefined): boolean {
-  if (!name || isBabelDestructuringHelperName(name)) return false
-  const firstChar = name[0]
-  return !!firstChar && firstChar === firstChar.toUpperCase()
+function expressionUsesComponentContextPrimitive(expr: Expression): boolean {
+  let found = false
+  walkExpression(
+    expr,
+    node => {
+      if (!found && isComponentContextPrimitiveCall(node)) found = true
+    },
+    { includeFunctionBodies: false },
+  )
+  return found
+}
+
+function terminatorUsesComponentContextPrimitive(term: Terminator): boolean {
+  switch (term.kind) {
+    case 'Return':
+      return !!term.argument && expressionUsesComponentContextPrimitive(term.argument)
+    case 'Throw':
+      return expressionUsesComponentContextPrimitive(term.argument)
+    case 'Branch':
+      return expressionUsesComponentContextPrimitive(term.test)
+    case 'Switch':
+      return (
+        expressionUsesComponentContextPrimitive(term.discriminant) ||
+        term.cases.some(item => !!item.test && expressionUsesComponentContextPrimitive(item.test))
+      )
+    case 'ForOf':
+      return (
+        expressionUsesComponentContextPrimitive(term.iterable) ||
+        (!!term.assignmentTarget && expressionUsesComponentContextPrimitive(term.assignmentTarget))
+      )
+    case 'ForIn':
+      return (
+        expressionUsesComponentContextPrimitive(term.object) ||
+        (!!term.assignmentTarget && expressionUsesComponentContextPrimitive(term.assignmentTarget))
+      )
+    case 'Break':
+    case 'Continue':
+    case 'Jump':
+    case 'Try':
+    case 'Unreachable':
+      return false
+  }
+}
+
+function functionUsesComponentContextPrimitives(fn: HIRFunction): boolean {
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (
+        (instr.kind === 'Assign' || instr.kind === 'Expression') &&
+        expressionUsesComponentContextPrimitive(instr.value)
+      ) {
+        return true
+      }
+    }
+    if (terminatorUsesComponentContextPrimitive(block.terminator)) return true
+  }
+  return false
 }
 
 function cloneDirectives(
@@ -6948,10 +7013,13 @@ function lowerFunctionWithRegions(
 
   // Generate region result for metadata
   const regionResult = generateRegions(fn, scopeResult)
+  const hasJSX = regionResult.regions.some(r => r.hasJSX) || functionContainsJSX(fn)
 
   const prevHookFlag = ctx.currentFnIsHook
   ctx.currentFnIsHook = inferredHook
-  const isComponent = isComponentFunctionNameByCurrentHeuristic(fn.name)
+  const isComponent =
+    isComponentName(fn.name ? deSSAVarName(fn.name) : undefined) &&
+    (hasJSX || functionUsesComponentContextPrimitives(fn))
   ctx.isComponentFn = isComponent
   // Non-component, non-hook functions should use non-hook-based primitives (createSignal, createMemo)
   // to avoid requiring hook context. Only component functions and hooks use hook-based APIs.
@@ -7356,7 +7424,6 @@ function lowerFunctionWithRegions(
     }
   })
 
-  const hasJSX = regionResult.regions.some(r => r.hasJSX) || functionContainsJSX(fn)
   emitReactiveControlFlowReexecutionWarning(fn, scopeResult, ctx, { hasJSX, isComponent })
   ctx.wrapTrackedExpressions = hasJSX
   const hasTrackedValues =
