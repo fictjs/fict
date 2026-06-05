@@ -1345,6 +1345,11 @@ function convertFunction(
       const exitBlock = createBlock()
 
       blocks.push(condBlock.block, bodyBlock.block, exitBlock.block)
+      condBlock.block.sourceLoop = {
+        kind: 'while',
+        body: bodyBlock.block.id,
+        exit: exitBlock.block.id,
+      }
 
       // jump from current to condition
       current.block.terminator = { kind: 'Jump', target: condBlock.block.id }
@@ -1382,6 +1387,12 @@ function convertFunction(
       const exitBlock = createBlock()
 
       blocks.push(condBlock.block, bodyBlock.block, updateBlock.block, exitBlock.block)
+      condBlock.block.sourceLoop = {
+        kind: 'for',
+        body: bodyBlock.block.id,
+        update: updateBlock.block.id,
+        exit: exitBlock.block.id,
+      }
 
       // init in current block
       if (stmt.init && t.isVariableDeclaration(stmt.init)) {
@@ -1458,6 +1469,11 @@ function convertFunction(
       const exitBlock = createBlock()
 
       blocks.push(bodyBlock.block, condBlock.block, exitBlock.block)
+      bodyBlock.block.sourceLoop = {
+        kind: 'doWhile',
+        condition: condBlock.block.id,
+        exit: exitBlock.block.id,
+      }
 
       // Jump directly to body
       current.block.terminator = { kind: 'Jump', target: bodyBlock.block.id }
@@ -2292,6 +2308,11 @@ function processStatement(
     const exitBlock = ctx.createBlock()
 
     ctx.blocks.push(condBlock.block, bodyBlock.block, exitBlock.block)
+    condBlock.block.sourceLoop = {
+      kind: 'while',
+      body: bodyBlock.block.id,
+      exit: exitBlock.block.id,
+    }
     markLabeledStatement(ctx, condBlock.block.id, labelOverride)
 
     // Jump to condition
@@ -2332,6 +2353,12 @@ function processStatement(
     const exitBlock = ctx.createBlock()
 
     ctx.blocks.push(condBlock.block, bodyBlock.block, updateBlock.block, exitBlock.block)
+    condBlock.block.sourceLoop = {
+      kind: 'for',
+      body: bodyBlock.block.id,
+      update: updateBlock.block.id,
+      exit: exitBlock.block.id,
+    }
     markLabeledStatement(ctx, condBlock.block.id, labelOverride)
 
     // Init in current block
@@ -2406,6 +2433,11 @@ function processStatement(
     const exitBlock = ctx.createBlock()
 
     ctx.blocks.push(bodyBlock.block, condBlock.block, exitBlock.block)
+    bodyBlock.block.sourceLoop = {
+      kind: 'doWhile',
+      condition: condBlock.block.id,
+      exit: exitBlock.block.id,
+    }
     markLabeledStatement(ctx, condBlock.block.id, labelOverride)
 
     // Jump directly to body (do-while executes body first)

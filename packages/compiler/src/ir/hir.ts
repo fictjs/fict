@@ -614,6 +614,12 @@ export interface BasicBlock {
   terminator: Terminator
   /** Exit block for a source bare block whose declarations need lexical scope. */
   lexicalScopeExit?: BlockId | undefined
+  /** Source loop shape for loops that may not have a natural back-edge, e.g. immediate break. */
+  sourceLoop?:
+    | { kind: 'while'; body: BlockId; exit: BlockId }
+    | { kind: 'for'; body: BlockId; update: BlockId; exit: BlockId }
+    | { kind: 'doWhile'; condition: BlockId; exit: BlockId }
+    | undefined
 }
 
 export interface LabeledStatementMeta {

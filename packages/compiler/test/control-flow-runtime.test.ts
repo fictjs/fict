@@ -160,6 +160,63 @@ describe('control flow runtime regressions', () => {
     expect(resolved).toBe(3)
   })
 
+  it('preserves immediate while break before trailing return', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          while (true) {
+            break
+          }
+          return 6
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(6)
+  })
+
+  it('preserves immediate for break before trailing return', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          for (let i = 0; i < 3; i++) {
+            break
+          }
+          return 5
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(5)
+  })
+
+  it('preserves immediate do-while break before trailing return', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          do {
+            break
+          } while (count < 3)
+          return 4
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(4)
+  })
+
   it('preserves trailing assignments in directly emitted control-flow regions', () => {
     const result = compileAndRunHook<{ bump: () => void; view: () => number }>(
       `

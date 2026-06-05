@@ -607,6 +607,21 @@ function structurizeBlock(
     return structurizeLexicalScopeBlock(ctx, blockId, block.lexicalScopeExit)
   }
 
+  if (block.sourceLoop?.kind === 'doWhile') {
+    if (
+      subgraphHasContinueToTarget(
+        ctx,
+        block.id,
+        block.sourceLoop.condition,
+        new Set([block.sourceLoop.condition]),
+      )
+    ) {
+      ctx.problematicBlocks.add(block.id)
+    } else {
+      return structurizeDoWhileLoop(ctx, block, block.sourceLoop)
+    }
+  }
+
   ctx.processing.add(blockId)
   ctx.emitted.add(blockId)
   ctx.depth++
@@ -736,6 +751,29 @@ function structurizeBranch(
 
   // Check if this is a loop header
   const isSyntheticIteratorBodyHeader = hasSyntheticIteratorBodyPredecessor(ctx, block.id)
+  if (
+    block.sourceLoop?.kind === 'while' &&
+    block.sourceLoop.body === consequent &&
+    block.sourceLoop.exit === alternate
+  ) {
+    return structurizeWhileLoop(ctx, block, test, consequent, alternate)
+  }
+  if (
+    block.sourceLoop?.kind === 'for' &&
+    block.sourceLoop.body === consequent &&
+    block.sourceLoop.exit === alternate
+  ) {
+    const updateBlock = ctx.blockMap.get(block.sourceLoop.update)
+    if (updateBlock) {
+      return structurizeForLoop(ctx, test, {
+        headerBlockId: block.id,
+        bodyBlockId: block.sourceLoop.body,
+        exitBlockId: block.sourceLoop.exit,
+        updateBlockId: block.sourceLoop.update,
+        updateInstructions: updateBlock.instructions,
+      })
+    }
+  }
   const isLoopHeader = ctx.loopHeaders.has(block.id) && !isSyntheticIteratorBodyHeader
   if (isLoopHeader) {
     const forLoop = detectForLoop(ctx, block.id, consequent, alternate)
@@ -928,6 +966,42 @@ function structurizeWhileLoop(
     return combineStructuredNodes(labeledWhileNode, exit)
   }
   return labeledWhileNode
+}
+
+function structurizeDoWhileLoop(
+  ctx: StructurizeContext,
+  bodyBlock: BasicBlock,
+  loop: Extract<NonNullable<BasicBlock['sourceLoop']>, { kind: 'doWhile' }>,
+  outerJoin?: BlockId,
+): StructuredNode {
+  const condBlock = ctx.blockMap.get(loop.condition)
+  const test =
+    condBlock?.terminator.kind === 'Branch'
+      ? condBlock.terminator.test
+      : ({ kind: 'Literal', value: true } as Expression)
+  const body = structurizeBlockUntilJoin(ctx, bodyBlock.id, loop.condition)
+  ctx.emitted.add(loop.condition)
+
+  const doWhileNode: StructuredNode = {
+    kind: 'doWhile',
+    test,
+    body,
+    headerBlock: loop.condition,
+  }
+  const labeledDoWhileNode = wrapStructuredNodeWithLabel(
+    getLabeledStatementMeta(ctx, loop.condition),
+    doWhileNode,
+  )
+
+  if (loop.exit !== outerJoin && !ctx.emitted.has(loop.exit)) {
+    const exit =
+      outerJoin !== undefined
+        ? structurizeBlockUntilJoin(ctx, loop.exit, outerJoin)
+        : structurizeBlock(ctx, loop.exit)
+    return combineStructuredNodes(labeledDoWhileNode, exit)
+  }
+
+  return labeledDoWhileNode
 }
 
 /**
@@ -1567,6 +1641,36 @@ function collectSubgraphBlocksUntilStop(
     collectSubgraphBlocksUntilStop(ctx, succ, stopBlocks, visited)
   }
   return visited
+}
+
+function subgraphHasContinueToTarget(
+  ctx: StructurizeContext,
+  start: BlockId | undefined,
+  target: BlockId,
+  stopBlocks: Set<BlockId>,
+  visited = new Set<BlockId>(),
+): boolean {
+  if (start === undefined || stopBlocks.has(start) || visited.has(start)) {
+    return false
+  }
+  visited.add(start)
+
+  const block = ctx.blockMap.get(start)
+  if (!block) return false
+  if (block.terminator.kind === 'Continue') {
+    return block.terminator.target === target
+  }
+  if (block.terminator.kind === 'Break') {
+    return false
+  }
+
+  const successors = ctx.successors.get(start) ?? []
+  for (const succ of successors) {
+    if (subgraphHasContinueToTarget(ctx, succ, target, stopBlocks, visited)) {
+      return true
+    }
+  }
+  return false
 }
 
 function subgraphHasEscapingLoopControlTransfer(
