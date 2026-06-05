@@ -1733,6 +1733,46 @@ function lowerExpressionImpl(
     return fnExprAst
   }
 
+  const lowerMemberExpressionWithoutAccessorCall = (
+    member: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+  ): BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression => {
+    const object = lowerExpression(member.object, ctx)
+    const property = member.computed
+      ? lowerExpression(member.property, ctx)
+      : member.property.kind === 'Identifier'
+        ? t.identifier(member.property.name)
+        : t.stringLiteral(
+            String(member.property.kind === 'Literal' ? (member.property.value ?? '') : ''),
+          )
+
+    if (member.kind === 'OptionalMemberExpression') {
+      return t.optionalMemberExpression(object, property, member.computed, member.optional)
+    }
+    return t.memberExpression(object, property, member.computed, member.optional)
+  }
+
+  const isNamespaceReactiveAccessorMember = (
+    callee: Expression,
+  ): callee is Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }> => {
+    if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') {
+      return false
+    }
+    if (callee.object.kind !== 'Identifier') return false
+    const nsMeta = ctx.importedNamespaces?.get(deSSAVarName(callee.object.name))
+    if (!nsMeta) return false
+    const propName = getStaticPropName(callee.property as Expression, callee.computed)
+    if (typeof propName !== 'string') return false
+    const kind = nsMeta.exports[propName]
+    return kind === 'signal' || kind === 'memo'
+  }
+
+  const lowerCallCalleeExpression = (callee: Expression): BabelCore.types.Expression => {
+    if (isNamespaceReactiveAccessorMember(callee)) {
+      return lowerMemberExpressionWithoutAccessorCall(callee)
+    }
+    return lowerExpression(callee, ctx)
+  }
+
   switch (expr.kind) {
     case 'Identifier':
       // Apply SSA de-versioning to restore original variable names
@@ -1937,7 +1977,7 @@ function lowerExpressionImpl(
       const lowerCallee = () =>
         isIIFE
           ? withNonReactiveScope(ctx, () => lowerExpression(expr.callee, ctx))
-          : lowerExpression(expr.callee, ctx)
+          : lowerCallCalleeExpression(expr.callee)
       const isIteratingMethod =
         expr.callee.kind === 'MemberExpression' &&
         ((expr.callee.property.kind === 'Identifier' &&
@@ -2481,7 +2521,7 @@ function lowerExpressionImpl(
         }
       }
       return t.optionalCallExpression(
-        lowerExpression(expr.callee, ctx),
+        lowerCallCalleeExpression(expr.callee),
         lowerCallArguments(expr.arguments),
         expr.optional,
       )

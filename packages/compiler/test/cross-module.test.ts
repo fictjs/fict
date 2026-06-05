@@ -425,6 +425,81 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('does not double-call namespace imported signal accessors used as calls', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+      `
+      const appSource = `
+        import * as store from './store-ns-call'
+
+        export function App() {
+          return <div>{store.count()}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-call.ts'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-ns-call.tsx'),
+      )
+
+      expect(output).toMatch(/store\.count\(\)/)
+      expect(output).not.toMatch(/store\.count\(\)\(\)/)
+    })
+
+    it('does not double-call optional namespace imported signal accessors', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+      `
+      const appSource = `
+        import * as store from './store-ns-optional-call'
+
+        export function App() {
+          return <div>{store.count?.()}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-optional-call.ts'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-ns-optional-call.tsx'),
+      )
+
+      expect(output).toMatch(/store\.count\?\.\(\)/)
+      expect(output).not.toMatch(/store\.count\?\.\(\)\?\.\(\)/)
+    })
+
+    it('does not double-call namespace imported memo accessors used as calls', () => {
+      const storeSource = `
+        import { createMemo } from 'fict/advanced'
+        export const doubled = createMemo(() => 2)
+      `
+      const appSource = `
+        import * as store from './store-ns-memo-call'
+
+        export function App() {
+          return <div>{store.doubled()}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-memo-call.ts'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-ns-memo-call.tsx'),
+      )
+
+      expect(output).toMatch(/store\.doubled\(\)/)
+      expect(output).not.toMatch(/store\.doubled\(\)\(\)/)
+    })
+
     it('propagates createMemo exports across modules', () => {
       const storeSource = `
         import { createMemo } from 'fict'
