@@ -77,6 +77,18 @@ export function normalizeHIRAttrName(name: string, namespace: NamespaceContext =
   return name
 }
 
+function addSpreadExclusionName(excluded: Set<string>, name: string): void {
+  excluded.add(name)
+  if (name === 'class' || name === 'className') {
+    excluded.add('class')
+    excluded.add('className')
+  }
+  if (name === 'for' || name === 'htmlFor') {
+    excluded.add('for')
+    excluded.add('htmlFor')
+  }
+}
+
 export type ForcedBindingPrefix = 'attr' | 'bool' | 'prop'
 
 export interface ForcedBindingName {
@@ -262,17 +274,17 @@ export function extractHIRStaticHtml(
           }
           if (nextName === 'key') continue
 
-          excluded.add(nextName)
+          addSpreadExclusionName(excluded, nextName)
           if (nextName !== nextAttr.name) {
-            excluded.add(nextAttr.name)
+            addSpreadExclusionName(excluded, nextAttr.name)
           }
           const customPropertyName = getCustomElementPropertyBindingName(nextName, isCustomElement)
           if (customPropertyName) {
-            excluded.add(customPropertyName)
+            addSpreadExclusionName(excluded, customPropertyName)
           }
           const forcedBinding = parseForcedBindingName(nextName)
           if (forcedBinding) {
-            excluded.add(forcedBinding.name)
+            addSpreadExclusionName(excluded, forcedBinding.name)
           }
         }
 

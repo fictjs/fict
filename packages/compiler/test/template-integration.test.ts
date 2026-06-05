@@ -1467,6 +1467,46 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it.each([
+    { tag: 'div', spreadKey: 'class', explicitAttr: 'class', expectedAttr: 'class' },
+    { tag: 'div', spreadKey: 'className', explicitAttr: 'class', expectedAttr: 'class' },
+    { tag: 'div', spreadKey: 'class', explicitAttr: 'className', expectedAttr: 'class' },
+    { tag: 'div', spreadKey: 'className', explicitAttr: 'className', expectedAttr: 'class' },
+    { tag: 'label', spreadKey: 'for', explicitAttr: 'for', expectedAttr: 'for' },
+    { tag: 'label', spreadKey: 'htmlFor', explicitAttr: 'for', expectedAttr: 'for' },
+    { tag: 'label', spreadKey: 'for', explicitAttr: 'htmlFor', expectedAttr: 'for' },
+    { tag: 'label', spreadKey: 'htmlFor', explicitAttr: 'htmlFor', expectedAttr: 'for' },
+  ])(
+    'keeps explicit $explicitAttr overriding spread $spreadKey on <$tag>',
+    async ({ tag, spreadKey, explicitAttr, expectedAttr }) => {
+      const source = `
+        import { render } from 'fict'
+
+        export function App() {
+          const attrs = { ${spreadKey}: 'spread' }
+          return <${tag} data-testid="target" {...attrs} ${explicitAttr}="fixed" />
+        }
+
+        export function mount(el: HTMLElement) {
+          return render(() => <App />, el)
+        }
+      `
+
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+      }>(source, { fineGrainedDom: true })
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const teardown = mod.mount(container)
+      const target = container.querySelector('[data-testid="target"]') as HTMLElement
+
+      expect(target.getAttribute(expectedAttr)).toBe('fixed')
+
+      teardown()
+      container.remove()
+    },
+  )
+
   it('does not invoke function-valued intrinsic spread expressions', async () => {
     const source = `
       import { render } from 'fict'
