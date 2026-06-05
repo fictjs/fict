@@ -3796,6 +3796,51 @@ function preserveTopLevelHookReturnAccessorsInStatement(
   return stmt
 }
 
+function propagateLocalHookAliasMetadata(
+  body: BabelCore.types.Statement[],
+  ctx: CodegenContext,
+  t: typeof BabelCore.types,
+): void {
+  const aliasPairs: { target: string; source: string }[] = []
+  const collectDeclaration = (decl: BabelCore.types.VariableDeclaration): void => {
+    for (const item of decl.declarations) {
+      if (!t.isIdentifier(item.id) || !item.init || !t.isIdentifier(item.init)) continue
+      aliasPairs.push({
+        target: deSSAVarName(item.id.name),
+        source: deSSAVarName(item.init.name),
+      })
+    }
+  }
+
+  for (const stmt of body) {
+    if (t.isVariableDeclaration(stmt)) {
+      collectDeclaration(stmt)
+      continue
+    }
+    if (
+      t.isExportNamedDeclaration(stmt) &&
+      stmt.declaration &&
+      t.isVariableDeclaration(stmt.declaration)
+    ) {
+      collectDeclaration(stmt.declaration)
+    }
+  }
+
+  if (aliasPairs.length === 0) return
+  ctx.hookReturnInfo = ctx.hookReturnInfo ?? new Map()
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const { target, source } of aliasPairs) {
+      if (ctx.hookReturnInfo.has(target)) continue
+      const sourceInfo = ctx.hookReturnInfo.get(source)
+      if (!sourceInfo) continue
+      ctx.hookReturnInfo.set(target, sourceInfo)
+      changed = true
+    }
+  }
+}
+
 function preserveHookReturnAccessorsInStatements(
   statements: BabelCore.types.Statement[],
   ctx: CodegenContext,
@@ -5584,6 +5629,8 @@ export function lowerHIRWithRegions(
   for (let index = 0; index < body.length; index++) {
     body[index] = preserveTopLevelHookReturnAccessorsInStatement(body[index]!, ctx)
   }
+
+  propagateLocalHookAliasMetadata(originalBody, ctx, t)
 
   const moduleMeta = buildModuleReactiveMetadata(originalBody, ctx, t, options, {
     getLocalHookInfo(localName) {

@@ -1534,6 +1534,50 @@ describe('Cross-Module Reactivity', () => {
       })
     })
 
+    it('propagates hook metadata through local imported hook aliases', () => {
+      const sourcePath = path.join(baseDir, 'hook-alias-source.tsx')
+      const wrapperPath = path.join(baseDir, 'hook-alias-wrapper.ts')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(sourcePath), {
+        version: 1,
+        exports: {},
+        hooks: {
+          useCounter: { directAccessor: 'signal' },
+        },
+      })
+
+      const wrapperSource = `
+        import { useCounter } from './hook-alias-source'
+
+        const useAlias = useCounter
+        export { useAlias }
+
+        export const useExportedAlias = useCounter
+
+        const useDefaultAlias = useAlias
+        export default useDefaultAlias
+
+        const useChain = useDefaultAlias
+        export { useChain }
+
+        const usePlain = () => null
+        const usePlainAlias = usePlain
+        export { usePlainAlias }
+      `
+
+      transform(wrapperSource, { moduleMetadata }, wrapperPath)
+
+      expect(moduleMetadata.get(path.resolve(wrapperPath))?.hooks).toMatchObject({
+        useAlias: { directAccessor: 'signal' },
+        useExportedAlias: { directAccessor: 'signal' },
+        default: { directAccessor: 'signal' },
+        useChain: { directAccessor: 'signal' },
+      })
+      expect(moduleMetadata.get(path.resolve(wrapperPath))?.hooks).not.toHaveProperty(
+        'usePlainAlias',
+      )
+    })
+
     it('preserves hook return accessors inside branch returns before publishing metadata', () => {
       const hookPath = path.join(baseDir, 'branch-hook-returns.tsx')
       const moduleMetadata = new Map()
