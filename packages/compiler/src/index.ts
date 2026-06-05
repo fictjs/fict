@@ -669,6 +669,10 @@ function runWarningPass(
     BabelCore.types.Identifier,
     Map<string, Set<string>>
   >()
+  const capturedClosureByClassMember = new Map<
+    BabelCore.types.Identifier,
+    { instance: Map<string, Set<string>>; static: Map<string, Set<string>> }
+  >()
   interface CaptureOptions {
     includeNestedFunctions?: boolean
   }
@@ -757,6 +761,45 @@ function runWarningPass(
       capturedClosureByObjectProperty.set(objectBindingId, propertyCaptures)
     }
     propertyCaptures.set(propertyName, captured)
+  }
+  const getClassBindingFromPath = (
+    classPath: BabelCore.NodePath<
+      BabelCore.types.ClassDeclaration | BabelCore.types.ClassExpression
+    >,
+  ): ScopeBinding | null => {
+    if (classPath.isClassDeclaration() && classPath.node.id) {
+      return classPath.parentPath.scope.getBinding(classPath.node.id.name) ?? null
+    }
+    if (
+      classPath.isClassExpression() &&
+      classPath.parentPath.isVariableDeclarator() &&
+      t.isIdentifier(classPath.parentPath.node.id)
+    ) {
+      return classPath.parentPath.scope.getBinding(classPath.parentPath.node.id.name) ?? null
+    }
+    return null
+  }
+  const getClassMemberCaptureStore = (
+    binding: ScopeBinding,
+  ): { instance: Map<string, Set<string>>; static: Map<string, Set<string>> } => {
+    const classBindingId = binding.identifier as BabelCore.types.Identifier
+    let store = capturedClosureByClassMember.get(classBindingId)
+    if (!store) {
+      store = { instance: new Map(), static: new Map() }
+      capturedClosureByClassMember.set(classBindingId, store)
+    }
+    return store
+  }
+  const registerClassMemberCaptureForBinding = (
+    binding: ScopeBinding,
+    propertyName: string,
+    isStatic: boolean,
+    captured: Set<string>,
+  ): void => {
+    if (captured.size === 0) return
+    const store = getClassMemberCaptureStore(binding)
+    const target = isStatic ? store.static : store.instance
+    target.set(propertyName, captured)
   }
   const getCapturedFromInlineSlots = (
     exprPath: BabelCore.NodePath,
@@ -868,6 +911,115 @@ function runWarningPass(
     }
     return null
   }
+  const getCapturedFromClassMemberPath = (
+    memberPath: BabelCore.NodePath,
+    options: CaptureOptions = {},
+  ): { propertyName: string; isStatic: boolean; captured: Set<string> } | null => {
+    const node = memberPath.node
+    const isStatic =
+      (t.isClassMethod(node) ||
+        t.isClassPrivateMethod(node) ||
+        t.isClassProperty(node) ||
+        t.isClassPrivateProperty(node) ||
+        t.isClassAccessorProperty(node)) &&
+      node.static === true
+    if (t.isClassMethod(node)) {
+      const propertyName = getStaticPropertyName(
+        node.key as BabelCore.types.Expression,
+        node.computed,
+      )
+      if (!propertyName) return null
+      const captured = collectCapturedReactiveNames(memberPath, options)
+      return captured.size > 0 ? { propertyName, isStatic, captured } : null
+    }
+    if (t.isClassProperty(node) || t.isClassAccessorProperty(node)) {
+      const propertyName = getStaticPropertyName(
+        node.key as BabelCore.types.Expression,
+        node.computed,
+      )
+      const valuePath = memberPath.get('value') as BabelCore.NodePath | null
+      if (!propertyName || !valuePath?.node) return null
+      const captured = getCapturedFromExpression(valuePath, options)
+      return captured ? { propertyName, isStatic, captured } : null
+    }
+    return null
+  }
+  const registerClassMemberCaptures = (
+    classPath: BabelCore.NodePath<
+      BabelCore.types.ClassDeclaration | BabelCore.types.ClassExpression
+    >,
+  ): void => {
+    const binding = getClassBindingFromPath(classPath)
+    if (!binding) return
+    for (const memberPath of classPath.get('body').get('body') as BabelCore.NodePath[]) {
+      const memberCapture = getCapturedFromClassMemberPath(memberPath)
+      if (!memberCapture) continue
+      registerClassMemberCaptureForBinding(
+        binding,
+        memberCapture.propertyName,
+        memberCapture.isStatic,
+        memberCapture.captured,
+      )
+    }
+  }
+  const getClassPathFromBinding = (
+    binding: ScopeBinding,
+  ): BabelCore.NodePath<
+    BabelCore.types.ClassDeclaration | BabelCore.types.ClassExpression
+  > | null => {
+    if (binding.path.isClassDeclaration()) return binding.path
+    if (binding.path.isVariableDeclarator()) {
+      const initPath = binding.path.get('init') as BabelCore.NodePath | null
+      if (initPath?.isClassExpression()) return initPath
+    }
+    return null
+  }
+  const getCapturedFromClassMemberBinding = (
+    binding: ScopeBinding,
+    propertyName: string,
+    isStatic: boolean,
+    options: CaptureOptions = {},
+  ): Set<string> | null => {
+    const store = capturedClosureByClassMember.get(binding.identifier as BabelCore.types.Identifier)
+    const cached = (isStatic ? store?.static : store?.instance)?.get(propertyName)
+    if (cached && cached.size > 0) return cached
+    const classPath = getClassPathFromBinding(binding)
+    if (!classPath) return null
+    for (const memberPath of classPath.get('body').get('body') as BabelCore.NodePath[]) {
+      const memberCapture = getCapturedFromClassMemberPath(memberPath, options)
+      if (
+        !memberCapture ||
+        memberCapture.propertyName !== propertyName ||
+        memberCapture.isStatic !== isStatic
+      ) {
+        continue
+      }
+      if (!options.includeNestedFunctions) {
+        registerClassMemberCaptureForBinding(
+          binding,
+          propertyName,
+          isStatic,
+          memberCapture.captured,
+        )
+      }
+      return memberCapture.captured
+    }
+    return null
+  }
+  const getCapturedFromClassInstanceMember = (
+    binding: ScopeBinding,
+    propertyName: string,
+    options: CaptureOptions = {},
+  ): Set<string> | null => {
+    if (!binding.path.isVariableDeclarator()) return null
+    const initPath = binding.path.get('init') as BabelCore.NodePath | null
+    if (!initPath?.isNewExpression()) return null
+    const callee = initPath.node.callee
+    if (!t.isIdentifier(callee)) return null
+    const classBinding = initPath.scope.getBinding(callee.name)
+    if (!classBinding) return null
+    return getCapturedFromClassMemberBinding(classBinding, propertyName, false, options)
+  }
   const registerObjectExpressionPropertyCaptures = (
     objectName: string,
     objectPath: BabelCore.NodePath<BabelCore.types.ObjectExpression>,
@@ -894,6 +1046,15 @@ function runWarningPass(
     if (!propertyName) return null
     const binding = scopePath.scope.getBinding(member.object.name)
     if (!binding) return null
+    const staticClassCaptured = getCapturedFromClassMemberBinding(
+      binding,
+      propertyName,
+      true,
+      options,
+    )
+    if (staticClassCaptured) return staticClassCaptured
+    const instanceClassCaptured = getCapturedFromClassInstanceMember(binding, propertyName, options)
+    if (instanceClassCaptured) return instanceClassCaptured
     const propertyCaptures = capturedClosureByObjectProperty.get(
       binding.identifier as BabelCore.types.Identifier,
     )
@@ -1229,6 +1390,9 @@ function runWarningPass(
       const initPath = path.get('init') as BabelCore.NodePath | null
       if (!initPath?.isObjectExpression()) return
       registerObjectExpressionPropertyCaptures(path.node.id.name, initPath, path)
+    },
+    Class(path) {
+      registerClassMemberCaptures(path)
     },
     UpdateExpression(path) {
       const arg = path.node.argument
