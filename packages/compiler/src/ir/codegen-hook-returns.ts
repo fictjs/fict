@@ -5,7 +5,7 @@ import type { HookReturnInfoSerializable } from '../types'
 import type { CodegenContext } from './codegen'
 import { collectMutatedIdentifiers } from './codegen-analysis'
 import { computeReactiveAccessors } from './codegen-reactive-accessors'
-import { getReactiveCallKind } from './codegen-reactive-kind'
+import { getReactiveCallKind, getStaticPropName } from './codegen-reactive-kind'
 import type { Expression, HIRFunction } from './hir'
 import { isHookName } from './hook-utils'
 import { deSSAVarName, generateRegions, type Region } from './regions'
@@ -179,6 +179,22 @@ export function analyzeHookReturnInfo(
     if (tmpCtx.memoVars?.has(base)) return 'memo'
     return undefined
   }
+  const namespaceMemberAccessorKind = (expr: Expression): HookAccessorKind | undefined => {
+    if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') {
+      return undefined
+    }
+    if (expr.object.kind !== 'Identifier') return undefined
+    const nsMeta = ctx.importedNamespaces?.get(deSSAVarName(expr.object.name))
+    if (!nsMeta) return undefined
+    const propName = getStaticPropName(expr.property as Expression, expr.computed)
+    if (typeof propName !== 'string') return undefined
+    const kind = nsMeta.exports[propName]
+    return kind === 'signal' || kind === 'memo' ? kind : undefined
+  }
+  const returnExprAccessorKind = (expr: Expression): HookAccessorKind | undefined => {
+    if (expr.kind === 'Identifier') return exprAccessorKind(expr.name)
+    return namespaceMemberAccessorKind(expr)
+  }
 
   const visitReturnExpr = (expr: Expression) => {
     if (expr.kind === 'ObjectExpression') {
@@ -192,25 +208,27 @@ export function analyzeHookReturnInfo(
               ? String(prop.key.value)
               : undefined
         if (!keyName) return
-        if (prop.value.kind === 'Identifier') {
-          const kind = exprAccessorKind(prop.value.name)
-          recordAccessor(kind, () => {
-            if (!info.objectProps) info.objectProps = new Map()
-            info.objectProps.set(keyName, kind!)
-          })
-        }
+        const kind = returnExprAccessorKind(prop.value)
+        recordAccessor(kind, () => {
+          if (!info.objectProps) info.objectProps = new Map()
+          info.objectProps.set(keyName, kind!)
+        })
       })
     } else if (expr.kind === 'ArrayExpression') {
       expr.elements.forEach((el, idx) => {
-        if (!el || el.kind !== 'Identifier') return
-        const kind = exprAccessorKind(el.name)
+        if (!el) return
+        const kind = returnExprAccessorKind(el)
         recordAccessor(kind, () => {
           if (!info.arrayProps) info.arrayProps = new Map()
           info.arrayProps.set(idx, kind!)
         })
       })
-    } else if (expr.kind === 'Identifier') {
-      const kind = exprAccessorKind(expr.name)
+    } else if (
+      expr.kind === 'Identifier' ||
+      expr.kind === 'MemberExpression' ||
+      expr.kind === 'OptionalMemberExpression'
+    ) {
+      const kind = returnExprAccessorKind(expr)
       recordAccessor(kind, () => {
         info.directAccessor = kind
       })

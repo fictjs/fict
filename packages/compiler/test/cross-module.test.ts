@@ -1487,6 +1487,53 @@ describe('Cross-Module Reactivity', () => {
       expect(moduleMetadata.get(path.resolve(hookPath))?.hooks).not.toHaveProperty('useShadow')
     })
 
+    it('preserves namespace imported accessor hook returns with metadata', () => {
+      const sourcePath = path.join(baseDir, 'namespace-accessor-source.ts')
+      const hookPath = path.join(baseDir, 'namespace-accessor-hooks.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(sourcePath), {
+        version: 1,
+        exports: {
+          count: 'signal',
+          doubled: 'memo',
+          state: 'store',
+        },
+      })
+
+      const hookSource = `
+        import * as source from './namespace-accessor-source'
+
+        export function useCount() {
+          return source.count
+        }
+
+        export function useDoubled() {
+          return source.doubled
+        }
+
+        export function useObject() {
+          return { count: source.count, doubled: source.doubled, state: source.state }
+        }
+
+        export function useTuple() {
+          return [source.count, source.doubled]
+        }
+      `
+
+      const output = transform(hookSource, { moduleMetadata }, hookPath)
+
+      expect(output).toMatch(/return source\.count;/)
+      expect(output).toMatch(/return source\.doubled;/)
+      expect(output).not.toMatch(/source\.count\(\)/)
+      expect(output).not.toMatch(/source\.doubled\(\)/)
+      expect(moduleMetadata.get(path.resolve(hookPath))?.hooks).toMatchObject({
+        useCount: { directAccessor: 'signal' },
+        useDoubled: { directAccessor: 'memo' },
+        useObject: { objectProps: { count: 'signal', doubled: 'memo' } },
+        useTuple: { arrayProps: { 0: 'signal', 1: 'memo' } },
+      })
+    })
+
     it('preserves hook return accessors inside branch returns before publishing metadata', () => {
       const hookPath = path.join(baseDir, 'branch-hook-returns.tsx')
       const moduleMetadata = new Map()

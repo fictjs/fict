@@ -244,6 +244,45 @@ function runtimeExportNamedDeclaration(
 
 function lowerRawJSXInBabelNode<T extends BabelCore.types.Node>(node: T, ctx: CodegenContext): T {
   const { t } = ctx
+  const preserveRawHookReturns = (fnNode: BabelCore.types.Function): void => {
+    const visitReturn = (
+      current: BabelCore.types.Node | null | undefined,
+      isRoot = false,
+    ): void => {
+      if (!current) return
+      if (
+        !isRoot &&
+        (t.isFunctionDeclaration(current) ||
+          t.isFunctionExpression(current) ||
+          t.isArrowFunctionExpression(current) ||
+          t.isObjectMethod(current) ||
+          t.isClassMethod(current))
+      ) {
+        return
+      }
+      if (t.isReturnStatement(current) && current.argument && t.isExpression(current.argument)) {
+        current.argument = unwrapAccessorCalls(current.argument, ctx)
+        return
+      }
+
+      const keys = (t as unknown as { VISITOR_KEYS?: Record<string, string[]> }).VISITOR_KEYS
+      const visitorKeys = keys?.[(current as { type: string }).type] ?? []
+      for (const key of visitorKeys) {
+        const value = (current as unknown as Record<string, unknown>)[key]
+        if (Array.isArray(value)) {
+          for (const child of value) {
+            if (child && typeof child === 'object' && 'type' in (child as object)) {
+              visitReturn(child as BabelCore.types.Node)
+            }
+          }
+        } else if (value && typeof value === 'object' && 'type' in value) {
+          visitReturn(value as BabelCore.types.Node)
+        }
+      }
+    }
+
+    visitReturn(fnNode, true)
+  }
   const visit = (current: unknown): unknown => {
     if (!current || typeof current !== 'object') return current
     if (Array.isArray(current)) return current.map(item => visit(item))
@@ -268,6 +307,9 @@ function lowerRawJSXInBabelNode<T extends BabelCore.types.Node>(node: T, ctx: Co
       } else if (value && typeof value === 'object' && 'type' in value) {
         record[key] = visit(value)
       }
+    }
+    if (t.isFunctionDeclaration(astNode) && isHookName(astNode.id?.name)) {
+      preserveRawHookReturns(astNode)
     }
     return astNode
   }
@@ -613,6 +655,8 @@ export interface CodegenContext {
   isComponentFn?: boolean | undefined
   /** Whether we are lowering a return statement (for hook return preservation) */
   inReturn?: boolean | undefined
+  /** Whether hook return lowering should preserve namespace/imported accessors. */
+  preserveHookReturnAccessors?: boolean | undefined
   /** Cache of hook return accessor metadata keyed by hook name */
   hookReturnInfo?: Map<string, HookReturnInfo> | undefined
   /** Map of local variables bound to hook results (per function) */
@@ -1155,6 +1199,8 @@ function lowerFunction(
     ctx.callableSignalVars?.delete(name)
   }
   ctx.needsCtx = false
+  const prevHookFlag = ctx.currentFnIsHook
+  ctx.currentFnIsHook = isHookLikeFunction(fn)
   const params = buildOutputParams(fn, ctx)
   const statements: BabelCore.types.Statement[] = []
 
@@ -1192,6 +1238,7 @@ function lowerFunction(
   result.generator = !!fn.meta?.isGenerator || functionHasYield(fn)
   ctx.trackedVars = prevTracked
   ctx.callableSignalVars = prevCallableSignalVars
+  ctx.currentFnIsHook = prevHookFlag
   return result
 }
 
@@ -1419,12 +1466,15 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
     case 'Return': {
       const preserveAccessors = ctx.currentFnIsHook
       const prevHookFlag = ctx.currentFnIsHook
+      const prevPreserveHookReturnAccessors = ctx.preserveHookReturnAccessors
       if (preserveAccessors) ctx.currentFnIsHook = false
+      ctx.preserveHookReturnAccessors = preserveAccessors
       ctx.inReturn = true
       let retExpr = block.terminator.argument
         ? lowerTrackedExpression(block.terminator.argument, ctx)
         : null
       ctx.inReturn = false
+      ctx.preserveHookReturnAccessors = prevPreserveHookReturnAccessors
       if (preserveAccessors) {
         ctx.currentFnIsHook = prevHookFlag
       }
@@ -2785,6 +2835,9 @@ function lowerExpressionImpl(
                 expr.computed,
                 expr.optional,
               )
+              if (ctx.preserveHookReturnAccessors) {
+                return member
+              }
               return t.callExpression(member, [])
             }
           }
@@ -3577,11 +3630,36 @@ function unwrapAccessorCalls(
   const { t } = ctx
   const isAccessorName = (name: string) =>
     ctx.signalVars?.has(name) || ctx.memoVars?.has(name) || ctx.aliasVars?.has(name)
+  const isNamespaceAccessorMember = (
+    member: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
+  ): boolean => {
+    if (!t.isIdentifier(member.object)) return false
+    const nsMeta = ctx.importedNamespaces?.get(deSSAVarName(member.object.name))
+    if (!nsMeta) return false
+    const propName = !member.computed
+      ? t.isIdentifier(member.property)
+        ? member.property.name
+        : null
+      : t.isStringLiteral(member.property) || t.isNumericLiteral(member.property)
+        ? String(member.property.value)
+        : null
+    if (!propName) return false
+    const kind = nsMeta.exports[propName]
+    return kind === 'signal' || kind === 'memo'
+  }
 
   if (t.isCallExpression(expr) && t.isIdentifier(expr.callee) && expr.arguments.length === 0) {
     if (isAccessorName(expr.callee.name)) {
       return t.identifier(expr.callee.name)
     }
+  }
+  if (
+    t.isCallExpression(expr) &&
+    (t.isMemberExpression(expr.callee) || t.isOptionalMemberExpression(expr.callee)) &&
+    expr.arguments.length === 0 &&
+    isNamespaceAccessorMember(expr.callee)
+  ) {
+    return t.cloneNode(expr.callee, true) as BabelCore.types.Expression
   }
 
   if (t.isObjectExpression(expr)) {
@@ -3618,6 +3696,13 @@ function preserveHookReturnAccessorsInStatement(
   ctx: CodegenContext,
 ): BabelCore.types.Statement {
   const { t } = ctx
+  if (t.isFunctionDeclaration(stmt)) {
+    stmt.body = preserveHookReturnAccessorsInStatement(
+      stmt.body,
+      ctx,
+    ) as BabelCore.types.BlockStatement
+    return stmt
+  }
   if (t.isReturnStatement(stmt)) {
     if (stmt.argument && t.isExpression(stmt.argument)) {
       stmt.argument = unwrapAccessorCalls(stmt.argument, ctx)
@@ -3672,6 +3757,40 @@ function preserveHookReturnAccessorsInStatement(
   }
   if (t.isForStatement(stmt) || t.isForInStatement(stmt) || t.isForOfStatement(stmt)) {
     stmt.body = preserveHookReturnAccessorsInStatement(stmt.body, ctx)
+    return stmt
+  }
+  return stmt
+}
+
+function preserveTopLevelHookReturnAccessorsInStatement(
+  stmt: BabelCore.types.Statement,
+  ctx: CodegenContext,
+): BabelCore.types.Statement {
+  const { t } = ctx
+  if (t.isFunctionDeclaration(stmt) && isHookName(stmt.id?.name)) {
+    return preserveHookReturnAccessorsInStatement(stmt, ctx)
+  }
+  if (
+    t.isExportNamedDeclaration(stmt) &&
+    stmt.declaration &&
+    t.isFunctionDeclaration(stmt.declaration) &&
+    isHookName(stmt.declaration.id?.name)
+  ) {
+    stmt.declaration = preserveHookReturnAccessorsInStatement(
+      stmt.declaration,
+      ctx,
+    ) as BabelCore.types.FunctionDeclaration
+    return stmt
+  }
+  if (
+    t.isExportDefaultDeclaration(stmt) &&
+    t.isFunctionDeclaration(stmt.declaration) &&
+    isHookName(stmt.declaration.id?.name)
+  ) {
+    stmt.declaration = preserveHookReturnAccessorsInStatement(
+      stmt.declaration,
+      ctx,
+    ) as BabelCore.types.FunctionDeclaration
     return stmt
   }
   return stmt
@@ -5154,7 +5273,13 @@ export function lowerHIRWithRegions(
   for (const fn of program.functions) {
     const funcStmt = lowerFunctionWithRegions(fn, ctx)
     if (funcStmt && fn.name) {
-      generatedFunctions.set(fn.name, { fn, stmt: funcStmt })
+      const stmt = isHookName(fn.name)
+        ? (preserveHookReturnAccessorsInStatement(
+            funcStmt,
+            ctx,
+          ) as BabelCore.types.FunctionDeclaration)
+        : funcStmt
+      generatedFunctions.set(fn.name, { fn, stmt })
     } else if (funcStmt && !fn.name) {
       // Anonymous function - emit immediately
       body.push(funcStmt)
@@ -5454,6 +5579,10 @@ export function lowerHIRWithRegions(
   if (topLevelCtxInjected) {
     ctx.helpersUsed.add('popContext')
     body.push(t.expressionStatement(t.callExpression(runtimeIdentifier(ctx, 'popContext'), [])))
+  }
+
+  for (let index = 0; index < body.length; index++) {
+    body[index] = preserveTopLevelHookReturnAccessorsInStatement(body[index]!, ctx)
   }
 
   const moduleMeta = buildModuleReactiveMetadata(originalBody, ctx, t, options, {
@@ -6977,7 +7106,7 @@ function lowerFunctionWithRegions(
   statements = generateRegionCode(fn, scopeResult, t, ctx)
   statements = restoreLexicalDeclarationUseOrder(statements, t)
 
-  if (ctx.currentFnIsHook) {
+  if (inferredHook) {
     statements = preserveHookReturnAccessorsInStatements(statements, ctx)
   }
 
