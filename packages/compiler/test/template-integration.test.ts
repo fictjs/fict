@@ -1842,6 +1842,62 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('reruns map callbacks with observable side effects for reused keys', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      type Item = { id: number; name: string }
+
+      export const log: string[] = []
+      export let api: { rename(): void }
+
+      export function App() {
+        let items = $state<Item[]>([{ id: 1, name: 'a' }])
+        api = {
+          rename() {
+            items = [{ id: 1, name: 'b' }]
+          },
+        }
+
+        return (
+          <div>
+            {items.map(item => {
+              log.push(item.name)
+              return <span key={item.id}>{item.name}</span>
+            })}
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      api: { rename(): void }
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(mod.log).toEqual(['a'])
+    expect(container.querySelector('span')?.textContent).toBe('a')
+
+    mod.api.rename()
+    await flushUpdates()
+
+    expect(mod.log).toEqual(['a', 'b'])
+    expect(container.querySelector('span')?.textContent).toBe('b')
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves map callback arguments semantics by falling back from list specialization', async () => {
     const source = `
       import { render } from 'fict'

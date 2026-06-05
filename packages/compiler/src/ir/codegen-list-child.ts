@@ -341,6 +341,66 @@ function isTrustedArrayMapReceiver(expr: Expression, ctx: CodegenContext): boole
   }
 }
 
+function expressionHasObservableMapCallbackEffect(expr: Expression): boolean {
+  let hasEffect = false
+  walkExpression(
+    expr,
+    node => {
+      if (hasEffect) return
+      switch (node.kind) {
+        case 'CallExpression':
+        case 'OptionalCallExpression':
+        case 'NewExpression':
+        case 'TaggedTemplateExpression':
+        case 'AwaitExpression':
+        case 'YieldExpression':
+        case 'ImportExpression':
+        case 'AssignmentExpression':
+        case 'UpdateExpression':
+          hasEffect = true
+          return
+        default:
+          return
+      }
+    },
+    { includeFunctionBodies: false },
+  )
+  return hasEffect
+}
+
+function mapCallbackHasObservableEffects(callback: Expression): boolean {
+  if (callback.kind === 'ArrowFunction' && callback.isExpression && !Array.isArray(callback.body)) {
+    return expressionHasObservableMapCallbackEffect(callback.body)
+  }
+  if (callback.kind !== 'ArrowFunction' && callback.kind !== 'FunctionExpression') return false
+
+  for (const block of getCallbackBlocks(callback)) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Debugger' || instr.kind === 'Expression') return true
+      if (instr.kind === 'Assign') {
+        if (!instr.declarationKind) return true
+        if (expressionHasObservableMapCallbackEffect(instr.value)) return true
+      }
+    }
+
+    const term = block.terminator
+    switch (term.kind) {
+      case 'Return':
+        if (term.argument && expressionHasObservableMapCallbackEffect(term.argument)) return true
+        break
+      case 'Jump':
+      case 'Unreachable':
+      case 'Break':
+      case 'Continue':
+        break
+      default:
+        return true
+    }
+  }
+
+  return false
+}
+
 function blocksUseArguments(blocks: BasicBlock[]): boolean {
   for (const block of blocks) {
     for (const instr of block.instructions) {
@@ -585,6 +645,7 @@ export function buildListCallExpression(
   }
   if (hasUnsupportedMapCallbackParams(mapCallback, ctx)) return null
   if (isDefinitelyNonCallableMapCallback(mapCallback)) return null
+  if (mapCallbackHasObservableEffects(mapCallback)) return null
   if (callbackUsesArguments(mapCallback, ctx)) return null
   if (callbackUsesThis(mapCallback, ctx)) return null
   const callbackSignature = getMapCallbackSignature(mapCallback, ctx)

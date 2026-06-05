@@ -2214,6 +2214,30 @@ describe('array/map rendering', () => {
     expect(code).toContain('props.items.map')
   })
 
+  it('preserves map callbacks with observable side effects', () => {
+    const ast = parseFile(`
+      function List() {
+        let rows = $state([{ id: 1, name: 'a' }])
+        const log = []
+        return (
+          <ul>
+            {rows.map(row => {
+              log.push(row.name)
+              return <li key={row.id}>{row.name}</li>
+            })}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain('createKeyedList')
+    expect(code).toContain('rows().map')
+    expect(code).toContain('log.push')
+  })
+
   it('should handle map with index', () => {
     const ast = parseFile(`
       function IndexedList(props) {
