@@ -6979,6 +6979,25 @@ function lowerFunctionWithRegions(
           ),
         ])
       }
+      const emitNestedObjectCheck = (
+        valueExpr: BabelCore.types.Expression,
+        keyName: string,
+      ): void => {
+        const objectId = genTemp(ctx, 'propObject')
+        stmts.push(
+          t.variableDeclaration('const', [
+            t.variableDeclarator(objectId, t.cloneNode(valueExpr, true)),
+          ]),
+          t.ifStatement(
+            t.binaryExpression('==', t.cloneNode(objectId), t.nullLiteral()),
+            t.throwStatement(
+              t.newExpression(t.identifier('TypeError'), [
+                t.stringLiteral(`Cannot destructure prop "${keyName}" because it is nullish`),
+              ]),
+            ),
+          ),
+        )
+      }
 
       const buildDestructure = (
         objectPattern: BabelCore.types.ObjectPattern,
@@ -7037,6 +7056,7 @@ function lowerFunctionWithRegions(
             }
 
             if (t.isObjectPattern(value)) {
+              emitNestedObjectCheck(member, keyName)
               buildDestructure(value, member, false, nextPropPath)
               if (!supported) break
               continue

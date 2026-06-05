@@ -293,6 +293,46 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('checks nested prop destructuring parents during component invocation', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      function Child({ user: { name } }: any) {
+        return <span data-id="nested">{name}</span>
+      }
+
+      export function mountMissing(el: HTMLElement) {
+        return render(() => <Child />, el)
+      }
+
+      export function mountNull(el: HTMLElement) {
+        return render(() => <Child user={null} />, el)
+      }
+
+      export function mountPresent(el: HTMLElement) {
+        return render(() => <Child user={{ name: 'Ada' }} />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mountMissing: (el: HTMLElement) => () => void
+      mountNull: (el: HTMLElement) => () => void
+      mountPresent: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+
+    expect(() => mod.mountMissing(container)).toThrow(/Cannot destructure prop "user"/)
+    expect(() => mod.mountNull(container)).toThrow(/Cannot destructure prop "user"/)
+
+    const teardown = mod.mountPresent(container)
+    await flushUpdates()
+    expect(container.querySelector('[data-id="nested"]')?.textContent).toBe('Ada')
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps function-as-child callbacks inert when passed to components', async () => {
     const source = `
       import { render } from 'fict'
