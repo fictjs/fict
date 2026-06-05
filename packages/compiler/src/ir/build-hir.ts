@@ -260,6 +260,12 @@ function normalizeMacroCallee(
 function normalizeVarKind(
   kind: BabelCore.types.VariableDeclaration['kind'],
 ): 'const' | 'let' | 'var' {
+  if ((kind as string) === 'using' || (kind as string) === 'await using') {
+    throw new HIRError(
+      '`using` and `await using` declarations are not supported by the Fict compiler yet. Resource disposal semantics would otherwise be lost.',
+      'BUILD_ERROR',
+    )
+  }
   return kind === 'const' || kind === 'let' || kind === 'var' ? kind : 'let'
 }
 
