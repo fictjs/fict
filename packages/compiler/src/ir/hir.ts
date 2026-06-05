@@ -612,6 +612,8 @@ export interface BasicBlock {
   id: BlockId
   instructions: Instruction[]
   terminator: Terminator
+  /** Exit block for a source bare block whose declarations need lexical scope. */
+  lexicalScopeExit?: BlockId | undefined
 }
 
 export interface LabeledStatementMeta {

@@ -547,7 +547,7 @@ function structurizeLabeledStatement(
 function structurizeBlock(
   ctx: StructurizeContext,
   blockId: BlockId,
-  options?: { ignoreLabeledBoundary?: boolean },
+  options?: { ignoreLabeledBoundary?: boolean; ignoreLexicalBoundary?: boolean },
 ): StructuredNode {
   // Safety: check depth limit
   if (ctx.depth > ctx.maxDepth) {
@@ -603,6 +603,10 @@ function structurizeBlock(
     return { kind: 'sequence', nodes: [] }
   }
 
+  if (block.lexicalScopeExit !== undefined && !options?.ignoreLexicalBoundary) {
+    return structurizeLexicalScopeBlock(ctx, blockId, block.lexicalScopeExit)
+  }
+
   ctx.processing.add(blockId)
   ctx.emitted.add(blockId)
   ctx.depth++
@@ -631,6 +635,35 @@ function structurizeBlock(
     return nodes[0]
   }
   return { kind: 'sequence', nodes }
+}
+
+function toStructuredStatements(node: StructuredNode): StructuredNode[] {
+  if (node.kind === 'sequence') return node.nodes
+  return [node]
+}
+
+function structurizeLexicalScopeBlock(
+  ctx: StructurizeContext,
+  blockId: BlockId,
+  exitBlock: BlockId,
+): StructuredNode {
+  ctx.reservedBlocks.add(exitBlock)
+  let body: StructuredNode
+  try {
+    body = structurizeBlock(ctx, blockId, { ignoreLexicalBoundary: true })
+  } finally {
+    ctx.reservedBlocks.delete(exitBlock)
+  }
+
+  const blockNode: StructuredNode = {
+    kind: 'block',
+    blockId,
+    statements: toStructuredStatements(body),
+  }
+  const exitPreds = ctx.predecessors.get(exitBlock) ?? []
+  const reachesExit = exitPreds.some(pred => ctx.emitted.has(pred))
+  const exitNode = reachesExit ? structurizeBlock(ctx, exitBlock) : null
+  return combineStructuredNodes(blockNode, exitNode)
 }
 
 /**

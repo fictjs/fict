@@ -1304,11 +1304,7 @@ function convertFunction(
       continue
     }
     if (t.isBlockStatement(stmt)) {
-      let blockCursor = current
-      for (const inner of stmt.body) {
-        blockCursor = processStatement(inner, blockCursor, blockCursor.block.id, cfgContext)
-      }
-      current = blockCursor
+      current = processLexicalBlockStatement(stmt, current, cfgContext)
       continue
     }
     if (t.isIfStatement(stmt)) {
@@ -1965,6 +1961,35 @@ function fillStatements(
   return result
 }
 
+function processLexicalBlockStatement(
+  stmt: BabelCore.types.BlockStatement,
+  bb: BlockBuilder,
+  ctx: CFGBuildContext,
+): BlockBuilder {
+  const bodyBlock = ctx.createBlock()
+  const exitBlock = ctx.createBlock()
+  bodyBlock.block.lexicalScopeExit = exitBlock.block.id
+  ctx.blocks.push(bodyBlock.block, exitBlock.block)
+
+  bb.block.terminator = { kind: 'Jump', target: bodyBlock.block.id }
+  bb.sealed = true
+
+  const bodyEnd = fillStatements(stmt, bodyBlock, exitBlock.block.id, ctx)
+  if (bodyEnd.sealed) {
+    const term = bodyEnd.block.terminator
+    if (
+      term.kind === 'Return' ||
+      term.kind === 'Throw' ||
+      term.kind === 'Break' ||
+      term.kind === 'Continue'
+    ) {
+      return bodyEnd
+    }
+  }
+
+  return exitBlock
+}
+
 /**
  * Process a single statement, potentially creating new blocks for control flow.
  */
@@ -2018,27 +2043,17 @@ function processStatement(
   // Preserve semantics of lexical blocks (e.g. switch case `{ ... }` consequents)
   // by recursively lowering contained statements.
   if (t.isBlockStatement(stmt)) {
-    const shouldScopeLabel = !!labelOverride && !!ctx
-    if (shouldScopeLabel) {
-      ctx!.loopStack.push({
-        breakTarget: jumpTarget,
-        label: labelOverride,
-      })
+    if (ctx) {
+      return processLexicalBlockStatement(stmt, bb, ctx)
     }
     let current = bb
-    try {
-      for (const inner of stmt.body) {
-        current = processStatement(inner, current, jumpTarget, ctx)
-        if (current.sealed) {
-          return current
-        }
-      }
-      return current
-    } finally {
-      if (shouldScopeLabel) {
-        ctx!.loopStack.pop()
+    for (const inner of stmt.body) {
+      current = processStatement(inner, current, jumpTarget, ctx, labelOverride)
+      if (current.sealed) {
+        return current
       }
     }
+    return current
   }
 
   if (t.isExpressionStatement(stmt)) {

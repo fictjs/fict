@@ -4645,6 +4645,10 @@ function transformControlFlowReturns(
               caseEntryCache.set(startIndex, null)
               return null
             }
+            if (endsWithReturn(entry)) {
+              caseEntryCache.set(startIndex, entry)
+              return entry
+            }
             if (!trailingStatements || trailingStatements.length === 0) {
               caseEntryCache.set(startIndex, null)
               return null

@@ -31,6 +31,82 @@ function compileAndRun<T>(source: string, exportName: string, args: unknown[] = 
 }
 
 describe('binding shadowing runtime regressions', () => {
+  it('preserves let shadowing inside bare blocks', () => {
+    const value = compileAndRun<number>(
+      `
+        import { $state } from 'fict'
+
+        export function Comp() {
+          let count = $state(0)
+          {
+            let count = 1
+            return count
+          }
+        }
+      `,
+      'Comp',
+    )
+
+    expect(value).toBe(1)
+  })
+
+  it('preserves const shadowing inside bare blocks', () => {
+    const value = compileAndRun<number>(
+      `
+        import { $state } from 'fict'
+
+        export function Comp() {
+          let count = $state(0)
+          {
+            const count = 2
+            return count
+          }
+        }
+      `,
+      'Comp',
+    )
+
+    expect(value).toBe(2)
+  })
+
+  it('keeps bare-block let bindings from leaking after the block', () => {
+    expect(() =>
+      compileAndRun<number>(
+        `
+          import { $state } from 'fict'
+
+          export function Comp() {
+            let count = $state(0)
+            {
+              let value = 1
+            }
+            return value
+          }
+        `,
+        'Comp',
+      ),
+    ).toThrow(/value is not defined/)
+  })
+
+  it('keeps var declarations function-scoped through bare blocks', () => {
+    const value = compileAndRun<number>(
+      `
+        import { $state } from 'fict'
+
+        export function Comp() {
+          let count = $state(0)
+          {
+            var value = 1
+          }
+          return value
+        }
+      `,
+      'Comp',
+    )
+
+    expect(value).toBe(1)
+  })
+
   it('keeps nested function locals from rewriting to outer signals', () => {
     const fn = compileAndRun<() => number>(
       `
