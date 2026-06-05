@@ -1841,6 +1841,43 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe('x')
   })
 
+  it('preserves tagged template assignment and update writes with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        export function useRun() {
+          "use pure"
+          let x = 1
+          let y = 1
+          const tag = (_strings, ...values) => values.join(':')
+          tag\`\${x = 2}\${y++}\`
+          return x + ':' + y
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('2:2')
+  })
+
+  it('preserves tagged template member mutators with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        export function useRun() {
+          "use pure"
+          const arr = [1]
+          const tag = (_strings, value) => value
+          tag\`\${arr.push(2)}\`
+          return arr.length
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(2)
+  })
+
   it('preserves tagged template unicode raw and cooked values with optimization', () => {
     const result = compileAndRunHook<string>(
       `
@@ -1951,6 +1988,45 @@ describe('control flow runtime regressions', () => {
     )
 
     expect([...result]).toEqual([1, 2])
+  })
+
+  it('preserves yield assignment and update writes with optimization', () => {
+    const result = compileAndRunHook<Generator<number, string, unknown>>(
+      `
+        export function* useRun() {
+          "use pure"
+          let x = 1
+          let y = 1
+          yield (x = 2)
+          yield y++
+          return x + ':' + y
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result.next()).toEqual({ value: 2, done: false })
+    expect(result.next()).toEqual({ value: 1, done: false })
+    expect(result.next()).toEqual({ value: '2:2', done: true })
+  })
+
+  it('preserves yield member mutators with optimization', () => {
+    const result = compileAndRunHook<Generator<number, number, unknown>>(
+      `
+        export function* useRun() {
+          "use pure"
+          const arr = [1]
+          yield arr.push(2)
+          return arr.length
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result.next()).toEqual({ value: 2, done: false })
+    expect(result.next()).toEqual({ value: 2, done: true })
   })
 
   it('preserves class expression extends locals with optimization', () => {

@@ -1254,11 +1254,23 @@ function optimizeReactiveBlock(
     instructions.push(instr)
   }
 
-  const terminatorAccessorWrites = collectTerminatorAccessorMutationTargets(
+  const terminatorEffects = collectTerminatorExpressionEffects(
     block.terminator,
     objectAccessorWrites,
   )
-  for (const name of terminatorAccessorWrites) {
+  for (const name of terminatorEffects.writes) {
+    deleteByBase(constants, name)
+    invalidateCSE(name)
+    deleteByBase(constObjects, name)
+    deleteByBase(constArrays, name)
+  }
+  for (const name of terminatorEffects.memberWrites) {
+    invalidateConstFieldCachesByAlias(name)
+  }
+  for (const name of terminatorEffects.potentialMutations) {
+    invalidateConstFieldCachesByAlias(name)
+  }
+  for (const name of terminatorEffects.accessorWrites) {
     deleteByBase(constants, name)
     invalidateCSE(name)
     deleteByBase(constObjects, name)
@@ -1413,6 +1425,13 @@ function eliminateCrossBlockCSE(
         invalidateCrossBlockCSE(cseMap, writes)
       }
     }
+    const terminatorEffects = collectTerminatorExpressionEffects(block.terminator, new Map())
+    const terminatorWrites = new Set<string>([
+      ...terminatorEffects.writes,
+      ...terminatorEffects.memberWrites,
+      ...terminatorEffects.potentialMutations,
+    ])
+    invalidateCrossBlockCSE(cseMap, terminatorWrites)
 
     newBlocks.set(blockId, changed ? { ...block, instructions: updatedInstructions } : block)
 
@@ -2551,6 +2570,9 @@ function collectWriteTargets(expr: Expression): Set<string> {
       case 'AwaitExpression':
         visit(node.argument as Expression, shadowed)
         return
+      case 'YieldExpression':
+        if (node.argument) visit(node.argument as Expression, shadowed)
+        return
       case 'ImportExpression':
         visit(node.source as Expression, shadowed)
         if (node.options) visit(node.options as Expression, shadowed)
@@ -2748,6 +2770,12 @@ function collectPotentialMutationTargets(expr: Expression): Set<string> {
       case 'AwaitExpression':
         visit(node.argument as Expression)
         return
+      case 'YieldExpression':
+        if (node.argument) {
+          collectEscapedArgument(node.argument as Expression)
+          visit(node.argument as Expression)
+        }
+        return
       case 'ImportExpression':
         visit(node.source as Expression)
         if (node.options) visit(node.options as Expression)
@@ -2854,6 +2882,10 @@ function collectMemberMutationTargets(expr: Expression): Set<string> {
         return
       case 'YieldExpression':
         if (node.argument) visit(node.argument as Expression)
+        return
+      case 'ImportExpression':
+        visit(node.source as Expression)
+        if (node.options) visit(node.options as Expression)
         return
       case 'ArrowFunction':
       case 'FunctionExpression':
@@ -2965,6 +2997,10 @@ function collectAccessorMutationTargets(
       case 'YieldExpression':
         if (node.argument) visit(node.argument as Expression)
         return
+      case 'ImportExpression':
+        visit(node.source as Expression)
+        if (node.options) visit(node.options as Expression)
+        return
       case 'ArrowFunction':
       case 'FunctionExpression':
       case 'ClassExpression':
@@ -2977,13 +3013,30 @@ function collectAccessorMutationTargets(
   return writes
 }
 
-function collectTerminatorAccessorMutationTargets(
+interface TerminatorExpressionEffects {
+  writes: Set<string>
+  memberWrites: Set<string>
+  potentialMutations: Set<string>
+  accessorWrites: Set<string>
+}
+
+function collectTerminatorExpressionEffects(
   term: Terminator,
   objectAccessorWrites: Map<string, Set<string>>,
-): Set<string> {
-  const writes = new Set<string>()
+): TerminatorExpressionEffects {
+  const effects: TerminatorExpressionEffects = {
+    writes: new Set(),
+    memberWrites: new Set(),
+    potentialMutations: new Set(),
+    accessorWrites: new Set(),
+  }
   const add = (expr: Expression): void => {
-    collectAccessorMutationTargets(expr, objectAccessorWrites).forEach(name => writes.add(name))
+    collectWriteTargets(expr).forEach(name => effects.writes.add(name))
+    collectMemberMutationTargets(expr).forEach(name => effects.memberWrites.add(name))
+    collectPotentialMutationTargets(expr).forEach(name => effects.potentialMutations.add(name))
+    collectAccessorMutationTargets(expr, objectAccessorWrites).forEach(name =>
+      effects.accessorWrites.add(name),
+    )
   }
   switch (term.kind) {
     case 'Return':
@@ -3012,7 +3065,7 @@ function collectTerminatorAccessorMutationTargets(
     default:
       break
   }
-  return writes
+  return effects
 }
 
 function countAssignments(fn: HIRFunction): Map<string, number> {
@@ -3212,8 +3265,28 @@ function propagateConstants(fn: HIRFunction, options: OptimizeOptions): HIRFunct
   return { ...fn, blocks }
 }
 
+function collectMutableConstantBases(fn: HIRFunction): Set<string> {
+  const mutable = new Set<string>()
+  const addWrite = (name: string): void => {
+    mutable.add(getSSABaseName(name))
+  }
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign') {
+        if (!instr.declarationKind) addWrite(instr.target.name)
+        collectWriteTargets(instr.value).forEach(addWrite)
+      } else if (instr.kind === 'Expression') {
+        collectWriteTargets(instr.value).forEach(addWrite)
+      }
+    }
+    collectTerminatorExpressionEffects(block.terminator, new Map()).writes.forEach(addWrite)
+  }
+  return mutable
+}
+
 function computeConstantMap(fn: HIRFunction): Map<string, ConstantValue> {
   const constants = new Map<string, ConstantValue>()
+  const mutableBases = collectMutableConstantBases(fn)
   const invalidateWrittenName = (writtenName: string): boolean => {
     const writtenBase = getSSABaseName(writtenName)
     let removed = false
@@ -3241,6 +3314,12 @@ function computeConstantMap(fn: HIRFunction): Map<string, ConstantValue> {
           }
         }
         if (instr.kind === 'Assign') {
+          if (mutableBases.has(getSSABaseName(instr.target.name))) {
+            if (invalidateWrittenName(instr.target.name)) {
+              changed = true
+            }
+            continue
+          }
           const value = evaluateConstant(instr.value, constants)
           if (value !== UNKNOWN_CONST) {
             const existing = constants.get(instr.target.name)
@@ -3258,6 +3337,15 @@ function computeConstantMap(fn: HIRFunction): Map<string, ConstantValue> {
               changed = true
             }
           }
+        }
+      }
+      const terminatorWrites = collectTerminatorExpressionEffects(
+        block.terminator,
+        new Map(),
+      ).writes
+      for (const writtenName of terminatorWrites) {
+        if (invalidateWrittenName(writtenName)) {
+          changed = true
         }
       }
     }
@@ -4358,6 +4446,17 @@ function inlineSingleUse(fn: HIRFunction, purity: PurityContext): HIRFunction {
   const defUse = buildDefUse(fn)
   const blockMap = new Map<number, BasicBlock>()
   fn.blocks.forEach(block => blockMap.set(block.id, block))
+  const writesTarget = (writes: Set<string>, target: string): boolean => {
+    const targetBase = getSSABaseName(target)
+    for (const name of writes) {
+      if (name === target || getSSABaseName(name) === targetBase) return true
+    }
+    return false
+  }
+  const expressionWritesTarget = (expr: Expression, target: string): boolean =>
+    writesTarget(collectWriteTargets(expr), target)
+  const terminatorWritesTarget = (term: Terminator, target: string): boolean =>
+    writesTarget(collectTerminatorExpressionEffects(term, new Map()).writes, target)
   const newBlocks: BasicBlock[] = fn.blocks.map(block => {
     const instructions = [...block.instructions]
     const toRemove = new Set<number>()
@@ -4381,6 +4480,7 @@ function inlineSingleUse(fn: HIRFunction, purity: PurityContext): HIRFunction {
       if (use.kind === 'Assign') {
         const useInstr = instructions[use.instrIndex]
         if (useInstr && useInstr.kind === 'Assign') {
+          if (expressionWritesTarget(useInstr.value, target)) continue
           instructions[use.instrIndex] = {
             ...useInstr,
             value: replaceIdentifier(useInstr.value, target, instr.value, false),
@@ -4389,12 +4489,14 @@ function inlineSingleUse(fn: HIRFunction, purity: PurityContext): HIRFunction {
       } else if (use.kind === 'Expression') {
         const useInstr = instructions[use.instrIndex]
         if (useInstr && useInstr.kind === 'Expression') {
+          if (expressionWritesTarget(useInstr.value, target)) continue
           instructions[use.instrIndex] = {
             ...useInstr,
             value: replaceIdentifier(useInstr.value, target, instr.value, false),
           }
         }
       } else if (use.kind === 'Terminator') {
+        if (terminatorWritesTarget(block.terminator, target)) continue
         const term = block.terminator
         block.terminator = replaceIdentifierInTerminator(term, target, instr.value)
       }

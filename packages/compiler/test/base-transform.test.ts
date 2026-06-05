@@ -383,6 +383,49 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).toContain('import(path, options)')
     })
 
+    it('does not fold writes hidden in dynamic import sources', () => {
+      const output = transform(`
+        export function useProbe() {
+          "use pure"
+          let x = 1
+          let y = 1
+          const p = import((x = 2, y++, './dep.js'))
+          return x + y
+        }
+      `)
+
+      expect(output).toContain('import((x = 2, y++, "./dep.js"))')
+      expect(output).not.toContain('return 2;')
+    })
+
+    it('invalidates const array caches for dynamic import source member calls', () => {
+      const output = transform(`
+        export function useProbe() {
+          "use pure"
+          const arr = [1]
+          const p = import((arr.push(2), './dep.js'))
+          return arr.length
+        }
+      `)
+
+      expect(output).toContain('arr.push(2)')
+      expect(output).not.toContain('return 1;')
+    })
+
+    it('invalidates const array caches for dynamic import option member calls', () => {
+      const output = transform(`
+        export function useProbe() {
+          "use pure"
+          const arr = [1]
+          const p = import('./dep.js', { with: { type: (arr.push(2), 'json') } })
+          return arr.length
+        }
+      `)
+
+      expect(output).toContain('arr.push(2)')
+      expect(output).not.toContain('return 1;')
+    })
+
     it('lowers default-exported arrow JSX components', () => {
       const output = transform(`
         export default () => <div />
