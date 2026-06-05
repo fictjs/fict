@@ -1,4 +1,12 @@
-import type { ClassBody, Directive, LVal, Node, SourceLocation, Statement } from '@babel/types'
+import type {
+  ClassBody,
+  Decorator,
+  Directive,
+  LVal,
+  Node,
+  SourceLocation,
+  Statement,
+} from '@babel/types'
 
 import type { FictMacroKind } from './macro-bindings'
 
@@ -29,6 +37,11 @@ export type BabelDirective = Directive
  * Type alias for class body members from Babel AST.
  */
 export type BabelClassMember = ClassBody['body'][number]
+
+/**
+ * Type alias for class decorators from Babel AST.
+ */
+export type BabelDecorator = Decorator
 
 /**
  * Type alias for function parameter nodes from Babel AST.
@@ -597,6 +610,8 @@ export interface ClassExpression extends SourceInfo {
   kind: 'ClassExpression'
   name?: string | undefined
   superClass?: Expression | undefined
+  /** Class-level decorators - stored as Babel AST nodes */
+  decorators?: BabelDecorator[] | undefined
   /** Class body elements - stored as Babel AST nodes */
   body: BabelClassMember[]
 }

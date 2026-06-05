@@ -2482,6 +2482,7 @@ function lowerExpressionImpl(
         expr.name ? t.identifier(expr.name) : null,
         expr.superClass ? lowerExpression(expr.superClass, ctx) : null,
         t.classBody(expr.body ?? []),
+        expr.decorators?.map(decorator => t.cloneNode(decorator, true)) ?? null,
       )
 
     case 'ThisExpression':

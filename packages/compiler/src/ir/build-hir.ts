@@ -3392,6 +3392,7 @@ function convertExpression(
       kind: 'ClassExpression',
       name: node.id?.name,
       superClass: node.superClass ? convertExpression(node.superClass) : undefined,
+      decorators: node.decorators?.map(decorator => t.cloneNode(decorator, true)),
       body: node.body.body, // Store as Babel AST for now
       loc,
     }
