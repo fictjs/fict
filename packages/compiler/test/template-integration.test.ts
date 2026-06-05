@@ -2066,6 +2066,86 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves pointer capture event names in fine-grained mode', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        return (
+          <button
+            data-id="btn"
+            onGotPointerCapture={() => calls.push('got')}
+            onLostPointerCapture={() => calls.push('lost')}
+          >
+            pointer
+          </button>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      calls: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const button = container.querySelector('[data-id="btn"]') as HTMLButtonElement
+    button.dispatchEvent(new Event('gotpointercapture', { bubbles: true }))
+    button.dispatchEvent(new Event('lostpointercapture', { bubbles: true }))
+    await flushUpdates()
+
+    expect(mod.calls).toEqual(['got', 'lost'])
+
+    teardown()
+    container.remove()
+  })
+
+  it('preserves pointer capture event names with modifiers in fine-grained mode', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        return (
+          <button data-id="btn" onGotPointerCaptureOnce={() => calls.push('got-once')}>
+            pointer
+          </button>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      calls: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const button = container.querySelector('[data-id="btn"]') as HTMLButtonElement
+    button.dispatchEvent(new Event('gotpointercapture', { bubbles: true }))
+    button.dispatchEvent(new Event('gotpointercapture', { bubbles: true }))
+    await flushUpdates()
+
+    expect(mod.calls).toEqual(['got-once'])
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps keyed list DOM in sync in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'

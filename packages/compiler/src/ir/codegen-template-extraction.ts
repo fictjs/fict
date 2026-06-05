@@ -85,6 +85,46 @@ function isCamelCaseEventName(name: string): boolean {
   return name.startsWith('on') && name.length > 2 && /^[A-Z]$/.test(name[2] ?? '')
 }
 
+const EVENT_NAMES_WITH_MODIFIER_SUFFIX = ['GotPointerCapture', 'LostPointerCapture'] as const
+
+function parseModifierSuffixes(
+  suffix: string,
+): { capture: boolean; passive: boolean; once: boolean } | null {
+  let rest = suffix
+  const modifiers = { capture: false, passive: false, once: false }
+  while (rest.length > 0) {
+    if (rest.startsWith('Capture')) {
+      modifiers.capture = true
+      rest = rest.slice('Capture'.length)
+      continue
+    }
+    if (rest.startsWith('Passive')) {
+      modifiers.passive = true
+      rest = rest.slice('Passive'.length)
+      continue
+    }
+    if (rest.startsWith('Once')) {
+      modifiers.once = true
+      rest = rest.slice('Once'.length)
+      continue
+    }
+    return null
+  }
+  return modifiers
+}
+
+function parseKnownEventNameWithModifiers(
+  eventName: string,
+): { eventName: string; capture: boolean; passive: boolean; once: boolean } | null {
+  for (const knownEventName of EVENT_NAMES_WITH_MODIFIER_SUFFIX) {
+    if (!eventName.startsWith(knownEventName)) continue
+    const modifiers = parseModifierSuffixes(eventName.slice(knownEventName.length))
+    if (!modifiers) continue
+    return { eventName: knownEventName, ...modifiers }
+  }
+  return null
+}
+
 /**
  * Resolve namespace context based on tag name and parent context.
  * - 'svg' enters SVG namespace
@@ -215,24 +255,32 @@ export function extractHIRStaticHtml(
       let passive = false
       let once = false
 
-      // Parse event modifiers
-      let changed = true
-      while (changed) {
-        changed = false
-        if (eventName.endsWith('Capture')) {
-          eventName = eventName.slice(0, -7)
-          capture = true
-          changed = true
-        }
-        if (eventName.endsWith('Passive')) {
-          eventName = eventName.slice(0, -7)
-          passive = true
-          changed = true
-        }
-        if (eventName.endsWith('Once')) {
-          eventName = eventName.slice(0, -4)
-          once = true
-          changed = true
+      const knownEvent = parseKnownEventNameWithModifiers(eventName)
+      if (knownEvent) {
+        eventName = knownEvent.eventName
+        capture ||= knownEvent.capture
+        passive = knownEvent.passive
+        once = knownEvent.once
+      } else {
+        // Parse event modifiers
+        let changed = true
+        while (changed) {
+          changed = false
+          if (eventName.endsWith('Capture')) {
+            eventName = eventName.slice(0, -7)
+            capture = true
+            changed = true
+          }
+          if (eventName.endsWith('Passive')) {
+            eventName = eventName.slice(0, -7)
+            passive = true
+            changed = true
+          }
+          if (eventName.endsWith('Once')) {
+            eventName = eventName.slice(0, -4)
+            once = true
+            changed = true
+          }
         }
       }
 
