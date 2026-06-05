@@ -74,4 +74,65 @@ describe('macro binding recognition', () => {
     expect(output).toContain('memo(() => count() * 2')
     expect(output).toContain('devToolsSource')
   })
+
+  it('rejects namespace $state macro calls from fict', () => {
+    expect(() =>
+      transform(`
+        import * as F from 'fict'
+        function App() {
+          let count = F.$state(0)
+          return count
+        }
+      `),
+    ).toThrow(/\$state\(\) cannot be called through a namespace import from "fict"/)
+  })
+
+  it('rejects namespace $effect macro calls from fict slim aliases', () => {
+    expect(() =>
+      transform(`
+        import * as Slim from 'fict/slim'
+        function App() {
+          Slim.$effect(() => {})
+          return null
+        }
+      `),
+    ).toThrow(/\$effect\(\) cannot be called through a namespace import from "fict\/slim"/)
+  })
+
+  it('rejects computed namespace macro calls', () => {
+    expect(() =>
+      transform(`
+        import * as F from 'fict'
+        function App() {
+          let count = F['$state'](0)
+          return count
+        }
+      `),
+    ).toThrow(/import \{ \$state \} from 'fict'/)
+  })
+
+  it('does not reject local objects that shadow a fict namespace import', () => {
+    const output = transform(`
+      import * as F from 'fict'
+      function App() {
+        const F = { $state: (value: number) => value }
+        let count = F.$state(0)
+        return count
+      }
+    `)
+
+    expect(output).toContain('.$state(0)')
+    expect(output).not.toContain('__fictUseSignal')
+  })
+
+  it('does not reject non-macro members on a fict namespace import', () => {
+    const output = transform(`
+      import * as F from 'fict'
+      function App() {
+        return F.createSignal(0)
+      }
+    `)
+
+    expect(output).toContain('F.createSignal(0)')
+  })
 })

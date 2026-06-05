@@ -2155,6 +2155,7 @@ function createHIREntrypointVisitor(
           effect: new Set(),
           memo: new Set(),
         }
+        const macroNamespaceBindingSources = new Map<BabelCore.types.Identifier, string>()
         const reactiveCreationBindingIds = new Set<BabelCore.types.Identifier>()
         const stateArgumentAllowedBindingIds = new Set<BabelCore.types.Identifier>()
         const importedReactiveBindingIds = new Set<BabelCore.types.Identifier>()
@@ -2169,7 +2170,23 @@ function createHIREntrypointVisitor(
               const binding = importPath.scope.getBinding(localName)
               if (binding) target.add(binding.identifier as BabelCore.types.Identifier)
             }
+            const addNamespaceBinding = (localName: string): void => {
+              const binding = importPath.scope.getBinding(localName)
+              if (binding) {
+                macroNamespaceBindingSources.set(
+                  binding.identifier as BabelCore.types.Identifier,
+                  source,
+                )
+              }
+            }
             for (const spec of importPath.node.specifiers) {
+              if (
+                t.isImportNamespaceSpecifier(spec) &&
+                (source === 'fict' || source === 'fict/slim')
+              ) {
+                addNamespaceBinding(spec.local.name)
+                continue
+              }
               if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
                 const importedName = spec.imported.name
                 if (source === 'fict' || source === 'fict/slim') {
@@ -2477,6 +2494,47 @@ function createHIREntrypointVisitor(
           if (callee.name === '$effect') return 'effect'
           return null
         }
+        const getStaticMemberPropertyName = (
+          member: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
+        ): string | null => {
+          if (!member.computed) {
+            return t.isIdentifier(member.property) ? member.property.name : null
+          }
+          if (t.isStringLiteral(member.property) || t.isNumericLiteral(member.property)) {
+            return String(member.property.value)
+          }
+          return null
+        }
+        const getUnsupportedNamespaceMacroCall = (
+          callPath: BabelCore.NodePath<
+            BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+          >,
+        ): { macroName: '$state' | '$effect'; source: string } | null => {
+          const callee = callPath.node.callee
+          if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee)) return null
+          if (!t.isIdentifier(callee.object)) return null
+          const propertyName = getStaticMemberPropertyName(callee)
+          if (propertyName !== '$state' && propertyName !== '$effect') return null
+          const binding = callPath.scope.getBinding(callee.object.name)
+          if (!binding) return null
+          const source = macroNamespaceBindingSources.get(
+            binding.identifier as BabelCore.types.Identifier,
+          )
+          return source ? { macroName: propertyName, source } : null
+        }
+        const rejectUnsupportedNamespaceMacroCall = (
+          callPath: BabelCore.NodePath<
+            BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+          >,
+        ): void => {
+          const macroCall = getUnsupportedNamespaceMacroCall(callPath)
+          if (!macroCall) return
+          throw callPath.buildCodeFrameError(
+            `${macroCall.macroName}() cannot be called through a namespace import from "${macroCall.source}".\n\n` +
+              `Use a named macro import instead:\n` +
+              `  import { ${macroCall.macroName} } from '${macroCall.source}'`,
+          )
+        }
         const isImportedReactiveCreationCall = (
           callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
         ): boolean => {
@@ -2696,6 +2754,7 @@ function createHIREntrypointVisitor(
             )
           },
           CallExpression(callPath) {
+            rejectUnsupportedNamespaceMacroCall(callPath)
             const importedMacroKind = getImportedMacroCallKind(callPath)
             if (importedMacroKind) {
               markFictMacroCall(callPath.node, importedMacroKind)
@@ -2904,6 +2963,7 @@ function createHIREntrypointVisitor(
             }
           },
           OptionalCallExpression(callPath) {
+            rejectUnsupportedNamespaceMacroCall(callPath)
             emitDirectStateArgumentWarnings(callPath, isImportedStateArgumentAllowedCall(callPath))
           },
         })
