@@ -16,6 +16,7 @@ import {
   bindAttribute,
   bindProperty,
   bindStyle,
+  setStyle,
   bindClass,
   classList,
   spread,
@@ -44,6 +45,22 @@ const tick = () =>
       ? queueMicrotask(resolve)
       : Promise.resolve().then(resolve),
   )
+
+describe('setStyle', () => {
+  it('preserves numeric CSS custom properties without appending units', () => {
+    const el = document.createElement('div')
+
+    setStyle(el, {
+      '--gap': 1,
+      '--name': 'x',
+      marginTop: 1,
+    })
+
+    expect(el.style.getPropertyValue('--gap')).toBe('1')
+    expect(el.style.getPropertyValue('--name')).toBe('x')
+    expect(el.style.marginTop).toBe('1px')
+  })
+})
 
 const pushCleanup = <T>(log: T[], value: T): void => {
   log.push(value)

@@ -641,7 +641,10 @@ function applyStyle(
       const v = styles[prop]
       if (v != null) {
         const cssProperty = normalizeStyleProperty(prop)
-        const unitless = isUnitlessStyleProperty(prop) || isUnitlessStyleProperty(cssProperty)
+        const unitless =
+          cssProperty.startsWith('--') ||
+          isUnitlessStyleProperty(prop) ||
+          isUnitlessStyleProperty(cssProperty)
         const valueStr = typeof v === 'number' && !unitless ? `${v}px` : String(v)
         el.style.setProperty(cssProperty, valueStr)
       } else {

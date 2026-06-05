@@ -41,4 +41,19 @@ describe('production style units', () => {
     expect(el.style.opacity).toBe('0.5')
     expect(el.style.marginTop).toBe('4px')
   })
+
+  it('keeps numeric CSS custom properties unitless in production', async () => {
+    const { setStyle } = await loadBindingForEnv('production')
+    const el = document.createElement('div')
+
+    setStyle(el, {
+      '--gap': 1,
+      '--name': 'x',
+      marginTop: 1,
+    })
+
+    expect(el.style.getPropertyValue('--gap')).toBe('1')
+    expect(el.style.getPropertyValue('--name')).toBe('x')
+    expect(el.style.marginTop).toBe('1px')
+  })
 })
