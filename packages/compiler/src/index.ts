@@ -944,7 +944,9 @@ function runWarningPass(
     return getCapturedFromExpression(argPath, { includeNestedFunctions: true })
   }
   const isNonEscapingCallbackHost = (
-    callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
+    callPath: BabelCore.NodePath<
+      BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+    >,
     callee: BabelCore.types.Expression,
   ): boolean => {
     if (t.isIdentifier(callee)) {
@@ -1015,6 +1017,44 @@ function runWarningPass(
       },
     })
     return found
+  }
+  const emitCallbackBoundaryWarnings = (
+    callPath: BabelCore.NodePath<
+      BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+    >,
+    callee: BabelCore.types.Expression,
+    options: { checkReactiveArguments: boolean },
+  ): void => {
+    const argPaths = callPath.get('arguments') as BabelCore.NodePath[]
+    const nonEscapingCallbackHost = isNonEscapingCallbackHost(callPath, callee)
+    if (nonEscapingCallbackHost) return
+    if (options.checkReactiveArguments) {
+      for (const argPath of argPaths) {
+        if (
+          argPath.isIdentifier() &&
+          hasTrackedBinding(argPath, argPath.node.name, stateBindingIds)
+        ) {
+          // Direct state bindings already warn via FICT-S002 elsewhere.
+          continue
+        }
+        if (argumentHasReactive(argPath)) {
+          emitWarning(
+            argPath,
+            'FICT-R002',
+            'Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise',
+            warn,
+            fileName,
+          )
+          break
+        }
+      }
+    }
+    for (const argPath of argPaths) {
+      const captured = collectCapturedForArgument(argPath)
+      if (!captured) continue
+      emitClosureCaptureWarning(argPath, captured)
+      break
+    }
   }
   programPath.traverse({
     AssignmentExpression(path) {
@@ -1248,34 +1288,12 @@ function runWarningPass(
         }
       }
 
-      const argPaths = path.get('arguments') as BabelCore.NodePath[]
-      const nonEscapingCallbackHost = isNonEscapingCallbackHost(path, callee)
-      if (nonEscapingCallbackHost) return
-      for (const argPath of argPaths) {
-        if (
-          argPath.isIdentifier() &&
-          hasTrackedBinding(argPath, argPath.node.name, stateBindingIds)
-        ) {
-          // Direct state bindings already warn via FICT-S002 elsewhere.
-          continue
-        }
-        if (argumentHasReactive(argPath)) {
-          emitWarning(
-            argPath,
-            'FICT-R002',
-            'Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise',
-            warn,
-            fileName,
-          )
-          break
-        }
-      }
-      for (const argPath of argPaths) {
-        const captured = collectCapturedForArgument(argPath)
-        if (!captured) continue
-        emitClosureCaptureWarning(argPath, captured)
-        break
-      }
+      emitCallbackBoundaryWarnings(path, callee, { checkReactiveArguments: true })
+    },
+    OptionalCallExpression(path) {
+      const callee = path.node.callee
+      if (!t.isExpression(callee)) return
+      emitCallbackBoundaryWarnings(path, callee, { checkReactiveArguments: false })
     },
     OptionalMemberExpression(path) {
       if (!path.node.computed) return

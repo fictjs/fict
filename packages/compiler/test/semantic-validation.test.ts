@@ -476,6 +476,20 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-R005')).toBe(false)
   })
 
+  it('does not warn FICT-R005 for optional non-escaping array callbacks', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        let count = $state(0)
+        const items = [1, 2, 3]
+        return <ul>{items.map?.(item => <li>{count + item}</li>)}</ul>
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R005')).toBe(false)
+  })
+
   it('warns FICT-R005 when inline closure escapes via unknown callback boundary', () => {
     const source = `
       import { $state } from 'fict'
@@ -491,6 +505,61 @@ describe('semantic validation', () => {
     const warnings: Array<{ code: string }> = []
     transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
     expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
+  })
+
+  it('warns FICT-R005 when inline closure escapes via optional callback boundary', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        function consume(fn) {
+          return fn()
+        }
+        function App() {
+          let count = $state(0)
+          consume?.(() => count)
+          return <div />
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function App() {
+          let count = $state(0)
+          const bus = { subscribe(fn) { return fn() } }
+          bus.subscribe?.(() => count)
+          return <div />
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function App() {
+          let count = $state(0)
+          Promise.resolve(1)?.then(() => count)
+          return <div>{count}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function App() {
+          let count = $state(0)
+          Promise.reject(1)?.catch(() => count)
+          return <div>{count}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function App() {
+          let count = $state(0)
+          Promise.resolve(1)?.finally(() => count)
+          return <div>{count}</div>
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      const warnings: Array<{ code: string }> = []
+      transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+      expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
+    }
   })
 
   it('warns FICT-R005 when named closure escapes via unknown callback boundary', () => {

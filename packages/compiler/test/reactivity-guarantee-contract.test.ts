@@ -336,6 +336,18 @@ describe('reactivity guarantee contract', () => {
         error: /FICT-R002/,
       },
       {
+        name: 'optional async promise callback captures reactive value across boundary',
+        source: `
+          import { $state } from 'fict'
+          function App() {
+            let count = $state(0)
+            Promise.resolve(1)?.then(() => count)
+            return <div>{count}</div>
+          }
+        `,
+        error: /FICT-R005/,
+      },
+      {
         name: 'control-flow fallback diagnostics',
         source: `
           import { $state } from 'fict'
