@@ -112,6 +112,7 @@ import { isHookLikeFunction, isHookName } from './hook-utils'
 import { buildPropsExpression } from './props-plan'
 import {
   deSSAVarName,
+  expressionNeedsAsyncContext,
   expressionUsesTracked,
   lowerStructuredNodeWithoutRegions,
   type Region,
@@ -4650,6 +4651,18 @@ function lowerInstructionWithScopes(
 
     // Check if target is a tracked variable (use de-versioned name for lookup)
     if (ctx.trackedVars.has(targetBase)) {
+      if (expressionNeedsAsyncContext(instr.value)) {
+        if (declKind) {
+          return applyLoc(
+            t.variableDeclaration(declKind, [
+              t.variableDeclarator(t.identifier(targetName), valueExpr),
+            ]),
+          )
+        }
+        return applyLoc(
+          t.expressionStatement(t.assignmentExpression('=', t.identifier(targetName), valueExpr)),
+        )
+      }
       // Wrap in memo if it depends on other tracked vars
       ctx.helpersUsed.add('useMemo')
       return applyLoc(

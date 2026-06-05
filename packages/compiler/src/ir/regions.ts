@@ -83,7 +83,7 @@ function templateElementFromQuasi(
   return element
 }
 
-function expressionNeedsAsyncContext(expr: Expression): boolean {
+export function expressionNeedsAsyncContext(expr: Expression): boolean {
   switch (expr.kind) {
     case 'AwaitExpression':
       return true
@@ -140,7 +140,7 @@ function expressionNeedsAsyncContext(expr: Expression): boolean {
     case 'SequenceExpression':
       return expr.expressions.some(part => expressionNeedsAsyncContext(part))
     case 'YieldExpression':
-      return expr.argument ? expressionNeedsAsyncContext(expr.argument) : false
+      return true
     case 'TaggedTemplateExpression':
       return (
         expressionNeedsAsyncContext(expr.tag) ||
@@ -3806,6 +3806,7 @@ function instructionToStatement(
     const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
     const lowerAssignedValue = (forceAssigned = false) =>
       lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
+    const needsAsyncContext = expressionNeedsAsyncContext(instr.value)
     const throwAliasReassignment = (): never => {
       const loc = instr.loc?.start
       throw new HIRError(
@@ -3834,6 +3835,15 @@ function instructionToStatement(
         source,
       })
     }
+    const trackDerivedMemoVar = (): void => {
+      if (!needsAsyncContext && !isReactiveObjectCall) ctx.memoVars?.add(baseName)
+    }
+    const buildDerivedValue = (expr: BabelCore.types.Expression): BabelCore.types.Expression =>
+      needsAsyncContext || isMemoReturningCall ? expr : buildDerivedMemoCall(expr)
+    const buildNoMemoDerivedValue = (
+      expr: BabelCore.types.Expression,
+    ): BabelCore.types.Expression =>
+      needsAsyncContext ? expr : t.arrowFunctionExpression([], expr)
     const buildHoistedInitializer = (): BabelCore.types.Expression => {
       if (isStateCall) {
         ctx.currentAssignmentName = baseName
@@ -3857,11 +3867,11 @@ function instructionToStatement(
           ctx.memoVars?.delete(baseName)
           return derivedExpr
         }
-        if (!isReactiveObjectCall) ctx.memoVars?.add(baseName)
+        trackDerivedMemoVar()
         if (ctx.noMemo) {
-          return t.arrowFunctionExpression([], derivedExpr)
+          return buildNoMemoDerivedValue(derivedExpr)
         }
-        return isMemoReturningCall ? derivedExpr : buildDerivedMemoCall(derivedExpr)
+        return buildDerivedValue(derivedExpr)
       }
 
       return lowerAssignedValue(true)
@@ -3928,21 +3938,15 @@ function instructionToStatement(
             ])
           }
           // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
-          if (!isReactiveObjectCall) ctx.memoVars?.add(baseName)
+          trackDerivedMemoVar()
           if (ctx.noMemo) {
             return t.variableDeclaration(normalizedDecl, [
-              t.variableDeclarator(
-                t.identifier(baseName),
-                t.arrowFunctionExpression([], derivedExpr),
-              ),
+              t.variableDeclarator(t.identifier(baseName), buildNoMemoDerivedValue(derivedExpr)),
             ])
           }
           // Skip memo wrapping if expression already returns an accessor
           return t.variableDeclaration(normalizedDecl, [
-            t.variableDeclarator(
-              t.identifier(baseName),
-              isMemoReturningCall ? derivedExpr : buildDerivedMemoCall(derivedExpr),
-            ),
+            t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr)),
           ])
         }
       }
@@ -3969,21 +3973,15 @@ function instructionToStatement(
           ])
         }
         // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
-        if (!isReactiveObjectCall) ctx.memoVars?.add(baseName)
+        trackDerivedMemoVar()
         if (ctx.noMemo) {
           return t.variableDeclaration(normalizedDecl, [
-            t.variableDeclarator(
-              t.identifier(baseName),
-              t.arrowFunctionExpression([], derivedExpr),
-            ),
+            t.variableDeclarator(t.identifier(baseName), buildNoMemoDerivedValue(derivedExpr)),
           ])
         }
         // Skip memo wrapping if expression already returns an accessor
         return t.variableDeclaration(normalizedDecl, [
-          t.variableDeclarator(
-            t.identifier(baseName),
-            isMemoReturningCall ? derivedExpr : buildDerivedMemoCall(derivedExpr),
-          ),
+          t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr)),
         ])
       }
 
@@ -4028,23 +4026,15 @@ function instructionToStatement(
         )
       }
 
-      if (!isReactiveObjectCall) ctx.memoVars?.add(baseName)
+      trackDerivedMemoVar()
       if (ctx.noMemo) {
         return t.expressionStatement(
-          t.assignmentExpression(
-            '=',
-            t.identifier(baseName),
-            t.arrowFunctionExpression([], derivedExpr),
-          ),
+          t.assignmentExpression('=', t.identifier(baseName), buildNoMemoDerivedValue(derivedExpr)),
         )
       }
 
       return t.expressionStatement(
-        t.assignmentExpression(
-          '=',
-          t.identifier(baseName),
-          isMemoReturningCall ? derivedExpr : buildDerivedMemoCall(derivedExpr),
-        ),
+        t.assignmentExpression('=', t.identifier(baseName), buildDerivedValue(derivedExpr)),
       )
     }
 
@@ -4103,21 +4093,15 @@ function instructionToStatement(
           ])
         }
         // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
-        if (!isReactiveObjectCall) ctx.memoVars?.add(baseName)
+        trackDerivedMemoVar()
         if (ctx.noMemo) {
           return t.variableDeclaration('const', [
-            t.variableDeclarator(
-              t.identifier(baseName),
-              t.arrowFunctionExpression([], derivedExpr),
-            ),
+            t.variableDeclarator(t.identifier(baseName), buildNoMemoDerivedValue(derivedExpr)),
           ])
         }
         // Skip memo wrapping if expression already returns an accessor
         return t.variableDeclaration('const', [
-          t.variableDeclarator(
-            t.identifier(baseName),
-            isMemoReturningCall ? derivedExpr : buildDerivedMemoCall(derivedExpr),
-          ),
+          t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr)),
         ])
       }
 
@@ -4138,18 +4122,15 @@ function instructionToStatement(
         ])
       }
       // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
-      if (!isReactiveObjectCall) ctx.memoVars?.add(baseName)
+      trackDerivedMemoVar()
       if (ctx.noMemo) {
         return t.variableDeclaration('const', [
-          t.variableDeclarator(t.identifier(baseName), t.arrowFunctionExpression([], derivedExpr)),
+          t.variableDeclarator(t.identifier(baseName), buildNoMemoDerivedValue(derivedExpr)),
         ])
       }
       // Skip memo wrapping if expression already returns an accessor
       return t.variableDeclaration('const', [
-        t.variableDeclarator(
-          t.identifier(baseName),
-          isMemoReturningCall ? derivedExpr : buildDerivedMemoCall(derivedExpr),
-        ),
+        t.variableDeclarator(t.identifier(baseName), buildDerivedValue(derivedExpr)),
       ])
     }
 
