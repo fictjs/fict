@@ -54,6 +54,25 @@ function stripMacroImports(
   path.node.body = nextBody
 }
 
+function unsupportedTypeScriptRuntimeDeclarationMessage(
+  node: BabelCore.types.Node,
+  t: typeof BabelCore.types,
+): string | null {
+  if (t.isTSEnumDeclaration(node) && !node.declare) {
+    return 'TypeScript enum declarations must be lowered by TypeScript before Fict compilation.'
+  }
+  if (t.isTSModuleDeclaration(node) && !node.declare) {
+    return 'TypeScript namespace declarations must be lowered by TypeScript before Fict compilation.'
+  }
+  if (t.isTSImportEqualsDeclaration(node)) {
+    return 'TypeScript import equals declarations must be lowered by TypeScript before Fict compilation.'
+  }
+  if (t.isTSExportAssignment(node)) {
+    return 'TypeScript export assignment declarations must be lowered by TypeScript before Fict compilation.'
+  }
+  return null
+}
+
 function isInsideLoop(path: BabelCore.NodePath): boolean {
   return !!path.findParent(
     p =>
@@ -1468,6 +1487,26 @@ function createHIREntrypointVisitor(
 
   return {
     Program: {
+      enter(path) {
+        path.traverse({
+          TSEnumDeclaration(tsPath) {
+            const message = unsupportedTypeScriptRuntimeDeclarationMessage(tsPath.node, t)
+            if (message) throw tsPath.buildCodeFrameError(message)
+          },
+          TSModuleDeclaration(tsPath) {
+            const message = unsupportedTypeScriptRuntimeDeclarationMessage(tsPath.node, t)
+            if (message) throw tsPath.buildCodeFrameError(message)
+          },
+          TSImportEqualsDeclaration(tsPath) {
+            const message = unsupportedTypeScriptRuntimeDeclarationMessage(tsPath.node, t)
+            if (message) throw tsPath.buildCodeFrameError(message)
+          },
+          TSExportAssignment(tsPath) {
+            const message = unsupportedTypeScriptRuntimeDeclarationMessage(tsPath.node, t)
+            if (message) throw tsPath.buildCodeFrameError(message)
+          },
+        })
+      },
       exit(path) {
         const hub = path.hub as unknown as {
           file?: BabelCore.BabelFile & {

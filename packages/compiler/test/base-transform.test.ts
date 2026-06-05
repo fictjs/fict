@@ -489,6 +489,50 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).not.toContain('Foo')
     })
 
+    it('rejects exported TypeScript runtime declarations before emitting JS', () => {
+      expect(() =>
+        transform(`
+          export enum Color {
+            Red = 1,
+          }
+        `),
+      ).toThrow('TypeScript enum declarations must be lowered')
+
+      expect(() =>
+        transform(`
+          export const enum Color {
+            Red = 1,
+          }
+        `),
+      ).toThrow('TypeScript enum declarations must be lowered')
+
+      expect(() =>
+        transform(`
+          export namespace N {
+            export const x = 1
+          }
+        `),
+      ).toThrow('TypeScript namespace declarations must be lowered')
+    })
+
+    it('drops exported ambient declarations from runtime output', () => {
+      const output = transformCommonJS(`
+        export declare const X: number
+        export declare function g(): number
+        export declare class C {}
+
+        export function f() {
+          return 1
+        }
+      `)
+
+      expect(output).toContain('function f()')
+      expect(output).not.toContain('declare')
+      expect(output).not.toContain('exports.X')
+      expect(output).not.toContain('exports.g')
+      expect(output).not.toContain('exports.C')
+    })
+
     it('preserves import expressions and meta properties', () => {
       const output = transform(`
         async function load() {

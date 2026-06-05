@@ -197,6 +197,27 @@ const reportUnsupportedExpression = (
   })
 }
 
+function unsupportedTypeScriptRuntimeDeclarationMessage(node: BabelCore.types.Node): string | null {
+  if (t.isTSEnumDeclaration(node) && !node.declare) {
+    return 'TypeScript enum declarations must be lowered by TypeScript before Fict compilation.'
+  }
+  if (t.isTSModuleDeclaration(node) && !node.declare) {
+    return 'TypeScript namespace declarations must be lowered by TypeScript before Fict compilation.'
+  }
+  if (t.isTSImportEqualsDeclaration(node)) {
+    return 'TypeScript import equals declarations must be lowered by TypeScript before Fict compilation.'
+  }
+  if (t.isTSExportAssignment(node)) {
+    return 'TypeScript export assignment declarations must be lowered by TypeScript before Fict compilation.'
+  }
+  return null
+}
+
+function rejectUnsupportedTypeScriptRuntimeDeclaration(node: BabelCore.types.Node): void {
+  const message = unsupportedTypeScriptRuntimeDeclarationMessage(node)
+  if (message) reportUnsupportedExpression(node, message)
+}
+
 interface MacroAliases {
   state?: Set<string>
   effect?: Set<string>
@@ -1050,6 +1071,8 @@ export function buildHIR(
     let defaultExportExpressionCounter = 0
 
     for (const stmt of expandedAst.program.body) {
+      rejectUnsupportedTypeScriptRuntimeDeclaration(stmt)
+
       // Import declarations go to preamble
       if (t.isImportDeclaration(stmt)) {
         preamble.push(stmt)
@@ -1077,6 +1100,7 @@ export function buildHIR(
       // Export named declarations
       if (t.isExportNamedDeclaration(stmt)) {
         const decl = stmt.declaration
+        if (decl) rejectUnsupportedTypeScriptRuntimeDeclaration(decl)
         if (decl && t.isFunctionDeclaration(decl) && decl.body) {
           // Export function declaration - convert to HIR and preserve export wrapper
           const name = decl.id?.name
