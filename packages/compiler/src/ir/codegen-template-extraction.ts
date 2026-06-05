@@ -141,6 +141,7 @@ export function extractHIRStaticHtml(
   const hasRenderableChildren = jsx.children.some(
     child => child.kind !== 'text' || child.value.length > 0,
   )
+  let childrenPropExpr: Expression | undefined
 
   // Process attributes
   for (let attrIndex = 0; attrIndex < jsx.attributes.length; attrIndex++) {
@@ -252,6 +253,12 @@ export function extractHIRStaticHtml(
       continue
     }
 
+    if (name === 'children') {
+      childrenPropExpr =
+        attr.value ?? ({ kind: 'Literal', value: true, loc: attr.loc } as Expression)
+      continue
+    }
+
     if (name === 'dangerouslySetInnerHTML') {
       bindings.push({
         type: 'attr',
@@ -326,6 +333,17 @@ export function extractHIRStaticHtml(
       (!!prev && (prev.kind === 'expression' || isNonEmptyText(prev))) ||
       (!!next && (next.kind === 'expression' || isNonEmptyText(next)))
     )
+  }
+
+  if (childrenPropExpr && !hasRenderableChildren) {
+    html += '<!--fict:slot:start--><!--fict:slot:end-->'
+    bindings.push({
+      type: 'child',
+      path: [...parentPath, childIndex],
+      expr: childrenPropExpr,
+      namespace: resolvedNamespace,
+    })
+    childIndex++
   }
 
   for (let i = 0; i < children.length; i++) {

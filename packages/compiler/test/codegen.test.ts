@@ -1769,6 +1769,32 @@ describe('spread operator in JSX', () => {
     expect(code).toContain('data-id=\\"ok\\"')
   })
 
+  it('routes intrinsic children props through child insertion', () => {
+    const ast = parseFile(`
+      function ChildrenProps() {
+        let text = $state('hello')
+        return (
+          <section>
+            <div children="static" />
+            <div children={text} />
+            <div children={<span>node</span>} />
+            <div children="ignored">explicit</div>
+          </section>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('<!--fict:slot:start--><!--fict:slot:end-->')
+    expect(code).toMatch(/insertBetween\([^,]+,\s*[^,]+,\s*\(\)\s*=>\s*"static"/)
+    expect(code).toMatch(/insertBetween\([^,]+,\s*[^,]+,\s*\(\)\s*=>\s*text\(\)/)
+    expect(code).toContain('<div>explicit</div>')
+    expect(code).not.toContain('children=\\"')
+    expect(code).not.toContain('bindAttribute')
+  })
+
   it('stringifies boolean aria and data attributes', () => {
     const ast = parseFile(`
       function BooleanAttrs() {

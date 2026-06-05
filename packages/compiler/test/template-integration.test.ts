@@ -628,6 +628,64 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('renders intrinsic children props as child content in fine-grained output', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: string): void }
+
+      export function App() {
+        let text = $state('hello')
+        api = { set: value => (text = value) }
+        return (
+          <section>
+            <div data-testid="static" children="static" />
+            <div data-testid="reactive" children={text} />
+            <div data-testid="array" children={['a', 'b']} />
+            <div data-testid="node" children={<span>node</span>} />
+            <div data-testid="conflict" children="ignored">explicit</div>
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: string): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const staticEl = container.querySelector('[data-testid="static"]') as HTMLDivElement
+    const reactive = container.querySelector('[data-testid="reactive"]') as HTMLDivElement
+    const array = container.querySelector('[data-testid="array"]') as HTMLDivElement
+    const node = container.querySelector('[data-testid="node"]') as HTMLDivElement
+    const conflict = container.querySelector('[data-testid="conflict"]') as HTMLDivElement
+
+    expect(staticEl.textContent).toBe('static')
+    expect(staticEl.getAttribute('children')).toBeNull()
+    expect(reactive.textContent).toBe('hello')
+    expect(array.textContent).toBe('ab')
+    expect(node.querySelector('span')?.textContent).toBe('node')
+    expect(node.getAttribute('children')).toBeNull()
+    expect(conflict.textContent).toBe('explicit')
+    expect(conflict.getAttribute('children')).toBeNull()
+
+    mod.api.set('updated')
+    await flushUpdates()
+    expect(reactive.textContent).toBe('updated')
+
+    teardown()
+    container.remove()
+  })
+
   it('stringifies boolean aria and data attributes in fine-grained output', async () => {
     const source = `
       import { $state, render } from 'fict'
