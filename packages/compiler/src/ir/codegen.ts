@@ -133,6 +133,17 @@ export { getReactiveCallKind } from './codegen-reactive-kind'
 
 const HOOK_SLOT_BASE = 1000
 const DELEGATED_DATA_ONLY_MARKER = '__fictDataOnly'
+const BABEL_DESTRUCTURING_HELPER_NAMES = new Set(['_toPrimitive', '_toPropertyKey'])
+
+function isBabelDestructuringHelperName(name: string | undefined): boolean {
+  return !!name && BABEL_DESTRUCTURING_HELPER_NAMES.has(deSSAVarName(name))
+}
+
+function isComponentFunctionNameByCurrentHeuristic(name: string | undefined): boolean {
+  if (!name || isBabelDestructuringHelperName(name)) return false
+  const firstChar = name[0]
+  return !!firstChar && firstChar === firstChar.toUpperCase()
+}
 
 function cloneDirectives(
   directives: BabelDirective[] | undefined,
@@ -6940,7 +6951,7 @@ function lowerFunctionWithRegions(
 
   const prevHookFlag = ctx.currentFnIsHook
   ctx.currentFnIsHook = inferredHook
-  const isComponent = !!(fn.name && fn.name[0] === fn.name[0]?.toUpperCase())
+  const isComponent = isComponentFunctionNameByCurrentHeuristic(fn.name)
   ctx.isComponentFn = isComponent
   // Non-component, non-hook functions should use non-hook-based primitives (createSignal, createMemo)
   // to avoid requiring hook context. Only component functions and hooks use hook-based APIs.
