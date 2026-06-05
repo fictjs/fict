@@ -993,6 +993,106 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/state\.count\(\)/)
     })
 
+    it('omits ambiguous star-export metadata conflicts', () => {
+      const aSource = `
+        import { $state } from 'fict'
+        import { createMemo, createSignal } from 'fict/advanced'
+
+        export const count = createSignal(1)
+        export const onlyA = createMemo(() => 1)
+
+        export function useThing() {
+          const value = $state(1)
+          return { value }
+        }
+
+        export function useOnlyA() {
+          const value = $state(1)
+          return { value }
+        }
+      `
+      const bSource = `
+        import { $state } from 'fict'
+        import { createMemo, createSignal } from 'fict/advanced'
+
+        export const count = createMemo(() => 2)
+        export const onlyB = createSignal(2)
+
+        export function useThing() {
+          const value = $state(2)
+          return { value }
+        }
+
+        export function useOnlyB() {
+          const value = $state(2)
+          return { value }
+        }
+      `
+      const barrelSource = `
+        export * from './star-a'
+        export * from './star-b'
+      `
+      const moduleMetadata = new Map()
+      const aPath = path.join(baseDir, 'star-a.tsx')
+      const bPath = path.join(baseDir, 'star-b.tsx')
+      const barrelPath = path.join(baseDir, 'star-barrel.ts')
+
+      transform(aSource, { moduleMetadata }, aPath)
+      transform(bSource, { moduleMetadata }, bPath)
+      transform(barrelSource, { moduleMetadata }, barrelPath)
+
+      const meta = moduleMetadata.get(path.resolve(barrelPath))
+      expect(meta?.exports).toEqual({
+        onlyA: 'memo',
+        onlyB: 'signal',
+      })
+      expect(meta?.hooks).toMatchObject({
+        useOnlyA: { objectProps: { value: 'signal' } },
+        useOnlyB: { objectProps: { value: 'signal' } },
+      })
+      expect(meta?.hooks).not.toHaveProperty('useThing')
+      expect(meta?.exports).not.toHaveProperty('default')
+    })
+
+    it('lets explicit exports disambiguate star-export metadata regardless of order', () => {
+      const localSource = `
+        import { createMemo } from 'fict/advanced'
+        export const count = createMemo(() => 1)
+      `
+      const starSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(2)
+      `
+      const moduleMetadata = new Map()
+      const localPath = path.join(baseDir, 'explicit-local.ts')
+      const starPath = path.join(baseDir, 'explicit-star.ts')
+
+      transform(localSource, { moduleMetadata }, localPath)
+      transform(starSource, { moduleMetadata }, starPath)
+
+      for (const [suffix, barrelSource] of [
+        [
+          'before',
+          `
+            export { count } from './explicit-local'
+            export * from './explicit-star'
+          `,
+        ],
+        [
+          'after',
+          `
+            export * from './explicit-star'
+            export { count } from './explicit-local'
+          `,
+        ],
+      ] as const) {
+        const barrelPath = path.join(baseDir, `explicit-barrel-${suffix}.ts`)
+        transform(barrelSource, { moduleMetadata }, barrelPath)
+        const meta = moduleMetadata.get(path.resolve(barrelPath))
+        expect(meta?.exports.count).toBe('memo')
+      }
+    })
+
     it('ignores type-only re-export declarations when propagating metadata', () => {
       const storeSource = `
         import { createSignal } from 'fict/advanced'

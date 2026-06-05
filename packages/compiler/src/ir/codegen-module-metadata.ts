@@ -155,10 +155,37 @@ export function buildModuleReactiveMetadata(
   }
   const hookExports: Record<string, HookReturnInfoSerializable> = {}
   const namespaceExports: Record<string, ModuleReactiveMetadata> = {}
+  const explicitExportNames = new Set<string>()
+  const starExportNames = new Set<string>()
+  const markExplicitExport = (exportName: string) => {
+    explicitExportNames.add(exportName)
+    delete metadata.exports[exportName]
+    delete hookExports[exportName]
+  }
+  const addStarExport = (
+    exportName: string,
+    kind: ReactiveExportKind | undefined,
+    hookInfo: HookReturnInfoSerializable | undefined,
+  ) => {
+    if (exportName === 'default' || explicitExportNames.has(exportName)) return
+    if (starExportNames.has(exportName)) {
+      delete metadata.exports[exportName]
+      delete hookExports[exportName]
+      return
+    }
+    starExportNames.add(exportName)
+    if (kind) {
+      metadata.exports[exportName] = kind
+    }
+    if (hookInfo) {
+      hookExports[exportName] = hookInfo
+    }
+  }
   const getExportedName = (
     exported: BabelCore.types.Identifier | BabelCore.types.StringLiteral,
   ): string => (t.isIdentifier(exported) ? exported.name : exported.value)
   const addExport = (exportName: string, localName: string) => {
+    markExplicitExport(exportName)
     const kind = classifyReactiveExport(localName, ctx)
     if (kind) {
       metadata.exports[exportName] = kind
@@ -175,6 +202,7 @@ export function buildModuleReactiveMetadata(
     }
   }
   const addExportFromSource = (source: string, importedName: string, exportName: string) => {
+    markExplicitExport(exportName)
     const sourceMeta = resolveModuleMetadata(source, options?.filename, options)
     if (!sourceMeta) return
     const kind = sourceMeta.exports[importedName]
@@ -187,6 +215,7 @@ export function buildModuleReactiveMetadata(
     }
   }
   const addDefaultExportKind = (kind: ReactiveExportKind | null) => {
+    markExplicitExport('default')
     if (kind) {
       metadata.exports.default = kind
     }
@@ -238,15 +267,12 @@ export function buildModuleReactiveMetadata(
       if (isTypeOnlyKind(stmt.exportKind)) continue
       const sourceMeta = resolveModuleMetadata(stmt.source.value, options?.filename, options)
       if (!sourceMeta) continue
-      for (const [exportName, kind] of Object.entries(sourceMeta.exports)) {
-        if (exportName === 'default') continue
-        metadata.exports[exportName] = kind
-      }
-      if (sourceMeta.hooks) {
-        for (const [exportName, info] of Object.entries(sourceMeta.hooks)) {
-          if (exportName === 'default') continue
-          hookExports[exportName] = info
-        }
+      const starNames = new Set([
+        ...Object.keys(sourceMeta.exports),
+        ...Object.keys(sourceMeta.hooks ?? {}),
+      ])
+      for (const exportName of starNames) {
+        addStarExport(exportName, sourceMeta.exports[exportName], sourceMeta.hooks?.[exportName])
       }
       continue
     }
