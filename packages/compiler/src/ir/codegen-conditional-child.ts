@@ -4,6 +4,10 @@ import type { CodegenContext } from './codegen'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 import type { Expression } from './hir'
 
+function voidZero(t: typeof BabelCore.types): BabelCore.types.UnaryExpression {
+  return t.unaryExpression('void', t.numericLiteral(0), true)
+}
+
 export interface ConditionalChildOps {
   buildListCallExpression: (
     expr: Expression,
@@ -70,7 +74,7 @@ export function emitConditionalChild(
   if (alternate) {
     args.push(t.arrowFunctionExpression([], alternate))
   } else {
-    args.push(t.identifier('undefined'))
+    args.push(voidZero(t))
   }
   args.push(startMarkerId, endMarkerId)
 

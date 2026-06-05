@@ -9,6 +9,10 @@ import {
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 import { HIRError, type Expression } from './hir'
 
+function voidZero(t: typeof BabelCore.types): BabelCore.types.UnaryExpression {
+  return t.unaryExpression('void', t.numericLiteral(0), true)
+}
+
 export interface ResumableEventBindingOps {
   lowerDomExpression: (
     expr: Expression,
@@ -329,7 +333,7 @@ export function emitResumableEventBinding(
           t.arrowFunctionExpression(
             [t.identifier('__value')],
             t.conditionalExpression(
-              t.binaryExpression('===', t.identifier('__value'), t.identifier('undefined')),
+              t.binaryExpression('===', t.identifier('__value'), voidZero(t)),
               t.cloneNode(restore.defaultValue, true) as BabelCore.types.Expression,
               t.identifier('__value'),
             ),

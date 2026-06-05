@@ -35,6 +35,10 @@ import {
 } from './shapes'
 import { structurizeCFG, StructurizationError, type StructuredNode } from './structurize'
 
+function voidZero(t: typeof BabelCore.types): BabelCore.types.UnaryExpression {
+  return t.unaryExpression('void', t.numericLiteral(0), true)
+}
+
 /**
  * A Region represents a contiguous section of code that should be
  * evaluated together and memoized based on its dependencies.
@@ -267,7 +271,7 @@ function buildEffectCall(
   const args: BabelCore.types.Expression[] = [t.identifier('__fictCtx'), effectFn]
   const slot = options?.slot
   if (options?.forceSlot) {
-    args.push(slot !== undefined && slot >= 0 ? t.numericLiteral(slot) : t.identifier('undefined'))
+    args.push(slot !== undefined && slot >= 0 ? t.numericLiteral(slot) : voidZero(t))
   } else if (slot !== undefined && slot >= 0) {
     args.push(t.numericLiteral(slot))
   }
@@ -3235,7 +3239,7 @@ function lowerInstructionsToInitExpr(
     if (i.kind === 'Expression') {
       return lowerExpression(i.value, ctx)
     }
-    return t.identifier('undefined')
+    return voidZero(t)
   })
 
   if (exprs.length === 1 && exprs[0]) {
@@ -3265,7 +3269,7 @@ function lowerInstructionsToUpdateExpr(
     if (i.kind === 'Expression') {
       return lowerExpression(i.value, ctx)
     }
-    return t.identifier('undefined')
+    return voidZero(t)
   })
 
   if (exprs.length === 1 && exprs[0]) {
@@ -3649,12 +3653,8 @@ function wrapInMemo(
       if (!region.hasControlFlow) {
         return t.objectProperty(t.identifier(name), t.identifier(name), false, true)
       }
-      const guard = t.binaryExpression('!==', t.identifier(name), t.identifier('undefined'))
-      const valueExpr = t.conditionalExpression(
-        guard,
-        t.identifier(name),
-        t.identifier('undefined'),
-      )
+      const guard = t.binaryExpression('!==', t.identifier(name), voidZero(t))
+      const valueExpr = t.conditionalExpression(guard, t.identifier(name), voidZero(t))
       return t.objectProperty(t.identifier(name), valueExpr)
     }
     const returnObj = t.objectExpression(uniqueOutputNames.map(name => buildOutputProperty(name)))
@@ -5014,7 +5014,7 @@ function exprToAST(
   expr: Expression | null | undefined,
   t: typeof BabelCore.types,
 ): BabelCore.types.Expression {
-  if (!expr) return t.identifier('undefined')
+  if (!expr) return voidZero(t)
 
   switch (expr.kind) {
     case 'Identifier':
@@ -5022,7 +5022,7 @@ function exprToAST(
 
     case 'Literal':
       if (expr.value === null) return t.nullLiteral()
-      if (expr.value === undefined) return t.identifier('undefined')
+      if (expr.value === undefined) return voidZero(t)
       if (typeof expr.value === 'string') return t.stringLiteral(expr.value)
       if (typeof expr.value === 'number') return t.numericLiteral(expr.value)
       if (typeof expr.value === 'boolean') return t.booleanLiteral(expr.value)
@@ -5030,7 +5030,7 @@ function exprToAST(
       if (expr.value instanceof RegExp) {
         return t.regExpLiteral(expr.value.source, expr.value.flags)
       }
-      return t.identifier('undefined')
+      return voidZero(t)
 
     case 'ImportExpression':
       return t.importExpression(
@@ -5186,7 +5186,7 @@ function exprToAST(
       if (expr.kind) {
         debugWarn('region', `Unsupported expression kind: ${expr.kind}`)
       }
-      return t.identifier('undefined')
+      return voidZero(t)
   }
 }
 

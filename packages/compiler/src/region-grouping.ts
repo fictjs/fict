@@ -13,6 +13,10 @@ import { RUNTIME_ALIASES } from './constants'
 import type { TransformContext } from './types'
 import { collectBindingNames, dependsOnTracked, isStateCall } from './utils'
 
+function voidZero(t: typeof BabelCore.types): BabelCore.types.UnaryExpression {
+  return t.unaryExpression('void', t.numericLiteral(0), true)
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -927,7 +931,7 @@ export function generateRegionMemo(
         t.objectProperty(
           t.identifier(name),
           t.conditionalExpression(
-            t.binaryExpression('!=', t.identifier(name), t.identifier('undefined')),
+            t.binaryExpression('!=', t.identifier(name), voidZero(t)),
             t.conditionalExpression(
               t.binaryExpression(
                 '===',
@@ -937,7 +941,7 @@ export function generateRegionMemo(
               t.callExpression(t.identifier(name), []),
               t.identifier(name),
             ),
-            t.identifier('undefined'),
+            voidZero(t),
           ),
         ),
       ),
@@ -1114,7 +1118,7 @@ function generateLazyConditionalRegionMemo(
           return t.objectProperty(
             t.identifier(name),
             t.conditionalExpression(
-              t.binaryExpression('!=', t.identifier(name), t.identifier('undefined')),
+              t.binaryExpression('!=', t.identifier(name), voidZero(t)),
               t.conditionalExpression(
                 t.binaryExpression(
                   '===',
@@ -1124,7 +1128,7 @@ function generateLazyConditionalRegionMemo(
                 t.callExpression(t.identifier(name), []),
                 t.identifier(name),
               ),
-              t.identifier('undefined'),
+              voidZero(t),
             ),
           )
         }),

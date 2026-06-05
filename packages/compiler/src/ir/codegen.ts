@@ -341,6 +341,10 @@ function setNodeLoc<T extends { loc?: BabelCore.types.SourceLocation | null }>(
   return node
 }
 
+function voidZero(t: typeof BabelCore.types): BabelCore.types.UnaryExpression {
+  return t.unaryExpression('void', t.numericLiteral(0), true)
+}
+
 function lowerTemplateElement(
   quasi: TemplateQuasi,
   tail: boolean,
@@ -2623,7 +2627,7 @@ function lowerExpressionImpl(
 
     case 'Literal':
       if (expr.value === null) return t.nullLiteral()
-      if (expr.value === undefined) return t.identifier('undefined')
+      if (expr.value === undefined) return voidZero(t)
       if (typeof expr.value === 'string') return t.stringLiteral(expr.value)
       if (typeof expr.value === 'number') {
         if (Object.is(expr.value, -0)) {
@@ -2636,7 +2640,7 @@ function lowerExpressionImpl(
       if (expr.value instanceof RegExp) {
         return t.regExpLiteral(expr.value.source, expr.value.flags)
       }
-      return t.identifier('undefined')
+      return voidZero(t)
 
     case 'ImportExpression':
       return t.importExpression(
@@ -2761,16 +2765,16 @@ function lowerExpressionImpl(
         ctx.needsForOfHelper = true
         const [iterable, cb] = lowerArgsAsExpressions(expr.arguments)
         return t.callExpression(inlineHelperIdentifier(ctx, 'forOf'), [
-          iterable ?? t.identifier('undefined'),
-          cb ?? t.arrowFunctionExpression([], t.identifier('undefined')),
+          iterable ?? voidZero(t),
+          cb ?? t.arrowFunctionExpression([], voidZero(t)),
         ])
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '__forIn') {
         ctx.needsForInHelper = true
         const [obj, cb] = lowerArgsAsExpressions(expr.arguments)
         return t.callExpression(inlineHelperIdentifier(ctx, 'forIn'), [
-          obj ?? t.identifier('undefined'),
-          cb ?? t.arrowFunctionExpression([], t.identifier('undefined')),
+          obj ?? voidZero(t),
+          cb ?? t.arrowFunctionExpression([], voidZero(t)),
         ])
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '__fictPropsRest') {
@@ -3331,7 +3335,7 @@ function lowerExpressionImpl(
     }
 
     default:
-      return t.identifier('undefined')
+      return voidZero(t)
   }
 }
 
@@ -7048,7 +7052,7 @@ function lowerFunctionWithRegions(
           t.arrowFunctionExpression(
             [valueId],
             t.conditionalExpression(
-              t.binaryExpression('===', t.cloneNode(valueId), t.identifier('undefined')),
+              t.binaryExpression('===', t.cloneNode(valueId), voidZero(t)),
               defaultExpr,
               t.cloneNode(valueId),
             ),
@@ -7066,9 +7070,9 @@ function lowerFunctionWithRegions(
             t.variableDeclarator(
               defaultId,
               t.conditionalExpression(
-                t.binaryExpression('===', t.cloneNode(valueExpr, true), t.identifier('undefined')),
+                t.binaryExpression('===', t.cloneNode(valueExpr, true), voidZero(t)),
                 t.cloneNode(defaultExpr, true) as BabelCore.types.Expression,
-                t.identifier('undefined'),
+                voidZero(t),
               ),
             ),
           ]),
@@ -7077,7 +7081,7 @@ function lowerFunctionWithRegions(
           t.arrowFunctionExpression(
             [],
             t.conditionalExpression(
-              t.binaryExpression('===', t.cloneNode(valueExpr, true), t.identifier('undefined')),
+              t.binaryExpression('===', t.cloneNode(valueExpr, true), voidZero(t)),
               t.cloneNode(defaultId),
               t.cloneNode(valueExpr, true),
             ),
@@ -7455,7 +7459,7 @@ function lowerFunctionWithRegions(
             t.variableDeclarator(
               t.identifier('__props'),
               t.conditionalExpression(
-                t.binaryExpression('===', t.identifier(propsParamName), t.identifier('undefined')),
+                t.binaryExpression('===', t.identifier(propsParamName), voidZero(t)),
                 t.cloneNode(defaultExpr, true) as BabelCore.types.Expression,
                 t.identifier(propsParamName),
               ),

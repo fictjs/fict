@@ -1338,7 +1338,7 @@ describe('resumable event handler transformation', () => {
     const { code } = generate(file)
 
     expect(code).toMatch(/const itemId = \(\) => \(__value =>/)
-    expect(code).toContain('__value === undefined ? "fallback" : __value')
+    expect(code).toContain('__value === void 0 ? "fallback" : __value')
     expect(code).toContain('(__scopeProps.id)')
     expect(code).toContain('console.log(itemId())')
   })
