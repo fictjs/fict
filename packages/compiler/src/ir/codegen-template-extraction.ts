@@ -1,5 +1,6 @@
 import type { CodegenContext } from './codegen'
 import { shouldAutoExtract } from './codegen-auto-extract'
+import { isDOMContentProperty } from './codegen-dom-utils'
 import type { Expression, JSXChild, JSXElementExpression } from './hir'
 
 export interface HIRBinding {
@@ -254,6 +255,16 @@ export function extractHIRStaticHtml(
         name,
         expr: attr.value ?? undefined,
         hasChildren: hasRenderableChildren,
+      })
+      continue
+    }
+
+    if (isDOMContentProperty(name)) {
+      bindings.push({
+        type: 'attr',
+        path: [...parentPath],
+        name,
+        expr: attr.value ?? undefined,
       })
       continue
     }

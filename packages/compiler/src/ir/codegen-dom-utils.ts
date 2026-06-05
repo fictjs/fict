@@ -11,7 +11,12 @@ const DOM_PROPERTY_NAMES = new Set([
   'readOnly',
   'multiple',
   'muted',
+  'innerHTML',
+  'innerText',
+  'textContent',
 ])
+
+const DOM_CONTENT_PROPERTY_NAMES = new Set(['innerHTML', 'innerText', 'textContent'])
 
 export function isStaticDelegatedDataAst(
   expr: BabelCore.types.Expression,
@@ -38,4 +43,8 @@ export function normalizeAttrName(name: string): string {
 
 export function isDOMProperty(name: string): boolean {
   return DOM_PROPERTY_NAMES.has(name)
+}
+
+export function isDOMContentProperty(name: string): boolean {
+  return DOM_CONTENT_PROPERTY_NAMES.has(name)
 }

@@ -544,6 +544,90 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('sets content JSX props through DOM properties in fine-grained output', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: {
+        setText(value: string): void
+        setHtml(value: string): void
+        setInner(value: string): void
+      }
+
+      export function App() {
+        let text = $state('hello')
+        let html = $state('<span>x</span>')
+        let inner = $state('plain')
+        api = {
+          setText(value) {
+            text = value
+          },
+          setHtml(value) {
+            html = value
+          },
+          setInner(value) {
+            inner = value
+          },
+        }
+        return (
+          <section>
+            <div data-testid="static-text" textContent="static" />
+            <div data-testid="static-html" innerHTML={"<strong>static</strong>"} />
+            <div data-testid="text" textContent={text} />
+            <div data-testid="html" innerHTML={html} />
+            <div data-testid="inner" innerText={inner} />
+            <div data-testid="control" data-mode={text} />
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: {
+        setText(value: string): void
+        setHtml(value: string): void
+        setInner(value: string): void
+      }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const staticText = container.querySelector('[data-testid="static-text"]') as HTMLDivElement
+    const staticHtml = container.querySelector('[data-testid="static-html"]') as HTMLDivElement
+    const text = container.querySelector('[data-testid="text"]') as HTMLDivElement
+    const html = container.querySelector('[data-testid="html"]') as HTMLDivElement
+    const inner = container.querySelector('[data-testid="inner"]') as HTMLDivElement
+    const control = container.querySelector('[data-testid="control"]') as HTMLDivElement
+
+    expect(staticText.textContent).toBe('static')
+    expect(staticText.getAttribute('textContent')).toBeNull()
+    expect(staticHtml.innerHTML).toBe('<strong>static</strong>')
+    expect(staticHtml.getAttribute('innerHTML')).toBeNull()
+    expect(text.textContent).toBe('hello')
+    expect(html.innerHTML).toBe('<span>x</span>')
+    expect((inner as unknown as { innerText: string }).innerText).toBe('plain')
+    expect(control.getAttribute('data-mode')).toBe('hello')
+
+    mod.api.setText('updated')
+    mod.api.setHtml('<em>next</em>')
+    mod.api.setInner('other')
+    await flushUpdates()
+
+    expect(text.textContent).toBe('updated')
+    expect(html.innerHTML).toBe('<em>next</em>')
+    expect((inner as unknown as { innerText: string }).innerText).toBe('other')
+    expect(control.getAttribute('data-mode')).toBe('updated')
+
+    teardown()
+    container.remove()
+  })
+
   it('rejects dangerouslySetInnerHTML with explicit JSX children', () => {
     const source = `
       import { render } from 'fict'

@@ -1739,6 +1739,36 @@ describe('spread operator in JSX', () => {
     expect(code).toContain('data-apos=\\"it\'s\\"')
   })
 
+  it('routes content JSX props through DOM properties', () => {
+    const ast = parseFile(`
+      function ContentProps() {
+        let text = $state('hello')
+        let html = $state('<span>x</span>')
+        return (
+          <section>
+            <div textContent="static" />
+            <div innerText={"plain"} />
+            <div innerHTML={"<b>bold</b>"} />
+            <div textContent={text} innerHTML={html} data-id="ok" />
+          </section>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/setProp\([^,]+,\s*"textContent",\s*"static"\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"innerText",\s*"plain"\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"innerHTML",\s*"<b>bold<\/b>"\)/)
+    expect(code).toMatch(/bindProperty\([^,]+,\s*"textContent",\s*\(\)\s*=>\s*text\(\)\)/)
+    expect(code).toMatch(/bindProperty\([^,]+,\s*"innerHTML",\s*\(\)\s*=>\s*html\(\)\)/)
+    expect(code).not.toContain('textContent=\\"')
+    expect(code).not.toContain('innerText=\\"')
+    expect(code).not.toContain('innerHTML=\\"')
+    expect(code).toContain('data-id=\\"ok\\"')
+  })
+
   it('escapes static JSX text in template HTML', () => {
     const ast = parseFile(`
       function EscapedText() {
