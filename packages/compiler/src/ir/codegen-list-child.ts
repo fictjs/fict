@@ -4,13 +4,14 @@ import type { CodegenContext } from './codegen'
 import { collectExpressionDependencies } from './codegen-expression-deps'
 import {
   extractKeyFromMapCallback,
+  getReturnedJSXElementsFromMapCallback,
   getReturnedKeyAttributeExpressionsFromMapCallback,
   keyExpressionSignature,
 } from './codegen-jsx-keys'
 import { replaceIdentifiersWithOverrides, type RegionOverrideMap } from './codegen-overrides'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 import { applySelectorHoist } from './codegen-selector-hoist'
-import type { BasicBlock, Expression } from './hir'
+import type { BasicBlock, Expression, JSXElementExpression } from './hir'
 import { deSSAVarName } from './regions'
 import { walkExpression } from './walk-expression'
 
@@ -418,6 +419,33 @@ function collectExpressionNodes(expr: Expression, nodes: Set<Expression>): void 
   )
 }
 
+function collectJSXContentExpressionNodes(
+  element: JSXElementExpression,
+  nodes: Set<Expression>,
+): void {
+  if (typeof element.tagName !== 'string') {
+    collectExpressionNodes(element.tagName, nodes)
+  }
+
+  for (const attr of element.attributes) {
+    if (attr.isSpread && attr.spreadExpr) {
+      collectExpressionNodes(attr.spreadExpr, nodes)
+      continue
+    }
+    if (attr.value) {
+      collectExpressionNodes(attr.value, nodes)
+    }
+  }
+
+  for (const child of element.children) {
+    if (child.kind === 'expression') {
+      collectExpressionNodes(child.value, nodes)
+    } else if (child.kind === 'element') {
+      collectJSXContentExpressionNodes(child.value, nodes)
+    }
+  }
+}
+
 function collectIgnoredKeyEffectNodes(
   callback: Expression,
   extractedKeyExpr: Expression | undefined,
@@ -436,6 +464,9 @@ function collectIgnoredKeyEffectNodes(
     if (aliasValue) {
       collectExpressionNodes(aliasValue, ignoredNodes)
     }
+  }
+  for (const element of getReturnedJSXElementsFromMapCallback(callback)) {
+    collectJSXContentExpressionNodes(element, ignoredNodes)
   }
 
   return ignoredNodes.size > 0 ? ignoredNodes : undefined

@@ -121,6 +121,12 @@ function getReturnedJSXFromCallback(callback: Expression): JSXElementExpression[
   return returned
 }
 
+export function getReturnedJSXElementsFromMapCallback(
+  callback: Expression,
+): JSXElementExpression[] {
+  return getReturnedJSXFromCallback(callback)
+}
+
 export function keyExpressionSignature(expression: Expression): string {
   try {
     return (
