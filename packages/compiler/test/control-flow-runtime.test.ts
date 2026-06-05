@@ -398,6 +398,82 @@ describe('control flow runtime regressions', () => {
     expect(resolved).toBe(8)
   })
 
+  it('preserves nested breaks to outer while loops before trailing returns', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let i = 0
+
+          outer: while (true) {
+            while (true) {
+              i++
+              break outer
+            }
+          }
+
+          return i
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('preserves nested breaks to outer for loops before trailing returns', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let i = 0
+
+          outer: for (; true;) {
+            while (true) {
+              i++
+              break outer
+            }
+          }
+
+          return i
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('preserves trailing reactive reads after labeled outer loop breaks', () => {
+    const result = compileAndRunHook<number | (() => number)>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(3)
+          let i = 0
+
+          outer: while (true) {
+            for (; true;) {
+              i++
+              break outer
+            }
+          }
+
+          return count + i
+        }
+      `,
+      'useRun',
+    )
+
+    const resolved = typeof result === 'function' ? result() : result
+    expect(resolved).toBe(4)
+  })
+
   it('preserves nested labeled for-of continues without corrupting fallthrough', () => {
     const result = compileAndRunHook<number | (() => number)>(
       `

@@ -1240,6 +1240,34 @@ function structurizeBranchUntilJoin(
   const { test, consequent, alternate } = term
 
   const isSyntheticIteratorBodyHeader = hasSyntheticIteratorBodyPredecessor(ctx, block.id)
+  if (
+    block.sourceLoop?.kind === 'while' &&
+    block.sourceLoop.body === consequent &&
+    block.sourceLoop.exit === alternate
+  ) {
+    return structurizeWhileLoop(ctx, block, test, consequent, alternate, outerJoin)
+  }
+  if (
+    block.sourceLoop?.kind === 'for' &&
+    block.sourceLoop.body === consequent &&
+    block.sourceLoop.exit === alternate
+  ) {
+    const updateBlock = ctx.blockMap.get(block.sourceLoop.update)
+    if (updateBlock) {
+      return structurizeForLoop(
+        ctx,
+        test,
+        {
+          headerBlockId: block.id,
+          bodyBlockId: block.sourceLoop.body,
+          exitBlockId: block.sourceLoop.exit,
+          updateBlockId: block.sourceLoop.update,
+          updateInstructions: updateBlock.instructions,
+        },
+        outerJoin,
+      )
+    }
+  }
   const isLoopHeader = ctx.loopHeaders.has(block.id) && !isSyntheticIteratorBodyHeader
   if (isLoopHeader) {
     const forLoop = detectForLoop(ctx, block.id, consequent, alternate)

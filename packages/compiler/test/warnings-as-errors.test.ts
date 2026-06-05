@@ -99,8 +99,8 @@ describe('warnings as errors', () => {
     const source = `
       function App({ mode }) {
         if (mode) {
-          while (true) {
-            break
+          if (mode > 1) {
+            return <span>{mode}</span>
           }
         }
         return <div>{mode}</div>

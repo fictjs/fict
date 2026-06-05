@@ -913,8 +913,8 @@ describe('Fict Compiler - Control Flow', () => {
       const input = `
         function Component({ mode }) {
           if (mode) {
-            while (true) {
-              break
+            if (mode > 1) {
+              return <span>{mode}</span>
             }
           }
           return <div>{mode}</div>
