@@ -1260,6 +1260,116 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps inherited spread props hidden from single component spreads', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const seen: {
+        keys: string[]
+        secret: unknown
+        hasSecret: boolean
+      } = {
+        keys: [],
+        secret: undefined,
+        hasSecret: false,
+      }
+
+      function Child(props: Record<string, unknown>) {
+        seen.keys = Object.keys(props)
+        seen.secret = props.secret
+        seen.hasSecret = 'secret' in props
+        return <div data-testid="box">{seen.keys.join(',') + ':' + String(seen.secret)}</div>
+      }
+
+      export function App() {
+        const proto = { secret: 'proto' }
+        const props = Object.create(proto)
+        props.visible = 'own'
+        return <Child {...props} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      seen: {
+        keys: string[]
+        secret: unknown
+        hasSecret: boolean
+      }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(mod.seen.keys).toEqual(['visible'])
+    expect(mod.seen.secret).toBeUndefined()
+    expect(mod.seen.hasSecret).toBe(false)
+    expect(box.textContent).toBe('visible:undefined')
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps inherited spread props hidden from merged component props', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const seen: {
+        keys: string[]
+        secret: unknown
+        hasSecret: boolean
+      } = {
+        keys: [],
+        secret: undefined,
+        hasSecret: false,
+      }
+
+      function Child(props: Record<string, unknown>) {
+        seen.keys = Object.keys(props)
+        seen.secret = props.secret
+        seen.hasSecret = 'secret' in props
+        return <div data-testid="box">{seen.keys.join(',') + ':' + String(seen.secret)}</div>
+      }
+
+      export function App() {
+        const proto = { secret: 'proto' }
+        const props = Object.create(proto)
+        props.visible = 'own'
+        return <Child {...props} other="x" />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      seen: {
+        keys: string[]
+        secret: unknown
+        hasSecret: boolean
+      }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(mod.seen.keys).toEqual(['visible', 'other'])
+    expect(mod.seen.secret).toBeUndefined()
+    expect(mod.seen.hasSecret).toBe(false)
+    expect(box.textContent).toBe('visible,other:undefined')
+
+    teardown()
+    container.remove()
+  })
+
   it('does not invoke function-valued intrinsic spread expressions', async () => {
     const source = `
       import { render } from 'fict'

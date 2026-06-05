@@ -423,6 +423,10 @@ export function lowerPropsPlan(
   }
 
   if (args.length === 1 && !plan.flags.hasLazySource) {
+    const segment = plan.segments.find(entry => entry.kind === 'spread')
+    if (segment?.kind === 'spread') {
+      return t.objectExpression([t.spreadElement(args[0]!)])
+    }
     return args[0] ?? null
   }
 
