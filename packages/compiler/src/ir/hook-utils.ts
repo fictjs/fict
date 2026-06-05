@@ -1,9 +1,9 @@
 import type { Expression, HIRFunction } from './hir'
 
-export const HOOK_NAME_PREFIX = 'use'
+export const HOOK_NAME_PATTERN = /^use[A-Z]/
 
 export function isHookName(name: string | undefined): boolean {
-  return !!name && name.startsWith(HOOK_NAME_PREFIX)
+  return !!name && HOOK_NAME_PATTERN.test(name)
 }
 
 export function isComponentName(name: string | undefined): boolean {

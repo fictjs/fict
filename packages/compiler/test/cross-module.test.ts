@@ -150,6 +150,67 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toMatch(/=> count[,)]/)
     })
 
+    it('does not treat lowercase use-prefix utilities as hooks', () => {
+      const localPath = path.join(baseDir, 'app-useful-local.tsx')
+      const localSource = `
+        function useful() {
+          return { label: 'ok' }
+        }
+
+        export function App() {
+          const value = useful()
+          return <div>{value.label}</div>
+        }
+      `
+
+      const localOutput = transform(localSource, { fineGrainedDom: true }, localPath)
+
+      expect(localOutput).toMatch(/value\.label/)
+      expect(localOutput).not.toMatch(/value\.label\(\)/)
+
+      const importedPath = path.join(baseDir, 'app-useful-imported.tsx')
+      const importedSource = `
+        import { useful } from './lib'
+
+        export function App() {
+          const value = useful()
+          return <div>{value.label}</div>
+        }
+      `
+
+      const importedOutput = transform(importedSource, { fineGrainedDom: true }, importedPath)
+
+      expect(importedOutput).toMatch(/value\.label/)
+      expect(importedOutput).not.toMatch(/value\.label\(\)/)
+
+      const hookPath = path.join(baseDir, 'hook-use-counter.tsx')
+      const hookConsumerPath = path.join(baseDir, 'app-use-counter.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(hookPath), {
+        version: 1,
+        exports: {},
+        hooks: {
+          useCounter: { objectProps: { count: 'signal' } },
+        },
+      })
+      const hookConsumerSource = `
+        import { useCounter } from './hook-use-counter'
+
+        export function App() {
+          const value = useCounter()
+          return <div>{value.count}</div>
+        }
+      `
+
+      const hookOutput = transform(
+        hookConsumerSource,
+        { fineGrainedDom: true, moduleMetadata },
+        hookConsumerPath,
+      )
+
+      expect(hookOutput).toMatch(/value\.count\(\)/)
+    })
+
     it('unwraps optional hook-return signal member reads across modules', () => {
       const hookSource = `
         import { $state } from 'fict'
