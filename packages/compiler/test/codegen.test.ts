@@ -1739,6 +1739,28 @@ describe('spread operator in JSX', () => {
     expect(code).toContain('data-apos=\\"it\'s\\"')
   })
 
+  it('escapes static JSX text in template HTML', () => {
+    const ast = parseFile(`
+      function EscapedText() {
+        return (
+          <section>
+            <div>&lt;span&gt;safe&lt;/span&gt; &amp; done</div>
+            <p>a&nbsp;b</p>
+            <svg><text>&lt;icon&gt;</text></svg>
+          </section>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('&lt;span&gt;safe&lt;/span&gt; &amp; done')
+    expect(code).not.toContain('<div><span>safe</span> & done</div>')
+    expect(code).toContain('a\\xA0b')
+    expect(code).toContain('&lt;icon&gt;')
+  })
+
   it('skips spread children when explicit host children are present', () => {
     const ast = parseFile(`
       function Wrapper(props) {

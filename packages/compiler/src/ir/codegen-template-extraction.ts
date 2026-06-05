@@ -96,6 +96,10 @@ function escapeHtmlAttributeValue(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
 }
 
+function escapeHtmlText(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 /**
  * Extract static HTML from HIR JSXElementExpression.
  * Similar to extractStaticHtml from fine-grained-dom.ts but works with HIR types.
@@ -299,7 +303,7 @@ export function extractHIRStaticHtml(
     if (child.kind === 'text') {
       const text = child.value
       if (text.trim()) {
-        html += text
+        html += escapeHtmlText(text)
         childIndex++
       }
     } else if (child.kind === 'element') {

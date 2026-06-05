@@ -701,6 +701,50 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps escaped static JSX text as text in template output', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return (
+          <section>
+            <div data-testid="escaped">&lt;span&gt;safe&lt;/span&gt; &amp; done</div>
+            <div data-testid="mixed">before &lt;x&gt;<em>inside</em> after &amp;</div>
+            <p data-testid="nbsp">a&nbsp;b</p>
+            <svg data-testid="svg"><text>&lt;icon&gt;</text></svg>
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const escaped = container.querySelector('[data-testid="escaped"]') as HTMLDivElement
+    const mixed = container.querySelector('[data-testid="mixed"]') as HTMLDivElement
+    const nbsp = container.querySelector('[data-testid="nbsp"]') as HTMLParagraphElement
+    const svgText = container.querySelector('[data-testid="svg"] text') as SVGTextElement
+
+    expect(escaped.innerHTML).toBe('&lt;span&gt;safe&lt;/span&gt; &amp; done')
+    expect(escaped.querySelector('span')).toBeNull()
+    expect(mixed.innerHTML).toBe('before &lt;x&gt;<em>inside</em> after &amp;')
+    expect(nbsp.textContent).toBe('a\u00a0b')
+    expect(svgText.textContent).toBe('<icon>')
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps non-enumerable spread props hidden from merged component props', async () => {
     const source = `
       import { render } from 'fict'
