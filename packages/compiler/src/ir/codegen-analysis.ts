@@ -385,8 +385,76 @@ export function functionHasYield(fn: HIRFunction): boolean {
   return false
 }
 
+export function collectStableIdentifierAliases(fn: HIRFunction): Map<string, string> {
+  const mutatedAliases = collectMutatedIdentifiers(fn)
+  const invalidAliases = new Set<string>()
+
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign') {
+        const target = deSSAVarName(instr.target.name)
+        if (!instr.declarationKind) {
+          mutatedAliases.add(target)
+          invalidAliases.add(target)
+        }
+      } else if (instr.kind === 'Phi') {
+        const target = deSSAVarName(instr.target.name)
+        mutatedAliases.add(target)
+        invalidAliases.add(target)
+      }
+    }
+  }
+
+  const aliasSources = new Map<string, string>()
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind !== 'Assign' || !instr.declarationKind) continue
+      if (instr.value.kind !== 'Identifier') continue
+
+      const target = deSSAVarName(instr.target.name)
+      if (mutatedAliases.has(target) || invalidAliases.has(target)) continue
+
+      const source = deSSAVarName(instr.value.name)
+      if (source === target) continue
+      const previous = aliasSources.get(target)
+      if (previous !== undefined && previous !== source) {
+        invalidAliases.add(target)
+        aliasSources.delete(target)
+        continue
+      }
+      aliasSources.set(target, source)
+    }
+  }
+
+  return aliasSources
+}
+
+export function collectIdentifierAliasesFromRoots(
+  fn: HIRFunction,
+  roots: Set<string>,
+  allowedAliases?: Set<string>,
+): Set<string> {
+  const aliases = new Set<string>()
+  const aliasSources = collectStableIdentifierAliases(fn)
+
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [alias, source] of aliasSources) {
+      if (allowedAliases && !allowedAliases.has(alias)) continue
+      if ((roots.has(source) || aliases.has(source)) && !aliases.has(alias)) {
+        aliases.add(alias)
+        changed = true
+      }
+    }
+  }
+
+  return aliases
+}
+
 export function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
   const called = new Set<string>()
+  const aliasSources = collectStableIdentifierAliases(fn)
 
   const getStaticMemberName = (
     expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
@@ -538,6 +606,17 @@ export function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
       }
     })
     visitTerminator(block.terminator)
+  }
+
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [alias, source] of aliasSources) {
+      if (called.has(alias) && !called.has(source)) {
+        called.add(source)
+        changed = true
+      }
+    }
   }
 
   return called

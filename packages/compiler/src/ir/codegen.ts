@@ -15,6 +15,7 @@ import {
 import {
   collectMutatedIdentifiers,
   collectCalledIdentifiers,
+  collectIdentifierAliasesFromRoots,
   functionContainsJSX,
   functionHasAsyncAwait,
   functionHasYield,
@@ -2802,7 +2803,9 @@ function lowerExpressionImpl(
         expr.arguments.length === 0 &&
         expr.callee.params.length === 0
       const calleeName = expr.callee.kind === 'Identifier' ? deSSAVarName(expr.callee.name) : null
-      const calleeIsMemoAccessor = !!calleeName && ctx.memoVars?.has(calleeName)
+      const calleeIsFunctionVar = !!calleeName && (ctx.functionVars?.has(calleeName) ?? false)
+      const calleeIsMemoAccessor =
+        !!calleeName && !calleeIsFunctionVar && ctx.memoVars?.has(calleeName)
       const calleeIsSignalLike =
         !!calleeName && (ctx.signalVars?.has(calleeName) || ctx.storeVars?.has(calleeName))
       const calleeIsCallableSignal =
@@ -5184,7 +5187,7 @@ function lowerInstructionWithScopes(
     }
 
     // Check if target is a tracked variable (use de-versioned name for lookup)
-    if (ctx.trackedVars.has(targetBase)) {
+    if (ctx.trackedVars.has(targetBase) && !(ctx.functionVars?.has(targetBase) ?? false)) {
       if (expressionNeedsAsyncContext(instr.value)) {
         if (declKind) {
           return applyLoc(
@@ -6823,6 +6826,8 @@ function lowerFunctionWithRegions(
   const prevDelegatedEventsUsed = ctx.delegatedEventsUsed
   ctx.delegatedEventsUsed = new Set()
   const calledIdentifiers = collectCalledIdentifiers(fn)
+  const calledPropValueNames = new Set<string>()
+  const calledPropFunctionVars = new Set<string>()
   const propsPlanAliases = new Set<string>()
   let propsDestructurePlan: {
     statements: BabelCore.types.Statement[]
@@ -7141,6 +7146,8 @@ function lowerFunctionWithRegions(
                 propsPlanAliases.add(value.name)
                 ctx.resumablePropAccessors?.set(value.name, { path: nextPropPath })
                 emitEagerPropRead(member)
+              } else {
+                calledPropValueNames.add(value.name)
               }
               stmts.push(
                 t.variableDeclaration('const', [
@@ -7174,6 +7181,8 @@ function lowerFunctionWithRegions(
                     path: nextPropPath,
                     defaultValue: t.cloneNode(value.right, true) as BabelCore.types.Expression,
                   })
+                } else {
+                  calledPropValueNames.add(value.left.name)
                 }
                 const baseInit = buildDefaultValueExpression(member, value.right)
                 const init = shouldWrapProp
@@ -7257,6 +7266,16 @@ function lowerFunctionWithRegions(
           ctx.trackedVars.add(name)
           ctx.shadowedNames?.delete(name)
         })
+        calledPropValueNames.forEach(name => {
+          calledPropFunctionVars.add(name)
+          ctx.functionVars?.add(name)
+        })
+        collectIdentifierAliasesFromRoots(fn, calledPropValueNames, calledIdentifiers).forEach(
+          name => {
+            calledPropFunctionVars.add(name)
+            ctx.functionVars?.add(name)
+          },
+        )
       } else {
         ctx.resumablePropAccessors?.clear()
         ctx.resumablePropRests?.clear()
@@ -7267,6 +7286,12 @@ function lowerFunctionWithRegions(
   const reactive = computeReactiveAccessors(fn, ctx)
   ctx.trackedVars = reactive.tracked
   ctx.memoVars = reactive.memo
+  calledPropFunctionVars.forEach(name => {
+    ctx.functionVars?.add(name)
+    ctx.trackedVars.delete(name)
+    ctx.memoVars?.delete(name)
+    ctx.aliasVars?.delete(name)
+  })
   ctx.controlDepsByInstr = reactive.controlDepsByInstr
   if (fn.name && isHookName(fn.name)) {
     const info = analyzeHookReturnInfo(fn, ctx)

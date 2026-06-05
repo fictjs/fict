@@ -668,6 +668,54 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).not.toContain('const cb = prop(() => __props.cb)')
   })
 
+  it('keeps destructured function props unwrapped when called through local aliases', () => {
+    const ast = parseFile(`
+      function Child({ cb }) {
+        const x = cb
+        let y = x
+        const z = y
+        x('direct')
+        y?.('optional')
+        z.call(null, 'call')
+        return <div>child</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('const cb = __props.cb')
+    expect(code).toContain('let x = cb')
+    expect(code).toContain('let y = x')
+    expect(code).toContain('const z = y')
+    expect(code).toContain('x("direct")')
+    expect(code).toContain('y?.("optional")')
+    expect(code).toContain('z.call(null, "call")')
+    expect(code).not.toContain('x()("direct")')
+    expect(code).not.toContain('const cb = prop(() => __props.cb)')
+  })
+
+  it('does not bypass the alias reassignment guard for reassigned local aliases', () => {
+    const ast = parseFile(`
+      function Child({ cb, other }) {
+        let x = cb
+        x = other
+        x('local')
+        return <div>child</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    let error: unknown
+    try {
+      lowerHIRWithRegions(hir, t)
+    } catch (caught) {
+      error = caught
+    }
+
+    expect(error).toBeInstanceOf(HIRError)
+    expect((error as Error).message).toMatch(/Alias reassignment is not supported/)
+  })
+
   it('lowers literal prop destructuring keys with computed members', () => {
     const ast = parseFile(`
       function Child({ "foo-bar": value, 0: first, nested: { "aria-label": label = 'fallback' } }) {
