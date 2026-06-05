@@ -1093,6 +1093,48 @@ describe('Cross-Module Reactivity', () => {
       }
     })
 
+    it('propagates quoted source names in re-export metadata', () => {
+      const sourcePath = path.join(baseDir, 'quoted-reexport-source.tsx')
+      const barrelPath = path.join(baseDir, 'quoted-reexport-barrel.ts')
+      const passthroughPath = path.join(baseDir, 'quoted-reexport-passthrough.ts')
+      const moduleMetadata = new Map()
+      const source = `
+        import { $state } from 'fict'
+        import { createMemo, createSignal } from 'fict/advanced'
+
+        const count = createSignal(1)
+        const doubled = createMemo(() => 2)
+
+        export function useLocal() {
+          const value = $state(0)
+          return { value }
+        }
+
+        export { count as "weird-name", doubled as named, useLocal as "use-local" }
+      `
+      const barrel = `
+        export { "weird-name" as normal, named as "odd-name", "use-local" as useQuoted } from './quoted-reexport-source'
+      `
+      const passthrough = `
+        export { "weird-name" } from './quoted-reexport-source'
+      `
+
+      transform(source, { moduleMetadata }, sourcePath)
+      transform(barrel, { moduleMetadata }, barrelPath)
+      transform(passthrough, { moduleMetadata }, passthroughPath)
+
+      expect(moduleMetadata.get(path.resolve(barrelPath))?.exports).toEqual({
+        normal: 'signal',
+        'odd-name': 'memo',
+      })
+      expect(moduleMetadata.get(path.resolve(barrelPath))?.hooks).toMatchObject({
+        useQuoted: { objectProps: { value: 'signal' } },
+      })
+      expect(moduleMetadata.get(path.resolve(passthroughPath))?.exports).toEqual({
+        'weird-name': 'signal',
+      })
+    })
+
     it('ignores type-only re-export declarations when propagating metadata', () => {
       const storeSource = `
         import { createSignal } from 'fict/advanced'

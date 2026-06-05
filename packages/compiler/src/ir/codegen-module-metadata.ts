@@ -181,9 +181,9 @@ export function buildModuleReactiveMetadata(
       hookExports[exportName] = hookInfo
     }
   }
-  const getExportedName = (
-    exported: BabelCore.types.Identifier | BabelCore.types.StringLiteral,
-  ): string => (t.isIdentifier(exported) ? exported.name : exported.value)
+  const getSpecifierName = (
+    specifierName: BabelCore.types.Identifier | BabelCore.types.StringLiteral,
+  ): string => (t.isIdentifier(specifierName) ? specifierName.name : specifierName.value)
   const addExport = (exportName: string, localName: string) => {
     markExplicitExport(exportName)
     const kind = classifyReactiveExport(localName, ctx)
@@ -228,12 +228,12 @@ export function buildModuleReactiveMetadata(
         for (const spec of stmt.specifiers) {
           if (isTypeOnlyExportSpecifier(spec)) continue
           if (t.isExportNamespaceSpecifier(spec)) {
-            addNamespaceExportFromSource(stmt.source.value, getExportedName(spec.exported))
+            addNamespaceExportFromSource(stmt.source.value, getSpecifierName(spec.exported))
             continue
           }
           if (!t.isExportSpecifier(spec)) continue
-          const importedName = spec.local.name
-          const exportName = getExportedName(spec.exported)
+          const importedName = getSpecifierName(spec.local)
+          const exportName = getSpecifierName(spec.exported)
           addExportFromSource(stmt.source.value, importedName, exportName)
         }
         continue
@@ -255,8 +255,8 @@ export function buildModuleReactiveMetadata(
         for (const spec of stmt.specifiers) {
           if (isTypeOnlyExportSpecifier(spec)) continue
           if (!t.isExportSpecifier(spec)) continue
-          const localName = spec.local.name
-          const exportName = getExportedName(spec.exported)
+          const localName = getSpecifierName(spec.local)
+          const exportName = getSpecifierName(spec.exported)
           addExport(exportName, localName)
         }
       }
