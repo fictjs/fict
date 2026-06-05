@@ -948,8 +948,18 @@ function optimizeReactiveBlock(
   const constObjects = new Map<string, ConstObjectFields>()
   const constArrays = new Map<string, ConstArrayElements>()
   const objectAccessorWrites = new Map<string, Set<string>>()
+  const aliasRoots = new Map<string, string>()
+  const aliasesByRoot = new Map<string, Set<string>>()
   const cseMap = new Map<string, { name: string; deps: Set<string> }>()
   const instructions: Instruction[] = []
+
+  const hasByBase = <T>(map: Map<string, T>, name: string): boolean => {
+    const base = getSSABaseName(name)
+    for (const key of map.keys()) {
+      if (getSSABaseName(key) === base) return true
+    }
+    return false
+  }
 
   const deleteByBase = <T>(map: Map<string, T>, name: string): void => {
     const base = getSSABaseName(name)
@@ -987,10 +997,72 @@ function optimizeReactiveBlock(
     toDelete.forEach(hash => cseMap.delete(hash))
   }
 
+  const resolveAliasRoot = (name: string): string => {
+    let current = getSSABaseName(name)
+    const seen = new Set<string>()
+    while (aliasRoots.has(current) && !seen.has(current)) {
+      seen.add(current)
+      current = aliasRoots.get(current)!
+    }
+    return current
+  }
+
+  const removeAlias = (name: string): void => {
+    const base = getSSABaseName(name)
+    const root = aliasRoots.get(base)
+    if (root) {
+      aliasesByRoot.get(root)?.delete(base)
+    }
+    aliasRoots.delete(base)
+
+    const aliases = aliasesByRoot.get(base)
+    if (aliases) {
+      for (const alias of aliases) {
+        aliasRoots.delete(alias)
+      }
+      aliasesByRoot.delete(base)
+    }
+  }
+
+  const registerAlias = (target: string, source: string): void => {
+    const targetBase = getSSABaseName(target)
+    const sourceRoot = resolveAliasRoot(source)
+    if (targetBase === sourceRoot) return
+    if (
+      !aliasRoots.has(getSSABaseName(source)) &&
+      !hasByBase(constObjects, sourceRoot) &&
+      !hasByBase(constArrays, sourceRoot)
+    ) {
+      return
+    }
+
+    removeAlias(targetBase)
+    aliasRoots.set(targetBase, sourceRoot)
+    const aliases = aliasesByRoot.get(sourceRoot) ?? new Set<string>()
+    aliases.add(targetBase)
+    aliasesByRoot.set(sourceRoot, aliases)
+  }
+
+  const expandAliases = (name: string): Set<string> => {
+    const base = getSSABaseName(name)
+    const root = resolveAliasRoot(base)
+    const names = new Set<string>([base, root])
+    aliasesByRoot.get(root)?.forEach(alias => names.add(alias))
+    return names
+  }
+
+  const invalidateConstFieldCachesByAlias = (name: string): void => {
+    for (const alias of expandAliases(name)) {
+      deleteByBase(constObjects, alias)
+      deleteByBase(constArrays, alias)
+    }
+  }
+
   for (const instr of block.instructions) {
     if (instr.kind === 'Assign') {
       const target = instr.target.name
       const declKind = instr.declarationKind
+      removeAlias(target)
       invalidateCSE(target)
       deleteByBase(constants, target)
       deleteByBase(constObjects, target)
@@ -1005,10 +1077,13 @@ function optimizeReactiveBlock(
         deleteByBase(constObjects, name)
         deleteByBase(constArrays, name)
       }
+      const memberWrites = collectMemberMutationTargets(instr.value)
+      for (const name of memberWrites) {
+        invalidateConstFieldCachesByAlias(name)
+      }
       const potentialMutations = collectPotentialMutationTargets(instr.value)
       for (const name of potentialMutations) {
-        deleteByBase(constObjects, name)
-        deleteByBase(constArrays, name)
+        invalidateConstFieldCachesByAlias(name)
       }
       const accessorWrites = collectAccessorMutationTargets(instr.value, objectAccessorWrites)
       for (const name of accessorWrites) {
@@ -1067,6 +1142,9 @@ function optimizeReactiveBlock(
       if (accessorWritesForValue.size > 0) {
         objectAccessorWrites.set(target, accessorWritesForValue)
       }
+      if (value.kind === 'Identifier') {
+        registerAlias(target, value.name)
+      }
 
       instructions.push(value === instr.value ? instr : { ...instr, value })
       continue
@@ -1080,10 +1158,13 @@ function optimizeReactiveBlock(
         deleteByBase(constObjects, name)
         deleteByBase(constArrays, name)
       }
+      const memberWrites = collectMemberMutationTargets(instr.value)
+      for (const name of memberWrites) {
+        invalidateConstFieldCachesByAlias(name)
+      }
       const potentialMutations = collectPotentialMutationTargets(instr.value)
       for (const name of potentialMutations) {
-        deleteByBase(constObjects, name)
-        deleteByBase(constArrays, name)
+        invalidateConstFieldCachesByAlias(name)
       }
       const accessorWrites = collectAccessorMutationTargets(instr.value, objectAccessorWrites)
       for (const name of accessorWrites) {
@@ -2583,6 +2664,104 @@ function collectPotentialMutationTargets(expr: Expression): Set<string> {
         return
     }
   }
+  visit(expr)
+  return targets
+}
+
+function collectMemberMutationTargets(expr: Expression): Set<string> {
+  const targets = new Set<string>()
+  const addMemberTarget = (node: Expression): void => {
+    if (node.kind !== 'MemberExpression' && node.kind !== 'OptionalMemberExpression') return
+    const base = getMemberBaseIdentifier(node)
+    if (base) targets.add(base.name)
+  }
+
+  const visit = (node: Expression): void => {
+    switch (node.kind) {
+      case 'AssignmentExpression': {
+        const left = node.left as Expression
+        addMemberTarget(left)
+        visit(left)
+        visit(node.right as Expression)
+        return
+      }
+      case 'UpdateExpression':
+        addMemberTarget(node.argument as Expression)
+        visit(node.argument as Expression)
+        return
+      case 'UnaryExpression':
+        if (node.operator === 'delete') {
+          addMemberTarget(node.argument as Expression)
+        }
+        visit(node.argument as Expression)
+        return
+      case 'CallExpression':
+      case 'OptionalCallExpression':
+        visit(node.callee as Expression)
+        node.arguments.forEach(arg => visit(arg as Expression))
+        return
+      case 'NewExpression':
+        visit(node.callee as Expression)
+        node.arguments.forEach(arg => visit(arg as Expression))
+        return
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        visit(node.object as Expression)
+        if (node.computed) visit(node.property as Expression)
+        return
+      case 'BinaryExpression':
+      case 'LogicalExpression':
+        visit(node.left as Expression)
+        visit(node.right as Expression)
+        return
+      case 'ConditionalExpression':
+        visit(node.test as Expression)
+        visit(node.consequent as Expression)
+        visit(node.alternate as Expression)
+        return
+      case 'ArrayExpression':
+        node.elements.forEach(el => {
+          if (el) visit(el as Expression)
+        })
+        return
+      case 'ObjectExpression':
+        node.properties.forEach(prop => {
+          if (prop.kind === 'SpreadElement') {
+            visit(prop.argument as Expression)
+          } else {
+            if (prop.computed) visit(prop.key as Expression)
+            visit(prop.value as Expression)
+          }
+        })
+        return
+      case 'TemplateLiteral':
+        node.expressions.forEach(item => visit(item as Expression))
+        return
+      case 'SpreadElement':
+        visit(node.argument as Expression)
+        return
+      case 'SequenceExpression':
+        node.expressions.forEach(item => visit(item as Expression))
+        return
+      case 'AwaitExpression':
+        visit(node.argument as Expression)
+        return
+      case 'TaggedTemplateExpression':
+        visit(node.tag as Expression)
+        node.quasi.expressions.forEach(item => visit(item as Expression))
+        return
+      case 'YieldExpression':
+        if (node.argument) visit(node.argument as Expression)
+        return
+      case 'ArrowFunction':
+      case 'FunctionExpression':
+      case 'ClassExpression':
+        return
+      default:
+        return
+    }
+  }
+
   visit(expr)
   return targets
 }

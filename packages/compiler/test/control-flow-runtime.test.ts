@@ -713,6 +713,66 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(2)
   })
 
+  it('preserves const object field writes through aliases with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          const obj = { a: 1 }
+          const alias = obj
+          alias.a = 2
+          return obj.a
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves const array index writes through aliases with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          const arr = [1]
+          const alias = arr
+          alias[0] = 2
+          return arr[0]
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves const array mutator calls through aliases with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          const arr = [1]
+          const alias = arr
+          alias.push(2)
+          return arr.length
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(2)
+  })
+
   it('preserves Object.defineProperty mutations of const object fields with optimization', () => {
     const result = compileAndRunHook<number>(
       `
