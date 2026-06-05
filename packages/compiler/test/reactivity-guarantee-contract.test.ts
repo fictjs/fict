@@ -205,6 +205,55 @@ describe('reactivity guarantee contract', () => {
         error: /FICT-R002/,
       },
       {
+        name: 'state argument escaping through constructor call',
+        source: `
+          import { $state } from 'fict'
+          class Box {
+            constructor(value) {
+              this.value = value
+            }
+          }
+          function App() {
+            let count = $state(0)
+            new Box(count)
+            return <div />
+          }
+        `,
+        error: /FICT-S002/,
+      },
+      {
+        name: 'reactive value escaping through constructor argument',
+        source: `
+          import { $state } from 'fict'
+          class Box {
+            constructor(value) {
+              this.value = value
+            }
+          }
+          function App() {
+            let count = $state(0)
+            new Box([count])
+            return <div />
+          }
+        `,
+        error: /FICT-R002/,
+      },
+      {
+        name: 'state interpolation escaping through tagged template',
+        source: `
+          import { $state } from 'fict'
+          function tag(strings, ...values) {
+            return values
+          }
+          function App() {
+            let count = $state(0)
+            tag\`\${count}\`
+            return <div />
+          }
+        `,
+        error: /FICT-S002/,
+      },
+      {
         name: 'reactive callback escaping through unknown function boundary',
         source: `
           import { $state } from 'fict'

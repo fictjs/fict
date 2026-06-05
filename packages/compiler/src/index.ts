@@ -1018,6 +1018,40 @@ function runWarningPass(
     })
     return found
   }
+  const emitInvocationArgumentEscapeWarnings = (argPaths: BabelCore.NodePath[]): void => {
+    for (const argPath of argPaths) {
+      if (
+        argPath.isIdentifier() &&
+        hasTrackedBinding(argPath, argPath.node.name, stateBindingIds)
+      ) {
+        emitWarning(
+          argPath,
+          'FICT-S002',
+          'State variable is passed as an argument; this passes a value snapshot and may escape component scope.',
+          warn,
+          fileName,
+        )
+      }
+    }
+    for (const argPath of argPaths) {
+      if (
+        argPath.isIdentifier() &&
+        hasTrackedBinding(argPath, argPath.node.name, stateBindingIds)
+      ) {
+        continue
+      }
+      if (argumentHasReactive(argPath)) {
+        emitWarning(
+          argPath,
+          'FICT-R002',
+          'Reactive value escapes scope when passed to an unknown function; dependency tracking may be imprecise',
+          warn,
+          fileName,
+        )
+        break
+      }
+    }
+  }
   const emitCallbackBoundaryWarnings = (
     callPath: BabelCore.NodePath<
       BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
@@ -1294,6 +1328,12 @@ function runWarningPass(
       const callee = path.node.callee
       if (!t.isExpression(callee)) return
       emitCallbackBoundaryWarnings(path, callee, { checkReactiveArguments: true })
+    },
+    NewExpression(path) {
+      emitInvocationArgumentEscapeWarnings(path.get('arguments') as BabelCore.NodePath[])
+    },
+    TaggedTemplateExpression(path) {
+      emitInvocationArgumentEscapeWarnings(path.get('quasi.expressions') as BabelCore.NodePath[])
     },
     OptionalMemberExpression(path) {
       if (!path.node.computed) return

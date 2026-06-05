@@ -479,6 +479,63 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
   })
 
+  it('warns when passing state directly to a constructor', () => {
+    const source = `
+      import { $state } from 'fict'
+      class Box {
+        constructor(value) {
+          this.value = value
+        }
+      }
+      function App() {
+        let count = $state(0)
+        new Box(count)
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-S002')).toBe(true)
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
+  })
+
+  it('warns when passing reactive values inside constructor arguments', () => {
+    const source = `
+      import { $state } from 'fict'
+      class Box {
+        constructor(value) {
+          this.value = value
+        }
+      }
+      function App() {
+        let count = $state(0)
+        new Box([count])
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
+  })
+
+  it('warns when tagged template interpolations receive state directly', () => {
+    const source = `
+      import { $state } from 'fict'
+      function tag(strings, ...values) {
+        return values
+      }
+      function App() {
+        let count = $state(0)
+        tag\`\${count}\`
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-S002')).toBe(true)
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
+  })
+
   it('does not warn FICT-R005 for non-escaping array callbacks', () => {
     const source = `
       import { $state } from 'fict'
