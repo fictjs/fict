@@ -595,7 +595,7 @@ describe('createFictPlugin (HIR)', () => {
       `)
 
       expect(output).toMatch(
-        /addEventListener\([^,]+,\s*"click",\s*\[select,\s*__fictReactive\(\(\)\s*=>\s*data\.key\)\],\s*true\)/,
+        /addEventListener\([^,]+,\s*"click",\s*\[select,\s*__fictReactive\(\(\)\s*=>\s*data\.key\),\s*"__fictDataOnly"\],\s*true\)/,
       )
       expect(output).toContain('__fictReactive')
       expect(output).toContain('data.key')

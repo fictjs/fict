@@ -63,6 +63,9 @@ const REACTIVE_FN_MARKER = Symbol.for('fict:reactive-fn')
 const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
 const REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:reactive-fn-registry')
 const PROP_GETTER_REGISTRY_KEY = Symbol.for('fict:prop-getter-registry')
+const DELEGATED_DATA_ONLY_MARKER = '__fictDataOnly'
+
+type EventHandlerTuple = [EventListenerOrEventListenerObject, unknown, string?]
 
 type NonReactiveRegistryHost = typeof globalThis & {
   [NON_REACTIVE_FN_REGISTRY_KEY]?: WeakSet<(...args: unknown[]) => unknown>
@@ -320,20 +323,25 @@ export function callEventHandler(
   event: Event,
   node?: EventTarget | null,
   data?: unknown,
+  dataOnly = false,
 ): void {
   if (!handler) return
 
   const context = (node ?? event.currentTarget ?? undefined) as EventTarget | undefined
+  const hasData = dataOnly || data !== undefined
   const invoke = (fn: EventListenerOrEventListenerObject | null | undefined): void => {
     if (typeof fn === 'function') {
-      const result =
-        data === undefined
-          ? (fn as EventListener).call(context, event)
+      const result = !hasData
+        ? (fn as EventListener).call(context, event)
+        : dataOnly
+          ? (fn as (data: unknown) => unknown).call(context, data)
           : (fn as (data: unknown, e: Event) => unknown).call(context, data, event)
 
       if (typeof result === 'function' && result !== fn) {
-        if (data === undefined) {
+        if (!hasData) {
           ;(result as EventListener).call(context, event)
+        } else if (dataOnly) {
+          ;(result as (data: unknown) => unknown).call(context, data)
         } else {
           ;(result as (data: unknown, e: Event) => unknown).call(context, data, event)
         }
@@ -1369,11 +1377,7 @@ function globalEventHandler(e: Event): void {
 export function addEventListener(
   node: Element,
   name: string,
-  handler:
-    | EventListenerOrEventListenerObject
-    | [EventListenerOrEventListenerObject, unknown]
-    | null
-    | undefined,
+  handler: EventListenerOrEventListenerObject | EventHandlerTuple | null | undefined,
   delegate?: boolean,
   options?: boolean | AddEventListenerOptions,
 ): void {
@@ -1486,11 +1490,7 @@ function resolveEventHandlerValue(
 
 function createEventInvoker(
   eventName: string,
-  handler:
-    | EventListenerOrEventListenerObject
-    | [EventListenerOrEventListenerObject, unknown]
-    | null
-    | undefined,
+  handler: EventListenerOrEventListenerObject | EventHandlerTuple | null | undefined,
   node: Element,
   rootRef: RootContext | undefined,
 ): EventListener {
@@ -1501,7 +1501,13 @@ function createEventInvoker(
           handler[0] as EventListenerOrEventListenerObject | null | undefined,
         )
         const data = resolveEventData(handler[1], event)
-        callEventHandler(resolvedHandler, event, node, data)
+        callEventHandler(
+          resolvedHandler,
+          event,
+          node,
+          data,
+          handler[2] === DELEGATED_DATA_ONLY_MARKER,
+        )
         return
       }
 
@@ -2133,11 +2139,7 @@ function assignProp(
     addEventListener(
       node,
       eventName,
-      value as
-        | EventListenerOrEventListenerObject
-        | [EventListenerOrEventListenerObject, unknown]
-        | null
-        | undefined,
+      value as EventListenerOrEventListenerObject | EventHandlerTuple | null | undefined,
       false,
     )
     return value
@@ -2150,11 +2152,7 @@ function assignProp(
     addEventListener(
       node,
       eventName,
-      value as
-        | EventListenerOrEventListenerObject
-        | [EventListenerOrEventListenerObject, unknown]
-        | null
-        | undefined,
+      value as EventListenerOrEventListenerObject | EventHandlerTuple | null | undefined,
       false,
       true,
     )
@@ -2172,11 +2170,7 @@ function assignProp(
       addEventListener(
         node,
         eventName,
-        value as
-          | EventListenerOrEventListenerObject
-          | [EventListenerOrEventListenerObject, unknown]
-          | null
-          | undefined,
+        value as EventListenerOrEventListenerObject | EventHandlerTuple | null | undefined,
         shouldDelegate,
         false,
       )

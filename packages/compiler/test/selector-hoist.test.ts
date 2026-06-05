@@ -166,7 +166,9 @@ describe('P1: Selector Hoist Optimization', () => {
     // row.id text should be treated as static key text (no per-row bindText effect)
     expect(output).not.toMatch(/bindText\([^,]+,\s*\(\)\s*=>\s*__key\)/)
 
-    expect(output).toMatch(/addEventListener\([^,]+,\s*"click",\s*\[remove,\s*__key\],\s*true\)/)
+    expect(output).toMatch(
+      /addEventListener\([^,]+,\s*"click",\s*\[remove,\s*__key,\s*"__fictDataOnly"\],\s*true\)/,
+    )
     expect(output).not.toMatch(
       /addEventListener\([^,]+,\s*"click",\s*\[remove,\s*\(\)\s*=>\s*__key\],\s*true\)/,
     )

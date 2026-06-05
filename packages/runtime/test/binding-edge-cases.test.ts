@@ -1154,6 +1154,39 @@ describe('Binding Edge Cases', () => {
       expect(handler).toHaveBeenCalledWith(data, expect.any(Event))
     })
 
+    it('handles compiler-tagged delegated data without adding the event argument', () => {
+      const el = document.createElement('button')
+      const data = { id: 123 }
+      let observed: { length: number; value: unknown; second: unknown; rest: unknown[] } | undefined
+      container.appendChild(el)
+      delegateEvents(['click'])
+
+      function handler(value: unknown, second = 'default', ...rest: unknown[]) {
+        observed = { length: arguments.length, value, second, rest }
+      }
+
+      addEventListener(el, 'click', [handler, data, '__fictDataOnly'] as any, true)
+
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(observed).toEqual({ length: 1, value: data, second: 'default', rest: [] })
+    })
+
+    it('passes undefined as an explicit compiler-tagged data argument', () => {
+      const el = document.createElement('button')
+      let observed: { length: number; value: unknown } | undefined
+      container.appendChild(el)
+      delegateEvents(['click'])
+
+      function handler(value: unknown) {
+        observed = { length: arguments.length, value }
+      }
+
+      addEventListener(el, 'click', [handler, undefined, '__fictDataOnly'] as any, true)
+
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(observed).toEqual({ length: 1, value: undefined })
+    })
+
     it('adds non-delegated listener directly', () => {
       const el = document.createElement('button')
       const handler = vi.fn()

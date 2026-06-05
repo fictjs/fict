@@ -115,6 +115,7 @@ import { structurizeCFG, structurizeCFGWithDiagnostics } from './structurize'
 export { getReactiveCallKind } from './codegen-reactive-kind'
 
 const HOOK_SLOT_BASE = 1000
+const DELEGATED_DATA_ONLY_MARKER = '__fictDataOnly'
 
 function cloneDirectives(
   directives: BabelDirective[] | undefined,
@@ -3211,7 +3212,11 @@ function lowerIntrinsicElement(
             t.callExpression(runtimeIdentifier(ctx, 'addEventListener'), [
               targetId,
               t.stringLiteral(eventName),
-              t.arrayExpression([handlerExpr, dataValue]),
+              t.arrayExpression([
+                handlerExpr,
+                dataValue,
+                t.stringLiteral(DELEGATED_DATA_ONLY_MARKER),
+              ]),
               t.booleanLiteral(true),
             ]),
           ),
@@ -3354,7 +3359,11 @@ function lowerIntrinsicElement(
 
           ctx.helpersUsed.add('addEventListener')
           const delegatedValue = dataForDelegate
-            ? t.arrayExpression([handlerToAssign, dataForDelegate])
+            ? t.arrayExpression([
+                handlerToAssign,
+                dataForDelegate,
+                t.stringLiteral(DELEGATED_DATA_ONLY_MARKER),
+              ])
             : handlerToAssign
           statements.push(
             t.expressionStatement(
