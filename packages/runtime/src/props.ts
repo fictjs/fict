@@ -244,10 +244,15 @@ export function mergeProps<T extends Record<string, unknown>>(
     return unwrapProps(value as T)
   }
 
+  const hasEnumerableOwnProp = (raw: T, prop: string | symbol): boolean => {
+    const descriptor = Object.getOwnPropertyDescriptor(raw, prop)
+    return descriptor?.enumerable === true
+  }
+
   const hasProp = (prop: string | symbol) => {
     for (const src of validSources) {
       const raw = resolveSource(src)
-      if (raw && prop in raw) {
+      if (raw && hasEnumerableOwnProp(raw, prop)) {
         return true
       }
     }
@@ -260,7 +265,7 @@ export function mergeProps<T extends Record<string, unknown>>(
     for (let i = validSources.length - 1; i >= 0; i--) {
       const src = validSources[i]!
       const raw = resolveSource(src)
-      if (!raw || !(prop in raw)) continue
+      if (!raw || !hasEnumerableOwnProp(raw, prop)) continue
 
       const value = (raw as Record<string | symbol, unknown>)[prop]
       // Preserve prop getters - let child component's createPropsProxy unwrap lazily
@@ -268,7 +273,7 @@ export function mergeProps<T extends Record<string, unknown>>(
       if (typeof src === 'function' && !isPropGetter(value)) {
         return __fictProp(() => {
           const latest = resolveSource(src)
-          if (!latest || !(prop in latest)) return undefined
+          if (!latest || !hasEnumerableOwnProp(latest, prop)) return undefined
           return (latest as Record<string | symbol, unknown>)[prop]
         })
       }
@@ -292,7 +297,9 @@ export function mergeProps<T extends Record<string, unknown>>(
         const raw = resolveSource(src)
         if (raw) {
           for (const key of Reflect.ownKeys(raw)) {
-            keys.add(key)
+            if (hasEnumerableOwnProp(raw, key)) {
+              keys.add(key)
+            }
           }
         }
       }

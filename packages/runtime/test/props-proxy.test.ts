@@ -262,6 +262,43 @@ describe('Props proxy', () => {
     expect(keys).toContain('c')
     expect(keys.length).toBe(3)
   })
+
+  it('mergeProps ignores non-enumerable spread properties', () => {
+    const hidden = {}
+    const hiddenSymbol = Symbol('hidden')
+    const visibleSymbol = Symbol('visible')
+    Object.defineProperties(hidden, {
+      secret: { value: 'x', enumerable: false },
+      [hiddenSymbol]: { value: 'hidden-symbol', enumerable: false },
+      [visibleSymbol]: { value: 'visible-symbol', enumerable: true },
+    })
+
+    const merged = mergeProps(hidden, { visible: 'y' })
+
+    expect(Object.keys(merged)).toEqual(['visible'])
+    expect(Reflect.ownKeys(merged)).toEqual([visibleSymbol, 'visible'])
+    expect('secret' in merged).toBe(false)
+    expect(hiddenSymbol in merged).toBe(false)
+    expect((merged as Record<string, unknown>).secret).toBeUndefined()
+    expect((merged as Record<symbol, unknown>)[hiddenSymbol]).toBeUndefined()
+    expect((merged as Record<symbol, unknown>)[visibleSymbol]).toBe('visible-symbol')
+    expect(Object.getOwnPropertyDescriptor(merged, 'secret')).toBeUndefined()
+  })
+
+  it('mergeProps re-checks enumerability for dynamic sources', () => {
+    const source = createSignal<Record<string, unknown>>(
+      Object.defineProperty({}, 'secret', { value: 'x', enumerable: false }),
+    )
+    const merged = createPropsProxy(mergeProps(() => source(), { visible: 'y' }))
+
+    expect(Object.keys(merged)).toEqual(['visible'])
+    expect((merged as Record<string, unknown>).secret).toBeUndefined()
+
+    source({ secret: 'shown' })
+
+    expect(Object.keys(merged)).toEqual(['secret', 'visible'])
+    expect((merged as Record<string, unknown>).secret).toBe('shown')
+  })
 })
 
 describe('prop', () => {

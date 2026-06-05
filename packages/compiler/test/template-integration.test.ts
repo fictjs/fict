@@ -701,6 +701,60 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps non-enumerable spread props hidden from merged component props', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const seen: {
+        keys: string[]
+        secret: unknown
+        descriptor: PropertyDescriptor | undefined
+      } = {
+        keys: [],
+        secret: undefined,
+        descriptor: undefined,
+      }
+
+      function Child(props: Record<string, unknown>) {
+        seen.keys = Object.keys(props)
+        seen.secret = props.secret
+        seen.descriptor = Object.getOwnPropertyDescriptor(props, 'secret')
+        return <div data-testid="box">{seen.keys.join(',') + ':' + String(seen.secret)}</div>
+      }
+
+      export function App() {
+        const hidden = {}
+        Object.defineProperty(hidden, 'secret', { value: 'x', enumerable: false })
+        return <Child {...hidden} visible="y" />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      seen: {
+        keys: string[]
+        secret: unknown
+        descriptor: PropertyDescriptor | undefined
+      }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(mod.seen.keys).toEqual(['visible'])
+    expect(mod.seen.secret).toBeUndefined()
+    expect(mod.seen.descriptor).toBeUndefined()
+    expect(box.textContent).toBe('visible:undefined')
+
+    teardown()
+    container.remove()
+  })
+
   it('does not invoke function-valued intrinsic spread expressions', async () => {
     const source = `
       import { render } from 'fict'
