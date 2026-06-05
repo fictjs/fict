@@ -653,6 +653,7 @@ export interface HIRFunction extends SourceInfo {
     | {
         fromExpression?: boolean | undefined
         functionExpressionName?: string | undefined
+        anonymousDefaultExport?: boolean | undefined
         directives?: BabelDirective[] | undefined
         isArrow?: boolean | undefined
         hasExpressionBody?: boolean | undefined

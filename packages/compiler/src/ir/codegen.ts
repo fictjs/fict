@@ -3865,6 +3865,26 @@ function buildFunctionDeclaratorExpression(
   )
 }
 
+function buildDefaultExportFunctionDeclaration(
+  entry: GeneratedFunctionEntry,
+  t: typeof BabelCore.types,
+): BabelCore.types.FunctionDeclaration {
+  if (!entry.fn.meta?.anonymousDefaultExport) {
+    return entry.stmt
+  }
+  const decl = t.functionDeclaration(
+    null,
+    entry.stmt.params,
+    entry.stmt.body,
+    entry.stmt.generator,
+    entry.stmt.async,
+  )
+  if (entry.stmt.loc !== undefined) {
+    decl.loc = entry.stmt.loc
+  }
+  return decl
+}
+
 /**
  * Lower HIR to Babel AST with full region-based reactive scope analysis.
  * This is the P0 integration point that bridges:
@@ -4104,7 +4124,7 @@ export function lowerHIRWithRegions(
       const name = stmt.declaration.id?.name ?? '__default'
       const generated = generatedFunctions.get(name)
       if (generated) {
-        body.push(t.exportDefaultDeclaration(generated.stmt))
+        body.push(t.exportDefaultDeclaration(buildDefaultExportFunctionDeclaration(generated, t)))
         generatedFunctions.delete(name)
         emittedFunctionNames.add(name)
         continue

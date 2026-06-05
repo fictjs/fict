@@ -972,17 +972,22 @@ export function buildHIR(
         if (t.isFunctionDeclaration(decl) && decl.body) {
           const name = decl.id?.name || '__default'
           processedFunctions.add(name)
-          functions.push(
-            convertFunction(name, decl.params, decl.body.body, {
-              noMemo: programNoMemo,
-              pure: programPure,
-              directives: decl.body.directives,
-              loc: getLoc(decl),
-              isAsync: decl.async,
-              isGenerator: decl.generator,
-              astNode: [decl, stmt],
-            }),
-          )
+          const fnHIR = convertFunction(name, decl.params, decl.body.body, {
+            noMemo: programNoMemo,
+            pure: programPure,
+            directives: decl.body.directives,
+            loc: getLoc(decl),
+            isAsync: decl.async,
+            isGenerator: decl.generator,
+            astNode: [decl, stmt],
+          })
+          if (!decl.id) {
+            fnHIR.meta = {
+              ...(fnHIR.meta ?? {}),
+              anonymousDefaultExport: true,
+            }
+          }
+          functions.push(fnHIR)
           postamble.push({ kind: 'ExportDefault', name })
         } else if (t.isIdentifier(decl)) {
           postamble.push({ kind: 'ExportDefault', name: decl.name })
