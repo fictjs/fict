@@ -2374,6 +2374,72 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('updates SVG dynamic classes through the class attribute in fine-grained output', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: string): void; toggle(): void }
+
+      export function App() {
+        let cls = $state('hot')
+        let active = $state(true)
+        api = {
+          set(value) {
+            cls = value
+          },
+          toggle() {
+            active = !active
+          },
+        }
+
+        return (
+          <svg>
+            <circle data-id="class" class={cls} />
+            <rect data-id="className" className={cls} />
+            <path data-id="classList" classList={{ active, off: !active }} />
+          </svg>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: string): void; toggle(): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const circle = container.querySelector('[data-id="class"]') as SVGCircleElement
+    const rect = container.querySelector('[data-id="className"]') as SVGRectElement
+    const path = container.querySelector('[data-id="classList"]') as SVGPathElement
+
+    expect(circle.getAttribute('class')).toBe('hot')
+    expect(circle.className.baseVal).toBe('hot')
+    expect(rect.getAttribute('class')).toBe('hot')
+    expect(rect.className.baseVal).toBe('hot')
+    expect(path.classList.contains('active')).toBe(true)
+    expect(path.classList.contains('off')).toBe(false)
+
+    mod.api.set('cool')
+    mod.api.toggle()
+    await flushUpdates()
+
+    expect(circle.getAttribute('class')).toBe('cool')
+    expect(circle.className.baseVal).toBe('cool')
+    expect(rect.getAttribute('class')).toBe('cool')
+    expect(rect.className.baseVal).toBe('cool')
+    expect(path.classList.contains('active')).toBe(false)
+    expect(path.classList.contains('off')).toBe(true)
+
+    teardown()
+    container.remove()
+  })
+
   it('applies static classList objects in fine-grained mode', async () => {
     const source = `
       import { render } from 'fict'

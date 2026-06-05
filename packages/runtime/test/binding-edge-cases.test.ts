@@ -629,6 +629,33 @@ describe('Binding Edge Cases', () => {
       expect(el.className).toBe('static-class')
     })
 
+    it('updates string class values on SVG elements through the class attribute', async () => {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+      const classValue = createSignal('hot')
+
+      bindClass(el, () => classValue())
+      expect(el.getAttribute('class')).toBe('hot')
+      expect((el.className as SVGAnimatedString).baseVal).toBe('hot')
+
+      classValue('cool')
+      await tick()
+      expect(el.getAttribute('class')).toBe('cool')
+      expect((el.className as SVGAnimatedString).baseVal).toBe('cool')
+    })
+
+    it('transitions SVG object class maps to string class values', async () => {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+      const classValue = createSignal<string | Record<string, boolean>>({ active: true })
+
+      bindClass(el, () => classValue())
+      expect(el.classList.contains('active')).toBe(true)
+
+      classValue('static-class')
+      await tick()
+      expect(el.getAttribute('class')).toBe('static-class')
+      expect((el.className as SVGAnimatedString).baseVal).toBe('static-class')
+    })
+
     it('handles space-separated class names in object keys', async () => {
       const el = document.createElement('div')
       const classValue = createSignal({ 'foo bar baz': true })

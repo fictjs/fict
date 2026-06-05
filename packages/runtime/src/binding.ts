@@ -682,6 +682,16 @@ function normalizeStyleProperty(prop: string): string {
 // Class Binding
 // ============================================================================
 
+const SVG_NAMESPACE_URI = 'http://www.w3.org/2000/svg'
+
+function setClassString(el: Element, value: string): void {
+  if (el.namespaceURI === SVG_NAMESPACE_URI) {
+    el.setAttribute('class', value)
+  } else {
+    el.className = value
+  }
+}
+
 /**
  * Apply class to an element, supporting reactive class values.
  */
@@ -722,7 +732,7 @@ export function setClass(
   // Preserve existing behavior: short-circuit only for stable string values.
   if (typeof value === 'string') {
     if (typeof prevValue === 'string' && prevValue === value) return
-    el.className = value
+    setClassString(el, value)
     cache[CLASS_STATE_CACHE] = {}
     cache[CLASS_VALUE_CACHE] = value
     return
@@ -751,7 +761,7 @@ function applyClass(el: Element, value: unknown, prev: unknown): Record<string, 
 
   // Handle string value - full replacement
   if (typeof value === 'string') {
-    el.className = value
+    setClassString(el, value)
     // Clear prev state since we're doing full replacement
     return {}
   }
