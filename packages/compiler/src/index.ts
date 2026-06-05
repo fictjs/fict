@@ -7,6 +7,7 @@ import { debugLog } from './debug'
 import { createCompilerExplainArtifact, emitCompilerExplainArtifact } from './explain'
 import { buildHIR } from './ir/build-hir'
 import { lowerHIRWithRegions } from './ir/codegen'
+import { getFictMacroKind, markFictMacroCall, type FictMacroKind } from './ir/macro-bindings'
 import { optimizeHIR } from './ir/optimize'
 import { resolveModuleMetadata } from './module-metadata'
 import { MODULE_REACTIVE_METADATA_VERSION } from './types'
@@ -584,6 +585,7 @@ function runWarningPass(
   stateMacroNames: Set<string>,
   memoMacroNames: Set<string>,
   effectMacroNames: Set<string>,
+  strictMacroBindings: boolean,
   warn: WarningSink,
   fileName: string,
   t: typeof BabelCore.types,
@@ -1137,10 +1139,18 @@ function runWarningPass(
         return hasReactiveDependency
       }
 
-      if (isStateCall(callNode, t, stateMacroNames)) return
-      if (isMemoCall(callNode, t, memoMacroNames)) return
+      const macroKind = getFictMacroKind(callNode)
+      if (
+        macroKind === 'state' ||
+        (!strictMacroBindings && isStateCall(callNode, t, stateMacroNames))
+      )
+        return
+      if (macroKind === 'memo' || (!strictMacroBindings && isMemoCall(callNode, t, memoMacroNames)))
+        return
 
-      const isEffect = isEffectCall(callNode, t, effectMacroNames)
+      const isEffect =
+        macroKind === 'effect' ||
+        (!strictMacroBindings && isEffectCall(callNode, t, effectMacroNames))
       if (isEffect) {
         const argPath = path.get('arguments.0')
         if (argPath?.isFunctionExpression() || argPath?.isArrowFunctionExpression()) {
@@ -1603,11 +1613,24 @@ function createHIREntrypointVisitor(
         const stateMacroNames = new Set<string>(['$state'])
         const effectMacroNames = new Set<string>(['$effect'])
         const memoMacroNames = new Set<string>(['$memo', 'createMemo'])
+        const macroBindingIds: Record<FictMacroKind, Set<BabelCore.types.Identifier>> = {
+          state: new Set(),
+          effect: new Set(),
+          memo: new Set(),
+        }
+        const reactiveCreationBindingIds = new Set<BabelCore.types.Identifier>()
         const importedReactiveBindingIds = new Set<BabelCore.types.Identifier>()
         path.traverse({
           ImportDeclaration(importPath) {
             const source = importPath.node.source.value
             if (source !== 'fict' && source !== 'fict/slim' && source !== 'fict/plus') return
+            const addImportBinding = (
+              target: Set<BabelCore.types.Identifier>,
+              localName: string,
+            ): void => {
+              const binding = importPath.scope.getBinding(localName)
+              if (binding) target.add(binding.identifier as BabelCore.types.Identifier)
+            }
             for (const spec of importPath.node.specifiers) {
               if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
                 const importedName = spec.imported.name
@@ -1615,16 +1638,26 @@ function createHIREntrypointVisitor(
                   fictImports.add(importedName)
                   if (importedName === '$state' && t.isIdentifier(spec.local)) {
                     stateMacroNames.add(spec.local.name)
+                    addImportBinding(macroBindingIds.state, spec.local.name)
                   }
                   if (importedName === '$effect' && t.isIdentifier(spec.local)) {
                     effectMacroNames.add(spec.local.name)
+                    addImportBinding(macroBindingIds.effect, spec.local.name)
                   }
                 }
                 if (importedName === '$memo' || importedName === 'createMemo') {
                   fictImports.add(importedName)
                   if (t.isIdentifier(spec.local)) {
                     memoMacroNames.add(spec.local.name)
+                    addImportBinding(macroBindingIds.memo, spec.local.name)
                   }
+                }
+                if (
+                  importedName === 'createEffect' ||
+                  importedName === 'createMemo' ||
+                  importedName === 'createSelector'
+                ) {
+                  addImportBinding(reactiveCreationBindingIds, spec.local.name)
                 }
               }
             }
@@ -1871,6 +1904,42 @@ function createHIREntrypointVisitor(
           const binding = path.scope.getBinding(name)
           if (binding) tracked.add(binding.identifier as BabelCore.types.Identifier)
         }
+        const getImportedMacroCallKind = (
+          callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
+        ): FictMacroKind | null => {
+          const callee = callPath.node.callee
+          if (!t.isIdentifier(callee)) return null
+          const binding = callPath.scope.getBinding(callee.name)
+          if (!binding) return null
+          const bindingId = binding.identifier as BabelCore.types.Identifier
+          if (macroBindingIds.state.has(bindingId)) return 'state'
+          if (macroBindingIds.effect.has(bindingId)) return 'effect'
+          if (macroBindingIds.memo.has(bindingId)) return 'memo'
+          return null
+        }
+        const getMacroCallKind = (
+          callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
+        ): FictMacroKind | null => {
+          const importedKind = getImportedMacroCallKind(callPath)
+          if (importedKind) return importedKind
+          const callee = callPath.node.callee
+          if (!t.isIdentifier(callee)) return null
+          if (callPath.scope.getBinding(callee.name)) return null
+          if (callee.name === '$state') return 'state'
+          if (callee.name === '$effect') return 'effect'
+          return null
+        }
+        const isImportedReactiveCreationCall = (
+          callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
+        ): boolean => {
+          const callee = callPath.node.callee
+          if (!t.isIdentifier(callee)) return false
+          const binding = callPath.scope.getBinding(callee.name)
+          return !!(
+            binding &&
+            reactiveCreationBindingIds.has(binding.identifier as BabelCore.types.Identifier)
+          )
+        }
         const hasReactiveAliasSourceBinding = (path: BabelCore.NodePath, name: string): boolean =>
           hasTrackedBinding(path, name, stateBindingIds) ||
           hasTrackedBinding(path, name, derivedBindingIds) ||
@@ -1914,7 +1983,10 @@ function createHIREntrypointVisitor(
           VariableDeclarator(varPath) {
             const init = varPath.node.init
             if (!init) return
-            if (isStateCall(init, t, stateMacroNames)) {
+            const initPath = varPath.get('init')
+            const isStateInit =
+              initPath.isCallExpression() && getMacroCallKind(initPath) === 'state'
+            if (isStateInit) {
               // Check if $state is imported from fict
               if (!fictImports.has('$state')) {
                 throw varPath.buildCodeFrameError(
@@ -2003,7 +2075,12 @@ function createHIREntrypointVisitor(
             )
           },
           CallExpression(callPath) {
-            if (isStateCall(callPath.node, t, stateMacroNames)) {
+            const importedMacroKind = getImportedMacroCallKind(callPath)
+            if (importedMacroKind) {
+              markFictMacroCall(callPath.node, importedMacroKind)
+            }
+            const macroKind = importedMacroKind ?? getMacroCallKind(callPath)
+            if (macroKind === 'state') {
               const parentPath = callPath.parentPath
               const isVariableDeclarator =
                 parentPath?.isVariableDeclarator() && parentPath.node.init === callPath.node
@@ -2053,7 +2130,7 @@ function createHIREntrypointVisitor(
                 )
               }
             }
-            if (isEffectCall(callPath.node, t, effectMacroNames)) {
+            if (macroKind === 'effect') {
               // Check if $effect is imported from fict
               if (!fictImports.has('$effect')) {
                 throw callPath.buildCodeFrameError(
@@ -2081,11 +2158,7 @@ function createHIREntrypointVisitor(
             const callee = callPath.node.callee
             const calleeId = t.isIdentifier(callee) ? callee.name : null
             if (
-              calleeId &&
-              (calleeId === 'createEffect' ||
-                calleeId === 'createMemo' ||
-                calleeId === 'createSelector') &&
-              fictImports.has(calleeId) &&
+              isImportedReactiveCreationCall(callPath) &&
               (isInsideLoop(callPath) || isInsideConditional(callPath)) &&
               !isInsideJSX(callPath)
             ) {
@@ -2131,18 +2204,16 @@ function createHIREntrypointVisitor(
                 }
               }
             }
-            const allowedStateCallees = new Set<string>([
-              ...effectMacroNames,
-              ...memoMacroNames,
-              'render',
-              'createMemo',
-              'createEffect',
-            ])
+            const isAllowedStateCallee =
+              macroKind === 'effect' ||
+              macroKind === 'memo' ||
+              isImportedReactiveCreationCall(callPath) ||
+              calleeId === 'render'
             callPath.node.arguments.forEach(arg => {
               if (
                 t.isIdentifier(arg) &&
                 hasTrackedBinding(callPath, arg.name, stateBindingIds) &&
-                (!calleeId || !allowedStateCallees.has(calleeId))
+                !isAllowedStateCallee
               ) {
                 const loc = arg.loc?.start ?? callPath.node.loc?.start
                 warn({
@@ -2156,7 +2227,7 @@ function createHIREntrypointVisitor(
               }
             })
             if (
-              isMemoCall(callPath.node, t, memoMacroNames) &&
+              macroKind === 'memo' &&
               (fictImports.has('$memo') || fictImports.has('createMemo'))
             ) {
               const firstArgPath = callPath.get('arguments.0')
@@ -2442,6 +2513,7 @@ function createHIREntrypointVisitor(
             stateMacroNames,
             memoMacroNames,
             effectMacroNames,
+            true,
             warn,
             fileName,
             t,
@@ -2460,6 +2532,7 @@ function createHIREntrypointVisitor(
           {
             state: stateMacroNames,
             effect: effectMacroNames,
+            strictMacroBindings: true,
           },
           {
             dev,
@@ -2471,6 +2544,7 @@ function createHIREntrypointVisitor(
         const optimized = optionsWithWarnings.optimize
           ? optimizeHIR(hir, {
               memoMacroNames,
+              strictMacroBindings: true,
               inlineDerivedMemos: optionsWithWarnings.inlineDerivedMemos ?? true,
               optimizeLevel: optionsWithWarnings.optimizeLevel ?? 'safe',
             })
@@ -2479,6 +2553,7 @@ function createHIREntrypointVisitor(
           state: stateMacroNames,
           effect: effectMacroNames,
           memo: memoMacroNames,
+          strictMacroBindings: true,
         })
 
         path.node.body = lowered.program.body

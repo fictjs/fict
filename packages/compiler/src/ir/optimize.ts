@@ -45,6 +45,7 @@ interface DefUseInfo {
 interface PurityContext {
   functionPure?: boolean | undefined
   impureIdentifiers?: Set<string> | undefined
+  strictMacroBindings?: boolean | undefined
 }
 
 const PURE_MATH_METHODS = new Set([
@@ -123,6 +124,7 @@ export interface OptimizeOptions {
   memoMacroNames?: Set<string>
   inlineDerivedMemos?: boolean
   optimizeLevel?: 'safe' | 'full'
+  strictMacroBindings?: boolean
 }
 
 export function optimizeHIR(program: HIRProgram, options: OptimizeOptions = {}): HIRProgram {
@@ -153,7 +155,7 @@ export function optimizeHIR(program: HIRProgram, options: OptimizeOptions = {}):
 function optimizeSSAFunction(fn: HIRFunction, options: OptimizeOptions): HIRFunction {
   let current = fn
   current = propagateConstants(current, options)
-  const purity = buildPurityContext(current)
+  const purity = buildPurityContext(current, options)
   current = eliminateCommonSubexpressions(current, purity)
   current = inlineSingleUse(current, purity)
   current = eliminateDeadCode(current, purity)
@@ -243,11 +245,26 @@ function buildReactiveGraph(
       if (instr.kind === 'Assign') {
         const target = getSSABaseName(instr.target.name)
         const calleeName = getCallCalleeName(instr.value)
-        if (calleeName === '$state' || calleeName === 'createSignal') {
+        const isStateMacro =
+          (instr.value.kind === 'CallExpression' ||
+            instr.value.kind === 'OptionalCallExpression') &&
+          instr.value.macro === 'state'
+        const isMemoMacro =
+          (instr.value.kind === 'CallExpression' ||
+            instr.value.kind === 'OptionalCallExpression') &&
+          instr.value.macro === 'memo'
+        if (
+          isStateMacro ||
+          (!options.strictMacroBindings && calleeName === '$state') ||
+          calleeName === 'createSignal'
+        ) {
           addVarNode(target, 'signal', new Set())
         } else if (calleeName === '$store' || calleeName === 'createStore') {
           addVarNode(target, 'store', new Set())
-        } else if (calleeName && memoMacroNames.has(calleeName)) {
+        } else if (
+          isMemoMacro ||
+          (!!calleeName && !options.strictMacroBindings && memoMacroNames.has(calleeName))
+        ) {
           const memoDeps = collectDependenciesFromMemo(instr.value)
           const valuePure =
             instr.value.kind === 'CallExpression' || instr.value.kind === 'OptionalCallExpression'
@@ -874,8 +891,8 @@ function optimizeReactiveFunction(
   options: OptimizeOptions,
 ): HIRFunction {
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
-  const reactive = buildReactiveContext(fn)
-  const purity = buildPurityContext(fn)
+  const reactive = buildReactiveContext(fn, options)
+  const purity = buildPurityContext(fn, options)
   const hookLike = isHookLikeFunction(fn)
   const transformedBlocks = fn.blocks.map(block =>
     optimizeReactiveBlock(block, reactive, purity, options),
@@ -1569,8 +1586,11 @@ function collectBlockUseInfo(
   return info
 }
 
-function buildPurityContext(fn: HIRFunction): PurityContext {
-  const base: PurityContext = { functionPure: fn.meta?.pure }
+function buildPurityContext(fn: HIRFunction, options: OptimizeOptions = {}): PurityContext {
+  const base: PurityContext = {
+    functionPure: fn.meta?.pure,
+    strictMacroBindings: options.strictMacroBindings,
+  }
   const impureIdentifiers = computeImpureIdentifiers(fn, base)
   return { ...base, impureIdentifiers }
 }
@@ -1712,7 +1732,7 @@ interface ReactiveContext {
   storeVars: Set<string>
 }
 
-function buildReactiveContext(fn: HIRFunction): ReactiveContext {
+function buildReactiveContext(fn: HIRFunction, options: OptimizeOptions = {}): ReactiveContext {
   const reactiveSources = new Set<string>()
   const storeVars = new Set<string>()
   for (const block of fn.blocks) {
@@ -1720,12 +1740,25 @@ function buildReactiveContext(fn: HIRFunction): ReactiveContext {
       if (instr.kind !== 'Assign') continue
       const calleeName = getAssignedCalleeName(instr.value)
       if (!calleeName) continue
-      if (calleeName === '$state' || calleeName === 'createSignal') {
+      const isStateMacro =
+        (instr.value.kind === 'CallExpression' || instr.value.kind === 'OptionalCallExpression') &&
+        instr.value.macro === 'state'
+      const isMemoMacro =
+        (instr.value.kind === 'CallExpression' || instr.value.kind === 'OptionalCallExpression') &&
+        instr.value.macro === 'memo'
+      if (
+        isStateMacro ||
+        (!options.strictMacroBindings && calleeName === '$state') ||
+        calleeName === 'createSignal'
+      ) {
         reactiveSources.add(instr.target.name)
       } else if (calleeName === '$store' || calleeName === 'createStore') {
         reactiveSources.add(instr.target.name)
         storeVars.add(instr.target.name)
-      } else if (calleeName === '$memo' || calleeName === 'createMemo') {
+      } else if (
+        isMemoMacro ||
+        (!options.strictMacroBindings && (calleeName === '$memo' || calleeName === 'createMemo'))
+      ) {
         reactiveSources.add(instr.target.name)
       }
     }
@@ -3811,6 +3844,8 @@ function hashExpression(expr: Expression): string {
 
 function isExplicitMemoCall(expr: Expression, ctx: PurityContext): boolean {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
+  if (expr.macro === 'memo') return !(expr.pure || ctx.functionPure)
+  if (ctx.strictMacroBindings) return false
   const callee = expr.callee.kind === 'Identifier' ? expr.callee.name : getCalleeName(expr.callee)
   if (!callee) return false
   return (callee === '$memo' || callee === 'createMemo') && !(expr.pure || ctx.functionPure)
@@ -3919,6 +3954,8 @@ function isCSESafeExpression(expr: Expression, ctx: PurityContext): boolean {
 
 function isCSESafeCall(expr: Expression, ctx: PurityContext): boolean {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
+  if (expr.macro === 'state' || expr.macro === 'effect') return false
+  if (expr.macro === 'memo') return !!(ctx.functionPure || expr.pure)
   const calleeName =
     expr.callee.kind === 'Identifier' ? expr.callee.name : getCalleeName(expr.callee)
   if (calleeName && IMPURE_CALLEES.has(calleeName)) {
@@ -3953,6 +3990,8 @@ function isStableMemberExpression(expr: Expression): boolean {
 
 function isPureCall(expr: Expression, ctx: PurityContext): boolean {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
+  if (expr.macro === 'state' || expr.macro === 'effect') return false
+  if (expr.macro === 'memo') return !!(ctx.functionPure || expr.pure)
   const calleeName =
     expr.callee.kind === 'Identifier' ? expr.callee.name : getCalleeName(expr.callee)
 

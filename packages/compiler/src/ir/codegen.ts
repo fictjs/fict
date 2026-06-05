@@ -322,6 +322,8 @@ export interface CodegenContext {
   moduleRuntimeNamespaceImports?: Set<string> | undefined
   /** Macro aliases for $state (compiler macro). */
   stateMacroNames?: Set<string> | undefined
+  /** Use compiler-confirmed macro markers instead of identifier names. */
+  strictMacroBindings?: boolean | undefined
   /** Local (function-scope) declared names for helper shadowing checks. */
   localDeclaredNames?: Set<string> | undefined
   /** Tracks which runtime helpers are used */
@@ -484,6 +486,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     functionVars: new Set(),
     memoVars: new Set(),
     memoMacroNames: new Set(['$memo', 'createMemo']),
+    strictMacroBindings: false,
     mutatedVars: new Set(),
     inRegionMemo: false,
     inListRender: false,
@@ -1476,7 +1479,10 @@ function lowerExpressionImpl(
       // Handle Fict macros in HIR path
       const stateCalleeNameRaw = expr.callee.kind === 'Identifier' ? expr.callee.name : null
       const stateCalleeName = stateCalleeNameRaw ? deSSAVarName(stateCalleeNameRaw) : null
-      if (stateCalleeName && ctx.stateMacroNames?.has(stateCalleeName)) {
+      const isStateMacro =
+        expr.macro === 'state' ||
+        (!ctx.strictMacroBindings && !!stateCalleeName && ctx.stateMacroNames?.has(stateCalleeName))
+      if (isStateMacro) {
         const args = lowerCallArguments(expr.arguments)
         const includeDevtools = ctx.options?.dev !== false
         const options: BabelCore.types.ObjectProperty[] = []
@@ -1507,7 +1513,10 @@ function lowerExpressionImpl(
       }
       if (expr.callee.kind === 'Identifier') {
         const memoCalleeName = deSSAVarName(expr.callee.name)
-        if (ctx.memoMacroNames?.has(memoCalleeName)) {
+        const isMemoMacro =
+          expr.macro === 'memo' ||
+          (!ctx.strictMacroBindings && ctx.memoMacroNames?.has(memoCalleeName))
+        if (isMemoMacro) {
           const args = lowerCallArguments(expr.arguments)
           const includeDevtools = ctx.options?.dev !== false
           if (includeDevtools && expr.arguments.length === 1) {
@@ -1533,7 +1542,11 @@ function lowerExpressionImpl(
           )
         }
       }
-      if (expr.callee.kind === 'Identifier' && expr.callee.name === '$effect') {
+      const effectCalleeName =
+        expr.callee.kind === 'Identifier' ? deSSAVarName(expr.callee.name) : null
+      const isEffectMacro =
+        expr.macro === 'effect' || (!ctx.strictMacroBindings && effectCalleeName === '$effect')
+      if (isEffectMacro) {
         const args = lowerCallArguments(expr.arguments, arg =>
           arg.kind === 'ArrowFunction' || arg.kind === 'FunctionExpression'
             ? withNonReactiveScope(ctx, () => lowerExpression(arg, ctx))
@@ -3482,6 +3495,7 @@ interface MacroAliases {
   state?: Set<string>
   effect?: Set<string>
   memo?: Set<string>
+  strictMacroBindings?: boolean
 }
 
 /**
@@ -3528,6 +3542,7 @@ export function lowerHIRWithRegions(
   if (!memoMacroNames.has('createMemo')) memoMacroNames.add('createMemo')
   ctx.stateMacroNames = stateMacroNames
   ctx.memoMacroNames = memoMacroNames
+  ctx.strictMacroBindings = macroAliases?.strictMacroBindings ?? false
 
   // Pre-mark top-level tracked variables so nested functions can treat captured signals as reactive
   for (const stmt of originalBody) {

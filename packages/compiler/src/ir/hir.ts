@@ -1,5 +1,7 @@
 import type { ClassBody, LVal, Node, SourceLocation, Statement } from '@babel/types'
 
+import type { FictMacroKind } from './macro-bindings'
+
 /**
  * High-level Intermediate Representation (HIR) scaffolding.
  *
@@ -295,6 +297,8 @@ export interface CallExpression extends SourceInfo {
   kind: 'CallExpression'
   callee: Expression
   arguments: Expression[]
+  /** Compiler-confirmed macro/helper call kind. */
+  macro?: FictMacroKind | undefined
   /** Optional purity hint (e.g., from @__PURE__ annotations) */
   pure?: boolean | undefined
 }
@@ -564,6 +568,8 @@ export interface OptionalCallExpression extends SourceInfo {
   callee: Expression
   arguments: Expression[]
   optional: boolean
+  /** Compiler-confirmed macro/helper call kind. */
+  macro?: FictMacroKind | undefined
   /** Optional purity hint (e.g., from @__PURE__ annotations) */
   pure?: boolean | undefined
 }

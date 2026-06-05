@@ -37,6 +37,7 @@ import {
   type UpdateExpression as HUpdateExpression,
   resetGeneratedSSANames,
 } from './hir'
+import { getFictMacroKind, type FictMacroKind } from './macro-bindings'
 
 export interface BuildHIROptions {
   dev?: boolean
@@ -196,16 +197,19 @@ const reportUnsupportedExpression = (
 interface MacroAliases {
   state?: Set<string>
   effect?: Set<string>
+  strictMacroBindings?: boolean
 }
 
 interface ResolvedMacroAliases {
   state: Set<string>
   effect: Set<string>
+  strictMacroBindings: boolean
 }
 
 const DEFAULT_MACRO_ALIASES: ResolvedMacroAliases = {
   state: new Set(['$state']),
   effect: new Set(['$effect']),
+  strictMacroBindings: false,
 }
 
 let activeMacroAliases: ResolvedMacroAliases = DEFAULT_MACRO_ALIASES
@@ -214,15 +218,37 @@ function resolveMacroAliases(aliases?: MacroAliases): ResolvedMacroAliases {
   return {
     state: new Set([...(aliases?.state ?? []), ...DEFAULT_MACRO_ALIASES.state]),
     effect: new Set([...(aliases?.effect ?? []), ...DEFAULT_MACRO_ALIASES.effect]),
+    strictMacroBindings: aliases?.strictMacroBindings ?? false,
   }
 }
 
-function normalizeMacroCallee(callee: BabelCore.types.Expression): BabelCore.types.Expression {
-  if (!t.isIdentifier(callee)) return callee
+function getCallMacroKind(
+  call: BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression,
+): FictMacroKind | null {
+  const marked = getFictMacroKind(call)
+  if (marked) return marked
+  if (activeMacroAliases.strictMacroBindings) return null
+
+  const callee = call.callee
+  if (!t.isIdentifier(callee)) return null
   if (activeMacroAliases.state.has(callee.name)) {
-    return t.identifier('$state')
+    return 'state'
   }
   if (activeMacroAliases.effect.has(callee.name)) {
+    return 'effect'
+  }
+  return null
+}
+
+function normalizeMacroCallee(
+  call: BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression,
+  callee: BabelCore.types.Expression,
+): BabelCore.types.Expression {
+  const macroKind = getCallMacroKind(call)
+  if (macroKind === 'state') {
+    return t.identifier('$state')
+  }
+  if (macroKind === 'effect') {
     return t.identifier('$effect')
   }
   return callee
@@ -2800,13 +2826,15 @@ function convertExpression(
     return { kind: 'ImportExpression', source, loc }
   }
   if (t.isCallExpression(node)) {
-    const callee = normalizeMacroCallee(node.callee as BabelCore.types.Expression)
+    const callee = normalizeMacroCallee(node, node.callee as BabelCore.types.Expression)
+    const macroKind = getCallMacroKind(node)
     const pure = hasPureAnnotation(node) || hasPureAnnotation(node.callee)
     const reactiveScope = resolveReactiveScope(node.callee as BabelCore.types.Expression)
     const call: HCallExpression = {
       kind: 'CallExpression',
       callee: convertExpression(callee),
       arguments: convertCallArguments(node.arguments, reactiveScope),
+      ...(macroKind ? { macro: macroKind } : null),
       ...(pure ? { pure: true } : null),
       loc,
     }
@@ -3192,13 +3220,15 @@ function convertExpression(
 
   // Optional Call Expression
   if (t.isOptionalCallExpression(node)) {
-    const callee = normalizeMacroCallee(node.callee as BabelCore.types.Expression)
+    const callee = normalizeMacroCallee(node, node.callee as BabelCore.types.Expression)
+    const macroKind = getCallMacroKind(node)
     const reactiveScope = resolveReactiveScope(node.callee as BabelCore.types.Expression)
     return {
       kind: 'OptionalCallExpression',
       callee: convertExpression(callee),
       arguments: convertCallArguments(node.arguments, reactiveScope),
       optional: node.optional,
+      ...(macroKind ? { macro: macroKind } : null),
       ...(hasPureAnnotation(node) || hasPureAnnotation(node.callee) ? { pure: true } : null),
       loc,
     }

@@ -4,6 +4,7 @@ import type { ReactiveExportKind } from '../types'
 
 import type { CodegenContext } from './codegen'
 import type { Expression } from './hir'
+import { getFictMacroKind } from './macro-bindings'
 import { deSSAVarName } from './regions'
 
 const RUNTIME_REACTIVE_CREATORS = new Map<string, ReactiveExportKind>([
@@ -58,9 +59,11 @@ export function getReactiveCallKind(
   const callee = expr.callee
   if (callee.kind === 'Identifier') {
     const name = deSSAVarName(callee.name)
-    if (ctx.stateMacroNames?.has(name)) return 'signal'
+    if (expr.macro === 'state') return 'signal'
+    if (expr.macro === 'memo') return 'memo'
+    if (!ctx.strictMacroBindings && ctx.stateMacroNames?.has(name)) return 'signal'
     if (name === '$store') return 'store'
-    if (ctx.memoMacroNames?.has(name)) return 'memo'
+    if (!ctx.strictMacroBindings && ctx.memoMacroNames?.has(name)) return 'memo'
     return getRuntimeImportedKind(name, ctx)
   }
   return getRuntimeMemberKind(callee, ctx)
@@ -74,9 +77,12 @@ export function getReactiveCallKindFromBabel(
   const callee = callExpr.callee
   if (t.isIdentifier(callee)) {
     const name = callee.name
-    if (ctx.stateMacroNames?.has(name)) return 'signal'
+    const macroKind = getFictMacroKind(callExpr)
+    if (macroKind === 'state') return 'signal'
+    if (macroKind === 'memo') return 'memo'
+    if (!ctx.strictMacroBindings && ctx.stateMacroNames?.has(name)) return 'signal'
     if (name === '$store') return 'store'
-    if (ctx.memoMacroNames?.has(name)) return 'memo'
+    if (!ctx.strictMacroBindings && ctx.memoMacroNames?.has(name)) return 'memo'
     return getRuntimeImportedKind(name, ctx)
   }
   if (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) {
