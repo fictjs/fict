@@ -340,6 +340,55 @@ describe('state write expression semantics', () => {
     expect(values).toEqual([3, 1, 6, 8, -4, 2147483647, 6])
   })
 
+  it('preserves value-position bitwise and shift compound assignments', () => {
+    const source = `
+      export function useValueCompoundAssignmentSemantics() {
+        let andValue = 7
+        const andResult = (andValue &= 3)
+
+        let orValue = 2
+        const orResult = (orValue |= 1)
+
+        let xorValue = 6
+        const xorResult = (xorValue ^= 3)
+
+        let shiftLeft = 4
+        const shiftLeftResult = (shiftLeft <<= 2)
+
+        let shiftRight = -8
+        const shiftRightResult = (shiftRight >>= 1)
+
+        let shiftUnsigned = -1
+        const shiftUnsignedResult = (shiftUnsigned >>>= 1)
+
+        let addValue = 9
+        const addResult = (addValue += 4)
+
+        return [
+          andResult,
+          andValue,
+          orResult,
+          orValue,
+          xorResult,
+          xorValue,
+          shiftLeftResult,
+          shiftLeft,
+          shiftRightResult,
+          shiftRight,
+          shiftUnsignedResult,
+          shiftUnsigned,
+          addResult,
+          addValue,
+        ]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    expect(compiledFunction(mod, 'useValueCompoundAssignmentSemantics')()).toEqual([
+      3, 3, 3, 3, 5, 5, 16, 16, -4, -4, 2147483647, 2147483647, 13, 13,
+    ])
+  })
+
   it('does not reuse cached signal getter values after writes in function bodies', () => {
     const source = `
       import { $state } from 'fict'
