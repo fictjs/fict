@@ -1096,6 +1096,54 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('sets static DOM property literal expressions through DOM properties', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return (
+          <section>
+            <input data-testid="literal" value={true} checked={0} disabled={false} readOnly={true} multiple={0} />
+            <option data-testid="option" selected={0}>item</option>
+            <video data-testid="video" muted={1} />
+            <input data-testid="nullish" value={undefined} checked={null} />
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const literal = container.querySelector('[data-testid="literal"]') as HTMLInputElement
+    const option = container.querySelector('[data-testid="option"]') as HTMLOptionElement
+    const video = container.querySelector('[data-testid="video"]') as HTMLVideoElement
+    const nullish = container.querySelector('[data-testid="nullish"]') as HTMLInputElement
+
+    expect(literal.value).toBe('true')
+    expect(literal.getAttribute('value')).toBeNull()
+    expect(literal.checked).toBe(false)
+    expect(literal.getAttribute('checked')).toBeNull()
+    expect(literal.disabled).toBe(false)
+    expect(literal.readOnly).toBe(true)
+    expect(literal.multiple).toBe(false)
+    expect(option.selected).toBe(false)
+    expect(video.muted).toBe(true)
+    expect(nullish.value).toBe('')
+    expect(nullish.checked).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps table row binding paths aligned with implicit tbody insertion', async () => {
     const source = `
       import { $state, render } from 'fict'

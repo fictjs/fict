@@ -520,6 +520,17 @@ export function extractHIRStaticHtml(
       continue
     }
 
+    if (resolvedNamespace === null && isDOMProperty(name) && isStaticValue(attr.value)) {
+      bindings.push({
+        type: 'attr',
+        path: [...parentPath],
+        name,
+        expr: attr.value,
+        bindingTarget: 'property',
+      })
+      continue
+    }
+
     // Check if value is static
     if (isStaticValue(attr.value)) {
       const value = attr.value.value
