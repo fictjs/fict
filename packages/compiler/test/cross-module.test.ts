@@ -475,6 +475,87 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toMatch(/store\.count\?\.\(\)\?\.\(\)/)
     })
 
+    it('preserves namespace signal assignment targets in non-strict mode', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+      `
+      const appSource = `
+        import * as store from './store-ns-write'
+
+        export function App() {
+          store.count = 2
+          return store.count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-write.ts'))
+      const output = transform(
+        appSource,
+        { moduleMetadata, strictGuarantee: false },
+        path.join(baseDir, 'app-ns-write.tsx'),
+      )
+
+      expect(output).toContain('store.count = 2')
+      expect(output).toMatch(/return store\.count\(\)/)
+      expect(output).not.toMatch(/store\.count\(\)\s*=/)
+    })
+
+    it('preserves namespace signal compound assignment targets in non-strict mode', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+      `
+      const appSource = `
+        import * as store from './store-ns-compound-write'
+
+        export function App() {
+          store.count += 2
+          return store.count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-compound-write.ts'))
+      const output = transform(
+        appSource,
+        { moduleMetadata, strictGuarantee: false },
+        path.join(baseDir, 'app-ns-compound-write.tsx'),
+      )
+
+      expect(output).toContain('store.count += 2')
+      expect(output).toMatch(/return store\.count\(\)/)
+      expect(output).not.toMatch(/store\.count\(\)\s*\+=/)
+    })
+
+    it('preserves namespace signal update targets in non-strict mode', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+      `
+      const appSource = `
+        import * as store from './store-ns-update'
+
+        export function App() {
+          store.count++
+          return store.count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-update.ts'))
+      const output = transform(
+        appSource,
+        { moduleMetadata, strictGuarantee: false },
+        path.join(baseDir, 'app-ns-update.tsx'),
+      )
+
+      expect(output).toContain('store.count++')
+      expect(output).toMatch(/return store\.count\(\)/)
+      expect(output).not.toMatch(/store\.count\(\)\+\+/)
+    })
+
     it('does not double-call namespace imported memo accessors used as calls', () => {
       const storeSource = `
         import { createMemo } from 'fict/advanced'
