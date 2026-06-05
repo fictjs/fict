@@ -877,8 +877,8 @@ describe('compiled templates DOM integration', () => {
         }
         return (
           <section>
-            <input data-testid="static" defaultValue="static" defaultChecked={true} />
-            <input data-testid="dynamic" defaultValue={val} defaultChecked={on} value={val} checked={on} />
+            <input data-testid="static" defaultValue="static" defaultChecked={true} indeterminate={true} />
+            <input data-testid="dynamic" defaultValue={val} defaultChecked={on} value={val} checked={on} indeterminate={on} />
             <select>
               <option data-testid="option" defaultSelected={on}>item</option>
             </select>
@@ -908,10 +908,13 @@ describe('compiled templates DOM integration', () => {
     expect(staticInput.defaultValue).toBe('static')
     expect(staticInput.defaultChecked).toBe(true)
     expect(staticInput.getAttribute('defaultValue')).toBeNull()
+    expect(staticInput.indeterminate).toBe(true)
+    expect(staticInput.getAttribute('indeterminate')).toBeNull()
     expect(dynamicInput.defaultValue).toBe('x')
     expect(dynamicInput.defaultChecked).toBe(true)
     expect(dynamicInput.value).toBe('x')
     expect(dynamicInput.checked).toBe(true)
+    expect(dynamicInput.indeterminate).toBe(true)
     expect(option.defaultSelected).toBe(true)
     expect(video.defaultMuted).toBe(true)
 
@@ -923,6 +926,7 @@ describe('compiled templates DOM integration', () => {
     expect(dynamicInput.defaultChecked).toBe(false)
     expect(dynamicInput.value).toBe('y')
     expect(dynamicInput.checked).toBe(false)
+    expect(dynamicInput.indeterminate).toBe(false)
     expect(option.defaultSelected).toBe(false)
     expect(video.defaultMuted).toBe(false)
 

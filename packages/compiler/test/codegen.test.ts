@@ -1954,7 +1954,8 @@ describe('spread operator in JSX', () => {
         let on = $state(true)
         return (
           <section>
-            <input defaultValue="static" defaultChecked={true} value={val} checked={on} />
+            <input defaultValue="static" defaultChecked={true} indeterminate={true} value={val} checked={on} />
+            <input indeterminate={on} />
             <input defaultValue={val} defaultChecked={on} />
             <option defaultSelected={on}>item</option>
             <video defaultMuted={on} />
@@ -1972,10 +1973,13 @@ describe('spread operator in JSX', () => {
     expect(code).toMatch(/setProp\([^,]+,\s*"defaultChecked",\s*on\(\)\)/)
     expect(code).toMatch(/setProp\([^,]+,\s*"defaultSelected",\s*on\(\)\)/)
     expect(code).toMatch(/setProp\([^,]+,\s*"defaultMuted",\s*on\(\)\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"indeterminate",\s*true\)/)
     expect(code).toMatch(/setProp\([^,]+,\s*"value",\s*val\(\)\)/)
     expect(code).toMatch(/setProp\([^,]+,\s*"checked",\s*on\(\)\)/)
+    expect(code).toMatch(/setProp\([^,]+,\s*"indeterminate",\s*on\(\)\)/)
     expect(code).not.toContain('defaultValue=\\"')
     expect(code).not.toContain('defaultChecked=\\"')
+    expect(code).not.toContain('indeterminate=\\"')
   })
 
   it('routes textarea expression children through the value property', () => {

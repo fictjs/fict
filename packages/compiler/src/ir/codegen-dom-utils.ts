@@ -11,6 +11,7 @@ const DOM_PROPERTY_NAMES = new Set([
   'readOnly',
   'multiple',
   'muted',
+  'indeterminate',
   'innerHTML',
   'innerText',
   'textContent',
@@ -28,6 +29,7 @@ const DOM_TEMPLATE_PROPERTY_NAMES = new Set([
   'defaultChecked',
   'defaultSelected',
   'defaultMuted',
+  'indeterminate',
 ])
 
 export function isStaticDelegatedDataAst(
