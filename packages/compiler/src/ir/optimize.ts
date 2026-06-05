@@ -7,6 +7,7 @@ import type {
   HIRProgram,
   Identifier,
   Instruction,
+  Literal,
   Terminator,
   JSXElementExpression,
   BlockId,
@@ -111,7 +112,7 @@ const STABLE_MEMBER_ACCESS = new Map<string, Set<string>>([
   ],
 ])
 
-const PURE_CALLEES = new Set(['String', 'Number', 'Boolean', 'BigInt', 'parseInt', 'parseFloat'])
+const PURE_CALLEES = new Set(['Boolean'])
 const IMPURE_CALLEES = new Set([
   '$state',
   '$effect',
@@ -5680,14 +5681,12 @@ function isCSESafeCall(expr: Expression, ctx: PurityContext): boolean {
     }
     return false
   }
-  if (expr.pure) return true
   if (!calleeName) return false
+  const builtinSafety = getBuiltinCallCoercionSafety(calleeName, expr.arguments)
+  if (builtinSafety !== null) return builtinSafety
+  if (expr.pure) return true
   if (PURE_CALLEES.has(calleeName)) return true
   if (ctx.functionPure) return true
-  if (calleeName.startsWith('Math.')) {
-    const method = calleeName.slice('Math.'.length)
-    return PURE_MATH_METHODS.has(method)
-  }
   return false
 }
 
@@ -5717,15 +5716,67 @@ function isPureCall(expr: Expression, ctx: PurityContext): boolean {
     }
     return false
   }
-  if (expr.pure) return true
   if (!calleeName) return false
+  const builtinSafety = getBuiltinCallCoercionSafety(calleeName, expr.arguments)
+  if (builtinSafety !== null) return builtinSafety
+  if (expr.pure) return true
   if (PURE_CALLEES.has(calleeName)) return true
   if (ctx.functionPure) return true
+  return false
+}
+
+function getBuiltinCallCoercionSafety(calleeName: string, args: Expression[]): boolean | null {
+  if (calleeName === 'String') {
+    return args.length === 0 || isStringCoercionSafeExpression(args[0]!)
+  }
+  if (calleeName === 'Number') {
+    return args.length === 0 || isNumberConstructorCoercionSafeExpression(args[0]!)
+  }
+  if (calleeName === 'BigInt') {
+    return args.length === 1 && isBigIntConstructorCoercionSafeExpression(args[0]!)
+  }
+  if (calleeName === 'parseInt' || calleeName === 'parseFloat') {
+    const source = args[0]
+    const radix = args[1]
+    return (
+      (!source || isStringCoercionSafeExpression(source)) &&
+      (!radix || isMathNumberCoercionSafeExpression(radix))
+    )
+  }
   if (calleeName.startsWith('Math.')) {
     const method = calleeName.slice('Math.'.length)
-    return PURE_MATH_METHODS.has(method)
+    if (!PURE_MATH_METHODS.has(method)) return null
+    return args.every(arg => isMathNumberCoercionSafeExpression(arg))
   }
-  return false
+  return null
+}
+
+function isPrimitiveLiteralExpression(expr: Expression): expr is Literal {
+  return expr.kind === 'Literal' && !(expr.value instanceof RegExp)
+}
+
+function isStringCoercionSafeExpression(expr: Expression): boolean {
+  return isPrimitiveLiteralExpression(expr)
+}
+
+function isNumberConstructorCoercionSafeExpression(expr: Expression): boolean {
+  return isPrimitiveLiteralExpression(expr)
+}
+
+function isMathNumberCoercionSafeExpression(expr: Expression): boolean {
+  return isPrimitiveLiteralExpression(expr) && typeof expr.value !== 'bigint'
+}
+
+function isBigIntConstructorCoercionSafeExpression(expr: Expression): boolean {
+  if (!isPrimitiveLiteralExpression(expr)) return false
+  const value = expr.value
+  if (value === null || value === undefined) return false
+  try {
+    BigInt(value as string | number | boolean | bigint)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function getCalleeName(callee: Expression): string | null {

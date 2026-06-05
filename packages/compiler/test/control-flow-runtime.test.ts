@@ -1943,6 +1943,126 @@ describe('control flow runtime regressions', () => {
     expect(result).toEqual(['\n-', '\\n-', 1, '-A\\', '-\\u{41}\\\\'])
   })
 
+  it('preserves throwing coercive builtin calls with optimization', () => {
+    const cases = [
+      {
+        name: 'Number',
+        setup: `const value = { valueOf() { throw new Error('number boom') } }`,
+        expression: 'Number(value)',
+      },
+      {
+        name: 'String',
+        setup: `const value = { toString() { throw new Error('string boom') } }`,
+        expression: 'String(value)',
+      },
+      {
+        name: 'parseInt',
+        setup: `const value = { toString() { throw new Error('parseInt boom') } }`,
+        expression: 'parseInt(value)',
+      },
+      {
+        name: 'parseFloat',
+        setup: `const value = { toString() { throw new Error('parseFloat boom') } }`,
+        expression: 'parseFloat(value)',
+      },
+      {
+        name: 'Math.abs',
+        setup: `const value = { valueOf() { throw new Error('math boom') } }`,
+        expression: 'Math.abs(value)',
+      },
+      {
+        name: 'BigInt',
+        setup: '',
+        expression: `BigInt('nope')`,
+      },
+    ]
+
+    for (const item of cases) {
+      expect(() =>
+        compileAndRunHook<number>(
+          `
+            export function useRun() {
+              ${item.setup}
+              const unused = ${item.expression}
+              return 1
+            }
+          `,
+          'useRun',
+          { optimize: true },
+        ),
+      ).toThrow()
+    }
+  })
+
+  it('does not merge coercive builtin calls with object operands', () => {
+    const cases: Array<{
+      name: string
+      method: 'toString' | 'valueOf'
+      expression: string
+      expected: unknown[]
+    }> = [
+      {
+        name: 'Number',
+        method: 'valueOf',
+        expression: 'Number(value)',
+        expected: [1, 2, 2],
+      },
+      {
+        name: 'String',
+        method: 'toString',
+        expression: 'String(value)',
+        expected: ['1', '2', 2],
+      },
+      {
+        name: 'parseInt',
+        method: 'toString',
+        expression: 'parseInt(value)',
+        expected: [1, 2, 2],
+      },
+      {
+        name: 'parseFloat',
+        method: 'toString',
+        expression: 'parseFloat(value)',
+        expected: [1, 2, 2],
+      },
+      {
+        name: 'Math.abs',
+        method: 'valueOf',
+        expression: 'Math.abs(value)',
+        expected: [1, 2, 2],
+      },
+      {
+        name: 'BigInt',
+        method: 'valueOf',
+        expression: 'BigInt(value)',
+        expected: [1n, 2n, 2],
+      },
+    ]
+
+    for (const item of cases) {
+      const result = compileAndRunHook<unknown[]>(
+        `
+          export function useRun() {
+            ;(globalThis as any).__fictCoerceCount = 0
+            const value = {
+              ${item.method}() {
+                ;(globalThis as any).__fictCoerceCount += 1
+                return (globalThis as any).__fictCoerceCount
+              },
+            }
+            const a = ${item.expression}
+            const b = ${item.expression}
+            return [a, b, (globalThis as any).__fictCoerceCount]
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      )
+
+      expect(result, item.name).toEqual(item.expected)
+    }
+  })
+
   it('preserves untagged template cooked escapes with optimization', () => {
     const result = compileAndRunHook<string>(
       `
