@@ -177,7 +177,9 @@ export function resolveNamespaceContext(
 
 function isStaticValue(expr: Expression | null): expr is Expression & { kind: 'Literal' } {
   if (!expr) return false
-  return expr.kind === 'Literal'
+  if (expr.kind !== 'Literal') return false
+  const { value } = expr
+  return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
 }
 
 function escapeHtmlAttributeValue(value: string): string {

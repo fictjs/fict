@@ -593,6 +593,48 @@ describe('compiled templates DOM integration', () => {
     expect(() => mod.mount(container)).toThrow(TypeError)
   })
 
+  it('binds BigInt and RegExp literal JSX attributes instead of dropping them', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return (
+          <section>
+            <div data-testid="bigint" data-x={1n} title={1n} />
+            <div data-testid="regexp" data-r={/x/g} />
+            <input data-testid="input-bigint" value={1n} />
+            <input data-testid="input-regexp" value={/x/g} />
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const bigint = container.querySelector('[data-testid="bigint"]') as HTMLDivElement
+    const regexp = container.querySelector('[data-testid="regexp"]') as HTMLDivElement
+    const inputBigint = container.querySelector('[data-testid="input-bigint"]') as HTMLInputElement
+    const inputRegexp = container.querySelector('[data-testid="input-regexp"]') as HTMLInputElement
+
+    expect(bigint.getAttribute('data-x')).toBe('1')
+    expect(bigint.getAttribute('title')).toBe('1')
+    expect(regexp.getAttribute('data-r')).toBe('/x/g')
+    expect(inputBigint.value).toBe('1')
+    expect(inputRegexp.value).toBe('/x/g')
+
+    teardown()
+    container.remove()
+  })
+
   it('applies intrinsic spread in fine-grained mode and preserves attribute/event ordering', async () => {
     const source = `
       import { $state, render } from 'fict'
