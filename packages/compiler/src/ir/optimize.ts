@@ -1875,104 +1875,299 @@ function getMemberBaseIdentifier(expr: Expression): Identifier | null {
 
 function collectWriteTargets(expr: Expression): Set<string> {
   const writes = new Set<string>()
-  const visit = (node: Expression): void => {
-    switch (node.kind) {
-      case 'AssignmentExpression': {
-        const left = node.left as Expression
-        if (left.kind === 'Identifier') {
-          writes.add(left.name)
-        } else if (left.kind === 'MemberExpression' || left.kind === 'OptionalMemberExpression') {
-          const base = getMemberBaseIdentifier(left)
-          if (base) writes.add(base.name)
-          visit(left.object as Expression)
-          if (left.computed) visit(left.property as Expression)
-        } else {
-          visit(left)
-        }
-        visit(node.right as Expression)
-        return
-      }
-      case 'UpdateExpression': {
-        const arg = node.argument as Expression
-        if (arg.kind === 'Identifier') {
-          writes.add(arg.name)
+  const addWrite = (name: string, shadowed: Set<string>): void => {
+    if (!shadowed.has(getSSABaseName(name))) {
+      writes.add(name)
+    }
+  }
+  const collectFromBabelNode = (node: t.Node | null | undefined, shadowed: Set<string>): void => {
+    if (!node) return
+    if (t.isAssignmentExpression(node)) {
+      collectFromBabelAssignmentTarget(node.left, shadowed)
+      collectFromBabelNode(node.right, shadowed)
+      return
+    }
+    if (t.isUpdateExpression(node)) {
+      collectFromBabelAssignmentTarget(node.argument, shadowed)
+      return
+    }
+    if (t.isCallExpression(node) || t.isOptionalCallExpression(node) || t.isNewExpression(node)) {
+      collectFromBabelNode(node.callee, shadowed)
+      node.arguments.forEach(arg => collectFromBabelNode(arg, shadowed))
+      return
+    }
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      collectFromBabelNode(node.object, shadowed)
+      if (node.computed) collectFromBabelNode(node.property, shadowed)
+      return
+    }
+    if (t.isBinaryExpression(node) || t.isLogicalExpression(node)) {
+      collectFromBabelNode(node.left, shadowed)
+      collectFromBabelNode(node.right, shadowed)
+      return
+    }
+    if (t.isUnaryExpression(node) || t.isAwaitExpression(node) || t.isSpreadElement(node)) {
+      collectFromBabelNode(node.argument, shadowed)
+      return
+    }
+    if (t.isConditionalExpression(node)) {
+      collectFromBabelNode(node.test, shadowed)
+      collectFromBabelNode(node.consequent, shadowed)
+      collectFromBabelNode(node.alternate, shadowed)
+      return
+    }
+    if (t.isSequenceExpression(node)) {
+      node.expressions.forEach(item => collectFromBabelNode(item, shadowed))
+      return
+    }
+    if (t.isArrayExpression(node)) {
+      node.elements.forEach(item => collectFromBabelNode(item, shadowed))
+      return
+    }
+    if (t.isObjectExpression(node)) {
+      node.properties.forEach(prop => {
+        if (t.isSpreadElement(prop)) {
+          collectFromBabelNode(prop.argument, shadowed)
           return
         }
-        if (arg.kind === 'MemberExpression' || arg.kind === 'OptionalMemberExpression') {
-          const base = getMemberBaseIdentifier(arg)
-          if (base) {
-            writes.add(base.name)
-          }
-          visit(arg.object as Expression)
-          if (arg.computed) visit(arg.property as Expression)
-          return
+        if (prop.computed) collectFromBabelNode(prop.key, shadowed)
+        if (t.isObjectProperty(prop)) {
+          collectFromBabelNode(prop.value, shadowed)
+        } else if (t.isObjectMethod(prop)) {
+          collectFromRawParams(prop.params, shadowed)
         }
-        visit(arg)
-        return
+      })
+      return
+    }
+    if (t.isTemplateLiteral(node)) {
+      node.expressions.forEach(item => collectFromBabelNode(item, shadowed))
+      return
+    }
+    if (t.isTaggedTemplateExpression(node)) {
+      collectFromBabelNode(node.tag, shadowed)
+      node.quasi.expressions.forEach(item => collectFromBabelNode(item, shadowed))
+      return
+    }
+    if (t.isYieldExpression(node)) {
+      collectFromBabelNode(node.argument, shadowed)
+    }
+  }
+  const collectFromBabelAssignmentTarget = (
+    node: t.Node | null | undefined,
+    shadowed: Set<string>,
+  ): void => {
+    if (!node) return
+    if (t.isIdentifier(node)) {
+      addWrite(node.name, shadowed)
+      return
+    }
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      const base = collectBabelMemberBaseIdentifier(node)
+      if (base) addWrite(base, shadowed)
+      collectFromBabelNode(node.object, shadowed)
+      if (node.computed) collectFromBabelNode(node.property, shadowed)
+      return
+    }
+    collectFromBabelNode(node, shadowed)
+  }
+  const collectFromRawParams = (params: t.Node[] | undefined, shadowed: Set<string>): void => {
+    params?.forEach(param => {
+      if (t.isAssignmentPattern(param)) {
+        collectFromBabelNode(param.right, shadowed)
       }
-      case 'CallExpression':
-      case 'OptionalCallExpression':
-        visit(node.callee as Expression)
-        node.arguments.forEach(arg => visit(arg as Expression))
-        return
-      case 'MemberExpression':
-      case 'OptionalMemberExpression':
-        visit(node.object as Expression)
-        if (node.computed) visit(node.property as Expression)
-        return
-      case 'BinaryExpression':
-      case 'LogicalExpression':
-        visit(node.left as Expression)
-        visit(node.right as Expression)
-        return
-      case 'UnaryExpression':
-        visit(node.argument as Expression)
-        return
-      case 'ConditionalExpression':
-        visit(node.test as Expression)
-        visit(node.consequent as Expression)
-        visit(node.alternate as Expression)
-        return
-      case 'ArrayExpression':
-        node.elements.forEach(el => {
-          if (el) visit(el as Expression)
-        })
-        return
-      case 'ObjectExpression':
-        node.properties.forEach(prop => {
-          if (prop.kind === 'SpreadElement') {
-            visit(prop.argument as Expression)
-          } else {
-            if (prop.computed) visit(prop.key as Expression)
-            visit(prop.value as Expression)
+    })
+  }
+  const visitBlocks = (blocks: BasicBlock[], shadowed: Set<string>): void => {
+    const localShadowed = new Set(shadowed)
+    collectDeclaredBasesInBlocks(blocks).forEach(name => localShadowed.add(name))
+
+    for (const block of blocks) {
+      for (const instr of block.instructions) {
+        if (instr.kind === 'Assign') {
+          if (!instr.declarationKind) {
+            addWrite(instr.target.name, localShadowed)
           }
+          visit(instr.value, localShadowed)
+        } else if (instr.kind === 'Expression') {
+          visit(instr.value, localShadowed)
+        }
+      }
+      visitTerminator(block.terminator, localShadowed)
+    }
+  }
+  const visitTerminator = (term: Terminator, shadowed: Set<string>): void => {
+    switch (term.kind) {
+      case 'Return':
+        if (term.argument) visit(term.argument, shadowed)
+        return
+      case 'Throw':
+        visit(term.argument, shadowed)
+        return
+      case 'Branch':
+        visit(term.test, shadowed)
+        return
+      case 'Switch':
+        visit(term.discriminant, shadowed)
+        term.cases.forEach(c => {
+          if (c.test) visit(c.test, shadowed)
         })
         return
-      case 'TemplateLiteral':
-        node.expressions.forEach(e => visit(e as Expression))
+      case 'ForOf':
+        if (term.leftKind === 'assignment') addWrite(term.variable, shadowed)
+        visit(term.iterable, shadowed)
         return
-      case 'SpreadElement':
-        visit(node.argument as Expression)
-        return
-      case 'SequenceExpression':
-        node.expressions.forEach(e => visit(e as Expression))
-        return
-      case 'AwaitExpression':
-        visit(node.argument as Expression)
-        return
-      case 'NewExpression':
-        visit(node.callee as Expression)
-        node.arguments.forEach(arg => visit(arg as Expression))
-        return
-      case 'ArrowFunction':
-      case 'FunctionExpression':
+      case 'ForIn':
+        if (term.leftKind === 'assignment') addWrite(term.variable, shadowed)
+        visit(term.object, shadowed)
         return
       default:
         return
     }
   }
-  visit(expr)
+  const visit = (node: Expression, shadowed: Set<string>): void => {
+    switch (node.kind) {
+      case 'AssignmentExpression': {
+        const left = node.left as Expression
+        if (left.kind === 'Identifier') {
+          addWrite(left.name, shadowed)
+        } else if (left.kind === 'MemberExpression' || left.kind === 'OptionalMemberExpression') {
+          const base = getMemberBaseIdentifier(left)
+          if (base) addWrite(base.name, shadowed)
+          visit(left.object as Expression, shadowed)
+          if (left.computed) visit(left.property as Expression, shadowed)
+        } else {
+          visit(left, shadowed)
+        }
+        visit(node.right as Expression, shadowed)
+        return
+      }
+      case 'UpdateExpression': {
+        const arg = node.argument as Expression
+        if (arg.kind === 'Identifier') {
+          addWrite(arg.name, shadowed)
+          return
+        }
+        if (arg.kind === 'MemberExpression' || arg.kind === 'OptionalMemberExpression') {
+          const base = getMemberBaseIdentifier(arg)
+          if (base) {
+            addWrite(base.name, shadowed)
+          }
+          visit(arg.object as Expression, shadowed)
+          if (arg.computed) visit(arg.property as Expression, shadowed)
+          return
+        }
+        visit(arg, shadowed)
+        return
+      }
+      case 'CallExpression':
+      case 'OptionalCallExpression':
+        visit(node.callee as Expression, shadowed)
+        node.arguments.forEach(arg => visit(arg as Expression, shadowed))
+        return
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        visit(node.object as Expression, shadowed)
+        if (node.computed) visit(node.property as Expression, shadowed)
+        return
+      case 'BinaryExpression':
+      case 'LogicalExpression':
+        visit(node.left as Expression, shadowed)
+        visit(node.right as Expression, shadowed)
+        return
+      case 'UnaryExpression':
+        visit(node.argument as Expression, shadowed)
+        return
+      case 'ConditionalExpression':
+        visit(node.test as Expression, shadowed)
+        visit(node.consequent as Expression, shadowed)
+        visit(node.alternate as Expression, shadowed)
+        return
+      case 'ArrayExpression':
+        node.elements.forEach(el => {
+          if (el) visit(el as Expression, shadowed)
+        })
+        return
+      case 'ObjectExpression':
+        node.properties.forEach(prop => {
+          if (prop.kind === 'SpreadElement') {
+            visit(prop.argument as Expression, shadowed)
+          } else {
+            if (prop.computed) visit(prop.key as Expression, shadowed)
+            visit(prop.value as Expression, shadowed)
+          }
+        })
+        return
+      case 'TemplateLiteral':
+        node.expressions.forEach(e => visit(e as Expression, shadowed))
+        return
+      case 'SpreadElement':
+        visit(node.argument as Expression, shadowed)
+        return
+      case 'SequenceExpression':
+        node.expressions.forEach(e => visit(e as Expression, shadowed))
+        return
+      case 'AwaitExpression':
+        visit(node.argument as Expression, shadowed)
+        return
+      case 'NewExpression':
+        visit(node.callee as Expression, shadowed)
+        node.arguments.forEach(arg => visit(arg as Expression, shadowed))
+        return
+      case 'ArrowFunction': {
+        const paramShadowed = new Set(shadowed)
+        node.params.forEach(param => paramShadowed.add(getSSABaseName(param.name)))
+        collectFromRawParams(node.rawParams, paramShadowed)
+        if (node.isExpression) {
+          visit(node.body as Expression, paramShadowed)
+        } else {
+          visitBlocks(node.body as BasicBlock[], paramShadowed)
+        }
+        return
+      }
+      case 'FunctionExpression': {
+        const paramShadowed = new Set(shadowed)
+        if (node.name) paramShadowed.add(getSSABaseName(node.name))
+        node.params.forEach(param => paramShadowed.add(getSSABaseName(param.name)))
+        collectFromRawParams(node.rawParams, paramShadowed)
+        visitBlocks(node.body, paramShadowed)
+        return
+      }
+      default:
+        return
+    }
+  }
+  visit(expr, new Set())
   return writes
+}
+
+function collectBabelMemberBaseIdentifier(
+  expr: t.MemberExpression | t.OptionalMemberExpression,
+): string | null {
+  let current: t.Expression | t.Super = expr.object
+  while (t.isMemberExpression(current) || t.isOptionalMemberExpression(current)) {
+    current = current.object
+  }
+  return t.isIdentifier(current) ? current.name : null
+}
+
+function collectDeclaredBasesInBlocks(blocks: BasicBlock[]): Set<string> {
+  const declared = new Set<string>()
+  for (const block of blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' && instr.declarationKind) {
+        declared.add(getSSABaseName(instr.target.name))
+      }
+    }
+    const term = block.terminator
+    if (term.kind === 'ForOf' || term.kind === 'ForIn') {
+      if (term.leftKind !== 'assignment') {
+        declared.add(getSSABaseName(term.variable))
+      }
+    } else if (term.kind === 'Try' && term.catchParam) {
+      declared.add(getSSABaseName(term.catchParam))
+    }
+  }
+  return declared
 }
 
 function collectMemberCallTargets(expr: Expression): Set<string> {

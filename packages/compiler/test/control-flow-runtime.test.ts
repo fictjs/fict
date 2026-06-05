@@ -361,6 +361,117 @@ describe('control flow runtime regressions', () => {
     })
   }
 
+  it('preserves nested function writes to outer locals with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          const fn = () => {
+            x = 1
+          }
+          fn()
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('preserves synchronous array callback writes to outer locals with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          ;[1].map(n => {
+            x = n
+          })
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('preserves object-hosted callback writes to outer locals with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          const runner = {
+            run(cb) {
+              cb(1)
+            },
+          }
+          runner.run(n => {
+            x = n
+          })
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('preserves default-parameter writes to outer locals with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          const fn = (value = (x = 1)) => value
+          fn()
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('keeps same-name callback parameters shadowed during optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          ;[1].map(x => {
+            x = 2
+            return x
+          })
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(0)
+  })
+
   it('preserves immediate do-while break before trailing return', () => {
     const result = compileAndRunHook<number>(
       `
