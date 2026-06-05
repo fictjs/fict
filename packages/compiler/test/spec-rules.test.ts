@@ -1348,7 +1348,7 @@ describe('Rule L: Getter cache in same sync block', () => {
 })
 
 describe('Rule C: memoization + control-flow re-execution', () => {
-  it('JSX usage inlines derived values by default', () => {
+  it('JSX usage binds derived values by default', () => {
     const output = transform(`
       import { $state } from 'fict'
       function Component() {
@@ -1357,7 +1357,8 @@ describe('Rule C: memoization + control-flow re-execution', () => {
         return <div>{doubled}</div>
       }
     `)
-    expect(output).toContain('bindText')
+    expect(output).toContain('insertBetween')
+    expect(output).toContain('doubled()')
     expect(output).toContain('count() * 2')
   })
 

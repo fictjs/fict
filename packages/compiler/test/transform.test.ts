@@ -100,7 +100,7 @@ describe('Fict Compiler - Basic Transforms', () => {
   })
 
   describe('Derived values', () => {
-    it('inlines derived const by default', () => {
+    it('memoizes derived const by default', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {
@@ -110,11 +110,12 @@ describe('Fict Compiler - Basic Transforms', () => {
         }
       `
       const output = transform(input)
-      expect(output).not.toContain('__fictUseMemo')
+      expect(output).toContain('__fictUseMemo')
       expect(output).toContain('count() * 2')
+      expect(output).toContain('return doubled()')
     })
 
-    it('inlines chained derived values by default', () => {
+    it('memoizes chained derived values by default', () => {
       const input = `
         import { $state } from 'fict'
         function Component() {
@@ -126,8 +127,9 @@ describe('Fict Compiler - Basic Transforms', () => {
     }
   `
       const output = transform(input)
-      expect(output).not.toContain('__fictUseMemo')
+      expect(output).toContain('__fictUseMemo')
       expect(output).toContain('console.log("fourfold"')
+      expect(output).toContain('fourfold()')
       expect(output).toContain('count()')
     })
 
