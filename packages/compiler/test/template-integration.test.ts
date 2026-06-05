@@ -1996,6 +1996,76 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('wires namespaced on: event handlers in fine-grained mode', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        return <button data-id="btn" on:click={() => calls.push('click')}>click</button>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      calls: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const button = container.querySelector('[data-id="btn"]') as HTMLButtonElement
+    button.click()
+    await flushUpdates()
+
+    expect(mod.calls).toEqual(['click'])
+
+    teardown()
+    container.remove()
+  })
+
+  it('wires namespaced oncapture: event handlers in fine-grained mode', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        return (
+          <div data-id="outer" oncapture:click={() => calls.push('capture')}>
+            <button data-id="btn" on:click={() => calls.push('bubble')}>click</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      calls: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const button = container.querySelector('[data-id="btn"]') as HTMLButtonElement
+    button.click()
+    await flushUpdates()
+
+    expect(mod.calls).toEqual(['capture', 'bubble'])
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps keyed list DOM in sync in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render } from 'fict'

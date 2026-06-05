@@ -71,6 +71,20 @@ export function normalizeHIRAttrName(name: string, namespace: NamespaceContext =
   return name
 }
 
+function parseNamespacedEventName(name: string): { eventName: string; capture: boolean } | null {
+  if (name.startsWith('oncapture:') && name.length > 'oncapture:'.length) {
+    return { eventName: name.slice('oncapture:'.length), capture: true }
+  }
+  if (name.startsWith('on:') && name.length > 'on:'.length) {
+    return { eventName: name.slice('on:'.length), capture: false }
+  }
+  return null
+}
+
+function isCamelCaseEventName(name: string): boolean {
+  return name.startsWith('on') && name.length > 2 && /^[A-Z]$/.test(name[2] ?? '')
+}
+
 /**
  * Resolve namespace context based on tag name and parent context.
  * - 'svg' enters SVG namespace
@@ -194,9 +208,10 @@ export function extractHIRStaticHtml(
     }
 
     // Event handlers are always dynamic
-    if (name.startsWith('on') && name.length > 2 && name[2] === name[2]?.toUpperCase()) {
-      let eventName = name.slice(2)
-      let capture = false
+    const namespacedEvent = parseNamespacedEventName(name)
+    if (namespacedEvent || isCamelCaseEventName(name)) {
+      let eventName = namespacedEvent?.eventName ?? name.slice(2)
+      let capture = namespacedEvent?.capture ?? false
       let passive = false
       let once = false
 
