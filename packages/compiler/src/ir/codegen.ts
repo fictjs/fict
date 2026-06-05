@@ -3439,11 +3439,8 @@ function lowerJSXElement(
   const { t } = ctx
 
   if (jsx.isComponent) {
-    // Check if this is a Fragment component
-    const isFragment =
-      typeof jsx.tagName === 'object' &&
-      jsx.tagName.kind === 'Identifier' &&
-      jsx.tagName.name === 'Fragment'
+    // Only source fragment syntax (`<>`) uses the built-in Fragment path.
+    const isFragment = jsx.isFragmentSyntax === true
 
     if (isFragment) {
       // Fragment - create VNode directly for runtime to handle

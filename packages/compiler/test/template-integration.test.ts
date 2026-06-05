@@ -278,6 +278,40 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('passes props to local components named Fragment', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      const Fragment = (props: { foo?: string; children?: unknown }) => (
+        <section data-id="local-fragment">
+          {props.foo}:{props.children}
+        </section>
+      )
+
+      export function App() {
+        return <Fragment foo="bar">x</Fragment>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(container.querySelector('[data-id="local-fragment"]')?.textContent).toBe('bar:x')
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves runtime map() callback errors instead of crashing during compilation', () => {
     const source = `
       import { render } from 'fict'

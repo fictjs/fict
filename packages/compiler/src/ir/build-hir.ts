@@ -3524,6 +3524,7 @@ export function convertExpression(
       kind: 'JSXElement',
       tagName: { kind: 'Identifier', name: 'Fragment', loc: getLoc(node) } as HIdentifier,
       isComponent: true,
+      isFragmentSyntax: true,
       attributes: [],
       children,
       loc: getLoc(node),

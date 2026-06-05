@@ -510,6 +510,8 @@ export interface JSXElementExpression extends SourceInfo {
   kind: 'JSXElement'
   tagName: string | Expression // string for intrinsic, Expression for component
   isComponent: boolean
+  /** True only for source JSX fragment syntax (`<>...</>`). */
+  isFragmentSyntax?: boolean | undefined
   attributes: JSXAttribute[]
   children: JSXChild[]
 }
