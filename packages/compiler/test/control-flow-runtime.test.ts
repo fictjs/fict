@@ -600,6 +600,109 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(1)
   })
 
+  it('preserves Object.assign mutations of const object fields with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          const obj = { a: 1 }
+          Object.assign(obj, { a: 2 })
+          return obj.a
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves Object.defineProperty mutations of const object fields with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          const obj = { a: 1 }
+          Object.defineProperty(obj, 'a', { value: 2 })
+          return obj.a
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves Reflect.set mutations of const object fields with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          const obj = { a: 1 }
+          Reflect.set(obj, 'a', 2)
+          return obj.a
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves unknown call mutations of const object fields with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        function mutate(target) {
+          target.a = 2
+        }
+
+        export function useRun() {
+          let count = $state(0)
+          const obj = { a: 1 }
+          mutate(obj)
+          return obj.a
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves unknown call mutations of const array fields with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        function mutate(target) {
+          target.push(2)
+        }
+
+        export function useRun() {
+          let count = $state(0)
+          const arr = [1]
+          mutate(arr)
+          return arr.length
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(2)
+  })
+
   it('preserves object destructuring assignment order in reactive hooks', () => {
     const result = compileAndRunHook<number>(
       `

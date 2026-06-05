@@ -988,8 +988,8 @@ function optimizeReactiveBlock(
         deleteByBase(constObjects, name)
         deleteByBase(constArrays, name)
       }
-      const memberCalls = collectMemberCallTargets(instr.value)
-      for (const name of memberCalls) {
+      const potentialMutations = collectPotentialMutationTargets(instr.value)
+      for (const name of potentialMutations) {
         deleteByBase(constObjects, name)
         deleteByBase(constArrays, name)
       }
@@ -1052,8 +1052,8 @@ function optimizeReactiveBlock(
         deleteByBase(constObjects, name)
         deleteByBase(constArrays, name)
       }
-      const memberCalls = collectMemberCallTargets(instr.value)
-      for (const name of memberCalls) {
+      const potentialMutations = collectPotentialMutationTargets(instr.value)
+      for (const name of potentialMutations) {
         deleteByBase(constObjects, name)
         deleteByBase(constArrays, name)
       }
@@ -1193,7 +1193,7 @@ function eliminateCrossBlockCSE(
 
         const writes = new Set<string>([target])
         collectWriteTargets(value).forEach(name => writes.add(name))
-        collectMemberCallTargets(value).forEach(name => writes.add(name))
+        collectPotentialMutationTargets(value).forEach(name => writes.add(name))
         invalidateCrossBlockCSE(cseMap, writes)
 
         if (
@@ -1210,7 +1210,7 @@ function eliminateCrossBlockCSE(
         }
       } else if (instr.kind === 'Expression') {
         const writes = collectWriteTargets(instr.value)
-        collectMemberCallTargets(instr.value).forEach(name => writes.add(name))
+        collectPotentialMutationTargets(instr.value).forEach(name => writes.add(name))
         invalidateCrossBlockCSE(cseMap, writes)
       } else if (instr.kind === 'Phi') {
         const writes = new Set<string>([instr.target.name])
@@ -2414,8 +2414,50 @@ function collectDeclaredBasesInBlocks(blocks: BasicBlock[]): Set<string> {
   return declared
 }
 
-function collectMemberCallTargets(expr: Expression): Set<string> {
+function collectPotentialMutationTargets(expr: Expression): Set<string> {
   const targets = new Set<string>()
+  const collectEscapedArgument = (node: Expression): void => {
+    switch (node.kind) {
+      case 'Identifier':
+        targets.add(node.name)
+        return
+      case 'ConditionalExpression':
+        collectEscapedArgument(node.consequent as Expression)
+        collectEscapedArgument(node.alternate as Expression)
+        return
+      case 'LogicalExpression':
+        collectEscapedArgument(node.left as Expression)
+        collectEscapedArgument(node.right as Expression)
+        return
+      case 'SequenceExpression': {
+        const last = node.expressions[node.expressions.length - 1]
+        if (last) collectEscapedArgument(last as Expression)
+        return
+      }
+      case 'AssignmentExpression':
+        collectEscapedArgument(node.right as Expression)
+        return
+      case 'ArrayExpression':
+        node.elements.forEach(el => {
+          if (el) collectEscapedArgument(el as Expression)
+        })
+        return
+      case 'ObjectExpression':
+        node.properties.forEach(prop => {
+          if (prop.kind === 'SpreadElement') {
+            collectEscapedArgument(prop.argument as Expression)
+          } else {
+            collectEscapedArgument(prop.value as Expression)
+          }
+        })
+        return
+      case 'SpreadElement':
+        collectEscapedArgument(node.argument as Expression)
+        return
+      default:
+        return
+    }
+  }
   const visit = (node: Expression): void => {
     switch (node.kind) {
       case 'CallExpression':
@@ -2425,10 +2467,18 @@ function collectMemberCallTargets(expr: Expression): Set<string> {
           const base = getMemberBaseIdentifier(callee)
           if (base) targets.add(base.name)
         }
+        if (!node.pure) {
+          node.arguments.forEach(arg => collectEscapedArgument(arg as Expression))
+        }
         visit(callee)
         node.arguments.forEach(arg => visit(arg as Expression))
         return
       }
+      case 'NewExpression':
+        node.arguments.forEach(arg => collectEscapedArgument(arg as Expression))
+        visit(node.callee as Expression)
+        node.arguments.forEach(arg => visit(arg as Expression))
+        return
       case 'MemberExpression':
       case 'OptionalMemberExpression':
         visit(node.object as Expression)
@@ -2473,10 +2523,6 @@ function collectMemberCallTargets(expr: Expression): Set<string> {
         return
       case 'AwaitExpression':
         visit(node.argument as Expression)
-        return
-      case 'NewExpression':
-        visit(node.callee as Expression)
-        node.arguments.forEach(arg => visit(arg as Expression))
         return
       case 'AssignmentExpression':
         visit(node.left as Expression)
