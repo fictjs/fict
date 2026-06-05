@@ -23,6 +23,11 @@ type ConstArrayElements = Map<number, ConstantValue>
 
 const UNKNOWN_CONST = Symbol('unknown-const')
 
+const constantValuesEqual = (left: ConstantValue | undefined, right: ConstantValue): boolean => {
+  if (typeof left === 'number' && typeof right === 'number') return Object.is(left, right)
+  return left === right
+}
+
 interface DefLocation {
   blockId: number
   instrIndex: number
@@ -2936,7 +2941,7 @@ function computeConstantMap(fn: HIRFunction): Map<string, ConstantValue> {
           const value = evaluateConstant(instr.value, constants)
           if (value !== UNKNOWN_CONST) {
             const existing = constants.get(instr.target.name)
-            if (!constants.has(instr.target.name) || existing !== value) {
+            if (!constants.has(instr.target.name) || !constantValuesEqual(existing, value)) {
               constants.set(instr.target.name, value as ConstantValue)
               changed = true
             }
@@ -2945,7 +2950,7 @@ function computeConstantMap(fn: HIRFunction): Map<string, ConstantValue> {
           const resolved = resolvePhiConstant(instr, constants)
           if (resolved !== UNKNOWN_CONST) {
             const existing = constants.get(instr.target.name)
-            if (!constants.has(instr.target.name) || existing !== resolved) {
+            if (!constants.has(instr.target.name) || !constantValuesEqual(existing, resolved)) {
               constants.set(instr.target.name, resolved as ConstantValue)
               changed = true
             }
@@ -2970,7 +2975,7 @@ function resolvePhiConstant(
       candidate = value
       continue
     }
-    if (candidate !== value) return UNKNOWN_CONST
+    if (!constantValuesEqual(candidate, value)) return UNKNOWN_CONST
   }
   return candidate
 }

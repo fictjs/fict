@@ -1726,7 +1726,12 @@ function lowerExpressionImpl(
       if (expr.value === null) return t.nullLiteral()
       if (expr.value === undefined) return t.identifier('undefined')
       if (typeof expr.value === 'string') return t.stringLiteral(expr.value)
-      if (typeof expr.value === 'number') return t.numericLiteral(expr.value)
+      if (typeof expr.value === 'number') {
+        if (Object.is(expr.value, -0)) {
+          return t.unaryExpression('-', t.numericLiteral(0), true)
+        }
+        return t.numericLiteral(expr.value)
+      }
       if (typeof expr.value === 'boolean') return t.booleanLiteral(expr.value)
       if (typeof expr.value === 'bigint') return t.bigIntLiteral(expr.value.toString())
       if (expr.value instanceof RegExp) {
