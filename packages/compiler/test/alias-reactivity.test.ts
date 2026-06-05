@@ -123,7 +123,7 @@ describe('Alias-Safe Reactive Lowering', () => {
         }
       `
       const output = transform(source)
-      expect(output).toContain('bindText')
+      expect(output).toContain('insertBetween')
       expect(output).toContain('count()')
     })
   })

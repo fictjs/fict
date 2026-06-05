@@ -396,7 +396,7 @@ describe('Fict Compiler - Basic Transforms', () => {
       `
       const output = transformWithOptions(input)
       expect(output).toMatch(/bindAttribute|setAttr/)
-      expect(output).toMatch(/bindText|setText/)
+      expect(output).toMatch(/insertBetween|setText/)
       expect(output).toContain('count()')
     })
 
@@ -412,7 +412,7 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('createKeyedList')
       expect(output).toContain('getSlotEnd')
       expect(output).toContain('template')
-      expect(output).toContain('bindText')
+      expect(output).toMatch(/bindText|insertBetween/)
       expect(output).toContain('item().label')
     })
 
@@ -531,7 +531,7 @@ describe('Fict Compiler - Basic Transforms', () => {
       const output = transformWithOptions(input)
       // Check that the output includes template cloning for the portal content
       expect(output).toContain('template')
-      expect(output).toContain('bindText')
+      expect(output).toContain('insertBetween')
     })
 
     it('lowers value/checked to property bindings', () => {

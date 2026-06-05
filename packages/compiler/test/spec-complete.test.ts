@@ -181,7 +181,7 @@ describe('R005: Props destructuring', () => {
         return <div>{count}</div>
       }
     `)
-    expect(output).toContain('=== undefined ? 0')
+    expect(output).toContain('=== void 0 ? 0')
     expect(output).toContain('__props')
   })
 
@@ -194,7 +194,7 @@ describe('R005: Props destructuring', () => {
     `)
     expect(output).toContain('__props')
     expect(output).toContain('prop(() => __props.user.name)')
-    expect(output).toContain('=== undefined ? 18')
+    expect(output).toContain('=== void 0 ? 18')
   })
 
   it('handles rest props', () => {

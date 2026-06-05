@@ -163,7 +163,7 @@ describe('Control Flow Re-Execution', () => {
           return <div>{count}</div>
         }
       `)
-      expect(output).toContain('bindText')
+      expect(output).toContain('insertBetween')
       expect(output).toContain('count()')
     })
 

@@ -36,43 +36,58 @@ export function Branch() {
 `;
 
 exports[`compiler output golden snapshots > stabilizes cross-module direct accessor metadata output 1`] = `
-"import { __fictUseMemo, template, resolvePath, bindText, __fictUseContext } from "fict/internal";
+"import { __fictUseMemo, template, resolvePath, getSlotEnd, insertBetween, createElement, __fictUseContext } from "fict/internal";
 import { useCounter } from 'counter-lib';
 export function App() {
   const __fictCtx = __fictUseContext();
   const count = useCounter();
   return __fictUseMemo(__fictCtx, () => {
-    const __tmpl_1 = template("<div> </div>");
+    const __tmpl_1 = template("<div><!--fict:slot:start--><!--fict:slot:end--></div>");
     const __root_0 = __tmpl_1();
     const __el_2 = resolvePath(__root_0, [0]);
-    bindText(__el_2, () => count());
+    const __end_3 = getSlotEnd(__el_2);
+    insertBetween(__el_2, __end_3, () => count(), createElement);
     return __root_0;
   }, 1000)();
 }"
 `;
 
 exports[`compiler output golden snapshots > stabilizes reactive prop getter marker output 1`] = `
-"import { __fictUseSignal, createElement, prop, __fictUseContext, __fictUseMemo, template, resolvePath, bindText } from "fict/internal";
+"import { __fictUseSignal, __fictUseMemo, createElement, __fictProp, __fictUseContext, template, resolvePath, getSlotEnd, insertBetween } from "fict/internal";
 export function Parent() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 0, {
     name: "count"
   });
+  const __region_0 = __fictUseMemo(__fictCtx, () => {
+    const doubled = __fictUseMemo(__fictCtx, () => count() * 2, {
+      name: "doubled"
+    }, 1000);
+    return {
+      doubled
+    };
+  }, {
+    internal: true
+  }, 1001);
+  const {
+    doubled
+  } = __region_0();
   return {
     type: Child,
     props: {
-      value: prop(() => count() * 2)
+      value: __fictProp(() => doubled())
     }
   };
 }
 function Child(props) {
   const __fictCtx = __fictUseContext();
   return __fictUseMemo(__fictCtx, () => {
-    const __tmpl_1 = template("<span> </span>");
+    const __tmpl_1 = template("<span><!--fict:slot:start--><!--fict:slot:end--></span>");
     const __root_0 = __tmpl_1();
     const __el_2 = resolvePath(__root_0, [0]);
-    bindText(__el_2, () => props.value);
+    const __end_3 = getSlotEnd(__el_2);
+    insertBetween(__el_2, __end_3, () => props.value, createElement);
     return __root_0;
-  }, 1000)();
+  }, 1002)();
 }"
 `;

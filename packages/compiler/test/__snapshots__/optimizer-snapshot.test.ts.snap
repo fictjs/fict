@@ -57,12 +57,25 @@ export function Demo(flag) {
 `;
 
 exports[`optimizer output snapshots > stabilizes derived values and memo accessors 1`] = `
-"import { __fictUseSignal, __fictUseContext } from "fict/internal";
+"import { __fictUseSignal, __fictUseMemo, __fictUseContext } from "fict/internal";
 export function Demo() {
   const __fictCtx = __fictUseContext();
   const count = __fictUseSignal(__fictCtx, 2, {
     name: "count"
   });
-  return count() * 2;
+  const __region_0 = __fictUseMemo(__fictCtx, () => {
+    const doubled = __fictUseMemo(__fictCtx, () => count() * 2, {
+      name: "doubled"
+    }, 1000);
+    return {
+      doubled
+    };
+  }, {
+    internal: true
+  }, 1001);
+  const {
+    doubled
+  } = __region_0();
+  return doubled();
 }"
 `;

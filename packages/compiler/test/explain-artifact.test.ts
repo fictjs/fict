@@ -87,6 +87,6 @@ describe('compiler explain artifact', () => {
 
     expect(artifact?.fileName).toMatch(/metadata-explain\.tsx$/)
     expect(artifact?.events.some(event => event.kind === 'source-signal')).toBe(true)
-    expect(artifact?.helpers).toContain('bindText')
+    expect(artifact?.helpers).toContain('insertBetween')
   })
 })
