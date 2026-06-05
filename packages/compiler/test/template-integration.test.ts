@@ -5117,16 +5117,25 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
-  it('invokes handlers returned by event call expressions', () => {
+  it('evaluates event handler factory expressions during render', () => {
     const source = `
       import { render } from 'fict'
 
       export const log: string[] = []
 
-      const createHandler = (label: string) => () => log.push(label)
+      const createHandler = (label: string) => {
+        log.push('factory:' + label)
+        return () => log.push('hit:' + label)
+      }
 
       export function App() {
-        return <button data-id="btn" onClick={createHandler('factory')}>Click</button>
+        return (
+          <div>
+            <button data-id="delegated" onClick={createHandler('delegated')}>Delegated</button>
+            <button data-id="captured" onClickCapture={createHandler('captured')}>Captured</button>
+            <button data-id="wrapped" onClick={() => createHandler('wrapped')()}>Wrapped</button>
+          </div>
+        )
       }
 
       export function mount(el: HTMLElement) {
@@ -5144,9 +5153,31 @@ describe('compiled templates DOM integration', () => {
     document.body.appendChild(container)
     const teardown = mod.mount(container)
 
-    const button = container.querySelector('[data-id="btn"]') as HTMLButtonElement
-    button.click()
-    expect(mod.log).toEqual(['factory'])
+    expect(mod.log).toEqual(['factory:delegated', 'factory:captured'])
+
+    const delegated = container.querySelector('[data-id="delegated"]') as HTMLButtonElement
+    const captured = container.querySelector('[data-id="captured"]') as HTMLButtonElement
+    const wrapped = container.querySelector('[data-id="wrapped"]') as HTMLButtonElement
+
+    delegated.click()
+    delegated.click()
+    captured.click()
+    captured.click()
+    wrapped.click()
+    wrapped.click()
+
+    expect(mod.log).toEqual([
+      'factory:delegated',
+      'factory:captured',
+      'hit:delegated',
+      'hit:delegated',
+      'hit:captured',
+      'hit:captured',
+      'factory:wrapped',
+      'hit:wrapped',
+      'factory:wrapped',
+      'hit:wrapped',
+    ])
 
     teardown()
     container.remove()

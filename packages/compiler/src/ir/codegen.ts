@@ -211,6 +211,30 @@ function functionUsesComponentContextPrimitives(fn: HIRFunction): boolean {
   return false
 }
 
+function eventHandlerExpressionNeedsReactiveGetter(expr: Expression, ctx: CodegenContext): boolean {
+  const deps = new Set<string>()
+  collectExpressionDependencies(expr, deps)
+
+  for (const depName of deps) {
+    const dep = deSSAVarName(depName)
+    if (ctx.listItemAccessorParamNames?.has(dep)) return true
+    if (
+      ctx.signalVars?.has(dep) ||
+      ctx.callableSignalVars?.has(dep) ||
+      ctx.memoVars?.has(dep) ||
+      ctx.aliasVars?.has(dep) ||
+      ctx.storeVars?.has(dep)
+    ) {
+      return true
+    }
+    if (ctx.trackedVars.has(dep) && !(ctx.functionVars?.has(dep) ?? false)) {
+      return true
+    }
+  }
+
+  return false
+}
+
 function cloneDirectives(
   directives: BabelDirective[] | undefined,
   t: typeof BabelCore.types,
@@ -4565,7 +4589,7 @@ function lowerIntrinsicElement(
         }
 
         // Standard path - lower the entire expression
-        const shouldWrapHandler = isExpressionReactive(binding.expr, ctx)
+        const shouldWrapHandler = eventHandlerExpressionNeedsReactiveGetter(binding.expr, ctx)
         const prevWrapTracked = ctx.wrapTrackedExpressions
         ctx.wrapTrackedExpressions = false
         const valueExpr = lowerDomExpression(binding.expr, ctx, containingRegion, {
@@ -4603,6 +4627,24 @@ function lowerIntrinsicElement(
           ctx.listItemAccessorParamNames?.has(deSSAVarName(binding.expr.name))
             ? deSSAVarName(binding.expr.name)
             : null
+        const shouldEvaluateHandlerAtSetup =
+          !shouldWrapHandler &&
+          !reactiveGetterIdentifierName &&
+          !listItemHandlerName &&
+          !isFn &&
+          !t.isIdentifier(valueExpr) &&
+          !t.isMemberExpression(valueExpr) &&
+          !t.isOptionalMemberExpression(valueExpr)
+        let handlerValueExpr = valueExpr
+        if (shouldEvaluateHandlerAtSetup) {
+          const handlerValueId = genTemp(ctx, 'handler')
+          statements.push(
+            t.variableDeclaration('const', [
+              t.variableDeclarator(handlerValueId, handlerValueExpr),
+            ]),
+          )
+          handlerValueExpr = handlerValueId
+        }
         const ensureHandlerParam = (fn: BabelCore.types.Expression): BabelCore.types.Expression => {
           if (t.isArrowFunctionExpression(fn)) {
             return fn
@@ -4639,11 +4681,11 @@ function lowerIntrinsicElement(
             ? t.identifier(reactiveGetterIdentifierName)
             : !isFn && shouldWrapHandler
               ? markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], valueExpr))
-              : ensureHandlerParam(valueExpr)
+              : ensureHandlerParam(handlerValueExpr)
 
         let dataBinding =
           isDelegated && !shouldTreatAsReactiveHandler
-            ? extractDelegatedEventData(valueExpr, t, {
+            ? extractDelegatedEventData(handlerValueExpr, t, {
                 isKnownHandlerIdentifier: name =>
                   ctx.functionVars?.has(deSSAVarName(name)) ?? false,
               })

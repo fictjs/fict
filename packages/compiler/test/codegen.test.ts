@@ -880,7 +880,9 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    expect(code).toContain('__fictReactive(() => makeHandler())')
+    expect(code).toMatch(/const __handler_\d+ = makeHandler\(\)/)
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",\s*__handler_\d+,\s*true\)/)
+    expect(code).not.toContain('__fictReactive(() => makeHandler())')
     expect(code).not.toContain('makeHandler.call(')
     expect(code).not.toContain('makeHandler().call(')
   })
