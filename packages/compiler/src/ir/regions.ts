@@ -2287,7 +2287,11 @@ function lowerStructuredNodeForRegion(
       return [t.continueStatement(node.label ? t.identifier(node.label) : null)]
 
     case 'return':
+      return []
+
     case 'throw':
+      return [t.throwStatement(lowerExpressionWithDeSSA(node.argument, ctx))]
+
     case 'stateMachine':
     default:
       return []

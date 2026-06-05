@@ -918,6 +918,80 @@ describe('control flow runtime regressions', () => {
     expect(result.view()).toBe('A')
   })
 
+  it('preserves thrown try-catch side effects', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+
+          try {
+            throw 0
+          } catch (e) {
+            x = 1
+          }
+
+          return x
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('preserves thrown try-catch-finally side effects', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+
+          try {
+            throw 0
+          } catch (e) {
+            x = 1
+          } finally {
+            x += 2
+          }
+
+          return x
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(3)
+  })
+
+  it('preserves thrown expression side effects before catch', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+
+          try {
+            throw (x += 1)
+          } catch (e) {
+            x += e
+          }
+
+          return x
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
   it('preserves labeled try-finally breaks that exit an outer label', () => {
     const result = compileAndRunHook<{ toggle: () => void; view: () => string }>(
       `
