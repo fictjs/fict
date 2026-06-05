@@ -279,8 +279,8 @@ describe('optimizeHIR', () => {
   it('removes unused pure assignments (DCE)', () => {
     const ast = parseFile(`
       function Foo(x) {
-        const a = x + 1
-        const b = x + 2
+        const a = x === 1
+        const b = x === 2
         return a
       }
     `)
@@ -534,7 +534,7 @@ describe('optimizeHIR', () => {
     const ast = parseFile(`
       function Counter() {
         let count = $state(0)
-        const unused = count + 1
+        const unused = count === 1
         return count
       }
     `)
@@ -717,21 +717,21 @@ describe('optimizeHIR', () => {
   it('eliminates common subexpressions within a block', () => {
     const ast = parseFile(`
       function Foo(x) {
-        const a = x + 1
-        const b = x + 1
-        return a + b
+        const a = x === 1
+        const b = x === 1
+        return [a, b]
       }
     `)
     const optimized = optimizeHIR(buildHIR(ast))
     const printed = printHIR(optimized)
-    const matches = printed.match(/\+\s*1/g) ?? []
+    const matches = printed.match(/===\s*1/g) ?? []
     expect(matches.length).toBe(1)
   })
 
   it('eliminates common subexpressions across straight-line blocks', () => {
     const expr = {
       kind: 'BinaryExpression',
-      operator: '+',
+      operator: '===',
       left: { kind: 'Identifier', name: 'x' },
       right: { kind: 'Literal', value: 1 },
     } as const
@@ -780,7 +780,7 @@ describe('optimizeHIR', () => {
     const count = countExpression(optimized, node => {
       return (
         node.kind === 'BinaryExpression' &&
-        node.operator === '+' &&
+        node.operator === '===' &&
         node.left.kind === 'Identifier' &&
         node.left.name === 'x' &&
         node.right.kind === 'Literal' &&
@@ -927,7 +927,7 @@ describe('optimizeHIR', () => {
     const ast = parseFile(`
       function Foo() {
         let count = $state(0)
-        const __total = count + 1
+        const __total = count === 1
         return __total
       }
     `)
@@ -939,7 +939,7 @@ describe('optimizeHIR', () => {
     const ast = parseFile(`
       function Foo() {
         let count = $state(0)
-        const total = count + 1
+        const total = count === 1
         return total
       }
     `)
@@ -973,8 +973,8 @@ describe('optimizeHIR', () => {
     const ast = parseFile(`
       function Foo(x) {
         const s = $state(0)
-        const __a = x + 1
-        const __b = x + 1
+        const __a = x === 1
+        const __b = x === 1
         return __b
       }
     `)
@@ -982,7 +982,7 @@ describe('optimizeHIR', () => {
     const count = countExpression(optimized, expr => {
       return (
         expr.kind === 'BinaryExpression' &&
-        expr.operator === '+' &&
+        expr.operator === '===' &&
         expr.left.kind === 'Identifier' &&
         expr.left.name === 'x' &&
         expr.right.kind === 'Literal' &&
@@ -1037,8 +1037,8 @@ describe('optimizeHIR', () => {
     const ast = parseFile(`
       function Foo(x) {
         const s = $state(0)
-        const __tmp = x + 1
-        const result = __tmp * 2
+        const __tmp = x === 1
+        const result = __tmp === true
         return result
       }
     `)

@@ -5580,6 +5580,140 @@ function isExplicitMemoCall(expr: Expression, ctx: PurityContext): boolean {
   return (callee === '$memo' || callee === 'createMemo') && !(expr.pure || ctx.functionPure)
 }
 
+function isPrimitiveLiteralValue(value: unknown): boolean {
+  return value === null || (typeof value !== 'object' && typeof value !== 'function')
+}
+
+function isKnownPrimitivePureExpression(expr: Expression, ctx: PurityContext): boolean {
+  switch (expr.kind) {
+    case 'Literal':
+      return isPrimitiveLiteralValue(expr.value) && !(expr.value instanceof RegExp)
+    case 'UnaryExpression':
+      if (expr.operator === '!' || expr.operator === 'typeof' || expr.operator === 'void') {
+        return isPureExpression(expr.argument as Expression, ctx)
+      }
+      if (expr.operator === '+' || expr.operator === '-' || expr.operator === '~') {
+        return isKnownPrimitivePureExpression(expr.argument as Expression, ctx)
+      }
+      return false
+    case 'BinaryExpression':
+      if (expr.operator === '===' || expr.operator === '!==') {
+        return (
+          isPureExpression(expr.left as Expression, ctx) &&
+          isPureExpression(expr.right as Expression, ctx)
+        )
+      }
+      return isCoercionSafePureBinaryExpression(expr, ctx)
+    case 'ConditionalExpression':
+      return (
+        isPureExpression(expr.test as Expression, ctx) &&
+        isKnownPrimitivePureExpression(expr.consequent as Expression, ctx) &&
+        isKnownPrimitivePureExpression(expr.alternate as Expression, ctx)
+      )
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      return isStableMemberExpression(expr)
+    default:
+      return false
+  }
+}
+
+function isKnownPrimitiveCSESafeExpression(expr: Expression, ctx: PurityContext): boolean {
+  switch (expr.kind) {
+    case 'Literal':
+      return isPrimitiveLiteralValue(expr.value) && !(expr.value instanceof RegExp)
+    case 'UnaryExpression':
+      if (expr.operator === '!' || expr.operator === 'typeof' || expr.operator === 'void') {
+        return isCSESafeExpression(expr.argument as Expression, ctx)
+      }
+      if (expr.operator === '+' || expr.operator === '-' || expr.operator === '~') {
+        return isKnownPrimitiveCSESafeExpression(expr.argument as Expression, ctx)
+      }
+      return false
+    case 'BinaryExpression':
+      if (expr.operator === '===' || expr.operator === '!==') {
+        return (
+          isCSESafeExpression(expr.left as Expression, ctx) &&
+          isCSESafeExpression(expr.right as Expression, ctx)
+        )
+      }
+      return isCoercionSafeCSEBinaryExpression(expr, ctx)
+    case 'ConditionalExpression':
+      return (
+        isCSESafeExpression(expr.test as Expression, ctx) &&
+        isKnownPrimitiveCSESafeExpression(expr.consequent as Expression, ctx) &&
+        isKnownPrimitiveCSESafeExpression(expr.alternate as Expression, ctx)
+      )
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      return isStableMemberExpression(expr)
+    default:
+      return false
+  }
+}
+
+function isCoercionSafePureUnaryExpression(
+  expr: Extract<Expression, { kind: 'UnaryExpression' }>,
+  ctx: PurityContext,
+): boolean {
+  if (expr.operator === 'delete') return false
+  if (expr.operator === '!' || expr.operator === 'typeof' || expr.operator === 'void') {
+    return isPureExpression(expr.argument as Expression, ctx)
+  }
+  if (expr.operator === '+' || expr.operator === '-' || expr.operator === '~') {
+    return isKnownPrimitivePureExpression(expr.argument as Expression, ctx)
+  }
+  return false
+}
+
+function isCoercionSafeCSEUnaryExpression(
+  expr: Extract<Expression, { kind: 'UnaryExpression' }>,
+  ctx: PurityContext,
+): boolean {
+  if (expr.operator === 'delete') return false
+  if (expr.operator === '!' || expr.operator === 'typeof' || expr.operator === 'void') {
+    return isCSESafeExpression(expr.argument as Expression, ctx)
+  }
+  if (expr.operator === '+' || expr.operator === '-' || expr.operator === '~') {
+    return isKnownPrimitiveCSESafeExpression(expr.argument as Expression, ctx)
+  }
+  return false
+}
+
+function isCoercionSafePureBinaryExpression(
+  expr: Extract<Expression, { kind: 'BinaryExpression' }>,
+  ctx: PurityContext,
+): boolean {
+  if (expr.operator === '===' || expr.operator === '!==') {
+    return (
+      isPureExpression(expr.left as Expression, ctx) &&
+      isPureExpression(expr.right as Expression, ctx)
+    )
+  }
+  if (expr.operator === 'in' || expr.operator === 'instanceof') return false
+  return (
+    isKnownPrimitivePureExpression(expr.left as Expression, ctx) &&
+    isKnownPrimitivePureExpression(expr.right as Expression, ctx)
+  )
+}
+
+function isCoercionSafeCSEBinaryExpression(
+  expr: Extract<Expression, { kind: 'BinaryExpression' }>,
+  ctx: PurityContext,
+): boolean {
+  if (expr.operator === '===' || expr.operator === '!==') {
+    return (
+      isCSESafeExpression(expr.left as Expression, ctx) &&
+      isCSESafeExpression(expr.right as Expression, ctx)
+    )
+  }
+  if (expr.operator === 'in' || expr.operator === 'instanceof') return false
+  return (
+    isKnownPrimitiveCSESafeExpression(expr.left as Expression, ctx) &&
+    isKnownPrimitiveCSESafeExpression(expr.right as Expression, ctx)
+  )
+}
+
 function isPureExpression(expr: Expression, ctx: PurityContext): boolean {
   switch (expr.kind) {
     case 'Literal':
@@ -5591,13 +5725,18 @@ function isPureExpression(expr: Expression, ctx: PurityContext): boolean {
     case 'SuperExpression':
       return true
     case 'BinaryExpression':
+      return (
+        isCoercionSafePureBinaryExpression(expr, ctx) &&
+        isPureExpression(expr.left as Expression, ctx) &&
+        isPureExpression(expr.right as Expression, ctx)
+      )
     case 'LogicalExpression':
       return (
         isPureExpression(expr.left as Expression, ctx) &&
         isPureExpression(expr.right as Expression, ctx)
       )
     case 'UnaryExpression':
-      return isPureExpression(expr.argument as Expression, ctx)
+      return isCoercionSafePureUnaryExpression(expr, ctx)
     case 'ConditionalExpression':
       return (
         isPureExpression(expr.test as Expression, ctx) &&
@@ -5623,7 +5762,7 @@ function isPureExpression(expr: Expression, ctx: PurityContext): boolean {
         (expr.computed ? isPureExpression(expr.property as Expression, ctx) : true)
       )
     case 'TemplateLiteral':
-      return expr.expressions.every(e => isPureExpression(e as Expression, ctx))
+      return expr.expressions.every(e => isKnownPrimitivePureExpression(e as Expression, ctx))
     case 'SpreadElement':
       return isPureExpression(expr.argument as Expression, ctx)
     case 'SequenceExpression':
@@ -5655,8 +5794,13 @@ function isCSESafeExpression(expr: Expression, ctx: PurityContext): boolean {
         (expr.computed ? isCSESafeExpression(expr.property as Expression, ctx) : true)
       )
     case 'UnaryExpression':
-      return isCSESafeExpression(expr.argument as Expression, ctx)
+      return isCoercionSafeCSEUnaryExpression(expr, ctx)
     case 'BinaryExpression':
+      return (
+        isCoercionSafeCSEBinaryExpression(expr, ctx) &&
+        isCSESafeExpression(expr.left as Expression, ctx) &&
+        isCSESafeExpression(expr.right as Expression, ctx)
+      )
     case 'LogicalExpression':
       return (
         isCSESafeExpression(expr.left as Expression, ctx) &&
@@ -5669,7 +5813,7 @@ function isCSESafeExpression(expr: Expression, ctx: PurityContext): boolean {
         isCSESafeExpression(expr.alternate as Expression, ctx)
       )
     case 'TemplateLiteral':
-      return expr.expressions.every(e => isCSESafeExpression(e as Expression, ctx))
+      return expr.expressions.every(e => isKnownPrimitiveCSESafeExpression(e as Expression, ctx))
     case 'SequenceExpression':
       return expr.expressions.every(e => isCSESafeExpression(e as Expression, ctx))
     case 'CallExpression':

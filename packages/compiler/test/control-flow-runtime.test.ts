@@ -1898,6 +1898,52 @@ describe('control flow runtime regressions', () => {
     expect(result).toEqual([false, 1, 0])
   })
 
+  it('preserves observable coercions with optimization', () => {
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun() {
+            "use pure"
+            const value = {
+              toString() {
+                throw new Error('coerced')
+              },
+            }
+            const text = \`\${value}\`
+            void text
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+      ),
+    ).toThrow('coerced')
+
+    const result = compileAndRunHook<string>(
+      `
+        export function useRun() {
+          "use pure"
+          let hits = 0
+          const value = {
+            valueOf() {
+              hits++
+              return 1
+            },
+          }
+          const unaryA = +value
+          const unaryB = +value
+          const binaryA = value + 1
+          const binaryB = value + 1
+          return hits + ':' + unaryA + ':' + unaryB + ':' + binaryA + ':' + binaryB
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('4:1:1:2:2')
+  })
+
   it('preserves tagged template unicode raw and cooked values with optimization', () => {
     const result = compileAndRunHook<string>(
       `
