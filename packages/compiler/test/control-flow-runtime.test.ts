@@ -4,11 +4,16 @@ import * as runtimeInternal from '../../runtime/src/internal'
 
 import { transformCommonJS } from './test-utils'
 
-function compileAndRunHook<T>(source: string, exportName: string): T {
+function compileAndRunHook<T>(
+  source: string,
+  exportName: string,
+  options: Parameters<typeof transformCommonJS>[1] = {},
+): T {
   const output = transformCommonJS(source, {
     dev: false,
     emitModuleMetadata: false,
     strictGuarantee: false,
+    ...options,
   })
 
   const module: { exports: Record<string, unknown> } = { exports: {} }
@@ -32,6 +37,8 @@ function compileAndRunHook<T>(source: string, exportName: string): T {
 
   return runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () => (hook as () => T)())
 }
+
+const optimizeModes = [true, false] as const
 
 describe('control flow runtime regressions', () => {
   beforeEach(() => {
@@ -251,6 +258,108 @@ describe('control flow runtime regressions', () => {
 
     expect(result).toBe(4)
   })
+
+  for (const optimize of optimizeModes) {
+    it(`preserves const function declarations before calls with optimize=${optimize}`, () => {
+      const result = compileAndRunHook<number>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            let x = 0
+            const fn = v => v
+            fn(x = 1)
+            return x
+          }
+        `,
+        'useRun',
+        { optimize },
+      )
+
+      expect(result).toBe(1)
+    })
+
+    it(`preserves const object declarations before method calls with optimize=${optimize}`, () => {
+      const result = compileAndRunHook<number>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            let x = 0
+            const obj = { fn(v) { return v } }
+            obj.fn(x = 1)
+            return x
+          }
+        `,
+        'useRun',
+        { optimize },
+      )
+
+      expect(result).toBe(1)
+    })
+
+    it(`preserves const function declarations before optional calls with optimize=${optimize}`, () => {
+      const result = compileAndRunHook<number>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            let x = 0
+            const fn = v => v
+            fn?.(x = 1)
+            return x
+          }
+        `,
+        'useRun',
+        { optimize },
+      )
+
+      expect(result).toBe(1)
+    })
+
+    it(`preserves const object declarations before optional member calls with optimize=${optimize}`, () => {
+      const result = compileAndRunHook<number>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            let x = 0
+            const obj = { fn(v) { return v } }
+            obj.fn?.(x = 1)
+            return x
+          }
+        `,
+        'useRun',
+        { optimize },
+      )
+
+      expect(result).toBe(1)
+    })
+
+    it(`preserves source TDZ for const calls before declarations with optimize=${optimize}`, () => {
+      expect(() =>
+        compileAndRunHook<number>(
+          `
+            import { $state } from 'fict'
+
+            export function useRun() {
+              let count = $state(0)
+              let x = 0
+              fn(x = 1)
+              const fn = v => v
+              return x
+            }
+          `,
+          'useRun',
+          { optimize },
+        ),
+      ).toThrow(/Cannot access 'fn' before initialization/)
+    })
+  }
 
   it('preserves immediate do-while break before trailing return', () => {
     const result = compileAndRunHook<number>(

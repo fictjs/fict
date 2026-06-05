@@ -4849,6 +4849,104 @@ function transformControlFlowReturns(
   return nestedChanged ? rewrittenStatements : null
 }
 
+function compareSourcePositions(
+  a: { line: number; column: number } | undefined,
+  b: { line: number; column: number } | undefined,
+): number | null {
+  if (!a || !b) return null
+  if (a.line !== b.line) return a.line - b.line
+  return a.column - b.column
+}
+
+function getSingleLexicalDeclaration(
+  stmt: BabelCore.types.Statement,
+  t: typeof BabelCore.types,
+): { name: string; loc: BabelCore.types.SourceLocation } | null {
+  if (!t.isVariableDeclaration(stmt)) return null
+  if (stmt.kind !== 'const' && stmt.kind !== 'let') return null
+  if (stmt.declarations.length !== 1) return null
+  const decl = stmt.declarations[0]
+  if (!decl || !t.isIdentifier(decl.id) || !stmt.loc) return null
+  return { name: decl.id.name, loc: stmt.loc }
+}
+
+function statementReferencesIdentifier(
+  stmt: BabelCore.types.Statement,
+  name: string,
+  t: typeof BabelCore.types,
+): boolean {
+  let found = false
+  const visitorKeys =
+    (t as unknown as { VISITOR_KEYS?: Record<string, string[]> }).VISITOR_KEYS ?? {}
+
+  const visit = (node: BabelCore.types.Node | null | undefined, isRoot = false): void => {
+    if (!node || found) return
+    if (
+      !isRoot &&
+      (t.isFunctionDeclaration(node) ||
+        t.isFunctionExpression(node) ||
+        t.isArrowFunctionExpression(node) ||
+        t.isObjectMethod(node) ||
+        t.isClassMethod(node))
+    ) {
+      return
+    }
+    if (t.isIdentifier(node) && node.name === name) {
+      found = true
+      return
+    }
+    const keys = visitorKeys[(node as { type: string }).type] ?? []
+    for (const key of keys) {
+      const value = (node as unknown as Record<string, unknown>)[key]
+      if (Array.isArray(value)) {
+        for (const child of value) {
+          if (child && typeof child === 'object' && 'type' in child) {
+            visit(child as BabelCore.types.Node)
+            if (found) return
+          }
+        }
+      } else if (value && typeof value === 'object' && 'type' in value) {
+        visit(value as BabelCore.types.Node)
+      }
+      if (found) return
+    }
+  }
+
+  visit(stmt, true)
+  return found
+}
+
+function restoreLexicalDeclarationUseOrder(
+  statements: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): BabelCore.types.Statement[] {
+  const ordered = [...statements]
+  for (let index = 0; index < ordered.length; index++) {
+    const stmt = ordered[index]
+    if (!stmt) continue
+    const declaration = getSingleLexicalDeclaration(stmt, t)
+    if (!declaration) continue
+
+    let insertionIndex = -1
+    for (let candidateIndex = 0; candidateIndex < index; candidateIndex++) {
+      const candidate = ordered[candidateIndex]
+      if (!candidate?.loc) continue
+      const sourceOrder = compareSourcePositions(declaration.loc.start, candidate.loc.start)
+      if (sourceOrder === null || sourceOrder >= 0) continue
+      if (statementReferencesIdentifier(candidate, declaration.name, t)) {
+        insertionIndex = candidateIndex
+        break
+      }
+    }
+
+    if (insertionIndex >= 0) {
+      ordered.splice(index, 1)
+      ordered.splice(insertionIndex, 0, stmt)
+    }
+  }
+  return ordered
+}
+
 /**
  * Lower a function with region-based code generation
  */
@@ -5396,6 +5494,7 @@ function lowerFunctionWithRegions(
   // Generate region-based statements (JSX-bearing functions)
   let statements: BabelCore.types.Statement[]
   statements = generateRegionCode(fn, scopeResult, t, ctx)
+  statements = restoreLexicalDeclarationUseOrder(statements, t)
 
   if (ctx.currentFnIsHook) {
     statements = statements.map(stmt => {

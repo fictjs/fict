@@ -1120,6 +1120,7 @@ function convertFunction(
         current.block.instructions.push({
           kind: 'Expression',
           value: convertExpression(stmt.expression),
+          loc: stmt.loc,
         })
       }
       continue
@@ -1135,6 +1136,7 @@ function convertFunction(
               ? convertExpression(decl.init)
               : ({ kind: 'Literal', value: undefined } as HLiteral),
             declarationKind: declKind,
+            loc: decl.loc ?? stmt.loc,
           })
           continue
         }
@@ -2079,7 +2081,7 @@ function processStatement(
 
   if (t.isExpressionStatement(stmt)) {
     if (!handleExpressionStatement(stmt.expression, push)) {
-      push({ kind: 'Expression', value: convertExpression(stmt.expression) })
+      push({ kind: 'Expression', value: convertExpression(stmt.expression), loc: stmt.loc })
     }
     return bb
   }
@@ -2095,6 +2097,7 @@ function processStatement(
             ? convertExpression(decl.init)
             : ({ kind: 'Literal', value: undefined } as HLiteral),
           declarationKind: declKind,
+          loc: decl.loc ?? stmt.loc,
         })
         continue
       }

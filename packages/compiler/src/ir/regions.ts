@@ -455,6 +455,13 @@ function createRegionFromScope(
   const instructions: Instruction[] = []
   let hasControlFlow = false
   let hasJSX = false
+  const instructionOrder = new Map<Instruction, number>()
+  let order = 0
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      instructionOrder.set(instr, order++)
+    }
+  }
 
   // Collect instructions from blocks in this scope
   for (const blockId of blocks) {
@@ -481,6 +488,7 @@ function createRegionFromScope(
       }
     }
   }
+  instructions.sort((a, b) => compareInstructionSourceOrder(a, b, instructionOrder))
 
   // Multi-block scopes imply control flow
   if (blocks.size > 1) {
@@ -515,6 +523,20 @@ function createRegionFromScope(
     shouldMemoize: scope.shouldMemoize,
     children: [],
   }
+}
+
+function compareInstructionSourceOrder(
+  a: Instruction,
+  b: Instruction,
+  instructionOrder: Map<Instruction, number>,
+): number {
+  const aLoc = a.loc?.start
+  const bLoc = b.loc?.start
+  if (aLoc && bLoc) {
+    if (aLoc.line !== bLoc.line) return aLoc.line - bLoc.line
+    if (aLoc.column !== bLoc.column) return aLoc.column - bLoc.column
+  }
+  return (instructionOrder.get(a) ?? 0) - (instructionOrder.get(b) ?? 0)
 }
 
 /**
@@ -3308,6 +3330,17 @@ function instructionToStatement(
   _buildMemoCall?: (expr: BabelCore.types.Expression, name?: string) => BabelCore.types.Expression,
   hoistedDeclarationInitializers?: Set<string>,
 ): BabelCore.types.Statement | null {
+  const applyLoc = <T extends BabelCore.types.Statement | null>(stmt: T): T => {
+    if (!stmt) return stmt
+    const baseLoc =
+      instr.loc ??
+      (instr.kind === 'Assign' || instr.kind === 'Expression' ? instr.value.loc : undefined)
+    if (baseLoc !== undefined) {
+      stmt.loc = baseLoc ?? null
+    }
+    return stmt
+  }
+
   if (instr.kind === 'Assign') {
     const ssaName = instr.target.name
     const baseName = deSSAVarName(ssaName)
@@ -3575,9 +3608,11 @@ function instructionToStatement(
         ])
       }
 
-      return t.variableDeclaration(fallbackDecl, [
-        t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
-      ])
+      return applyLoc(
+        t.variableDeclaration(fallbackDecl, [
+          t.variableDeclarator(t.identifier(baseName), lowerAssignedValue(true)),
+        ]),
+      )
     }
 
     if (aliasVars.has(baseName) && declaredVars.has(baseName)) {
@@ -3778,9 +3813,9 @@ function instructionToStatement(
       // fix: Always use numbered slots for effects so they work when called
       // outside render context (e.g., in conditional callbacks that re-run).
       const slot = ctx.inModule ? undefined : reserveHookSlot(ctx)
-      return t.expressionStatement(buildEffectCall(ctx, t, effectFn, { slot }))
+      return applyLoc(t.expressionStatement(buildEffectCall(ctx, t, effectFn, { slot })))
     }
-    return t.expressionStatement(lowerExpressionWithDeSSA(instr.value, ctx))
+    return applyLoc(t.expressionStatement(lowerExpressionWithDeSSA(instr.value, ctx)))
   }
   // Phi nodes are handled by SSA elimination pass
   return null
