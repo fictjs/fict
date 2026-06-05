@@ -807,7 +807,6 @@ function resolveDirectHookCallInfo(
 function getHookReturnAccessorKind(
   info: HookReturnInfo | null,
   propName: string | number | null,
-  allowUnknownFallback: boolean,
 ): HookAccessorKind | null {
   if (typeof propName === 'string') {
     const kind = info?.objectProps?.get(propName)
@@ -816,17 +815,16 @@ function getHookReturnAccessorKind(
     const kind = info?.arrayProps?.get(propName)
     if (kind) return kind
   }
-  return !info && allowUnknownFallback && propName !== null ? 'signal' : null
+  return null
 }
 
 function resolveHookReturnMemberInfo(
   expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
   ctx: CodegenContext,
-): { info: HookReturnInfo | null; allowUnknownFallback: boolean } | null {
+): { info: HookReturnInfo | null } | null {
   let info: HookReturnInfo | null | undefined
-  let hookName: string | undefined
   if (expr.object.kind === 'Identifier') {
-    hookName = ctx.hookResultVarMap?.get(deSSAVarName(expr.object.name))
+    const hookName = ctx.hookResultVarMap?.get(deSSAVarName(expr.object.name))
     if (!hookName) return null
     info = getHookReturnInfo(hookName, ctx)
   } else if (
@@ -835,7 +833,6 @@ function resolveHookReturnMemberInfo(
   ) {
     const hookCall = resolveDirectHookCallInfo(expr.object, ctx)
     if (!hookCall) return null
-    hookName = hookCall.hookName
     info = hookCall.info
   } else {
     return null
@@ -843,7 +840,6 @@ function resolveHookReturnMemberInfo(
 
   return {
     info: info ?? null,
-    allowUnknownFallback: !hookName || !ctx.opaqueImportedHookNames?.has(hookName),
   }
 }
 
@@ -854,11 +850,7 @@ function resolveHookReturnMemberAccessorKind(
   const hookMemberInfo = resolveHookReturnMemberInfo(expr, ctx)
   if (!hookMemberInfo) return null
   const propName = getStaticPropName(expr.property as Expression, expr.computed)
-  return getHookReturnAccessorKind(
-    hookMemberInfo.info,
-    propName,
-    hookMemberInfo.allowUnknownFallback,
-  )
+  return getHookReturnAccessorKind(hookMemberInfo.info, propName)
 }
 
 function withNonReactiveScope<T>(ctx: CodegenContext, fn: () => T): T {
@@ -6523,7 +6515,8 @@ function lowerFunctionWithRegions(
         if (
           instr.value.kind === 'MemberExpression' &&
           instr.value.object.kind === 'Identifier' &&
-          hookResultVars.has(deSSAVarName(instr.value.object.name))
+          hookResultVars.has(deSSAVarName(instr.value.object.name)) &&
+          resolveHookReturnMemberAccessorKind(instr.value, ctx)
         ) {
           hookAccessorAliases.add(target)
         }
