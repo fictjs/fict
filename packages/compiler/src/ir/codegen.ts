@@ -59,6 +59,7 @@ import {
   buildModuleReactiveMetadata,
 } from './codegen-module-metadata'
 import {
+  markSkipRegionOverride,
   normalizeDependencyKey,
   replaceIdentifiersWithOverrides,
   type RegionOverrideMap,
@@ -3807,10 +3808,11 @@ function lowerIntrinsicElement(
         ctx.delegatedEventsUsed?.add(eventName)
 
         // Lower handler as a simple identifier (not as getter call)
-        const handlerExpr =
+        const handlerExpr = markSkipRegionOverride(
           hirDataBinding.handler.kind === 'Identifier'
             ? t.identifier(hirDataBinding.handler.name)
-            : lowerExpression(hirDataBinding.handler, ctx)
+            : lowerExpression(hirDataBinding.handler, ctx),
+        )
 
         // Lower data with proper tracking (wrapped in getter for reactivity)
         const dataExpr = lowerDomExpression(hirDataBinding.data, ctx, containingRegion, {
@@ -3849,10 +3851,11 @@ function lowerIntrinsicElement(
             : null
 
         if (explicitEventTuple) {
-          const tupleHandler =
+          const tupleHandler = markSkipRegionOverride(
             explicitEventTuple.handler.kind === 'Identifier'
               ? t.identifier(deSSAVarName(explicitEventTuple.handler.name))
-              : lowerExpression(explicitEventTuple.handler, ctx)
+              : lowerExpression(explicitEventTuple.handler, ctx),
+          )
           const tupleData = lowerDomExpression(explicitEventTuple.data, ctx, containingRegion, {
             skipHookAccessors: false,
             skipRegionRootOverride: true,
@@ -3927,6 +3930,28 @@ function lowerIntrinsicElement(
         ctx.wrapTrackedExpressions = prevWrapTracked
         const eventParam = t.identifier('_e')
         const isFn = t.isArrowFunctionExpression(valueExpr) || t.isFunctionExpression(valueExpr)
+        const isReactiveGetterName = (name: string): boolean =>
+          !!(
+            ctx.signalVars?.has(name) ||
+            ctx.callableSignalVars?.has(name) ||
+            ctx.memoVars?.has(name) ||
+            ctx.aliasVars?.has(name)
+          )
+        const reactiveGetterIdentifierName = (() => {
+          if (binding.expr.kind === 'Identifier') {
+            const name = deSSAVarName(binding.expr.name)
+            if (isReactiveGetterName(name)) return name
+          }
+          if (
+            t.isCallExpression(valueExpr) &&
+            t.isIdentifier(valueExpr.callee) &&
+            valueExpr.arguments.length === 0 &&
+            isReactiveGetterName(valueExpr.callee.name)
+          ) {
+            return valueExpr.callee.name
+          }
+          return null
+        })()
         const ensureHandlerParam = (fn: BabelCore.types.Expression): BabelCore.types.Expression => {
           if (t.isArrowFunctionExpression(fn)) {
             return fn
@@ -3949,13 +3974,16 @@ function lowerIntrinsicElement(
             t.blockStatement([t.returnStatement(fn as BabelCore.types.Expression)]),
           )
         }
-        const handlerExpr =
-          !isFn && shouldWrapHandler
+        const shouldTreatAsReactiveHandler =
+          !!reactiveGetterIdentifierName || (!isFn && shouldWrapHandler)
+        const handlerExpr = reactiveGetterIdentifierName
+          ? t.identifier(reactiveGetterIdentifierName)
+          : !isFn && shouldWrapHandler
             ? markCompilerReactiveGetter(ctx, t.arrowFunctionExpression([], valueExpr))
             : ensureHandlerParam(valueExpr)
 
         let dataBinding =
-          isDelegated && !shouldWrapHandler
+          isDelegated && !shouldTreatAsReactiveHandler
             ? extractDelegatedEventData(valueExpr, t, {
                 isKnownHandlerIdentifier: name =>
                   ctx.functionVars?.has(deSSAVarName(name)) ?? false,
@@ -3981,38 +4009,7 @@ function lowerIntrinsicElement(
           // The runtime's global event handler will pick up handlers stored as $$eventName
           ctx.delegatedEventsUsed?.add(eventName)
 
-          // For reactive handlers (non-function expressions), we need to wrap them
-          // so that when called, they resolve the handler and invoke it with the event
-          // fix: Use regular function (not arrow) with .call(this, ...) to preserve `this` binding
-          // The runtime's delegated event handler calls handlers with .call(element, event),
-          // so we need to propagate `this` through to the actual handler.
-          //
-          // Critical: The AST nodes can be mutated by later processing steps. To preserve the
-          // original identifier, we extract the name and create a fresh identifier node.
-          let handlerName: string | null = null
-          if (t.isIdentifier(valueExpr)) {
-            handlerName = valueExpr.name
-          }
-
-          // Create a fresh identifier to avoid mutation issues
-          const handlerForCall = handlerName
-            ? t.identifier(handlerName)
-            : t.cloneNode(valueExpr, true)
-          const finalHandler =
-            !isFn && shouldWrapHandler
-              ? t.functionExpression(
-                  null,
-                  [eventParam],
-                  t.blockStatement([
-                    t.returnStatement(
-                      t.callExpression(t.memberExpression(handlerForCall, t.identifier('call')), [
-                        t.thisExpression(),
-                        eventParam,
-                      ]),
-                    ),
-                  ]),
-                )
-              : handlerExpr
+          const finalHandler = handlerExpr
 
           const normalizeHandler = (
             expr: BabelCore.types.Expression,
@@ -4045,11 +4042,14 @@ function lowerIntrinsicElement(
             t.isArrowFunctionExpression(handlerForDelegate) ||
             t.isFunctionExpression(handlerForDelegate) ||
             t.isIdentifier(handlerForDelegate) ||
-            t.isMemberExpression(handlerForDelegate)
+            t.isMemberExpression(handlerForDelegate) ||
+            shouldTreatAsReactiveHandler
 
-          const handlerToAssign: BabelCore.types.Expression = handlerIsCallableExpr
-            ? handlerForDelegate
-            : t.arrowFunctionExpression([eventParam], handlerForDelegate)
+          const handlerToAssign: BabelCore.types.Expression = markSkipRegionOverride(
+            handlerIsCallableExpr
+              ? handlerForDelegate
+              : t.arrowFunctionExpression([eventParam], handlerForDelegate),
+          )
 
           ctx.helpersUsed.add('addEventListener')
           const delegatedValue = dataForDelegate
@@ -4077,7 +4077,7 @@ function lowerIntrinsicElement(
           const args: BabelCore.types.Expression[] = [
             targetId,
             t.stringLiteral(eventName),
-            handlerExpr,
+            markSkipRegionOverride(handlerExpr),
           ]
           if (hasEventOptions && binding.eventOptions) {
             const optionProps: BabelCore.types.ObjectProperty[] = []

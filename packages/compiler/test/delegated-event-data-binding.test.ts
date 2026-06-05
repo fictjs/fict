@@ -68,4 +68,41 @@ describe('Delegated event data binding', () => {
     expect(output).toContain('capture: true')
     expect(output).not.toContain('.call(this')
   })
+
+  it('passes delegated $state handler accessors to the runtime', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function App() {
+        const handler = $state((event) => event.type)
+        return <button onClick={handler}>Click</button>
+      }
+    `
+    const output = transform(source)
+
+    expect(output).toMatch(/addEventListener\([^,]+,\s*"click",\s*handler,\s*true\)/)
+    expect(output).not.toContain('handler.call(this')
+  })
+
+  it('keeps delegated $state handler accessors swappable', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function App() {
+        const first = (event) => event.type
+        const second = (event) => event.currentTarget
+        const handler = $state(first)
+        return (
+          <>
+            <button onClick={handler}>Click</button>
+            <button onClick={() => handler(second)}>Swap</button>
+          </>
+        )
+      }
+    `
+    const output = transform(source)
+
+    expect(output).toMatch(/addEventListener\([^,]+,\s*"click",\s*handler,\s*true\)/)
+    expect(output).not.toContain('handler.call(this')
+  })
 })

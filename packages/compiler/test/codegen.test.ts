@@ -616,8 +616,9 @@ describe('event handler transformation', () => {
     const file = lowerHIRWithRegions(hir, t)
     const { code } = generate(file)
 
-    expect(code).toContain('makeHandler().call(')
+    expect(code).toContain('__fictReactive(() => makeHandler())')
     expect(code).not.toContain('makeHandler.call(')
+    expect(code).not.toContain('makeHandler().call(')
   })
 
   it('optimizes keyed list event payload/data and key text as static', () => {

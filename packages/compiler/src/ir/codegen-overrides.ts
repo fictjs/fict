@@ -4,6 +4,20 @@ import { normalizeDependencyKey as normalizeDependencyKeyImpl } from './dependen
 
 export type RegionOverrideMap = Record<string, () => BabelCore.types.Expression>
 
+const SKIP_REGION_OVERRIDE_EXTRA_KEY = '__fictSkipRegionOverride'
+
+export function markSkipRegionOverride<T extends BabelCore.types.Node>(node: T): T {
+  const extra = (node.extra ?? {}) as Record<string, unknown>
+  extra[SKIP_REGION_OVERRIDE_EXTRA_KEY] = true
+  node.extra = extra
+  return node
+}
+
+function shouldSkipRegionOverride(node: BabelCore.types.Node): boolean {
+  const extra = (node.extra ?? {}) as Record<string, unknown>
+  return extra[SKIP_REGION_OVERRIDE_EXTRA_KEY] === true
+}
+
 export function normalizeDependencyKey(name: string): string {
   return normalizeDependencyKeyImpl(name)
 }
@@ -66,6 +80,9 @@ export function replaceIdentifiersWithOverrides(
     return
   }
   if (isWriteTarget) {
+    return
+  }
+  if (!skipCurrentNode && shouldSkipRegionOverride(node)) {
     return
   }
 
