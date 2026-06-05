@@ -115,6 +115,7 @@ export interface ModuleReactiveMetadata {
   version?: ModuleReactiveMetadataVersion
   exports: Record<string, ReactiveExportKind>
   hooks?: Record<string, HookReturnInfoSerializable>
+  namespaces?: Record<string, ModuleReactiveMetadata>
 }
 
 export interface FictCompilerOptions {

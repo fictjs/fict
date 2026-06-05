@@ -191,6 +191,67 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('propagates reactive export metadata through namespace re-exports', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+      `
+      const barrelSource = `
+        export * as signals from './store-ns-reexport'
+      `
+      const appSource = `
+        import { signals } from './barrel-ns-reexport'
+
+        export function useProbe() {
+          return signals.count + 1
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-reexport.ts'))
+      transform(barrelSource, { moduleMetadata }, path.join(baseDir, 'barrel-ns-reexport.ts'))
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-ns-reexport.tsx'),
+      )
+
+      expect(output).toMatch(/signals\.count\(\) \+ 1/)
+    })
+
+    it('propagates hook return metadata through namespace re-exports', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        export function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+      `
+      const barrelSource = `
+        export * as hooks from './hooks-ns-reexport'
+      `
+      const appSource = `
+        import { hooks } from './barrel-hooks-ns-reexport'
+
+        export function App() {
+          const state = hooks.useCounter()
+          return <div>{state.count}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'hooks-ns-reexport.tsx'))
+      transform(barrelSource, { moduleMetadata }, path.join(baseDir, 'barrel-hooks-ns-reexport.ts'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hooks-ns-reexport.tsx'),
+      )
+
+      expect(output).toMatch(/state\.count\(\)/)
+    })
+
     it('propagates createSignal exports from advanced modules (alias)', () => {
       const storeSource = `
         import { createSignal as makeSignal } from 'fict/advanced'

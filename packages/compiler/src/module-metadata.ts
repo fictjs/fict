@@ -302,19 +302,29 @@ function isHookReturnInfo(value: unknown): boolean {
   return true
 }
 
+function isModuleReactiveMetadata(value: unknown): value is ModuleReactiveMetadata {
+  if (!isPlainObject(value)) return false
+  if ('version' in value && value.version !== MODULE_REACTIVE_METADATA_VERSION) return false
+  if (!isPlainObject(value.exports)) return false
+  if (!Object.values(value.exports).every(isReactiveExportKind)) return false
+
+  if ('hooks' in value) {
+    if (!isPlainObject(value.hooks)) return false
+    if (!Object.values(value.hooks).every(isHookReturnInfo)) return false
+  }
+
+  if ('namespaces' in value) {
+    if (!isPlainObject(value.namespaces)) return false
+    if (!Object.values(value.namespaces).every(isModuleReactiveMetadata)) return false
+  }
+
+  return true
+}
+
 function parseModuleReactiveMetadata(raw: string): ModuleReactiveMetadata | null {
   try {
     const parsed = JSON.parse(raw) as unknown
-    if (!isPlainObject(parsed)) return null
-    if ('version' in parsed && parsed.version !== MODULE_REACTIVE_METADATA_VERSION) return null
-    if (!isPlainObject(parsed.exports)) return null
-    if (!Object.values(parsed.exports).every(isReactiveExportKind)) return null
-
-    if ('hooks' in parsed) {
-      if (!isPlainObject(parsed.hooks)) return null
-      if (!Object.values(parsed.hooks).every(isHookReturnInfo)) return null
-    }
-
+    if (!isModuleReactiveMetadata(parsed)) return null
     return parsed as unknown as ModuleReactiveMetadata
   } catch {
     return null

@@ -65,6 +65,10 @@ export function applyImportedReactiveMetadata(
         if (kind) {
           addImportedReactiveBinding(localName, kind, ctx)
         }
+        const namespaceMeta = meta.namespaces?.[importedName]
+        if (namespaceMeta) {
+          namespaces.set(localName, namespaceMeta)
+        }
         const hookInfo = meta.hooks?.[importedName]
         if (hookInfo && hooks?.setImportedHookInfo) {
           hooks.setImportedHookInfo(localName, hookInfo)
@@ -108,6 +112,10 @@ export function buildModuleReactiveMetadata(
     exports: {},
   }
   const hookExports: Record<string, HookReturnInfoSerializable> = {}
+  const namespaceExports: Record<string, ModuleReactiveMetadata> = {}
+  const getExportedName = (
+    exported: BabelCore.types.Identifier | BabelCore.types.StringLiteral,
+  ): string => (t.isIdentifier(exported) ? exported.name : exported.value)
   const addExport = (exportName: string, localName: string) => {
     const kind = classifyReactiveExport(localName, ctx)
     if (kind) {
@@ -116,6 +124,12 @@ export function buildModuleReactiveMetadata(
     const hookInfo = hooks?.getLocalHookInfo?.(localName)
     if (hookInfo) {
       hookExports[exportName] = hookInfo
+    }
+  }
+  const addNamespaceExportFromSource = (source: string, exportName: string) => {
+    const sourceMeta = resolveModuleMetadata(source, options?.filename, options)
+    if (sourceMeta) {
+      namespaceExports[exportName] = sourceMeta
     }
   }
   const addExportFromSource = (source: string, importedName: string, exportName: string) => {
@@ -140,13 +154,13 @@ export function buildModuleReactiveMetadata(
     if (t.isExportNamedDeclaration(stmt)) {
       if (stmt.source && stmt.specifiers.length > 0) {
         for (const spec of stmt.specifiers) {
+          if (t.isExportNamespaceSpecifier(spec)) {
+            addNamespaceExportFromSource(stmt.source.value, getExportedName(spec.exported))
+            continue
+          }
           if (!t.isExportSpecifier(spec)) continue
           const importedName = spec.local.name
-          const exportName = t.isIdentifier(spec.exported)
-            ? spec.exported.name
-            : t.isStringLiteral(spec.exported)
-              ? spec.exported.value
-              : String(spec.exported)
+          const exportName = getExportedName(spec.exported)
           addExportFromSource(stmt.source.value, importedName, exportName)
         }
         continue
@@ -168,11 +182,7 @@ export function buildModuleReactiveMetadata(
         for (const spec of stmt.specifiers) {
           if (!t.isExportSpecifier(spec)) continue
           const localName = spec.local.name
-          const exportName = t.isIdentifier(spec.exported)
-            ? spec.exported.name
-            : t.isStringLiteral(spec.exported)
-              ? spec.exported.value
-              : String(spec.exported)
+          const exportName = getExportedName(spec.exported)
           addExport(exportName, localName)
         }
       }
@@ -212,6 +222,9 @@ export function buildModuleReactiveMetadata(
 
   if (Object.keys(hookExports).length > 0) {
     metadata.hooks = hookExports
+  }
+  if (Object.keys(namespaceExports).length > 0) {
+    metadata.namespaces = namespaceExports
   }
   return metadata
 }
