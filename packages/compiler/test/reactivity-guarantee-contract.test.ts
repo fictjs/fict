@@ -159,6 +159,21 @@ describe('reactivity guarantee contract', () => {
         error: /FICT-S002/,
       },
       {
+        name: 'optional direct state argument escape fallback',
+        source: `
+          import { $state } from 'fict'
+          function sink(value) {
+            return value
+          }
+          function App() {
+            let count = $state(0)
+            sink?.(count)
+            return <div />
+          }
+        `,
+        error: /FICT-S002/,
+      },
+      {
         name: 'reactive value escaping through unknown function call',
         source: `
           import { $state } from 'fict'
@@ -169,6 +184,21 @@ describe('reactivity guarantee contract', () => {
             let count = $state(0)
             const doubled = count * 2
             sink(doubled)
+            return <div />
+          }
+        `,
+        error: /FICT-R002/,
+      },
+      {
+        name: 'reactive value escaping through optional unknown function call',
+        source: `
+          import { $state } from 'fict'
+          function sink(value) {
+            return value
+          }
+          function App() {
+            let count = $state(0)
+            sink?.([count])
             return <div />
           }
         `,
@@ -345,7 +375,7 @@ describe('reactivity guarantee contract', () => {
             return <div>{count}</div>
           }
         `,
-        error: /FICT-R005/,
+        error: /FICT-R002/,
       },
       {
         name: 'control-flow fallback diagnostics',

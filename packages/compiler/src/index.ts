@@ -1293,7 +1293,7 @@ function runWarningPass(
     OptionalCallExpression(path) {
       const callee = path.node.callee
       if (!t.isExpression(callee)) return
-      emitCallbackBoundaryWarnings(path, callee, { checkReactiveArguments: false })
+      emitCallbackBoundaryWarnings(path, callee, { checkReactiveArguments: true })
     },
     OptionalMemberExpression(path) {
       if (!path.node.computed) return
@@ -2035,7 +2035,9 @@ function createHIREntrypointVisitor(
           )
         }
         const isImportedStateArgumentAllowedCall = (
-          callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
+          callPath: BabelCore.NodePath<
+            BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+          >,
         ): boolean => {
           const callee = callPath.node.callee
           if (!t.isIdentifier(callee)) return false
@@ -2044,6 +2046,30 @@ function createHIREntrypointVisitor(
             binding &&
             stateArgumentAllowedBindingIds.has(binding.identifier as BabelCore.types.Identifier)
           )
+        }
+        const emitDirectStateArgumentWarnings = (
+          callPath: BabelCore.NodePath<
+            BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+          >,
+          isAllowedStateCallee: boolean,
+        ): void => {
+          callPath.node.arguments.forEach(arg => {
+            if (
+              t.isIdentifier(arg) &&
+              hasTrackedBinding(callPath, arg.name, stateBindingIds) &&
+              !isAllowedStateCallee
+            ) {
+              const loc = arg.loc?.start ?? callPath.node.loc?.start
+              warn({
+                code: 'FICT-S002',
+                message:
+                  'State variable is passed as an argument; this passes a value snapshot and may escape component scope.',
+                fileName,
+                line: loc?.line ?? 0,
+                column: loc ? loc.column + 1 : 0,
+              })
+            }
+          })
         }
         const hasReactiveAliasSourceBinding = (path: BabelCore.NodePath, name: string): boolean =>
           hasTrackedBinding(path, name, stateBindingIds) ||
@@ -2354,23 +2380,7 @@ function createHIREntrypointVisitor(
               macroKind === 'effect' ||
               macroKind === 'memo' ||
               isImportedStateArgumentAllowedCall(callPath)
-            callPath.node.arguments.forEach(arg => {
-              if (
-                t.isIdentifier(arg) &&
-                hasTrackedBinding(callPath, arg.name, stateBindingIds) &&
-                !isAllowedStateCallee
-              ) {
-                const loc = arg.loc?.start ?? callPath.node.loc?.start
-                warn({
-                  code: 'FICT-S002',
-                  message:
-                    'State variable is passed as an argument; this passes a value snapshot and may escape component scope.',
-                  fileName,
-                  line: loc?.line ?? 0,
-                  column: loc ? loc.column + 1 : 0,
-                })
-              }
-            })
+            emitDirectStateArgumentWarnings(callPath, isAllowedStateCallee)
             if (
               macroKind === 'memo' &&
               (fictImports.has('$memo') || fictImports.has('createMemo'))
@@ -2426,6 +2436,9 @@ function createHIREntrypointVisitor(
                 })
               }
             }
+          },
+          OptionalCallExpression(callPath) {
+            emitDirectStateArgumentWarnings(callPath, isImportedStateArgumentAllowedCall(callPath))
           },
         })
 

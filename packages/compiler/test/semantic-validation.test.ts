@@ -462,6 +462,23 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
   })
 
+  it('warns when passing reactive value inside optional-call argument to unknown function', () => {
+    const source = `
+      import { $state } from 'fict'
+      function sink(value) {
+        return value
+      }
+      function App() {
+        let count = $state(0)
+        sink?.([count])
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
+  })
+
   it('does not warn FICT-R005 for non-escaping array callbacks', () => {
     const source = `
       import { $state } from 'fict'
@@ -701,6 +718,24 @@ describe('semantic validation', () => {
       function App() {
         let count = $state(0)
         sink(count)
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-S002')).toBe(true)
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
+  })
+
+  it('warns only with FICT-S002 for optional direct state argument', () => {
+    const source = `
+      import { $state } from 'fict'
+      function sink(value) {
+        return value
+      }
+      function App() {
+        let count = $state(0)
+        sink?.(count)
         return <div />
       }
     `
