@@ -4764,6 +4764,434 @@ function collectUsesFromTerminator(
   }
 }
 
+type UseCollector = (name: string, inFunctionBody: boolean) => void
+
+interface ExpressionWalkContext {
+  inFunctionBody: boolean
+  shadowed: Set<string>
+}
+
+function isNameShadowed(name: string, shadowed: Set<string>): boolean {
+  return shadowed.has(name) || shadowed.has(getSSABaseName(name))
+}
+
+function addBabelIdentifierUse(name: string, add: UseCollector, ctx: ExpressionWalkContext): void {
+  if (!isNameShadowed(name, ctx.shadowed)) add(name, ctx.inFunctionBody)
+}
+
+function collectBabelBindingBases(node: t.Node | null | undefined, shadowed: Set<string>): void {
+  if (!node) return
+  if (t.isIdentifier(node)) {
+    shadowed.add(getSSABaseName(node.name))
+    return
+  }
+  if (t.isRestElement(node)) {
+    collectBabelBindingBases(node.argument, shadowed)
+    return
+  }
+  if (t.isAssignmentPattern(node)) {
+    collectBabelBindingBases(node.left, shadowed)
+    return
+  }
+  if (t.isArrayPattern(node)) {
+    node.elements.forEach(item => collectBabelBindingBases(item, shadowed))
+    return
+  }
+  if (t.isObjectPattern(node)) {
+    node.properties.forEach(prop => {
+      if (t.isRestElement(prop)) {
+        collectBabelBindingBases(prop.argument, shadowed)
+      } else {
+        collectBabelBindingBases(prop.value, shadowed)
+      }
+    })
+    return
+  }
+  if (t.isTSParameterProperty(node)) {
+    collectBabelBindingBases(node.parameter, shadowed)
+  }
+}
+
+function collectBabelPatternInitializerUses(
+  node: t.Node | null | undefined,
+  add: UseCollector,
+  ctx: ExpressionWalkContext,
+): void {
+  if (!node) return
+  if (t.isAssignmentPattern(node)) {
+    collectBabelPatternInitializerUses(node.left, add, ctx)
+    collectBabelNodeUses(node.right, add, ctx)
+    return
+  }
+  if (t.isArrayPattern(node)) {
+    node.elements.forEach(item => collectBabelPatternInitializerUses(item, add, ctx))
+    return
+  }
+  if (t.isObjectPattern(node)) {
+    node.properties.forEach(prop => {
+      if (t.isRestElement(prop)) return
+      if (prop.computed) collectBabelNodeUses(prop.key, add, ctx)
+      collectBabelPatternInitializerUses(prop.value, add, ctx)
+    })
+    return
+  }
+  if (t.isRestElement(node)) {
+    collectBabelPatternInitializerUses(node.argument, add, ctx)
+    return
+  }
+  if (t.isTSParameterProperty(node)) {
+    collectBabelPatternInitializerUses(node.parameter, add, ctx)
+  }
+}
+
+function collectBabelFunctionUses(
+  name: string | undefined,
+  params: t.Node[] | undefined,
+  body: t.Node | null | undefined,
+  add: UseCollector,
+  ctx: ExpressionWalkContext,
+): void {
+  const functionCtx: ExpressionWalkContext = {
+    inFunctionBody: true,
+    shadowed: new Set(ctx.shadowed),
+  }
+  if (name) functionCtx.shadowed.add(getSSABaseName(name))
+  params?.forEach(param => collectBabelBindingBases(param, functionCtx.shadowed))
+  params?.forEach(param => collectBabelPatternInitializerUses(param, add, functionCtx))
+  if (!body) return
+  if (t.isBlockStatement(body)) {
+    collectBabelStatementsUses(body.body, add, functionCtx)
+  } else {
+    collectBabelNodeUses(body, add, functionCtx)
+  }
+}
+
+function collectBabelClassUses(
+  node: t.ClassExpression | t.ClassDeclaration,
+  add: UseCollector,
+  ctx: ExpressionWalkContext,
+): void {
+  node.decorators?.forEach(decorator => collectBabelNodeUses(decorator.expression, add, ctx))
+  if (node.superClass) collectBabelNodeUses(node.superClass, add, ctx)
+  const classCtx: ExpressionWalkContext = {
+    inFunctionBody: ctx.inFunctionBody,
+    shadowed: new Set(ctx.shadowed),
+  }
+  if (node.id) classCtx.shadowed.add(getSSABaseName(node.id.name))
+  collectBabelClassBodyUses(node.body.body, add, classCtx)
+}
+
+function collectBabelClassBodyUses(
+  members: t.ClassBody['body'],
+  add: UseCollector,
+  ctx: ExpressionWalkContext,
+): void {
+  members.forEach(member => {
+    const decorators = (member as t.Node & { decorators?: t.Decorator[] | null }).decorators
+    decorators?.forEach(decorator => collectBabelNodeUses(decorator.expression, add, ctx))
+    const keyedMember = member as t.Node & { computed?: boolean; key?: t.Node | null }
+    if (keyedMember.computed) collectBabelNodeUses(keyedMember.key, add, ctx)
+    if (
+      t.isClassProperty(member) ||
+      t.isClassPrivateProperty(member) ||
+      t.isClassAccessorProperty(member)
+    ) {
+      collectBabelNodeUses(member.value, add, ctx)
+      return
+    }
+    if (t.isStaticBlock(member)) {
+      collectBabelStatementsUses(member.body, add, ctx)
+      return
+    }
+    if (t.isClassMethod(member) || t.isClassPrivateMethod(member)) {
+      collectBabelFunctionUses(undefined, member.params, member.body, add, ctx)
+    }
+  })
+}
+
+function collectDeclaredBasesInBabelStatements(statements: t.Statement[]): Set<string> {
+  const declared = new Set<string>()
+  statements.forEach(statement => {
+    if (t.isVariableDeclaration(statement)) {
+      statement.declarations.forEach(decl => collectBabelBindingBases(decl.id, declared))
+      return
+    }
+    if (t.isFunctionDeclaration(statement) || t.isClassDeclaration(statement)) {
+      if (statement.id) declared.add(getSSABaseName(statement.id.name))
+    }
+  })
+  return declared
+}
+
+function collectBabelStatementsUses(
+  statements: t.Statement[],
+  add: UseCollector,
+  ctx: ExpressionWalkContext,
+): void {
+  const blockCtx: ExpressionWalkContext = {
+    inFunctionBody: ctx.inFunctionBody,
+    shadowed: new Set(ctx.shadowed),
+  }
+  collectDeclaredBasesInBabelStatements(statements).forEach(name => blockCtx.shadowed.add(name))
+  statements.forEach(statement => collectBabelStatementUses(statement, add, blockCtx))
+}
+
+function collectBabelVariableDeclarationUses(
+  declaration: t.VariableDeclaration,
+  add: UseCollector,
+  ctx: ExpressionWalkContext,
+): void {
+  declaration.declarations.forEach(decl => {
+    collectBabelPatternInitializerUses(decl.id, add, ctx)
+    collectBabelNodeUses(decl.init, add, ctx)
+  })
+}
+
+function collectBabelAssignmentTargetUses(
+  node: t.Node | null | undefined,
+  add: UseCollector,
+  ctx: ExpressionWalkContext,
+): void {
+  if (!node) return
+  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+    collectBabelNodeUses(node.object, add, ctx)
+    if (node.computed) collectBabelNodeUses(node.property, add, ctx)
+    return
+  }
+  collectBabelNodeUses(node, add, ctx)
+}
+
+function collectBabelStatementUses(
+  statement: t.Statement,
+  add: UseCollector,
+  ctx: ExpressionWalkContext,
+): void {
+  if (t.isExpressionStatement(statement)) {
+    collectBabelNodeUses(statement.expression, add, ctx)
+    return
+  }
+  if (t.isVariableDeclaration(statement)) {
+    collectBabelVariableDeclarationUses(statement, add, ctx)
+    return
+  }
+  if (t.isFunctionDeclaration(statement)) {
+    collectBabelFunctionUses(statement.id?.name, statement.params, statement.body, add, ctx)
+    return
+  }
+  if (t.isClassDeclaration(statement)) {
+    collectBabelClassUses(statement, add, ctx)
+    return
+  }
+  if (t.isBlockStatement(statement)) {
+    collectBabelStatementsUses(statement.body, add, ctx)
+    return
+  }
+  if (t.isReturnStatement(statement) || t.isThrowStatement(statement)) {
+    collectBabelNodeUses(statement.argument, add, ctx)
+    return
+  }
+  if (t.isIfStatement(statement)) {
+    collectBabelNodeUses(statement.test, add, ctx)
+    collectBabelStatementUses(statement.consequent, add, ctx)
+    if (statement.alternate) collectBabelStatementUses(statement.alternate, add, ctx)
+    return
+  }
+  if (t.isForStatement(statement)) {
+    const loopCtx: ExpressionWalkContext = {
+      inFunctionBody: ctx.inFunctionBody,
+      shadowed: new Set(ctx.shadowed),
+    }
+    if (t.isVariableDeclaration(statement.init)) {
+      statement.init.declarations.forEach(decl =>
+        collectBabelBindingBases(decl.id, loopCtx.shadowed),
+      )
+      collectBabelVariableDeclarationUses(statement.init, add, loopCtx)
+    } else {
+      collectBabelNodeUses(statement.init, add, loopCtx)
+    }
+    collectBabelNodeUses(statement.test, add, loopCtx)
+    collectBabelNodeUses(statement.update, add, loopCtx)
+    collectBabelStatementUses(statement.body, add, loopCtx)
+    return
+  }
+  if (t.isForInStatement(statement) || t.isForOfStatement(statement)) {
+    const loopCtx: ExpressionWalkContext = {
+      inFunctionBody: ctx.inFunctionBody,
+      shadowed: new Set(ctx.shadowed),
+    }
+    if (t.isVariableDeclaration(statement.left)) {
+      statement.left.declarations.forEach(decl =>
+        collectBabelBindingBases(decl.id, loopCtx.shadowed),
+      )
+      collectBabelVariableDeclarationUses(statement.left, add, loopCtx)
+    } else {
+      collectBabelAssignmentTargetUses(statement.left, add, loopCtx)
+    }
+    collectBabelNodeUses(statement.right, add, loopCtx)
+    collectBabelStatementUses(statement.body, add, loopCtx)
+    return
+  }
+  if (t.isWhileStatement(statement)) {
+    collectBabelNodeUses(statement.test, add, ctx)
+    collectBabelStatementUses(statement.body, add, ctx)
+    return
+  }
+  if (t.isDoWhileStatement(statement)) {
+    collectBabelStatementUses(statement.body, add, ctx)
+    collectBabelNodeUses(statement.test, add, ctx)
+    return
+  }
+  if (t.isSwitchStatement(statement)) {
+    collectBabelNodeUses(statement.discriminant, add, ctx)
+    statement.cases.forEach(item => {
+      if (item.test) collectBabelNodeUses(item.test, add, ctx)
+      collectBabelStatementsUses(item.consequent, add, ctx)
+    })
+    return
+  }
+  if (t.isTryStatement(statement)) {
+    collectBabelStatementUses(statement.block, add, ctx)
+    if (statement.handler) {
+      const catchCtx: ExpressionWalkContext = {
+        inFunctionBody: ctx.inFunctionBody,
+        shadowed: new Set(ctx.shadowed),
+      }
+      collectBabelBindingBases(statement.handler.param, catchCtx.shadowed)
+      collectBabelStatementUses(statement.handler.body, add, catchCtx)
+    }
+    if (statement.finalizer) collectBabelStatementUses(statement.finalizer, add, ctx)
+    return
+  }
+  if (t.isLabeledStatement(statement) || t.isWithStatement(statement)) {
+    collectBabelStatementUses(statement.body, add, ctx)
+  }
+}
+
+function collectBabelNodeUses(
+  node: t.Node | null | undefined,
+  add: UseCollector,
+  ctx: ExpressionWalkContext,
+): void {
+  if (!node) return
+  if (t.isIdentifier(node)) {
+    addBabelIdentifierUse(node.name, add, ctx)
+    return
+  }
+  if (
+    t.isThisExpression(node) ||
+    t.isSuper(node) ||
+    t.isPrivateName(node) ||
+    t.isMetaProperty(node)
+  ) {
+    return
+  }
+  if (t.isFunctionExpression(node) || t.isArrowFunctionExpression(node)) {
+    collectBabelFunctionUses(
+      t.isFunctionExpression(node) ? node.id?.name : undefined,
+      node.params,
+      node.body,
+      add,
+      ctx,
+    )
+    return
+  }
+  if (t.isClassExpression(node) || t.isClassDeclaration(node)) {
+    collectBabelClassUses(node, add, ctx)
+    return
+  }
+  if (t.isAssignmentExpression(node)) {
+    collectBabelAssignmentTargetUses(node.left, add, ctx)
+    collectBabelNodeUses(node.right, add, ctx)
+    return
+  }
+  if (t.isUpdateExpression(node)) {
+    collectBabelAssignmentTargetUses(node.argument, add, ctx)
+    return
+  }
+  if (t.isCallExpression(node) || t.isOptionalCallExpression(node) || t.isNewExpression(node)) {
+    collectBabelNodeUses(node.callee, add, ctx)
+    node.arguments.forEach(arg => collectBabelNodeUses(arg, add, ctx))
+    return
+  }
+  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+    collectBabelNodeUses(node.object, add, ctx)
+    if (node.computed) collectBabelNodeUses(node.property, add, ctx)
+    return
+  }
+  if (t.isBinaryExpression(node) || t.isLogicalExpression(node)) {
+    collectBabelNodeUses(node.left, add, ctx)
+    collectBabelNodeUses(node.right, add, ctx)
+    return
+  }
+  if (t.isUnaryExpression(node)) {
+    collectBabelNodeUses(node.argument, add, ctx)
+    return
+  }
+  if (t.isAwaitExpression(node) || t.isSpreadElement(node)) {
+    collectBabelNodeUses(node.argument, add, ctx)
+    return
+  }
+  if (t.isYieldExpression(node)) {
+    collectBabelNodeUses(node.argument, add, ctx)
+    return
+  }
+  if (t.isConditionalExpression(node)) {
+    collectBabelNodeUses(node.test, add, ctx)
+    collectBabelNodeUses(node.consequent, add, ctx)
+    collectBabelNodeUses(node.alternate, add, ctx)
+    return
+  }
+  if (t.isSequenceExpression(node)) {
+    node.expressions.forEach(item => collectBabelNodeUses(item, add, ctx))
+    return
+  }
+  if (t.isArrayExpression(node)) {
+    node.elements.forEach(item => collectBabelNodeUses(item, add, ctx))
+    return
+  }
+  if (t.isObjectExpression(node)) {
+    node.properties.forEach(prop => {
+      if (t.isSpreadElement(prop)) {
+        collectBabelNodeUses(prop.argument, add, ctx)
+        return
+      }
+      if (t.isObjectProperty(prop)) {
+        if (prop.computed) collectBabelNodeUses(prop.key, add, ctx)
+        collectBabelNodeUses(prop.value, add, ctx)
+        return
+      }
+      if (t.isObjectMethod(prop)) {
+        if (prop.computed) collectBabelNodeUses(prop.key, add, ctx)
+        collectBabelFunctionUses(undefined, prop.params, prop.body, add, ctx)
+      }
+    })
+    return
+  }
+  if (t.isTemplateLiteral(node)) {
+    node.expressions.forEach(item => collectBabelNodeUses(item, add, ctx))
+    return
+  }
+  if (t.isTaggedTemplateExpression(node)) {
+    collectBabelNodeUses(node.tag, add, ctx)
+    node.quasi.expressions.forEach(item => collectBabelNodeUses(item, add, ctx))
+    return
+  }
+  if (t.isDecorator(node)) {
+    collectBabelNodeUses(node.expression, add, ctx)
+    return
+  }
+  if (
+    t.isTSAsExpression(node) ||
+    t.isTSTypeAssertion(node) ||
+    t.isTSNonNullExpression(node) ||
+    t.isTSSatisfiesExpression(node) ||
+    t.isTSInstantiationExpression(node) ||
+    t.isTypeCastExpression(node)
+  ) {
+    collectBabelNodeUses(node.expression, add, ctx)
+  }
+}
+
 function collectUsesFromExpression(
   expr: Expression,
   add: (name: string, inFunctionBody: boolean) => void,
@@ -4772,14 +5200,10 @@ function collectUsesFromExpression(
   walkExpression(expr, add, { inFunctionBody, shadowed: new Set() })
 }
 
-function walkExpression(
-  expr: Expression,
-  add: (name: string, inFunctionBody: boolean) => void,
-  ctx: { inFunctionBody: boolean; shadowed: Set<string> },
-): void {
+function walkExpression(expr: Expression, add: UseCollector, ctx: ExpressionWalkContext): void {
   switch (expr.kind) {
     case 'Identifier':
-      if (!ctx.shadowed.has(expr.name)) add(expr.name, ctx.inFunctionBody)
+      if (!isNameShadowed(expr.name, ctx.shadowed)) add(expr.name, ctx.inFunctionBody)
       return
     case 'CallExpression':
     case 'OptionalCallExpression':
@@ -4888,16 +5312,23 @@ function walkExpression(
         }
       })
       return
+    case 'ClassExpression': {
+      expr.decorators?.forEach(decorator => collectBabelNodeUses(decorator.expression, add, ctx))
+      if (expr.superClass) walkExpression(expr.superClass as Expression, add, ctx)
+      const classCtx: ExpressionWalkContext = {
+        inFunctionBody: ctx.inFunctionBody,
+        shadowed: new Set(ctx.shadowed),
+      }
+      if (expr.name) classCtx.shadowed.add(getSSABaseName(expr.name))
+      collectBabelClassBodyUses(expr.body, add, classCtx)
+      return
+    }
     default:
       return
   }
 }
 
-function walkBlocks(
-  blocks: BasicBlock[],
-  add: (name: string, inFunctionBody: boolean) => void,
-  ctx: { inFunctionBody: boolean; shadowed: Set<string> },
-): void {
+function walkBlocks(blocks: BasicBlock[], add: UseCollector, ctx: ExpressionWalkContext): void {
   for (const block of blocks) {
     for (const instr of block.instructions) {
       if (instr.kind === 'Assign') {

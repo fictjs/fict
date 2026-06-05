@@ -442,6 +442,94 @@ describe('optimizeHIR', () => {
     expect(hasDanglingIdentifierReference(optimized, 'name')).toBe(false)
   })
 
+  it('keeps class expression extends dependencies alive', () => {
+    const ast = parseFile(`
+      function make() {
+        "use pure"
+        const Base = Object
+        return class Derived extends Base {}
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasAssignTargetBase(optimized, 'Base')).toBe(true)
+  })
+
+  it('keeps class expression computed member dependencies alive', () => {
+    const ast = parseFile(`
+      function make() {
+        "use pure"
+        const key = 'm'
+        return class {
+          [key]() {
+            return 2
+          }
+        }
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasAssignTargetBase(optimized, 'key')).toBe(true)
+  })
+
+  it('keeps class expression method body dependencies alive', () => {
+    const ast = parseFile(`
+      function make() {
+        "use pure"
+        const value = 6
+        return class {
+          read() {
+            return value
+          }
+        }
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasAssignTargetBase(optimized, 'value')).toBe(true)
+  })
+
+  it('keeps class expression instance field dependencies alive', () => {
+    const ast = parseFile(`
+      function make() {
+        "use pure"
+        const value = 3
+        return class {
+          field = value
+        }
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasAssignTargetBase(optimized, 'value')).toBe(true)
+  })
+
+  it('keeps class expression static field dependencies alive', () => {
+    const ast = parseFile(`
+      function make() {
+        "use pure"
+        const value = 4
+        return class {
+          static field = value
+        }
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasAssignTargetBase(optimized, 'value')).toBe(true)
+  })
+
+  it('keeps class expression static block dependencies alive', () => {
+    const ast = parseFile(`
+      function make() {
+        "use pure"
+        const value = 5
+        return class {
+          static {
+            globalThis.__fictClassValue = value
+          }
+        }
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasAssignTargetBase(optimized, 'value')).toBe(true)
+  })
+
   it('drops unused derived values from reactive graph DCE', () => {
     const ast = parseFile(`
       function Counter() {

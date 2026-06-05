@@ -1953,6 +1953,127 @@ describe('control flow runtime regressions', () => {
     expect([...result]).toEqual([1, 2])
   })
 
+  it('preserves class expression extends locals with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        export function useRun() {
+          "use pure"
+          const Base = class {
+            static label = 'base'
+          }
+          const Derived = class extends Base {}
+          return Object.getPrototypeOf(Derived).label
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('base')
+  })
+
+  it('preserves class expression computed member locals with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        export function useRun() {
+          "use pure"
+          const key = 'm'
+          const C = class {
+            [key]() {
+              return 2
+            }
+          }
+          return new C().m()
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('preserves class expression method body locals with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        export function useRun() {
+          "use pure"
+          const value = 6
+          const C = class {
+            read() {
+              return value
+            }
+          }
+          return new C().read()
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(6)
+  })
+
+  it('preserves class expression instance field locals with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        export function useRun() {
+          "use pure"
+          const value = 3
+          const C = class {
+            field = value
+          }
+          return new C().field
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(3)
+  })
+
+  it('preserves class expression static field locals with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        export function useRun() {
+          "use pure"
+          const value = 4
+          const C = class {
+            static field = value
+          }
+          return C.field
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(4)
+  })
+
+  it('preserves class expression static block locals with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        export function useRun() {
+          "use pure"
+          const value = 5
+          let result = 0
+          const Probe = class {
+            static {
+              result = value
+            }
+          }
+          return result + (Probe ? 0 : 1)
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(5)
+  })
+
   it('preserves for-await over promise arrays with optimization', async () => {
     const result = await compileAndRunHook<Promise<number>>(
       `
