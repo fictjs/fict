@@ -64,6 +64,7 @@ import {
   applyImportedReactiveMetadata,
   buildModuleReactiveMetadata,
 } from './codegen-module-metadata'
+import { createGeneratedIdentifier } from './codegen-name-allocation'
 import {
   markSkipRegionOverride,
   normalizeDependencyKey,
@@ -664,6 +665,8 @@ export interface CodegenContext {
   inlineHelperLocalNames?: Map<string, string> | undefined
   /** Counter for generating unique identifiers */
   tempCounter: number
+  /** Generated local temporary names already allocated in this module. */
+  generatedTempNames?: Set<string> | undefined
   /** Set of tracked/reactive variable names (de-versioned) */
   trackedVars: Set<string>
   /** Identifiers shadowed in the current lowering scope (params/locals) */
@@ -835,6 +838,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     runtimeHelperLocalNames: new Map(),
     inlineHelperLocalNames: new Map(),
     tempCounter: 0,
+    generatedTempNames: new Set(),
     trackedVars: new Set(),
     shadowedNames: new Set(),
     needsForOfHelper: false,
@@ -1032,7 +1036,7 @@ function withNonReactiveScope<T>(ctx: CodegenContext, fn: () => T): T {
  * Generate a unique temporary identifier
  */
 function genTemp(ctx: CodegenContext, prefix = 'tmp'): BabelCore.types.Identifier {
-  return ctx.t.identifier(`__${prefix}_${ctx.tempCounter++}`)
+  return createGeneratedIdentifier(ctx, prefix)
 }
 
 /**

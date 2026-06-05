@@ -1,10 +1,11 @@
 import type * as BabelCore from '@babel/core'
 
 import type { CodegenContext } from './codegen'
+import { createGeneratedIdentifier, reserveGeneratedName } from './codegen-name-allocation'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 
 function genTemp(ctx: CodegenContext, prefix = 'tmp'): BabelCore.types.Identifier {
-  return ctx.t.identifier(`__${prefix}_${ctx.tempCounter++}`)
+  return createGeneratedIdentifier(ctx, prefix)
 }
 
 /**
@@ -81,7 +82,7 @@ export function getCachedGetterExpression(
   }
 
   if (existingEntry === '') {
-    const cacheVar = `__cached_${getterName}_${ctx.tempCounter++}`
+    const cacheVar = reserveGeneratedName(ctx, `cached_${getterName}`)
     ctx.getterCache.set(getterName, cacheVar)
     ctx.getterCacheDeclarations.set(cacheVar, null)
     return ctx.t.assignmentExpression('=', ctx.t.identifier(cacheVar), callExpr)

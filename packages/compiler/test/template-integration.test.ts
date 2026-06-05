@@ -1931,6 +1931,101 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps generated template temps from shadowing source bindings', async () => {
+    const cases: Array<{
+      source: string
+      assert(container: HTMLDivElement): void
+    }> = [
+      {
+        source: `
+          import { render } from 'fict'
+
+          export function App() {
+            const __root_0 = 'user-root'
+            return <div data-id="target">{__root_0 ? <span data-id="value">{__root_0}</span> : null}</div>
+          }
+
+          export function mount(el: HTMLElement) {
+            return render(() => <App />, el)
+          }
+        `,
+        assert(container) {
+          expect(container.querySelector('[data-id="value"]')?.textContent).toBe('user-root')
+        },
+      },
+      {
+        source: `
+          import { render } from 'fict'
+
+          export function App() {
+            const __tmpl_1 = 'user-template'
+            return <div data-id="target" title={__tmpl_1}>x</div>
+          }
+
+          export function mount(el: HTMLElement) {
+            return render(() => <App />, el)
+          }
+        `,
+        assert(container) {
+          expect(container.querySelector('[data-id="target"]')?.getAttribute('title')).toBe(
+            'user-template',
+          )
+        },
+      },
+      {
+        source: `
+          import { render } from 'fict'
+
+          export function App() {
+            const __el_2 = 'user-path'
+            return <section><span data-id="target" title={__el_2}>x</span></section>
+          }
+
+          export function mount(el: HTMLElement) {
+            return render(() => <App />, el)
+          }
+        `,
+        assert(container) {
+          expect(container.querySelector('[data-id="target"]')?.getAttribute('title')).toBe(
+            'user-path',
+          )
+        },
+      },
+      {
+        source: `
+          import { render } from 'fict'
+
+          export function App() {
+            const __end_3 = 'user-end'
+            return <div data-id="target">{__end_3 ? <span data-id="value">{__end_3}</span> : null}</div>
+          }
+
+          export function mount(el: HTMLElement) {
+            return render(() => <App />, el)
+          }
+        `,
+        assert(container) {
+          expect(container.querySelector('[data-id="value"]')?.textContent).toBe('user-end')
+        },
+      },
+    ]
+
+    for (const testCase of cases) {
+      const mod = compileAndLoad<{
+        mount: (el: HTMLElement) => () => void
+      }>(testCase.source, { fineGrainedDom: true })
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const teardown = mod.mount(container)
+
+      await flushUpdates()
+      testCase.assert(container)
+
+      teardown()
+      container.remove()
+    }
+  })
+
   it('preserves whitespace-only static JSX text in template output', async () => {
     const source = `
       import { render } from 'fict'
