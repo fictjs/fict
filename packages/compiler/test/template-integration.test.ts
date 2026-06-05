@@ -417,6 +417,47 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('invokes optional-called destructured function props', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      function Child({ cb, value }: { cb?: (value?: string) => void; value: string }) {
+        cb?.()
+        cb?.(value)
+        return <div data-testid="child">child</div>
+      }
+
+      export function App() {
+        return (
+          <section>
+            <Child cb={value => calls.push(value ?? 'empty')} value="called" />
+            <Child value="missing" />
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      calls: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelectorAll('[data-testid="child"]')).toHaveLength(2)
+    expect(mod.calls).toEqual(['empty', 'called'])
+
+    teardown()
+    container.remove()
+  })
+
   it('passes props to local components named Fragment', async () => {
     const source = `
       import { render } from 'fict'

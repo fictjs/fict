@@ -402,6 +402,15 @@ export function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
         expr.arguments.forEach(arg => visitExpr(arg as Expression))
         return
       }
+      case 'OptionalCallExpression': {
+        if (expr.callee.kind === 'Identifier') {
+          called.add(deSSAVarName(expr.callee.name))
+        } else {
+          visitExpr(expr.callee as Expression)
+        }
+        expr.arguments.forEach(arg => visitExpr(arg as Expression))
+        return
+      }
       case 'MemberExpression':
       case 'OptionalMemberExpression':
         visitExpr(expr.object as Expression)
