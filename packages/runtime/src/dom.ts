@@ -17,6 +17,7 @@ import {
   createAttributeBinding,
   createStyleBinding,
   createClassBinding,
+  createClassListBinding,
   createChildBinding,
   bindEvent,
   bindRef,
@@ -782,7 +783,7 @@ function applyProps(el: Element, props: Record<string, unknown>, isSVG = false):
 
     // classList for object-style class binding
     if (key === 'classList') {
-      createClassBinding(el, value as MaybeReactive<Record<string, boolean> | null>)
+      createClassListBinding(el, value as MaybeReactive<Record<string, boolean> | null>)
       continue
     }
 

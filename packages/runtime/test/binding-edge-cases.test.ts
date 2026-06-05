@@ -671,15 +671,59 @@ describe('Binding Edge Cases', () => {
 
     it('transitions from string to object class', async () => {
       const el = document.createElement('div')
-      const classValue = createSignal<string | Record<string, boolean>>('static-class')
+      const classValue = createSignal<string | Record<string, boolean>>('old static-class')
+
+      bindClass(el, () => classValue())
+      expect(el.className).toBe('old static-class')
+
+      classValue({ dynamic: true, another: true })
+      await tick()
+      expect(el.classList.contains('old')).toBe(false)
+      expect(el.classList.contains('static-class')).toBe(false)
+      expect(el.classList.contains('dynamic')).toBe(true)
+      expect(el.classList.contains('another')).toBe(true)
+    })
+
+    it('clears string class values when switching to null', async () => {
+      const el = document.createElement('div')
+      const classValue = createSignal<string | null>('foo old')
+
+      bindClass(el, () => classValue())
+      expect(el.className).toBe('foo old')
+
+      classValue(null)
+      await tick()
+      expect(el.className).toBe('')
+    })
+
+    it('clears string class values after object to string to null transitions', async () => {
+      const el = document.createElement('div')
+      const classValue = createSignal<string | Record<string, boolean> | null>({ active: true })
+
+      bindClass(el, () => classValue())
+      expect(el.classList.contains('active')).toBe(true)
+
+      classValue('foo')
+      await tick()
+      expect(el.className).toBe('foo')
+
+      classValue(null)
+      await tick()
+      expect(el.className).toBe('')
+    })
+
+    it('keeps external static classes for object class bindings', async () => {
+      const el = document.createElement('div')
+      el.className = 'static-class'
+      const classValue = createSignal<Record<string, boolean>>({ active: false })
 
       bindClass(el, () => classValue())
       expect(el.className).toBe('static-class')
 
-      classValue({ dynamic: true, another: true })
+      classValue({ active: true })
       await tick()
-      expect(el.classList.contains('dynamic')).toBe(true)
-      expect(el.classList.contains('another')).toBe(true)
+      expect(el.classList.contains('static-class')).toBe(true)
+      expect(el.classList.contains('active')).toBe(true)
     })
 
     it('transitions from object to string class', async () => {

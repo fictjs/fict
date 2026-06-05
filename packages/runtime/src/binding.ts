@@ -723,6 +723,23 @@ export function createClassBinding(
 }
 
 /**
+ * Apply a classList object with independent incremental state.
+ */
+export function createClassListBinding(
+  el: Element,
+  value: MaybeReactive<Record<string, boolean> | null | undefined>,
+): void {
+  if (isReactive(value)) {
+    let prev: Record<string, boolean> = {}
+    createRenderEffect(() => {
+      prev = applyClass(el, (value as () => Record<string, boolean> | null | undefined)(), prev)
+    })
+  } else {
+    applyClass(el, value, {})
+  }
+}
+
+/**
  * Bind a reactive class value to an existing element.
  */
 export function bindClass(
@@ -752,6 +769,9 @@ export function setClass(
     return
   }
 
+  if (typeof prevValue === 'string') {
+    setClassString(el, '')
+  }
   cache[CLASS_STATE_CACHE] = applyClass(el, value, prevState)
   cache[CLASS_VALUE_CACHE] = value
 }

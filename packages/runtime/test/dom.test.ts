@@ -890,6 +890,29 @@ describe('DOM Module', () => {
         expect((result as HTMLDivElement).classList.contains('disabled')).toBe(false)
       })
 
+      it('keeps class and classList props independent', async () => {
+        const active = createSignal(true)
+        const result = createElement({
+          type: 'div',
+          props: {
+            class: 'base',
+            classList: reactive(() => ({ active: active(), off: !active() })),
+          },
+          key: undefined,
+        }) as HTMLDivElement
+
+        expect(result.classList.contains('base')).toBe(true)
+        expect(result.classList.contains('active')).toBe(true)
+        expect(result.classList.contains('off')).toBe(false)
+
+        active(false)
+        await tick()
+
+        expect(result.classList.contains('base')).toBe(true)
+        expect(result.classList.contains('active')).toBe(false)
+        expect(result.classList.contains('off')).toBe(true)
+      })
+
       it('applies data attributes', () => {
         const result = createElement({
           type: 'div',
