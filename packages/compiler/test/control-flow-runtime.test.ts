@@ -669,6 +669,132 @@ describe('control flow runtime regressions', () => {
       expect(result).toBe(3)
     })
 
+    it(`preserves var bindings after return with optimize=${optimize}`, () => {
+      const result = compileAndRunHook<undefined>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            return x
+
+            var x = 1
+          }
+        `,
+        'useRun',
+        { optimize },
+      )
+
+      expect(result).toBeUndefined()
+    })
+
+    it(`preserves const TDZ after return with optimize=${optimize}`, () => {
+      expect(() =>
+        compileAndRunHook<number>(
+          `
+            import { $state } from 'fict'
+
+            export function useRun() {
+              let count = $state(0)
+              return typeof x
+
+              const x = 1
+            }
+          `,
+          'useRun',
+          { optimize },
+        ),
+      ).toThrow(/Cannot access 'x' before initialization/)
+    })
+
+    it(`preserves class TDZ after return with optimize=${optimize}`, () => {
+      expect(() =>
+        compileAndRunHook<unknown>(
+          `
+            import { $state } from 'fict'
+
+            export function useRun() {
+              let count = $state(0)
+              return C
+
+              class C {}
+            }
+          `,
+          'useRun',
+          { optimize },
+        ),
+      ).toThrow(/Cannot access 'C' before initialization/)
+    })
+
+    it(`preserves var bindings after throw with optimize=${optimize}`, () => {
+      const result = compileAndRunHook<string>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            try {
+              throw x
+
+              var x = 1
+            } catch (err) {
+              return err === undefined ? 'undefined' : 'other'
+            }
+          }
+        `,
+        'useRun',
+        { optimize },
+      )
+
+      expect(result).toBe('undefined')
+    })
+
+    it(`preserves const TDZ after throw with optimize=${optimize}`, () => {
+      const result = compileAndRunHook<string>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            try {
+              throw typeof x
+
+              const x = 1
+            } catch (err) {
+              return err instanceof ReferenceError ? err.message : 'wrong'
+            }
+          }
+        `,
+        'useRun',
+        { optimize },
+      )
+
+      expect(result).toMatch(/Cannot access 'x' before initialization/)
+    })
+
+    it(`preserves class TDZ after throw with optimize=${optimize}`, () => {
+      const result = compileAndRunHook<string>(
+        `
+          import { $state } from 'fict'
+
+          export function useRun() {
+            let count = $state(0)
+            try {
+              throw C
+
+              class C {}
+            } catch (err) {
+              return err instanceof ReferenceError ? err.message : 'wrong'
+            }
+          }
+        `,
+        'useRun',
+        { optimize },
+      )
+
+      expect(result).toMatch(/Cannot access 'C' before initialization/)
+    })
+
     it(`preserves const object declarations before optional member calls with optimize=${optimize}`, () => {
       const result = compileAndRunHook<number>(
         `

@@ -651,6 +651,8 @@ export interface BasicBlock {
   id: BlockId
   instructions: Instruction[]
   terminator: Terminator
+  /** Binding-only declarations that must remain after return/throw to preserve hoisting and TDZ. */
+  postTerminatorStatements?: BabelStatement[] | undefined
   /** Exit block for a source bare block whose declarations need lexical scope. */
   lexicalScopeExit?: BlockId | undefined
   /** Source loop shape for loops that may not have a natural back-edge, e.g. immediate break. */

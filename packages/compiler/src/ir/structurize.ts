@@ -15,6 +15,7 @@
 import type { LVal } from '@babel/types'
 
 import type {
+  BabelStatement,
   BasicBlock,
   BlockId,
   Expression,
@@ -132,8 +133,8 @@ export type StructuredNode =
       handler: { param: string | null; body: StructuredNode } | null
       finalizer: StructuredNode | null
     }
-  | { kind: 'return'; argument: Expression | null }
-  | { kind: 'throw'; argument: Expression }
+  | { kind: 'return'; argument: Expression | null; trailingStatements?: BabelStatement[] }
+  | { kind: 'throw'; argument: Expression; trailingStatements?: BabelStatement[] }
   | { kind: 'break'; label?: string | undefined }
   | { kind: 'continue'; label?: string | undefined }
   | { kind: 'instruction'; instruction: Instruction }
@@ -144,6 +145,7 @@ export type StructuredNode =
         blockId: BlockId
         instructions: Instruction[]
         terminator: BasicBlock['terminator']
+        postTerminatorStatements?: BabelStatement[] | undefined
       }[]
       entryBlock: BlockId
     }
@@ -339,6 +341,7 @@ function createStateMachineFallback(fn: HIRFunction): StructuredNode {
     blockId: block.id,
     instructions: block.instructions,
     terminator: block.terminator,
+    postTerminatorStatements: block.postTerminatorStatements,
   }))
 
   return {
@@ -513,6 +516,14 @@ function combineStructuredNodes(...nodes: (StructuredNode | null | undefined)[])
     return flattened[0]!
   }
   return { kind: 'sequence', nodes: flattened }
+}
+
+function trailingStatementsForBlock(
+  block: BasicBlock,
+): { trailingStatements: BabelStatement[] } | Record<string, never> {
+  return block.postTerminatorStatements
+    ? { trailingStatements: block.postTerminatorStatements }
+    : {}
 }
 
 function structurizeLabeledStatement(
@@ -721,10 +732,18 @@ function structurizeTerminator(ctx: StructurizeContext, block: BasicBlock): Stru
 
   switch (term.kind) {
     case 'Return':
-      return { kind: 'return', argument: term.argument ?? null }
+      return {
+        kind: 'return',
+        argument: term.argument ?? null,
+        ...trailingStatementsForBlock(block),
+      }
 
     case 'Throw':
-      return { kind: 'throw', argument: term.argument }
+      return {
+        kind: 'throw',
+        argument: term.argument,
+        ...trailingStatementsForBlock(block),
+      }
 
     case 'Jump': {
       // Check if this is a back-edge (loop continuation)
@@ -1196,11 +1215,19 @@ function structurizeBlockUntilJoin(
 
   switch (term.kind) {
     case 'Return':
-      nodes.push({ kind: 'return', argument: term.argument ?? null })
+      nodes.push({
+        kind: 'return',
+        argument: term.argument ?? null,
+        ...trailingStatementsForBlock(block),
+      })
       break
 
     case 'Throw':
-      nodes.push({ kind: 'throw', argument: term.argument })
+      nodes.push({
+        kind: 'throw',
+        argument: term.argument,
+        ...trailingStatementsForBlock(block),
+      })
       break
 
     case 'Jump': {

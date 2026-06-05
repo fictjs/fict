@@ -303,6 +303,153 @@ function emitHoistedFunctionDeclarations(
   }
 }
 
+function bindingNamesFromPattern(
+  pattern: BabelCore.types.LVal | BabelCore.types.PatternLike,
+): string[] {
+  return Object.keys(t.getBindingIdentifiers(pattern as BabelCore.types.Node))
+}
+
+function bindingOnlyVariableDeclaration(
+  kind: 'const' | 'let' | 'var',
+  names: string[],
+  loc?: BabelCore.types.SourceLocation | null,
+): BabelStatement | null {
+  const uniqueNames = Array.from(new Set(names))
+  if (uniqueNames.length === 0) return null
+  const declaration = t.variableDeclaration(
+    kind,
+    uniqueNames.map(name =>
+      t.variableDeclarator(
+        t.identifier(name),
+        kind === 'const' ? t.unaryExpression('void', t.numericLiteral(0), true) : null,
+      ),
+    ),
+  )
+  declaration.loc = loc ?? null
+  return declaration
+}
+
+function bindingOnlyClassDeclaration(
+  stmt: BabelCore.types.ClassDeclaration,
+): BabelStatement | null {
+  if (!stmt.id) return null
+  const declaration = t.classDeclaration(t.identifier(stmt.id.name), null, t.classBody([]), null)
+  declaration.loc = stmt.loc ?? null
+  return declaration
+}
+
+function collectVarBindingDeclarationsFromStatement(
+  stmt: BabelCore.types.Statement,
+): BabelStatement[] {
+  if (t.isFunctionDeclaration(stmt) || t.isClassDeclaration(stmt)) {
+    return []
+  }
+  if (t.isVariableDeclaration(stmt)) {
+    const declKind = normalizeVarKind(stmt.kind)
+    if (declKind !== 'var') return []
+    const names = stmt.declarations.flatMap(decl => bindingNamesFromPattern(decl.id))
+    const declaration = bindingOnlyVariableDeclaration('var', names, stmt.loc)
+    return declaration ? [declaration] : []
+  }
+  if (t.isBlockStatement(stmt)) {
+    return stmt.body.flatMap(child => collectVarBindingDeclarationsFromStatement(child))
+  }
+  if (t.isLabeledStatement(stmt)) {
+    return collectVarBindingDeclarationsFromStatement(stmt.body as BabelCore.types.Statement)
+  }
+  if (t.isIfStatement(stmt)) {
+    return [
+      ...collectVarBindingDeclarationsFromStatement(stmt.consequent as BabelCore.types.Statement),
+      ...(stmt.alternate
+        ? collectVarBindingDeclarationsFromStatement(stmt.alternate as BabelCore.types.Statement)
+        : []),
+    ]
+  }
+  if (t.isWhileStatement(stmt) || t.isDoWhileStatement(stmt)) {
+    return collectVarBindingDeclarationsFromStatement(stmt.body as BabelCore.types.Statement)
+  }
+  if (t.isForStatement(stmt)) {
+    const declarations: BabelStatement[] = []
+    if (stmt.init && t.isVariableDeclaration(stmt.init)) {
+      const declKind = normalizeVarKind(stmt.init.kind)
+      if (declKind === 'var') {
+        const names = stmt.init.declarations.flatMap(decl => bindingNamesFromPattern(decl.id))
+        const declaration = bindingOnlyVariableDeclaration('var', names, stmt.init.loc)
+        if (declaration) declarations.push(declaration)
+      }
+    }
+    declarations.push(
+      ...collectVarBindingDeclarationsFromStatement(stmt.body as BabelCore.types.Statement),
+    )
+    return declarations
+  }
+  if (t.isForInStatement(stmt) || t.isForOfStatement(stmt)) {
+    const declarations: BabelStatement[] = []
+    if (t.isVariableDeclaration(stmt.left)) {
+      const declKind = normalizeVarKind(stmt.left.kind)
+      if (declKind === 'var') {
+        const names = stmt.left.declarations.flatMap(decl => bindingNamesFromPattern(decl.id))
+        const declaration = bindingOnlyVariableDeclaration('var', names, stmt.left.loc)
+        if (declaration) declarations.push(declaration)
+      }
+    }
+    declarations.push(
+      ...collectVarBindingDeclarationsFromStatement(stmt.body as BabelCore.types.Statement),
+    )
+    return declarations
+  }
+  if (t.isSwitchStatement(stmt)) {
+    return stmt.cases.flatMap(switchCase =>
+      switchCase.consequent.flatMap(child => collectVarBindingDeclarationsFromStatement(child)),
+    )
+  }
+  if (t.isTryStatement(stmt)) {
+    return [
+      ...collectVarBindingDeclarationsFromStatement(stmt.block),
+      ...(stmt.handler ? collectVarBindingDeclarationsFromStatement(stmt.handler.body) : []),
+      ...(stmt.finalizer ? collectVarBindingDeclarationsFromStatement(stmt.finalizer) : []),
+    ]
+  }
+  if (t.isWithStatement(stmt)) {
+    return collectVarBindingDeclarationsFromStatement(stmt.body as BabelCore.types.Statement)
+  }
+  return []
+}
+
+function collectPostTerminatorDeclarations(
+  statements: BabelCore.types.Statement[],
+): BabelStatement[] {
+  const declarations: BabelStatement[] = []
+  for (const stmt of statements) {
+    if (t.isFunctionDeclaration(stmt)) {
+      continue
+    }
+    if (t.isVariableDeclaration(stmt)) {
+      const declKind = normalizeVarKind(stmt.kind)
+      const names = stmt.declarations.flatMap(decl => bindingNamesFromPattern(decl.id))
+      const declaration = bindingOnlyVariableDeclaration(declKind, names, stmt.loc)
+      if (declaration) declarations.push(declaration)
+      continue
+    }
+    if (t.isClassDeclaration(stmt)) {
+      const declaration = bindingOnlyClassDeclaration(stmt)
+      if (declaration) declarations.push(declaration)
+      continue
+    }
+    declarations.push(...collectVarBindingDeclarationsFromStatement(stmt))
+  }
+  return declarations
+}
+
+function appendPostTerminatorDeclarations(
+  block: BasicBlock,
+  statements: BabelCore.types.Statement[],
+): void {
+  const declarations = collectPostTerminatorDeclarations(statements)
+  if (declarations.length === 0) return
+  block.postTerminatorStatements = [...(block.postTerminatorStatements ?? []), ...declarations]
+}
+
 function hasNoMemoDirective(directives?: BabelCore.types.Directive[] | null): boolean {
   if (!directives) return false
   return directives.some(d => d.value.value === 'use no memo')
@@ -626,6 +773,7 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
           kind: 'Return',
           argument: stmt.argument ? convertExpression(stmt.argument) : undefined,
         }
+        appendPostTerminatorDeclarations(target, stmts.slice(index + 1))
         return // Stop processing after return
       }
       if (t.isThrowStatement(stmt)) {
@@ -633,6 +781,7 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
           kind: 'Throw',
           argument: convertExpression(stmt.argument as BabelCore.types.Expression),
         }
+        appendPostTerminatorDeclarations(target, stmts.slice(index + 1))
         return // Stop processing after throw
       }
       if (t.isExpressionStatement(stmt)) {
@@ -1195,7 +1344,8 @@ function convertFunction(
 
   emitHoistedFunctionDeclarations(bodyStatements, instr => current.block.instructions.push(instr))
 
-  for (const stmt of bodyStatements) {
+  for (let index = 0; index < bodyStatements.length; index++) {
+    const stmt = bodyStatements[index]!
     if (t.isFunctionDeclaration(stmt)) {
       continue
     }
@@ -1209,8 +1359,8 @@ function convertFunction(
     if (t.isReturnStatement(stmt)) {
       const returnExpr = stmt.argument ? convertExpression(stmt.argument) : undefined
       sealCurrent({ kind: 'Return', argument: returnExpr })
-      current = startNewBlock()
-      continue
+      appendPostTerminatorDeclarations(current.block, bodyStatements.slice(index + 1))
+      break
     }
     if (t.isExpressionStatement(stmt)) {
       const handled = handleExpressionStatement(stmt.expression, instr =>
@@ -1636,9 +1786,19 @@ function convertFunction(
         const fallthroughTarget = nextCaseBlock ? nextCaseBlock.block.id : exitBlock.block.id
         // Process case statements
         let caseBuilder: BlockBuilder = caseBlock
-        for (const s of switchCase.consequent) {
+        for (let stmtIndex = 0; stmtIndex < switchCase.consequent.length; stmtIndex++) {
+          const s = switchCase.consequent[stmtIndex]!
           if (caseBuilder.sealed) break
           caseBuilder = processStatement(s, caseBuilder, exitBlock.block.id, cfgContext)
+          if (caseBuilder.sealed) {
+            const termKind = caseBuilder.block.terminator.kind
+            if (termKind === 'Return' || termKind === 'Throw') {
+              appendPostTerminatorDeclarations(
+                caseBuilder.block,
+                switchCase.consequent.slice(stmtIndex + 1),
+              )
+            }
+          }
         }
 
         // Fall through if not sealed
@@ -1850,6 +2010,11 @@ function convertFunction(
     // This prevents silent statement loss when top-level handling misses a node kind.
     current = processStatement(stmt, current, current.block.id, cfgContext)
     if (current.sealed) {
+      const termKind = current.block.terminator.kind
+      if (termKind === 'Return' || termKind === 'Throw') {
+        appendPostTerminatorDeclarations(current.block, bodyStatements.slice(index + 1))
+        break
+      }
       current = startNewBlock()
     }
   }
@@ -2072,12 +2237,17 @@ function fillStatements(
     emitHoistedFunctionDeclarations(stmt.body, instr => current.block.instructions.push(instr), {
       blockScoped: true,
     })
-    for (const s of stmt.body) {
+    for (let index = 0; index < stmt.body.length; index++) {
+      const s = stmt.body[index]!
       if (t.isFunctionDeclaration(s)) {
         continue
       }
       current = processStatement(s, current, jumpTarget, ctx)
       if (current.sealed) {
+        const termKind = current.block.terminator.kind
+        if (termKind === 'Return' || termKind === 'Throw') {
+          appendPostTerminatorDeclarations(current.block, stmt.body.slice(index + 1))
+        }
         return current
       }
     }
@@ -2190,12 +2360,17 @@ function processStatement(
     emitHoistedFunctionDeclarations(stmt.body, instr => current.block.instructions.push(instr), {
       blockScoped: true,
     })
-    for (const inner of stmt.body) {
+    for (let index = 0; index < stmt.body.length; index++) {
+      const inner = stmt.body[index]!
       if (t.isFunctionDeclaration(inner)) {
         continue
       }
       current = processStatement(inner, current, jumpTarget, ctx, labelOverride)
       if (current.sealed) {
+        const termKind = current.block.terminator.kind
+        if (termKind === 'Return' || termKind === 'Throw') {
+          appendPostTerminatorDeclarations(current.block, stmt.body.slice(index + 1))
+        }
         return current
       }
     }

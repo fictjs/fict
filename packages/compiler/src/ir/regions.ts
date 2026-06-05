@@ -1096,6 +1096,13 @@ function ensureSwitchCaseBreak(
   return [...stmts, t.breakStatement()]
 }
 
+function cloneTrailingStatements(
+  statements: BabelCore.types.Statement[] | undefined,
+  t: typeof BabelCore.types,
+): BabelCore.types.Statement[] {
+  return (statements ?? []).map(stmt => t.cloneNode(stmt, true) as BabelCore.types.Statement)
+}
+
 function shouldLabelStructuredNodeDirectly(node: StructuredNode): boolean {
   switch (node.kind) {
     case 'while':
@@ -1634,9 +1641,27 @@ function collectPatternBindingNames(
   }
 }
 
-function collectDirectBlockBindingNames(statements: StructuredNode[]): Set<string> {
+function collectDirectBlockBindingNames(
+  statements: StructuredNode[],
+  t: typeof BabelCore.types,
+): Set<string> {
   const names = new Set<string>()
+  const collectStatementBindings = (stmt: BabelCore.types.Statement): void => {
+    if (t.isVariableDeclaration(stmt)) {
+      for (const decl of stmt.declarations) {
+        collectPatternBindingNames(decl.id, t, names)
+      }
+      return
+    }
+    if (t.isClassDeclaration(stmt) && stmt.id) {
+      names.add(stmt.id.name)
+    }
+  }
   for (const statement of statements) {
+    if (statement.kind === 'return' || statement.kind === 'throw') {
+      statement.trailingStatements?.forEach(collectStatementBindings)
+      continue
+    }
     if (statement.kind !== 'instruction') continue
     const instruction = statement.instruction
     if (instruction.kind !== 'Assign') continue
@@ -1876,7 +1901,7 @@ function lowerNodeWithRegionContext(
     case 'block': {
       const stmts: BabelCore.types.Statement[] = []
       const scopedDeclared = new Set(declaredVars)
-      const blockBindings = collectDirectBlockBindingNames(node.statements)
+      const blockBindings = collectDirectBlockBindingNames(node.statements, t)
       withShadowedBindings(ctx, blockBindings, () => {
         for (const child of node.statements) {
           stmts.push(...lowerNodeWithRegionContext(child, t, ctx, scopedDeclared, regionCtx))
@@ -1906,11 +1931,15 @@ function lowerNodeWithRegionContext(
     case 'return': {
       return [
         t.returnStatement(node.argument ? lowerExpressionWithDeSSA(node.argument, ctx) : null),
+        ...cloneTrailingStatements(node.trailingStatements, t),
       ]
     }
 
     case 'throw': {
-      return [t.throwStatement(lowerExpressionWithDeSSA(node.argument, ctx))]
+      return [
+        t.throwStatement(lowerExpressionWithDeSSA(node.argument, ctx)),
+        ...cloneTrailingStatements(node.trailingStatements, t),
+      ]
     }
 
     case 'break': {
@@ -2344,6 +2373,7 @@ function lowerNodeWithRegionContext(
 
         // Lower terminator
         stmts.push(...lowerTerminatorForStateMachine(block.terminator, t, ctx, stateVar))
+        stmts.push(...cloneTrailingStatements(block.postTerminatorStatements, t))
 
         cases.push(t.switchCase(t.numericLiteral(block.blockId), stmts))
       }
@@ -2567,7 +2597,7 @@ function lowerStructuredNodeForRegion(
     case 'block': {
       const stmts: BabelCore.types.Statement[] = []
       const scopedDeclared = new Set(declaredVars)
-      const blockBindings = collectDirectBlockBindingNames(node.statements)
+      const blockBindings = collectDirectBlockBindingNames(node.statements, t)
       withShadowedBindings(ctx, blockBindings, () => {
         for (const child of node.statements) {
           stmts.push(

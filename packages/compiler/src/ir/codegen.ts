@@ -1230,6 +1230,14 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
   const baseLoc = block.terminator.loc ?? getTerminatorArgumentLoc(block.terminator)
   const applyLoc = (stmts: BabelCore.types.Statement[]): BabelCore.types.Statement[] =>
     stmts.map(stmt => setNodeLoc(stmt, baseLoc))
+  const appendPostTerminatorStatements = (
+    stmts: BabelCore.types.Statement[],
+  ): BabelCore.types.Statement[] => [
+    ...applyLoc(stmts),
+    ...(block.postTerminatorStatements ?? []).map(
+      stmt => t.cloneNode(stmt, true) as BabelCore.types.Statement,
+    ),
+  ]
   switch (block.terminator.kind) {
     case 'Return': {
       const preserveAccessors = ctx.currentFnIsHook
@@ -1246,10 +1254,12 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
       if (preserveAccessors && retExpr) {
         retExpr = unwrapAccessorCalls(retExpr, ctx)
       }
-      return applyLoc([t.returnStatement(retExpr)])
+      return appendPostTerminatorStatements([t.returnStatement(retExpr)])
     }
     case 'Throw':
-      return applyLoc([t.throwStatement(lowerTrackedExpression(block.terminator.argument, ctx))])
+      return appendPostTerminatorStatements([
+        t.throwStatement(lowerTrackedExpression(block.terminator.argument, ctx)),
+      ])
     case 'Jump':
       return applyLoc([t.expressionStatement(t.stringLiteral(`jump ${block.terminator.target}`))])
     case 'Branch':
@@ -2113,6 +2123,7 @@ function lowerExpressionImpl(
                   blockId: block.id,
                   instructions: block.instructions,
                   terminator: block.terminator,
+                  postTerminatorStatements: block.postTerminatorStatements,
                 })),
                 entryBlock: fn.blocks[0]?.id ?? 0,
               }
