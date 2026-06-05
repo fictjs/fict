@@ -252,6 +252,131 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/state\.count\(\)/)
     })
 
+    it('ignores type-only re-export declarations when propagating metadata', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+        export type count = number
+      `
+      const barrelSource = `
+        export type { count } from './store-type-reexport'
+      `
+      const appSource = `
+        import { count } from './barrel-type-reexport'
+
+        export function useProbe() {
+          return count + 1
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-type-reexport.ts'))
+      transform(barrelSource, { moduleMetadata }, path.join(baseDir, 'barrel-type-reexport.ts'))
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-type-reexport.tsx'),
+      )
+
+      expect(output).toMatch(/return count \+ 1/)
+      expect(output).not.toMatch(/count\(\)/)
+    })
+
+    it('ignores type-only re-export specifiers when propagating metadata', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+        export type count = number
+        export type Label = string
+      `
+      const barrelSource = `
+        export { count as valueCount, type count as Count, type Label } from './store-type-specifier'
+      `
+      const appSource = `
+        import { valueCount, Count } from './barrel-type-specifier'
+
+        export function useProbe() {
+          return valueCount + Count
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-type-specifier.ts'))
+      transform(barrelSource, { moduleMetadata }, path.join(baseDir, 'barrel-type-specifier.ts'))
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-type-specifier.tsx'),
+      )
+
+      expect(output).toMatch(/valueCount\(\) \+ Count/)
+      expect(output).not.toMatch(/\bCount\(\)/)
+    })
+
+    it('ignores type-only imports when applying reactive metadata', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+        export const count = createSignal(1)
+      `
+      const appSource = `
+        import type { count } from './store-type-import'
+
+        export function useProbe() {
+          return count + 1
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-type-import.ts'))
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-type-import.tsx'),
+      )
+
+      expect(output).toMatch(/return count \+ 1/)
+      expect(output).not.toMatch(/count\(\)/)
+    })
+
+    it('ignores type-only hook re-exports when propagating hook metadata', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { directAccessor: "signal" } */
+        export function useCounter() {
+          const count = $state(0)
+          return count
+        }
+      `
+      const barrelSource = `
+        export type { useCounter } from './hook-type-reexport'
+      `
+      const appSource = `
+        import { useCounter } from './barrel-hook-type-reexport'
+
+        export function useProbe() {
+          const count = useCounter()
+          return count * 2
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(hookSource, { moduleMetadata }, path.join(baseDir, 'hook-type-reexport.tsx'))
+      transform(
+        barrelSource,
+        { moduleMetadata },
+        path.join(baseDir, 'barrel-hook-type-reexport.ts'),
+      )
+      const output = transform(
+        appSource,
+        { moduleMetadata },
+        path.join(baseDir, 'app-hook-type-reexport.tsx'),
+      )
+
+      expect(output).toMatch(/return count \* 2/)
+      expect(output).not.toMatch(/count\(\) \* 2/)
+    })
+
     it('propagates createSignal exports from advanced modules (alias)', () => {
       const storeSource = `
         import { createSignal as makeSignal } from 'fict/advanced'

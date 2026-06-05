@@ -38,6 +38,20 @@ function classifyReactiveExport(name: string, ctx: CodegenContext): ReactiveExpo
   return null
 }
 
+function isTypeOnlyKind(kind: string | null | undefined): boolean {
+  return kind === 'type' || kind === 'typeof'
+}
+
+function isTypeOnlyImportSpecifier(spec: BabelCore.types.ImportDeclaration['specifiers'][number]) {
+  return isTypeOnlyKind((spec as { importKind?: string | null }).importKind)
+}
+
+function isTypeOnlyExportSpecifier(
+  spec: BabelCore.types.ExportNamedDeclaration['specifiers'][number],
+) {
+  return isTypeOnlyKind((spec as { exportKind?: string | null }).exportKind)
+}
+
 export function applyImportedReactiveMetadata(
   body: BabelCore.types.Statement[],
   ctx: CodegenContext,
@@ -52,10 +66,12 @@ export function applyImportedReactiveMetadata(
 
   for (const stmt of body) {
     if (!t.isImportDeclaration(stmt)) continue
+    if (isTypeOnlyKind(stmt.importKind)) continue
     const meta = resolveModuleMetadata(stmt.source.value, importer, options)
     if (!meta) continue
 
     for (const spec of stmt.specifiers) {
+      if (isTypeOnlyImportSpecifier(spec)) continue
       if (t.isImportSpecifier(spec)) {
         const importedName = t.isIdentifier(spec.imported)
           ? spec.imported.name
@@ -152,8 +168,10 @@ export function buildModuleReactiveMetadata(
 
   for (const stmt of body) {
     if (t.isExportNamedDeclaration(stmt)) {
+      if (isTypeOnlyKind(stmt.exportKind)) continue
       if (stmt.source && stmt.specifiers.length > 0) {
         for (const spec of stmt.specifiers) {
+          if (isTypeOnlyExportSpecifier(spec)) continue
           if (t.isExportNamespaceSpecifier(spec)) {
             addNamespaceExportFromSource(stmt.source.value, getExportedName(spec.exported))
             continue
@@ -180,6 +198,7 @@ export function buildModuleReactiveMetadata(
         }
       } else {
         for (const spec of stmt.specifiers) {
+          if (isTypeOnlyExportSpecifier(spec)) continue
           if (!t.isExportSpecifier(spec)) continue
           const localName = spec.local.name
           const exportName = getExportedName(spec.exported)
@@ -190,6 +209,7 @@ export function buildModuleReactiveMetadata(
     }
 
     if (t.isExportAllDeclaration(stmt)) {
+      if (isTypeOnlyKind(stmt.exportKind)) continue
       const sourceMeta = resolveModuleMetadata(stmt.source.value, options?.filename, options)
       if (!sourceMeta) continue
       for (const [exportName, kind] of Object.entries(sourceMeta.exports)) {
