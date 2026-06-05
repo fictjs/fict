@@ -1319,6 +1319,50 @@ describe('Cross-Module Reactivity', () => {
       })
     })
 
+    it('publishes hook metadata for imported accessor returns', () => {
+      const sourcePath = path.join(baseDir, 'imported-accessor-source.ts')
+      const hookPath = path.join(baseDir, 'imported-accessor-hooks.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(sourcePath), {
+        version: 1,
+        exports: {
+          count: 'signal',
+          doubled: 'memo',
+          state: 'store',
+        },
+      })
+
+      const hookSource = `
+        import { count, doubled, state } from './imported-accessor-source'
+
+        export function useDirect() {
+          return count
+        }
+
+        export function useObject() {
+          return { count, doubled, state }
+        }
+
+        export function useArrayAlias() {
+          const alias = doubled
+          return [count, alias]
+        }
+
+        export function useShadow(count) {
+          return count
+        }
+      `
+
+      transform(hookSource, { moduleMetadata }, hookPath)
+
+      expect(moduleMetadata.get(path.resolve(hookPath))?.hooks).toMatchObject({
+        useDirect: { directAccessor: 'signal' },
+        useObject: { objectProps: { count: 'signal', doubled: 'memo' } },
+        useArrayAlias: { arrayProps: { 0: 'signal', 1: 'memo' } },
+      })
+      expect(moduleMetadata.get(path.resolve(hookPath))?.hooks).not.toHaveProperty('useShadow')
+    })
+
     it('preserves hook return accessors inside branch returns before publishing metadata', () => {
       const hookPath = path.join(baseDir, 'branch-hook-returns.tsx')
       const moduleMetadata = new Map()

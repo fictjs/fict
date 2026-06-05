@@ -64,17 +64,22 @@ function collectHookReactiveVars(
   memoVars: Set<string>
   functionVars: Set<string>
   mutatedVars: Set<string>
+  localVars: Set<string>
 } {
   const signalVars = new Set<string>()
   const storeVars = new Set<string>()
   const memoVars = new Set<string>()
   const functionVars = new Set<string>()
   const mutatedVars = new Set<string>()
+  const localVars = new Set<string>(fn.params.map(param => deSSAVarName(param.name)))
 
   for (const block of fn.blocks) {
     for (const instr of block.instructions) {
       if (instr.kind === 'Assign') {
         const target = deSSAVarName(instr.target.name)
+        if (instr.declarationKind) {
+          localVars.add(target)
+        }
         if (instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression') {
           functionVars.add(target)
         }
@@ -101,7 +106,7 @@ function collectHookReactiveVars(
   }
   collectMutatedIdentifiers(fn).forEach(name => mutatedVars.add(name))
 
-  return { signalVars, storeVars, memoVars, functionVars, mutatedVars }
+  return { signalVars, storeVars, memoVars, functionVars, mutatedVars, localVars }
 }
 
 export function analyzeHookReturnInfo(
@@ -111,10 +116,18 @@ export function analyzeHookReturnInfo(
 ): HookReturnInfo | null {
   if (!isHookName(fn.name)) return null
 
-  const { signalVars, storeVars, memoVars, functionVars, mutatedVars } = collectHookReactiveVars(
-    fn,
-    ctx,
-  )
+  const { signalVars, storeVars, memoVars, functionVars, mutatedVars, localVars } =
+    collectHookReactiveVars(fn, ctx)
+  const seedImportedVars = (source: Set<string> | undefined, target: Set<string>) => {
+    source?.forEach(name => {
+      const base = deSSAVarName(name)
+      if (!localVars.has(base)) {
+        target.add(base)
+      }
+    })
+  }
+  seedImportedVars(ctx.signalVars, signalVars)
+  seedImportedVars(ctx.memoVars, memoVars)
   const tmpCtx = ops.createCodegenContext(ctx.t)
   tmpCtx.signalVars = new Set(signalVars)
   tmpCtx.storeVars = new Set(storeVars)
