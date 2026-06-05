@@ -1923,6 +1923,36 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe('a\nb')
   })
 
+  it('preserves yield argument locals with optimization', () => {
+    const result = compileAndRunHook<Generator<number, void, unknown>>(
+      `
+        export function* useRun() {
+          const x = 1
+          yield x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result.next()).toEqual({ value: 1, done: false })
+  })
+
+  it('preserves yield delegate locals with optimization', () => {
+    const result = compileAndRunHook<Generator<number, void, unknown>>(
+      `
+        export function* useRun() {
+          const xs = [1, 2]
+          yield* xs
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect([...result]).toEqual([1, 2])
+  })
+
   it('preserves for-await over promise arrays with optimization', async () => {
     const result = await compileAndRunHook<Promise<number>>(
       `

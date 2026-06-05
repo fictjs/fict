@@ -125,6 +125,9 @@ const walkExpression = (expr: Expression | null | undefined, visit: (expr: Expre
     case 'AwaitExpression':
       walkExpression(expr.argument as Expression, visit)
       return
+    case 'YieldExpression':
+      if (expr.argument) walkExpression(expr.argument as Expression, visit)
+      return
     case 'ImportExpression':
       walkExpression(expr.source as Expression, visit)
       if (expr.options) walkExpression(expr.options as Expression, visit)
@@ -380,6 +383,63 @@ describe('optimizeHIR', () => {
     const optimized = optimizeHIR(buildHIR(ast))
     expect(hasDanglingIdentifierReference(optimized, 'spec')).toBe(false)
     expect(hasDanglingIdentifierReference(optimized, 'options')).toBe(false)
+  })
+
+  it('keeps yield argument dependencies alive', () => {
+    const ast = parseFile(`
+      function* useYieldDep() {
+        const x = 1
+        yield x
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasDanglingIdentifierReference(optimized, 'x')).toBe(false)
+  })
+
+  it('keeps return-yield argument dependencies alive', () => {
+    const ast = parseFile(`
+      function* useYieldDep() {
+        const x = 1
+        return yield x
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasDanglingIdentifierReference(optimized, 'x')).toBe(false)
+  })
+
+  it('keeps yield delegate dependencies alive', () => {
+    const ast = parseFile(`
+      function* useYieldDep() {
+        const xs = [1, 2]
+        yield* xs
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasDanglingIdentifierReference(optimized, 'xs')).toBe(false)
+  })
+
+  it('keeps yield member dependencies alive', () => {
+    const ast = parseFile(`
+      function* useYieldDep() {
+        const key = 'value'
+        const box = { value: 1 }
+        yield box[key]
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasDanglingIdentifierReference(optimized, 'key')).toBe(false)
+    expect(hasDanglingIdentifierReference(optimized, 'box')).toBe(false)
+  })
+
+  it('keeps yield template dependencies alive', () => {
+    const ast = parseFile(`
+      function* useYieldDep() {
+        const name = 'value'
+        yield \`prefix-\${name}\`
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    expect(hasDanglingIdentifierReference(optimized, 'name')).toBe(false)
   })
 
   it('drops unused derived values from reactive graph DCE', () => {

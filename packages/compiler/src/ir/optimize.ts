@@ -514,6 +514,9 @@ function collectRootNodesFromExpression(
       case 'AwaitExpression':
         visit(node.argument as Expression, shadowed)
         return
+      case 'YieldExpression':
+        if (node.argument) visit(node.argument as Expression, shadowed)
+        return
       case 'ImportExpression':
         visit(node.source as Expression, shadowed)
         if (node.options) visit(node.options as Expression, shadowed)
@@ -709,6 +712,16 @@ function collectDependenciesFromExpression(
         includeFunctionBodies,
         shadowed,
       )
+      return
+    case 'YieldExpression':
+      if (expr.argument) {
+        collectDependenciesFromExpression(
+          expr.argument as Expression,
+          deps,
+          includeFunctionBodies,
+          shadowed,
+        )
+      }
       return
     case 'ImportExpression':
       collectDependenciesFromExpression(
@@ -2032,6 +2045,8 @@ function expressionDependsOnReactive(expr: Expression, ctx: ReactiveContext): bo
       return expr.expressions.some(e => expressionDependsOnReactive(e as Expression, ctx))
     case 'AwaitExpression':
       return expressionDependsOnReactive(expr.argument as Expression, ctx)
+    case 'YieldExpression':
+      return expr.argument ? expressionDependsOnReactive(expr.argument as Expression, ctx) : false
     case 'ImportExpression':
       return (
         expressionDependsOnReactive(expr.source as Expression, ctx) ||
@@ -3126,6 +3141,8 @@ function expressionContainsImpureMarkers(expr: Expression): boolean {
       return expr.expressions.some(e => expressionContainsImpureMarkers(e as Expression))
     case 'AwaitExpression':
       return expressionContainsImpureMarkers(expr.argument as Expression)
+    case 'YieldExpression':
+      return expr.argument ? expressionContainsImpureMarkers(expr.argument as Expression) : false
     case 'ImportExpression':
       return (
         expressionContainsImpureMarkers(expr.source as Expression) ||
@@ -3580,6 +3597,13 @@ function replaceConstMemberExpressions(
           constObjects,
           constArrays,
         ),
+      }
+    case 'YieldExpression':
+      return {
+        ...expr,
+        argument: expr.argument
+          ? replaceConstMemberExpressions(expr.argument as Expression, constObjects, constArrays)
+          : expr.argument,
       }
     case 'ImportExpression':
       return {
@@ -4078,6 +4102,13 @@ function replaceIdentifiersWithConstants(
       return {
         ...expr,
         argument: replaceIdentifiersWithConstants(expr.argument as Expression, constants),
+      }
+    case 'YieldExpression':
+      return {
+        ...expr,
+        argument: expr.argument
+          ? replaceIdentifiersWithConstants(expr.argument as Expression, constants)
+          : expr.argument,
       }
     case 'NewExpression':
       return {
@@ -4804,6 +4835,9 @@ function walkExpression(
     case 'AwaitExpression':
       walkExpression(expr.argument as Expression, add, ctx)
       return
+    case 'YieldExpression':
+      if (expr.argument) walkExpression(expr.argument as Expression, add, ctx)
+      return
     case 'ImportExpression':
       walkExpression(expr.source as Expression, add, ctx)
       if (expr.options) walkExpression(expr.options as Expression, add, ctx)
@@ -4971,6 +5005,10 @@ function hashExpression(expr: Expression): string {
       return `seq:${expr.expressions.map(e => hashExpression(e as Expression)).join(',')}`
     case 'AwaitExpression':
       return `await:${hashExpression(expr.argument as Expression)}`
+    case 'YieldExpression':
+      return `yield:${expr.delegate ? '*' : ''}${
+        expr.argument ? hashExpression(expr.argument as Expression) : ''
+      }`
     case 'ImportExpression':
       return `import:${hashExpression(expr.source as Expression)}${
         expr.options ? `:${hashExpression(expr.options as Expression)}` : ''
@@ -5331,6 +5369,13 @@ function replaceIdentifier(
           replacement,
           inFunctionBody,
         ),
+      }
+    case 'YieldExpression':
+      return {
+        ...expr,
+        argument: expr.argument
+          ? replaceIdentifier(expr.argument as Expression, target, replacement, inFunctionBody)
+          : expr.argument,
       }
     case 'ImportExpression':
       return {
