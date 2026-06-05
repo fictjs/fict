@@ -92,6 +92,7 @@ import {
 import {
   HIRError,
   type BabelDirective,
+  type BabelParamNode,
   type BasicBlock,
   type Expression,
   type HIRFunction,
@@ -754,14 +755,140 @@ export function lowerHIRToBabel(
   return t.file(buildProgram(program, attachHelperImports(ctx, filteredBody, t), t))
 }
 
+function collectParamBindingNames(
+  params: { name: string }[],
+  rawParams: BabelParamNode[] | undefined,
+  t: typeof BabelCore.types,
+): Set<string> {
+  const names = new Set(params.map(p => deSSAVarName(p.name)))
+  rawParams?.forEach(param => {
+    const ids = t.getBindingIdentifiers(param)
+    Object.keys(ids).forEach(name => names.add(deSSAVarName(name)))
+  })
+  return names
+}
+
+function parameterRegionOverride(ctx: CodegenContext): RegionInfo | null {
+  if (ctx.inReturn && ctx.currentFnIsHook) return null
+  return (
+    ctx.currentRegion ??
+    (ctx.trackedVars.size
+      ? {
+          id: -1,
+          dependencies: new Set(ctx.trackedVars),
+          declarations: new Set<string>(),
+          hasControlFlow: false,
+          hasReactiveWrites: false,
+        }
+      : null)
+  )
+}
+
+function lowerParameterExpression(
+  expr: BabelCore.types.Expression,
+  ctx: CodegenContext,
+  paramNames: Set<string>,
+): BabelCore.types.Expression {
+  const prevShadowed = ctx.shadowedNames
+  const shadowed = new Set(prevShadowed ?? [])
+  paramNames.forEach(name => shadowed.add(name))
+  ctx.shadowedNames = shadowed
+  try {
+    return applyRegionMetadataToExpression(
+      ctx.t.cloneNode(expr, true) as BabelCore.types.Expression,
+      ctx,
+      parameterRegionOverride(ctx) ?? undefined,
+    )
+  } finally {
+    ctx.shadowedNames = prevShadowed
+  }
+}
+
+function lowerParameterPattern(
+  pattern: BabelCore.types.FunctionParameter | BabelCore.types.PatternLike,
+  ctx: CodegenContext,
+  paramNames: Set<string>,
+): BabelCore.types.FunctionParameter | BabelCore.types.PatternLike {
+  const { t } = ctx
+
+  if (t.isIdentifier(pattern)) {
+    return t.identifier(deSSAVarName(pattern.name))
+  }
+  if (t.isAssignmentPattern(pattern)) {
+    pattern.left = lowerParameterPattern(
+      pattern.left as BabelCore.types.PatternLike,
+      ctx,
+      paramNames,
+    ) as typeof pattern.left
+    pattern.right = lowerParameterExpression(pattern.right, ctx, paramNames)
+    return pattern
+  }
+  if (t.isRestElement(pattern)) {
+    pattern.argument = lowerParameterPattern(
+      pattern.argument as BabelCore.types.PatternLike,
+      ctx,
+      paramNames,
+    ) as typeof pattern.argument
+    return pattern
+  }
+  if (t.isObjectPattern(pattern)) {
+    pattern.properties = pattern.properties.map(prop => {
+      if (t.isRestElement(prop)) {
+        prop.argument = lowerParameterPattern(
+          prop.argument as BabelCore.types.PatternLike,
+          ctx,
+          paramNames,
+        ) as typeof prop.argument
+        return prop
+      }
+      if (t.isObjectProperty(prop)) {
+        if (prop.computed && t.isExpression(prop.key)) {
+          prop.key = lowerParameterExpression(prop.key, ctx, paramNames)
+        }
+        prop.value = lowerParameterPattern(
+          prop.value as BabelCore.types.PatternLike,
+          ctx,
+          paramNames,
+        ) as typeof prop.value
+      }
+      return prop
+    })
+    return pattern
+  }
+  if (t.isArrayPattern(pattern)) {
+    pattern.elements = pattern.elements.map(element =>
+      element && t.isPatternLike(element)
+        ? (lowerParameterPattern(element, ctx, paramNames) as BabelCore.types.PatternLike)
+        : element,
+    )
+    return pattern
+  }
+  return pattern
+}
+
+function buildFunctionParams(
+  params: { name: string }[],
+  rawParams: BabelParamNode[] | undefined,
+  ctx: CodegenContext,
+): BabelCore.types.FunctionParameter[] {
+  if (rawParams && rawParams.length > 0) {
+    const paramNames = collectParamBindingNames(params, rawParams, ctx.t)
+    return rawParams.map(param =>
+      lowerParameterPattern(
+        ctx.t.cloneNode(param, true) as BabelCore.types.FunctionParameter,
+        ctx,
+        paramNames,
+      ),
+    ) as BabelCore.types.FunctionParameter[]
+  }
+  return params.map(p => ctx.t.identifier(deSSAVarName(p.name)))
+}
+
 function buildOutputParams(
   fn: HIRFunction,
-  t: typeof BabelCore.types,
+  ctx: CodegenContext,
 ): BabelCore.types.FunctionParameter[] {
-  if (fn.rawParams && fn.rawParams.length > 0) {
-    return fn.rawParams.map(param => t.cloneNode(param, true) as BabelCore.types.FunctionParameter)
-  }
-  return fn.params.map(p => t.identifier(deSSAVarName(p.name)))
+  return buildFunctionParams(fn.params, fn.rawParams, ctx)
 }
 
 function lowerFunction(
@@ -780,7 +907,7 @@ function lowerFunction(
     ctx.callableSignalVars?.delete(name)
   }
   ctx.needsCtx = false
-  const params = buildOutputParams(fn, t)
+  const params = buildOutputParams(fn, ctx)
   const statements: BabelCore.types.Statement[] = []
 
   // For now, just emit instructions in block order, ignoring control flow structure.
@@ -1351,8 +1478,6 @@ function lowerExpressionImpl(
   valueUsed = true,
 ): BabelCore.types.Expression {
   const { t } = ctx
-  const mapParams = (params: { name: string }[]) =>
-    params.map(p => t.identifier(deSSAVarName(p.name)))
   const lowerArgsAsExpressions = (args: Expression[]): BabelCore.types.Expression[] =>
     args.map(arg =>
       arg.kind === 'SpreadElement'
@@ -2394,9 +2519,7 @@ function lowerExpressionImpl(
     case 'ArrowFunction': {
       const reactiveLowered = lowerReactiveScopeExpression(expr)
       if (reactiveLowered) return reactiveLowered
-      const paramIds = expr.rawParams
-        ? expr.rawParams.map(param => t.cloneNode(param, true) as BabelCore.types.FunctionParameter)
-        : mapParams(expr.params)
+      const paramIds = buildFunctionParams(expr.params, expr.rawParams, ctx)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
       const localDeclared = collectLocalDeclaredNames(
         expr.params,
@@ -2469,9 +2592,7 @@ function lowerExpressionImpl(
     case 'FunctionExpression': {
       const reactiveLowered = lowerReactiveScopeExpression(expr)
       if (reactiveLowered) return reactiveLowered
-      const paramIds = expr.rawParams
-        ? expr.rawParams.map(param => t.cloneNode(param, true) as BabelCore.types.FunctionParameter)
-        : mapParams(expr.params)
+      const paramIds = buildFunctionParams(expr.params, expr.rawParams, ctx)
       const shadowed = new Set(expr.params.map(p => deSSAVarName(p.name)))
       const localDeclared = collectLocalDeclaredNames(expr.params, expr.body as BasicBlock[], t)
       return withNonReactiveScope(ctx, () =>
@@ -4223,7 +4344,7 @@ function lowerFunctionWithScopes(
   ctx: CodegenContext,
 ): BabelCore.types.FunctionDeclaration | null {
   const { t } = ctx
-  const params = buildOutputParams(fn, t)
+  const params = buildOutputParams(fn, ctx)
   const statements: BabelCore.types.Statement[] = []
 
   // Emit instructions with scope-aware transformations
@@ -6115,7 +6236,7 @@ function lowerFunctionWithRegions(
           ]),
         )
       }
-      const params = buildOutputParams(fn, t)
+      const params = buildOutputParams(fn, ctx)
       const funcDecl = setNodeLoc(
         t.functionDeclaration(
           t.identifier(fn.name ?? 'fn'),
@@ -6200,7 +6321,7 @@ function lowerFunctionWithRegions(
 
   // Handle props destructuring pattern for component functions
   // If first rawParam is ObjectPattern, emit __props and add destructuring
-  let finalParams = buildOutputParams(fn, t)
+  let finalParams = buildOutputParams(fn, ctx)
   const propsDestructuring: BabelCore.types.Statement[] = []
 
   if (isComponent && fn.rawParams && fn.rawParams.length === 1) {

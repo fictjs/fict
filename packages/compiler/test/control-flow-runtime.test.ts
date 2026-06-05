@@ -706,6 +706,94 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(1)
   })
 
+  it('lowers reactive reads in arrow function parameter defaults', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          const fn = (value = count) => value
+          return fn()
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('lowers reactive reads in function expression parameter defaults', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(2)
+          const fn = function (value = count) {
+            return value
+          }
+          return fn()
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('lowers reactive reads in destructured parameter defaults', () => {
+    const result = compileAndRunHook<number[]>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(3)
+          const objectFn = ({ value = count } = {}) => value
+          const arrayFn = ([value = count] = []) => value
+          return [objectFn(), arrayFn()]
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toEqual([3, 3])
+  })
+
+  it('lowers reactive reads in computed parameter pattern keys', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let key = $state('value')
+          const fn = ({ [key]: value } = { value: 4 }) => value
+          return fn()
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(4)
+  })
+
+  it('keeps parameter defaults shadowed from outer reactive values', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(1)
+          const fn = (count = 2, value = count) => value
+          return fn()
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
   it('keeps same-name callback parameters shadowed during optimization', () => {
     const result = compileAndRunHook<number>(
       `
