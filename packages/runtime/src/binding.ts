@@ -2118,7 +2118,9 @@ export function spread(
   }
 
   // Handle ref
-  bindRef(node, (typeof props === 'function' ? reactive(resolveRef) : resolveRef()) ?? null)
+  if (!excludedProps?.has('ref')) {
+    bindRef(node, (typeof props === 'function' ? reactive(resolveRef) : resolveRef()) ?? null)
+  }
 
   // Handle all other props
   createRenderEffect(() => {

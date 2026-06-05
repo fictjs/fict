@@ -977,6 +977,32 @@ describe('Binding Edge Cases', () => {
       expect(refElement).toBe(el)
     })
 
+    it('skips ref callbacks excluded from spread props', () => {
+      const el = document.createElement('div')
+      const calls: Array<Element | null> = []
+
+      const { dispose } = createRoot(() => {
+        spread(el, { ref: (elem: Element | null) => calls.push(elem) }, false, false, ['ref'])
+      })
+
+      expect(calls).toEqual([])
+      dispose()
+      expect(calls).toEqual([])
+    })
+
+    it('keeps spread ref callbacks when no exclusion is present', () => {
+      const el = document.createElement('div')
+      const calls: Array<Element | null> = []
+
+      const { dispose } = createRoot(() => {
+        spread(el, { ref: (elem: Element | null) => calls.push(elem) })
+      })
+
+      expect(calls).toEqual([el])
+      dispose()
+      expect(calls).toEqual([el, null])
+    })
+
     it('handles object refs in props', () => {
       const el = document.createElement('div')
       const ref = { current: null as Element | null }

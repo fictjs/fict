@@ -3584,6 +3584,73 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not call spread refs excluded by a later explicit ref', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: Array<[string, boolean]> = []
+
+      const spreadRef = (el: Element | null) => log.push(['spread', !!el])
+      const explicitRef = (el: Element | null) => log.push(['explicit', !!el])
+
+      export function App() {
+        return <div {...{ ref: spreadRef }} ref={explicitRef}>x</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: Array<[string, boolean]>
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(mod.log).toEqual([['explicit', true]])
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps spread refs when no later explicit ref excludes them', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: Array<[string, boolean]> = []
+
+      const spreadRef = (el: Element | null) => log.push(['spread', !!el])
+
+      export function App() {
+        return <div {...{ ref: spreadRef }}>x</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: Array<[string, boolean]>
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(mod.log).toEqual([['spread', true]])
+
+    teardown()
+    container.remove()
+  })
+
   it('unwraps direct reads of nested reactive object and array props', async () => {
     const source = `
       import { $state, render } from 'fict'
