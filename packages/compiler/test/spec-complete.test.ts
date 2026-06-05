@@ -737,20 +737,22 @@ describe('R017: Ambiguity resolution', () => {
     expect(output).not.toContain('(count) => console.log(count())')
   })
 
-  it('block-scoped variable shadows outer state', () => {
-    expect(() =>
-      transform(`
-        import { $state } from 'fict'
-        function Component() {
-          let count = $state(0)
-          {
-            const count = 5
-            console.log(count)
-          }
-          return null
+  it('allows block-scoped variable to shadow outer state', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+      function Component() {
+        let count = $state(0)
+        {
+          const count = 5
+          console.log(count)
         }
-      `),
-    ).toThrow(/Duplicate declaration|component or hook function body/)
+        return null
+      }
+    `)
+
+    expect(output).toContain('const count = 5')
+    expect(output).toContain('console.log(count)')
+    expect(output).not.toContain('console.log(count())')
   })
 })
 
