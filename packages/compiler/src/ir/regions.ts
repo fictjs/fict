@@ -39,6 +39,29 @@ function voidZero(t: typeof BabelCore.types): BabelCore.types.UnaryExpression {
   return t.unaryExpression('void', t.numericLiteral(0), true)
 }
 
+function numericValueExpression(
+  value: number,
+  t: typeof BabelCore.types,
+): BabelCore.types.Expression {
+  if (Object.is(value, -0)) {
+    return t.unaryExpression('-', t.numericLiteral(0), true)
+  }
+  if (Number.isNaN(value)) {
+    return t.binaryExpression('/', t.numericLiteral(0), t.numericLiteral(0))
+  }
+  if (value === Infinity) {
+    return t.binaryExpression('/', t.numericLiteral(1), t.numericLiteral(0))
+  }
+  if (value === -Infinity) {
+    return t.binaryExpression(
+      '/',
+      t.unaryExpression('-', t.numericLiteral(1), true),
+      t.numericLiteral(0),
+    )
+  }
+  return t.numericLiteral(value)
+}
+
 /**
  * A Region represents a contiguous section of code that should be
  * evaluated together and memoized based on its dependencies.
@@ -5024,7 +5047,7 @@ function exprToAST(
       if (expr.value === null) return t.nullLiteral()
       if (expr.value === undefined) return voidZero(t)
       if (typeof expr.value === 'string') return t.stringLiteral(expr.value)
-      if (typeof expr.value === 'number') return t.numericLiteral(expr.value)
+      if (typeof expr.value === 'number') return numericValueExpression(expr.value, t)
       if (typeof expr.value === 'boolean') return t.booleanLiteral(expr.value)
       if (typeof expr.value === 'bigint') return t.bigIntLiteral(expr.value.toString())
       if (expr.value instanceof RegExp) {
