@@ -941,6 +941,7 @@ function optimizeReactiveBlock(
   const constants = new Map<string, ConstantValue>()
   const constObjects = new Map<string, ConstObjectFields>()
   const constArrays = new Map<string, ConstArrayElements>()
+  const objectAccessorWrites = new Map<string, Set<string>>()
   const cseMap = new Map<string, { name: string; deps: Set<string> }>()
   const instructions: Instruction[] = []
 
@@ -949,6 +950,15 @@ function optimizeReactiveBlock(
     for (const key of Array.from(map.keys())) {
       if (getSSABaseName(key) === base) {
         map.delete(key)
+      }
+    }
+  }
+
+  const deleteAccessorWritesByBase = (name: string): void => {
+    const base = getSSABaseName(name)
+    for (const key of Array.from(objectAccessorWrites.keys())) {
+      if (getSSABaseName(key) === base) {
+        objectAccessorWrites.delete(key)
       }
     }
   }
@@ -979,6 +989,7 @@ function optimizeReactiveBlock(
       deleteByBase(constants, target)
       deleteByBase(constObjects, target)
       deleteByBase(constArrays, target)
+      deleteAccessorWritesByBase(target)
       const sideWrites = collectWriteTargets(instr.value)
       for (const name of sideWrites) {
         if (name !== target) {
@@ -990,6 +1001,13 @@ function optimizeReactiveBlock(
       }
       const potentialMutations = collectPotentialMutationTargets(instr.value)
       for (const name of potentialMutations) {
+        deleteByBase(constObjects, name)
+        deleteByBase(constArrays, name)
+      }
+      const accessorWrites = collectAccessorMutationTargets(instr.value, objectAccessorWrites)
+      for (const name of accessorWrites) {
+        deleteByBase(constants, name)
+        invalidateCSE(name)
         deleteByBase(constObjects, name)
         deleteByBase(constArrays, name)
       }
@@ -1039,6 +1057,10 @@ function optimizeReactiveBlock(
           }
         }
       }
+      const accessorWritesForValue = extractObjectAccessorWrites(value)
+      if (accessorWritesForValue.size > 0) {
+        objectAccessorWrites.set(target, accessorWritesForValue)
+      }
 
       instructions.push(value === instr.value ? instr : { ...instr, value })
       continue
@@ -1057,6 +1079,13 @@ function optimizeReactiveBlock(
         deleteByBase(constObjects, name)
         deleteByBase(constArrays, name)
       }
+      const accessorWrites = collectAccessorMutationTargets(instr.value, objectAccessorWrites)
+      for (const name of accessorWrites) {
+        deleteByBase(constants, name)
+        invalidateCSE(name)
+        deleteByBase(constObjects, name)
+        deleteByBase(constArrays, name)
+      }
       const dependsOnReactiveValue = expressionDependsOnReactive(instr.value, reactive)
       const value = dependsOnReactiveValue
         ? instr.value
@@ -1068,6 +1097,16 @@ function optimizeReactiveBlock(
     instructions.push(instr)
   }
 
+  const terminatorAccessorWrites = collectTerminatorAccessorMutationTargets(
+    block.terminator,
+    objectAccessorWrites,
+  )
+  for (const name of terminatorAccessorWrites) {
+    deleteByBase(constants, name)
+    invalidateCSE(name)
+    deleteByBase(constObjects, name)
+    deleteByBase(constArrays, name)
+  }
   const terminator = foldTerminatorWithConstants(
     block.terminator,
     constants,
@@ -2540,6 +2579,151 @@ function collectPotentialMutationTargets(expr: Expression): Set<string> {
   }
   visit(expr)
   return targets
+}
+
+function extractObjectAccessorWrites(expr: Expression): Set<string> {
+  const writes = new Set<string>()
+  if (expr.kind !== 'ObjectExpression') return writes
+  for (const prop of expr.properties) {
+    if (prop.kind === 'SpreadElement') continue
+    if (prop.propertyKind !== 'get' && prop.propertyKind !== 'set') continue
+    collectWriteTargets(prop.value as Expression).forEach(name => writes.add(name))
+  }
+  return writes
+}
+
+function collectAccessorMutationTargets(
+  expr: Expression,
+  objectAccessorWrites: Map<string, Set<string>>,
+): Set<string> {
+  const writes = new Set<string>()
+  const addAccessorWrites = (expr: Expression): void => {
+    if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') return
+    const base = getMemberBaseIdentifier(expr)
+    if (!base) return
+    const baseName = getSSABaseName(base.name)
+    for (const [objectName, objectWrites] of objectAccessorWrites.entries()) {
+      if (getSSABaseName(objectName) !== baseName) continue
+      objectWrites.forEach(name => writes.add(name))
+    }
+  }
+  const visit = (node: Expression): void => {
+    switch (node.kind) {
+      case 'MemberExpression':
+      case 'OptionalMemberExpression':
+        addAccessorWrites(node)
+        visit(node.object as Expression)
+        if (node.computed) visit(node.property as Expression)
+        return
+      case 'CallExpression':
+      case 'OptionalCallExpression':
+        visit(node.callee as Expression)
+        node.arguments.forEach(arg => visit(arg as Expression))
+        return
+      case 'NewExpression':
+        visit(node.callee as Expression)
+        node.arguments.forEach(arg => visit(arg as Expression))
+        return
+      case 'BinaryExpression':
+      case 'LogicalExpression':
+        visit(node.left as Expression)
+        visit(node.right as Expression)
+        return
+      case 'UnaryExpression':
+        visit(node.argument as Expression)
+        return
+      case 'AssignmentExpression':
+        visit(node.left as Expression)
+        visit(node.right as Expression)
+        return
+      case 'UpdateExpression':
+        visit(node.argument as Expression)
+        return
+      case 'ConditionalExpression':
+        visit(node.test as Expression)
+        visit(node.consequent as Expression)
+        visit(node.alternate as Expression)
+        return
+      case 'ArrayExpression':
+        node.elements.forEach(el => {
+          if (el) visit(el as Expression)
+        })
+        return
+      case 'ObjectExpression':
+        node.properties.forEach(prop => {
+          if (prop.kind === 'SpreadElement') {
+            visit(prop.argument as Expression)
+          } else {
+            if (prop.computed) visit(prop.key as Expression)
+            visit(prop.value as Expression)
+          }
+        })
+        return
+      case 'TemplateLiteral':
+        node.expressions.forEach(expr => visit(expr as Expression))
+        return
+      case 'SpreadElement':
+        visit(node.argument as Expression)
+        return
+      case 'SequenceExpression':
+        node.expressions.forEach(expr => visit(expr as Expression))
+        return
+      case 'AwaitExpression':
+        visit(node.argument as Expression)
+        return
+      case 'TaggedTemplateExpression':
+        visit(node.tag as Expression)
+        node.quasi.expressions.forEach(expr => visit(expr as Expression))
+        return
+      case 'YieldExpression':
+        if (node.argument) visit(node.argument as Expression)
+        return
+      case 'ArrowFunction':
+      case 'FunctionExpression':
+      case 'ClassExpression':
+        return
+      default:
+        return
+    }
+  }
+  visit(expr)
+  return writes
+}
+
+function collectTerminatorAccessorMutationTargets(
+  term: Terminator,
+  objectAccessorWrites: Map<string, Set<string>>,
+): Set<string> {
+  const writes = new Set<string>()
+  const add = (expr: Expression): void => {
+    collectAccessorMutationTargets(expr, objectAccessorWrites).forEach(name => writes.add(name))
+  }
+  switch (term.kind) {
+    case 'Return':
+      if (term.argument) add(term.argument)
+      break
+    case 'Throw':
+      add(term.argument)
+      break
+    case 'Branch':
+      add(term.test)
+      break
+    case 'Switch':
+      add(term.discriminant)
+      term.cases.forEach(c => {
+        if (c.test) add(c.test)
+      })
+      break
+    case 'ForOf':
+      add(term.iterable)
+      break
+    case 'ForIn':
+      add(term.object)
+      break
+    default:
+      break
+  }
+  return writes
 }
 
 function countAssignments(fn: HIRFunction): Map<string, number> {

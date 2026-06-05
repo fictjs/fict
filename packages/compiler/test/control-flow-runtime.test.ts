@@ -703,6 +703,162 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(2)
   })
 
+  it('preserves object getter side effects with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          const obj = {
+            get a() {
+              x = 1
+              return 2
+            },
+          }
+          x = 0
+          const y = obj.a
+          return x + ':' + y
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('1:2')
+  })
+
+  it('preserves computed object getter side effects with optimization', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          const key = 'a'
+          const obj = {
+            get [key]() {
+              x = 1
+              return 2
+            },
+          }
+          x = 0
+          const y = obj[key]
+          return x + ':' + y
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('1:2')
+  })
+
+  it('preserves object setter side effects with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          const obj = {
+            set a(value) {
+              x = value
+            },
+          }
+          x = 1
+          obj.a = 3
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(3)
+  })
+
+  it('preserves getter side effects in logical expressions with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          const obj = {
+            get a() {
+              x = 1
+              return false
+            },
+          }
+          x = 0
+          return obj.a || x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('preserves setter side effects in compound assignments with optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          const obj = {
+            get a() {
+              return 1
+            },
+            set a(value) {
+              x = value
+            },
+          }
+          x = 0
+          obj.a += 2
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(3)
+  })
+
+  it('keeps accessor parameters shadowed during optimization', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+          const obj = {
+            set a(x) {
+              x = 3
+            },
+          }
+          x = 1
+          obj.a = 2
+          return x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe(1)
+  })
+
   it('preserves object destructuring assignment order in reactive hooks', () => {
     const result = compileAndRunHook<number>(
       `
