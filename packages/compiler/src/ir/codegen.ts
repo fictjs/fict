@@ -488,6 +488,12 @@ export interface CodegenContext {
   propsParamName?: string | undefined
   /** Pending prop accessor declarations synthesized for props reads */
   propAccessorDecls?: Map<string, BabelCore.types.Statement> | undefined
+  /** Destructured prop accessors that resumable handlers can restore from serialized props. */
+  resumablePropAccessors?:
+    | Map<string, { path: string[]; defaultValue?: BabelCore.types.Expression | undefined }>
+    | undefined
+  /** Destructured prop rest bindings that resumable handlers can restore from serialized props. */
+  resumablePropRests?: Map<string, { excludedKeys: string[] }> | undefined
   /** Whether tracked expressions should be wrapped in runtime effects */
   wrapTrackedExpressions?: boolean | undefined
   /** Whether the current function is treated as a hook (preserve accessor returns) */
@@ -587,6 +593,8 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     inPropsContext: false,
     propsParamName: undefined,
     propAccessorDecls: new Map(),
+    resumablePropAccessors: new Map(),
+    resumablePropRests: new Map(),
     hookReturnInfo: new Map(),
     hoistedTemplates: new Map(),
     hoistedTemplateStatements: [],
@@ -5159,7 +5167,11 @@ function lowerFunctionWithRegions(
   const hookAccessorAliases = new Set<string>()
   const prevPropsParam = ctx.propsParamName
   const prevPropAccessors = ctx.propAccessorDecls
+  const prevResumablePropAccessors = ctx.resumablePropAccessors
+  const prevResumablePropRests = ctx.resumablePropRests
   ctx.propAccessorDecls = new Map()
+  ctx.resumablePropAccessors = new Map()
+  ctx.resumablePropRests = new Map()
   const prevDelegatedEventsUsed = ctx.delegatedEventsUsed
   ctx.delegatedEventsUsed = new Set()
   const calledIdentifiers = collectCalledIdentifiers(fn)
@@ -5381,6 +5393,7 @@ function lowerFunctionWithRegions(
         objectPattern: BabelCore.types.ObjectPattern,
         baseExpr: BabelCore.types.Expression,
         allowRest: boolean,
+        propPath: string[] = [],
       ): void => {
         for (const prop of objectPattern.properties) {
           if (t.isObjectProperty(prop)) {
@@ -5407,6 +5420,7 @@ function lowerFunctionWithRegions(
               excludeKeys.push(t.stringLiteral(keyName))
             }
             const member = memberExprForKey(baseExpr, keyName)
+            const nextPropPath = [...propPath, keyName]
             const value = prop.value
 
             if (t.isIdentifier(value)) {
@@ -5414,6 +5428,7 @@ function lowerFunctionWithRegions(
               if (shouldWrapProp) {
                 usesProp = true
                 propsPlanAliases.add(value.name)
+                ctx.resumablePropAccessors?.set(value.name, { path: nextPropPath })
               }
               stmts.push(
                 t.variableDeclaration('const', [
@@ -5431,7 +5446,7 @@ function lowerFunctionWithRegions(
             }
 
             if (t.isObjectPattern(value)) {
-              buildDestructure(value, member, false)
+              buildDestructure(value, member, false, nextPropPath)
               if (!supported) break
               continue
             }
@@ -5442,6 +5457,10 @@ function lowerFunctionWithRegions(
                 if (shouldWrapProp) {
                   usesProp = true
                   propsPlanAliases.add(value.left.name)
+                  ctx.resumablePropAccessors?.set(value.left.name, {
+                    path: nextPropPath,
+                    defaultValue: t.cloneNode(value.right, true) as BabelCore.types.Expression,
+                  })
                 }
                 const baseInit = buildDefaultValueExpression(member, value.right)
                 const init = shouldWrapProp
@@ -5483,6 +5502,11 @@ function lowerFunctionWithRegions(
             break
           } else if (t.isRestElement(prop) && allowRest && t.isIdentifier(prop.argument)) {
             usesPropsRest = true
+            ctx.resumablePropRests?.set(prop.argument.name, {
+              excludedKeys: excludeKeys
+                .filter((key): key is BabelCore.types.StringLiteral => t.isStringLiteral(key))
+                .map(key => key.value),
+            })
             stmts.push(
               t.variableDeclaration('const', [
                 t.variableDeclarator(
@@ -5522,6 +5546,9 @@ function lowerFunctionWithRegions(
           ctx.trackedVars.add(name)
           ctx.shadowedNames?.delete(name)
         })
+      } else {
+        ctx.resumablePropAccessors?.clear()
+        ctx.resumablePropRests?.clear()
       }
     }
   }
@@ -5616,6 +5643,8 @@ function lowerFunctionWithRegions(
       ctx.wrapTrackedExpressions = prevWrapTracked
       ctx.hookResultVarMap = prevHookResultVarMap
       ctx.inModule = prevInModule
+      ctx.resumablePropAccessors = prevResumablePropAccessors
+      ctx.resumablePropRests = prevResumablePropRests
       return funcDecl
     }
 
@@ -5637,6 +5666,8 @@ function lowerFunctionWithRegions(
     ctx.wrapTrackedExpressions = prevWrapTracked
     ctx.hookResultVarMap = prevHookResultVarMap
     ctx.inModule = prevInModule
+    ctx.resumablePropAccessors = prevResumablePropAccessors
+    ctx.resumablePropRests = prevResumablePropRests
     return null
   }
 
@@ -5765,6 +5796,8 @@ function lowerFunctionWithRegions(
   ctx.hookResultVarMap = prevHookResultVarMap
   ctx.propsParamName = prevPropsParam
   ctx.propAccessorDecls = prevPropAccessors
+  ctx.resumablePropAccessors = prevResumablePropAccessors
+  ctx.resumablePropRests = prevResumablePropRests
   ctx.delegatedEventsUsed = prevDelegatedEventsUsed
   ctx.inModule = prevInModule
   return funcDecl

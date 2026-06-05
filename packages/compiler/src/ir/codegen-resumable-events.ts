@@ -68,16 +68,28 @@ export function emitResumableEventBinding(
   ctx.resumableHandlerCounter = (ctx.resumableHandlerCounter ?? 0) + 1
 
   const captured = collectFreeIdentifiersInExpr(handlerExpr, t)
+  const propAccessorRestores = new Map(
+    Array.from(ctx.resumablePropAccessors ?? []).filter(([name]) => captured.has(name)),
+  )
+  const propRestRestores = new Map(
+    Array.from(ctx.resumablePropRests ?? []).filter(([name]) => captured.has(name)),
+  )
 
   const lexicalNames = Array.from(captured).filter(name => ctx.signalVars?.has(name))
   const propsName =
-    ctx.propsParamName && captured.has(ctx.propsParamName) ? ctx.propsParamName : null
+    ctx.propsParamName &&
+    captured.has(ctx.propsParamName) &&
+    !propAccessorRestores.has(ctx.propsParamName) &&
+    !propRestRestores.has(ctx.propsParamName)
+      ? ctx.propsParamName
+      : null
   const unsupportedLocals = Array.from(captured).filter(name => {
     if (ctx.inListRender && ctx.listKeyParamName && name === ctx.listKeyParamName) return true
     if (!ctx.localDeclaredNames?.has(name)) return false
     if (ctx.signalVars?.has(name)) return false
     if (ctx.functionVars?.has(name)) return false
     if (propsName && name === propsName) return false
+    if (propAccessorRestores.has(name) || propRestRestores.has(name)) return false
     return true
   })
 
@@ -173,6 +185,34 @@ export function emitResumableEventBinding(
   }
 
   const bodyStatements: BabelCore.types.Statement[] = []
+  const scopePropsId = t.identifier('__scopeProps')
+  let scopePropsDeclared = false
+  const ensureScopeProps = (): BabelCore.types.Identifier => {
+    if (!scopePropsDeclared) {
+      ctx.helpersUsed.add('getScopeProps')
+      bodyStatements.push(
+        t.variableDeclaration('const', [
+          t.variableDeclarator(
+            scopePropsId,
+            t.logicalExpression(
+              '||',
+              t.callExpression(runtimeIdentifier(ctx, 'getScopeProps'), [scopeParam]),
+              t.objectExpression([]),
+            ),
+          ),
+        ]),
+      )
+      scopePropsDeclared = true
+    }
+    return scopePropsId
+  }
+
+  const buildPropsPathRead = (path: string[]): BabelCore.types.Expression =>
+    path.reduce<BabelCore.types.Expression>(
+      (expr, segment) => t.memberExpression(expr, t.identifier(segment), false),
+      ensureScopeProps(),
+    )
+
   if (lexicalNames.length > 0) {
     ctx.helpersUsed.add('useLexicalScope')
     bodyStatements.push(
@@ -189,16 +229,45 @@ export function emitResumableEventBinding(
   }
 
   if (propsName) {
-    ctx.helpersUsed.add('getScopeProps')
+    bodyStatements.push(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(t.identifier(propsName), ensureScopeProps()),
+      ]),
+    )
+  }
+
+  for (const [name, restore] of propAccessorRestores) {
+    const valueExpr = buildPropsPathRead(restore.path)
+    const restoredValue = restore.defaultValue
+      ? t.callExpression(
+          t.arrowFunctionExpression(
+            [t.identifier('__value')],
+            t.conditionalExpression(
+              t.binaryExpression('===', t.identifier('__value'), t.identifier('undefined')),
+              t.cloneNode(restore.defaultValue, true) as BabelCore.types.Expression,
+              t.identifier('__value'),
+            ),
+          ),
+          [valueExpr],
+        )
+      : valueExpr
+    bodyStatements.push(
+      t.variableDeclaration('const', [
+        t.variableDeclarator(t.identifier(name), t.arrowFunctionExpression([], restoredValue)),
+      ]),
+    )
+  }
+
+  for (const [name, restore] of propRestRestores) {
+    ctx.helpersUsed.add('propsRest')
     bodyStatements.push(
       t.variableDeclaration('const', [
         t.variableDeclarator(
-          t.identifier(propsName),
-          t.logicalExpression(
-            '||',
-            t.callExpression(runtimeIdentifier(ctx, 'getScopeProps'), [scopeParam]),
-            t.objectExpression([]),
-          ),
+          t.identifier(name),
+          t.callExpression(runtimeIdentifier(ctx, 'propsRest'), [
+            ensureScopeProps(),
+            t.arrayExpression(restore.excludedKeys.map(key => t.stringLiteral(key))),
+          ]),
         ),
       ]),
     )

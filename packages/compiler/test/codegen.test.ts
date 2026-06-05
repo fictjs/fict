@@ -699,6 +699,66 @@ describe('resumable event handler transformation', () => {
     expect(code).not.toContain('() => () => helper()')
   })
 
+  it('restores destructured prop captures as accessors in resumable handlers', () => {
+    const ast = parseFile(`
+      function Button({ id }) {
+        return <button onClick$={() => console.log(id)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('const __scopeProps = __fictGetScopeProps(scopeId) || {}')
+    expect(code).toMatch(/const id = \(\) => __scopeProps\.id/)
+    expect(code).toContain('const __handler = () => console.log(id())')
+    expect(code).not.toContain('const id = __fictGetScopeProps(scopeId) || {}')
+  })
+
+  it('restores aliased and defaulted prop captures in resumable handlers', () => {
+    const ast = parseFile(`
+      function Button({ id: itemId = "fallback" }) {
+        return <button onClick$={() => console.log(itemId)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/const itemId = \(\) => \(__value =>/)
+    expect(code).toContain('__value === undefined ? "fallback" : __value')
+    expect(code).toContain('(__scopeProps.id)')
+    expect(code).toContain('console.log(itemId())')
+  })
+
+  it('restores nested prop captures in resumable handlers', () => {
+    const ast = parseFile(`
+      function Button({ user: { id } }) {
+        return <button onClick$={() => console.log(id)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/const id = \(\) => __scopeProps\.user\.id/)
+    expect(code).toContain('console.log(id())')
+  })
+
+  it('restores prop rest captures in resumable handlers', () => {
+    const ast = parseFile(`
+      function Button({ id, ...rest }) {
+        return <button onClick$={() => console.log(rest.title)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('const rest = __fictPropsRest(__scopeProps, ["id"])')
+    expect(code).toContain('console.log(rest.title)')
+  })
+
   it('throws for explicit resumable handlers that capture non-serializable locals', () => {
     const ast = parseFile(`
       function Comp() {
