@@ -562,6 +562,145 @@ describe('compiled templates DOM integration', () => {
     )
   })
 
+  it('renders static boolean and null JSX expression children as empty text', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return (
+          <div data-testid="box">
+            {false}
+            {true}
+            {null}
+            {void 0}
+            {0}
+            {''}
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(box.textContent).toBe('0')
+
+    teardown()
+    container.remove()
+  })
+
+  it('renders reactive boolean JSX text children as empty text', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: boolean | number): void }
+
+      export function App() {
+        let value = $state<boolean | number>(true)
+        api = { set: next => (value = next) }
+        return <div data-testid="box">{value}</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: boolean | number): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(box.textContent).toBe('')
+
+    mod.api.set(false)
+    await flushUpdates()
+    expect(box.textContent).toBe('')
+
+    mod.api.set(0)
+    await flushUpdates()
+    expect(box.textContent).toBe('0')
+
+    teardown()
+    container.remove()
+  })
+
+  it('formats conditional JSX text children with runtime child semantics', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { toggle(): void }
+
+      export function App() {
+        let show = $state(true)
+        api = { toggle: () => (show = !show) }
+        return <div data-testid="box">{show ? true : 0}</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { toggle(): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(box.textContent).toBe('')
+
+    mod.api.toggle()
+    await flushUpdates()
+    expect(box.textContent).toBe('0')
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps adjacent text around empty JSX expression children', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        return <div data-testid="box">A{true}B{false}C{null}D{0}</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(box.textContent).toBe('ABCD0')
+
+    teardown()
+    container.remove()
+  })
+
   it('does not invoke function-valued intrinsic spread expressions', async () => {
     const source = `
       import { render } from 'fict'

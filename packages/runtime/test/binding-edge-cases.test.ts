@@ -345,6 +345,18 @@ describe('Binding Edge Cases', () => {
       expect(text.data).toBe('')
     })
 
+    it('formats true as empty string', async () => {
+      const text = document.createTextNode('')
+      const value = createSignal<string | boolean>('hello')
+
+      bindText(text, () => value())
+      expect(text.data).toBe('hello')
+
+      value(true)
+      await tick()
+      expect(text.data).toBe('')
+    })
+
     it('formats numbers correctly', async () => {
       const text = document.createTextNode('')
       const value = createSignal<number>(42)

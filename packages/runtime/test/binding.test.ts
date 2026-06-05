@@ -500,6 +500,26 @@ describe('Reactive DOM Binding', () => {
       expect(foreignContainer.childNodes.length).toBe(0)
       root.dispose()
     })
+
+    it('renders boolean primitive children as empty', async () => {
+      const value = createSignal<boolean | number>(true)
+
+      const root = createRoot(() => insert(container, () => value()))
+      const disposeInsert = root.value
+
+      expect(container.textContent).toBe('')
+
+      value(0)
+      await tick()
+      expect(container.textContent).toBe('0')
+
+      value(false)
+      await tick()
+      expect(container.textContent).toBe('')
+
+      disposeInsert()
+      root.dispose()
+    })
   })
 
   describe('insertBetween', () => {
@@ -523,6 +543,27 @@ describe('Reactive DOM Binding', () => {
 
       dispose()
       expect(foreignDoc.body.textContent).toBe('')
+    })
+
+    it('renders boolean primitive values as empty', async () => {
+      const start = document.createComment('start')
+      const end = document.createComment('end')
+      container.append(start, end)
+      const value = createSignal<boolean | number>(true)
+
+      const dispose = insertBetween(start, end, () => value())
+
+      expect(container.textContent).toBe('')
+
+      value(0)
+      await tick()
+      expect(container.textContent).toBe('0')
+
+      value(false)
+      await tick()
+      expect(container.textContent).toBe('')
+
+      dispose()
     })
   })
 

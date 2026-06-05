@@ -487,9 +487,9 @@ describe('createFictPlugin (HIR)', () => {
       `)
 
       expect(output).toContain(`"static"`)
-      // Static text uses direct assignment instead of bindText
+      // Static text uses the runtime formatter without creating a reactive binding.
       expect(output).not.toContain(`bindText`)
-      expect(output).toContain(`.data = String`)
+      expect(output).toContain(`setText`)
     })
 
     it('wraps complex expressions that depend on state', () => {

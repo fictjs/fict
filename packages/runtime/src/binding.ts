@@ -443,7 +443,7 @@ export function setText(textNode: Text, value: unknown): void {
  * Format a value for text content
  */
 function formatTextValue(value: unknown): string {
-  if (value == null || value === false) {
+  if (value == null || typeof value === 'boolean') {
     return ''
   }
   return String(value)
@@ -884,8 +884,8 @@ export function insert(
         clearCurrentNodes()
         return
       }
-      const textValue = value == null || value === false ? '' : String(value)
-      const shouldInsert = value != null && value !== false
+      const textValue = value == null || typeof value === 'boolean' ? '' : String(value)
+      const shouldInsert = value != null && typeof value !== 'boolean'
       setTextNode(textValue, shouldInsert, parentNode)
       return
     }
@@ -1056,8 +1056,8 @@ export function insertBetween(
         clearCurrentNodes()
         return
       }
-      const textValue = value == null || value === false ? '' : String(value)
-      const shouldInsert = value != null && value !== false
+      const textValue = value == null || typeof value === 'boolean' ? '' : String(value)
+      const shouldInsert = value != null && typeof value !== 'boolean'
       setTextNode(textValue, shouldInsert)
       initialHydrating = false
       return
@@ -1839,8 +1839,8 @@ function bindAssignedChildren(
       typeof value === 'boolean'
 
     if (isPrimitive) {
-      const textValue = value == null || value === false ? '' : String(value)
-      const shouldInsert = value != null && value !== false
+      const textValue = value == null || typeof value === 'boolean' ? '' : String(value)
+      const shouldInsert = value != null && typeof value !== 'boolean'
       setTextNode(textValue, shouldInsert)
       return
     }

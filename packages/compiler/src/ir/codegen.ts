@@ -3697,14 +3697,11 @@ function lowerIntrinsicElement(
           statements.push(fallback)
         }
       } else {
-        // Static text: direct assignment - no effect needed
+        // Static text: use the runtime formatter without creating an effect.
+        ctx.helpersUsed.add('setText')
         statements.push(
           t.expressionStatement(
-            t.assignmentExpression(
-              '=',
-              t.memberExpression(targetId, t.identifier('data')),
-              t.callExpression(t.identifier('String'), [valueExpr]),
-            ),
+            t.callExpression(runtimeIdentifier(ctx, 'setText'), [targetId, valueExpr]),
           ),
         )
       }
