@@ -386,7 +386,14 @@ function toSSA(fn: HIRFunction): HIRFunction {
     switch (expr?.kind) {
       case 'Identifier':
         return { ...expr, name: currentName(expr.name) }
+      case 'ImportExpression':
+        return {
+          ...expr,
+          source: renameExpr(expr.source),
+          options: expr.options ? renameExpr(expr.options) : expr.options,
+        }
       case 'CallExpression':
+      case 'OptionalCallExpression':
         return {
           ...expr,
           callee: renameExpr(expr.callee),
@@ -408,6 +415,7 @@ function toSSA(fn: HIRFunction): HIRFunction {
       case 'LogicalExpression':
         return { ...expr, left: renameExpr(expr.left), right: renameExpr(expr.right) }
       case 'UnaryExpression':
+      case 'AwaitExpression':
         return { ...expr, argument: renameExpr(expr.argument) }
       case 'ConditionalExpression':
         return {
@@ -431,6 +439,70 @@ function toSSA(fn: HIRFunction): HIRFunction {
               value: renameExpr(p.value),
             }
           }),
+        }
+      case 'JSXElement':
+        return {
+          ...expr,
+          tagName: typeof expr.tagName === 'string' ? expr.tagName : renameExpr(expr.tagName),
+          attributes: expr.attributes.map(attr =>
+            attr.isSpread
+              ? {
+                  ...attr,
+                  spreadExpr: attr.spreadExpr ? renameExpr(attr.spreadExpr) : attr.spreadExpr,
+                }
+              : {
+                  ...attr,
+                  value: attr.value ? renameExpr(attr.value) : attr.value,
+                },
+          ),
+          children: expr.children.map(child => {
+            if (child.kind === 'expression') {
+              return { ...child, value: renameExpr(child.value) }
+            }
+            if (child.kind === 'element') {
+              return { ...child, value: renameExpr(child.value) as typeof child.value }
+            }
+            return child
+          }),
+        }
+      case 'AssignmentExpression':
+        return {
+          ...expr,
+          left: renameExpr(expr.left),
+          right: renameExpr(expr.right),
+        }
+      case 'UpdateExpression':
+        return { ...expr, argument: renameExpr(expr.argument) }
+      case 'TemplateLiteral':
+        return { ...expr, expressions: expr.expressions.map(item => renameExpr(item)) }
+      case 'SpreadElement':
+        return { ...expr, argument: renameExpr(expr.argument) }
+      case 'NewExpression':
+        return {
+          ...expr,
+          callee: renameExpr(expr.callee),
+          arguments: expr.arguments.map(a => renameExpr(a)),
+        }
+      case 'SequenceExpression':
+        return { ...expr, expressions: expr.expressions.map(item => renameExpr(item)) }
+      case 'YieldExpression':
+        return {
+          ...expr,
+          argument: expr.argument ? renameExpr(expr.argument) : expr.argument,
+        }
+      case 'TaggedTemplateExpression':
+        return {
+          ...expr,
+          tag: renameExpr(expr.tag),
+          quasi: {
+            ...expr.quasi,
+            expressions: expr.quasi.expressions.map(item => renameExpr(item)),
+          },
+        }
+      case 'ClassExpression':
+        return {
+          ...expr,
+          superClass: expr.superClass ? renameExpr(expr.superClass) : expr.superClass,
         }
       default:
         return expr
@@ -792,6 +864,22 @@ function renameTerminator(
           ...c,
           test: c.test ? renameExpr(c.test) : c.test,
         })),
+      }
+    case 'ForOf':
+      return {
+        ...term,
+        iterable: renameExpr(term.iterable),
+        assignmentTarget: term.assignmentTarget
+          ? renameExpr(term.assignmentTarget)
+          : term.assignmentTarget,
+      }
+    case 'ForIn':
+      return {
+        ...term,
+        object: renameExpr(term.object),
+        assignmentTarget: term.assignmentTarget
+          ? renameExpr(term.assignmentTarget)
+          : term.assignmentTarget,
       }
     default:
       return term

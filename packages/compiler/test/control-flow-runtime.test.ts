@@ -2907,6 +2907,128 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe('a\nb')
   })
 
+  it('renames repeated assignment reads in newer HIR expressions with optimization', async () => {
+    const optional = compileAndRunHook<number>(
+      `
+        export function useRun(maybe?: (value: number) => number) {
+          "use pure"
+          let x = 1
+          x = 2
+          return maybe?.(x) ?? 0
+        }
+      `,
+      'useRun',
+      { optimize: true },
+      [(value: number) => value],
+    )
+    expect(optional).toBe(2)
+
+    const template = compileAndRunHook<string>(
+      `
+        export function useRun() {
+          "use pure"
+          let x = 1
+          x = 2
+          return \`\${x}\`
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+    expect(template).toBe('2')
+
+    const tagged = compileAndRunHook<number>(
+      `
+        export function useRun() {
+          "use pure"
+          const tag = (_strings: TemplateStringsArray, value: number) => value
+          let x = 1
+          x = 2
+          return tag\`\${x}\`
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+    expect(tagged).toBe(2)
+
+    const sequence = compileAndRunHook<number>(
+      `
+        export function useRun() {
+          "use pure"
+          let x = 1
+          x = 2
+          return (0, x)
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+    expect(sequence).toBe(2)
+
+    const created = compileAndRunHook<number>(
+      `
+        export function useRun() {
+          "use pure"
+          class Box {
+            value: number
+            constructor(value: number) {
+              this.value = value
+            }
+          }
+          let x = 1
+          x = 2
+          return new Box(x).value
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+    expect(created).toBe(2)
+
+    const spread = compileAndRunHook<number>(
+      `
+        export function useRun() {
+          "use pure"
+          let x = 1
+          x = 2
+          return [0, ...[x]][1]
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+    expect(spread).toBe(2)
+
+    const awaited = await compileAndRunHook<Promise<number>>(
+      `
+        export async function useRun() {
+          "use pure"
+          let x = 1
+          x = 2
+          return await Promise.resolve(x)
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+    expect(awaited).toBe(2)
+
+    const yielded = compileAndRunHook<Generator<number, void, unknown>>(
+      `
+        export function* useRun() {
+          "use pure"
+          let x = 1
+          x = 2
+          yield x
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+    expect(yielded.next()).toEqual({ value: 2, done: false })
+  })
+
   it('preserves yield argument locals with optimization', () => {
     const result = compileAndRunHook<Generator<number, void, unknown>>(
       `
