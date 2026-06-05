@@ -292,6 +292,54 @@ describe('state write expression semantics', () => {
     expect(values).toEqual([2, 8, 0, 5, 5, 7, 7])
   })
 
+  it('preserves statement-position bitwise and shift compound assignments', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useStatementCompoundAssignmentSemantics() {
+        let orValue = 1
+        orValue |= 2
+
+        let andValue = 3
+        andValue &= 1
+
+        let xorValue = 5
+        xorValue ^= 3
+
+        let shiftLeft = 1
+        shiftLeft <<= 3
+
+        let shiftRight = -8
+        shiftRight >>= 1
+
+        let shiftUnsigned = -1
+        shiftUnsigned >>>= 1
+
+        let state = $state(1)
+        state |= 2
+        state <<= 2
+        state >>>= 1
+
+        return [
+          orValue,
+          andValue,
+          xorValue,
+          shiftLeft,
+          shiftRight,
+          shiftUnsigned,
+          state,
+        ]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useStatementCompoundAssignmentSemantics')() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual([3, 1, 6, 8, -4, 2147483647, 6])
+  })
+
   it('preserves logical assignment short-circuit semantics on ordinary locals', () => {
     const source = `
       import { $state } from 'fict'

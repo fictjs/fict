@@ -1903,6 +1903,12 @@ function convertAssignmentValue(expr: BabelCore.types.AssignmentExpression): Exp
     '/=': '/',
     '%=': '%',
     '**=': '**',
+    '<<=': '<<',
+    '>>=': '>>',
+    '>>>=': '>>>',
+    '|=': '|',
+    '^=': '^',
+    '&=': '&',
   }
   const mapped = operatorMap[expr.operator]
   if (mapped && t.isIdentifier(expr.left)) {
