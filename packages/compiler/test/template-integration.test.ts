@@ -1777,6 +1777,93 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps inline MathML templates in MathML namespace when undefined is shadowed', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const undefined = true
+        const shadow = undefined ? 'yes' : 'no'
+        return (
+          <math data-id="math" data-shadow={shadow}>
+            {shadow ? <mi data-id="inline">x</mi> : null}
+          </math>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const output = transformCommonJS(source, { fineGrainedDom: true })
+    expect(output).toMatch(/"<mi data-id=\\"inline\\">x<\/mi>", void 0, void 0, true/)
+    expect(output).not.toMatch(/"<mi data-id=\\"inline\\">x<\/mi>", undefined, undefined, true/)
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const math = container.querySelector('[data-id="math"]') as MathMLElement
+    const mi = container.querySelector('[data-id="inline"]') as MathMLElement
+
+    expect(math.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
+    expect(mi.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
+    expect(math.getAttribute('data-shadow')).toBe('yes')
+
+    teardown()
+    container.remove()
+  })
+
+  it('keeps hoisted list MathML templates in MathML namespace when undefined is shadowed', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const undefined = true
+        const shadow = undefined ? 'yes' : 'no'
+        const items = [1]
+        return (
+          <math data-id="math" data-shadow={shadow}>
+            {items.map(item => <mi key={item} data-id="list-item">x</mi>)}
+          </math>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const output = transformCommonJS(source, { fineGrainedDom: true })
+    expect(output).toMatch(/"<mi data-id=\\"list-item\\">x<\/mi>", void 0, void 0, true/)
+    expect(output).not.toMatch(/"<mi data-id=\\"list-item\\">x<\/mi>", undefined, undefined, true/)
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const math = container.querySelector('[data-id="math"]') as MathMLElement
+    const mi = container.querySelector('[data-id="list-item"]') as MathMLElement
+
+    expect(math.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
+    expect(mi.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
+    expect(math.getAttribute('data-shadow')).toBe('yes')
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves whitespace-only static JSX text in template output', async () => {
     const source = `
       import { render } from 'fict'

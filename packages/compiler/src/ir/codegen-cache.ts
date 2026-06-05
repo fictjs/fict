@@ -128,8 +128,10 @@ export function getOrCreateHoistedTemplate(
 
   const templateArgs: BabelCore.types.Expression[] = [t.stringLiteral(html)]
   if (isSVG || isMathML) {
-    templateArgs.push(t.identifier('undefined'))
-    templateArgs.push(isSVG ? t.booleanLiteral(true) : t.identifier('undefined'))
+    templateArgs.push(t.unaryExpression('void', t.numericLiteral(0)))
+    templateArgs.push(
+      isSVG ? t.booleanLiteral(true) : t.unaryExpression('void', t.numericLiteral(0)),
+    )
     if (isMathML) {
       templateArgs.push(t.booleanLiteral(true))
     }

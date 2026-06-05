@@ -4027,8 +4027,10 @@ function lowerIntrinsicElement(
     const templateArgs: BabelCore.types.Expression[] = [t.stringLiteral(html)]
     if (isSVG || isMathML) {
       // template(html, isImportNode, isSVG, isMathML)
-      templateArgs.push(t.identifier('undefined')) // isImportNode
-      templateArgs.push(isSVG ? t.booleanLiteral(true) : t.identifier('undefined'))
+      templateArgs.push(t.unaryExpression('void', t.numericLiteral(0))) // isImportNode
+      templateArgs.push(
+        isSVG ? t.booleanLiteral(true) : t.unaryExpression('void', t.numericLiteral(0)),
+      )
       if (isMathML) {
         templateArgs.push(t.booleanLiteral(true))
       }
