@@ -418,6 +418,77 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).not.toContain('return <span')
     })
 
+    it('lowers JSX returned from class expression methods', () => {
+      const output = transform(`
+        export function make() {
+          return class {
+            render() {
+              return <div />
+            }
+          }
+        }
+      `)
+
+      expect(output).toContain('template("<div></div>")')
+      expect(output).not.toMatch(/return\s+</)
+    })
+
+    it('lowers JSX in class expression fields', () => {
+      const output = transform(`
+        export function make() {
+          return class {
+            view = <section />
+            static label = <strong />
+          }
+        }
+      `)
+
+      expect(output).toContain('template("<section></section>")')
+      expect(output).toContain('template("<strong></strong>")')
+      expect(output).not.toMatch(/=\s+</)
+    })
+
+    it('lowers JSX in class expression static blocks', () => {
+      const output = transform(`
+        export function make() {
+          return class {
+            static {
+              this.view = <span />
+            }
+          }
+        }
+      `)
+
+      expect(output).toContain('template("<span></span>")')
+      expect(output).not.toMatch(/=\s+</)
+    })
+
+    it('lowers JSX in exported class declarations', () => {
+      const output = transform(`
+        export class App {
+          render() {
+            return <div />
+          }
+        }
+      `)
+
+      expect(output).toContain('template("<div></div>")')
+      expect(output).not.toMatch(/return\s+</)
+    })
+
+    it('lowers JSX in default-exported class declarations', () => {
+      const output = transform(`
+        export default class App {
+          render() {
+            return <div />
+          }
+        }
+      `)
+
+      expect(output).toContain('template("<div></div>")')
+      expect(output).not.toMatch(/return\s+</)
+    })
+
     it('rewrites $effect to useEffect', () => {
       const output = transform(`
         import { $state, $effect } from 'fict'

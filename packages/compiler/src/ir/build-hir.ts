@@ -3085,8 +3085,8 @@ function processStatement(
   })
 }
 
-function convertExpression(
-  node: BabelCore.types.Expression,
+export function convertExpression(
+  node: BabelCore.types.Expression | BabelCore.types.JSXFragment,
   options?: { reactiveScope?: string },
 ): Expression {
   const loc = getLoc(node)

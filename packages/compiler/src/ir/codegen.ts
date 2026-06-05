@@ -8,7 +8,10 @@ import type { FictCompilerOptions, ModuleReactiveMetadata } from '../types'
 import { isLogicalAssignmentOperator } from '../utils'
 import { DiagnosticCode, reportDiagnostic } from '../validation'
 
-import { convertStatementsToHIRFunction } from './build-hir'
+import {
+  convertExpression as convertBabelExpressionToHIR,
+  convertStatementsToHIRFunction,
+} from './build-hir'
 import {
   collectMutatedIdentifiers,
   collectCalledIdentifiers,
@@ -185,6 +188,39 @@ function isTypeScriptOnlyTopLevelStatement(
     return true
   }
   return (node as { declare?: boolean }).declare === true
+}
+
+function lowerRawJSXInBabelNode<T extends BabelCore.types.Node>(node: T, ctx: CodegenContext): T {
+  const { t } = ctx
+  const visit = (current: unknown): unknown => {
+    if (!current || typeof current !== 'object') return current
+    if (Array.isArray(current)) return current.map(item => visit(item))
+    if (!('type' in current)) return current
+
+    const astNode = current as BabelCore.types.Node
+    if (t.isJSXElement(astNode) || t.isJSXFragment(astNode)) {
+      return lowerExpression(
+        convertBabelExpressionToHIR(
+          astNode as BabelCore.types.Expression | BabelCore.types.JSXFragment,
+        ),
+        ctx,
+      )
+    }
+
+    const record = astNode as unknown as Record<string, unknown>
+    for (const key of Object.keys(astNode)) {
+      if (key === 'type' || key === 'loc' || key === 'start' || key === 'end') continue
+      const value = record[key]
+      if (Array.isArray(value)) {
+        record[key] = value.map(item => visit(item))
+      } else if (value && typeof value === 'object' && 'type' in value) {
+        record[key] = visit(value)
+      }
+    }
+    return astNode
+  }
+
+  return visit(node) as T
 }
 
 const cloneLoc = (loc?: BabelCore.types.SourceLocation | null) =>
@@ -3032,7 +3068,9 @@ function lowerExpressionImpl(
         expr.superClass ? lowerExpression(expr.superClass, ctx) : null,
         t.classBody(
           (expr.body ?? []).map(member =>
-            lowerRawClassReactiveWrites(t.cloneNode(member, true) as BabelClassMember),
+            lowerRawClassReactiveWrites(
+              lowerRawJSXInBabelNode(t.cloneNode(member, true) as BabelClassMember, ctx),
+            ),
           ),
         ),
         expr.decorators?.map(decorator => t.cloneNode(decorator, true)) ?? null,
@@ -5018,6 +5056,8 @@ export function lowerHIRWithRegions(
     }
     return null
   }
+  const lowerRawStatement = <T extends BabelCore.types.Statement>(stmt: T): T =>
+    lowerRawJSXInBabelNode(t.cloneNode(stmt, true) as T, ctx)
 
   // Rebuild program body preserving original order
   for (const stmt of originalBody as BabelCore.types.Statement[]) {
@@ -5129,13 +5169,13 @@ export function lowerHIRWithRegions(
           continue
         }
       }
-      body.push(stmt)
+      body.push(lowerRawStatement(stmt))
       continue
     }
 
     if (t.isExportNamedDeclaration(stmt)) {
       flushLowerableBuffer()
-      body.push(stmt)
+      body.push(lowerRawStatement(stmt))
       continue
     }
 
@@ -5150,7 +5190,7 @@ export function lowerHIRWithRegions(
         emittedFunctionNames.add(name)
         continue
       }
-      body.push(stmt)
+      body.push(lowerRawStatement(stmt))
       if (stmt.declaration.id?.name) emittedFunctionNames.add(stmt.declaration.id.name)
       continue
     }
@@ -5166,13 +5206,13 @@ export function lowerHIRWithRegions(
         if (generated.fn.name) emittedFunctionNames.add(generated.fn.name)
         continue
       }
-      body.push(stmt)
+      body.push(lowerRawStatement(stmt))
       continue
     }
 
     if (t.isExportDefaultDeclaration(stmt) || t.isExportAllDeclaration(stmt)) {
       flushLowerableBuffer()
-      body.push(stmt)
+      body.push(lowerRawStatement(stmt))
       continue
     }
 
