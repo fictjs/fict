@@ -1906,7 +1906,15 @@ function collectWriteTargets(expr: Expression): Set<string> {
       collectFromBabelNode(node.right, shadowed)
       return
     }
-    if (t.isUnaryExpression(node) || t.isAwaitExpression(node) || t.isSpreadElement(node)) {
+    if (t.isUnaryExpression(node)) {
+      if (node.operator === 'delete') {
+        collectFromBabelDeleteTarget(node.argument, shadowed)
+      } else {
+        collectFromBabelNode(node.argument, shadowed)
+      }
+      return
+    }
+    if (t.isAwaitExpression(node) || t.isSpreadElement(node)) {
       collectFromBabelNode(node.argument, shadowed)
       return
     }
@@ -1961,6 +1969,20 @@ function collectWriteTargets(expr: Expression): Set<string> {
       addWrite(node.name, shadowed)
       return
     }
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      const base = collectBabelMemberBaseIdentifier(node)
+      if (base) addWrite(base, shadowed)
+      collectFromBabelNode(node.object, shadowed)
+      if (node.computed) collectFromBabelNode(node.property, shadowed)
+      return
+    }
+    collectFromBabelNode(node, shadowed)
+  }
+  const collectFromBabelDeleteTarget = (
+    node: t.Node | null | undefined,
+    shadowed: Set<string>,
+  ): void => {
+    if (!node) return
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
       const base = collectBabelMemberBaseIdentifier(node)
       if (base) addWrite(base, shadowed)
@@ -2075,7 +2097,11 @@ function collectWriteTargets(expr: Expression): Set<string> {
         visit(node.right as Expression, shadowed)
         return
       case 'UnaryExpression':
-        visit(node.argument as Expression, shadowed)
+        if (node.operator === 'delete') {
+          collectDeleteTarget(node.argument as Expression, shadowed)
+        } else {
+          visit(node.argument as Expression, shadowed)
+        }
         return
       case 'ConditionalExpression':
         visit(node.test as Expression, shadowed)
@@ -2136,6 +2162,17 @@ function collectWriteTargets(expr: Expression): Set<string> {
         return
     }
   }
+  function collectDeleteTarget(target: Expression, shadowed: Set<string>): void {
+    if (target.kind === 'MemberExpression' || target.kind === 'OptionalMemberExpression') {
+      const base = getMemberBaseIdentifier(target)
+      if (base) addWrite(base.name, shadowed)
+      visit(target.object as Expression, shadowed)
+      if (target.computed) visit(target.property as Expression, shadowed)
+      return
+    }
+    visit(target, shadowed)
+  }
+
   visit(expr, new Set())
   return writes
 }
@@ -2701,6 +2738,9 @@ function replaceConstMemberExpressions(
         right: replaceConstMemberExpressions(expr.right as Expression, constObjects, constArrays),
       }
     case 'UnaryExpression':
+      if (expr.operator === 'delete') {
+        return expr
+      }
       return {
         ...expr,
         argument: replaceConstMemberExpressions(

@@ -472,6 +472,44 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(0)
   })
 
+  it('preserves optimized object member delete side effects', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          const obj = { a: 1 }
+          const ok = delete obj.a
+          return ok + ':' + ('a' in obj)
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('true:false')
+  })
+
+  it('preserves optimized array index delete side effects', () => {
+    const result = compileAndRunHook<string>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          const arr = [1]
+          const ok = delete arr[0]
+          return ok + ':' + (0 in arr)
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toBe('true:false')
+  })
+
   it('preserves immediate do-while break before trailing return', () => {
     const result = compileAndRunHook<number>(
       `
