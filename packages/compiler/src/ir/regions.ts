@@ -1399,6 +1399,7 @@ function lowerNodeWithRegionContext(
           const controlFlowState = analyzeControlFlowRegion(child, regionCtx)
           const disablePartialRegions = shouldDisablePartialRegions(child)
           const disableEarlyExitRegion = _structuredNodeHasEarlyExit(child)
+          const disableAbruptCompletionRegion = _structuredNodeHasReturnOrThrow(child)
           const directEmitCandidate = buildDirectRegionEmitCandidate(
             node.nodes,
             index,
@@ -1412,7 +1413,15 @@ function lowerNodeWithRegionContext(
             !!controlFlowRegion &&
             controlFlowRegion.shouldMemoize &&
             canEmitControlFlowRegionDirectly(child) &&
+            !disableAbruptCompletionRegion &&
             !regionCtx?.disabledRegions.has(controlFlowRegion.id)
+          const disabledRegionIdsForControlFlow = new Set<number>()
+          if (!canDirectlyEmitRegion && (disablePartialRegions || disableEarlyExitRegion)) {
+            controlFlowState.partialRegionIds.forEach(id => disabledRegionIdsForControlFlow.add(id))
+            if (disableAbruptCompletionRegion && controlFlowState.region) {
+              disabledRegionIdsForControlFlow.add(controlFlowState.region.id)
+            }
+          }
           // Flush pending instructions before control flow
           stmts.push(
             ...flushInstructionBuffer(
@@ -1421,8 +1430,8 @@ function lowerNodeWithRegionContext(
               ctx,
               declaredVars,
               regionCtx,
-              !canDirectlyEmitRegion && (disablePartialRegions || disableEarlyExitRegion)
-                ? controlFlowState.partialRegionIds
+              disabledRegionIdsForControlFlow.size > 0
+                ? disabledRegionIdsForControlFlow
                 : undefined,
               canDirectlyEmitRegion && controlFlowRegion
                 ? new Set([controlFlowRegion.id])
@@ -2834,6 +2843,51 @@ function _structuredNodeHasEarlyExit(
         _structuredNodeHasEarlyExit(node.block, options) ||
         _structuredNodeHasEarlyExit(node.handler?.body, options) ||
         _structuredNodeHasEarlyExit(node.finalizer, options)
+      )
+
+    default:
+      return false
+  }
+}
+
+function _structuredNodeHasReturnOrThrow(node: StructuredNode | null | undefined): boolean {
+  if (!node) return false
+
+  switch (node.kind) {
+    case 'return':
+    case 'throw':
+      return true
+
+    case 'block':
+      return node.statements.some(stmt => _structuredNodeHasReturnOrThrow(stmt))
+
+    case 'sequence':
+      return node.nodes.some(child => _structuredNodeHasReturnOrThrow(child))
+
+    case 'labeled':
+      return _structuredNodeHasReturnOrThrow(node.statement)
+
+    case 'if':
+      return (
+        _structuredNodeHasReturnOrThrow(node.consequent) ||
+        _structuredNodeHasReturnOrThrow(node.alternate)
+      )
+
+    case 'while':
+    case 'doWhile':
+    case 'for':
+    case 'forOf':
+    case 'forIn':
+      return _structuredNodeHasReturnOrThrow(node.body)
+
+    case 'switch':
+      return node.cases.some(c => _structuredNodeHasReturnOrThrow(c.body))
+
+    case 'try':
+      return (
+        _structuredNodeHasReturnOrThrow(node.block) ||
+        _structuredNodeHasReturnOrThrow(node.handler?.body) ||
+        _structuredNodeHasReturnOrThrow(node.finalizer)
       )
 
     default:

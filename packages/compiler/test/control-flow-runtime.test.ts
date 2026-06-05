@@ -1912,6 +1912,75 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(3)
   })
 
+  it('preserves try return values before mutating finally blocks', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 1
+
+          try {
+            return x
+          } finally {
+            x = 2
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(1)
+  })
+
+  it('lets finally returns override try returns', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+
+          try {
+            return 1
+          } finally {
+            return 2
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
+  it('runs finally before propagating thrown try completions', () => {
+    const result = compileAndRunHook<number>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          let x = 0
+
+          try {
+            try {
+              throw new Error('x')
+            } finally {
+              x = 2
+            }
+          } catch {
+            return x
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result).toBe(2)
+  })
+
   it('preserves thrown expression side effects before catch', () => {
     const result = compileAndRunHook<number>(
       `
