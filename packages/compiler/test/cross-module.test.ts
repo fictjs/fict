@@ -1619,6 +1619,80 @@ describe('Cross-Module Reactivity', () => {
       })
     })
 
+    it('preserves composite hook accessor returns with metadata', () => {
+      const hookPath = path.join(baseDir, 'composite-hook-returns.tsx')
+      const appPath = path.join(baseDir, 'composite-hook-consumer.tsx')
+      const moduleMetadata = new Map()
+      const hookSource = `
+        import { $memo, $state } from 'fict'
+
+        export function useConditional(flag: boolean) {
+          const count = $state(0)
+          const other = $state(1)
+          return flag ? count : other
+        }
+
+        export function useLogical() {
+          const count = $state(0)
+          return true && count
+        }
+
+        export function useSequence() {
+          const count = $state(0)
+          return (0, count)
+        }
+
+        export function useIife() {
+          const count = $state(0)
+          return (() => count)()
+        }
+
+        export function useObjectSlot(flag: boolean) {
+          const count = $state(0)
+          const doubled = $memo(() => count() * 2)
+          return { value: flag ? count : count, doubled: (0, doubled) }
+        }
+
+        export function useMixed(flag: boolean) {
+          const count = $state(0)
+          return flag && count
+        }
+      `
+
+      const hookOutput = transform(hookSource, { moduleMetadata }, hookPath)
+
+      expect(hookOutput).toMatch(/return flag \? count : other;/)
+      expect(hookOutput).toMatch(/return true && count;/)
+      expect(hookOutput).toMatch(/return \(?0, count\)?;/)
+      expect(hookOutput).toMatch(/return \(\(\) => count\)\(\);/)
+      expect(hookOutput).not.toMatch(/flag \? count\(\) : other\(\)/)
+      expect(hookOutput).not.toMatch(/true && count\(\)/)
+      expect(hookOutput).not.toMatch(/return \(?0, count\(\)\)?;/)
+      expect(hookOutput).not.toMatch(/return \(\(\) => count\(\)\)\(\);/)
+      expect(moduleMetadata.get(path.resolve(hookPath))?.hooks).toMatchObject({
+        useConditional: { directAccessor: 'signal' },
+        useLogical: { directAccessor: 'signal' },
+        useSequence: { directAccessor: 'signal' },
+        useIife: { directAccessor: 'signal' },
+        useObjectSlot: { objectProps: { value: 'signal', doubled: 'memo' } },
+      })
+      expect(moduleMetadata.get(path.resolve(hookPath))?.hooks).not.toHaveProperty('useMixed')
+
+      const appSource = `
+        import { useConditional, useSequence } from './composite-hook-returns'
+
+        export function App() {
+          const v = useConditional(true)
+          const seq = useSequence()
+          return <div>{v}{seq}</div>
+        }
+      `
+      const appOutput = transform(appSource, { fineGrainedDom: true, moduleMetadata }, appPath)
+
+      expect(appOutput).toMatch(/v\(\)/)
+      expect(appOutput).toMatch(/seq\(\)/)
+    })
+
     it('propagates createSignal exports from advanced modules (namespace)', () => {
       const storeSource = `
         import * as runtime from 'fict/advanced'

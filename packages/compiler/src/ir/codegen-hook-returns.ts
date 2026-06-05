@@ -191,9 +191,91 @@ export function analyzeHookReturnInfo(
     const kind = nsMeta.exports[propName]
     return kind === 'signal' || kind === 'memo' ? kind : undefined
   }
-  const returnExprAccessorKind = (expr: Expression): HookAccessorKind | undefined => {
+  const compatibleAccessorKind = (
+    left: HookAccessorKind | undefined,
+    right: HookAccessorKind | undefined,
+  ): HookAccessorKind | undefined => (left && left === right ? left : undefined)
+
+  const isAlwaysTruthy = (expr: Expression): boolean => {
+    if (returnExprAccessorKind(expr)) return true
+    if (expr.kind === 'Literal') return !!expr.value
+    if (
+      expr.kind === 'ArrayExpression' ||
+      expr.kind === 'ObjectExpression' ||
+      expr.kind === 'ArrowFunction' ||
+      expr.kind === 'FunctionExpression' ||
+      expr.kind === 'ClassExpression'
+    ) {
+      return true
+    }
+    if (expr.kind === 'SequenceExpression' && expr.expressions.length > 0) {
+      return isAlwaysTruthy(expr.expressions[expr.expressions.length - 1]!)
+    }
+    return false
+  }
+
+  const isAlwaysFalsy = (expr: Expression): boolean => {
+    if (returnExprAccessorKind(expr)) return false
+    if (expr.kind === 'Literal') return !expr.value
+    if (expr.kind === 'SequenceExpression' && expr.expressions.length > 0) {
+      return isAlwaysFalsy(expr.expressions[expr.expressions.length - 1]!)
+    }
+    return false
+  }
+
+  const isAlwaysNullish = (expr: Expression): boolean => {
+    if (returnExprAccessorKind(expr)) return false
+    if (expr.kind === 'Literal') return expr.value == null
+    if (expr.kind === 'SequenceExpression' && expr.expressions.length > 0) {
+      return isAlwaysNullish(expr.expressions[expr.expressions.length - 1]!)
+    }
+    return false
+  }
+
+  function iifeAccessorKind(expr: Expression): HookAccessorKind | undefined {
+    if (expr.kind !== 'CallExpression' || expr.arguments.length > 0) return undefined
+    if (
+      expr.callee.kind === 'ArrowFunction' &&
+      expr.callee.params.length === 0 &&
+      expr.callee.isExpression &&
+      !Array.isArray(expr.callee.body)
+    ) {
+      return returnExprAccessorKind(expr.callee.body)
+    }
+    return undefined
+  }
+
+  function logicalAccessorKind(expr: Extract<Expression, { kind: 'LogicalExpression' }>) {
+    const leftKind = returnExprAccessorKind(expr.left)
+    if (expr.operator === '&&') {
+      if (isAlwaysFalsy(expr.left)) return undefined
+      return leftKind || isAlwaysTruthy(expr.left) ? returnExprAccessorKind(expr.right) : undefined
+    }
+    if (expr.operator === '||') {
+      if (leftKind) return leftKind
+      return isAlwaysFalsy(expr.left) ? returnExprAccessorKind(expr.right) : undefined
+    }
+    if (leftKind) return leftKind
+    return isAlwaysNullish(expr.left) ? returnExprAccessorKind(expr.right) : undefined
+  }
+
+  function returnExprAccessorKind(expr: Expression): HookAccessorKind | undefined {
     if (expr.kind === 'Identifier') return exprAccessorKind(expr.name)
-    return namespaceMemberAccessorKind(expr)
+    const namespaceKind = namespaceMemberAccessorKind(expr)
+    if (namespaceKind) return namespaceKind
+    if (expr.kind === 'ConditionalExpression') {
+      return compatibleAccessorKind(
+        returnExprAccessorKind(expr.consequent),
+        returnExprAccessorKind(expr.alternate),
+      )
+    }
+    if (expr.kind === 'LogicalExpression') {
+      return logicalAccessorKind(expr)
+    }
+    if (expr.kind === 'SequenceExpression' && expr.expressions.length > 0) {
+      return returnExprAccessorKind(expr.expressions[expr.expressions.length - 1]!)
+    }
+    return iifeAccessorKind(expr)
   }
 
   const visitReturnExpr = (expr: Expression) => {
@@ -224,19 +306,15 @@ export function analyzeHookReturnInfo(
         })
       })
     } else if (
-      expr.kind === 'Identifier' ||
-      expr.kind === 'MemberExpression' ||
-      expr.kind === 'OptionalMemberExpression'
-    ) {
-      const kind = returnExprAccessorKind(expr)
-      recordAccessor(kind, () => {
-        info.directAccessor = kind
-      })
-    } else if (
       (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') &&
       expr.callee.kind === 'Identifier'
     ) {
       copyHookInfo(getHookReturnInfo(expr.callee.name, ctx, ops))
+    } else {
+      const kind = returnExprAccessorKind(expr)
+      recordAccessor(kind, () => {
+        info.directAccessor = kind
+      })
     }
   }
 

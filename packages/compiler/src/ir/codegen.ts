@@ -3688,6 +3688,43 @@ function unwrapAccessorCalls(
     )
   }
 
+  if (t.isLogicalExpression(expr)) {
+    return t.logicalExpression(
+      expr.operator,
+      unwrapAccessorCalls(expr.left, ctx),
+      unwrapAccessorCalls(expr.right, ctx),
+    )
+  }
+
+  if (t.isSequenceExpression(expr)) {
+    return t.sequenceExpression(expr.expressions.map(child => unwrapAccessorCalls(child, ctx)))
+  }
+
+  if (
+    t.isCallExpression(expr) &&
+    expr.arguments.length === 0 &&
+    (t.isArrowFunctionExpression(expr.callee) || t.isFunctionExpression(expr.callee)) &&
+    expr.callee.params.length === 0
+  ) {
+    const callee = t.cloneNode(expr.callee, true)
+    if (t.isArrowFunctionExpression(callee)) {
+      if (t.isExpression(callee.body)) {
+        callee.body = unwrapAccessorCalls(callee.body, ctx)
+      } else {
+        callee.body = preserveHookReturnAccessorsInStatement(
+          callee.body,
+          ctx,
+        ) as BabelCore.types.BlockStatement
+      }
+    } else {
+      callee.body = preserveHookReturnAccessorsInStatement(
+        callee.body,
+        ctx,
+      ) as BabelCore.types.BlockStatement
+    }
+    return t.callExpression(callee, [])
+  }
+
   return expr
 }
 
