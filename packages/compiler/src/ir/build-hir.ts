@@ -1047,6 +1047,7 @@ export function buildHIR(
 
     // Track which function names we've processed to avoid duplicates in export
     const processedFunctions = new Set<string>()
+    let defaultExportExpressionCounter = 0
 
     for (const stmt of expandedAst.program.body) {
       // Import declarations go to preamble
@@ -1173,6 +1174,51 @@ export function buildHIR(
               ...(fnHIR.meta ?? {}),
               anonymousDefaultExport: true,
             }
+          }
+          functions.push(fnHIR)
+          postamble.push({ kind: 'ExportDefault', name })
+        } else if (t.isArrowFunctionExpression(decl) || t.isFunctionExpression(decl)) {
+          const name = `__default_export_${defaultExportExpressionCounter++}`
+          processedFunctions.add(name)
+          const body = decl.body
+          const params = decl.params
+          const isArrow = t.isArrowFunctionExpression(decl)
+          const hasExpressionBody = isArrow && !t.isBlockStatement(body)
+          const fnHIR = t.isBlockStatement(body)
+            ? convertFunction(name, params, body.body, {
+                noMemo: programNoMemo,
+                pure: programPure,
+                directives: body.directives,
+                loc: getLoc(decl),
+                isAsync: decl.async,
+                isGenerator: t.isFunctionExpression(decl) ? decl.generator : false,
+                astNode: [decl, stmt],
+              })
+            : convertFunction(
+                name,
+                params,
+                [t.returnStatement(body as BabelCore.types.Expression)],
+                {
+                  noMemo: programNoMemo,
+                  pure: programPure,
+                  loc: getLoc(decl),
+                  isAsync: decl.async,
+                  isGenerator: false,
+                  astNode: [decl, stmt],
+                },
+              )
+          fnHIR.meta = {
+            ...(fnHIR.meta ?? {}),
+            fromExpression: true,
+            defaultExportExpression: true,
+            ...(!isArrow && t.isFunctionExpression(decl) && decl.id
+              ? { functionExpressionName: decl.id.name }
+              : null),
+            isArrow,
+            hasExpressionBody,
+            ...(!isArrow && t.isFunctionExpression(decl) && decl.generator
+              ? { isGenerator: true }
+              : null),
           }
           functions.push(fnHIR)
           postamble.push({ kind: 'ExportDefault', name })

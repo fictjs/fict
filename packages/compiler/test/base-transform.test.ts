@@ -383,6 +383,41 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).toContain('import(path, options)')
     })
 
+    it('lowers default-exported arrow JSX components', () => {
+      const output = transform(`
+        export default () => <div />
+      `)
+
+      expect(output).toContain('template("<div></div>")')
+      expect(output).not.toContain('=> <div')
+    })
+
+    it('lowers block-bodied default arrows with macros', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+
+        export default () => {
+          let count = $state(1)
+          return <div>{count}</div>
+        }
+      `)
+
+      expect(output).toContain('template("<div>')
+      expect(output).not.toContain('$state(1)')
+      expect(output).not.toContain('return <div>')
+    })
+
+    it('lowers default-exported function expressions', () => {
+      const output = transform(`
+        export default (function () {
+          return <span />
+        })
+      `)
+
+      expect(output).toContain('template("<span></span>")')
+      expect(output).not.toContain('return <span')
+    })
+
     it('rewrites $effect to useEffect', () => {
       const output = transform(`
         import { $state, $effect } from 'fict'

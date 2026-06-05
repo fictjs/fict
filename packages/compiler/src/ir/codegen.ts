@@ -5009,6 +5009,15 @@ export function lowerHIRWithRegions(
     body.push(...statements)
     lowerableBuffer.length = 0
   }
+  const takeDefaultExportExpression = (): GeneratedFunctionEntry | null => {
+    for (const [name, entry] of generatedFunctions.entries()) {
+      if (entry.fn.meta?.defaultExportExpression) {
+        generatedFunctions.delete(name)
+        return entry
+      }
+    }
+    return null
+  }
 
   // Rebuild program body preserving original order
   for (const stmt of originalBody as BabelCore.types.Statement[]) {
@@ -5143,6 +5152,21 @@ export function lowerHIRWithRegions(
       }
       body.push(stmt)
       if (stmt.declaration.id?.name) emittedFunctionNames.add(stmt.declaration.id.name)
+      continue
+    }
+
+    if (
+      t.isExportDefaultDeclaration(stmt) &&
+      (t.isArrowFunctionExpression(stmt.declaration) || t.isFunctionExpression(stmt.declaration))
+    ) {
+      flushLowerableBuffer()
+      const generated = takeDefaultExportExpression()
+      if (generated) {
+        body.push(t.exportDefaultDeclaration(buildFunctionDeclaratorExpression(generated, t)))
+        if (generated.fn.name) emittedFunctionNames.add(generated.fn.name)
+        continue
+      }
+      body.push(stmt)
       continue
     }
 
