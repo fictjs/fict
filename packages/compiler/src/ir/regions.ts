@@ -111,7 +111,7 @@ export function expressionNeedsAsyncContext(expr: Expression): boolean {
         expressionNeedsAsyncContext(expr.alternate)
       )
     case 'ArrayExpression':
-      return expr.elements.some(element => expressionNeedsAsyncContext(element))
+      return expr.elements.some(element => (element ? expressionNeedsAsyncContext(element) : false))
     case 'ObjectExpression':
       return expr.properties.some(prop =>
         prop.kind === 'SpreadElement'

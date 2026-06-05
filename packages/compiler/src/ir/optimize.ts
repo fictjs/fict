@@ -3627,7 +3627,9 @@ function extractConstArrayElements(
   if (expr.kind !== 'ArrayExpression') return null
   const elements: ConstArrayElements = new Map()
   for (let i = 0; i < expr.elements.length; i++) {
-    const value = evaluateLiteral(expr.elements[i] as Expression, constants)
+    const element = expr.elements[i]
+    if (!element) continue
+    const value = evaluateLiteral(element as Expression, constants)
     if (value === UNKNOWN_CONST) return null
     elements.set(i, value as ConstantValue)
   }

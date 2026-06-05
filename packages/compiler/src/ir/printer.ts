@@ -40,7 +40,7 @@ function formatExpression(expr: Expression, depth = 0): string {
     case 'ConditionalExpression':
       return `(${formatExpression(expr.test, depth)} ? ${formatExpression(expr.consequent, depth)} : ${formatExpression(expr.alternate, depth)})`
     case 'ArrayExpression':
-      return `[${expr.elements.map(e => formatExpression(e, depth)).join(', ')}]`
+      return `[${expr.elements.map(e => (e ? formatExpression(e, depth) : '')).join(', ')}]`
     case 'ObjectExpression':
       return `{${expr.properties
         .map(p => {

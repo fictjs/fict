@@ -429,7 +429,9 @@ function collectDefinedVariables(program: HIRProgram): Set<string> {
         collectExprAssignedIdentifiers(expr.alternate)
         break
       case 'ArrayExpression':
-        expr.elements.forEach(collectExprAssignedIdentifiers)
+        expr.elements.forEach(element => {
+          if (element) collectExprAssignedIdentifiers(element)
+        })
         break
       case 'ObjectExpression':
         for (const prop of expr.properties) {
@@ -596,7 +598,9 @@ function collectReferenceSummary(
         visitExpr(expr.alternate)
         break
       case 'ArrayExpression':
-        expr.elements.forEach(element => visitExpr(element))
+        expr.elements.forEach(element => {
+          if (element) visitExpr(element)
+        })
         break
       case 'ObjectExpression':
         for (const prop of expr.properties) {
@@ -746,7 +750,9 @@ function collectSideEffectEvents(program: HIRProgram): SideEffectEvent[] {
         visitExpr(expr.alternate)
         break
       case 'ArrayExpression':
-        expr.elements.forEach(visitExpr)
+        expr.elements.forEach(element => {
+          if (element) visitExpr(element)
+        })
         break
       case 'ObjectExpression':
         for (const prop of expr.properties) {

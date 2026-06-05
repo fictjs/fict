@@ -2933,9 +2933,11 @@ function lowerExpressionImpl(
     case 'ArrayExpression':
       return t.arrayExpression(
         expr.elements.map(el =>
-          el.kind === 'SpreadElement'
-            ? t.spreadElement(lowerExpression(el.argument, ctx))
-            : lowerExpression(el, ctx),
+          !el
+            ? null
+            : el.kind === 'SpreadElement'
+              ? t.spreadElement(lowerExpression(el.argument, ctx))
+              : lowerExpression(el, ctx),
         ),
       )
 
@@ -4085,7 +4087,7 @@ function lowerIntrinsicElement(
           isFusibleBindingExpression(expr.alternate as Expression)
         )
       case 'ArrayExpression':
-        return expr.elements.every(el => isFusibleBindingExpression(el as Expression))
+        return expr.elements.every(el => !el || isFusibleBindingExpression(el as Expression))
       case 'ObjectExpression':
         return expr.properties.every(prop => {
           if (prop.kind === 'SpreadElement') {

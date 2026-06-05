@@ -138,7 +138,9 @@ export function walkExpression(
         visitNode(node.alternate, node, inFunctionBody)
         return
       case 'ArrayExpression':
-        node.elements.forEach(el => visitNode(el, node, inFunctionBody))
+        node.elements.forEach(el => {
+          if (el) visitNode(el, node, inFunctionBody)
+        })
         return
       case 'ObjectExpression':
         node.properties.forEach(prop => {

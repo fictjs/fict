@@ -241,7 +241,10 @@ function rewriteExprWithMap(expr: Expression, rewrites: Map<string, string>): Ex
         alternate: rewriteExprWithMap(expr.alternate, rewrites),
       }
     case 'ArrayExpression':
-      return { ...expr, elements: expr.elements.map(el => rewriteExprWithMap(el, rewrites)) }
+      return {
+        ...expr,
+        elements: expr.elements.map(el => (el ? rewriteExprWithMap(el, rewrites) : el)),
+      }
     case 'ObjectExpression':
       return {
         ...expr,
@@ -414,7 +417,7 @@ function toSSA(fn: HIRFunction): HIRFunction {
           alternate: renameExpr(expr.alternate),
         }
       case 'ArrayExpression':
-        return { ...expr, elements: expr.elements.map(el => renameExpr(el)) }
+        return { ...expr, elements: expr.elements.map(el => (el ? renameExpr(el) : el)) }
       case 'ObjectExpression':
         return {
           ...expr,

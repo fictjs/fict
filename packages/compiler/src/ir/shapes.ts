@@ -886,7 +886,7 @@ function analyzeExpression(
 
     case 'ArrayExpression': {
       for (const el of expr.elements) {
-        analyzeExpression(el, shapes, propertyReads, ctx)
+        if (el) analyzeExpression(el, shapes, propertyReads, ctx)
       }
       return createUnknownShape({ kind: 'local', name: '' })
     }
@@ -1041,7 +1041,7 @@ function markEscaping(expr: Expression, shapes: Map<string, ObjectShape>): void 
     }
     case 'ArrayExpression': {
       for (const el of expr.elements) {
-        markEscaping(el, shapes)
+        if (el) markEscaping(el, shapes)
       }
       break
     }

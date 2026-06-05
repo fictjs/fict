@@ -3385,15 +3385,12 @@ export function convertExpression(
     return cond
   }
   if (t.isArrayExpression(node)) {
-    if ((node.elements ?? []).some(el => el == null)) {
-      return reportUnsupportedExpression(
-        node,
-        'Array literal holes are not supported in HIR conversion. Use explicit undefined values instead.',
-      )
-    }
-    const elements: Expression[] = []
+    const elements: HArrayExpression['elements'] = []
     for (const el of node.elements ?? []) {
-      if (!el) continue
+      if (!el) {
+        elements.push(null)
+        continue
+      }
       if (t.isSpreadElement(el)) {
         elements.push({
           kind: 'SpreadElement',

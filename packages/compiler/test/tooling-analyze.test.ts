@@ -58,8 +58,7 @@ describe('analyzeFictFile', () => {
     const result = analyzeFictFile(
       `
         function App() {
-          const arr = [, 1]
-          return <div>{arr.length}</div>
+          return <svg:path />
         }
       `,
       'unsupported.tsx',
@@ -79,7 +78,7 @@ describe('analyzeFictFile', () => {
         }),
       ]),
     )
-    expect(result.diagnostics[0]?.message).toContain('Array literal holes')
+    expect(result.diagnostics[0]?.message).toContain('Unsupported JSX tag syntax')
     expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
   })
 
@@ -91,8 +90,7 @@ describe('analyzeFictFile', () => {
         function App() {
           let state = $state({ user: { name: 'a' } })
           state.user.name = 'b'
-          const arr = [, 1]
-          return <div>{state.user.name}{arr.length}</div>
+          return <div>{state.user.name}<svg:path /></div>
         }
       `,
       'unsupported-with-warning.tsx',
@@ -121,8 +119,7 @@ describe('analyzeFictFile', () => {
         function App() {
           let state = $state({ user: { name: 'a' } })
           state.user.name = 'b'
-          const arr = [, 1]
-          return <div>{state.user.name}{arr.length}</div>
+          return <div>{state.user.name}<svg:path /></div>
         }
       `,
       'unsupported-with-escalation.tsx',
@@ -410,8 +407,7 @@ describe('analyzeFictFile', () => {
       analyzeFictFile(
         `
           function App() {
-            const arr = [, 1]
-            return <div>{arr.length}</div>
+            return <svg:path />
           }
         `,
         'unsupported.tsx',
@@ -421,14 +417,14 @@ describe('analyzeFictFile', () => {
           verbosity: 'minimal',
         },
       ),
-    ).toThrow(/Array literal holes/)
+    ).toThrow(/Unsupported JSX tag syntax/)
   })
 
   it('returns a generic compile diagnostic when no structured compiler warning exists', () => {
     const result = analyzeFictFile(
       `
         export function App() {
-          debugger
+          type Local = string
           return <div />
         }
       `,

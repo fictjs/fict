@@ -89,7 +89,9 @@ function expressionContainsMacroCall(expr: Expression, macroName: '$state' | '$e
         visit(value.alternate)
         return
       case 'ArrayExpression':
-        value.elements.forEach(el => visit(el))
+        value.elements.forEach(el => {
+          if (el) visit(el)
+        })
         return
       case 'ObjectExpression':
         value.properties.forEach(prop => {

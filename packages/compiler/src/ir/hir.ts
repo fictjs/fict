@@ -485,7 +485,7 @@ export interface LogicalExpression extends SourceInfo {
 
 export interface ArrayExpression extends SourceInfo {
   kind: 'ArrayExpression'
-  elements: Expression[]
+  elements: (Expression | null)[]
 }
 
 export interface ObjectProperty extends SourceInfo {

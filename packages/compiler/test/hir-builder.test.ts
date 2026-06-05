@@ -513,14 +513,22 @@ describe('buildHIR - Advanced Patterns', () => {
     expect(firstFunction(hir).blocks.length).toBeGreaterThanOrEqual(3)
   })
 
-  it('throws on array literal holes', () => {
+  it('preserves array literal holes', () => {
     const ast = parseFile(`
       function Hole() {
         const arr = [, 1]
         return arr
       }
     `)
-    expect(() => buildHIR(ast)).toThrow(/Array literal holes are not supported/)
+    const hir = buildHIR(ast)
+    const assign = firstFunction(hir).blocks[0]?.instructions.find(isAssignInstruction)
+    expect(assign?.value.kind).toBe('ArrayExpression')
+    if (assign?.value.kind !== 'ArrayExpression') {
+      throw new Error('expected array expression assignment')
+    }
+    expect(assign.value.elements).toHaveLength(2)
+    expect(assign.value.elements[0]).toBeNull()
+    expect(assign.value.elements[1]?.kind).toBe('Literal')
   })
 
   it('preserves class expressions', () => {
