@@ -403,6 +403,66 @@ describe('reactivity guarantee contract', () => {
         error: /FICT-R005/,
       },
       {
+        name: 'inline object arrow callback slot escaping through unknown boundary',
+        source: `
+          import { $state } from 'fict'
+          function consume(value) {
+            return value
+          }
+          function App() {
+            let count = $state(0)
+            consume({ read: () => count })
+            return <div />
+          }
+        `,
+        error: /FICT-R005/,
+      },
+      {
+        name: 'inline object method callback slot escaping through unknown boundary',
+        source: `
+          import { $state } from 'fict'
+          function consume(value) {
+            return value
+          }
+          function App() {
+            let count = $state(0)
+            consume({ read() { return count } })
+            return <div />
+          }
+        `,
+        error: /FICT-R005/,
+      },
+      {
+        name: 'inline object getter callback slot escaping through unknown boundary',
+        source: `
+          import { $state } from 'fict'
+          function consume(value) {
+            return value
+          }
+          function App() {
+            let count = $state(0)
+            consume({ get read() { return count } })
+            return <div />
+          }
+        `,
+        error: /FICT-R005/,
+      },
+      {
+        name: 'inline array callback slot escaping through unknown boundary',
+        source: `
+          import { $state } from 'fict'
+          function consume(value) {
+            return value
+          }
+          function App() {
+            let count = $state(0)
+            consume([() => count])
+            return <div />
+          }
+        `,
+        error: /FICT-R005/,
+      },
+      {
         name: 'async promise callback captures reactive value across boundary',
         source: `
           import { $state } from 'fict'
@@ -616,6 +676,59 @@ describe('reactivity guarantee contract', () => {
         `,
       )
       expect(warningCodes).toContain('FICT-R005')
+    })
+
+    it('warns FICT-R005 for inline object and array callback slots', () => {
+      const cases = [
+        `
+          import { $state } from 'fict'
+          function consume(value) {
+            return value
+          }
+          function App() {
+            let count = $state(0)
+            consume({ read: () => count })
+            return <div />
+          }
+        `,
+        `
+          import { $state } from 'fict'
+          function consume(value) {
+            return value
+          }
+          function App() {
+            let count = $state(0)
+            consume({ read() { return count } })
+            return <div />
+          }
+        `,
+        `
+          import { $state } from 'fict'
+          function consume(value) {
+            return value
+          }
+          function App() {
+            let count = $state(0)
+            consume({ get read() { return count } })
+            return <div />
+          }
+        `,
+        `
+          import { $state } from 'fict'
+          function consume(value) {
+            return value
+          }
+          function App() {
+            let count = $state(0)
+            consume([() => count])
+            return <div />
+          }
+        `,
+      ]
+
+      for (const source of cases) {
+        expect(collectWarningCodes(source)).toContain('FICT-R005')
+      }
     })
 
     it('does not warn FICT-R005 for non-escaping iterator callback host', () => {

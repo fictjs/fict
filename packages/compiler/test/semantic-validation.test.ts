@@ -581,6 +581,84 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
   })
 
+  it('warns FICT-R005 when inline object and array callback slots escape', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        function consume(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          consume({ read: () => count })
+          return <div />
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function consume(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          consume({ read: function() { return count } })
+          return <div />
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function consume(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          consume({ read() { return count } })
+          return <div />
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function consume(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          consume({ get read() { return count } })
+          return <div />
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function consume(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          consume([() => count])
+          return <div />
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function consume(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          consume({ nested: [{ read: () => count }] })
+          return <div />
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      const warnings: Array<{ code: string }> = []
+      transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+      expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
+      expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
+    }
+  })
+
   it('warns FICT-R005 when inline closure escapes via optional callback boundary', () => {
     const cases = [
       `

@@ -715,6 +715,17 @@ function runWarningPass(
   }
   type ScopeBinding = NonNullable<ReturnType<BabelCore.NodePath['scope']['getBinding']>>
   const resolvingClosureBindings = new Set<BabelCore.types.Identifier>()
+  const mergeCapturedSets = (
+    target: Set<string> | null,
+    captured: Set<string> | null,
+  ): Set<string> | null => {
+    if (!captured || captured.size === 0) return target
+    const merged = target ?? new Set<string>()
+    for (const name of captured) {
+      merged.add(name)
+    }
+    return merged
+  }
   const registerObjectPropertyCaptureForBinding = (
     binding: ScopeBinding,
     propertyName: string,
@@ -728,6 +739,52 @@ function runWarningPass(
     }
     propertyCaptures.set(propertyName, captured)
   }
+  const getCapturedFromInlineSlots = (
+    exprPath: BabelCore.NodePath,
+    options: CaptureOptions,
+  ): Set<string> | null => {
+    let captured: Set<string> | null = null
+
+    if (exprPath.isObjectExpression()) {
+      for (const propertyPath of exprPath.get('properties') as BabelCore.NodePath[]) {
+        if (propertyPath.isSpreadElement()) {
+          captured = mergeCapturedSets(
+            captured,
+            getCapturedFromExpression(propertyPath.get('argument') as BabelCore.NodePath, options),
+          )
+          continue
+        }
+        if (propertyPath.isObjectProperty()) {
+          captured = mergeCapturedSets(
+            captured,
+            getCapturedFromExpression(propertyPath.get('value') as BabelCore.NodePath, options),
+          )
+          continue
+        }
+        if (propertyPath.isObjectMethod()) {
+          const methodCaptured = collectCapturedReactiveNames(propertyPath, options)
+          captured = mergeCapturedSets(captured, methodCaptured.size > 0 ? methodCaptured : null)
+        }
+      }
+      return captured
+    }
+
+    if (exprPath.isArrayExpression()) {
+      for (const elementPath of exprPath.get('elements') as BabelCore.NodePath[]) {
+        if (!elementPath.node) continue
+        if (elementPath.isSpreadElement()) {
+          captured = mergeCapturedSets(
+            captured,
+            getCapturedFromExpression(elementPath.get('argument') as BabelCore.NodePath, options),
+          )
+          continue
+        }
+        captured = mergeCapturedSets(captured, getCapturedFromExpression(elementPath, options))
+      }
+    }
+
+    return captured
+  }
   const getCapturedFromExpression = (
     exprPath: BabelCore.NodePath,
     options: CaptureOptions = {},
@@ -738,6 +795,9 @@ function runWarningPass(
     }
     if (exprPath.isMemberExpression() || exprPath.isOptionalMemberExpression()) {
       return getCapturedFromMemberExpression(exprPath.node, exprPath, options)
+    }
+    if (exprPath.isObjectExpression() || exprPath.isArrayExpression()) {
+      return getCapturedFromInlineSlots(exprPath, options)
     }
     if (!exprPath.isIdentifier()) return null
     const binding = exprPath.scope.getBinding(exprPath.node.name)
