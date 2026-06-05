@@ -562,6 +562,102 @@ describe('state write expression semantics', () => {
     await expect(result).resolves.toBe('1:2:2')
   })
 
+  it('does not cache signal getter reads in generator function expressions', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useGeneratorGetterCacheAfterYield() {
+        let count = $state(1)
+        const set = (value: number) => {
+          count = value
+        }
+        const fn = function* () {
+          const a = count
+          yield 'pause'
+          const b = count
+          const c = count
+          return a + ':' + b + ':' + c
+        }
+        return [fn, set]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const [fn, set] = compiledFunction(mod, 'useGeneratorGetterCacheAfterYield')() as [
+      () => Generator<string, string, unknown>,
+      (value: number) => void,
+    ]
+    const iterator = fn()
+    expect(iterator.next()).toEqual({ value: 'pause', done: false })
+    set(2)
+    expect(output).not.toContain('__cached_count_')
+    expect(iterator.next()).toEqual({ value: '1:2:2', done: true })
+  })
+
+  it('does not cache signal getter reads in generator function declarations', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useGeneratorDeclarationGetterCacheAfterYield() {
+        let count = $state(1)
+        const set = (value: number) => {
+          count = value
+        }
+        function* fn() {
+          const a = count
+          yield 'pause'
+          const b = count
+          const c = count
+          return a + ':' + b + ':' + c
+        }
+        return [fn, set]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const [fn, set] = compiledFunction(mod, 'useGeneratorDeclarationGetterCacheAfterYield')() as [
+      () => Generator<string, string, unknown>,
+      (value: number) => void,
+    ]
+    const iterator = fn()
+    expect(iterator.next()).toEqual({ value: 'pause', done: false })
+    set(2)
+    expect(output).not.toContain('__cached_count_')
+    expect(iterator.next()).toEqual({ value: '1:2:2', done: true })
+  })
+
+  it('does not cache signal getter reads in async generator function expressions', async () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useAsyncGeneratorGetterCacheAfterYield() {
+        let count = $state(1)
+        const set = (value: number) => {
+          count = value
+        }
+        const fn = async function* () {
+          const a = count
+          yield 'pause'
+          const b = count
+          const c = count
+          return a + ':' + b + ':' + c
+        }
+        return [fn, set]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const [fn, set] = compiledFunction(mod, 'useAsyncGeneratorGetterCacheAfterYield')() as [
+      () => AsyncGenerator<string, string, unknown>,
+      (value: number) => void,
+    ]
+    const iterator = fn()
+    await expect(iterator.next()).resolves.toEqual({ value: 'pause', done: false })
+    set(2)
+    expect(output).not.toContain('__cached_count_')
+    await expect(iterator.next()).resolves.toEqual({ value: '1:2:2', done: true })
+  })
+
   it('preserves logical assignment short-circuit semantics on ordinary locals', () => {
     const source = `
       import { $state } from 'fict'

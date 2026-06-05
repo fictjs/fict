@@ -2456,8 +2456,11 @@ function lowerExpressionImpl(
                 // Rule L: Enable getter caching for sync function expressions
                 const bodyBlocks = expr.body as BasicBlock[]
                 const disabledGetters = collectDisabledGetterNames(bodyBlocks)
+                const hasYieldBoundary =
+                  (expr.isGenerator ?? false) ||
+                  functionHasYield({ params: expr.params, blocks: bodyBlocks })
                 const { result: stmts, cacheDeclarations } = withOptionalGetterCache(
-                  !(expr.isAsync ?? false),
+                  !(expr.isAsync ?? false) && !hasYieldBoundary,
                   () => lowerStructuredBlocks(bodyBlocks, expr.params, paramIds),
                   disabledGetters,
                 )
