@@ -516,15 +516,20 @@ export function extractHIRStaticHtml(
   }
 
   if (!textareaValueChild) {
+    let previousStaticTextChild = false
     for (let i = 0; i < children.length; i++) {
       const child = children[i]!
       if (child.kind === 'text') {
         const text = child.value
         if (text.length > 0) {
           html += escapeHtmlText(text)
-          childIndex++
+          if (!previousStaticTextChild) {
+            childIndex++
+          }
+          previousStaticTextChild = true
         }
       } else if (child.kind === 'element') {
+        previousStaticTextChild = false
         const childPath = [...parentPath, childIndex]
         // Pass namespace context to child elements
         const childResult = extractHIRStaticHtml(
@@ -538,6 +543,7 @@ export function extractHIRStaticHtml(
         bindings.push(...childResult.bindings)
         childIndex += childResult.nodeCount
       } else if (child.kind === 'expression') {
+        previousStaticTextChild = false
         const inline = hasAdjacentInline(i)
         if (!inline && ops.isLikelyTextExpression(child.value, ctx)) {
           html += ' '

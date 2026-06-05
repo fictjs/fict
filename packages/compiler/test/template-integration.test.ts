@@ -1503,6 +1503,44 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps binding paths after adjacent static text split by comments', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: string): void }
+
+      export function App() {
+        let label = $state('first')
+        api = { set: value => (label = value) }
+        return <div data-testid="box">a{/* split */}b<span data-testid="span">s</span><em data-testid="target" title={label}>e</em></div>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: string): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+    const target = container.querySelector('[data-testid="target"]') as HTMLElement
+
+    expect(box.textContent).toBe('abse')
+    expect(target.getAttribute('title')).toBe('first')
+
+    mod.api.set('next')
+    await flushUpdates()
+    expect(target.getAttribute('title')).toBe('next')
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps escaped static JSX text as text in template output', async () => {
     const source = `
       import { render } from 'fict'
