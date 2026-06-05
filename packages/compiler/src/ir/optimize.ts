@@ -5642,6 +5642,8 @@ function isPureExpression(expr: Expression, ctx: PurityContext): boolean {
 function isCSESafeExpression(expr: Expression, ctx: PurityContext): boolean {
   switch (expr.kind) {
     case 'Literal':
+      if (expr.value instanceof RegExp) return false
+      return true
     case 'Identifier':
       return true
     case 'MemberExpression':

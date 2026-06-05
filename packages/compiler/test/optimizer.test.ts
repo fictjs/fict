@@ -992,6 +992,24 @@ describe('optimizeHIR', () => {
     expect(count).toBe(1)
   })
 
+  it('does not eliminate RegExp literal allocations as common subexpressions', () => {
+    const ast = parseFile(`
+      function Foo() {
+        const s = $state(0)
+        const __a = /x/g
+        const __b = /x/g
+        return [__a, __b]
+      }
+    `)
+    const optimized = optimizeHIR(buildHIR(ast))
+    const regexLiteralCount = countExpression(
+      optimized,
+      expr => expr.kind === 'Literal' && expr.value instanceof RegExp,
+    )
+
+    expect(regexLiteralCount).toBe(2)
+  })
+
   it('treats stable Symbol members as CSE-safe in reactive functions', () => {
     const ast = parseFile(`
       function Foo() {

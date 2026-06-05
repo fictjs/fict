@@ -1878,6 +1878,26 @@ describe('control flow runtime regressions', () => {
     expect(result).toBe(2)
   })
 
+  it('preserves RegExp literal allocation identity with optimization', () => {
+    const result = compileAndRunHook<[boolean, number, number]>(
+      `
+        import { $state } from 'fict'
+
+        export function useRun() {
+          let count = $state(0)
+          const a = /x/g
+          const b = /x/g
+          a.lastIndex = 1
+          return [a === b, a.lastIndex, b.lastIndex]
+        }
+      `,
+      'useRun',
+      { optimize: true },
+    )
+
+    expect(result).toEqual([false, 1, 0])
+  })
+
   it('preserves tagged template unicode raw and cooked values with optimization', () => {
     const result = compileAndRunHook<string>(
       `
