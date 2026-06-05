@@ -2228,6 +2228,67 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not invoke function-valued component spread sources', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+      export const seen: {
+        keys: string[]
+        foo: unknown
+        bar: unknown
+      } = {
+        keys: [],
+        foo: undefined,
+        bar: undefined,
+      }
+
+      function Child(props: Record<string, unknown>) {
+        seen.keys = Object.keys(props)
+        seen.foo = props.foo
+        seen.bar = props.bar
+        return <div data-testid="box">{String(seen.foo) + ':' + String(seen.bar)}</div>
+      }
+
+      export function App() {
+        function fn() {
+          log.push('called')
+          return { foo: 'return' }
+        }
+        ;(fn as any).foo = 'own'
+        return <Child {...fn} bar="b" />
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      log: string[]
+      seen: {
+        keys: string[]
+        foo: unknown
+        bar: unknown
+      }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(mod.log).toEqual([])
+    expect(mod.seen.keys).toEqual(['foo', 'bar'])
+    expect(mod.seen.foo).toBe('own')
+    expect(mod.seen.bar).toBe('b')
+    expect(box.textContent).toBe('own:b')
+
+    teardown()
+    container.remove()
+  })
+
   it.each([
     { tag: 'div', spreadKey: 'class', explicitAttr: 'class', expectedAttr: 'class' },
     { tag: 'div', spreadKey: 'className', explicitAttr: 'class', expectedAttr: 'class' },

@@ -219,7 +219,7 @@ export function __fictObjectRest<T extends object>(
  * Uses lazy lookup strategy - properties are only accessed when read,
  * avoiding upfront iteration of all keys.
  */
-type MergeSource<T extends Record<string, unknown>> = T | (() => T)
+type MergeSource<T extends Record<string, unknown>> = T | (() => unknown)
 
 export function mergeProps<T extends Record<string, unknown>>(
   ...sources: (MergeSource<T> | null | undefined)[]
@@ -239,9 +239,9 @@ export function mergeProps<T extends Record<string, unknown>>(
   }
 
   const resolveSource = (src: MergeSource<T>): T | undefined => {
-    const value = typeof src === 'function' ? src() : src
-    if (!value || typeof value !== 'object') return undefined
-    return unwrapProps(value as T)
+    const value = isPropGetter(src) ? src() : src
+    if (!value || (typeof value !== 'object' && typeof value !== 'function')) return undefined
+    return unwrapProps(Object(value) as T)
   }
 
   const hasEnumerableOwnProp = (raw: T, prop: string | symbol): boolean => {
@@ -270,7 +270,7 @@ export function mergeProps<T extends Record<string, unknown>>(
       const value = (raw as Record<string | symbol, unknown>)[prop]
       // Preserve prop getters - let child component's createPropsProxy unwrap lazily
       // Note: For Symbol properties, we still wrap in getter if source is dynamic
-      if (typeof src === 'function' && !isPropGetter(value)) {
+      if (isPropGetter(src) && !isPropGetter(value)) {
         return __fictProp(() => {
           const latest = resolveSource(src)
           if (!latest || !hasEnumerableOwnProp(latest, prop)) return undefined

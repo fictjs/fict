@@ -53,10 +53,6 @@ export function buildPropsPlan(
       (ctx.signalVars?.has(name) ?? false) ||
       (ctx.aliasVars?.has(name) ?? false)
 
-    const isZeroArgFunction = (expr: BabelCore.types.Expression): boolean =>
-      (t.isArrowFunctionExpression(expr) || t.isFunctionExpression(expr)) &&
-      expr.params.length === 0
-
     const withPropsContextDisabled = <T>(disabled: boolean, fn: () => T): T => {
       if (!disabled) return fn()
       const prevPropsCtx = ctx.inPropsContext
@@ -78,18 +74,31 @@ export function buildPropsPlan(
       return expr
     }
 
+    const markLazySource = (getter: BabelCore.types.Expression): BabelCore.types.Expression => {
+      ctx.helpersUsed.add('propGetter')
+      return t.callExpression(runtimeIdentifier(ctx, 'propGetter'), [getter])
+    }
+
+    const isMarkedLazySource = (expr: BabelCore.types.Expression): boolean =>
+      t.isCallExpression(expr) &&
+      t.isIdentifier(expr.callee) &&
+      (expr.callee.name === RUNTIME_ALIASES.propGetter ||
+        expr.callee.name === ctx.runtimeHelperLocalNames?.get('propGetter'))
+
     const wrapAccessorSource = (node: BabelCore.types.Expression): BabelCore.types.Expression => {
       if (t.isCallExpression(node) && t.isIdentifier(node.callee) && node.arguments.length === 0) {
         const baseName = helpers.deSSAVarName(node.callee.name)
         if (isAccessorName(baseName)) {
           // Keep accessor lazy so mergeProps can re-evaluate per access
-          return t.arrowFunctionExpression([], node)
+          return markLazySource(t.arrowFunctionExpression([], node))
         }
       }
       if (t.isIdentifier(node)) {
         const baseName = helpers.deSSAVarName(node.name)
         if (isAccessorName(baseName)) {
-          return t.arrowFunctionExpression([], t.callExpression(t.identifier(baseName), []))
+          return markLazySource(
+            t.arrowFunctionExpression([], t.callExpression(t.identifier(baseName), [])),
+          )
         }
       }
       return node
@@ -257,7 +266,7 @@ export function buildPropsPlan(
 
     const pushSpread = (expr: BabelCore.types.Expression) => {
       flags.needsMergeProps = true
-      if (isZeroArgFunction(expr)) {
+      if (isMarkedLazySource(expr)) {
         flags.hasLazySource = true
       }
       segments.push({ kind: 'spread', expr })

@@ -18,7 +18,7 @@ import {
   startTransition,
 } from '../src/index'
 import { effectScope, createSignal, reactive } from '../src/advanced'
-import { createPropsProxy, createKeyedList } from '../src/internal'
+import { __fictProp, createPropsProxy, createKeyedList } from '../src/internal'
 import {
   isSignal,
   isComputed,
@@ -605,7 +605,7 @@ describe('mergeProps Symbol support', () => {
     const sym = Symbol('reactive')
     const source = createSignal({ [sym]: 1 })
 
-    const merged = createPropsProxy(mergeProps(() => source()))
+    const merged = createPropsProxy(mergeProps(__fictProp(() => source())))
 
     expect(merged[sym]).toBe(1)
 

@@ -289,7 +289,12 @@ describe('Props proxy', () => {
     const source = createSignal<Record<string, unknown>>(
       Object.defineProperty({}, 'secret', { value: 'x', enumerable: false }),
     )
-    const merged = createPropsProxy(mergeProps(() => source(), { visible: 'y' }))
+    const merged = createPropsProxy(
+      mergeProps(
+        __fictProp(() => source()),
+        { visible: 'y' },
+      ),
+    )
 
     expect(Object.keys(merged)).toEqual(['visible'])
     expect((merged as Record<string, unknown>).secret).toBeUndefined()
@@ -404,7 +409,7 @@ describe('mergeProps advanced', () => {
     const value = createSignal(1)
     const dynamicSource = () => ({ a: value() })
 
-    const merged = createPropsProxy(mergeProps(dynamicSource))
+    const merged = createPropsProxy(mergeProps(__fictProp(dynamicSource)))
 
     expect(merged.a).toBe(1)
     value(2)
@@ -417,8 +422,8 @@ describe('mergeProps advanced', () => {
 
     const merged = createPropsProxy(
       mergeProps(
-        () => ({ value: first() }),
-        () => ({ value: second() }),
+        __fictProp(() => ({ value: first() })),
+        __fictProp(() => ({ value: second() })),
       ),
     )
 
@@ -443,7 +448,7 @@ describe('mergeProps advanced', () => {
     const value = createSignal('initial')
     const dynamicSource = () => ({ [sym]: value() })
 
-    const merged = createPropsProxy(mergeProps(dynamicSource))
+    const merged = createPropsProxy(mergeProps(__fictProp(dynamicSource)))
 
     expect(merged[sym]).toBe('initial')
     value('updated')
@@ -464,7 +469,11 @@ describe('mergeProps advanced', () => {
     const dynamic = createSignal(100)
 
     const merged = createPropsProxy(
-      mergeProps({ static: 'value' }, () => ({ dynamic: dynamic() }), { override: true }),
+      mergeProps(
+        { static: 'value' },
+        __fictProp(() => ({ dynamic: dynamic() })),
+        { override: true },
+      ),
     )
 
     expect(merged.static).toBe('value')
@@ -485,6 +494,26 @@ describe('mergeProps advanced', () => {
     const merged = mergeProps(source)
 
     expect(merged).toBe(source)
+  })
+
+  it('treats unmarked function sources as spread objects', () => {
+    let calls = 0
+    const source = Object.assign(
+      () => {
+        calls += 1
+        return { foo: 'return' }
+      },
+      { foo: 'own' },
+    )
+
+    const merged = createPropsProxy(
+      mergeProps(source as unknown as Record<string, unknown>, { bar: 'b' }),
+    )
+
+    expect(Object.keys(merged)).toEqual(['foo', 'bar'])
+    expect(merged.foo).toBe('own')
+    expect(merged.bar).toBe('b')
+    expect(calls).toBe(0)
   })
 })
 
