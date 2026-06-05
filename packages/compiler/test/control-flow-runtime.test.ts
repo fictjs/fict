@@ -75,6 +75,58 @@ describe('control flow runtime regressions', () => {
     expect(resolved).toBe(5)
   })
 
+  it('re-runs for loop initializers inside reactive hook regions', () => {
+    const result = compileAndRunHook<{
+      set: (next: number) => void
+      starts: () => number
+      view: () => string
+    }>(
+      `
+        import { $state } from 'fict'
+
+        function begin() {
+          ;(globalThis as any).__fictForInitStarts =
+            ((globalThis as any).__fictForInitStarts ?? 0) + 1
+          return 0
+        }
+
+        export function useRun() {
+          ;(globalThis as any).__fictForInitStarts = 0
+          let n = $state(2)
+          let out = ''
+
+          for (let i = begin(); i < n; i++) {
+            out += i
+          }
+
+          return {
+            set: (next: number) => {
+              n = next
+            },
+            starts: () => (globalThis as any).__fictForInitStarts ?? 0,
+            view: () => out,
+          }
+        }
+      `,
+      'useRun',
+    )
+
+    expect(result.view()).toBe('01')
+    expect(result.starts()).toBe(1)
+
+    result.set(3)
+    expect(result.view()).toBe('012')
+    expect(result.starts()).toBe(2)
+
+    result.set(1)
+    expect(result.view()).toBe('0')
+    expect(result.starts()).toBe(3)
+
+    result.set(3)
+    expect(result.view()).toBe('012')
+    expect(result.starts()).toBe(4)
+  })
+
   it('preserves for-of continue semantics at iterator body entry', () => {
     const result = compileAndRunHook<{ toggle: () => void; view: () => number }>(
       `
