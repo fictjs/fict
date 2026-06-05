@@ -495,6 +495,7 @@ function collectExprReads(
     }
     case 'ImportExpression':
       collectExprReads(expr.source, into, paths, bound)
+      if (expr.options) collectExprReads(expr.options, into, paths, bound)
       return
     case 'SpreadElement':
       collectExprReads(expr.argument, into, paths, bound)

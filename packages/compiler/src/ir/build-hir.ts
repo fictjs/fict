@@ -2965,6 +2965,7 @@ function convertExpression(
     return {
       kind: 'ImportExpression',
       source: convertExpression(node.source as BabelCore.types.Expression),
+      ...(node.options ? { options: convertExpression(node.options) } : null),
       loc,
     }
   }
@@ -2999,10 +3000,12 @@ function convertExpression(
   }
   if (t.isCallExpression(node) && t.isImport(node.callee)) {
     const firstArg = node.arguments[0]
+    const secondArg = node.arguments[1]
     const source = t.isExpression(firstArg)
       ? convertExpression(firstArg)
       : ({ kind: 'Literal', value: undefined, loc } as HLiteral)
-    return { kind: 'ImportExpression', source, loc }
+    const options = t.isExpression(secondArg) ? convertExpression(secondArg) : undefined
+    return { kind: 'ImportExpression', source, ...(options ? { options } : null), loc }
   }
   if (t.isCallExpression(node)) {
     const callee = normalizeMacroCallee(node, node.callee as BabelCore.types.Expression)

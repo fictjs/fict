@@ -17,7 +17,9 @@ function formatExpression(expr: Expression, depth = 0): string {
       if (typeof expr.value === 'bigint') return `${expr.value.toString()}n`
       return expr.value instanceof RegExp ? expr.value.toString() : JSON.stringify(expr.value)
     case 'ImportExpression':
-      return `import(${formatExpression(expr.source, depth)})`
+      return expr.options
+        ? `import(${formatExpression(expr.source, depth)}, ${formatExpression(expr.options, depth)})`
+        : `import(${formatExpression(expr.source, depth)})`
     case 'MetaProperty':
       return `${expr.meta.name}.${expr.property.name}`
     case 'CallExpression':

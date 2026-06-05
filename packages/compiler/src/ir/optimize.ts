@@ -3792,6 +3792,9 @@ function simplifyChildren(
       return {
         ...expr,
         source: simplifyAlgebraically(expr.source as Expression, constants, options),
+        ...(expr.options
+          ? { options: simplifyAlgebraically(expr.options as Expression, constants, options) }
+          : null),
       }
     case 'MemberExpression':
     case 'OptionalMemberExpression':
@@ -3947,6 +3950,9 @@ function replaceIdentifiersWithConstants(
       return {
         ...expr,
         source: replaceIdentifiersWithConstants(expr.source as Expression, constants),
+        ...(expr.options
+          ? { options: replaceIdentifiersWithConstants(expr.options as Expression, constants) }
+          : null),
       }
     default:
       return expr

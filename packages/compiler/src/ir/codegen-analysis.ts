@@ -217,7 +217,10 @@ function expressionHasAwait(expr: Expression): boolean {
         expr.arguments.some(arg => expressionHasAwait(arg as Expression))
       )
     case 'ImportExpression':
-      return expressionHasAwait(expr.source as Expression)
+      return (
+        expressionHasAwait(expr.source as Expression) ||
+        (!!expr.options && expressionHasAwait(expr.options as Expression))
+      )
     case 'YieldExpression':
       return expr.argument ? expressionHasAwait(expr.argument as Expression) : false
     case 'TaggedTemplateExpression':
@@ -302,7 +305,10 @@ function expressionHasYield(expr: Expression): boolean {
         expr.arguments.some(arg => expressionHasYield(arg as Expression))
       )
     case 'ImportExpression':
-      return expressionHasYield(expr.source as Expression)
+      return (
+        expressionHasYield(expr.source as Expression) ||
+        (!!expr.options && expressionHasYield(expr.options as Expression))
+      )
     case 'YieldExpression':
       return true
     case 'TaggedTemplateExpression':

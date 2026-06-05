@@ -260,6 +260,7 @@ function rewriteExprWithMap(expr: Expression, rewrites: Map<string, string>): Ex
       return {
         ...expr,
         source: rewriteExprWithMap(expr.source, rewrites),
+        ...(expr.options ? { options: rewriteExprWithMap(expr.options, rewrites) } : null),
       }
     default:
       return expr

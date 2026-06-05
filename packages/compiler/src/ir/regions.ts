@@ -127,7 +127,10 @@ function expressionNeedsAsyncContext(expr: Expression): boolean {
         expr.arguments.some(arg => expressionNeedsAsyncContext(arg))
       )
     case 'ImportExpression':
-      return expressionNeedsAsyncContext(expr.source)
+      return (
+        expressionNeedsAsyncContext(expr.source) ||
+        (!!expr.options && expressionNeedsAsyncContext(expr.options))
+      )
     case 'SequenceExpression':
       return expr.expressions.some(part => expressionNeedsAsyncContext(part))
     case 'YieldExpression':
@@ -4475,7 +4478,10 @@ function exprToAST(
       return t.identifier('undefined')
 
     case 'ImportExpression':
-      return t.importExpression(exprToAST(expr.source, t))
+      return t.importExpression(
+        exprToAST(expr.source, t),
+        expr.options ? exprToAST(expr.options, t) : null,
+      )
 
     case 'MetaProperty':
       return t.metaProperty(t.identifier(expr.meta.name), t.identifier(expr.property.name))

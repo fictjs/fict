@@ -1977,7 +1977,10 @@ function lowerExpressionImpl(
       return t.identifier('undefined')
 
     case 'ImportExpression':
-      return t.importExpression(lowerExpression(expr.source, ctx) as BabelCore.types.Expression)
+      return t.importExpression(
+        lowerExpression(expr.source, ctx) as BabelCore.types.Expression,
+        expr.options ? (lowerExpression(expr.options, ctx) as BabelCore.types.Expression) : null,
+      )
 
     case 'MetaProperty':
       return t.metaProperty(t.identifier(expr.meta.name), t.identifier(expr.property.name))

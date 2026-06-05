@@ -317,6 +317,7 @@ export interface Literal extends SourceInfo {
 export interface ImportExpression extends SourceInfo {
   kind: 'ImportExpression'
   source: Expression
+  options?: Expression | undefined
 }
 
 export interface MetaProperty extends SourceInfo {

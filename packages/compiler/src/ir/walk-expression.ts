@@ -107,6 +107,7 @@ export function walkExpression(
         return
       case 'ImportExpression':
         visitNode(node.source, node, inFunctionBody)
+        if (node.options) visitNode(node.options, node, inFunctionBody)
         return
       case 'CallExpression':
       case 'OptionalCallExpression':

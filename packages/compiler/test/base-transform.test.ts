@@ -355,6 +355,34 @@ describe('createFictPlugin (HIR)', () => {
       expect(output).not.toContain('return undefined')
     })
 
+    it('preserves dynamic import options', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+
+        export async function useProbe() {
+          let tick = $state(0)
+          return import('./data.json', { with: { type: 'json' } })
+        }
+      `)
+
+      expect(output).toContain('import("./data.json", {')
+      expect(output).toContain('with: {')
+      expect(output).toContain('type: "json"')
+    })
+
+    it('preserves dynamic import option expressions', () => {
+      const output = transform(`
+        import { $state } from 'fict'
+
+        export async function useProbe(path, options) {
+          let tick = $state(0)
+          return import(path, options)
+        }
+      `)
+
+      expect(output).toContain('import(path, options)')
+    })
+
     it('rewrites $effect to useEffect', () => {
       const output = transform(`
         import { $state, $effect } from 'fict'
