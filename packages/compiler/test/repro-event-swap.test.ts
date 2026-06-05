@@ -224,38 +224,68 @@ describe('dynamic event handlers', () => {
     container.remove()
   })
 
-  it('handles null/undefined handlers gracefully', async () => {
-    const addCalls: any[] = []
-    HTMLElement.prototype.addEventListener = function (type: any, handler: any, options: any) {
-      addCalls.push({ type, handler, options })
-      return originalAdd.call(this, type, handler, options)
-    }
-
+  it('dispatches nullable handlers as no-ops', async () => {
     const source = `
       import { $state, render } from 'fict'
 
-      export function App() {
-        let enabled = $state(false)
-        const handler = enabled ? () => console.log('click') : null
+      export const log: string[] = []
 
-        return <button data-id="btn" onClick={handler}>Click</button>
+      export function App() {
+        const enabled = $state(false)
+        const handler = (event: Event) => log.push(event.type)
+
+        return (
+          <>
+            <button data-id="null" onClick={enabled() ? handler : null}>Null</button>
+            <button data-id="undefined" onClick={enabled() ? handler : undefined}>
+              Undefined
+            </button>
+            <button data-id="false" onClick={enabled() && handler}>False</button>
+            <button data-id="enable" onClick={() => enabled(true)}>Enable</button>
+          </>
+        )
       }
 
       export function mount(el: HTMLElement) {
+        log.length = 0
         return render(() => <App />, el)
       }
     `
 
-    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      log: string[]
+    }>(source, {
       fineGrainedDom: true,
     })
 
     const container = document.createElement('div')
     document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
 
-    // Should not throw even with null handler
-    expect(() => mod.mount(container)).not.toThrow()
+    const nullButton = container.querySelector('[data-id="null"]') as HTMLButtonElement
+    const undefinedButton = container.querySelector('[data-id="undefined"]') as HTMLButtonElement
+    const falseButton = container.querySelector('[data-id="false"]') as HTMLButtonElement
+    const enableButton = container.querySelector('[data-id="enable"]') as HTMLButtonElement
 
+    expect(() => {
+      nullButton.click()
+      undefinedButton.click()
+      falseButton.click()
+    }).not.toThrow()
+    expect(mod.log).toEqual([])
+
+    enableButton.click()
+    await flushUpdates()
+
+    nullButton.click()
+    undefinedButton.click()
+    falseButton.click()
+
+    expect(mod.log).toEqual(['click', 'click', 'click'])
+
+    teardown()
     container.remove()
   })
 })
