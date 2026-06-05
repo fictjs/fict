@@ -1126,6 +1126,73 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps bindings on elements that HTML parsing would otherwise auto-close', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: string): void }
+
+      export function App() {
+        let title = $state('first')
+        api = {
+          set(value) {
+            title = value
+          },
+        }
+
+        return (
+          <section>
+            <p data-id="invalid-p"><div data-id="block" title={title}>block</div></p>
+            <p data-id="valid-p"><span data-id="inline" title={title}>inline</span></p>
+            <a data-id="outer-link" href="#outer">
+              <a data-id="inner-link" href="#inner" title={title}>inner</a>
+            </a>
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: string): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const invalidP = container.querySelector('[data-id="invalid-p"]') as HTMLParagraphElement
+    const block = container.querySelector('[data-id="block"]') as HTMLDivElement
+    const validP = container.querySelector('[data-id="valid-p"]') as HTMLParagraphElement
+    const inline = container.querySelector('[data-id="inline"]') as HTMLSpanElement
+    const outerLink = container.querySelector('[data-id="outer-link"]') as HTMLAnchorElement
+    const innerLink = container.querySelector('[data-id="inner-link"]') as HTMLAnchorElement
+
+    expect(invalidP.contains(block)).toBe(true)
+    expect(invalidP.getAttribute('title')).toBeNull()
+    expect(block.getAttribute('title')).toBe('first')
+    expect(validP.contains(inline)).toBe(true)
+    expect(inline.getAttribute('title')).toBe('first')
+    expect(outerLink.contains(innerLink)).toBe(true)
+    expect(outerLink.getAttribute('title')).toBeNull()
+    expect(innerLink.getAttribute('title')).toBe('first')
+
+    mod.api.set('next')
+    await flushUpdates()
+
+    expect(invalidP.getAttribute('title')).toBeNull()
+    expect(block.getAttribute('title')).toBe('next')
+    expect(inline.getAttribute('title')).toBe('next')
+    expect(outerLink.getAttribute('title')).toBeNull()
+    expect(innerLink.getAttribute('title')).toBe('next')
+
+    teardown()
+    container.remove()
+  })
+
   it('binds textarea expression children through the visible value property', async () => {
     const source = `
       import { $state, render } from 'fict'

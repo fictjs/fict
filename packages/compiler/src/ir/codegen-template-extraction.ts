@@ -192,6 +192,81 @@ function shouldStringifyBooleanAttribute(name: string): boolean {
   return name === 'draggable' || name.startsWith('aria-') || name.startsWith('data-')
 }
 
+const PHRASING_HTML_TAGS = new Set([
+  'a',
+  'abbr',
+  'area',
+  'audio',
+  'b',
+  'bdi',
+  'bdo',
+  'br',
+  'button',
+  'canvas',
+  'cite',
+  'code',
+  'data',
+  'datalist',
+  'del',
+  'dfn',
+  'em',
+  'embed',
+  'i',
+  'iframe',
+  'img',
+  'input',
+  'ins',
+  'kbd',
+  'label',
+  'map',
+  'mark',
+  'math',
+  'meter',
+  'noscript',
+  'object',
+  'output',
+  'picture',
+  'progress',
+  'q',
+  'ruby',
+  's',
+  'samp',
+  'script',
+  'select',
+  'slot',
+  'small',
+  'span',
+  'strong',
+  'sub',
+  'sup',
+  'svg',
+  'template',
+  'textarea',
+  'time',
+  'u',
+  'var',
+  'video',
+  'wbr',
+])
+
+function shouldDeferChildForHtmlParser(
+  parentTag: string,
+  childTag: string,
+  namespace: NamespaceContext,
+): boolean {
+  if (namespace !== null) return false
+  if (parentTag === 'p') {
+    return !PHRASING_HTML_TAGS.has(childTag)
+  }
+  if (parentTag === 'a') {
+    return childTag === 'a'
+  }
+  if (parentTag === 'form') {
+    return childTag === 'form'
+  }
+  return false
+}
+
 function literalExpression(value: unknown, loc?: Expression['loc']): Expression {
   return { kind: 'Literal', value, loc } as Expression
 }
@@ -536,6 +611,21 @@ export function extractHIRStaticHtml(
         }
       } else if (child.kind === 'element') {
         previousStaticTextChild = false
+        if (
+          !child.value.isComponent &&
+          typeof child.value.tagName === 'string' &&
+          shouldDeferChildForHtmlParser(tagName, child.value.tagName, resolvedNamespace)
+        ) {
+          html += '<!--fict:slot:start--><!--fict:slot:end-->'
+          bindings.push({
+            type: 'child',
+            path: [...parentPath, childIndex],
+            expr: child.value,
+            namespace: resolvedNamespace,
+          })
+          childIndex++
+          continue
+        }
         if (isImplicitTableRow(child)) {
           const tbodyPath = [...parentPath, childIndex]
           html += '<tbody>'
