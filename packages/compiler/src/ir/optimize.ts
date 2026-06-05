@@ -52,6 +52,7 @@ interface DefUseInfo {
 interface PurityContext {
   functionPure?: boolean | undefined
   impureIdentifiers?: Set<string> | undefined
+  shadowedBuiltins?: Set<string> | undefined
   strictMacroBindings?: boolean | undefined
 }
 
@@ -113,6 +114,15 @@ const STABLE_MEMBER_ACCESS = new Map<string, Set<string>>([
 ])
 
 const PURE_CALLEES = new Set(['Boolean'])
+const BUILTIN_GLOBAL_NAMES = new Set([
+  ...PURE_CALLEES,
+  ...STABLE_MEMBER_ACCESS.keys(),
+  'String',
+  'Number',
+  'BigInt',
+  'parseInt',
+  'parseFloat',
+])
 const IMPURE_CALLEES = new Set([
   '$state',
   '$effect',
@@ -137,6 +147,7 @@ export interface OptimizeOptions {
 export function optimizeHIR(program: HIRProgram, options: OptimizeOptions = {}): HIRProgram {
   resetGeneratedSSANames()
   const exportedNames = collectExportedNames(program)
+  const moduleShadowedBuiltins = collectModuleShadowedBuiltins(program)
   const functions = program.functions.map(fn => {
     if (isPureOptimizationCandidate(fn)) {
       const ssaProgram = enterSSA({
@@ -146,10 +157,10 @@ export function optimizeHIR(program: HIRProgram, options: OptimizeOptions = {}):
         originalBody: [],
       })
       const ssaFn = ssaProgram.functions[0]
-      return ssaFn ? optimizeSSAFunction(ssaFn, options) : fn
+      return ssaFn ? optimizeSSAFunction(ssaFn, options, moduleShadowedBuiltins) : fn
     }
     if (isReactiveOptimizationCandidate(fn)) {
-      return optimizeReactiveFunction(fn, exportedNames, options)
+      return optimizeReactiveFunction(fn, exportedNames, options, moduleShadowedBuiltins)
     }
     return fn
   })
@@ -159,10 +170,14 @@ export function optimizeHIR(program: HIRProgram, options: OptimizeOptions = {}):
   }
 }
 
-function optimizeSSAFunction(fn: HIRFunction, options: OptimizeOptions): HIRFunction {
+function optimizeSSAFunction(
+  fn: HIRFunction,
+  options: OptimizeOptions,
+  moduleShadowedBuiltins: Set<string>,
+): HIRFunction {
   let current = fn
   current = propagateConstants(current, options)
-  const purity = buildPurityContext(current, options)
+  const purity = buildPurityContext(current, options, moduleShadowedBuiltins)
   current = eliminateCommonSubexpressions(current, purity)
   current = inlineSingleUse(current, purity)
   current = eliminateDeadCode(current, purity)
@@ -966,10 +981,11 @@ function optimizeReactiveFunction(
   fn: HIRFunction,
   exportedNames: Set<string>,
   options: OptimizeOptions,
+  moduleShadowedBuiltins: Set<string>,
 ): HIRFunction {
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
   const reactive = buildReactiveContext(fn, options)
-  const purity = buildPurityContext(fn, options)
+  const purity = buildPurityContext(fn, options, moduleShadowedBuiltins)
   const hookLike = isHookLikeFunction(fn)
   const transformedBlocks = fn.blocks.map(block =>
     optimizeReactiveBlock(block, reactive, purity, options),
@@ -1802,9 +1818,53 @@ function collectBlockUseInfo(
   return info
 }
 
-function buildPurityContext(fn: HIRFunction, options: OptimizeOptions = {}): PurityContext {
+function collectModuleShadowedBuiltins(program: HIRProgram): Set<string> {
+  const shadowed = new Set<string>()
+  const add = (name: string) => {
+    if (BUILTIN_GLOBAL_NAMES.has(name)) shadowed.add(name)
+  }
+  for (const stmt of program.preamble) {
+    if (!t.isImportDeclaration(stmt)) continue
+    for (const spec of stmt.specifiers) {
+      add(spec.local.name)
+    }
+  }
+  return shadowed
+}
+
+function collectFunctionShadowedBuiltins(fn: HIRFunction): Set<string> {
+  const shadowed = new Set<string>()
+  const add = (name: string) => {
+    const base = getSSABaseName(name)
+    if (BUILTIN_GLOBAL_NAMES.has(base)) shadowed.add(base)
+  }
+  fn.params.forEach(param => add(param.name))
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' && instr.declarationKind) {
+        add(instr.target.name)
+      }
+    }
+    const term = block.terminator
+    if (term.kind === 'ForOf' || term.kind === 'ForIn') {
+      if (term.leftKind !== 'assignment') add(term.variable)
+    } else if (term.kind === 'Try' && term.catchParam) {
+      add(term.catchParam)
+    }
+  }
+  return shadowed
+}
+
+function buildPurityContext(
+  fn: HIRFunction,
+  options: OptimizeOptions = {},
+  moduleShadowedBuiltins: Set<string> = new Set<string>(),
+): PurityContext {
+  const shadowedBuiltins = new Set<string>(moduleShadowedBuiltins)
+  collectFunctionShadowedBuiltins(fn).forEach(name => shadowedBuiltins.add(name))
   const base: PurityContext = {
     functionPure: fn.meta?.pure,
+    shadowedBuiltins,
     strictMacroBindings: options.strictMacroBindings,
   }
   const impureIdentifiers = computeImpureIdentifiers(fn, base)
@@ -5612,7 +5672,7 @@ function isKnownPrimitivePureExpression(expr: Expression, ctx: PurityContext): b
       )
     case 'MemberExpression':
     case 'OptionalMemberExpression':
-      return isStableMemberExpression(expr)
+      return isStableMemberExpression(expr, ctx)
     default:
       return false
   }
@@ -5646,7 +5706,7 @@ function isKnownPrimitiveCSESafeExpression(expr: Expression, ctx: PurityContext)
       )
     case 'MemberExpression':
     case 'OptionalMemberExpression':
-      return isStableMemberExpression(expr)
+      return isStableMemberExpression(expr, ctx)
     default:
       return false
   }
@@ -5759,7 +5819,7 @@ function isPureExpression(expr: Expression, ctx: PurityContext): boolean {
       })
     case 'MemberExpression':
     case 'OptionalMemberExpression':
-      if (isStableMemberExpression(expr)) return true
+      if (isStableMemberExpression(expr, ctx)) return true
       if (!ctx.functionPure) return false
       return (
         isPureExpression(expr.object as Expression, ctx) &&
@@ -5791,7 +5851,7 @@ function isCSESafeExpression(expr: Expression, ctx: PurityContext): boolean {
       return true
     case 'MemberExpression':
     case 'OptionalMemberExpression':
-      if (isStableMemberExpression(expr)) return true
+      if (isStableMemberExpression(expr, ctx)) return true
       if (!ctx.functionPure) return false
       return (
         isCSESafeExpression(expr.object as Expression, ctx) &&
@@ -5844,22 +5904,30 @@ function isCSESafeCall(expr: Expression, ctx: PurityContext): boolean {
     return false
   }
   if (!calleeName) return false
-  const builtinSafety = getBuiltinCallCoercionSafety(calleeName, expr.arguments)
-  if (builtinSafety !== null) return builtinSafety
+  if (!isBuiltinCalleeShadowed(calleeName, ctx)) {
+    const builtinSafety = getBuiltinCallCoercionSafety(calleeName, expr.arguments)
+    if (builtinSafety !== null) return builtinSafety
+  }
   if (expr.pure) return true
-  if (PURE_CALLEES.has(calleeName)) return true
+  if (PURE_CALLEES.has(calleeName) && !isBuiltinCalleeShadowed(calleeName, ctx)) return true
   if (ctx.functionPure) return true
   return false
+}
+
+function isBuiltinCalleeShadowed(calleeName: string, ctx: PurityContext): boolean {
+  const root = calleeName.includes('.') ? calleeName.slice(0, calleeName.indexOf('.')) : calleeName
+  return ctx.shadowedBuiltins?.has(root) ?? false
 }
 
 function isCompilerGeneratedName(name: string): boolean {
   return name.startsWith('__')
 }
 
-function isStableMemberExpression(expr: Expression): boolean {
+function isStableMemberExpression(expr: Expression, ctx?: PurityContext): boolean {
   if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') return false
   if (expr.computed) return false
   if (expr.object.kind !== 'Identifier' || expr.property.kind !== 'Identifier') return false
+  if (ctx?.shadowedBuiltins?.has(expr.object.name)) return false
   const stable = STABLE_MEMBER_ACCESS.get(expr.object.name)
   if (!stable) return false
   return stable.has(expr.property.name)
@@ -5879,10 +5947,12 @@ function isPureCall(expr: Expression, ctx: PurityContext): boolean {
     return false
   }
   if (!calleeName) return false
-  const builtinSafety = getBuiltinCallCoercionSafety(calleeName, expr.arguments)
-  if (builtinSafety !== null) return builtinSafety
+  if (!isBuiltinCalleeShadowed(calleeName, ctx)) {
+    const builtinSafety = getBuiltinCallCoercionSafety(calleeName, expr.arguments)
+    if (builtinSafety !== null) return builtinSafety
+  }
   if (expr.pure) return true
-  if (PURE_CALLEES.has(calleeName)) return true
+  if (PURE_CALLEES.has(calleeName) && !isBuiltinCalleeShadowed(calleeName, ctx)) return true
   if (ctx.functionPure) return true
   return false
 }

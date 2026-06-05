@@ -8,6 +8,8 @@ function compileAndRunHook<T>(
   source: string,
   exportName: string,
   options: Parameters<typeof transformCommonJS>[1] = {},
+  args: unknown[] = [],
+  modules: Record<string, unknown> = {},
 ): T {
   const output = transformCommonJS(source, {
     dev: false,
@@ -21,6 +23,9 @@ function compileAndRunHook<T>(
 
   wrapped(
     (id: string) => {
+      if (Object.prototype.hasOwnProperty.call(modules, id)) {
+        return modules[id]
+      }
       if (id === '@fictjs/runtime/internal' || id === 'fict/internal' || id === 'fict') {
         return runtimeInternal
       }
@@ -35,7 +40,9 @@ function compileAndRunHook<T>(
     throw new Error(`Expected export ${exportName} to be a function`)
   }
 
-  return runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () => (hook as () => T)())
+  return runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () =>
+    (hook as (...innerArgs: unknown[]) => T)(...args),
+  )
 }
 
 const optimizeModes = [true, false] as const
@@ -2027,6 +2034,103 @@ describe('control flow runtime regressions', () => {
         { optimize: true },
       ),
     ).toThrow('inline computed key')
+  })
+
+  it('does not treat shadowed builtin names as optimizer builtins', () => {
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          import { Number } from './dep'
+
+          export function useRun() {
+            const value = Number(1)
+            void value
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+        [],
+        {
+          './dep': {
+            Number() {
+              throw new Error('imported Number')
+            },
+          },
+        },
+      ),
+    ).toThrow('imported Number')
+
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          import * as Math from './dep'
+
+          export function useRun() {
+            const value = Math.abs(1)
+            void value
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+        [],
+        {
+          './dep': {
+            abs() {
+              throw new Error('imported Math')
+            },
+          },
+        },
+      ),
+    ).toThrow('imported Math')
+
+    const numberNamespace = {}
+    Object.defineProperty(numberNamespace, 'NaN', {
+      enumerable: true,
+      get() {
+        throw new Error('imported Number member')
+      },
+    })
+
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          import * as Number from './dep'
+
+          export function useRun() {
+            const value = Number.NaN
+            void value
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+        [],
+        {
+          './dep': numberNamespace,
+        },
+      ),
+    ).toThrow('imported Number member')
+
+    expect(() =>
+      compileAndRunHook<number>(
+        `
+          export function useRun(Number) {
+            const value = Number(1)
+            void value
+            return 1
+          }
+        `,
+        'useRun',
+        { optimize: true },
+        [
+          () => {
+            throw new Error('parameter Number')
+          },
+        ],
+      ),
+    ).toThrow('parameter Number')
   })
 
   it('preserves tagged template unicode raw and cooked values with optimization', () => {
