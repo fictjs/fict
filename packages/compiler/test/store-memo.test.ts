@@ -20,6 +20,38 @@ describe('$store memoization and dynamic access', () => {
     expect(output).toContain(`insertBetween(__el_`)
   })
 
+  it('memoizes derived computations from aliased store macros', () => {
+    const output = transform(`
+      import { $store as createLocalStore } from 'fict/plus'
+      function Component() {
+        const store = createLocalStore({ count: 1 })
+        const doubled = store.count * 2
+        return <span>{doubled}</span>
+      }
+    `)
+
+    expect(output).toContain(`const doubled = __fictUseMemo(__fictCtx, () => store.count * 2`)
+    expect(output).toContain(`() => doubled()`)
+  })
+
+  it('publishes aliased store macro exports as store metadata', () => {
+    const moduleMetadata = new Map()
+    const sourcePath = path.join(baseDir, 'aliased-store-export.ts')
+
+    transform(
+      `
+        import { $store as createLocalStore } from 'fict/plus'
+        export const store = createLocalStore({ count: 1 })
+      `,
+      { moduleMetadata },
+      sourcePath,
+    )
+
+    expect(moduleMetadata.get(path.resolve(sourcePath))?.exports).toEqual({
+      store: 'store',
+    })
+  })
+
   it('preserves dynamic store property access inside memos', () => {
     const output = transform(`
       import { $store } from 'fict/plus'

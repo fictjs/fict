@@ -62,7 +62,7 @@ export function getReactiveCallKind(
     if (expr.macro === 'state') return 'signal'
     if (expr.macro === 'memo') return 'memo'
     if (!ctx.strictMacroBindings && ctx.stateMacroNames?.has(name)) return 'signal'
-    if (name === '$store') return 'store'
+    if (ctx.storeMacroNames?.has(name)) return 'store'
     if (!ctx.strictMacroBindings && ctx.memoMacroNames?.has(name)) return 'memo'
     return getRuntimeImportedKind(name, ctx)
   }
@@ -81,7 +81,7 @@ export function getReactiveCallKindFromBabel(
     if (macroKind === 'state') return 'signal'
     if (macroKind === 'memo') return 'memo'
     if (!ctx.strictMacroBindings && ctx.stateMacroNames?.has(name)) return 'signal'
-    if (name === '$store') return 'store'
+    if (ctx.storeMacroNames?.has(name)) return 'store'
     if (!ctx.strictMacroBindings && ctx.memoMacroNames?.has(name)) return 'memo'
     return getRuntimeImportedKind(name, ctx)
   }

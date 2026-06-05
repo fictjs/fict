@@ -183,6 +183,7 @@ const IMPURE_CALLEES = new Set([
 
 export interface OptimizeOptions {
   memoMacroNames?: Set<string>
+  storeMacroNames?: Set<string>
   inlineDerivedMemos?: boolean
   optimizeLevel?: 'safe' | 'full'
   strictMacroBindings?: boolean
@@ -284,6 +285,7 @@ function buildReactiveGraph(
     ...DEFAULT_MEMO_MACRO_NAMES,
     ...(options.memoMacroNames ?? []),
   ])
+  const storeMacroNames = new Set<string>(['$store', ...(options.storeMacroNames ?? [])])
 
   const resolvedScopeResult = scopeResult ?? analyzeReactiveScopesWithSSA(fn)
   const derivedVars = new Set<string>()
@@ -335,7 +337,10 @@ function buildReactiveGraph(
           calleeName === 'createSignal'
         ) {
           addVarNode(target, 'signal', new Set())
-        } else if (calleeName === '$store' || calleeName === 'createStore') {
+        } else if (
+          (!!calleeName && storeMacroNames.has(calleeName)) ||
+          calleeName === 'createStore'
+        ) {
           addVarNode(target, 'store', new Set())
         } else if (
           isMemoMacro ||
@@ -2073,6 +2078,7 @@ interface ReactiveContext {
 function buildReactiveContext(fn: HIRFunction, options: OptimizeOptions = {}): ReactiveContext {
   const reactiveSources = new Set<string>()
   const storeVars = new Set<string>()
+  const storeMacroNames = new Set<string>(['$store', ...(options.storeMacroNames ?? [])])
   for (const block of fn.blocks) {
     for (const instr of block.instructions) {
       if (instr.kind !== 'Assign') continue
@@ -2090,7 +2096,7 @@ function buildReactiveContext(fn: HIRFunction, options: OptimizeOptions = {}): R
         calleeName === 'createSignal'
       ) {
         reactiveSources.add(instr.target.name)
-      } else if (calleeName === '$store' || calleeName === 'createStore') {
+      } else if (storeMacroNames.has(calleeName) || calleeName === 'createStore') {
         reactiveSources.add(instr.target.name)
         storeVars.add(instr.target.name)
       } else if (

@@ -1847,6 +1847,7 @@ function createHIREntrypointVisitor(
         const stateMacroNames = new Set<string>(['$state'])
         const effectMacroNames = new Set<string>(['$effect'])
         const memoMacroNames = new Set<string>(['$memo', 'createMemo'])
+        const storeMacroNames = new Set<string>(['$store'])
         const macroBindingIds: Record<FictMacroKind, Set<BabelCore.types.Identifier>> = {
           state: new Set(),
           effect: new Set(),
@@ -1885,6 +1886,12 @@ function createHIREntrypointVisitor(
                   if (t.isIdentifier(spec.local)) {
                     memoMacroNames.add(spec.local.name)
                     addImportBinding(macroBindingIds.memo, spec.local.name)
+                  }
+                }
+                if (source === 'fict/plus' && importedName === '$store') {
+                  fictImports.add(importedName)
+                  if (t.isIdentifier(spec.local)) {
+                    storeMacroNames.add(spec.local.name)
                   }
                 }
                 if (
@@ -2844,6 +2851,7 @@ function createHIREntrypointVisitor(
         const optimized = optionsWithWarnings.optimize
           ? optimizeHIR(hir, {
               memoMacroNames,
+              storeMacroNames,
               strictMacroBindings: true,
               inlineDerivedMemos: optionsWithWarnings.inlineDerivedMemos ?? true,
               optimizeLevel: optionsWithWarnings.optimizeLevel ?? 'safe',
@@ -2853,6 +2861,7 @@ function createHIREntrypointVisitor(
           state: stateMacroNames,
           effect: effectMacroNames,
           memo: memoMacroNames,
+          store: storeMacroNames,
           strictMacroBindings: true,
         })
 

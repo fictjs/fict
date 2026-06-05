@@ -552,6 +552,8 @@ export interface CodegenContext {
   memoVars?: Set<string> | undefined
   /** Memo call names (including aliases) that return accessors */
   memoMacroNames?: Set<string> | undefined
+  /** Store call names (including aliases) that create store proxies */
+  storeMacroNames?: Set<string> | undefined
   /** Variables that are assigned after declaration (need mutable binding) */
   mutatedVars?: Set<string> | undefined
   /** Whether we are emitting statements inside a region memo */
@@ -687,6 +689,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     functionVars: new Set(),
     memoVars: new Set(),
     memoMacroNames: new Set(['$memo', 'createMemo']),
+    storeMacroNames: new Set(['$store']),
     strictMacroBindings: false,
     mutatedVars: new Set(),
     inRegionMemo: false,
@@ -4977,6 +4980,7 @@ interface MacroAliases {
   state?: Set<string>
   effect?: Set<string>
   memo?: Set<string>
+  store?: Set<string>
   strictMacroBindings?: boolean
 }
 
@@ -5101,8 +5105,11 @@ export function lowerHIRWithRegions(
   const memoMacroNames = new Set<string>(macroAliases?.memo ?? ctx.memoMacroNames ?? [])
   if (!memoMacroNames.has('$memo')) memoMacroNames.add('$memo')
   if (!memoMacroNames.has('createMemo')) memoMacroNames.add('createMemo')
+  const storeMacroNames = new Set<string>(macroAliases?.store ?? ctx.storeMacroNames ?? [])
+  if (!storeMacroNames.has('$store')) storeMacroNames.add('$store')
   ctx.stateMacroNames = stateMacroNames
   ctx.memoMacroNames = memoMacroNames
+  ctx.storeMacroNames = storeMacroNames
   ctx.strictMacroBindings = macroAliases?.strictMacroBindings ?? false
 
   // Pre-mark top-level tracked variables so nested functions can treat captured signals as reactive
