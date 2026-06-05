@@ -4210,6 +4210,96 @@ describe('compiled templates DOM integration', () => {
     },
   )
 
+  it('switches reactive expression-level return branches', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: {
+        setTernary(value: boolean): void
+        setLogical(value: boolean): void
+        setMode(value: 'a' | 'b' | 'c'): void
+      }
+
+      function TernaryReturn() {
+        let flag = $state(true)
+        api.setTernary = value => (flag = value)
+        return flag ? <span data-id="ternary-on">on</span> : <em data-id="ternary-off">off</em>
+      }
+
+      function LogicalReturn() {
+        let visible = $state(true)
+        api.setLogical = value => (visible = value)
+        return visible && <strong data-id="logical-on">visible</strong>
+      }
+
+      function NestedReturn() {
+        let mode = $state<'a' | 'b' | 'c'>('a')
+        api.setMode = value => (mode = value)
+        return mode === 'a'
+          ? <b data-id="nested-a">A</b>
+          : mode === 'b'
+            ? <i data-id="nested-b">B</i>
+            : <u data-id="nested-c">C</u>
+      }
+
+      export function App() {
+        api = {} as typeof api
+        return (
+          <section>
+            <TernaryReturn />
+            <LogicalReturn />
+            <NestedReturn />
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: {
+        setTernary(value: boolean): void
+        setLogical(value: boolean): void
+        setMode(value: 'a' | 'b' | 'c'): void
+      }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-id="ternary-on"]')).toBeTruthy()
+    expect(container.querySelector('[data-id="logical-on"]')).toBeTruthy()
+    expect(container.querySelector('[data-id="nested-a"]')).toBeTruthy()
+
+    mod.api.setTernary(false)
+    mod.api.setLogical(false)
+    mod.api.setMode('b')
+    await flushUpdates()
+
+    expect(container.querySelector('[data-id="ternary-on"]')).toBeNull()
+    expect(container.querySelector('[data-id="ternary-off"]')).toBeTruthy()
+    expect(container.querySelector('[data-id="logical-on"]')).toBeNull()
+    expect(container.querySelector('[data-id="nested-a"]')).toBeNull()
+    expect(container.querySelector('[data-id="nested-b"]')).toBeTruthy()
+
+    mod.api.setTernary(true)
+    mod.api.setLogical(true)
+    mod.api.setMode('c')
+    await flushUpdates()
+
+    expect(container.querySelector('[data-id="ternary-on"]')).toBeTruthy()
+    expect(container.querySelector('[data-id="ternary-off"]')).toBeNull()
+    expect(container.querySelector('[data-id="logical-on"]')).toBeTruthy()
+    expect(container.querySelector('[data-id="nested-b"]')).toBeNull()
+    expect(container.querySelector('[data-id="nested-c"]')).toBeTruthy()
+
+    teardown()
+    container.remove()
+  })
+
   it('renders and cleans up a portal in fine-grained mode', { timeout: 10000 }, async () => {
     const source = `
       import { $state, render, createPortal, createElement } from 'fict'

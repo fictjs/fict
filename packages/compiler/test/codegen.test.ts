@@ -2579,6 +2579,21 @@ describe('class binding', () => {
 // ============================================================================
 
 describe('conditional rendering', () => {
+  it('routes reactive expression-level returns through conditionals', () => {
+    const ast = parseFile(`
+      function ReturnConditional() {
+        let flag = $state(true)
+        return flag ? <span>on</span> : <em>off</em>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('createConditional')
+    expect(code).not.toContain('return flag() ?')
+  })
+
   it('should handle ternary conditional', () => {
     const ast = parseFile(`
       function Conditional(props) {

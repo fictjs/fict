@@ -6262,6 +6262,68 @@ function transformControlFlowReturns(
     )
   }
 
+  const cloneExpression = (expr: BabelCore.types.Expression): BabelCore.types.Expression =>
+    t.cloneNode(expr, true) as BabelCore.types.Expression
+
+  function buildExpressionReturnValue(
+    expr: BabelCore.types.Expression,
+  ): BabelCore.types.Expression {
+    return buildExpressionConditionalExpr(expr) ?? cloneExpression(expr)
+  }
+
+  function buildExpressionReturnFunction(
+    expr: BabelCore.types.Expression,
+  ): BabelCore.types.ArrowFunctionExpression {
+    return t.arrowFunctionExpression(
+      [],
+      t.blockStatement([t.returnStatement(buildExpressionReturnValue(expr))]),
+    )
+  }
+
+  function buildExpressionConditionalExpr(
+    expr: BabelCore.types.Expression,
+  ): BabelCore.types.Expression | null {
+    if (t.isConditionalExpression(expr)) {
+      if (!containsReactiveAccessorRead([expr.test], { skipNestedFunctions: true })) return null
+      const trueFn = buildExpressionReturnFunction(expr.consequent as BabelCore.types.Expression)
+      const falseFn = buildExpressionReturnFunction(expr.alternate as BabelCore.types.Expression)
+      const shouldTrackBranchReads =
+        containsReactiveAccessorRead([expr.consequent], { skipNestedFunctions: true }) ||
+        containsReactiveAccessorRead([expr.alternate], { skipNestedFunctions: true })
+      return buildConditionalBindingExpr(
+        cloneExpression(expr.test as BabelCore.types.Expression),
+        trueFn,
+        falseFn,
+        shouldTrackBranchReads ? { trackBranchReads: true } : undefined,
+      )
+    }
+
+    if (t.isLogicalExpression(expr) && (expr.operator === '&&' || expr.operator === '||')) {
+      if (!containsReactiveAccessorRead([expr.left], { skipNestedFunctions: true })) return null
+      const left = expr.left as BabelCore.types.Expression
+      const right = expr.right as BabelCore.types.Expression
+      const trueFn =
+        expr.operator === '&&'
+          ? buildExpressionReturnFunction(right)
+          : buildExpressionReturnFunction(left)
+      const falseFn =
+        expr.operator === '&&'
+          ? buildExpressionReturnFunction(left)
+          : buildExpressionReturnFunction(right)
+      const shouldTrackBranchReads = containsReactiveAccessorRead([right], {
+        skipNestedFunctions: true,
+      })
+      return buildConditionalBindingExpr(
+        cloneExpression(left),
+        trueFn,
+        falseFn,
+        shouldTrackBranchReads ? { trackBranchReads: true } : undefined,
+      )
+    }
+
+    return null
+  }
+
   function buildConditionalExpr(
     ifStmt: BabelCore.types.IfStatement,
     rest: BabelCore.types.Statement[],
@@ -6512,6 +6574,15 @@ function transformControlFlowReturns(
         line: loc?.line,
       },
     )
+  }
+
+  for (let i = 0; i < rewrittenStatements.length; i++) {
+    const stmt = rewrittenStatements[i]
+    if (!t.isReturnStatement(stmt) || !stmt.argument || !t.isExpression(stmt.argument)) continue
+    const conditionalExpr = buildExpressionConditionalExpr(stmt.argument)
+    if (!conditionalExpr) continue
+    const prefix = rewrittenStatements.slice(0, i)
+    return [...prefix, t.returnStatement(conditionalExpr)]
   }
 
   for (let i = 0; i < rewrittenStatements.length; i++) {
