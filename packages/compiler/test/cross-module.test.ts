@@ -1632,6 +1632,62 @@ describe('Cross-Module Reactivity', () => {
       }
     })
 
+    it('resolves bare package hook object members only when metadata is published', () => {
+      clearModuleMetadata()
+      const appSource = `
+        import { useCounter } from 'fict-hook-lib'
+
+        export function App() {
+          const state = useCounter()
+          state.count++
+          const next = state['count']
+          const first = state[0]
+          return <div>{state.count}{next}{first}</div>
+        }
+      `
+      const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+      const appPath = path.join(baseDir, 'app-package-member-metadata.tsx')
+
+      try {
+        mkdirSync(packageDir, { recursive: true })
+        writeFileSync(
+          path.join(packageDir, 'package.json'),
+          JSON.stringify({
+            name: 'fict-hook-lib',
+            type: 'module',
+            exports: './dist/index.js',
+            fict: { metadata: './dist/index.fict.meta.json' },
+          }),
+        )
+        mkdirSync(path.join(packageDir, 'dist'), { recursive: true })
+        writeFileSync(
+          path.join(packageDir, 'dist', 'index.fict.meta.json'),
+          JSON.stringify({
+            exports: {},
+            hooks: {
+              useCounter: {
+                objectProps: { count: 'signal' },
+                arrayProps: { 0: 'signal' },
+              },
+            },
+          }),
+        )
+
+        const output = transform(appSource, { fineGrainedDom: true }, appPath)
+        expect(output).toMatch(/state\.count\(\)/)
+        expect(output).toMatch(/state\.count\(__prev_/)
+        expect(output).toMatch(/state\["count"\]/)
+        expect(output).toMatch(/next\(\)/)
+        expect(output).toMatch(/state\[0\]/)
+        expect(output).toMatch(/first\(\)/)
+      } finally {
+        clearModuleMetadata()
+        if (existsSync(path.join(baseDir, 'node_modules'))) {
+          rmSync(path.join(baseDir, 'node_modules'), { recursive: true, force: true })
+        }
+      }
+    })
+
     it('keeps bare package hook returns opaque when package metadata is missing', () => {
       clearModuleMetadata()
       const appSource = `
@@ -1660,6 +1716,51 @@ describe('Cross-Module Reactivity', () => {
         const output = transform(appSource, { fineGrainedDom: true }, appPath)
         expect(output).not.toMatch(/count\(\) \* 2/)
         expect(output).toMatch(/count \* 2/)
+      } finally {
+        clearModuleMetadata()
+        if (existsSync(path.join(baseDir, 'node_modules'))) {
+          rmSync(path.join(baseDir, 'node_modules'), { recursive: true, force: true })
+        }
+      }
+    })
+
+    it('keeps bare package hook object members opaque when package metadata is missing', () => {
+      clearModuleMetadata()
+      const appSource = `
+        import { useCounter } from 'fict-hook-lib'
+
+        export function App() {
+          const state = useCounter()
+          state.count++
+          const next = state['count']
+          const first = state[0]
+          return <div>{state.count}{next}{first}</div>
+        }
+      `
+      const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+      const appPath = path.join(baseDir, 'app-package-member-no-metadata.tsx')
+
+      try {
+        mkdirSync(packageDir, { recursive: true })
+        writeFileSync(
+          path.join(packageDir, 'package.json'),
+          JSON.stringify({
+            name: 'fict-hook-lib',
+            type: 'module',
+            exports: './dist/index.js',
+          }),
+        )
+
+        const output = transform(appSource, { fineGrainedDom: true }, appPath)
+        expect(output).not.toMatch(/state\.count\(\)/)
+        expect(output).not.toMatch(/state\.count\(__prev_/)
+        expect(output).not.toMatch(/state\["count"\]\(\)/)
+        expect(output).not.toMatch(/state\[0\]\(\)/)
+        expect(output).not.toMatch(/next\(\)/)
+        expect(output).not.toMatch(/first\(\)/)
+        expect(output).toMatch(/state\.count\+\+/)
+        expect(output).toMatch(/state\["count"\]/)
+        expect(output).toMatch(/state\[0\]/)
       } finally {
         clearModuleMetadata()
         if (existsSync(path.join(baseDir, 'node_modules'))) {

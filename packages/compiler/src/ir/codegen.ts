@@ -525,6 +525,8 @@ export interface CodegenContext {
   hookReturnInfo?: Map<string, HookReturnInfo> | undefined
   /** Map of local variables bound to hook results (per function) */
   hookResultVarMap?: Map<string, string> | undefined
+  /** Imported hook bindings that did not publish hook-return metadata */
+  opaqueImportedHookNames?: Set<string> | undefined
   /** Program functions keyed by name for hook metadata lookup */
   programFunctions?: Map<string, HIRFunction> | undefined
   /** Cache of hoisted template identifiers keyed by HTML string */
@@ -616,6 +618,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     resumablePropAccessors: new Map(),
     resumablePropRests: new Map(),
     hookReturnInfo: new Map(),
+    opaqueImportedHookNames: new Set(),
     hoistedTemplates: new Map(),
     hoistedTemplateStatements: [],
     hoistedResumableStatements: [],
@@ -708,6 +711,7 @@ function resolveDirectHookCallInfo(
   const cached = ctx.hookReturnInfo?.get(hookName)
   if (cached) return { hookName, info: cached }
   if (!isHookName(hookName)) return null
+  if (ctx.opaqueImportedHookNames?.has(hookName)) return null
 
   return { hookName, info: getHookReturnInfo(hookName, ctx) }
 }
@@ -715,6 +719,7 @@ function resolveDirectHookCallInfo(
 function getHookReturnAccessorKind(
   info: HookReturnInfo | null,
   propName: string | number | null,
+  allowUnknownFallback: boolean,
 ): HookAccessorKind | null {
   if (typeof propName === 'string') {
     const kind = info?.objectProps?.get(propName)
@@ -723,16 +728,17 @@ function getHookReturnAccessorKind(
     const kind = info?.arrayProps?.get(propName)
     if (kind) return kind
   }
-  return !info && propName !== null ? 'signal' : null
+  return !info && allowUnknownFallback && propName !== null ? 'signal' : null
 }
 
 function resolveHookReturnMemberInfo(
   expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
   ctx: CodegenContext,
-): { info: HookReturnInfo | null } | null {
+): { info: HookReturnInfo | null; allowUnknownFallback: boolean } | null {
   let info: HookReturnInfo | null | undefined
+  let hookName: string | undefined
   if (expr.object.kind === 'Identifier') {
-    const hookName = ctx.hookResultVarMap?.get(deSSAVarName(expr.object.name))
+    hookName = ctx.hookResultVarMap?.get(deSSAVarName(expr.object.name))
     if (!hookName) return null
     info = getHookReturnInfo(hookName, ctx)
   } else if (
@@ -741,12 +747,16 @@ function resolveHookReturnMemberInfo(
   ) {
     const hookCall = resolveDirectHookCallInfo(expr.object, ctx)
     if (!hookCall) return null
+    hookName = hookCall.hookName
     info = hookCall.info
   } else {
     return null
   }
 
-  return { info: info ?? null }
+  return {
+    info: info ?? null,
+    allowUnknownFallback: !hookName || !ctx.opaqueImportedHookNames?.has(hookName),
+  }
 }
 
 function resolveHookReturnMemberAccessorKind(
@@ -756,7 +766,11 @@ function resolveHookReturnMemberAccessorKind(
   const hookMemberInfo = resolveHookReturnMemberInfo(expr, ctx)
   if (!hookMemberInfo) return null
   const propName = getStaticPropName(expr.property as Expression, expr.computed)
-  return getHookReturnAccessorKind(hookMemberInfo.info, propName)
+  return getHookReturnAccessorKind(
+    hookMemberInfo.info,
+    propName,
+    hookMemberInfo.allowUnknownFallback,
+  )
 }
 
 function withNonReactiveScope<T>(ctx: CodegenContext, fn: () => T): T {
@@ -1140,13 +1154,10 @@ function lowerInstruction(
         ),
       )
     }
-    if (
-      instr.value.kind === 'CallExpression' &&
-      instr.value.callee.kind === 'Identifier' &&
-      isHookName(instr.value.callee.name)
-    ) {
-      ctx.hookResultVarMap?.set(baseName, instr.value.callee.name)
-      const retInfo = getHookReturnInfo(instr.value.callee.name, ctx)
+    const directHookCall = resolveDirectHookCallInfo(instr.value, ctx)
+    if (directHookCall && directHookCall.hookName.indexOf('.') === -1) {
+      ctx.hookResultVarMap?.set(baseName, directHookCall.hookName)
+      const retInfo = directHookCall.info
       if (retInfo?.directAccessor === 'signal') {
         ctx.signalVars?.add(baseName)
         ctx.trackedVars.add(baseName)
@@ -3081,9 +3092,10 @@ function lowerDomExpression(
   const skipHookAccessors = options?.skipHookAccessors ?? false
   if (
     !skipHookAccessors &&
+    (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') &&
+    resolveHookReturnMemberAccessorKind(expr, ctx) &&
     ctx.t.isMemberExpression(lowered) &&
-    ctx.t.isIdentifier(lowered.object) &&
-    ctx.hookResultVarMap?.has(deSSAVarName(lowered.object.name))
+    ctx.t.isIdentifier(lowered.object)
   ) {
     lowered = ctx.t.callExpression(lowered, [])
   } else if (!skipHookAccessors && ctx.t.isIdentifier(lowered)) {
@@ -4909,6 +4921,15 @@ export function lowerHIRWithRegions(
   ctx.moduleRuntimeImportMap = runtimeImports.importMap
   ctx.moduleRuntimeNamespaceImports = runtimeImports.namespaces
   applyImportedReactiveMetadata(originalBody, ctx, t, options, {
+    markImportedHook(localName, hasMetadata) {
+      const base = deSSAVarName(localName)
+      ctx.opaqueImportedHookNames = ctx.opaqueImportedHookNames ?? new Set()
+      if (hasMetadata) {
+        ctx.opaqueImportedHookNames.delete(base)
+      } else {
+        ctx.opaqueImportedHookNames.add(base)
+      }
+    },
     setImportedHookInfo(localName, info) {
       ctx.hookReturnInfo = ctx.hookReturnInfo ?? new Map()
       ctx.hookReturnInfo.set(localName, deserializeHookReturnInfo(info))
@@ -6243,13 +6264,10 @@ function lowerFunctionWithRegions(
             ctx.memoVars?.add(target)
           }
         }
-        if (
-          instr.value.kind === 'CallExpression' &&
-          instr.value.callee.kind === 'Identifier' &&
-          isHookName(instr.value.callee.name)
-        ) {
+        const directHookCall = resolveDirectHookCallInfo(instr.value, ctx)
+        if (directHookCall && directHookCall.hookName.indexOf('.') === -1) {
           hookResultVars.add(target)
-          ctx.hookResultVarMap?.set(target, instr.value.callee.name)
+          ctx.hookResultVarMap?.set(target, directHookCall.hookName)
         }
         const namespaceHookCall = resolveNamespaceHookCallInfo(instr.value, ctx)
         if (namespaceHookCall) {

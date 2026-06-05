@@ -11,6 +11,7 @@ import type {
 
 import type { CodegenContext } from './codegen'
 import { getReactiveCallKindFromBabel } from './codegen-reactive-kind'
+import { isHookName } from './hook-utils'
 import { deSSAVarName } from './regions'
 
 function addImportedReactiveBinding(
@@ -58,17 +59,40 @@ export function applyImportedReactiveMetadata(
   t: typeof BabelCore.types,
   options: FictCompilerOptions | undefined,
   hooks?: {
+    markImportedHook?: (localName: string, hasMetadata: boolean) => void
     setImportedHookInfo?: (localName: string, info: HookReturnInfoSerializable) => void
   },
 ): void {
   const importer = options?.filename
   const namespaces = new Map<string, ModuleReactiveMetadata>()
+  const markHookImport = (
+    localName: string,
+    importedName: string | undefined,
+    hasMetadata: boolean,
+  ) => {
+    if (isHookName(localName) || isHookName(importedName)) {
+      hooks?.markImportedHook?.(localName, hasMetadata)
+    }
+  }
 
   for (const stmt of body) {
     if (!t.isImportDeclaration(stmt)) continue
     if (isTypeOnlyKind(stmt.importKind)) continue
     const meta = resolveModuleMetadata(stmt.source.value, importer, options)
-    if (!meta) continue
+    if (!meta) {
+      for (const spec of stmt.specifiers) {
+        if (isTypeOnlyImportSpecifier(spec)) continue
+        if (t.isImportSpecifier(spec)) {
+          const importedName = t.isIdentifier(spec.imported)
+            ? spec.imported.name
+            : String(spec.imported.value)
+          markHookImport(spec.local.name, importedName, false)
+        } else if (t.isImportDefaultSpecifier(spec)) {
+          markHookImport(spec.local.name, 'default', false)
+        }
+      }
+      continue
+    }
 
     for (const spec of stmt.specifiers) {
       if (isTypeOnlyImportSpecifier(spec)) continue
@@ -89,6 +113,7 @@ export function applyImportedReactiveMetadata(
         if (hookInfo && hooks?.setImportedHookInfo) {
           hooks.setImportedHookInfo(localName, hookInfo)
         }
+        markHookImport(localName, importedName, !!hookInfo)
         continue
       }
       if (t.isImportDefaultSpecifier(spec)) {
@@ -101,6 +126,7 @@ export function applyImportedReactiveMetadata(
         if (hookInfo && hooks?.setImportedHookInfo) {
           hooks.setImportedHookInfo(localName, hookInfo)
         }
+        markHookImport(localName, 'default', !!hookInfo)
         continue
       }
       if (t.isImportNamespaceSpecifier(spec)) {
