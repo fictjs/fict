@@ -361,6 +361,49 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).toContain('props.double()')
   })
 
+  it('preserves explicit calls to hook return accessor members', () => {
+    const ast = parseFile(`
+      const useCounter = () => {
+        const count = $state(0)
+        const double = count * 2
+        return { count, double }
+      }
+
+      function Counter() {
+        const props = useCounter()
+        return <p>{props.count()} / {props.double()}</p>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('props.count()')
+    expect(code).toContain('props.double()')
+    expect(code).not.toContain('props.count()()')
+    expect(code).not.toContain('props.double()()')
+  })
+
+  it('preserves optional calls to hook return accessor members', () => {
+    const ast = parseFile(`
+      const useCounter = () => {
+        const count = $state(0)
+        return { count }
+      }
+
+      function Counter() {
+        const props = useCounter()
+        return <p>{props.count?.()}</p>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('props.count?.()')
+    expect(code).not.toContain('props.count?.()?.()')
+  })
+
   it('handles hook returning a single accessor value', () => {
     const ast = parseFile(`
       const useCount = () => {

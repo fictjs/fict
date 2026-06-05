@@ -1766,8 +1766,28 @@ function lowerExpressionImpl(
     return kind === 'signal' || kind === 'memo'
   }
 
+  const isHookReturnAccessorMember = (
+    callee: Expression,
+  ): callee is Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }> => {
+    if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') {
+      return false
+    }
+    if (callee.object.kind !== 'Identifier') return false
+    const hookName = ctx.hookResultVarMap?.get(deSSAVarName(callee.object.name))
+    if (!hookName) return false
+    const info = getHookReturnInfo(hookName, ctx)
+    const propName = getStaticPropName(callee.property as Expression, callee.computed)
+    let accessorKind: HookAccessorKind | undefined
+    if (typeof propName === 'string') {
+      accessorKind = info?.objectProps?.get(propName)
+    } else if (typeof propName === 'number') {
+      accessorKind = info?.arrayProps?.get(propName)
+    }
+    return !!(accessorKind || (!info && propName !== null))
+  }
+
   const lowerCallCalleeExpression = (callee: Expression): BabelCore.types.Expression => {
-    if (isNamespaceReactiveAccessorMember(callee)) {
+    if (isNamespaceReactiveAccessorMember(callee) || isHookReturnAccessorMember(callee)) {
       return lowerMemberExpressionWithoutAccessorCall(callee)
     }
     return lowerExpression(callee, ctx)
