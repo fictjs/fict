@@ -458,7 +458,7 @@ function formatTextValue(value: unknown): string {
 export type AttributeSetter = (el: Element, key: string, value: unknown) => void
 
 function shouldStringifyBooleanAttribute(key: string): boolean {
-  return key.startsWith('aria-') || key.startsWith('data-')
+  return key === 'draggable' || key.startsWith('aria-') || key.startsWith('data-')
 }
 
 /**

@@ -2064,10 +2064,12 @@ describe('spread operator in JSX', () => {
               aria-expanded={false}
               data-active={true}
               data-off={false}
+              draggable={true}
               hidden={true}
               disabled={false}
             />
-            <div aria-live={on} data-on={on} hidden={on} bool:data-forced={on} />
+            <div draggable={false} />
+            <div aria-live={on} data-on={on} draggable={on} hidden={on} bool:data-forced={on} />
           </section>
         )
       }
@@ -2080,11 +2082,14 @@ describe('spread operator in JSX', () => {
     expect(code).toContain('aria-expanded=\\"false\\"')
     expect(code).toContain('data-active=\\"true\\"')
     expect(code).toContain('data-off=\\"false\\"')
+    expect(code).toContain('draggable=\\"true\\"')
+    expect(code).toContain('draggable=\\"false\\"')
     expect(code).toContain(
-      '<div aria-hidden=\\"true\\" aria-expanded=\\"false\\" data-active=\\"true\\" data-off=\\"false\\" hidden></div>',
+      '<div aria-hidden=\\"true\\" aria-expanded=\\"false\\" data-active=\\"true\\" data-off=\\"false\\" draggable=\\"true\\" hidden></div>',
     )
     expect(code).toMatch(/setAttr\([^,]+,\s*"aria-live",\s*on\(\)\)/)
     expect(code).toMatch(/setAttr\([^,]+,\s*"data-on",\s*on\(\)\)/)
+    expect(code).toMatch(/setAttr\([^,]+,\s*"draggable",\s*on\(\)\)/)
     expect(code).toContain('setAttribute("data-forced", "")')
     expect(code).not.toContain('bool:data-forced')
   })

@@ -943,6 +943,7 @@ describe('DOM Module', () => {
             'aria-expanded': false,
             'data-active': true,
             'data-off': false,
+            draggable: true,
             hidden: true,
             disabled: false,
             'bool:data-forced': true,
@@ -954,9 +955,22 @@ describe('DOM Module', () => {
         expect(result.getAttribute('aria-expanded')).toBe('false')
         expect(result.getAttribute('data-active')).toBe('true')
         expect(result.getAttribute('data-off')).toBe('false')
+        expect(result.getAttribute('draggable')).toBe('true')
+        expect(result.draggable).toBe(true)
         expect(result.hasAttribute('hidden')).toBe(true)
         expect(result.hasAttribute('disabled')).toBe(false)
         expect(result.getAttribute('data-forced')).toBe('')
+      })
+
+      it('stringifies false draggable attributes', () => {
+        const result = createElement({
+          type: 'div',
+          props: { draggable: false },
+          key: undefined,
+        }) as HTMLDivElement
+
+        expect(result.getAttribute('draggable')).toBe('false')
+        expect(result.draggable).toBe(false)
       })
     })
 

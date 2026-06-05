@@ -189,7 +189,7 @@ function escapeHtmlText(value: string): string {
 }
 
 function shouldStringifyBooleanAttribute(name: string): boolean {
-  return name.startsWith('aria-') || name.startsWith('data-')
+  return name === 'draggable' || name.startsWith('aria-') || name.startsWith('data-')
 }
 
 function literalExpression(value: unknown, loc?: Expression['loc']): Expression {

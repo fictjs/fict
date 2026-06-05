@@ -902,7 +902,7 @@ function toPropertyName(name: string): string {
  * Set an attribute on an element, handling various value types.
  */
 function shouldStringifyBooleanAttribute(key: string): boolean {
-  return key.startsWith('aria-') || key.startsWith('data-')
+  return key === 'draggable' || key.startsWith('aria-') || key.startsWith('data-')
 }
 
 const setAttribute: AttributeSetter = (el: Element, key: string, value: unknown): void => {

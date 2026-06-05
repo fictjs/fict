@@ -454,6 +454,21 @@ describe('Binding Edge Cases', () => {
       expect(el.getAttribute('disabled')).toBe('')
     })
 
+    it('stringifies draggable boolean values', async () => {
+      const el = document.createElement('div')
+      const draggable = createSignal(false)
+
+      bindAttribute(el, 'draggable', () => draggable())
+      await tick()
+      expect(el.getAttribute('draggable')).toBe('false')
+      expect(el.draggable).toBe(false)
+
+      draggable(true)
+      await tick()
+      expect(el.getAttribute('draggable')).toBe('true')
+      expect(el.draggable).toBe(true)
+    })
+
     it('handles undefined values', async () => {
       const el = document.createElement('div')
       el.setAttribute('data-test', 'value')

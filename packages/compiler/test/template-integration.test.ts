@@ -1145,14 +1145,17 @@ describe('compiled templates DOM integration', () => {
               aria-expanded={false}
               data-active={true}
               data-off={false}
+              draggable={true}
               hidden={true}
               disabled={false}
               bool:data-forced={true}
             />
+            <div data-testid="static-false" draggable={false} />
             <div
               data-testid="dynamic"
               aria-live={on}
               data-on={on}
+              draggable={on}
               hidden={on}
               bool:data-flag={on}
             />
@@ -1174,18 +1177,25 @@ describe('compiled templates DOM integration', () => {
     const teardown = mod.mount(container)
 
     const staticEl = container.querySelector('[data-testid="static"]') as HTMLDivElement
+    const staticFalseEl = container.querySelector('[data-testid="static-false"]') as HTMLDivElement
     const dynamicEl = container.querySelector('[data-testid="dynamic"]') as HTMLDivElement
 
     expect(staticEl.getAttribute('aria-hidden')).toBe('true')
     expect(staticEl.getAttribute('aria-expanded')).toBe('false')
     expect(staticEl.getAttribute('data-active')).toBe('true')
     expect(staticEl.getAttribute('data-off')).toBe('false')
+    expect(staticEl.getAttribute('draggable')).toBe('true')
+    expect(staticEl.draggable).toBe(true)
+    expect(staticFalseEl.getAttribute('draggable')).toBe('false')
+    expect(staticFalseEl.draggable).toBe(false)
     expect(staticEl.hasAttribute('hidden')).toBe(true)
     expect(staticEl.hasAttribute('disabled')).toBe(false)
     expect(staticEl.getAttribute('data-forced')).toBe('')
 
     expect(dynamicEl.getAttribute('aria-live')).toBe('true')
     expect(dynamicEl.getAttribute('data-on')).toBe('true')
+    expect(dynamicEl.getAttribute('draggable')).toBe('true')
+    expect(dynamicEl.draggable).toBe(true)
     expect(dynamicEl.hasAttribute('hidden')).toBe(true)
     expect(dynamicEl.getAttribute('data-flag')).toBe('')
 
@@ -1194,6 +1204,8 @@ describe('compiled templates DOM integration', () => {
 
     expect(dynamicEl.getAttribute('aria-live')).toBe('false')
     expect(dynamicEl.getAttribute('data-on')).toBe('false')
+    expect(dynamicEl.getAttribute('draggable')).toBe('false')
+    expect(dynamicEl.draggable).toBe(false)
     expect(dynamicEl.hasAttribute('hidden')).toBe(false)
     expect(dynamicEl.hasAttribute('data-flag')).toBe(false)
 
