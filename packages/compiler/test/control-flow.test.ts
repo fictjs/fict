@@ -909,6 +909,70 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).not.toContain('choose: choose:')
     })
 
+    it('drops assignments after labeled block breaks', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          const x = $state(0)
+          let out = 'a'
+          block: {
+            out += 'b'
+            break block
+            out += 'UNREACHABLE_ASSIGNMENT'
+          }
+          out += 'after'
+          return out + x()
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('break block')
+      expect(output).toContain('"after"')
+      expect(output).not.toContain('UNREACHABLE_ASSIGNMENT')
+    })
+
+    it('drops function calls after labeled block breaks', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          const x = $state(0)
+          const calls = []
+          block: {
+            calls.push('before')
+            break block
+            calls.push('UNREACHABLE_CALL')
+          }
+          return calls.length + x()
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('break block')
+      expect(output).toContain('"before"')
+      expect(output).not.toContain('UNREACHABLE_CALL')
+    })
+
+    it('drops nested block statements after labeled breaks', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          const x = $state(0)
+          let out = 'a'
+          outer: {
+            {
+              out += 'before'
+              break outer
+              out += 'UNREACHABLE_NESTED'
+            }
+          }
+          out += 'after'
+          return out + x()
+        }
+      `
+      const output = runTransform(input)
+      expect(output).toContain('break outer')
+      expect(output).toContain('"after"')
+      expect(output).not.toContain('UNREACHABLE_NESTED')
+    })
+
     it('emits FICT-R003 when reactive if-return lowering is skipped', () => {
       const input = `
         function Component({ mode }) {

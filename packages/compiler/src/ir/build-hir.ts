@@ -2073,11 +2073,7 @@ function fillStatements(
       }
       current = processStatement(s, current, jumpTarget, ctx)
       if (current.sealed) {
-        // If sealed with return/throw, stop processing
-        const term = current.block.terminator
-        if (term.kind === 'Return' || term.kind === 'Throw') {
-          return current
-        }
+        return current
       }
     }
     if (!current.sealed) {
