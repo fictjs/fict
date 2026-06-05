@@ -892,4 +892,45 @@ describe('semantic validation', () => {
     transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
     expect(warnings.some(w => w.code === 'FICT-M')).toBe(true)
   })
+
+  it('warns when deleting a nested property from state', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const state = $state({ nested: { value: 1 } })
+        delete state.nested
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-M')).toBe(true)
+  })
+
+  it('throws under strictGuarantee when deleting a nested property from state', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const state = $state({ nested: { value: 1 } })
+        delete state.nested
+        return <div />
+      }
+    `
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-M/)
+  })
+
+  it('warns once for dynamic delete paths through state', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App(key: 'nested') {
+        const state = $state({ nested: { value: 1 } })
+        delete state[key]
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.filter(w => w.code === 'FICT-M')).toHaveLength(1)
+    expect(warnings.filter(w => w.code === 'FICT-H')).toHaveLength(1)
+  })
 })

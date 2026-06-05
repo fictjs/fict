@@ -1079,10 +1079,42 @@ function runWarningPass(
         }
       }
     },
+    UnaryExpression(path) {
+      if (path.node.operator !== 'delete') return
+      const arg = path.node.argument
+      if (t.isMemberExpression(arg) || t.isOptionalMemberExpression(arg)) {
+        const stateRoot = isStateRoot(arg.object as BabelCore.types.Expression, path)
+        const reactiveRoot = isReactiveRoot(arg.object as BabelCore.types.Expression, path)
+        if (stateRoot || reactiveRoot) {
+          emitWarning(
+            path,
+            'FICT-M',
+            'Direct mutation of nested property detected; use immutable update or $store helpers',
+            warn,
+            fileName,
+          )
+          if (isDynamicPropertyAccess(arg, t)) {
+            emitWarning(
+              path,
+              'FICT-H',
+              'Dynamic property access widens dependency tracking',
+              warn,
+              fileName,
+            )
+          }
+        }
+      }
+    },
     MemberExpression(path) {
       if (!path.node.computed) return
       if (path.parentPath.isAssignmentExpression({ left: path.node })) return
       if (path.parentPath.isUpdateExpression() && path.parentPath.node.argument === path.node) {
+        return
+      }
+      if (
+        path.parentPath.isUnaryExpression({ operator: 'delete' }) &&
+        path.parentPath.node.argument === path.node
+      ) {
         return
       }
       if (
@@ -1216,6 +1248,12 @@ function runWarningPass(
       if (!path.node.computed) return
       if (path.parentPath.isAssignmentExpression({ left: path.node })) return
       if (path.parentPath.isUpdateExpression() && path.parentPath.node.argument === path.node) {
+        return
+      }
+      if (
+        path.parentPath.isUnaryExpression({ operator: 'delete' }) &&
+        path.parentPath.node.argument === path.node
+      ) {
         return
       }
       if (
