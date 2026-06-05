@@ -1028,6 +1028,16 @@ function runWarningPass(
     >,
     callee: BabelCore.types.Expression,
   ): boolean => {
+    const isKnownArrayReceiver = (expr: BabelCore.types.Expression): boolean => {
+      if (t.isArrayExpression(expr)) return true
+      if (!t.isIdentifier(expr)) return false
+      const binding = callPath.scope.getBinding(expr.name)
+      if (!binding?.constant) return false
+      if (!binding.path.isVariableDeclarator()) return false
+      const init = binding.path.get('init') as BabelCore.NodePath | null
+      return !!init?.isArrayExpression()
+    }
+
     if (t.isIdentifier(callee)) {
       const binding = callPath.scope.getBinding(callee.name)
       const bindingPath = binding?.path
@@ -1050,7 +1060,10 @@ function runWarningPass(
     const member =
       t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee) ? callee : null
     if (!member || member.computed || !t.isIdentifier(member.property)) return false
-    return NON_ESCAPING_CALLBACK_METHODS.has(member.property.name)
+    return (
+      NON_ESCAPING_CALLBACK_METHODS.has(member.property.name) &&
+      isKnownArrayReceiver(member.object as BabelCore.types.Expression)
+    )
   }
   const emitClosureCaptureWarning = (
     nodeOrPath: BabelCore.types.Node | BabelCore.NodePath,

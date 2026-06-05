@@ -646,6 +646,93 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-R005')).toBe(false)
   })
 
+  it('warns FICT-R005 for callback methods on unknown receivers', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        const later = {
+          map(cb) {
+            globalThis.cb = cb
+          }
+        }
+        function App() {
+          let count = $state(0)
+          later.map(() => count)
+          return <div>{count}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function App(props) {
+          let count = $state(0)
+          props.forEach(() => count)
+          return <div>{count}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        import * as later from './later'
+        function App() {
+          let count = $state(0)
+          later.reduce(() => count)
+          return <div>{count}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        class Later {
+          filter(cb) {
+            globalThis.cb = cb
+          }
+        }
+        function App() {
+          let count = $state(0)
+          const later = new Later()
+          later.filter(() => count)
+          return <div>{count}</div>
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      const warnings: Array<{ code: string }> = []
+      transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+      expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
+      expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(
+        /FICT-R002|FICT-R005/,
+      )
+    }
+  })
+
+  it('does not warn FICT-R005 for callback methods on known arrays', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        function App() {
+          let count = $state(0)
+          ;[1, 2, 3].map(() => count)
+          return <div>{count}</div>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function App() {
+          let count = $state(0)
+          const items = [1, 2, 3]
+          items.forEach(() => count)
+          items.reduce(() => count, 0)
+          return <div>{count}</div>
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      const warnings: Array<{ code: string }> = []
+      transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+      expect(warnings.some(w => w.code === 'FICT-R005')).toBe(false)
+    }
+  })
+
   it('warns FICT-R005 when inline closure escapes via unknown callback boundary', () => {
     const source = `
       import { $state } from 'fict'
