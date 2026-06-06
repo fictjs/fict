@@ -557,6 +557,139 @@ describe('createDiffingSignal reactivity', () => {
     expect(seen).toEqual([false, true, false])
   })
 
+  it('tracks enumerable true-to-false descriptor changes', async () => {
+    const first = {} as Record<string, number>
+    Object.defineProperty(first, 'x', {
+      value: 1,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+    const second = {} as Record<string, number>
+    Object.defineProperty(second, 'x', {
+      value: 1,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    })
+    const [read, write] = createDiffingSignal(first)
+    const seen: string[][] = []
+
+    createEffect(() => {
+      seen.push(Object.keys(read()))
+    })
+
+    await tick()
+    expect(seen).toEqual([['x']])
+
+    write(second)
+    await tick()
+
+    expect(seen).toEqual([['x'], []])
+  })
+
+  it('tracks enumerable false-to-true descriptor changes', async () => {
+    const first = {} as Record<string, number>
+    Object.defineProperty(first, 'x', {
+      value: 1,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    })
+    const second = {} as Record<string, number>
+    Object.defineProperty(second, 'x', {
+      value: 1,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+    const [read, write] = createDiffingSignal(first)
+    const seen: string[][] = []
+
+    createEffect(() => {
+      seen.push(Object.keys(read()))
+    })
+
+    await tick()
+    expect(seen).toEqual([[]])
+
+    write(second)
+    await tick()
+
+    expect(seen).toEqual([[], ['x']])
+  })
+
+  it('tracks data-to-accessor descriptor changes with the same value', async () => {
+    const first = {} as Record<string, number>
+    Object.defineProperty(first, 'x', {
+      value: 1,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+    const second = {} as Record<string, number>
+    Object.defineProperty(second, 'x', {
+      get() {
+        return 1
+      },
+      enumerable: true,
+      configurable: true,
+    })
+    const [read, write] = createDiffingSignal(first)
+    const seen: string[] = []
+
+    createEffect(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(read(), 'x')
+      seen.push(descriptor && 'get' in descriptor ? 'accessor' : 'data')
+    })
+
+    await tick()
+    expect(seen).toEqual(['data'])
+
+    write(second)
+    await tick()
+
+    expect(seen).toEqual(['data', 'accessor'])
+  })
+
+  it('tracks writable and configurable descriptor changes', async () => {
+    const first = {} as Record<string, number>
+    Object.defineProperty(first, 'x', {
+      value: 1,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+    const second = {} as Record<string, number>
+    Object.defineProperty(second, 'x', {
+      value: 1,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    })
+    const [read, write] = createDiffingSignal(first)
+    const seen: Array<{ configurable: boolean; writable: boolean }> = []
+
+    createEffect(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(read(), 'x')!
+      seen.push({
+        configurable: descriptor.configurable,
+        writable: Boolean('writable' in descriptor && descriptor.writable),
+      })
+    })
+
+    await tick()
+    expect(seen).toEqual([{ configurable: true, writable: true }])
+
+    write(second)
+    await tick()
+
+    expect(seen).toEqual([
+      { configurable: true, writable: true },
+      { configurable: true, writable: false },
+    ])
+  })
+
   it('notifies iterate subscribers for same-reference writes', async () => {
     const value: { foo?: number; bar?: number } = { foo: 1 }
     const [read, write] = createDiffingSignal(value)
@@ -605,6 +738,53 @@ describe('createDiffingSignal reactivity', () => {
     await tick()
     expect(inSeen).toEqual([false, true, false])
     expect(descriptorSeen).toEqual([false, true, false])
+  })
+
+  it('notifies iterate subscribers for same-reference descriptor changes', async () => {
+    const value = {} as Record<string, number>
+    Object.defineProperty(value, 'x', {
+      value: 1,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+    const [read, write] = createDiffingSignal(value)
+    const seen: string[][] = []
+
+    createEffect(() => {
+      seen.push(Object.keys(read()))
+    })
+
+    await tick()
+    expect(seen).toEqual([['x']])
+
+    Object.defineProperty(value, 'x', {
+      value: 1,
+      enumerable: false,
+      configurable: true,
+      writable: true,
+    })
+    write(value)
+    await tick()
+
+    expect(seen).toEqual([['x'], []])
+  })
+
+  it('continues to track ordinary value changes', async () => {
+    const [read, write] = createDiffingSignal({ x: 1 })
+    const seen: number[] = []
+
+    createEffect(() => {
+      seen.push(read().x)
+    })
+
+    await tick()
+    expect(seen).toEqual([1])
+
+    write({ x: 2 })
+    await tick()
+
+    expect(seen).toEqual([1, 2])
   })
 
   it('tracks ownKeys order changes for same-reference writes', async () => {

@@ -455,6 +455,7 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
   let iterateSignal: SignalAccessor<number> | undefined
   let iterateVersion = 0
   let ownKeysSnapshot = Reflect.ownKeys(currentValue as object)
+  let ownDescriptorSnapshot = snapshotOwnDescriptors(currentValue as object)
 
   const hasSameOwnKeys = (aKeys: (string | symbol)[], bKeys: (string | symbol)[]): boolean => {
     if (aKeys.length !== bKeys.length) return false
@@ -462,6 +463,29 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
       if (aKeys[i] !== bKeys[i]) return false
     }
     return true
+  }
+
+  function snapshotOwnDescriptors(value: object): Map<string | symbol, PropertyDescriptor> {
+    const snapshot = new Map<string | symbol, PropertyDescriptor>()
+    for (const key of Reflect.ownKeys(value)) {
+      const descriptor = Reflect.getOwnPropertyDescriptor(value, key)
+      if (descriptor) snapshot.set(key, descriptor)
+    }
+    return snapshot
+  }
+
+  const ownDescriptorSnapshotChanged = (next: object, nextKeys: (string | symbol)[]): boolean => {
+    for (const key of nextKeys) {
+      if (
+        descriptorShapeChanged(
+          ownDescriptorSnapshot.get(key),
+          Reflect.getOwnPropertyDescriptor(next, key),
+        )
+      ) {
+        return true
+      }
+    }
+    return false
   }
 
   const getPropSignal = (prop: string | symbol) => {
@@ -488,8 +512,10 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
 
   const updateIterateFromOwnKeys = (next: object): void => {
     const nextKeys = Reflect.ownKeys(next)
-    const changed = !hasSameOwnKeys(ownKeysSnapshot, nextKeys)
+    const changed =
+      !hasSameOwnKeys(ownKeysSnapshot, nextKeys) || ownDescriptorSnapshotChanged(next, nextKeys)
     ownKeysSnapshot = nextKeys
+    ownDescriptorSnapshot = snapshotOwnDescriptors(next)
     if (changed) {
       bumpIterate()
     }
@@ -574,11 +600,18 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
     for (const [prop, s] of signals) {
       const oldHas = Reflect.has(prev as object, prop)
       const newHas = Reflect.has(next as object, prop)
-      const oldOwn = Reflect.getOwnPropertyDescriptor(prev as object, prop) !== undefined
-      const newOwn = Reflect.getOwnPropertyDescriptor(next as object, prop) !== undefined
+      const oldDescriptor = Reflect.getOwnPropertyDescriptor(prev as object, prop)
+      const newDescriptor = Reflect.getOwnPropertyDescriptor(next as object, prop)
+      const oldOwn = oldDescriptor !== undefined
+      const newOwn = newDescriptor !== undefined
       const oldVal = Reflect.get(prev as object, prop)
       const newVal = Reflect.get(next as object, prop)
-      if (oldVal !== newVal || oldHas !== newHas || oldOwn !== newOwn) {
+      if (
+        oldVal !== newVal ||
+        oldHas !== newHas ||
+        oldOwn !== newOwn ||
+        descriptorShapeChanged(oldDescriptor, newDescriptor)
+      ) {
         s(newVal)
       }
     }
