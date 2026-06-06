@@ -5738,6 +5738,48 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves block-bodied branch tests before list key evaluation', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      export function App() {
+        let seq = 0
+        const items = [1, 2]
+        return (
+          <ul>
+            {items.map(item => {
+              if ((log.push('test ' + item + ':' + seq), seq++, item > 0)) {
+                return <li key={(log.push('key ' + item + ':' + seq), seq)}>{seq}</li>
+              }
+              return <li key={(log.push('key ' + item + ':' + seq), seq)}>{seq}</li>
+            })}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(mod.log).toEqual(['test 1:0', 'key 1:1', 'test 2:1', 'key 2:2'])
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves sequence prefixes before keyed JSX list children', async () => {
     const source = `
       import { render } from 'fict'

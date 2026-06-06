@@ -1457,6 +1457,31 @@ describe('event handler transformation', () => {
     expect(code).toContain('key = key + 10')
   })
 
+  it('falls back for block-bodied branch keys with multiple return sites', () => {
+    const ast = parseFile(`
+      function List() {
+        let seq = 0
+        const items = [1, 2]
+        return (
+          <ul>
+            {items.map(item => {
+              if ((seq++, item > 0)) {
+                return <li key={seq}>{seq}</li>
+              }
+              return <li key={seq}>{seq}</li>
+            })}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).not.toContain('createKeyedList')
+    expect(code).toContain('items.map')
+  })
+
   it('keeps throwing inline list keys only in the extracted key function', () => {
     const ast = parseFile(`
       function List() {
