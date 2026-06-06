@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest'
 
 import createFictPlugin, { type CompilerWarning } from '../src'
 import { clearModuleMetadata, resolveModuleMetadata, setModuleMetadata } from '../src'
+import type { ModuleReactiveMetadata } from '../src/types'
 
 describe('module metadata safety', () => {
   it('does not write metadata sidecar for unknown filename', () => {
@@ -556,6 +557,50 @@ describe('module metadata safety', () => {
         moduleMetadata: new Map(),
       })
       expect(resolved).toBeUndefined()
+    } finally {
+      if (existsSync(depMetaPath)) {
+        rmSync(depMetaPath, { force: true })
+      }
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
+  it('prefers explicit external metadata after the same key was loaded from disk', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_external_after_disk__')
+    const importer = path.join(baseDir, 'consumer.ts')
+    const depPath = path.join(baseDir, 'dep.ts')
+    const depMetaPath = `${depPath}.fict.meta.json`
+    mkdirSync(baseDir, { recursive: true })
+
+    try {
+      writeFileSync(depMetaPath, JSON.stringify({ exports: { value: 'signal' } }), 'utf8')
+
+      const diskResolved = resolveModuleMetadata('./dep', importer, {
+        emitModuleMetadata: false,
+      })
+      expect(diskResolved).toEqual({ exports: { value: 'signal' } })
+
+      const explicitStore = new Map<string, ModuleReactiveMetadata>([
+        [depPath, { exports: { value: 'memo' } }],
+      ])
+      const explicitResolved = resolveModuleMetadata('./dep', importer, {
+        emitModuleMetadata: false,
+        moduleMetadata: explicitStore,
+      })
+      expect(explicitResolved).toEqual({ exports: { value: 'memo' } })
+
+      const otherExplicitStore = new Map<string, ModuleReactiveMetadata>([
+        [depPath, { exports: { value: 'store' } }],
+      ])
+      const otherExplicitResolved = resolveModuleMetadata('./dep', importer, {
+        emitModuleMetadata: false,
+        moduleMetadata: otherExplicitStore,
+      })
+      expect(otherExplicitResolved).toEqual({ exports: { value: 'store' } })
     } finally {
       if (existsSync(depMetaPath)) {
         rmSync(depMetaPath, { force: true })

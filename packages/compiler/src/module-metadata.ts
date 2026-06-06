@@ -559,6 +559,8 @@ export function resolveModuleMetadata(
   // of truth and avoid disk probing unless adjacent emission is explicitly enabled.
   const shouldProbeFs = options?.emitModuleMetadata === true || !hasExternalMetadataStore
   const fsCache = shouldProbeFs ? sharedFsProbeCache : undefined
+  const canUseStoreEntry = (key: string): boolean =>
+    hasExternalMetadataStore && !shouldProbeFs ? true : canReuseStoredMetadata(key)
   const canReadSourceDirectly =
     path.isAbsolute(source) || source.startsWith('/@fs/') || source.startsWith('file://')
 
@@ -573,7 +575,7 @@ export function resolveModuleMetadata(
   let resolvedFromDisk = false
   if (resolvedKey) {
     const existing = store.get(resolvedKey)
-    if (existing && canReuseStoredMetadata(resolvedKey)) {
+    if (existing && canUseStoreEntry(resolvedKey)) {
       resolvedMetadata = existing
     } else if (shouldProbeFs) {
       const loaded = shouldProbeFs
@@ -585,11 +587,11 @@ export function resolveModuleMetadata(
       }
     }
   }
-  if (!resolvedMetadata && store.has(source) && canReuseStoredMetadata(source)) {
+  if (!resolvedMetadata && store.has(source) && canUseStoreEntry(source)) {
     resolvedMetadata = store.get(source)
   }
   if (!resolvedMetadata && canReadSourceDirectly) {
-    if ((store.has(source) && !canReuseStoredMetadata(source)) || !store.has(source)) {
+    if ((store.has(source) && !canUseStoreEntry(source)) || !store.has(source)) {
       const loaded = shouldProbeFs
         ? readMetadataFromDisk(source, store, options, fsCache)
         : undefined
@@ -598,7 +600,7 @@ export function resolveModuleMetadata(
         resolvedFromDisk = true
       }
     }
-    if (!resolvedMetadata && store.has(source) && canReuseStoredMetadata(source)) {
+    if (!resolvedMetadata && store.has(source) && canUseStoreEntry(source)) {
       resolvedMetadata = store.get(source)
     }
   }
