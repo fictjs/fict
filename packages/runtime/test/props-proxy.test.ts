@@ -278,6 +278,25 @@ describe('Props proxy', () => {
     expect(keys.length).toBe(3)
   })
 
+  it('mergeProps exposes spread props as data descriptors', () => {
+    let reads = 0
+    const source = {
+      x: 1,
+      get y() {
+        reads++
+        return 2
+      },
+    }
+    const merged = createPropsProxy(mergeProps(source, { z: 3 }))
+
+    const x = Object.getOwnPropertyDescriptor(merged, 'x')
+    const y = Object.getOwnPropertyDescriptor(merged, 'y')
+
+    expect(x).toEqual({ value: 1, writable: true, enumerable: true, configurable: true })
+    expect(y).toEqual({ value: 2, writable: true, enumerable: true, configurable: true })
+    expect(reads).toBeGreaterThan(0)
+  })
+
   it('mergeProps ignores non-enumerable spread properties', () => {
     const hidden = {}
     const hiddenSymbol = Symbol('hidden')

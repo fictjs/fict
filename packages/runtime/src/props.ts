@@ -280,6 +280,16 @@ export function mergeProps<T extends Record<string, unknown>>(
     return undefined
   }
 
+  const readDescriptorValue = (prop: string | symbol) => {
+    for (let i = validSources.length - 1; i >= 0; i--) {
+      const src = validSources[i]!
+      const raw = resolveSource(src)
+      if (!raw || !hasEnumerableOwnProp(raw, prop)) continue
+      return (raw as Record<string | symbol, unknown>)[prop]
+    }
+    return undefined
+  }
+
   return new Proxy({} as Record<string, unknown>, {
     get(_, prop) {
       return readProp(prop)
@@ -309,7 +319,8 @@ export function mergeProps<T extends Record<string, unknown>>(
       return {
         enumerable: true,
         configurable: true,
-        get: () => readProp(prop),
+        writable: true,
+        value: readDescriptorValue(prop),
       }
     },
   })
