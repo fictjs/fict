@@ -805,6 +805,7 @@ export function analyzeFictFile(
       endLine,
       verbosity,
       regions,
+      effectMacroNames: macroNames.effect,
     })
 
     components.push({

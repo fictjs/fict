@@ -11,6 +11,7 @@ interface InferTraceInput {
   endLine: number
   verbosity: 'minimal' | 'verbose'
   regions?: RegionInfoSerializable[] | undefined
+  effectMacroNames?: ReadonlySet<string> | undefined
 }
 
 const TRACE_REGEX_ESCAPES = /[.*+?^${}()|[\]\\]/g
@@ -32,6 +33,19 @@ function lineContainsIdentifier(lineText: string, identifier: string): boolean {
 function lineContainsAnyIdentifier(lineText: string, identifiers: Iterable<string>): boolean {
   for (const id of identifiers) {
     if (lineContainsIdentifier(lineText, id)) return true
+  }
+  return false
+}
+
+function lineContainsCall(lineText: string, identifier: string): boolean {
+  const escaped = identifier.replace(TRACE_REGEX_ESCAPES, '\\$&')
+  const pattern = new RegExp(`(^|[^${IDENTIFIER_BOUNDARY_CHARS}])${escaped}\\s*\\(`)
+  return pattern.test(lineText)
+}
+
+function lineContainsAnyCall(lineText: string, identifiers: Iterable<string>): boolean {
+  for (const id of identifiers) {
+    if (lineContainsCall(lineText, id)) return true
   }
   return false
 }
@@ -114,21 +128,26 @@ function collectStateDeclNames(fn: HIRFunction): { name: string; line: number }[
   return result
 }
 
-function expressionContainsEffectCall(instr: Instruction): number | null {
-  const value = instr.kind === 'Assign' || instr.kind === 'Expression' ? instr.value : null
-  if (!value || !instr.loc) return null
+function expressionContainsEffectCall(
+  instr: Instruction,
+  effectMacroNames: ReadonlySet<string>,
+): number | null {
+  if (instr.kind !== 'Assign' && instr.kind !== 'Expression') return null
+  const value = instr.value
+  const loc = instr.loc ?? value.loc
+  if (!loc) return null
 
   let found = false
   walkExpression(value, expr => {
     if (
       expr.kind === 'CallExpression' &&
       expr.callee.kind === 'Identifier' &&
-      deSSAVarName(expr.callee.name) === '$effect'
+      effectMacroNames.has(deSSAVarName(expr.callee.name))
     ) {
       found = true
     }
   })
-  return found ? instr.loc.start.line : null
+  return found ? loc.start.line : null
 }
 
 function flattenRegions(regions: RegionInfoSerializable[] | undefined): RegionInfoSerializable[] {
@@ -169,6 +188,9 @@ function findContainingRegion(
 export function inferTraceMarkersForComponent(input: InferTraceInput): LineTrace[] {
   const { fn, sourceLines, startLine, endLine, verbosity, regions } = input
   const markersByLine = new Map<number, TraceMarker[]>()
+  const effectTraceNames = new Set(input.effectMacroNames ?? ['$effect'])
+  effectTraceNames.add('$effect')
+  effectTraceNames.add('effect')
 
   pushTraceMarker(markersByLine, startLine, {
     kind: 'once',
@@ -192,7 +214,7 @@ export function inferTraceMarkersForComponent(input: InferTraceInput): LineTrace
 
   for (const block of fn.blocks) {
     for (const instr of block.instructions) {
-      const line = expressionContainsEffectCall(instr)
+      const line = expressionContainsEffectCall(instr, effectTraceNames)
       if (!line || line < startLine || line > endLine) continue
       pushTraceMarker(markersByLine, line, {
         kind: 'effect',
@@ -222,7 +244,7 @@ export function inferTraceMarkersForComponent(input: InferTraceInput): LineTrace
       })
     }
 
-    if (/\b(?:\$effect|effect)\s*\(/.test(lineText)) {
+    if (lineContainsAnyCall(lineText, effectTraceNames)) {
       pushTraceMarker(markersByLine, line, {
         kind: 'effect',
         label: 'Effect callback executes reactively',

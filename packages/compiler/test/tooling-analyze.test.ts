@@ -157,6 +157,32 @@ describe('analyzeFictFile', () => {
     )
   })
 
+  it('marks aliased effect calls in JSX components', () => {
+    const source = `
+      import { $effect as fx, $state } from 'fict'
+
+      export function App() {
+        const count = $state(0)
+        fx(() => {
+          console.log(count)
+        })
+        return <div>{count}</div>
+      }
+    `
+    const result = analyzeFictFile(source, 'aliased-effect-trace.tsx', {
+      includeRegions: true,
+      includeDiagnostics: true,
+      verbosity: 'verbose',
+    })
+
+    const app = result.components.find(component => component.name === 'App')
+    const effectLine = sourceLine(source, 'fx(()')
+
+    expect(app?.trace.find(entry => entry.line === effectLine)?.markers).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: 'effect' })]),
+    )
+  })
+
   it('marks derived JSX reads from dollar-suffixed state identifiers as reactive', () => {
     const source = `
       import { $state } from 'fict'
