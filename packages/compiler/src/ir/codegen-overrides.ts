@@ -532,6 +532,51 @@ export function replaceIdentifiersWithOverrides(
     return
   }
 
+  if (t.isClassExpression(node) || t.isClassDeclaration(node)) {
+    const classNames = new Set<string>()
+    if (node.id) {
+      classNames.add(normalizeDependencyKey(node.id.name).split('.')[0] ?? node.id.name)
+    }
+    const classOverrides = scopeOverrides(classNames)
+
+    const decorators = (node as unknown as { decorators?: BabelCore.types.Decorator[] }).decorators
+    decorators?.forEach(decorator =>
+      replaceIdentifiersWithOverrides(
+        decorator,
+        overrides,
+        t,
+        node.type,
+        'decorators',
+        false,
+        allowCallCalleeReplacement,
+      ),
+    )
+
+    if (node.superClass) {
+      replaceIdentifiersWithOverrides(
+        node.superClass,
+        classOverrides,
+        t,
+        node.type,
+        'superClass',
+        false,
+        allowCallCalleeReplacement,
+      )
+    }
+    node.body.body.forEach(member =>
+      replaceIdentifiersWithOverrides(
+        member,
+        classOverrides,
+        t,
+        node.type,
+        'body',
+        false,
+        allowCallCalleeReplacement,
+      ),
+    )
+    return
+  }
+
   for (const key of Object.keys(node)) {
     if (key === 'type' || key === 'loc' || key === 'start' || key === 'end') continue
     if ((t.isObjectProperty(node) || t.isObjectMethod(node)) && key === 'key' && !node.computed) {

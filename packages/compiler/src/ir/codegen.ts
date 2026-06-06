@@ -3911,20 +3911,31 @@ function lowerExpressionImpl(
         ),
       )
 
-    case 'ClassExpression':
-      // Class bodies are stored as Babel AST, so patch tracked writes before read overrides run.
-      return t.classExpression(
-        expr.name ? t.identifier(expr.name) : null,
-        expr.superClass ? lowerExpression(expr.superClass, ctx) : null,
-        t.classBody(
-          (expr.body ?? []).map(member =>
-            lowerRawClassReactiveWrites(
-              lowerRawJSXInBabelNode(t.cloneNode(member, true) as BabelClassMember, ctx),
+    case 'ClassExpression': // Class bodies are stored as Babel AST, so patch tracked writes before read overrides run.
+    {
+      const prevShadowed = ctx.shadowedNames
+      if (expr.name) {
+        const classShadowed = new Set(prevShadowed ?? [])
+        classShadowed.add(deSSAVarName(expr.name))
+        ctx.shadowedNames = classShadowed
+      }
+      try {
+        return t.classExpression(
+          expr.name ? t.identifier(expr.name) : null,
+          expr.superClass ? lowerExpression(expr.superClass, ctx) : null,
+          t.classBody(
+            (expr.body ?? []).map(member =>
+              lowerRawClassReactiveWrites(
+                lowerRawJSXInBabelNode(t.cloneNode(member, true) as BabelClassMember, ctx),
+              ),
             ),
           ),
-        ),
-        expr.decorators?.map(decorator => t.cloneNode(decorator, true)) ?? null,
-      )
+          expr.decorators?.map(decorator => t.cloneNode(decorator, true)) ?? null,
+        )
+      } finally {
+        ctx.shadowedNames = prevShadowed
+      }
+    }
 
     case 'ThisExpression':
       return t.thisExpression()

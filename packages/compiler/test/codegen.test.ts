@@ -757,6 +757,32 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).toMatch(/const anon = function \(\) \{\s+return count\(\);\s+\}/)
   })
 
+  it('keeps named class expression bindings shadowed from reactive overrides', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(1)
+        const C = class count {
+          static read() {
+            return count
+          }
+        }
+        const Anon = class {
+          static read() {
+            return count
+          }
+        }
+        return <span>{C.name}{C.read()}{Anon.read()}</span>
+      }
+    `)
+
+    expect(output).toMatch(/const C = class count \{/)
+    expect(output).toMatch(/static read\(\) \{\s+return count;\s+\}/)
+    expect(output).toMatch(/const Anon = class \{\s+static read\(\) \{\s+return count\(\);\s+\}/)
+    expect(output).not.toContain('class count()')
+  })
+
   it('keeps call/apply destructured function props unwrapped', () => {
     const ast = parseFile(`
       function Child({ cb }) {
