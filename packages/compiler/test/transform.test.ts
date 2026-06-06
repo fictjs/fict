@@ -201,6 +201,70 @@ describe('Fict Compiler - Basic Transforms', () => {
       expect(output).toContain('__fictUseMemo')
       expect(output).toContain('doubled()')
     })
+
+    it('memoizes dynamic import sources that read state', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let name = $state('a')
+          const mod = import(\`./\${name}.js\`)
+          return String(mod)
+        }
+      `
+      const output = transform(input)
+
+      expect(output).toMatch(/const mod = __fictUseMemo\(__fictCtx, \(\) => import/)
+      expect(output).toContain('`./${name()}.js`')
+      expect(output).toContain('return String(mod())')
+    })
+
+    it('memoizes computed dynamic import sources that read state', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let name = $state('a')
+          const mod = import('./' + name + '.js')
+          return String(mod)
+        }
+      `
+      const output = transform(input)
+
+      expect(output).toMatch(/const mod = __fictUseMemo\(__fictCtx, \(\) => import/)
+      expect(output).toContain('import("./" + name() + ".js")')
+      expect(output).toContain('return String(mod())')
+    })
+
+    it('memoizes dynamic import options that read state', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let kind = $state('json')
+          const mod = import('./data.json', { with: { type: kind } })
+          return String(mod)
+        }
+      `
+      const output = transform(input)
+
+      expect(output).toMatch(/const mod = __fictUseMemo\(__fictCtx, \(\) => import/)
+      expect(output).toContain('type: kind()')
+      expect(output).toContain('return String(mod())')
+    })
+
+    it('keeps static dynamic import sources as ordinary values', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let name = $state('a')
+          const mod = import('./static.js')
+          return name + String(mod)
+        }
+      `
+      const output = transform(input)
+
+      expect(output).toContain('const mod = import("./static.js")')
+      expect(output).toContain('return name() + String(mod)')
+      expect(output).not.toContain('String(mod())')
+    })
   })
 
   describe('Event handler safety', () => {

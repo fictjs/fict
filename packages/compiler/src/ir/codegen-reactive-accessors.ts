@@ -201,6 +201,10 @@ function collectExpressionIdentifiers(expr: Expression, into: Set<string>): void
     case 'AwaitExpression':
       collectExpressionIdentifiers(expr.argument as Expression, into)
       return
+    case 'ImportExpression':
+      collectExpressionIdentifiers(expr.source as Expression, into)
+      if (expr.options) collectExpressionIdentifiers(expr.options as Expression, into)
+      return
     case 'NewExpression':
       collectExpressionIdentifiers(expr.callee as Expression, into)
       expr.arguments.forEach(arg => collectExpressionIdentifiers(arg as Expression, into))
@@ -740,6 +744,24 @@ export function collectExpressionIdentifiersDeep(
         scopeFunctionLocals,
         includeReturnedFunctionBodies,
       )
+      return
+    case 'ImportExpression':
+      collectExpressionIdentifiersDeep(
+        expr.source as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+        includeReturnedFunctionBodies,
+      )
+      if (expr.options) {
+        collectExpressionIdentifiersDeep(
+          expr.options as Expression,
+          into,
+          bound,
+          scopeFunctionLocals,
+          includeReturnedFunctionBodies,
+        )
+      }
       return
     case 'NewExpression':
       collectExpressionIdentifiersDeep(

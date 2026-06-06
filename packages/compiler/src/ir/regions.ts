@@ -4552,13 +4552,17 @@ function expressionIsLazyMemoSafe(expr: Expression, ctx: CodegenContext): boolea
       return expr.expressions.every(item => expressionIsLazyMemoSafe(item, ctx))
     case 'SpreadElement':
       return expressionIsLazyMemoSafe(expr.argument, ctx)
+    case 'ImportExpression':
+      return (
+        expressionIsLazyMemoSafe(expr.source, ctx) &&
+        (!expr.options || expressionIsLazyMemoSafe(expr.options, ctx))
+      )
     case 'TaggedTemplateExpression':
     case 'AssignmentExpression':
     case 'UpdateExpression':
     case 'AwaitExpression':
     case 'NewExpression':
     case 'YieldExpression':
-    case 'ImportExpression':
     case 'ClassExpression':
       return false
   }
