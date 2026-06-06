@@ -143,6 +143,35 @@ describe('SVG/MathML Namespace Support ()', () => {
       // The div should be a regular HTML template without namespace flags
       expect(output).not.toMatch(/template\("[^"]*div[^"]*",\s*undefined,\s*true\)/)
     })
+
+    it.each(['title', 'desc'])('exits SVG namespace inside %s integration point', parentTag => {
+      const source = `
+          import { $state } from 'fict'
+          export function App() {
+            const show = $state(true)
+            return (
+              <svg>
+                <${parentTag}>
+                  {show && <circle data-id="${parentTag}-circle"></circle>}
+                  {show && <div data-id="${parentTag}-div">html</div>}
+                </${parentTag}>
+                <g>{show && <circle data-id="svg-circle"></circle>}</g>
+              </svg>
+            )
+          }
+        `
+      const output = transform(source)
+
+      expect(output).toContain(`<circle data-id=\\"${parentTag}-circle\\">`)
+      expect(output).toContain(`<div data-id=\\"${parentTag}-div\\">`)
+      expect(output).not.toMatch(
+        new RegExp(`template\\([^)]*${parentTag}-circle[^)]*,\\s*void 0,\\s*true\\)`),
+      )
+      expect(output).not.toMatch(
+        new RegExp(`template\\([^)]*${parentTag}-div[^)]*,\\s*void 0,\\s*true\\)`),
+      )
+      expect(output).toMatch(/template\([^)]*svg-circle[^)]*,\s*void 0,\s*true\)/)
+    })
   })
 
   describe('MathML elements', () => {

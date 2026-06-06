@@ -2653,6 +2653,65 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('renders dynamic SVG integration point children in the HTML namespace', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const show = true
+        const items = [1]
+        return (
+          <svg data-id="svg">
+            <title>
+              {show && <circle data-id="title-circle"></circle>}
+              {show && <div data-id="title-div">html</div>}
+            </title>
+            <desc>{show && <><circle data-id="desc-circle"></circle></>}</desc>
+            <foreignObject>
+              {items.map(item => <circle key={item} data-id="foreign-circle"></circle>)}
+            </foreignObject>
+            <g>{show && <circle data-id="svg-circle"></circle>}</g>
+          </svg>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const output = transformCommonJS(source, { fineGrainedDom: true })
+    expect(output).not.toMatch(/"<circle data-id=\\"title-circle\\"><\/circle>", void 0, true/)
+    expect(output).not.toMatch(/"<div data-id=\\"title-div\\">html<\/div>", void 0, true/)
+    expect(output).not.toMatch(/"<circle data-id=\\"desc-circle\\"><\/circle>", void 0, true/)
+    expect(output).not.toMatch(/"<circle data-id=\\"foreign-circle\\"><\/circle>", void 0, true/)
+    expect(output).toMatch(/"<circle data-id=\\"svg-circle\\"><\/circle>", void 0, true/)
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const titleCircle = container.querySelector('[data-id="title-circle"]') as Element
+    const titleDiv = container.querySelector('[data-id="title-div"]') as Element
+    const descCircle = container.querySelector('[data-id="desc-circle"]') as Element
+    const foreignCircle = container.querySelector('[data-id="foreign-circle"]') as Element
+    const svgCircle = container.querySelector('[data-id="svg-circle"]') as Element
+
+    expect(titleCircle.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
+    expect(titleDiv.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
+    expect(descCircle.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
+    expect(foreignCircle.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
+    expect(svgCircle.namespaceURI).toBe('http://www.w3.org/2000/svg')
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps generated template temps from shadowing source bindings', async () => {
     const cases: Array<{
       source: string

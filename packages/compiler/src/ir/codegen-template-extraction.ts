@@ -182,12 +182,13 @@ function isHtmlAnnotationXmlEncoding(value: string | null): boolean {
 
 const MATHML_TEXT_INTEGRATION_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext'])
 const MATHML_TEXT_INTEGRATION_EXCEPTIONS = new Set(['mglyph', 'malignmark'])
+const SVG_HTML_INTEGRATION_POINTS = new Set(['foreignObject', 'title', 'desc'])
 
 /**
  * Resolve namespace context based on tag name and parent context.
  * - 'svg' enters SVG namespace
  * - 'math' enters MathML namespace
- * - 'foreignObject' inside SVG exits to null (HTML namespace)
+ * - SVG HTML integration points exit to null (HTML namespace)
  * - 'annotation-xml' with an HTML encoding inside MathML exits to null
  * - MathML text integration point children exit to HTML except mglyph/malignmark
  * - Otherwise inherit from parent context
@@ -199,7 +200,7 @@ export function resolveNamespaceContext(
 ): NamespaceContext {
   if (tagName === 'svg') return 'svg'
   if (tagName === 'math') return 'mathml'
-  if (tagName === 'foreignObject' && parentNamespace === 'svg') return null
+  if (parentNamespace === 'svg' && SVG_HTML_INTEGRATION_POINTS.has(tagName)) return null
   if (parentNamespace === 'mathmlTextIntegration') {
     return MATHML_TEXT_INTEGRATION_EXCEPTIONS.has(tagName) ? 'mathml' : null
   }
