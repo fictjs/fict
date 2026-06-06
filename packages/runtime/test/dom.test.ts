@@ -1,6 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
-import { render, createElement, Fragment, createRoot, onDestroy, onMount } from '../src/index'
+import {
+  render,
+  createElement,
+  Fragment,
+  createRoot,
+  createEffect,
+  onDestroy,
+  onMount,
+} from '../src/index'
 import { createSignal, reactive } from '../src/advanced'
 import {
   clearDelegatedEvents,
@@ -121,6 +129,145 @@ describe('DOM Module', () => {
       expect(destroyed).toBe(false)
       teardown()
       expect(destroyed).toBe(true)
+    })
+
+    it('cleans up effects when the render view throws', async () => {
+      const trigger = createSignal(0)
+      let runs = 0
+      let destroyed = 0
+
+      expect(() => {
+        render(() => {
+          createEffect(() => {
+            trigger()
+            runs++
+          })
+          onDestroy(() => {
+            destroyed++
+          })
+          throw new Error('view boom')
+        }, container)
+      }).toThrow('view boom')
+
+      expect(runs).toBe(1)
+      expect(destroyed).toBe(1)
+
+      trigger(1)
+      await tick()
+
+      expect(runs).toBe(1)
+    })
+
+    it('cleans up parent and child effects when component rendering throws', async () => {
+      const trigger = createSignal(0)
+      let parentRuns = 0
+      let childRuns = 0
+      let destroyed = 0
+
+      const BrokenChild = () => {
+        createEffect(() => {
+          trigger()
+          childRuns++
+        })
+        onDestroy(() => {
+          destroyed++
+        })
+        throw new Error('child boom')
+      }
+
+      expect(() => {
+        render(() => {
+          createEffect(() => {
+            trigger()
+            parentRuns++
+          })
+          onDestroy(() => {
+            destroyed++
+          })
+          return { type: BrokenChild, props: {}, key: undefined }
+        }, container)
+      }).toThrow('child boom')
+
+      expect(parentRuns).toBe(1)
+      expect(childRuns).toBe(1)
+      expect(destroyed).toBe(2)
+
+      trigger(1)
+      await tick()
+
+      expect(parentRuns).toBe(1)
+      expect(childRuns).toBe(1)
+    })
+
+    it('cleans up effects when container replacement throws', async () => {
+      const trigger = createSignal(0)
+      let runs = 0
+      let destroyed = 0
+      const replaceSpy = vi.spyOn(container, 'replaceChildren').mockImplementation(() => {
+        throw new Error('replace boom')
+      })
+
+      try {
+        expect(() => {
+          render(() => {
+            createEffect(() => {
+              trigger()
+              runs++
+            })
+            onDestroy(() => {
+              destroyed++
+            })
+            return document.createElement('div')
+          }, container)
+        }).toThrow('replace boom')
+
+        expect(runs).toBe(1)
+        expect(destroyed).toBe(1)
+
+        trigger(1)
+        await tick()
+
+        expect(runs).toBe(1)
+      } finally {
+        replaceSpy.mockRestore()
+      }
+    })
+
+    it('cleans up effects when render mount flushing throws', async () => {
+      const trigger = createSignal(0)
+      let runs = 0
+      let mountCleanups = 0
+      let destroyed = 0
+
+      expect(() => {
+        render(() => {
+          createEffect(() => {
+            trigger()
+            runs++
+          })
+          onDestroy(() => {
+            destroyed++
+          })
+          onMount(() => {
+            return () => {
+              mountCleanups++
+            }
+          })
+          onMount(() => {
+            throw new Error('mount boom')
+          })
+          return document.createElement('div')
+        }, container)
+      }).toThrow('mount boom')
+
+      expect(runs).toBe(1)
+      expect(mountCleanups).toBe(1)
+      expect(destroyed).toBe(1)
+
+      trigger(1)
+      await tick()
+
+      expect(runs).toBe(1)
     })
   })
 

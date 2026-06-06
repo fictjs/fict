@@ -172,34 +172,42 @@ export function render(view: () => FictNode, container: HTMLElement): () => void
   root.ownerDocument = container.ownerDocument ?? document
   const prev = pushRoot(root)
   let dom: DOMElement = undefined as unknown as DOMElement
+  let completed = false
   try {
-    const output = view()
-    // createElement must be called within the root context
-    // so that child components register their onMount callbacks correctly
-    if (__fictIsHydrating()) {
-      withHydration(container, () => {
+    try {
+      const output = view()
+      // createElement must be called within the root context
+      // so that child components register their onMount callbacks correctly
+      if (__fictIsHydrating()) {
+        withHydration(container, () => {
+          dom = createElement(output)
+        })
+      } else {
         dom = createElement(output)
-      })
-    } else {
-      dom = createElement(output)
+      }
+    } finally {
+      popRoot(prev)
     }
+
+    if (!__fictIsHydrating()) {
+      container.replaceChildren(dom)
+    }
+    container.setAttribute('data-fict-fine-grained', '1')
+
+    flushOnMount(root)
+
+    const teardown = () => {
+      destroyRoot(root)
+      container.innerHTML = ''
+    }
+
+    completed = true
+    return teardown
   } finally {
-    popRoot(prev)
+    if (!completed) {
+      destroyRoot(root)
+    }
   }
-
-  if (!__fictIsHydrating()) {
-    container.replaceChildren(dom)
-  }
-  container.setAttribute('data-fict-fine-grained', '1')
-
-  flushOnMount(root)
-
-  const teardown = () => {
-    destroyRoot(root)
-    container.innerHTML = ''
-  }
-
-  return teardown
 }
 
 /**
