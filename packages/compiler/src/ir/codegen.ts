@@ -3114,6 +3114,10 @@ function lowerExpressionImpl(
         expr.callee.params.length === 0
       const calleeName = expr.callee.kind === 'Identifier' ? deSSAVarName(expr.callee.name) : null
       const calleeIsFunctionVar = !!calleeName && (ctx.functionVars?.has(calleeName) ?? false)
+      const calleeIsPropAccessor =
+        !!calleeName &&
+        !calleeIsFunctionVar &&
+        (ctx.resumablePropAccessors?.has(calleeName) ?? false)
       const calleeIsMemoAccessor =
         !!calleeName && !calleeIsFunctionVar && ctx.memoVars?.has(calleeName)
       const calleeIsSignalLike =
@@ -3129,6 +3133,11 @@ function lowerExpressionImpl(
             lowerCallArguments(expr.arguments),
           ),
         )
+      }
+      if (calleeIsPropAccessor) {
+        const propValue = t.callExpression(t.identifier(calleeName), [])
+        const loweredArgs = lowerCallArguments(expr.arguments)
+        return withCallCacheBarrier(t.callExpression(propValue, loweredArgs))
       }
       if (calleeIsMemoAccessor && !calleeIsSignalLike && expr.arguments.length > 0) {
         const loweredArgs = lowerCallArguments(expr.arguments)
@@ -3560,9 +3569,21 @@ function lowerExpressionImpl(
     case 'OptionalCallExpression':
       if (expr.callee.kind === 'Identifier') {
         const calleeName = deSSAVarName(expr.callee.name)
+        const calleeIsFunctionVar = ctx.functionVars?.has(calleeName) ?? false
+        const calleeIsPropAccessor =
+          !calleeIsFunctionVar && (ctx.resumablePropAccessors?.has(calleeName) ?? false)
         const calleeIsCallableSignal =
           (ctx.signalVars?.has(calleeName) ?? false) &&
           (ctx.callableSignalVars?.has(calleeName) ?? false)
+        if (calleeIsPropAccessor) {
+          return withCallCacheBarrier(
+            t.optionalCallExpression(
+              t.callExpression(t.identifier(calleeName), []),
+              lowerCallArguments(expr.arguments),
+              expr.optional,
+            ),
+          )
+        }
         if (calleeIsCallableSignal) {
           return withCallCacheBarrier(
             t.optionalCallExpression(
@@ -7299,6 +7320,150 @@ function lowerFunctionWithRegions(
     }
   }
   const calledIdentifiers = collectCalledIdentifiers(fn, propDestructureRootNames)
+  const jsxPropValueReadNames = (() => {
+    const names = new Set<string>()
+    if (propDestructureRootNames.size === 0) return names
+
+    const isEventLikeAttrName = (name: string): boolean =>
+      name.startsWith('on:') ||
+      name.startsWith('oncapture:') ||
+      (name.startsWith('on') && name.length > 2 && /^[A-Z]$/.test(name[2] ?? ''))
+
+    const visit = (
+      expr: Expression | null | undefined,
+      inCallCallee = false,
+      collectReads = false,
+    ): void => {
+      if (!expr) return
+      switch (expr.kind) {
+        case 'Identifier': {
+          const name = deSSAVarName(expr.name)
+          if (collectReads && !inCallCallee && propDestructureRootNames.has(name)) {
+            names.add(name)
+          }
+          return
+        }
+        case 'CallExpression':
+        case 'OptionalCallExpression':
+          visit(expr.callee as Expression, true, collectReads)
+          expr.arguments.forEach(arg => visit(arg as Expression, false, collectReads))
+          return
+        case 'MemberExpression':
+        case 'OptionalMemberExpression':
+          visit(expr.object as Expression, inCallCallee, collectReads)
+          if (expr.computed) visit(expr.property as Expression, false, collectReads)
+          return
+        case 'ArrowFunction':
+        case 'FunctionExpression':
+          return
+        case 'ArrayExpression':
+          expr.elements.forEach(element => visit(element as Expression | null, false, collectReads))
+          return
+        case 'ObjectExpression':
+          expr.properties.forEach(prop => {
+            if (prop.kind === 'SpreadElement') {
+              visit(prop.argument as Expression, false, collectReads)
+            } else {
+              if (prop.computed) visit(prop.key as Expression, false, collectReads)
+              visit(prop.value as Expression, false, collectReads)
+            }
+          })
+          return
+        case 'JSXElement':
+          expr.attributes.forEach(attr => {
+            if (attr.isSpread) {
+              visit(attr.spreadExpr, false, true)
+            } else if (attr.value && attr.name !== 'ref' && !isEventLikeAttrName(attr.name)) {
+              visit(attr.value, false, true)
+            }
+          })
+          expr.children.forEach(child => {
+            if (child.kind === 'expression') {
+              visit(child.value, false, true)
+            } else if (child.kind === 'element') {
+              visit(child.value, false, true)
+            }
+          })
+          return
+        case 'BinaryExpression':
+        case 'LogicalExpression':
+          visit(expr.left as Expression, false, collectReads)
+          visit(expr.right as Expression, false, collectReads)
+          return
+        case 'UnaryExpression':
+        case 'AwaitExpression':
+          visit(expr.argument as Expression, false, collectReads)
+          return
+        case 'ConditionalExpression':
+          visit(expr.test as Expression, false, collectReads)
+          visit(expr.consequent as Expression, false, collectReads)
+          visit(expr.alternate as Expression, false, collectReads)
+          return
+        case 'AssignmentExpression':
+          visit(expr.left as Expression, false, collectReads)
+          visit(expr.right as Expression, false, collectReads)
+          return
+        case 'UpdateExpression':
+          visit(expr.argument as Expression, false, collectReads)
+          return
+        case 'TemplateLiteral':
+          expr.expressions.forEach(item => visit(item as Expression, false, collectReads))
+          return
+        case 'TaggedTemplateExpression':
+          visit(expr.tag as Expression, true, collectReads)
+          expr.quasi.expressions.forEach(item => visit(item as Expression, false, collectReads))
+          return
+        case 'SequenceExpression':
+          expr.expressions.forEach(item => visit(item as Expression, false, collectReads))
+          return
+        case 'SpreadElement':
+          visit(expr.argument as Expression, false, collectReads)
+          return
+        case 'NewExpression':
+          visit(expr.callee as Expression, true, collectReads)
+          expr.arguments.forEach(arg => visit(arg as Expression, false, collectReads))
+          return
+        case 'YieldExpression':
+          visit(expr.argument as Expression | null, false, collectReads)
+          return
+        case 'ImportExpression':
+          visit(expr.source as Expression, false, collectReads)
+          visit(expr.options as Expression | null, false, collectReads)
+          return
+        case 'ClassExpression':
+          visit(expr.superClass as Expression | null, false, collectReads)
+          return
+        case 'Literal':
+        case 'MetaProperty':
+        case 'ThisExpression':
+        case 'SuperExpression':
+          return
+        default:
+          return
+      }
+    }
+
+    for (const block of fn.blocks) {
+      block.instructions.forEach(instr => {
+        if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+          visit(instr.value)
+        }
+      })
+      const term = block.terminator
+      if (term.kind === 'Return') {
+        visit(term.argument ?? null)
+      } else if (term.kind === 'Throw') {
+        visit(term.argument)
+      } else if (term.kind === 'Branch') {
+        visit(term.test)
+      } else if (term.kind === 'Switch') {
+        visit(term.discriminant)
+        term.cases.forEach(item => visit(item.test ?? null))
+      }
+    }
+
+    return names
+  })()
   const calledPropValueNames = new Set<string>()
   const calledPropFunctionVars = new Set<string>()
   const propsPlanAliases = new Set<string>()
@@ -7667,7 +7832,8 @@ function lowerFunctionWithRegions(
             const value = prop.value
 
             if (t.isIdentifier(value)) {
-              const shouldWrapProp = !calledIdentifiers.has(value.name)
+              const shouldWrapProp =
+                jsxPropValueReadNames.has(value.name) || !calledIdentifiers.has(value.name)
               if (shouldWrapProp) {
                 usesProp = true
                 propsPlanAliases.add(value.name)
@@ -7700,7 +7866,9 @@ function lowerFunctionWithRegions(
 
             if (t.isAssignmentPattern(value)) {
               if (t.isIdentifier(value.left)) {
-                const shouldWrapProp = !calledIdentifiers.has(value.left.name)
+                const shouldWrapProp =
+                  jsxPropValueReadNames.has(value.left.name) ||
+                  !calledIdentifiers.has(value.left.name)
                 if (shouldWrapProp) {
                   usesProp = true
                   propsPlanAliases.add(value.left.name)

@@ -748,6 +748,23 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).not.toContain('const value = __props.value')
   })
 
+  it('keeps destructured props reactive when nested calls are mixed with JSX reads', () => {
+    const ast = parseFile(`
+      function Child({ label }) {
+        const invokeLater = () => label()
+        return <span onClick={invokeLater} title={label}>{label}</span>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('const label = prop(() => __props.label)')
+    expect(code).toContain('const invokeLater = () => label()()')
+    expect(code).toContain('() => label()')
+    expect(code).not.toContain('const label = __props.label')
+  })
+
   it('does not bypass the alias reassignment guard for reassigned local aliases', () => {
     const ast = parseFile(`
       function Child({ cb, other }) {

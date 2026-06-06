@@ -835,6 +835,75 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps mixed called and displayed destructured props reactive', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const calls: string[] = []
+      export let api: { set(value: string): void }
+
+      function makeLabel(value: string) {
+        const label = () => calls.push(value)
+        label.toString = () => value
+        return label
+      }
+
+      function Child({ label }: { label: (() => void) & { toString(): string } }) {
+        const invokeLater = () => label()
+        return (
+          <>
+            <button data-id="call" onClick={invokeLater}>call</button>
+            <span data-id="label">{String(label)}</span>
+          </>
+        )
+      }
+
+      export function App() {
+        let label = $state(makeLabel('first'))
+        api = {
+          set(value) {
+            label = makeLabel(value)
+          },
+        }
+        return <Child label={label} />
+      }
+
+      export function mount(el: HTMLElement) {
+        calls.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      api: { set(value: string): void }
+      calls: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    const label = container.querySelector('[data-id="label"]') as HTMLSpanElement
+    const call = container.querySelector('[data-id="call"]') as HTMLButtonElement
+
+    expect(label.textContent).toBe('first')
+    call.click()
+    await flushUpdates()
+    expect(mod.calls).toEqual(['first'])
+
+    mod.api.set('second')
+    await flushUpdates()
+    expect(label.textContent).toBe('second')
+
+    call.click()
+    await flushUpdates()
+    expect(mod.calls).toEqual(['first', 'second'])
+
+    teardown()
+    container.remove()
+  })
+
   it('invokes call/apply destructured function props', async () => {
     const source = `
       import { render } from 'fict'
