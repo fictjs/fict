@@ -706,6 +706,182 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('uses imported hook metadata for renamed hook locals', () => {
+      const moduleMetadata = new Map()
+      transform(
+        `
+          import { $memo, $state } from 'fict'
+
+          /** @fictReturn { count: 'signal', doubled: 'memo' } */
+          export function useCounter() {
+            const count = $state(0)
+            const doubled = $memo(() => count * 2)
+            return { count, doubled }
+          }
+        `,
+        { moduleMetadata },
+        path.join(baseDir, 'renamed-hook-source.tsx'),
+      )
+      transform(
+        `
+          import { $state } from 'fict'
+
+          /** @fictReturn [0: 'signal'] */
+          export function usePair() {
+            const count = $state(0)
+            return [count]
+          }
+        `,
+        { moduleMetadata },
+        path.join(baseDir, 'renamed-hook-array-source.tsx'),
+      )
+      transform(
+        `
+          import { $state } from 'fict'
+
+          /** @fictReturn { directAccessor: 'signal' } */
+          export function useCount() {
+            const count = $state(0)
+            return count
+          }
+        `,
+        { moduleMetadata },
+        path.join(baseDir, 'renamed-hook-direct-source.tsx'),
+      )
+      transform(
+        `
+          import { $state } from 'fict'
+
+          /** @fictReturn { count: 'signal' } */
+          export default function useCounter() {
+            const count = $state(0)
+            return { count }
+          }
+        `,
+        { moduleMetadata },
+        path.join(baseDir, 'renamed-hook-default-source.tsx'),
+      )
+
+      const objectOutput = transform(
+        `
+          import { useCounter as counter } from './renamed-hook-source'
+
+          export function App() {
+            const state = counter()
+            return <span>{state.count}:{state.doubled}</span>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-renamed-hook-object.tsx'),
+      )
+
+      expect(objectOutput).toMatch(/state\.count\(\)/)
+      expect(objectOutput).toMatch(/state\.doubled\(\)/)
+
+      const writeOutput = transform(
+        `
+          import { useCounter as counter } from './renamed-hook-source'
+
+          export function App() {
+            const state = counter()
+            state.count = 2
+            state.count++
+            return <span>{state.count}</span>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-renamed-hook-write.tsx'),
+      )
+
+      expect(writeOutput).toContain('state.count(2)')
+      expect(writeOutput).toMatch(/state\.count\(\+\+__prev_|state\.count\(--__prev_/)
+      expect(writeOutput).not.toContain('state.count = 2')
+      expect(writeOutput).not.toContain('state.count++')
+
+      const arrayOutput = transform(
+        `
+          import { usePair as pair } from './renamed-hook-array-source'
+
+          export function App() {
+            const state = pair()
+            return <span>{state[0]}</span>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-renamed-hook-array.tsx'),
+      )
+
+      expect(arrayOutput).toMatch(/state\[0\]\(\)/)
+
+      const directOutput = transform(
+        `
+          import { useCount as counter } from './renamed-hook-direct-source'
+
+          export function App() {
+            const count = counter()
+            return count
+          }
+        `,
+        { moduleMetadata },
+        path.join(baseDir, 'app-renamed-hook-direct.tsx'),
+      )
+
+      expect(directOutput).toContain('return count();')
+
+      const defaultOutput = transform(
+        `
+          import counter from './renamed-hook-default-source'
+
+          export function App() {
+            const state = counter()
+            return <span>{state.count}</span>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-renamed-hook-default.tsx'),
+      )
+
+      expect(defaultOutput).toMatch(/state\.count\(\)/)
+    })
+
+    it('propagates renamed hook metadata through re-exports', () => {
+      const moduleMetadata = new Map()
+      transform(
+        `
+          import { $state } from 'fict'
+
+          /** @fictReturn { count: 'signal' } */
+          export function useCounter() {
+            const count = $state(0)
+            return { count }
+          }
+        `,
+        { moduleMetadata },
+        path.join(baseDir, 'renamed-hook-reexport-source.tsx'),
+      )
+      transform(
+        `
+          export { useCounter as counter } from './renamed-hook-reexport-source'
+        `,
+        { moduleMetadata },
+        path.join(baseDir, 'renamed-hook-reexport-barrel.ts'),
+      )
+      const output = transform(
+        `
+          import { counter } from './renamed-hook-reexport-barrel'
+
+          export function App() {
+            const state = counter()
+            return <span>{state.count}</span>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-renamed-hook-reexport.tsx'),
+      )
+
+      expect(output).toMatch(/state\.count\(\)/)
+    })
+
     it('propagates object-style direct accessor annotations for opaque hooks', () => {
       const hookSource = `
         import { readCount } from './external'
