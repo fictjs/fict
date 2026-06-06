@@ -1491,6 +1491,38 @@ describe('resumable event handler transformation', () => {
     )
   })
 
+  it('throws for explicit resumable handlers that capture reassigned function deps', () => {
+    const ast = parseFile(`
+      function Comp() {
+        let handler = () => 'off'
+        handler = () => 'on'
+        return <button onClick$={handler}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+      /function mutations: handler -> = handler/i,
+    )
+  })
+
+  it('throws for explicit resumable handlers that capture conditionally reassigned function deps', () => {
+    const ast = parseFile(`
+      function Comp(props) {
+        let handler = () => 'off'
+        if (props.enabled) {
+          handler = () => 'on'
+        }
+        return <button onClick$={handler}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+      /function mutations: handler -> = handler/i,
+    )
+  })
+
   it('throws for explicit resumable handlers that capture mutated function declarations', () => {
     const ast = parseFile(`
       function Comp() {
@@ -2192,6 +2224,25 @@ describe('resumable event handler transformation', () => {
         return <button onClick={() => {
           console.log("before")
           console.log(helper.extra)
+        }}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(code).not.toContain('setAttribute(\"on:click\"')
+  })
+
+  it('falls back for auto-extracted handlers that capture reassigned function deps', () => {
+    const ast = parseFile(`
+      function Comp() {
+        let handler = () => 'off'
+        handler = () => 'on'
+        return <button onClick={() => {
+          console.log("before")
+          console.log(handler())
         }}>Click</button>
       }
     `)

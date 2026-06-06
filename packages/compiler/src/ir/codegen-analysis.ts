@@ -570,8 +570,19 @@ export function collectFunctionDependencyMutations(
   }
 
   const mutations = new Map<string, Set<string>>()
+  const recordBindingMutation = (name: string, detail: string): void => {
+    const owner = resolveOwner(name)
+    if (!owner) return
+    const details = mutations.get(owner) ?? new Set<string>()
+    details.add(detail)
+    mutations.set(owner, details)
+  }
   for (const block of fn.blocks) {
     for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' && !instr.declarationKind) {
+        const targetName = deSSAVarName(instr.target.name)
+        recordBindingMutation(targetName, `= ${targetName}`)
+      }
       if (instr.kind === 'Assign' || instr.kind === 'Expression') {
         collectFunctionMutationExpression(instr.value, ownerByName, mutations)
       }
