@@ -3,7 +3,7 @@ import { declare } from '@babel/helper-plugin-utils'
 import traverseModule from '@babel/traverse'
 
 import { createCompilerCacheFingerprint } from './cache-fingerprint'
-import { SAFE_FUNCTIONS } from './constants'
+import { SAFE_FUNCTIONS, isRuntimeImportModule } from './constants'
 import { debugLog } from './debug'
 import { createCompilerExplainArtifact, emitCompilerExplainArtifact } from './explain'
 import { buildHIR } from './ir/build-hir'
@@ -2423,12 +2423,18 @@ function createHIREntrypointVisitor(
         const macroNamespaceBindingSources = new Map<BabelCore.types.Identifier, string>()
         const dollarMemoMacroBindingIds = new Set<BabelCore.types.Identifier>()
         const reactiveCreationBindingIds = new Set<BabelCore.types.Identifier>()
+        const reactiveCreationNamespaceBindingIds = new Set<BabelCore.types.Identifier>()
         const stateArgumentAllowedBindingIds = new Set<BabelCore.types.Identifier>()
         const importedReactiveBindingIds = new Set<BabelCore.types.Identifier>()
+        const isReactiveCreationName = (name: string): boolean =>
+          name === 'createEffect' || name === 'createMemo' || name === 'createSelector'
         path.traverse({
           ImportDeclaration(importPath) {
             const source = importPath.node.source.value
-            if (source !== 'fict' && source !== 'fict/slim' && source !== 'fict/plus') return
+            const isFictMacroSource = source === 'fict' || source === 'fict/slim'
+            const isSupportedMacroSource = isFictMacroSource || source === 'fict/plus'
+            const isRuntimeSource = isRuntimeImportModule(source)
+            if (!isSupportedMacroSource && !isRuntimeSource) return
             const addImportBinding = (
               target: Set<BabelCore.types.Identifier>,
               localName: string,
@@ -2446,16 +2452,18 @@ function createHIREntrypointVisitor(
               }
             }
             for (const spec of importPath.node.specifiers) {
-              if (
-                t.isImportNamespaceSpecifier(spec) &&
-                (source === 'fict' || source === 'fict/slim')
-              ) {
-                addNamespaceBinding(spec.local.name)
+              if (t.isImportNamespaceSpecifier(spec)) {
+                if (isFictMacroSource) {
+                  addNamespaceBinding(spec.local.name)
+                }
+                if (isRuntimeSource) {
+                  addImportBinding(reactiveCreationNamespaceBindingIds, spec.local.name)
+                }
                 continue
               }
               if (t.isImportSpecifier(spec) && t.isIdentifier(spec.imported)) {
                 const importedName = spec.imported.name
-                if (source === 'fict' || source === 'fict/slim') {
+                if (isFictMacroSource) {
                   fictImports.add(importedName)
                   if (importedName === '$state' && t.isIdentifier(spec.local)) {
                     stateMacroNames.add(spec.local.name)
@@ -2466,7 +2474,10 @@ function createHIREntrypointVisitor(
                     addImportBinding(macroBindingIds.effect, spec.local.name)
                   }
                 }
-                if (importedName === '$memo' || importedName === 'createMemo') {
+                if (
+                  isSupportedMacroSource &&
+                  (importedName === '$memo' || importedName === 'createMemo')
+                ) {
                   fictImports.add(importedName)
                   if (t.isIdentifier(spec.local)) {
                     memoMacroNames.add(spec.local.name)
@@ -2482,11 +2493,7 @@ function createHIREntrypointVisitor(
                     storeMacroNames.add(spec.local.name)
                   }
                 }
-                if (
-                  importedName === 'createEffect' ||
-                  importedName === 'createMemo' ||
-                  importedName === 'createSelector'
-                ) {
+                if (isReactiveCreationName(importedName)) {
                   addImportBinding(reactiveCreationBindingIds, spec.local.name)
                   addImportBinding(stateArgumentAllowedBindingIds, spec.local.name)
                 }
@@ -2996,11 +3003,23 @@ function createHIREntrypointVisitor(
           callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
         ): boolean => {
           const callee = callPath.node.callee
-          if (!t.isIdentifier(callee)) return false
-          const binding = callPath.scope.getBinding(callee.name)
+          if (t.isIdentifier(callee)) {
+            const binding = callPath.scope.getBinding(callee.name)
+            return !!(
+              binding &&
+              reactiveCreationBindingIds.has(binding.identifier as BabelCore.types.Identifier)
+            )
+          }
+          if (!t.isMemberExpression(callee)) return false
+          if (!t.isIdentifier(callee.object)) return false
+          const propertyName = getStaticMemberPropertyName(callee)
+          if (!propertyName || !isReactiveCreationName(propertyName)) return false
+          const binding = callPath.scope.getBinding(callee.object.name)
           return !!(
             binding &&
-            reactiveCreationBindingIds.has(binding.identifier as BabelCore.types.Identifier)
+            reactiveCreationNamespaceBindingIds.has(
+              binding.identifier as BabelCore.types.Identifier,
+            )
           )
         }
         const isImportedDollarMemoCall = (
