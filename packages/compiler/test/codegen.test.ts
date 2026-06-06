@@ -4849,6 +4849,84 @@ describe('fragment handling', () => {
     expect(code).toBeDefined()
   })
 
+  it('uses a runtime fragment alias for short fragments when a local const Fragment exists', () => {
+    const output = transform(`
+      const Fragment = () => <div>shadow</div>
+
+      export function App() {
+        return (
+          <>
+            <span>a</span>
+          </>
+        )
+      }
+    `)
+
+    expect(output).toContain('Fragment as Fragment_1')
+    expect(output).toContain('const Fragment =')
+    expect(output).toContain('type: Fragment_1')
+    expect(output).not.toContain('type: Fragment,')
+  })
+
+  it('uses a runtime fragment alias for short fragments when a local function Fragment exists', () => {
+    const output = transform(`
+      function Fragment() {
+        return <div>shadow</div>
+      }
+
+      export function App() {
+        return (
+          <>
+            <span>a</span>
+          </>
+        )
+      }
+    `)
+
+    expect(output).toContain('Fragment as Fragment_1')
+    expect(output).toContain('function Fragment()')
+    expect(output).toContain('type: Fragment_1')
+  })
+
+  it('uses a runtime fragment alias for short fragments when Fragment is imported', () => {
+    const output = transform(`
+      import { Fragment } from './local'
+
+      export const marker = Fragment
+
+      export function App() {
+        return (
+          <>
+            <span>a</span>
+          </>
+        )
+      }
+    `)
+
+    expect(output).toContain("import { Fragment } from './local'")
+    expect(output).toContain('export let marker = Fragment')
+    expect(output).toContain('Fragment as Fragment_1')
+    expect(output).toContain('type: Fragment_1')
+  })
+
+  it('keeps explicit local Fragment components separate from short fragment syntax', () => {
+    const output = transform(`
+      const Fragment = (props: any) => <section>{props.children}</section>
+
+      export function App() {
+        return (
+          <Fragment label="local">
+            <span>a</span>
+          </Fragment>
+        )
+      }
+    `)
+
+    expect(output).not.toContain('Fragment as Fragment_1')
+    expect(output).toContain('type: Fragment')
+    expect(output).toContain('label: "local"')
+  })
+
   it('should handle nested fragments', () => {
     const ast = parseFile(`
       function NestedList() {

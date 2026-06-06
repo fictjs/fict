@@ -4646,7 +4646,7 @@ function lowerJSXElement(
 
       return t.callExpression(t.identifier('createElement'), [
         t.objectExpression([
-          t.objectProperty(t.identifier('type'), t.identifier('Fragment')),
+          t.objectProperty(t.identifier('type'), runtimeIdentifier(ctx, 'fragment')),
           t.objectProperty(
             t.identifier('props'),
             children.length > 0 && childrenProp
