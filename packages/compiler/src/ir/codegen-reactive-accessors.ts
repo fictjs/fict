@@ -969,8 +969,32 @@ function buildControlDependencyMap(fn: HIRFunction): Map<Instruction, Set<string
       }
       case 'switch': {
         const discDeps = getControlExpressionIdentifiers(node.discriminant)
-        const nextDeps = mergeDeps(activeDeps, discDeps)
-        node.cases.forEach(c => walk(c.body, nextDeps))
+        const switchDeps = mergeDeps(activeDeps, discDeps)
+        const caseTestDeps = node.cases.map(c =>
+          c.test ? getControlExpressionIdentifiers(c.test) : new Set<string>(),
+        )
+        const allCaseTestDeps = caseTestDeps.reduce(
+          (deps, current) => mergeDeps(deps, current),
+          new Set<string>(),
+        )
+        let checkedCaseTestDeps = new Set<string>()
+        let hasSeenDefault = false
+        node.cases.forEach((c, index) => {
+          const currentTestDeps = caseTestDeps[index]!
+          let bodyDeps = mergeDeps(switchDeps, checkedCaseTestDeps)
+          if (c.test) {
+            bodyDeps = mergeDeps(bodyDeps, currentTestDeps)
+          }
+          if (!c.test || hasSeenDefault) {
+            bodyDeps = mergeDeps(bodyDeps, allCaseTestDeps)
+          }
+          walk(c.body, bodyDeps)
+          if (c.test) {
+            checkedCaseTestDeps = mergeDeps(checkedCaseTestDeps, currentTestDeps)
+          } else {
+            hasSeenDefault = true
+          }
+        })
         return
       }
       case 'try':

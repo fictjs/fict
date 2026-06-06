@@ -509,6 +509,192 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('tracks state reads in switch case tests', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      const setters: Array<((value: string) => void) | undefined> = []
+      export const calls: string[] = []
+      export const api = {
+        set(index: number, value: string) {
+          setters[index]?.(value)
+        },
+        clearCalls() {
+          calls.length = 0
+        },
+      }
+
+      function DirectCaseProbe() {
+        const selected = $state('target')
+        setters[0] = (value: string) => selected(value)
+
+        let label = 'direct:no'
+        switch ('target') {
+          case selected():
+            label = 'direct:yes'
+            break
+          default:
+            label = 'direct:no'
+        }
+        return <span>{label}</span>
+      }
+
+      function MultipleCaseProbe() {
+        const first = $state('skip')
+        setters[1] = (value: string) => first(value)
+        const second = $state('target')
+        setters[2] = (value: string) => second(value)
+
+        let label = 'multi:none'
+        switch ('target') {
+          case first():
+            label = 'multi:first'
+            break
+          case second():
+            label = 'multi:second'
+            break
+          default:
+            label = 'multi:default'
+        }
+        return <span>{label}</span>
+      }
+
+      function FallthroughProbe() {
+        const first = $state('skip')
+        setters[3] = (value: string) => first(value)
+        const second = $state('target')
+        setters[4] = (value: string) => second(value)
+
+        let label = ''
+        switch ('target') {
+          case first():
+            label = 'fall:first'
+          case second():
+            label = label ? label + '+second' : 'fall:second'
+            break
+          default:
+            label = 'fall:default'
+        }
+        return <span>{label}</span>
+      }
+
+      function DefaultProbe() {
+        const before = $state('before')
+        setters[5] = (value: string) => before(value)
+        const after = $state('after')
+        setters[6] = (value: string) => after(value)
+
+        let label = 'default:none'
+        switch ('target') {
+          case before():
+            label = 'default:before'
+            break
+          default:
+            label = 'default:hit'
+            break
+          case after():
+            label = 'default:after'
+            break
+        }
+        return <span>{label}</span>
+      }
+
+      function NoDefaultProbe() {
+        const selected = $state('miss')
+        setters[7] = (value: string) => selected(value)
+
+        let label = 'nodefault:miss'
+        switch ('target') {
+          case selected():
+            label = 'nodefault:hit'
+            break
+        }
+        return <span>{label}</span>
+      }
+
+      function CallbackCaseProbe() {
+        const selected = $state('target')
+        setters[8] = (value: string) => selected(value)
+
+        const items = ['target']
+        let label = 'callback:no'
+        switch ('target') {
+          case items.find(item => item === selected()):
+            label = 'callback:yes'
+            break
+          default:
+            label = 'callback:no'
+        }
+        return <span>{label}</span>
+      }
+
+      function SideEffectOrderProbe() {
+        const selected = $state('skip')
+        setters[9] = (value: string) => selected(value)
+
+        function probe(name: string, value: string) {
+          calls.push(name)
+          return value
+        }
+
+        let label = 'order:none'
+        switch ('target') {
+          case probe('first', selected()):
+            label = 'order:first'
+            break
+          case probe('second', 'target'):
+            label = 'order:second'
+            break
+        }
+        return <span>{label}</span>
+      }
+
+      function App() {
+        return (
+          <span data-testid="value">
+            <DirectCaseProbe />|<MultipleCaseProbe />|<FallthroughProbe />|<DefaultProbe />|<NoDefaultProbe />|<CallbackCaseProbe />|<SideEffectOrderProbe />
+          </span>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(index: number, value: string): void; clearCalls(): void }
+      calls: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe(
+      'direct:yes|multi:second|fall:second|default:hit|nodefault:miss|callback:yes|order:second',
+    )
+    expect(mod.calls).toEqual(['first', 'second'])
+
+    mod.api.clearCalls()
+    mod.api.set(0, 'miss')
+    mod.api.set(1, 'target')
+    mod.api.set(3, 'target')
+    mod.api.set(6, 'target')
+    mod.api.set(7, 'target')
+    mod.api.set(8, 'miss')
+    mod.api.set(9, 'target')
+    await flushUpdates()
+
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe(
+      'direct:no|multi:first|fall:first+second|default:after|nodefault:hit|callback:no|order:first',
+    )
+    expect(mod.calls).toEqual(['first'])
+
+    teardown()
+    container.remove()
+  })
+
   it('evaluates impure reactive derived declaration initializers eagerly', async () => {
     const source = `
       import { $state, render } from 'fict'
