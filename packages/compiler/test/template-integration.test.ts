@@ -8767,6 +8767,51 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not shadow named function-expression self bindings with generated list params', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const rows = [{ id: 'a' }]
+        return (
+          <ul>
+            {rows.map(function __key(item) {
+              return <li key={item.id}>{__key.name}</li>
+            })}
+            {rows.map(function __item() {
+              return <li key="item">{__item.name}</li>
+            })}
+            {rows.map(function __index(item) {
+              return <li key={item.id}>{__index.name}</li>
+            })}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    expect(Array.from(container.querySelectorAll('li')).map(li => li.textContent)).toEqual([
+      '__key',
+      '__item',
+      '__index',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
   it('invokes function-valued list items used as event handlers', async () => {
     const source = `
       import { render } from 'fict'

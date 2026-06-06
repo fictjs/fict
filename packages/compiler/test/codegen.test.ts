@@ -1538,6 +1538,37 @@ describe('event handler transformation', () => {
     expect(code).toContain('(__item_0, __index_0, __key_0)')
   })
 
+  it('freshens generated list parameters around named function expression self bindings', () => {
+    const ast = parseFile(`
+      function List() {
+        const rows = [{ id: 'a' }]
+        return (
+          <ul>
+            {rows.map(function __key(item) {
+              return <li key={item.id}>{__key.name}</li>
+            })}
+            {rows.map(function __item() {
+              return <li key="item">{__item.name}</li>
+            })}
+            {rows.map(function __index(item) {
+              return <li key={item.id}>{__index.name}</li>
+            })}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('function __key(item, __index, __key_0)')
+    expect(code).toContain('function __item(__item_0, __index, __key)')
+    expect(code).toContain('function __index(item, __index_0, __key)')
+    expect(code).not.toContain('function __key(item, __index, __key)')
+    expect(code).not.toContain('function __item(__item,')
+    expect(code).not.toContain('function __index(item, __index,')
+  })
+
   it('does not extract delegated data when handler comes from event param', () => {
     const ast = parseFile(`
       function Comp() {
