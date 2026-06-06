@@ -1555,6 +1555,81 @@ describe('Spec rule coverage', () => {
     ).not.toThrow(/FICT-R004/)
   })
 
+  it('rejects optional $state and $effect macro calls', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        function Demo() {
+          const count = $state?.(0)
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $effect } from 'fict'
+        function Demo() {
+          $effect?.(() => console.log('ready'))
+          return <div />
+        }
+      `,
+      `
+        import { $state as state } from 'fict'
+        function Demo() {
+          const count = state?.(0)
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $effect as effect } from 'fict'
+        function Demo({ ready }) {
+          if (ready) {
+            effect?.(() => console.log('ready'))
+          }
+          return <div />
+        }
+      `,
+      `
+        import { $state as state } from 'fict'
+        function Demo({ items }) {
+          for (const item of items) {
+            const count = state?.(item)
+            return <button>{count}</button>
+          }
+          return <button />
+        }
+      `,
+    ]
+
+    for (const input of cases) {
+      expect(() => transform(input)).toThrow(/optional-call syntax/)
+    }
+  })
+
+  it('allows optional local macro-name shadows and top-level runtime optional calls', () => {
+    expect(() =>
+      transform(`
+        import { $state as importedState, $effect as importedEffect } from 'fict'
+        function Demo({ ready }) {
+          const $state = (value: number) => value
+          const $effect = (fn: () => void) => fn()
+          const count = importedState(0)
+          importedEffect(() => {})
+          if (ready) {
+            const value = $state?.(1)
+            $effect?.(() => console.log(value))
+          }
+          return <button>{count}</button>
+        }
+      `),
+    ).not.toThrow(/optional-call syntax/)
+
+    expect(() =>
+      transform(`
+        import { createMemo } from 'fict'
+        const value = createMemo?.(() => 1)
+      `),
+    ).not.toThrow(/optional-call syntax/)
+  })
+
   it('throws when $memo is created inside loops or conditionals', () => {
     const cases = [
       `

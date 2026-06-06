@@ -2823,7 +2823,9 @@ function createHIREntrypointVisitor(
           if (binding) tracked.add(binding.identifier as BabelCore.types.Identifier)
         }
         const getImportedMacroCallKind = (
-          callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
+          callPath: BabelCore.NodePath<
+            BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
+          >,
         ): FictMacroKind | null => {
           const callee = callPath.node.callee
           if (!t.isIdentifier(callee)) return null
@@ -2847,6 +2849,23 @@ function createHIREntrypointVisitor(
           if (callee.name === '$effect' && !fictImports.has('$effect')) return 'effect'
           return null
         }
+        const rejectUnsupportedOptionalMacroCall = (
+          callPath: BabelCore.NodePath<BabelCore.types.OptionalCallExpression>,
+        ): void => {
+          const macroKind = getImportedMacroCallKind(callPath)
+          if (macroKind !== 'state' && macroKind !== 'effect') return
+          const macroName = macroKind === 'state' ? '$state' : '$effect'
+          const callee = callPath.node.callee
+          const displayName =
+            t.isIdentifier(callee) && callee.name !== macroName
+              ? `${callee.name} (${macroName})`
+              : macroName
+
+          throw callPath.buildCodeFrameError(
+            `${displayName} cannot be called with optional-call syntax.\n\n` +
+              `Compiler macros are required at compile time. Use ${macroName}(...) directly.`,
+          )
+        }
         const getImportedValueOnlyMacroName = (
           idPath: BabelCore.NodePath<BabelCore.types.Identifier>,
         ): '$state' | '$effect' | null => {
@@ -2860,7 +2879,8 @@ function createHIREntrypointVisitor(
         const isMacroCallCallee = (
           idPath: BabelCore.NodePath<BabelCore.types.Identifier>,
         ): boolean =>
-          idPath.parentPath.isCallExpression() && idPath.parentPath.node.callee === idPath.node
+          (idPath.parentPath.isCallExpression() || idPath.parentPath.isOptionalCallExpression()) &&
+          idPath.parentPath.node.callee === idPath.node
         path.traverse({
           Identifier(idPath) {
             if (!idPath.isReferencedIdentifier()) return
@@ -3519,6 +3539,7 @@ function createHIREntrypointVisitor(
             }
           },
           OptionalCallExpression(callPath) {
+            rejectUnsupportedOptionalMacroCall(callPath)
             emitReactiveCreationPlacementWarning(callPath)
           },
           AssignmentExpression(assignPath) {
