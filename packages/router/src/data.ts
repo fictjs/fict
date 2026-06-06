@@ -163,7 +163,7 @@ export function query<T, Args extends unknown[]>(
         // Update cache
         const entry: QueryCacheEntry<T> = {
           timestamp: Date.now(),
-          promise,
+          promise: promise as Promise<T>,
           result,
           intent: 'navigate',
         }
@@ -183,7 +183,7 @@ export function query<T, Args extends unknown[]>(
           errorSignal(error)
           loadingSignal(false)
         })
-        throw error
+        return undefined
       })
 
     // Store promise in cache immediately for deduplication

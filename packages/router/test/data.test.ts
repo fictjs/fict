@@ -67,6 +67,37 @@ describe('query', () => {
     // Different args should create separate cache entries
     expect(callCount).toBe(2)
   })
+
+  it('should keep rejected query failures internal', async () => {
+    const error = new Error('query failed')
+    const fetchUser = query(async () => {
+      throw error
+    }, 'failingQuery')
+
+    const accessor = fetchUser()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(accessor()).toBe(undefined)
+  })
+
+  it('should retry successfully after a rejected query', async () => {
+    const fetchUser = query(
+      vi.fn().mockRejectedValueOnce(new Error('query failed')).mockResolvedValueOnce('ok'),
+      'retryQuery',
+    )
+
+    const first = fetchUser('123')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(first()).toBe(undefined)
+
+    const second = fetchUser('123')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(second()).toBe('ok')
+  })
 })
 
 describe('revalidate', () => {
