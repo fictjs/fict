@@ -370,6 +370,101 @@ function bindingOnlyClassDeclaration(
   return declaration
 }
 
+function collectBabelIdentifierNames(
+  node: BabelCore.types.Node | null | undefined,
+  into: Set<string>,
+): void {
+  if (!node) return
+  if (t.isIdentifier(node)) {
+    into.add(node.name)
+  }
+
+  const visitorKeys =
+    (t as unknown as { VISITOR_KEYS?: Record<string, string[]> }).VISITOR_KEYS?.[node.type] ?? []
+  for (const key of visitorKeys) {
+    const value = (node as unknown as Record<string, unknown>)[key]
+    if (Array.isArray(value)) {
+      for (const child of value) {
+        if (child && typeof child === 'object' && 'type' in child) {
+          collectBabelIdentifierNames(child as BabelCore.types.Node, into)
+        }
+      }
+      continue
+    }
+    if (value && typeof value === 'object' && 'type' in value) {
+      collectBabelIdentifierNames(value as BabelCore.types.Node, into)
+    }
+  }
+}
+
+function isVoidZeroExpression(node: BabelCore.types.Node): boolean {
+  return (
+    t.isUnaryExpression(node) &&
+    node.operator === 'void' &&
+    t.isNumericLiteral(node.argument) &&
+    node.argument.value === 0
+  )
+}
+
+function destructuringDefaultTempName(init: BabelCore.types.Expression): string | null {
+  if (!t.isConditionalExpression(init)) return null
+  if (!t.isIdentifier(init.alternate)) return null
+
+  const test = init.test
+  if (!t.isBinaryExpression(test) || (test.operator !== '===' && test.operator !== '==')) {
+    return null
+  }
+
+  const alternateName = init.alternate.name
+  const leftMatches =
+    t.isIdentifier(test.left, { name: alternateName }) && isVoidZeroExpression(test.right)
+  const rightMatches =
+    t.isIdentifier(test.right, { name: alternateName }) && isVoidZeroExpression(test.left)
+
+  return leftMatches || rightMatches ? alternateName : null
+}
+
+function collectEagerDestructuringDeclaratorNames(
+  declaration: BabelCore.types.VariableDeclaration,
+): Set<string> {
+  const eager = new Set<string>()
+  const initByName = new Map<string, BabelCore.types.Expression | null | undefined>()
+  const priorNames = new Set<string>()
+
+  for (const declarator of declaration.declarations) {
+    if (!t.isIdentifier(declarator.id)) continue
+    const name = declarator.id.name
+    initByName.set(name, declarator.init)
+
+    if (declarator.init) {
+      const tempName = destructuringDefaultTempName(declarator.init)
+      if (tempName && priorNames.has(tempName)) {
+        eager.add(name)
+        eager.add(tempName)
+      }
+    }
+
+    priorNames.add(name)
+  }
+
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const [name, init] of initByName) {
+      if (!eager.has(name) || !init) continue
+      const deps = new Set<string>()
+      collectBabelIdentifierNames(init, deps)
+      for (const dep of deps) {
+        if (!initByName.has(dep) || eager.has(dep)) continue
+        eager.add(dep)
+        changed = true
+      }
+    }
+  }
+
+  return eager
+}
+
 function collectVarBindingDeclarationsFromStatement(
   stmt: BabelCore.types.Statement,
 ): BabelStatement[] {
@@ -912,6 +1007,7 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
         continue
       }
       if (t.isVariableDeclaration(stmt)) {
+        const eagerDestructuringNames = collectEagerDestructuringDeclaratorNames(stmt)
         for (const decl of stmt.declarations) {
           const declKind = normalizeVarKind(stmt.kind)
           if (t.isIdentifier(decl.id)) {
@@ -922,6 +1018,7 @@ function _buildBlocksFromStatements(statements: BabelCore.types.Statement[]): Ba
                 ? convertExpression(decl.init)
                 : ({ kind: 'Literal', value: undefined } as HLiteral),
               declarationKind: declKind,
+              preserveEagerEvaluation: eagerDestructuringNames.has(decl.id.name) || undefined,
             })
             continue
           }
@@ -1541,6 +1638,7 @@ function convertFunction(
     }
     if (t.isVariableDeclaration(stmt)) {
       const declKind = normalizeVarKind(stmt.kind)
+      const eagerDestructuringNames = collectEagerDestructuringDeclaratorNames(stmt)
       for (const decl of stmt.declarations) {
         if (t.isIdentifier(decl.id)) {
           current.block.instructions.push({
@@ -1551,6 +1649,7 @@ function convertFunction(
               : ({ kind: 'Literal', value: undefined } as HLiteral),
             declarationKind: declKind,
             loc: decl.loc ?? stmt.loc,
+            preserveEagerEvaluation: eagerDestructuringNames.has(decl.id.name) || undefined,
           })
           continue
         }
@@ -2562,6 +2661,7 @@ function processStatement(
   }
 
   if (t.isVariableDeclaration(stmt)) {
+    const eagerDestructuringNames = collectEagerDestructuringDeclaratorNames(stmt)
     for (const decl of stmt.declarations) {
       const declKind = normalizeVarKind(stmt.kind)
       if (t.isIdentifier(decl.id)) {
@@ -2573,6 +2673,7 @@ function processStatement(
             : ({ kind: 'Literal', value: undefined } as HLiteral),
           declarationKind: declKind,
           loc: decl.loc ?? stmt.loc,
+          preserveEagerEvaluation: eagerDestructuringNames.has(decl.id.name) || undefined,
         })
         continue
       }

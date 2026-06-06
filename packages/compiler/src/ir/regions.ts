@@ -3834,6 +3834,12 @@ function generateRegionStatements(
     if (hoistedInstructionSet.has(instr)) {
       continue
     }
+    if (instr.kind === 'Assign' && instr.preserveEagerEvaluation) {
+      const index = instructionIndexes.get(instr) ?? 0
+      hoistPriorLocalDependencies(instr.value, index)
+      emitHoistedInstruction(instr)
+      continue
+    }
     if (isReactiveCreationInstruction(instr)) {
       const index = instructionIndexes.get(instr) ?? 0
       instr.value.arguments.forEach(arg => hoistPriorLocalDependencies(arg, index))
@@ -5124,10 +5130,15 @@ function instructionToStatement(
     const isTracked = ctx.trackedVars.has(baseName)
     const isSignal = ctx.signalVars?.has(baseName) ?? false
     const aliasVars = ctx.aliasVars ?? (ctx.aliasVars = new Set())
+    const preserveEagerEvaluation = instr.preserveEagerEvaluation === true
+    if (preserveEagerEvaluation) {
+      ctx.memoVars?.delete(baseName)
+    }
     // Check both expression-level dependencies AND pre-computed memoVars (from computeReactiveAccessors)
     // This handles cases where dependencies are inside callbacks (e.g., array.find(n => n === target))
     const dependsOnTracked =
-      expressionUsesTracked(instr.value, ctx) || (ctx.memoVars?.has(baseName) ?? false)
+      !preserveEagerEvaluation &&
+      (expressionUsesTracked(instr.value, ctx) || (ctx.memoVars?.has(baseName) ?? false))
     const capturedTracked =
       ctx.externalTracked && ctx.externalTracked.has(baseName) && !declaredVars.has(baseName)
     const isShadowDeclaration = !!declKind && declaredVars.has(baseName)

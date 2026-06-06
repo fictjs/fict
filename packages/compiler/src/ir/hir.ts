@@ -248,6 +248,8 @@ export interface AssignInstruction extends SourceInfo {
   isMutation?: boolean | undefined
   /** Function declaration came from a lexical block and must not flow outside it. */
   blockScopedFunction?: boolean | undefined
+  /** Declaration-time work that must stay eager even when it reads reactive values. */
+  preserveEagerEvaluation?: boolean | undefined
 }
 
 export interface ExpressionInstruction extends SourceInfo {

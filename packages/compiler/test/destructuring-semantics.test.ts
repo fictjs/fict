@@ -136,6 +136,42 @@ describe('destructuring semantic alignment', () => {
     expect(nestedDecl({})).toEqual([2, 3])
   })
 
+  it('evaluates reactive destructuring declaration defaults at declaration time', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function StateDefaultAfterMutation() {
+        let count = $state(0)
+        const obj = {}
+        const { a = count } = obj
+        count = 5
+        return a
+      }
+
+      export function ReadBeforeObjectMutation() {
+        let count = $state(0)
+        const obj = {}
+        const { a = count } = obj
+        obj.a = 9
+        return a
+      }
+
+      export function ArrayDefaultAfterMutation() {
+        let count = $state(0)
+        const arr = []
+        const [a = count] = arr
+        count = 5
+        return a
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+
+    expect(compiledFunction(mod, 'StateDefaultAfterMutation')()).toBe(0)
+    expect(compiledFunction(mod, 'ReadBeforeObjectMutation')()).toBe(0)
+    expect(compiledFunction(mod, 'ArrayDefaultAfterMutation')()).toBe(0)
+  })
+
   it('preserves defaults in destructuring assignments', () => {
     const source = `
       export function assign(obj, arr) {

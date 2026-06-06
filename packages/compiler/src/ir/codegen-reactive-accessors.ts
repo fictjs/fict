@@ -1193,7 +1193,13 @@ export function computeReactiveAccessors(
             instr.value.kind === 'CallExpression' &&
             instr.value.callee.kind === 'Identifier' &&
             ['mergeProps'].includes(instr.value.callee.name)
-          if (hasDataDep && !isSignal(target) && !isStore(target) && !isReactiveObjectCall) {
+          if (
+            hasDataDep &&
+            !instr.preserveEagerEvaluation &&
+            !isSignal(target) &&
+            !isStore(target) &&
+            !isReactiveObjectCall
+          ) {
             memo.add(target)
           }
         } else if (instr.kind === 'Phi') {
