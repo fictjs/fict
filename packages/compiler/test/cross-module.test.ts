@@ -199,6 +199,60 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('keeps internal createStore tuple exports opaque unless destructured', () => {
+      const internalSource = `
+        import { createStore } from 'fict/internal'
+        export const pair = createStore({ count: 1 })
+      `
+      const runtimeInternalSource = `
+        import { createStore } from '@fictjs/runtime/internal'
+        export const pair = createStore({ count: 1 })
+      `
+      const namespaceSource = `
+        import * as internal from 'fict/internal'
+        export const pair = internal.createStore({ count: 1 })
+      `
+      const tupleSource = `
+        import { createStore } from 'fict/internal'
+        export const [store] = createStore({ count: 1 })
+      `
+      const namespaceTupleSource = `
+        import * as internal from '@fictjs/runtime/internal'
+        export const [store] = internal.createStore({ count: 1 })
+      `
+      const publicSource = `
+        import { $store } from 'fict'
+        export const user = $store({ name: 'Ada' })
+      `
+      const moduleMetadata = new Map()
+      const internalPath = path.join(baseDir, 'internal-create-store-direct.ts')
+      const runtimeInternalPath = path.join(baseDir, 'runtime-internal-create-store-direct.ts')
+      const namespacePath = path.join(baseDir, 'internal-create-store-namespace.ts')
+      const tuplePath = path.join(baseDir, 'internal-create-store-tuple.ts')
+      const namespaceTuplePath = path.join(baseDir, 'internal-create-store-namespace-tuple.ts')
+      const publicPath = path.join(baseDir, 'public-store-control.ts')
+
+      transform(internalSource, { moduleMetadata }, internalPath)
+      transform(runtimeInternalSource, { moduleMetadata }, runtimeInternalPath)
+      transform(namespaceSource, { moduleMetadata }, namespacePath)
+      transform(tupleSource, { moduleMetadata }, tuplePath)
+      transform(namespaceTupleSource, { moduleMetadata }, namespaceTuplePath)
+      transform(publicSource, { moduleMetadata }, publicPath)
+
+      expect(moduleMetadata.get(path.resolve(internalPath))?.exports).toEqual({})
+      expect(moduleMetadata.get(path.resolve(runtimeInternalPath))?.exports).toEqual({})
+      expect(moduleMetadata.get(path.resolve(namespacePath))?.exports).toEqual({})
+      expect(moduleMetadata.get(path.resolve(tuplePath))?.exports).toEqual({
+        store: 'store',
+      })
+      expect(moduleMetadata.get(path.resolve(namespaceTuplePath))?.exports).toEqual({
+        store: 'store',
+      })
+      expect(moduleMetadata.get(path.resolve(publicPath))?.exports).toEqual({
+        user: 'store',
+      })
+    })
+
     it('keeps destructured metadata conservative for defaults rest and non-reactive values', () => {
       const arrayDefaultSource = `
         import { createSignal } from 'fict/advanced'

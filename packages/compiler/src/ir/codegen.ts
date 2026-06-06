@@ -693,8 +693,12 @@ export interface CodegenContext {
   moduleRuntimeNames?: Set<string> | undefined
   /** Module-level runtime import map (local name -> imported name). */
   moduleRuntimeImportMap?: Map<string, string> | undefined
+  /** Module-level runtime import source map (local name -> module source). */
+  moduleRuntimeImportSources?: Map<string, string> | undefined
   /** Module-level runtime namespace/default imports (local name). */
   moduleRuntimeNamespaceImports?: Set<string> | undefined
+  /** Module-level runtime namespace/default import source map (local name -> module source). */
+  moduleRuntimeNamespaceImportSources?: Map<string, string> | undefined
   /** Macro aliases for $state (compiler macro). */
   stateMacroNames?: Set<string> | undefined
   /** Use compiler-confirmed macro markers instead of identifier names. */
@@ -900,7 +904,9 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     moduleBindingKinds: new Map(),
     moduleRuntimeNames: new Set(),
     moduleRuntimeImportMap: new Map(),
+    moduleRuntimeImportSources: new Map(),
     moduleRuntimeNamespaceImports: new Set(),
+    moduleRuntimeNamespaceImportSources: new Map(),
     stateMacroNames: new Set(),
     localDeclaredNames: new Set(),
     currentFunctionDeclaredNames: new Set(),
@@ -6086,7 +6092,9 @@ export function lowerHIRWithRegions(
   const runtimeImports = collectRuntimeImports(originalBody, t)
   ctx.moduleRuntimeNames = runtimeImports.names
   ctx.moduleRuntimeImportMap = runtimeImports.importMap
+  ctx.moduleRuntimeImportSources = runtimeImports.importSources
   ctx.moduleRuntimeNamespaceImports = runtimeImports.namespaces
+  ctx.moduleRuntimeNamespaceImportSources = runtimeImports.namespaceSources
   applyImportedReactiveMetadata(originalBody, ctx, t, options, {
     markImportedHook(localName, hasMetadata) {
       const base = deSSAVarName(localName)

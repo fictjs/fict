@@ -13,6 +13,7 @@ import type { CodegenContext } from './codegen'
 import {
   getReactiveCallKindFromBabel,
   getRuntimeReactiveCreatorKind,
+  isInternalCreateStoreRuntimeImport,
 } from './codegen-reactive-kind'
 import { collectRuntimeImports } from './codegen-runtime-imports'
 import { isHookName } from './hook-utils'
@@ -165,11 +166,19 @@ export function buildModuleReactiveMetadata(
   const starExportNames = new Set<string>()
   const runtimeImports = collectRuntimeImports(body, t)
   const runtimeImportMap = new Map(runtimeImports.importMap)
+  const runtimeImportSources = new Map(runtimeImports.importSources)
   ctx.moduleRuntimeImportMap?.forEach((importedName, localName) => {
     runtimeImportMap.set(localName, importedName)
   })
+  ctx.moduleRuntimeImportSources?.forEach((source, localName) => {
+    runtimeImportSources.set(localName, source)
+  })
   const runtimeNamespaceImports = new Set(runtimeImports.namespaces)
+  const runtimeNamespaceImportSources = new Map(runtimeImports.namespaceSources)
   ctx.moduleRuntimeNamespaceImports?.forEach(name => runtimeNamespaceImports.add(name))
+  ctx.moduleRuntimeNamespaceImportSources?.forEach((source, localName) => {
+    runtimeNamespaceImportSources.set(localName, source)
+  })
   const markExplicitExport = (exportName: string) => {
     explicitExportNames.add(exportName)
     delete metadata.exports[exportName]
@@ -210,11 +219,16 @@ export function buildModuleReactiveMetadata(
     (t.isUnaryExpression(expr) && expr.operator === 'void')
   type StaticValue =
     | { kind: 'known'; value: BabelCore.types.Expression | null }
+    | { kind: 'reactive'; reactiveKind: ReactiveExportKind }
     | { kind: 'unknown' }
   const unknownStaticValue = (): StaticValue => ({ kind: 'unknown' })
   const knownStaticValue = (value: BabelCore.types.Expression | null): StaticValue => ({
     kind: 'known',
     value,
+  })
+  const reactiveStaticValue = (reactiveKind: ReactiveExportKind): StaticValue => ({
+    kind: 'reactive',
+    reactiveKind,
   })
   const getObjectKey = (
     key: BabelCore.types.Expression | BabelCore.types.PrivateName,
@@ -254,8 +268,31 @@ export function buildModuleReactiveMetadata(
     const element = expr.elements[index]
     return element && t.isExpression(element) ? knownStaticValue(element) : knownStaticValue(null)
   }
+  const isInternalCreateStoreCall = (expr: BabelCore.types.Expression | null): boolean => {
+    if (!expr || (!t.isCallExpression(expr) && !t.isOptionalCallExpression(expr))) return false
+    const callee = expr.callee
+    if (t.isIdentifier(callee)) {
+      const importedName = runtimeImportMap.get(callee.name)
+      return importedName
+        ? isInternalCreateStoreRuntimeImport(importedName, runtimeImportSources.get(callee.name))
+        : false
+    }
+    if (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) {
+      if (!t.isIdentifier(callee.object)) return false
+      if (!runtimeNamespaceImports.has(callee.object.name)) return false
+      const memberName = getStaticMemberName(callee)
+      return typeof memberName === 'string'
+        ? isInternalCreateStoreRuntimeImport(
+            memberName,
+            runtimeNamespaceImportSources.get(callee.object.name),
+          )
+        : false
+    }
+    return false
+  }
   const staticLocalValues = new Map<string, StaticValue>()
   const getStaticUndefinedState = (value: StaticValue): boolean | null => {
+    if (value.kind === 'reactive') return false
     if (value.kind !== 'known') return null
     return !value.value || isStaticUndefined(value.value)
   }
@@ -282,6 +319,15 @@ export function buildModuleReactiveMetadata(
   }
   const resolveStaticValue = (expr: BabelCore.types.Expression | null | undefined): StaticValue => {
     if (!expr) return unknownStaticValue()
+    if (
+      t.isCallExpression(expr) &&
+      t.isIdentifier(expr.callee) &&
+      /^_slicedToArray/.test(expr.callee.name) &&
+      expr.arguments[0] &&
+      t.isExpression(expr.arguments[0])
+    ) {
+      return resolveStaticValue(expr.arguments[0])
+    }
     if (t.isConditionalExpression(expr)) {
       const test = evaluateStaticBoolean(expr.test as BabelCore.types.Expression)
       if (test === true) return resolveStaticValue(expr.consequent as BabelCore.types.Expression)
@@ -296,6 +342,12 @@ export function buildModuleReactiveMetadata(
       if (!objectValue || objectValue.kind !== 'known') return knownStaticValue(expr)
       const memberName = getStaticMemberName(expr)
       if (memberName === null) return unknownStaticValue()
+      if (
+        (memberName === 0 || memberName === '0') &&
+        isInternalCreateStoreCall(objectValue.value)
+      ) {
+        return reactiveStaticValue('store')
+      }
       if (objectValue.value && t.isArrayExpression(objectValue.value)) {
         return getStaticArrayElement(objectValue.value, memberName)
       }
@@ -308,6 +360,7 @@ export function buildModuleReactiveMetadata(
     return knownStaticValue(expr)
   }
   const classifyStaticValue = (source: StaticValue): ReactiveExportKind | null => {
+    if (source.kind === 'reactive') return source.reactiveKind
     if (source.kind !== 'known' || !source.value) return null
     if (t.isCallExpression(source.value) || t.isOptionalCallExpression(source.value)) {
       const kind = getReactiveCallKindFromBabel(source.value, ctx, t)
@@ -315,13 +368,20 @@ export function buildModuleReactiveMetadata(
       const callee = source.value.callee
       if (t.isIdentifier(callee)) {
         const importedName = runtimeImportMap.get(callee.name)
-        return importedName ? getRuntimeReactiveCreatorKind(importedName) : null
+        return importedName
+          ? getRuntimeReactiveCreatorKind(importedName, runtimeImportSources.get(callee.name))
+          : null
       }
       if (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) {
         if (!t.isIdentifier(callee.object)) return null
         if (!runtimeNamespaceImports.has(callee.object.name)) return null
         const memberName = getStaticMemberName(callee)
-        return typeof memberName === 'string' ? getRuntimeReactiveCreatorKind(memberName) : null
+        return typeof memberName === 'string'
+          ? getRuntimeReactiveCreatorKind(
+              memberName,
+              runtimeNamespaceImportSources.get(callee.object.name),
+            )
+          : null
       }
     }
     return null

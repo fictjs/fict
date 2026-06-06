@@ -15,7 +15,22 @@ const RUNTIME_REACTIVE_CREATORS = new Map<string, ReactiveExportKind>([
   ['$store', 'store'],
 ])
 
-export function getRuntimeReactiveCreatorKind(name: string): ReactiveExportKind | null {
+function isInternalRuntimeModule(source: string | undefined): boolean {
+  return source === 'fict/internal' || source === '@fictjs/runtime/internal'
+}
+
+export function isInternalCreateStoreRuntimeImport(
+  importedName: string,
+  source: string | undefined,
+): boolean {
+  return importedName === 'createStore' && isInternalRuntimeModule(source)
+}
+
+export function getRuntimeReactiveCreatorKind(
+  name: string,
+  source?: string | undefined,
+): ReactiveExportKind | null {
+  if (isInternalCreateStoreRuntimeImport(name, source)) return null
   return RUNTIME_REACTIVE_CREATORS.get(name) ?? null
 }
 
@@ -27,7 +42,7 @@ function getRuntimeImportedKind(name: string, ctx: CodegenContext): ReactiveExpo
   if (isNameShadowed(name, ctx)) return null
   const imported = ctx.moduleRuntimeImportMap?.get(name)
   if (!imported) return null
-  return RUNTIME_REACTIVE_CREATORS.get(imported) ?? null
+  return getRuntimeReactiveCreatorKind(imported, ctx.moduleRuntimeImportSources?.get(name))
 }
 
 function getRuntimeMemberKind(expr: Expression, ctx: CodegenContext): ReactiveExportKind | null {
@@ -38,7 +53,10 @@ function getRuntimeMemberKind(expr: Expression, ctx: CodegenContext): ReactiveEx
   if (!ctx.moduleRuntimeNamespaceImports?.has(objectName)) return null
   const propName = getStaticPropName(expr.property as Expression, expr.computed)
   if (typeof propName !== 'string') return null
-  return RUNTIME_REACTIVE_CREATORS.get(propName) ?? null
+  return getRuntimeReactiveCreatorKind(
+    propName,
+    ctx.moduleRuntimeNamespaceImportSources?.get(objectName),
+  )
 }
 
 function normalizeReactiveCallee(expr: Expression): Expression {
@@ -132,7 +150,10 @@ export function getReactiveCallKindFromBabel(
           ? String(memberCallee.property.value)
           : null
     if (!propName) return null
-    return RUNTIME_REACTIVE_CREATORS.get(propName) ?? null
+    return getRuntimeReactiveCreatorKind(
+      propName,
+      ctx.moduleRuntimeNamespaceImportSources?.get(objectName),
+    )
   }
   return null
 }

@@ -5,7 +5,9 @@ import { isRuntimeImportModule } from '../constants'
 export interface RuntimeImportCollection {
   names: Set<string>
   importMap: Map<string, string>
+  importSources: Map<string, string>
   namespaces: Set<string>
+  namespaceSources: Map<string, string>
 }
 
 export function collectRuntimeImports(
@@ -14,7 +16,9 @@ export function collectRuntimeImports(
 ): RuntimeImportCollection {
   const names = new Set<string>()
   const importMap = new Map<string, string>()
+  const importSources = new Map<string, string>()
   const namespaces = new Set<string>()
+  const namespaceSources = new Map<string, string>()
 
   for (const stmt of body) {
     if (!t.isImportDeclaration(stmt)) continue
@@ -30,11 +34,13 @@ export function collectRuntimeImports(
           ? spec.imported.name
           : spec.imported.value
         importMap.set(spec.local.name, importedName)
+        importSources.set(spec.local.name, stmt.source.value)
       } else if (t.isImportNamespaceSpecifier(spec) || t.isImportDefaultSpecifier(spec)) {
         namespaces.add(spec.local.name)
+        namespaceSources.set(spec.local.name, stmt.source.value)
       }
     }
   }
 
-  return { names, importMap, namespaces }
+  return { names, importMap, importSources, namespaces, namespaceSources }
 }
