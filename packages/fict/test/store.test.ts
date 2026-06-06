@@ -402,6 +402,58 @@ describe('$store', () => {
     expect(seen).toEqual([1])
   })
 
+  it('throws for same-value writes to non-writable own data properties', () => {
+    const raw: { value?: number } = {}
+    Object.defineProperty(raw, 'value', {
+      value: 1,
+      enumerable: true,
+      configurable: true,
+      writable: false,
+    })
+    const state = $store(raw)
+
+    expect(() => {
+      state.value = 1
+    }).toThrow(TypeError)
+    expect(raw.value).toBe(1)
+  })
+
+  it('throws for same-value writes to frozen store properties', () => {
+    const raw = Object.freeze({ value: 1 })
+    const state = $store(raw)
+
+    expect(() => {
+      state.value = 1
+    }).toThrow(TypeError)
+    expect(raw.value).toBe(1)
+  })
+
+  it('throws for same-value writes to inherited read-only data properties', () => {
+    const proto: { value?: number } = {}
+    Object.defineProperty(proto, 'value', {
+      value: 1,
+      enumerable: true,
+      configurable: true,
+      writable: false,
+    })
+    const raw = Object.create(proto) as { value: number }
+    const state = $store(raw)
+
+    expect(() => {
+      state.value = 1
+    }).toThrow(TypeError)
+    expect(Object.prototype.hasOwnProperty.call(raw, 'value')).toBe(false)
+  })
+
+  it('allows same-value writes to writable data properties', () => {
+    const state = $store({ value: 1 })
+
+    expect(() => {
+      state.value = 1
+    }).not.toThrow()
+    expect(state.value).toBe(1)
+  })
+
   it('does not notify subscribers when accessor setters throw', async () => {
     const error = new Error('setter failed')
     const raw = {
