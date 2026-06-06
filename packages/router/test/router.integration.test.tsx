@@ -168,6 +168,156 @@ describe('Router integration (MemoryRouter)', () => {
     expect(screen.getByTestId('pending').textContent).toBe('none')
   })
 
+  it('clears pending location when beforeLeave throws', async () => {
+    const error = new Error('guard failed')
+    const onCall = vi.fn(() => {
+      throw error
+    })
+
+    render(() => (
+      <MemoryRouter initialEntries={['/from']}>
+        <Route
+          path="/from"
+          element={
+            <div>
+              <LocationText />
+              <PendingText />
+              <Guarded onCall={onCall} />
+              <NavigateButton to="/to" />
+            </div>
+          }
+        />
+        <Route path="/to" element={<LocationText />} />
+      </MemoryRouter>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('go-/to').click()
+      await Promise.resolve()
+    })
+
+    expect(onCall).toHaveBeenCalled()
+    expect(screen.getByTestId('path').textContent).toBe('/from')
+    expect(screen.getByTestId('pending').textContent).toBe('none')
+  })
+
+  it('clears pending location when beforeLeave rejects', async () => {
+    const error = new Error('guard rejected')
+    const onCall = vi.fn(async () => {
+      await Promise.resolve()
+      throw error
+    })
+
+    render(() => (
+      <MemoryRouter initialEntries={['/from']}>
+        <Route
+          path="/from"
+          element={
+            <div>
+              <LocationText />
+              <PendingText />
+              <Guarded onCall={onCall} />
+              <NavigateButton to="/to" />
+            </div>
+          }
+        />
+        <Route path="/to" element={<LocationText />} />
+      </MemoryRouter>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('go-/to').click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(onCall).toHaveBeenCalled()
+    expect(screen.getByTestId('path').textContent).toBe('/from')
+    expect(screen.getByTestId('pending').textContent).toBe('none')
+  })
+
+  it('clears pending location when one of multiple beforeLeave handlers throws', async () => {
+    const first = vi.fn(retry => {
+      retry()
+    })
+    const second = vi.fn(() => {
+      throw new Error('second guard failed')
+    })
+
+    render(() => (
+      <MemoryRouter initialEntries={['/from']}>
+        <Route
+          path="/from"
+          element={
+            <div>
+              <LocationText />
+              <PendingText />
+              <Guarded onCall={first} />
+              <Guarded onCall={second} />
+              <NavigateButton to="/to" />
+            </div>
+          }
+        />
+        <Route path="/to" element={<LocationText />} />
+      </MemoryRouter>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('go-/to').click()
+      await Promise.resolve()
+    })
+
+    expect(first).toHaveBeenCalled()
+    expect(second).toHaveBeenCalled()
+    expect(screen.getByTestId('path').textContent).toBe('/from')
+    expect(screen.getByTestId('pending').textContent).toBe('none')
+  })
+
+  it('allows retry after a failed beforeLeave handler', async () => {
+    let calls = 0
+    const onCall = vi.fn(retry => {
+      calls += 1
+      if (calls === 1) {
+        throw new Error('guard failed')
+      }
+      retry(true)
+    })
+
+    render(() => (
+      <MemoryRouter initialEntries={['/from']}>
+        <Route
+          path="/from"
+          element={
+            <div>
+              <LocationText />
+              <PendingText />
+              <Guarded onCall={onCall} />
+              <NavigateButton to="/to" />
+            </div>
+          }
+        />
+        <Route path="/to" element={<LocationText />} />
+      </MemoryRouter>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('go-/to').click()
+      await Promise.resolve()
+    })
+
+    expect(screen.getByTestId('path').textContent).toBe('/from')
+    expect(screen.getByTestId('pending').textContent).toBe('none')
+
+    await act(async () => {
+      screen.getByTestId('go-/to').click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(onCall).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('path').textContent).toBe('/to')
+  })
+
   it('allows retry after async beforeLeave handler', async () => {
     const onCall = vi.fn(retry => {
       retry(true)

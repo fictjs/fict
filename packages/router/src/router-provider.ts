@@ -234,50 +234,57 @@ function createRouterState(
 
     // Check beforeLeave handlers
     untrack(async () => {
-      if (beforeLeaveHandlers.size > 0) {
-        pendingLocationSignal(targetLocation)
+      try {
+        if (beforeLeaveHandlers.size > 0) {
+          pendingLocationSignal(targetLocation)
+        }
+        const canNavigate = await beforeLeave.confirm(targetLocation, currentLocation)
+        if (!canNavigate) {
+          pendingLocationSignal(null)
+          return
+        }
+
+        // Start routing indicator and set pending location
+        batch(() => {
+          isRoutingSignal(true)
+          pendingLocationSignal(targetLocation)
+        })
+
+        // Use transition for smooth updates
+        // Note: We only push/replace to history here.
+        // The actual signal updates happen in history.listen to avoid duplicates.
+        startTransition(() => {
+          const prevLocation = history.location
+          if (options?.replace) {
+            history.replace(targetLocation, finalState)
+          } else {
+            history.push(targetLocation, finalState)
+          }
+
+          // Scroll handling for programmatic navigation
+          if (options?.scroll !== false && isBrowser()) {
+            const scrollRestoration = getScrollRestoration()
+            scrollRestoration.handleNavigation(
+              prevLocation,
+              history.location,
+              options?.replace ? 'REPLACE' : 'PUSH',
+            )
+          }
+
+          // If navigation was blocked or no-op, reset routing state
+          if (locationsAreEqual(prevLocation, history.location)) {
+            batch(() => {
+              isRoutingSignal(false)
+              pendingLocationSignal(null)
+            })
+          }
+        })
+      } catch {
+        batch(() => {
+          isRoutingSignal(false)
+          pendingLocationSignal(null)
+        })
       }
-      const canNavigate = await beforeLeave.confirm(targetLocation, currentLocation)
-      if (!canNavigate) {
-        pendingLocationSignal(null)
-        return
-      }
-
-      // Start routing indicator and set pending location
-      batch(() => {
-        isRoutingSignal(true)
-        pendingLocationSignal(targetLocation)
-      })
-
-      // Use transition for smooth updates
-      // Note: We only push/replace to history here.
-      // The actual signal updates happen in history.listen to avoid duplicates.
-      startTransition(() => {
-        const prevLocation = history.location
-        if (options?.replace) {
-          history.replace(targetLocation, finalState)
-        } else {
-          history.push(targetLocation, finalState)
-        }
-
-        // Scroll handling for programmatic navigation
-        if (options?.scroll !== false && isBrowser()) {
-          const scrollRestoration = getScrollRestoration()
-          scrollRestoration.handleNavigation(
-            prevLocation,
-            history.location,
-            options?.replace ? 'REPLACE' : 'PUSH',
-          )
-        }
-
-        // If navigation was blocked or no-op, reset routing state
-        if (locationsAreEqual(prevLocation, history.location)) {
-          batch(() => {
-            isRoutingSignal(false)
-            pendingLocationSignal(null)
-          })
-        }
-      })
     })
   }
 
