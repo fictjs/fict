@@ -1739,6 +1739,45 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('const __result_1 = __handler_1.call(el_1, event_1)')
   })
 
+  it('allocates handler body names around module-scope captures', () => {
+    const ast = parseFile(`
+      export const log = []
+      export const scopeId = 'module-scope'
+      export const event = 'module-event'
+      export const el = 'module-el'
+      export const __result = 'module-result'
+      export const __handler = () => log.push('module-handler')
+
+      export function App() {
+        return (
+          <button
+            onClick$={() => {
+              log.push(scopeId)
+              log.push(event)
+              log.push(el)
+              log.push(__result)
+              __handler()
+            }}
+          >
+            Click
+          </button>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/export const __fict_e0 = \(scopeId_1, event_1, el_1\) =>/)
+    expect(code).toContain('const __handler_1 = () => {')
+    expect(code).toContain('log.push(scopeId)')
+    expect(code).toContain('log.push(event)')
+    expect(code).toContain('log.push(el)')
+    expect(code).toContain('log.push(__result)')
+    expect(code).toContain('__handler()')
+    expect(code).toContain('const __result_1 = __handler_1.call(el_1, event_1)')
+  })
+
   it('allocates handler locals around restored props captures', () => {
     const ast = parseFile(`
       function App(__handler) {
