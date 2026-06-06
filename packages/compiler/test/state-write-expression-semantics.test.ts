@@ -870,6 +870,39 @@ describe('state write expression semantics', () => {
     expect(values).toEqual([2, 3, 10, 3, 11])
   })
 
+  it('does not shadow RHS locals with computed hook member key temporaries', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useBox() {
+        let value = $state(0)
+        const other = 5
+        return { value, other }
+      }
+
+      export function useComputedHookMemberKeyCollision() {
+        const box = useBox()
+        const signalKey = 'value'
+        const plainKey = 'other'
+        const __key_0 = 10
+
+        const signalAssigned = (box[signalKey] = __key_0 + 1)
+        const plainAssigned = (box[plainKey] = __key_0 + 1)
+
+        return [signalAssigned, plainAssigned, box.value, box.other]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).not.toMatch(/\(__key_0\s*=>/)
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useComputedHookMemberKeyCollision')() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual([11, 11, 11, 11])
+  })
+
   it('preserves bigint update semantics for $state', () => {
     const source = `
       import { $state } from 'fict'
