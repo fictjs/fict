@@ -7,6 +7,7 @@ import {
   useNavigate,
   useLocation,
   useBeforeLeave,
+  usePendingLocation,
   NavLink,
   Link,
 } from '../src'
@@ -23,6 +24,11 @@ function NavigateButton({ to }: { to: string }) {
       go
     </button>
   )
+}
+
+function PendingText() {
+  const pending = usePendingLocation()
+  return <span data-testid="pending">{pending()?.pathname ?? 'none'}</span>
 }
 
 function Guarded({
@@ -87,6 +93,79 @@ describe('Router integration (MemoryRouter)', () => {
 
     expect(onCall).toHaveBeenCalled()
     expect(screen.getByTestId('path').textContent).toBe('/from')
+  })
+
+  it('clears pending location when beforeLeave blocks navigation', async () => {
+    const onCall = vi.fn((_retry, prevent) => {
+      prevent()
+    })
+
+    render(() => (
+      <MemoryRouter initialEntries={['/from']}>
+        <Route
+          path="/from"
+          element={
+            <div>
+              <LocationText />
+              <PendingText />
+              <NavLink to="/to" pendingClassName="pending">
+                {({ isPending }) => (
+                  <span data-testid="nav" className={isPending ? 'pending' : 'idle'}>
+                    To
+                  </span>
+                )}
+              </NavLink>
+              <Guarded onCall={onCall} />
+              <NavigateButton to="/to" />
+            </div>
+          }
+        />
+        <Route path="/to" element={<LocationText />} />
+      </MemoryRouter>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('go-/to').click()
+    })
+
+    expect(onCall).toHaveBeenCalled()
+    expect(screen.getByTestId('path').textContent).toBe('/from')
+    expect(screen.getByTestId('pending').textContent).toBe('none')
+    expect(screen.getByTestId('nav').className).toBe('idle')
+  })
+
+  it('clears pending location when async beforeLeave blocks navigation', async () => {
+    const onCall = vi.fn(async (_retry, prevent) => {
+      await Promise.resolve()
+      prevent()
+    })
+
+    render(() => (
+      <MemoryRouter initialEntries={['/from']}>
+        <Route
+          path="/from"
+          element={
+            <div>
+              <LocationText />
+              <PendingText />
+              <Guarded onCall={onCall} />
+              <NavigateButton to="/to" />
+            </div>
+          }
+        />
+        <Route path="/to" element={<LocationText />} />
+      </MemoryRouter>
+    ))
+
+    await act(async () => {
+      screen.getByTestId('go-/to').click()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(onCall).toHaveBeenCalled()
+    expect(screen.getByTestId('path').textContent).toBe('/from')
+    expect(screen.getByTestId('pending').textContent).toBe('none')
   })
 
   it('allows retry after async beforeLeave handler', async () => {

@@ -239,6 +239,7 @@ function createRouterState(
       }
       const canNavigate = await beforeLeave.confirm(targetLocation, currentLocation)
       if (!canNavigate) {
+        pendingLocationSignal(null)
         return
       }
 
