@@ -218,6 +218,31 @@ describe('serializeValue / deserializeValue', () => {
       expect(Reflect.ownKeys(result)).toEqual(['a', key])
     })
 
+    it('should escape marker-like plain objects', () => {
+      const values = [
+        { __t: 'u' },
+        { __t: 'n' },
+        { __t: 'd', v: 0 },
+        { __t: 'm', v: [] },
+        { __t: 'plain', v: 1 },
+      ]
+
+      for (const value of values) {
+        const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(value))))
+        expect(result).toEqual(value)
+      }
+    })
+
+    it('should escape nested marker-like objects', () => {
+      const obj = {
+        nested: { __t: 'u' },
+        list: [{ __t: 'd', v: 0 }],
+      }
+      const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(obj)))) as typeof obj
+
+      expect(result).toEqual(obj)
+    })
+
     it('should preserve null-prototype objects', () => {
       const obj = Object.create(null) as Record<string, unknown>
       obj.a = 1

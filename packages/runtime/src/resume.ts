@@ -463,6 +463,10 @@ function enumerableOwnSymbols(value: object): symbol[] {
   )
 }
 
+function hasOwnMarkerKey(value: object): boolean {
+  return Object.prototype.hasOwnProperty.call(value, '__t')
+}
+
 function unsupportedObjectName(value: object): string {
   const ctor = (value as { constructor?: { name?: string } }).constructor
   if (ctor?.name) return ctor.name
@@ -610,7 +614,7 @@ export function serializeValue(
     }
 
     const symbolKeys = enumerableOwnSymbols(value)
-    if (symbolKeys.length > 0 || proto === null) {
+    if (symbolKeys.length > 0 || proto === null || hasOwnMarkerKey(value)) {
       const marker: Extract<SerializedMarker, { __t: 'o' }> = {
         __t: 'o',
         v: serializeObjectEntries(value, seen, path, symbolKeys),
