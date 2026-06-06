@@ -75,6 +75,22 @@ describe('macro binding recognition', () => {
     expect(output).toContain('devToolsSource')
   })
 
+  it('tracks namespace $memo runtime calls as memo accessors', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+      import * as F from 'fict'
+      function App() {
+        let count = $state(1)
+        const double = F.$memo(() => count * 2)
+        return <div>{double}</div>
+      }
+    `)
+
+    expect(output).toContain('const double = F.$memo(() => count() * 2')
+    expect(output).not.toMatch(/const double = __fictUseMemo[\s\S]*F\.\$memo/)
+    expect(output).toMatch(/\(\)\s*=>\s*double\(\)/)
+  })
+
   it('rejects namespace $state macro calls from fict', () => {
     expect(() =>
       transform(`
