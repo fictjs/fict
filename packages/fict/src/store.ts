@@ -332,6 +332,12 @@ export function $store<T extends object>(initialValue: T): T {
       getSignal(target, prop)()
       return Reflect.has(target, prop)
     },
+
+    getOwnPropertyDescriptor(target, prop) {
+      getSignal(target, prop)()
+      getSignal(target, ITERATE_KEY)()
+      return Reflect.getOwnPropertyDescriptor(target, prop)
+    },
   })
 
   PROXY_CACHE.set(initialValue, proxy)

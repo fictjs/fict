@@ -358,6 +358,104 @@ describe('$store', () => {
     expect(seen).toEqual([1, 2])
   })
 
+  it('tracks Object.hasOwn checks across add and delete', async () => {
+    const state = $store<{ value?: number }>({})
+    const seen: boolean[] = []
+
+    createEffect(() => {
+      seen.push(Object.hasOwn(state, 'value'))
+    })
+
+    expect(seen).toEqual([false])
+
+    state.value = 1
+    await tick()
+
+    expect(seen).toEqual([false, true])
+
+    delete state.value
+    await tick()
+
+    expect(seen).toEqual([false, true, false])
+  })
+
+  it('tracks hasOwnProperty.call checks across add and delete', async () => {
+    const state = $store<{ value?: number }>({})
+    const seen: boolean[] = []
+
+    createEffect(() => {
+      seen.push(Object.prototype.hasOwnProperty.call(state, 'value'))
+    })
+
+    expect(seen).toEqual([false])
+
+    state.value = 1
+    await tick()
+
+    expect(seen).toEqual([false, true])
+
+    delete state.value
+    await tick()
+
+    expect(seen).toEqual([false, true, false])
+  })
+
+  it('tracks Object.getOwnPropertyDescriptor value reads', async () => {
+    const state = $store<{ value?: number }>({ value: 1 })
+    const seen: Array<number | undefined> = []
+
+    createEffect(() => {
+      seen.push(Object.getOwnPropertyDescriptor(state, 'value')?.value)
+    })
+
+    expect(seen).toEqual([1])
+
+    state.value = 2
+    await tick()
+
+    expect(seen).toEqual([1, 2])
+
+    delete state.value
+    await tick()
+
+    expect(seen).toEqual([1, 2, undefined])
+  })
+
+  it('tracks absent-to-undefined own property additions', async () => {
+    const state = $store<{ value?: undefined }>({})
+    const seen: boolean[] = []
+
+    createEffect(() => {
+      seen.push(Object.hasOwn(state, 'value'))
+    })
+
+    expect(seen).toEqual([false])
+
+    state.value = undefined
+    await tick()
+
+    expect(seen).toEqual([false, true])
+  })
+
+  it('keeps inherited properties out of own-property tracking until an own key is added', async () => {
+    const raw = Object.create({ value: 1 }) as { value?: number }
+    const state = $store(raw)
+    const seen: boolean[] = []
+
+    createEffect(() => {
+      seen.push(Object.hasOwn(state, 'value'))
+    })
+
+    expect(state.value).toBe(1)
+    expect(Object.getOwnPropertyDescriptor(state, 'value')).toBeUndefined()
+    expect(seen).toEqual([false])
+
+    state.value = 2
+    await tick()
+
+    expect(seen).toEqual([false, true])
+  })
+
   describe('Method binding and cache invalidation', () => {
     it('should invalidate bound method cache when method is reassigned', () => {
       const state = $store({
