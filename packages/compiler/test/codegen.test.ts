@@ -310,6 +310,148 @@ describe('lowerHIRWithRegions', () => {
     expect(output).not.toMatch(/const \{[^}]*x[^}]*\} = __region_/)
   })
 
+  it('does not expose branch-local scalar declarations as region outputs', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      function side() {
+        return 2
+      }
+
+      export function App() {
+        const count = $state(1)
+        let out = 0
+        if (count) {
+          const x = side()
+          out = x
+        }
+        return <span>{out}:{count}</span>
+      }
+    `)
+
+    expect(output).toMatch(/if \(count\(\)\) \{\s+const x = side\(\);\s+out = x;/)
+    expect(output).toMatch(/return \{\s+out: out !== void 0 \? out : void 0\s+\};/)
+    expect(output).not.toMatch(/x: x !== void 0 \? x : void 0/)
+    expect(output).not.toMatch(/const x = \(\) => __region_\d+\(\)\.x/)
+  })
+
+  it('keeps block-scoped control-flow locals internal to region bodies', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      function side() {
+        return 2
+      }
+
+      export function IfElseApp() {
+        const count = $state(1)
+        let out = 0
+        if (count) {
+          const thenLocal = side()
+          out = thenLocal
+        } else {
+          let elseLocal = side()
+          out = elseLocal
+        }
+        return <span>{out}:{count}</span>
+      }
+
+      export function NestedApp() {
+        const count = $state(1)
+        let out = 0
+        if (count) {
+          {
+            const nestedLocal = side()
+            out = nestedLocal
+          }
+        }
+        return <span>{out}:{count}</span>
+      }
+
+      export function SwitchApp() {
+        const count = $state(1)
+        let out = 0
+        switch (count) {
+          case 1: {
+            const caseLocal = side()
+            out = caseLocal
+            break
+          }
+        }
+        return <span>{out}:{count}</span>
+      }
+
+      export function LoopApp() {
+        const count = $state(1)
+        let out = 0
+        while (count) {
+          const loopLocal = side()
+          out = loopLocal
+          break
+        }
+        return <span>{out}:{count}</span>
+      }
+
+      export function TryApp() {
+        const count = $state(1)
+        let out = 0
+        if (count) {
+          try {
+            const tryLocal = side()
+            out = tryLocal
+          } catch (error) {
+            const catchLocal = side()
+            out = catchLocal
+          } finally {
+            let finallyLocal = side()
+            out = finallyLocal
+          }
+        }
+        return <span>{out}:{count}</span>
+      }
+    `)
+
+    for (const name of [
+      'thenLocal',
+      'elseLocal',
+      'nestedLocal',
+      'caseLocal',
+      'loopLocal',
+      'tryLocal',
+      'catchLocal',
+      'finallyLocal',
+    ]) {
+      expect(output).toContain(`${name} = side();`)
+      expect(output).not.toMatch(new RegExp(`${name}: ${name} !== void 0 \\? ${name} : void 0`))
+      expect(output).not.toMatch(
+        new RegExp(`const ${name} = \\(\\) => __region_\\d+\\(\\)\\.${name}`),
+      )
+    }
+  })
+
+  it('allows var control-flow locals to remain region outputs', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      function side() {
+        return 2
+      }
+
+      export function App() {
+        const count = $state(1)
+        let out = 0
+        if (count) {
+          var branchVar = side()
+          out = branchVar
+        }
+        return <span>{out}:{branchVar}:{count}</span>
+      }
+    `)
+
+    expect(output).toMatch(/branchVar: branchVar !== void 0 \? branchVar : void 0/)
+    expect(output).toMatch(/const branchVar = \(\) => __region_\d+\(\)\.branchVar/)
+  })
+
   it('omits type-only imports and declarations from emitted modules', () => {
     const ast = parseFile(`
       import type { Foo } from './types'

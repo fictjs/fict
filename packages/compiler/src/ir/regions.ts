@@ -4022,6 +4022,16 @@ function generateRegionStatements(
       declarationByName.set(deSSAVarName(instr.target.name), instr)
     }
   })
+  const controlFlowLocalDeclarations = regionCtx
+    ? collectControlFlowLocalRegionDeclarations(regionCtx.rootNode, region, regionCtx, t)
+    : new Set<string>()
+  if (controlFlowLocalDeclarations.size > 0) {
+    for (const declaration of Array.from(memoDeclarations)) {
+      if (controlFlowLocalDeclarations.has(deSSAVarName(declaration))) {
+        memoDeclarations.delete(declaration)
+      }
+    }
+  }
   const emitHoistedInstruction = (instr: Instruction): void => {
     if (hoistedInstructionSet.has(instr)) return
     if (regionCtx?.hoistedInstructions.has(instr)) return
@@ -5050,6 +5060,95 @@ function collectStructuredAssignDeclarations(
       break
   }
   return into
+}
+
+function collectControlFlowLocalRegionDeclarations(
+  rootNode: StructuredNode,
+  region: Region,
+  regionCtx: RegionEmitContext,
+  t: typeof BabelCore.types,
+): Set<string> {
+  const localNames = new Set<string>()
+  const regionDeclarations = new Set(
+    Array.from(region.declarations, declaration => deSSAVarName(declaration)),
+  )
+
+  const addRegionInstructionDeclaration = (instr: Instruction): void => {
+    if (instr.kind !== 'Assign') return
+    if (instr.declarationKind !== 'const' && instr.declarationKind !== 'let') return
+    const name = deSSAVarName(instr.target.name)
+    if (!regionDeclarations.has(name)) return
+    if (findRegionForInstruction(instr, regionCtx)?.id !== region.id) return
+    localNames.add(name)
+  }
+
+  const addLoopBindingName = (name: string, kind: 'const' | 'let' | 'var'): void => {
+    if (kind === 'var' || !regionDeclarations.has(name)) return
+    localNames.add(name)
+  }
+
+  const visit = (node: StructuredNode, inControlFlowScope: boolean): void => {
+    switch (node.kind) {
+      case 'instruction':
+        if (inControlFlowScope) addRegionInstructionDeclaration(node.instruction)
+        return
+      case 'sequence':
+        node.nodes.forEach(child => visit(child, inControlFlowScope))
+        return
+      case 'block':
+        node.statements.forEach(child => visit(child, inControlFlowScope))
+        return
+      case 'labeled':
+        visit(node.statement, inControlFlowScope)
+        return
+      case 'if':
+        visit(node.consequent, true)
+        if (node.alternate) visit(node.alternate, true)
+        return
+      case 'while':
+      case 'doWhile':
+        visit(node.body, true)
+        return
+      case 'for':
+        node.init?.forEach(addRegionInstructionDeclaration)
+        visit(node.body, true)
+        return
+      case 'forOf':
+      case 'forIn': {
+        if (node.leftKind !== 'assignment') {
+          addLoopBindingName(deSSAVarName(node.variable), node.variableKind)
+          if (node.pattern) {
+            const patternNames = new Set<string>()
+            collectPatternBindingNames(node.pattern, t, patternNames)
+            patternNames.forEach(name => addLoopBindingName(name, node.variableKind))
+          }
+        }
+        visit(node.body, true)
+        return
+      }
+      case 'switch':
+        node.cases.forEach(item => visit(item.body, true))
+        return
+      case 'try':
+        visit(node.block, true)
+        if (node.handler) {
+          if (node.handler.param) addLoopBindingName(deSSAVarName(node.handler.param), 'let')
+          if (node.handler.pattern) {
+            const patternNames = new Set<string>()
+            collectPatternBindingNames(node.handler.pattern, t, patternNames)
+            patternNames.forEach(name => addLoopBindingName(name, 'let'))
+          }
+          visit(node.handler.body, true)
+        }
+        if (node.finalizer) visit(node.finalizer, true)
+        return
+      default:
+        return
+    }
+  }
+
+  visit(rootNode, false)
+  return localNames
 }
 
 function findPriorDeclarationInstruction(
