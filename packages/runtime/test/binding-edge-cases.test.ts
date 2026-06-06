@@ -1683,6 +1683,65 @@ describe('Binding Edge Cases', () => {
       expect(handler).toHaveBeenCalled()
     })
 
+    it('removes string on: event attributes when spread props omit them', () => {
+      const el = document.createElement('button')
+      const prevProps: Record<string, unknown> = {}
+
+      assign(el, { 'on:click': '/handler.js#click' }, false, false, prevProps)
+      expect(el.getAttribute('on:click')).toBe('/handler.js#click')
+
+      assign(el, {}, false, false, prevProps)
+
+      expect(el.hasAttribute('on:click')).toBe(false)
+    })
+
+    it('removes native on: listeners when switching to string event attributes', () => {
+      const el = document.createElement('button')
+      const handler = vi.fn()
+      const prevProps: Record<string, unknown> = {}
+
+      assign(el, { 'on:click': handler }, false, false, prevProps)
+      el.dispatchEvent(new Event('click'))
+      expect(handler).toHaveBeenCalledTimes(1)
+
+      assign(el, { 'on:click': '/handler.js#click' }, false, false, prevProps)
+      handler.mockClear()
+      el.dispatchEvent(new Event('click'))
+
+      expect(handler).not.toHaveBeenCalled()
+      expect(el.getAttribute('on:click')).toBe('/handler.js#click')
+    })
+
+    it('removes string on: event attributes when switching to native listeners', () => {
+      const el = document.createElement('button')
+      const handler = vi.fn()
+      const prevProps: Record<string, unknown> = {}
+
+      assign(el, { 'on:click': '/handler.js#click' }, false, false, prevProps)
+      assign(el, { 'on:click': handler }, false, false, prevProps)
+      el.dispatchEvent(new Event('click'))
+
+      expect(el.hasAttribute('on:click')).toBe(false)
+      expect(handler).toHaveBeenCalledTimes(1)
+    })
+
+    it('replaces native on: event listeners without leaving stale handlers', () => {
+      const el = document.createElement('button')
+      const first = vi.fn()
+      const second = vi.fn()
+      const prevProps: Record<string, unknown> = {}
+
+      assign(el, { 'on:click': first }, false, false, prevProps)
+      el.dispatchEvent(new Event('click'))
+      expect(first).toHaveBeenCalledTimes(1)
+
+      assign(el, { 'on:click': second }, false, false, prevProps)
+      el.dispatchEvent(new Event('click'))
+
+      expect(first).toHaveBeenCalledTimes(1)
+      expect(second).toHaveBeenCalledTimes(1)
+    })
+
     it('treats on: reactive handlers as accessors instead of native listeners', async () => {
       const el = document.createElement('input')
       const firstHandler = vi.fn()

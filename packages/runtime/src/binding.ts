@@ -2480,11 +2480,17 @@ function assignProp(
   // Event handling: on:eventname
   if (prop.slice(0, 3) === 'on:') {
     const eventName = prop.slice(3)
+    if (value == null) {
+      removeStoredEventListener(node, eventName)
+      node.removeAttribute(prop)
+      return value
+    }
     if (typeof value === 'string') {
+      removeStoredEventListener(node, eventName)
       node.setAttribute(prop, value)
       return value
     }
-    if (prev && typeof prev !== 'string') removeStoredEventListener(node, eventName)
+    node.removeAttribute(prop)
     addEventListener(
       node,
       eventName,
