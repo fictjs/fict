@@ -40,6 +40,7 @@ const proxyCache = new WeakMap<object, unknown>()
 const signalCache = new WeakMap<object, Map<string | symbol, SignalAccessor<unknown>>>()
 // Map of target object -> monotonically increasing iterate version
 const iterateVersionCache = new WeakMap<object, number>()
+const defineNotificationSuppressions = new WeakMap<object, Set<string | symbol>>()
 
 function getIterateVersion(target: object): number {
   return iterateVersionCache.get(target) ?? 0
@@ -67,6 +68,89 @@ function enumerableOwnKeys(value: object): (string | symbol)[] {
   return keys
 }
 
+function getPropertyDescriptor(
+  target: object,
+  prop: string | symbol,
+): PropertyDescriptor | undefined {
+  let current: object | null = target
+  while (current) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(current, prop)
+    if (descriptor) return descriptor
+    current = Object.getPrototypeOf(current)
+  }
+  return undefined
+}
+
+function mustReturnExactDataValue(target: object, prop: string | symbol): boolean {
+  const descriptor = Reflect.getOwnPropertyDescriptor(target, prop)
+  return !!descriptor && 'value' in descriptor && !descriptor.configurable && !descriptor.writable
+}
+
+function canSkipSameValueSet(
+  target: object,
+  prop: string | symbol,
+  descriptor: PropertyDescriptor | undefined,
+): boolean {
+  return (
+    !!descriptor &&
+    Object.prototype.hasOwnProperty.call(target, prop) &&
+    'value' in descriptor &&
+    descriptor.writable === true
+  )
+}
+
+function suppressDefineNotification(target: object, prop: string | symbol): () => void {
+  let suppressions = defineNotificationSuppressions.get(target)
+  if (!suppressions) {
+    suppressions = new Set()
+    defineNotificationSuppressions.set(target, suppressions)
+  }
+  suppressions.add(prop)
+  return () => {
+    const current = defineNotificationSuppressions.get(target)
+    if (!current) return
+    current.delete(prop)
+    if (current.size === 0) {
+      defineNotificationSuppressions.delete(target)
+    }
+  }
+}
+
+function isDefineNotificationSuppressed(target: object, prop: string | symbol): boolean {
+  return defineNotificationSuppressions.get(target)?.has(prop) ?? false
+}
+
+function descriptorShapeChanged(
+  before: PropertyDescriptor | undefined,
+  after: PropertyDescriptor | undefined,
+): boolean {
+  if (!before || !after) return before !== after
+  if (before.enumerable !== after.enumerable || before.configurable !== after.configurable) {
+    return true
+  }
+  const beforeIsData = 'value' in before
+  const afterIsData = 'value' in after
+  if (beforeIsData !== afterIsData) return true
+  if (beforeIsData && afterIsData) return before.writable !== after.writable
+  return before.get !== after.get || before.set !== after.set
+}
+
+function descriptorValue(
+  target: object,
+  prop: string | symbol,
+  descriptor: PropertyDescriptor | undefined,
+  receiver: object,
+  fallback: unknown,
+): unknown {
+  if (!descriptor) return fallback
+  if ('value' in descriptor) return descriptor.value
+  try {
+    return Reflect.get(target, prop, receiver)
+  } catch {
+    return fallback
+  }
+}
+
 function wrap<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value
   if (Reflect.get(value, PROXY)) return value
@@ -81,9 +165,12 @@ function wrap<T>(value: T): T {
       const value = Reflect.get(target, prop, receiver)
 
       // Track property access
-      track(target, prop)
+      track(target, prop, value, true)
 
       // Recursively wrap objects
+      if (value !== null && typeof value === 'object' && mustReturnExactDataValue(target, prop)) {
+        return value
+      }
       return wrap(value)
     },
     has(target, prop) {
@@ -107,12 +194,21 @@ function wrap<T>(value: T): T {
       const oldLength =
         (isArrayLength || isArrayIndex) && Array.isArray(target) ? target.length : undefined
       const hadKey = Object.prototype.hasOwnProperty.call(target, prop)
-      const oldValue = Reflect.get(target, prop, receiver)
-      if (oldValue === value) return true
+      const descriptor = getPropertyDescriptor(target, prop)
+      if (canSkipSameValueSet(target, prop, descriptor)) {
+        const oldValue = Reflect.get(target, prop, receiver)
+        if (oldValue === value) return true
+      }
 
-      const result = Reflect.set(target, prop, value, receiver)
+      const releaseDefineSuppression = suppressDefineNotification(target, prop)
+      let result: boolean
+      try {
+        result = Reflect.set(target, prop, value, receiver)
+      } finally {
+        releaseDefineSuppression()
+      }
       if (result) {
-        trigger(target, prop)
+        trigger(target, prop, value, true)
         if (!hadKey) {
           trigger(target, ITERATE_KEY)
         }
@@ -140,6 +236,50 @@ function wrap<T>(value: T): T {
           trigger(target, ITERATE_KEY)
         }
       }
+      return result
+    },
+    defineProperty(target, prop, descriptor) {
+      const hadKey = Object.prototype.hasOwnProperty.call(target, prop)
+      const oldLength = Array.isArray(target) ? target.length : undefined
+      const oldDescriptor = Reflect.getOwnPropertyDescriptor(target, prop)
+      const result = Reflect.defineProperty(target, prop, descriptor)
+      if (!result || isDefineNotificationSuppressed(target, prop)) {
+        return result
+      }
+
+      const nextDescriptor = Reflect.getOwnPropertyDescriptor(target, prop)
+      const hasKey = Object.prototype.hasOwnProperty.call(target, prop)
+      trigger(
+        target,
+        prop,
+        descriptorValue(target, prop, nextDescriptor, proxy as object, undefined),
+        true,
+      )
+
+      if (hadKey !== hasKey || descriptorShapeChanged(oldDescriptor, nextDescriptor)) {
+        trigger(target, ITERATE_KEY)
+      }
+
+      if (Array.isArray(target)) {
+        if (target.length !== oldLength) {
+          trigger(target, 'length', target.length, true)
+        }
+        if (prop === 'length' && typeof oldLength === 'number' && target.length < oldLength) {
+          const signals = signalCache.get(target)
+          if (signals) {
+            for (const key of signals.keys()) {
+              if (typeof key !== 'string') continue
+              const index = Number(key)
+              if (!Number.isInteger(index) || String(index) !== key) continue
+              if (index >= target.length && index < oldLength) {
+                trigger(target, key, undefined, true)
+              }
+            }
+          }
+          trigger(target, ITERATE_KEY)
+        }
+      }
+
       return result
     },
     deleteProperty(target, prop) {
@@ -175,7 +315,12 @@ export function unwrapStore<T>(value: T): T {
   return unwrap(value)
 }
 
-function track(target: object, prop: string | symbol) {
+function track(
+  target: object,
+  prop: string | symbol,
+  initialValue?: unknown,
+  useProvidedInitial = false,
+) {
   // Avoid allocating per-property signals when no reactive subscriber is active.
   if (!getActiveSub()) return
 
@@ -187,14 +332,24 @@ function track(target: object, prop: string | symbol) {
 
   let s = signals.get(prop)
   if (!s) {
-    const initial = prop === ITERATE_KEY ? getIterateVersion(target) : getLastValue(target, prop)
+    const initial =
+      prop === ITERATE_KEY
+        ? getIterateVersion(target)
+        : useProvidedInitial
+          ? initialValue
+          : getLastValue(target, prop)
     s = signal(initial)
     signals.set(prop, s)
   }
   s() // subscribe
 }
 
-function trigger(target: object, prop: string | symbol) {
+function trigger(
+  target: object,
+  prop: string | symbol,
+  nextValue?: unknown,
+  useProvidedValue = false,
+) {
   const signals = signalCache.get(target)
   if (signals) {
     const s = signals.get(prop)
@@ -202,7 +357,7 @@ function trigger(target: object, prop: string | symbol) {
       if (prop === ITERATE_KEY) {
         s(bumpIterateVersion(target))
       } else {
-        s(getLastValue(target, prop)) // notify with new value
+        s(useProvidedValue ? nextValue : getLastValue(target, prop)) // notify with new value
       }
     }
   }

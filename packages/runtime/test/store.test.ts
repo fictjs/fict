@@ -95,6 +95,148 @@ describe('createStore iteration tracking', () => {
   })
 })
 
+describe('createStore descriptor safety', () => {
+  it('returns descriptor-defined read-only nested objects without wrapping', () => {
+    const child = { value: 1 }
+    const raw: { child?: { value: number } } = {}
+    Object.defineProperty(raw, 'child', {
+      value: child,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    })
+
+    const [state] = createStore(raw as { child: { value: number } })
+
+    expect(state.child).toBe(child)
+    expect(state.child.value).toBe(1)
+  })
+
+  it('reacts when Object.defineProperty adds internal store properties', async () => {
+    const [state] = createStore<{ value?: number }>({})
+    const seen: Array<number | undefined> = []
+
+    createEffect(() => {
+      seen.push(state.value)
+    })
+
+    await tick()
+    expect(seen).toEqual([undefined])
+
+    Object.defineProperty(state, 'value', {
+      value: 1,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+    await tick()
+
+    expect(seen).toEqual([undefined, 1])
+  })
+
+  it('reacts when Object.defineProperty redefines internal store values', async () => {
+    const [state] = createStore({ value: 1 })
+    const seen: number[] = []
+
+    createEffect(() => {
+      seen.push(state.value)
+    })
+
+    await tick()
+    Object.defineProperty(state, 'value', {
+      value: 2,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    })
+    await tick()
+
+    expect(seen).toEqual([1, 2])
+  })
+
+  it('assigns internal store setters without reading throwing getters first', () => {
+    const calls: number[] = []
+    const raw: { value?: number } = {}
+    Object.defineProperty(raw, 'value', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error('getter should not run')
+      },
+      set(next: number) {
+        calls.push(next)
+      },
+    })
+    const [state] = createStore(raw)
+
+    expect(() => {
+      state.value = 1
+    }).not.toThrow()
+    expect(calls).toEqual([1])
+  })
+
+  it('throws for same-value writes to read-only internal store data properties', () => {
+    const raw: { value?: number } = {}
+    Object.defineProperty(raw, 'value', {
+      value: 1,
+      enumerable: true,
+      configurable: true,
+      writable: false,
+    })
+    const [state] = createStore(raw)
+
+    expect(() => {
+      state.value = 1
+    }).toThrow(TypeError)
+  })
+
+  it('does not notify after failed internal Object.defineProperty mutations', async () => {
+    const raw = Object.preventExtensions({}) as { value?: number }
+    const [state] = createStore(raw)
+    const values: Array<number | undefined> = []
+    const keys: string[] = []
+
+    createEffect(() => {
+      values.push(state.value)
+    })
+    createEffect(() => {
+      keys.push(Object.keys(state).join(','))
+    })
+
+    await tick()
+    expect(() => {
+      Object.defineProperty(state, 'value', {
+        value: 1,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      })
+    }).toThrow(TypeError)
+    await tick()
+
+    expect(values).toEqual([undefined])
+    expect(keys).toEqual([''])
+  })
+
+  it('keeps mutable nested internal store objects reactive', async () => {
+    const raw = { child: { value: 1 } }
+    const [state] = createStore(raw)
+    const seen: number[] = []
+
+    expect(state.child).not.toBe(raw.child)
+
+    createEffect(() => {
+      seen.push(state.child.value)
+    })
+
+    await tick()
+    state.child.value = 2
+    await tick()
+
+    expect(seen).toEqual([1, 2])
+  })
+})
+
 describe('createStore reconciliation', () => {
   it('reacts when array length is truncated via direct assignment', async () => {
     const [state, setState] = createStore<{ items: number[] }>({ items: [1, 2, 3] })
