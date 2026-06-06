@@ -183,6 +183,40 @@ describe('analyzeFictFile', () => {
     )
   })
 
+  it('includes components with JSX hidden inside expression containers', () => {
+    const source = `
+      export function Direct() {
+        return <span>ok</span>
+      }
+
+      export function OptionalArg(maybe?: (value: unknown) => unknown) {
+        return maybe?.(<span>ok</span>)
+      }
+
+      export function SequenceExpr() {
+        return (0, <span>ok</span>)
+      }
+
+      export function NewArg(C: new (value: unknown) => unknown) {
+        return new C(<span>ok</span>)
+      }
+
+      export function TaggedSub(tag: (strings: TemplateStringsArray, value: unknown) => unknown) {
+        return tag\`\${<span>ok</span>}\`
+      }
+    `
+    const result = analyzeFictFile(source, 'jsx-containers.tsx', {
+      includeRegions: true,
+      includeDiagnostics: true,
+      verbosity: 'minimal',
+    })
+
+    const names = result.components.map(component => component.name)
+    expect(names).toEqual(
+      expect.arrayContaining(['Direct', 'OptionalArg', 'SequenceExpr', 'NewArg', 'TaggedSub']),
+    )
+  })
+
   it('marks derived JSX reads from dollar-suffixed state identifiers as reactive', () => {
     const source = `
       import { $state } from 'fict'
@@ -294,8 +328,8 @@ describe('analyzeFictFile', () => {
   it('returns diagnostics instead of throwing for unsupported HIR input', () => {
     const result = analyzeFictFile(
       `
-        function App() {
-          return <svg:path />
+        function App(props) {
+          return <div>{...props.children}</div>
         }
       `,
       'unsupported.tsx',
@@ -315,7 +349,7 @@ describe('analyzeFictFile', () => {
         }),
       ]),
     )
-    expect(result.diagnostics[0]?.message).toContain('Unsupported JSX tag syntax')
+    expect(result.diagnostics[0]?.message).toContain('JSX spread children are not supported')
     expect(result.diagnostics.some(diagnostic => diagnostic.code === 'FICT-COMPILE')).toBe(false)
   })
 
@@ -324,10 +358,10 @@ describe('analyzeFictFile', () => {
       `
         import { $state } from 'fict'
 
-        function App() {
+        function App(children) {
           let state = $state({ user: { name: 'a' } })
           state.user.name = 'b'
-          return <div>{state.user.name}<svg:path /></div>
+          return <div>{state.user.name}{...children}</div>
         }
       `,
       'unsupported-with-warning.tsx',
@@ -353,10 +387,10 @@ describe('analyzeFictFile', () => {
       `
         import { $state } from 'fict'
 
-        function App() {
+        function App(children) {
           let state = $state({ user: { name: 'a' } })
           state.user.name = 'b'
-          return <div>{state.user.name}<svg:path /></div>
+          return <div>{state.user.name}{...children}</div>
         }
       `,
       'unsupported-with-escalation.tsx',
@@ -830,8 +864,8 @@ describe('analyzeFictFile', () => {
     expect(() =>
       analyzeFictFile(
         `
-          function App() {
-            return <svg:path />
+          function App(props) {
+            return <div>{...props.children}</div>
           }
         `,
         'unsupported.tsx',
@@ -841,7 +875,7 @@ describe('analyzeFictFile', () => {
           verbosity: 'minimal',
         },
       ),
-    ).toThrow(/Unsupported JSX tag syntax/)
+    ).toThrow(/JSX spread children are not supported/)
   })
 
   it('returns a generic compile diagnostic when no structured compiler warning exists', () => {

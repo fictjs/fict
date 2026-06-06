@@ -17,6 +17,52 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled terminator in codegen analysis: ${JSON.stringify(value)}`)
 }
 
+function instructionContainsJSX(instr: Instruction): boolean {
+  return instr.kind === 'Assign' || instr.kind === 'Expression'
+    ? expressionContainsJSX(instr.value)
+    : false
+}
+
+function terminatorContainsJSX(term: Terminator): boolean {
+  switch (term.kind) {
+    case 'Return':
+      return term.argument ? expressionContainsJSX(term.argument) : false
+    case 'Throw':
+      return expressionContainsJSX(term.argument)
+    case 'Branch':
+      return expressionContainsJSX(term.test)
+    case 'Switch':
+      return (
+        expressionContainsJSX(term.discriminant) ||
+        term.cases.some(switchCase =>
+          switchCase.test ? expressionContainsJSX(switchCase.test) : false,
+        )
+      )
+    case 'ForOf':
+      return (
+        expressionContainsJSX(term.iterable) ||
+        (term.assignmentTarget ? expressionContainsJSX(term.assignmentTarget) : false)
+      )
+    case 'ForIn':
+      return (
+        expressionContainsJSX(term.object) ||
+        (term.assignmentTarget ? expressionContainsJSX(term.assignmentTarget) : false)
+      )
+    case 'Jump':
+    case 'Unreachable':
+    case 'Break':
+    case 'Continue':
+    case 'Try':
+      return false
+    default:
+      assertNever(term)
+  }
+}
+
+function blockContainsJSX(block: BasicBlock): boolean {
+  return block.instructions.some(instructionContainsJSX) || terminatorContainsJSX(block.terminator)
+}
+
 function expressionContainsJSX(expr: unknown): boolean {
   if (!expr || typeof expr !== 'object') return false
   const cached = expressionContainsJSXCache.get(expr)
@@ -29,68 +75,21 @@ function expressionContainsJSX(expr: unknown): boolean {
     return result
   }
   const candidate = expr as Expression
-  if (candidate.kind === 'JSXElement') {
-    expressionContainsJSXCache.set(expr, true)
-    return true
-  }
 
   if (hasInstructionArray(expr)) {
-    result = expr.instructions.some(i =>
-      i.kind === 'Assign' || i.kind === 'Expression' ? expressionContainsJSX(i.value) : false,
-    )
+    result = blockContainsJSX(expr as BasicBlock)
     expressionContainsJSXCache.set(expr, result)
     return result
   }
 
-  switch (candidate.kind) {
-    case 'CallExpression':
-      if (expressionContainsJSX(candidate.callee)) {
-        result = true
-        break
-      }
-      result = candidate.arguments.some(arg => expressionContainsJSX(arg))
-      break
-    case 'ArrayExpression':
-      result = candidate.elements.some(el => expressionContainsJSX(el))
-      break
-    case 'ObjectExpression':
-      result =
-        candidate.properties.some(p => {
-          if (p.kind === 'SpreadElement') return expressionContainsJSX(p.argument)
-          return (
-            ((p.computed ?? false) && expressionContainsJSX(p.key)) ||
-            expressionContainsJSX(p.value)
-          )
-        }) ?? false
-      break
-    case 'ConditionalExpression':
-      result =
-        expressionContainsJSX(candidate.test) ||
-        expressionContainsJSX(candidate.consequent) ||
-        expressionContainsJSX(candidate.alternate)
-      break
-    case 'ArrowFunction':
-      if (Array.isArray(candidate.body)) {
-        result = candidate.body.some(block =>
-          block.instructions.some(i =>
-            i.kind === 'Assign' || i.kind === 'Expression' ? expressionContainsJSX(i.value) : false,
-          ),
-        )
-        break
-      }
-      result = expressionContainsJSX(candidate.body)
-      break
-    case 'FunctionExpression':
-      result = candidate.body.some(block =>
-        block.instructions.some(i =>
-          i.kind === 'Assign' || i.kind === 'Expression' ? expressionContainsJSX(i.value) : false,
-        ),
-      )
-      break
-    default:
-      result = false
-      break
+  if (typeof candidate.kind !== 'string') {
+    expressionContainsJSXCache.set(expr, false)
+    return false
   }
+  result = false
+  walkExpression(candidate, node => {
+    if (node.kind === 'JSXElement') result = true
+  })
 
   expressionContainsJSXCache.set(expr, result)
   return result
@@ -98,17 +97,7 @@ function expressionContainsJSX(expr: unknown): boolean {
 
 export function functionContainsJSX(fn: HIRFunction): boolean {
   for (const block of fn.blocks) {
-    for (const instr of block.instructions) {
-      if (
-        (instr.kind === 'Assign' || instr.kind === 'Expression') &&
-        expressionContainsJSX(instr.value)
-      ) {
-        return true
-      }
-    }
-
-    const term = block.terminator
-    if (term.kind === 'Return' && term.argument && expressionContainsJSX(term.argument)) {
+    if (blockContainsJSX(block)) {
       return true
     }
   }
