@@ -89,6 +89,27 @@ const isDev =
 
 let nextComponentId = 1
 
+function createKeyedComponentProps(
+  rawProps: Record<string, unknown>,
+  key: unknown,
+): Record<string, unknown> {
+  const props = Object.create(Object.getPrototypeOf(rawProps)) as Record<string, unknown>
+  for (const prop of Reflect.ownKeys(rawProps)) {
+    if (prop === 'key') continue
+    const descriptor = Object.getOwnPropertyDescriptor(rawProps, prop)
+    if (descriptor) {
+      Object.defineProperty(props, prop, descriptor)
+    }
+  }
+  Object.defineProperty(props, 'key', {
+    value: key,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  })
+  return props
+}
+
 type DevtoolsAnnotatedElement = HTMLElement & {
   __fict_component_id__?: number
   __fict_component_name__?: string
@@ -352,29 +373,7 @@ function createElementWithContext(
   if (typeof vnode.type === 'function') {
     const rawProps = unwrapProps(vnode.props ?? {}) as Record<string, unknown>
     const baseProps =
-      vnode.key === undefined
-        ? rawProps
-        : new Proxy(rawProps, {
-            get(target, prop, receiver) {
-              if (prop === 'key') return vnode.key
-              return Reflect.get(target, prop, receiver)
-            },
-            has(target, prop) {
-              if (prop === 'key') return true
-              return prop in target
-            },
-            ownKeys(target) {
-              const keys = new Set(Reflect.ownKeys(target))
-              keys.add('key')
-              return Array.from(keys)
-            },
-            getOwnPropertyDescriptor(target, prop) {
-              if (prop === 'key') {
-                return { enumerable: true, configurable: true, value: vnode.key }
-              }
-              return Object.getOwnPropertyDescriptor(target, prop)
-            },
-          })
+      vnode.key === undefined ? rawProps : createKeyedComponentProps(rawProps, vnode.key)
 
     const props = createPropsProxy(baseProps)
     // Create a fresh hook context for this component instance.

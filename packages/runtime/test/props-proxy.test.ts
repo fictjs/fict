@@ -86,6 +86,80 @@ describe('Props proxy', () => {
     dispose()
   })
 
+  it('exposes vnode keys through frozen, sealed, and non-extensible component props', () => {
+    const sealed = Object.seal({ value: 'sealed' })
+    const nonExtensible = { value: 'non-extensible' }
+    Object.preventExtensions(nonExtensible)
+    const variants: Array<{ props: Record<string, unknown>; value: string }> = [
+      { props: Object.freeze({ value: 'frozen' }), value: 'frozen' },
+      { props: sealed, value: 'sealed' },
+      { props: nonExtensible, value: 'non-extensible' },
+    ]
+
+    for (const variant of variants) {
+      let seen:
+        | {
+            key: unknown
+            keys: PropertyKey[]
+            descriptor: PropertyDescriptor | undefined
+          }
+        | undefined
+      const vnodeKey = `${variant.value}-key`
+      const Child = (props: Record<string, unknown>) => {
+        seen = {
+          key: props.key,
+          keys: Reflect.ownKeys(props),
+          descriptor: Object.getOwnPropertyDescriptor(props, 'key'),
+        }
+        return `${props.key}:${props.value}`
+      }
+
+      const node = createElement({ type: Child, props: variant.props, key: vnodeKey })
+
+      expect(node.textContent).toBe(`${vnodeKey}:${variant.value}`)
+      expect(seen?.key).toBe(vnodeKey)
+      expect(seen?.keys).toEqual(expect.arrayContaining(['key', 'value']))
+      expect(seen?.descriptor).toEqual({
+        value: vnodeKey,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      })
+    }
+  })
+
+  it('exposes vnode keys when raw props already own a non-configurable key', () => {
+    const rawProps: Record<string, unknown> = { value: 'x' }
+    Object.defineProperty(rawProps, 'key', {
+      value: 'raw-key',
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    })
+    Object.preventExtensions(rawProps)
+
+    let seen:
+      | {
+          key: unknown
+          keys: PropertyKey[]
+        }
+      | undefined
+    const Child = (props: Record<string, unknown>) => {
+      seen = {
+        key: props.key,
+        keys: Reflect.ownKeys(props),
+      }
+      return `${props.key}:${props.value}`
+    }
+
+    const node = createElement({ type: Child, props: rawProps, key: 'vnode-key' })
+
+    expect(node.textContent).toBe('vnode-key:x')
+    expect(seen?.key).toBe('vnode-key')
+    expect(seen?.keys.filter(key => key === 'key')).toHaveLength(1)
+    expect(rawProps.key).toBe('raw-key')
+  })
+
   it('marks plain zero-arg callback props as non-reactive', () => {
     const callback = () => 42
     const proxied = createPropsProxy({ callback })
