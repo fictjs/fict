@@ -382,6 +382,58 @@ describe('state write expression semantics', () => {
     expect(values).toEqual([1, 3, 5, 7, 7])
   })
 
+  it('preserves declaration ordering before $state assignment statements', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export function useStateAssignmentOrdering() {
+        let postFlag = $state(false)
+        let postCalls = 0
+        postFlag = postCalls++
+
+        let preFlag = $state(false)
+        let preCalls = 0
+        preFlag = ++preCalls
+
+        let compoundFlag = $state(false)
+        let compoundCalls = 0
+        compoundFlag = (compoundCalls += 2)
+
+        let pureFlag = $state(false)
+        let pureCalls = 1
+        pureFlag = pureCalls + 1
+
+        let sideEffectFlag = $state(false)
+        const sideEffectCalls = (() => 3)()
+        sideEffectFlag = sideEffectCalls
+
+        let noBarrierFlag = $state(false)
+        noBarrierFlag = 4
+
+        return [
+          postCalls,
+          postFlag,
+          preCalls,
+          preFlag,
+          compoundCalls,
+          compoundFlag,
+          pureCalls,
+          pureFlag,
+          sideEffectCalls,
+          sideEffectFlag,
+          noBarrierFlag,
+        ]
+      }
+    `
+    const output = transformCommonJS(source)
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useStateAssignmentOrdering')() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual([1, 0, 1, 1, 2, 2, 1, 2, 3, 3, 4])
+  })
+
   it('preserves ToNumeric coercion for update expressions on $state', () => {
     const source = `
       import { $state } from 'fict'

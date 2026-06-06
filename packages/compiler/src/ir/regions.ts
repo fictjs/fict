@@ -3413,6 +3413,9 @@ function flushInstructionBuffer(
 ): BabelCore.types.Statement[] {
   const stmts: BabelCore.types.Statement[] = []
   collectSnapshotInterruptedRegionIds(buffer).forEach(id => regionCtx?.disabledRegions.add(id))
+  collectSignalWriteDeclarationBarrierRegionIds(buffer, ctx).forEach(id =>
+    regionCtx?.disabledRegions.add(id),
+  )
 
   for (const item of buffer) {
     if (regionCtx?.hoistedInstructions.has(item.instr)) {
@@ -3445,6 +3448,46 @@ function flushInstructionBuffer(
   }
 
   return stmts
+}
+
+function collectSignalWriteDeclarationBarrierRegionIds(
+  buffer: { instr: Instruction; region?: Region | undefined }[],
+  ctx: CodegenContext,
+): Set<number> {
+  const disabled = new Set<number>()
+  const signalNames = new Set<string>(ctx.signalVars ?? [])
+  const priorDeclarations = new Map<string, { index: number; region?: Region | undefined }>()
+
+  for (let index = 0; index < buffer.length; index++) {
+    const item = buffer[index]
+    const instr = item?.instr
+    if (!instr) continue
+
+    if (instr.kind === 'Assign' && instr.declarationKind) {
+      const name = deSSAVarName(instr.target.name)
+      priorDeclarations.set(name, { index, region: item.region })
+      if (getReactiveCallKind(instr.value, ctx) === 'signal') {
+        signalNames.add(name)
+      }
+      continue
+    }
+
+    if (!item.region || instr.kind !== 'Assign' || instr.declarationKind) continue
+
+    const targetName = deSSAVarName(instr.target.name)
+    if (!signalNames.has(targetName)) continue
+
+    for (const dep of collectInstructionDependencies(instr)) {
+      const depName = deSSAVarName(dep)
+      if (depName === targetName) continue
+      const declaration = priorDeclarations.get(depName)
+      if (!declaration || declaration.index >= index) continue
+      if (declaration.region?.id === item.region.id) continue
+      disabled.add(item.region.id)
+    }
+  }
+
+  return disabled
 }
 
 function collectSnapshotInterruptedRegionIds(
