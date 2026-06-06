@@ -806,6 +806,63 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps destructured value props reactive when lexical shadows are called', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: string): void }
+
+      function Child({ value }: { value: string }) {
+        try {
+          throw () => 'catch'
+        } catch (value) {
+          value()
+        }
+        for (const value of [() => 'loop']) {
+          value()
+        }
+        switch (1) {
+          case 1: {
+            const value = () => 'case'
+            value()
+            break
+          }
+        }
+        return <span data-testid="value" title={value}>{value}</span>
+      }
+
+      function App() {
+        const value = $state('one')
+        api = { set: next => value(next) }
+        return <Child value={value} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: string): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const valueEl = container.querySelector('[data-testid="value"]') as HTMLSpanElement
+
+    expect(valueEl.textContent).toBe('one')
+    expect(valueEl.getAttribute('title')).toBe('one')
+
+    mod.api.set('two')
+    await flushUpdates()
+    expect(valueEl.textContent).toBe('two')
+    expect(valueEl.getAttribute('title')).toBe('two')
+
+    teardown()
+    container.remove()
+  })
+
   it('passes props to local components named Fragment', async () => {
     const source = `
       import { render } from 'fict'

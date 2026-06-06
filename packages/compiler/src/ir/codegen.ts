@@ -3749,7 +3749,8 @@ export function applyRegionMetadataToExpression(
   const _isReactiveAccessor = (name: string): boolean =>
     ctx.trackedVars.has(name) ||
     !!(ctx.signalVars?.has(name) || ctx.memoVars?.has(name) || ctx.aliasVars?.has(name))
-  const isNonReactiveFunction = (name: string): boolean => ctx.functionVars?.has(name) ?? false
+  const isNonReactiveFunction = (name: string): boolean =>
+    (ctx.functionVars?.has(name) ?? false) && !(ctx.resumablePropAccessors?.has(name) ?? false)
 
   if (shadowed && Object.keys(overrides).length > 0) {
     for (const key of Object.keys(overrides)) {
@@ -3825,11 +3826,13 @@ export function buildDependencyGetter(
   const isActualGetter = !!(
     ctx.signalVars?.has(base) ||
     ctx.memoVars?.has(base) ||
-    ctx.aliasVars?.has(base)
+    ctx.aliasVars?.has(base) ||
+    ctx.resumablePropAccessors?.has(base)
   )
   // $store variables use proxy-based reactivity, don't convert to getter calls
   const isStore = ctx.storeVars?.has(base) ?? false
-  const isNonReactiveFunction = ctx.functionVars?.has(base) ?? false
+  const isNonReactiveFunction =
+    (ctx.functionVars?.has(base) ?? false) && !(ctx.resumablePropAccessors?.has(base) ?? false)
 
   let baseExpr: BabelCore.types.Expression
   if (isActualGetter && !isStore && !isNonReactiveFunction) {
@@ -4330,8 +4333,16 @@ function lowerIntrinsicElement(
       ? lowerDomExpression(expr, ctx, containingRegion)
       : t.booleanLiteral(true)
     const valueIdentifier = t.isIdentifier(valueExpr) ? deSSAVarName(valueExpr.name) : undefined
+    const isAccessorIdentifier =
+      valueIdentifier &&
+      ((ctx.signalVars?.has(valueIdentifier) ?? false) ||
+        (ctx.memoVars?.has(valueIdentifier) ?? false) ||
+        (ctx.aliasVars?.has(valueIdentifier) ?? false) ||
+        (ctx.resumablePropAccessors?.has(valueIdentifier) ?? false))
     return valueIdentifier &&
-      (regionMeta?.dependencies.has(valueIdentifier) || ctx.trackedVars.has(valueIdentifier))
+      (regionMeta?.dependencies.has(valueIdentifier) ||
+        ctx.trackedVars.has(valueIdentifier) ||
+        isAccessorIdentifier)
       ? buildDependencyGetter(valueIdentifier, ctx)
       : valueExpr
   }
@@ -7083,7 +7094,24 @@ function lowerFunctionWithRegions(
   ctx.resumablePropRests = new Map()
   const prevDelegatedEventsUsed = ctx.delegatedEventsUsed
   ctx.delegatedEventsUsed = new Set()
-  const calledIdentifiers = collectCalledIdentifiers(fn)
+  const propDestructureRootNames = new Set<string>()
+  if (fn.rawParams && fn.rawParams.length === 1) {
+    const rawParam = fn.rawParams[0]
+    const pattern =
+      rawParam &&
+      (rawParam.type === 'ObjectPattern' ||
+        (rawParam.type === 'AssignmentPattern' && rawParam.left?.type === 'ObjectPattern'))
+        ? rawParam.type === 'AssignmentPattern'
+          ? rawParam.left
+          : rawParam
+        : null
+    if (pattern && pattern.type === 'ObjectPattern') {
+      Object.keys(t.getBindingIdentifiers(pattern)).forEach(name =>
+        propDestructureRootNames.add(name),
+      )
+    }
+  }
+  const calledIdentifiers = collectCalledIdentifiers(fn, propDestructureRootNames)
   const calledPropValueNames = new Set<string>()
   const calledPropFunctionVars = new Set<string>()
   const propsPlanAliases = new Set<string>()

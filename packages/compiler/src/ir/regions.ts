@@ -1741,6 +1741,7 @@ function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, f
   const prevCallableSignals = ctx.callableSignalVars
   const prevMemos = ctx.memoVars
   const prevAliases = ctx.aliasVars
+  const prevResumablePropAccessors = ctx.resumablePropAccessors
   const tracked = new Set(ctx.trackedVars)
   bindingNames.forEach(name => tracked.delete(name))
   ctx.trackedVars = tracked
@@ -1764,6 +1765,11 @@ function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, f
     bindingNames.forEach(name => aliases.delete(name))
     ctx.aliasVars = aliases
   }
+  if (ctx.resumablePropAccessors) {
+    const resumablePropAccessors = new Map(ctx.resumablePropAccessors)
+    bindingNames.forEach(name => resumablePropAccessors.delete(name))
+    ctx.resumablePropAccessors = resumablePropAccessors
+  }
   const shadowed = new Set(prevShadowed ?? [])
   bindingNames.forEach(name => shadowed.add(name))
   ctx.shadowedNames = shadowed
@@ -1777,6 +1783,7 @@ function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, f
     ctx.callableSignalVars = prevCallableSignals
     ctx.memoVars = prevMemos
     ctx.aliasVars = prevAliases
+    ctx.resumablePropAccessors = prevResumablePropAccessors
   }
 }
 

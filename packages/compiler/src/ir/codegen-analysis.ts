@@ -452,9 +452,13 @@ export function collectIdentifierAliasesFromRoots(
   return aliases
 }
 
-export function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
+export function collectCalledIdentifiers(
+  fn: HIRFunction,
+  shadowRootNames?: Set<string>,
+): Set<string> {
   const called = new Set<string>()
   const aliasSources = collectStableIdentifierAliases(fn)
+  const shadowRoots = shadowRootNames ?? new Set<string>()
 
   const getStaticMemberName = (
     expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
@@ -466,9 +470,10 @@ export function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
     return null
   }
 
-  const recordCalledIdentifier = (callee: Expression): boolean => {
+  const recordCalledIdentifier = (callee: Expression, shadowed: Set<string>): boolean => {
     if (callee.kind === 'Identifier') {
-      called.add(deSSAVarName(callee.name))
+      const name = deSSAVarName(callee.name)
+      if (!shadowed.has(name)) called.add(name)
       return true
     }
     if (callee.kind === 'MemberExpression' || callee.kind === 'OptionalMemberExpression') {
@@ -477,90 +482,104 @@ export function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
         (methodName === 'call' || methodName === 'apply') &&
         callee.object.kind === 'Identifier'
       ) {
-        called.add(deSSAVarName(callee.object.name))
+        const name = deSSAVarName(callee.object.name)
+        if (!shadowed.has(name)) called.add(name)
         return true
       }
     }
     return false
   }
 
-  const visitExpr = (expr: Expression | undefined | null) => {
+  const withRootShadow = (shadowed: Set<string>, name: string | undefined | null): Set<string> => {
+    if (!name || !shadowRoots.has(name)) return shadowed
+    const next = new Set(shadowed)
+    next.add(name)
+    return next
+  }
+
+  const visitExpr = (expr: Expression | undefined | null, shadowed = new Set<string>()) => {
     if (!expr) return
     switch (expr.kind) {
       case 'Identifier':
         return
       case 'CallExpression': {
-        if (!recordCalledIdentifier(expr.callee as Expression)) {
-          visitExpr(expr.callee as Expression)
+        if (!recordCalledIdentifier(expr.callee as Expression, shadowed)) {
+          visitExpr(expr.callee as Expression, shadowed)
         }
-        expr.arguments.forEach(arg => visitExpr(arg as Expression))
+        expr.arguments.forEach(arg => visitExpr(arg as Expression, shadowed))
         return
       }
       case 'OptionalCallExpression': {
-        if (!recordCalledIdentifier(expr.callee as Expression)) {
-          visitExpr(expr.callee as Expression)
+        if (!recordCalledIdentifier(expr.callee as Expression, shadowed)) {
+          visitExpr(expr.callee as Expression, shadowed)
         }
-        expr.arguments.forEach(arg => visitExpr(arg as Expression))
+        expr.arguments.forEach(arg => visitExpr(arg as Expression, shadowed))
         return
       }
       case 'MemberExpression':
       case 'OptionalMemberExpression':
-        visitExpr(expr.object as Expression)
-        visitExpr(expr.property as Expression)
+        visitExpr(expr.object as Expression, shadowed)
+        visitExpr(expr.property as Expression, shadowed)
         return
       case 'UnaryExpression':
-        visitExpr(expr.argument as Expression)
+        visitExpr(expr.argument as Expression, shadowed)
         return
       case 'BinaryExpression':
       case 'LogicalExpression':
-        visitExpr(expr.left as Expression)
-        visitExpr(expr.right as Expression)
+        visitExpr(expr.left as Expression, shadowed)
+        visitExpr(expr.right as Expression, shadowed)
         return
       case 'ConditionalExpression':
-        visitExpr(expr.test as Expression)
-        visitExpr(expr.consequent as Expression)
-        visitExpr(expr.alternate as Expression)
+        visitExpr(expr.test as Expression, shadowed)
+        visitExpr(expr.consequent as Expression, shadowed)
+        visitExpr(expr.alternate as Expression, shadowed)
         return
       case 'ArrayExpression':
-        expr.elements.forEach(el => visitExpr(el as Expression))
+        expr.elements.forEach(el => visitExpr(el as Expression, shadowed))
         return
       case 'ObjectExpression':
         expr.properties.forEach(p => {
           if (p.kind === 'SpreadElement') {
-            visitExpr(p.argument as Expression)
+            visitExpr(p.argument as Expression, shadowed)
           } else {
-            if (p.computed) visitExpr(p.key as Expression)
-            visitExpr(p.value as Expression)
+            if (p.computed) visitExpr(p.key as Expression, shadowed)
+            visitExpr(p.value as Expression, shadowed)
           }
         })
         return
-      case 'ArrowFunction':
-      case 'FunctionExpression':
+      case 'ArrowFunction': {
+        let fnShadowed = shadowed
+        expr.params.forEach(param => {
+          fnShadowed = withRootShadow(fnShadowed, deSSAVarName(param.name))
+        })
         if (Array.isArray(expr.body)) {
-          expr.body.forEach(block => {
-            block.instructions.forEach(instr => {
-              if (instr.kind === 'Assign' || instr.kind === 'Expression') {
-                visitExpr(instr.value)
-              }
-            })
-          })
+          visitBlocks(expr.body, fnShadowed)
         } else {
-          visitExpr(expr.body as Expression)
+          visitExpr(expr.body as Expression, fnShadowed)
         }
         return
+      }
+      case 'FunctionExpression': {
+        let fnShadowed = shadowed
+        expr.params.forEach(param => {
+          fnShadowed = withRootShadow(fnShadowed, deSSAVarName(param.name))
+        })
+        visitBlocks(expr.body, fnShadowed)
+        return
+      }
       case 'JSXElement':
         expr.attributes.forEach(attr => {
           if (attr.isSpread && attr.spreadExpr) {
-            visitExpr(attr.spreadExpr)
+            visitExpr(attr.spreadExpr, shadowed)
           } else if (attr.value) {
-            visitExpr(attr.value)
+            visitExpr(attr.value, shadowed)
           }
         })
         expr.children.forEach(child => {
           if (child.kind === 'expression') {
-            visitExpr(child.value)
+            visitExpr(child.value, shadowed)
           } else if (child.kind === 'element') {
-            visitExpr(child.value)
+            visitExpr(child.value, shadowed)
           }
         })
         return
@@ -569,43 +588,117 @@ export function collectCalledIdentifiers(fn: HIRFunction): Set<string> {
     }
   }
 
-  const visitTerminator = (term: BasicBlock['terminator']) => {
+  const visitTerminator = (
+    term: BasicBlock['terminator'],
+    shadowed: Set<string>,
+    visitBlockById?: (id: number, shadowed: Set<string>) => void,
+  ) => {
     switch (term.kind) {
       case 'Branch':
-        visitExpr(term.test)
+        visitExpr(term.test, shadowed)
+        visitBlockById?.(term.consequent, shadowed)
+        visitBlockById?.(term.alternate, shadowed)
         return
       case 'Switch':
-        visitExpr(term.discriminant)
-        term.cases.forEach(c => visitExpr(c.test))
+        visitExpr(term.discriminant, shadowed)
+        term.cases.forEach(c => {
+          visitExpr(c.test, shadowed)
+          visitBlockById?.(c.target, shadowed)
+        })
         return
       case 'ForOf':
-        visitExpr(term.iterable)
-        visitExpr(term.assignmentTarget ?? null)
+        visitExpr(term.iterable, shadowed)
+        visitExpr(term.assignmentTarget ?? null, shadowed)
+        visitBlockById?.(
+          term.body,
+          term.leftKind === 'declaration'
+            ? withRootShadow(shadowed, deSSAVarName(term.variable))
+            : shadowed,
+        )
+        visitBlockById?.(term.exit, shadowed)
         return
       case 'ForIn':
-        visitExpr(term.object)
-        visitExpr(term.assignmentTarget ?? null)
+        visitExpr(term.object, shadowed)
+        visitExpr(term.assignmentTarget ?? null, shadowed)
+        visitBlockById?.(
+          term.body,
+          term.leftKind === 'declaration'
+            ? withRootShadow(shadowed, deSSAVarName(term.variable))
+            : shadowed,
+        )
+        visitBlockById?.(term.exit, shadowed)
+        return
+      case 'Try':
+        visitBlockById?.(term.tryBlock, shadowed)
+        if (term.catchBlock !== undefined) {
+          visitBlockById?.(
+            term.catchBlock,
+            term.catchParam ? withRootShadow(shadowed, deSSAVarName(term.catchParam)) : shadowed,
+          )
+        }
+        if (term.finallyBlock !== undefined) visitBlockById?.(term.finallyBlock, shadowed)
+        visitBlockById?.(term.exit, shadowed)
         return
       case 'Return':
-        visitExpr(term.argument ?? null)
+        visitExpr(term.argument ?? null, shadowed)
         return
       case 'Throw':
-        visitExpr(term.argument)
+        visitExpr(term.argument, shadowed)
+        return
+      case 'Jump':
+      case 'Break':
+      case 'Continue':
+        visitBlockById?.(term.target, shadowed)
         return
       default:
         return
     }
   }
 
-  for (const block of fn.blocks) {
-    block.instructions.forEach(instr => {
-      if (instr.kind === 'Assign') {
-        visitExpr(instr.value)
-      } else if (instr.kind === 'Expression') {
-        visitExpr(instr.value)
-      }
+  function visitBlocks(blocks: BasicBlock[], initialShadowed: Set<string>): void {
+    const byId = new Map(blocks.map(block => [block.id, block]))
+    const visited = new Set<string>()
+    const visitBlockById = (id: number, shadowed: Set<string>): void => {
+      const block = byId.get(id)
+      if (!block) return
+      const key = `${id}:${Array.from(shadowed).sort().join(',')}`
+      if (visited.has(key)) return
+      visited.add(key)
+
+      let blockShadowed = shadowed
+      block.instructions.forEach(instr => {
+        if (instr.kind === 'Assign') {
+          visitExpr(instr.value, blockShadowed)
+          if (instr.declarationKind) {
+            blockShadowed = withRootShadow(blockShadowed, deSSAVarName(instr.target.name))
+          }
+        } else if (instr.kind === 'Expression') {
+          visitExpr(instr.value, blockShadowed)
+        }
+      })
+      visitTerminator(block.terminator, blockShadowed, visitBlockById)
+    }
+
+    if (blocks[0]) visitBlockById(blocks[0].id, initialShadowed)
+    blocks.forEach(block => {
+      const seen = Array.from(visited).some(key => key.startsWith(`${block.id}:`))
+      if (!seen) visitBlockById(block.id, initialShadowed)
     })
-    visitTerminator(block.terminator)
+  }
+
+  if (shadowRoots.size > 0) {
+    visitBlocks(fn.blocks, new Set())
+  } else {
+    for (const block of fn.blocks) {
+      block.instructions.forEach(instr => {
+        if (instr.kind === 'Assign') {
+          visitExpr(instr.value)
+        } else if (instr.kind === 'Expression') {
+          visitExpr(instr.value)
+        }
+      })
+      visitTerminator(block.terminator, new Set())
+    }
   }
 
   let changed = true

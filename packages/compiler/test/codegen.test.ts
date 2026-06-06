@@ -695,6 +695,36 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).not.toContain('const cb = prop(() => __props.cb)')
   })
 
+  it('keeps value props reactive when lexical shadows are called', () => {
+    const ast = parseFile(`
+      function Child({ value }) {
+        try {
+          throw () => 1
+        } catch (value) {
+          value()
+        }
+        for (const value of [() => 2]) {
+          value()
+        }
+        switch (1) {
+          case 1: {
+            const value = () => 3
+            value()
+            break
+          }
+        }
+        return <span title={value}>{value}</span>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('const value = prop(() => __props.value)')
+    expect(code).toContain('() => value()')
+    expect(code).not.toContain('const value = __props.value')
+  })
+
   it('does not bypass the alias reassignment guard for reassigned local aliases', () => {
     const ast = parseFile(`
       function Child({ cb, other }) {
