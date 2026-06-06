@@ -1590,6 +1590,137 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('__fictUseSignal(__fictCtx, 1')
   })
 
+  it('lowers object-destructured components with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const { App } = {
+        App: () => {
+          const count = $state(1)
+          return <button>{count}</button>
+        },
+      }
+
+      export function Parent() {
+        return <App />
+      }
+    `)
+
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).toContain('type: App')
+    expect(output).not.toContain('createSignal(1')
+    expect(output).not.toContain('() => count, createElement')
+  })
+
+  it('keeps renamed object-destructured component props reactive', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const { App: Child } = {
+        App: ({ value }: { value: number }) => <span>{value}</span>,
+      }
+
+      export function Parent() {
+        const count = $state(1)
+        return <Child value={count} />
+      }
+    `)
+
+    expect(output).toContain('const value = prop(() => __props.value)')
+    expect(output).toContain('() => value()')
+    expect(output).toContain('value: __fictProp(() => count())')
+    expect(output).not.toContain('({ value })')
+    expect(output).not.toContain('() => value, createElement')
+  })
+
+  it('lowers object-method destructured components with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const { App } = {
+        App() {
+          const count = $state(1)
+          return <button>{count}</button>
+        },
+      }
+
+      export function Parent() {
+        return <App />
+      }
+    `)
+
+    expect(output).toContain('App() {')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('lowers aliased object-destructured components with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const registry = {
+        App: () => {
+          const count = $state(1)
+          return <button>{count}</button>
+        },
+      }
+      const { App } = registry
+
+      export function Parent() {
+        return <App />
+      }
+    `)
+
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('keeps object-destructuring assignment component props reactive', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      let Child: any
+
+      ;({ App: Child } = {
+        App: ({ value }: { value: number }) => <span>{value}</span>,
+      })
+
+      export function Parent() {
+        const count = $state(1)
+        return <Child value={count} />
+      }
+    `)
+
+    expect(output).toContain('const value = prop(() => __props.value)')
+    expect(output).toContain('() => value()')
+    expect(output).toContain('value: __fictProp(() => count())')
+    expect(output).not.toContain('({ value })')
+    expect(output).not.toContain('() => value, createElement')
+  })
+
+  it('does not component-lower object-destructured functions unused as JSX tags', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const { App } = {
+        App: () => {
+          const count = $state(1)
+          return <button>{count}</button>
+        },
+      }
+
+      export function Parent() {
+        return <div>app</div>
+      }
+    `)
+
+    expect(output).toContain('createSignal(1')
+    expect(output).not.toContain('__fictUseSignal(__fictCtx, 1')
+  })
+
   it('lowers array-literal component spreads to index props', () => {
     const output = transform(`
       import { $state } from 'fict'

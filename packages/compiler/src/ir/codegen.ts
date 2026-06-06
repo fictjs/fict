@@ -1649,6 +1649,7 @@ export function lowerHIRToBabel(
     ctx.jsxComponentNames.add(name)
   }
   ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(originalBody, t)
+  addDestructuredJSXComponentSourcePaths(program, ctx)
   const body: BabelCore.types.Statement[] = []
   const emittedFunctionNames = new Set<string>()
   for (const fn of program.functions) {
@@ -2656,6 +2657,29 @@ function getStaticMemberPath(expr: Expression): string[] | null {
   const propertyName = getStaticPropName(expr.property as Expression, expr.computed)
   if (propertyName === null) return null
   return [...objectPath, String(propertyName)]
+}
+
+function addDestructuredJSXComponentSourcePathsFromFunctions(
+  functions: Iterable<HIRFunction>,
+  ctx: CodegenContext,
+): void {
+  const paths = ctx.jsxMemberComponentPaths ?? (ctx.jsxMemberComponentPaths = new Set())
+  for (const fn of functions) {
+    for (const block of fn.blocks) {
+      for (const instr of block.instructions) {
+        if (instr.kind !== 'Assign') continue
+        const targetName = deSSAVarName(instr.target.name)
+        if (!isJSXIdentifierComponentName(targetName, ctx)) continue
+        const sourcePath = getStaticMemberPath(instr.value)
+        if (!sourcePath || sourcePath.length < 2) continue
+        paths.add(objectPathKey(sourcePath))
+      }
+    }
+  }
+}
+
+function addDestructuredJSXComponentSourcePaths(program: HIRProgram, ctx: CodegenContext): void {
+  addDestructuredJSXComponentSourcePathsFromFunctions(program.functions, ctx)
 }
 
 function functionValueToHIRFunction(
@@ -6392,12 +6416,19 @@ export function codegenWithScopes(
   t: typeof BabelCore.types,
 ): BabelCore.types.File {
   const ctx = createCodegenContext(t)
+  const originalBody = (program.originalBody ?? []) as BabelCore.types.Statement[]
   ctx.resumableEnabled = ctx.options?.resumable === true
   ctx.autoExtractEnabled = ctx.options?.autoExtractHandlers ?? ctx.resumableEnabled
   ctx.autoExtractThreshold = ctx.options?.autoExtractThreshold ?? 3
   ctx.programFunctions = new Map(
     program.functions.filter(fn => !!fn.name).map(fn => [fn.name as string, fn]),
   )
+  ctx.jsxComponentNames = collectJSXComponentNames(originalBody, t)
+  for (const name of collectExportedComponentNames(originalBody, t)) {
+    ctx.jsxComponentNames.add(name)
+  }
+  ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(originalBody, t)
+  addDestructuredJSXComponentSourcePaths(program, ctx)
   ctx.scopes = scopes
 
   // Mark tracked variables based on scope analysis
@@ -6522,13 +6553,18 @@ function lowerInstructionWithScopes(
     markKnownArrayInitializer(targetBase, instr.value, ctx, !!declKind)
     let valueExpr: BabelCore.types.Expression
     const lowerInitializerExpression = (): BabelCore.types.Expression => {
+      const prevObjectLiteralPath = ctx.objectLiteralPath
       const prevComponentWrapperName = ctx.componentWrapperName
+      if (instr.value.kind === 'ObjectExpression') {
+        ctx.objectLiteralPath = [targetBase]
+      }
       if (isComponentName(targetBase) && isJSXIdentifierComponentName(targetBase, ctx)) {
         ctx.componentWrapperName = targetBase
       }
       try {
         return lowerExpression(instr.value, ctx)
       } finally {
+        ctx.objectLiteralPath = prevObjectLiteralPath
         ctx.componentWrapperName = prevComponentWrapperName
       }
     }
@@ -6708,6 +6744,7 @@ export function lowerHIRWithRegions(
     ctx.jsxComponentNames.add(name)
   }
   ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(originalBody, t)
+  addDestructuredJSXComponentSourcePaths(program, ctx)
   ctx.resumableEnabled = options?.resumable === true
   // Auto-extract defaults to true when resumable is enabled, unless explicitly disabled
   ctx.autoExtractEnabled = options?.autoExtractHandlers ?? options?.resumable === true
@@ -7146,6 +7183,7 @@ function lowerTopLevelStatementBlock(
       ? { reactiveScopes: new Set(reactiveScopes) }
       : undefined,
   )
+  addDestructuredJSXComponentSourcePathsFromFunctions([fn], ctx)
   const scopeResult = analyzeReactiveScopesWithSSA(fn)
   detectDerivedCycles(fn, scopeResult, ctx)
   ctx.scopes = scopeResult

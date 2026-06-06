@@ -2428,6 +2428,92 @@ function handleExpressionStatement(
   if (!t.isAssignmentExpression(unwrapped)) return false
   if (isLogicalAssignmentOperator(unwrapped.operator)) return false
 
+  if (unwrapped.operator === '=' && t.isObjectPattern(unwrapped.left)) {
+    const useTemp = !t.isIdentifier(unwrapped.right)
+    const tempName = `__destruct_${destructuringTempCounter++}`
+    const sourceExpr = useTemp
+      ? t.identifier(tempName)
+      : (unwrapped.right as BabelCore.types.Expression)
+
+    if (useTemp) {
+      push({
+        kind: 'Assign',
+        target: { kind: 'Identifier', name: tempName },
+        value: convertExpression(unwrapped.right as BabelCore.types.Expression),
+        declarationKind: 'const',
+      })
+    }
+
+    const excludeKeys: BabelCore.types.Expression[] = []
+    for (const prop of unwrapped.left.properties) {
+      if (t.isObjectProperty(prop)) {
+        if (prop.computed) {
+          reportUnsupportedExpression(
+            prop.key,
+            'Computed keys in object destructuring are not supported in HIR conversion.',
+          )
+          return true
+        }
+        const keyName = t.isIdentifier(prop.key)
+          ? prop.key.name
+          : t.isStringLiteral(prop.key)
+            ? prop.key.value
+            : t.isNumericLiteral(prop.key)
+              ? String(prop.key.value)
+              : null
+        if (!keyName) {
+          reportUnsupportedExpression(
+            prop.key,
+            'Unsupported object destructuring key in HIR conversion.',
+          )
+          return true
+        }
+        excludeKeys.push(t.stringLiteral(keyName))
+        if (!t.isIdentifier(prop.value)) {
+          reportUnsupportedExpression(
+            prop.value as unknown as BabelCore.types.Node,
+            'Unsupported object destructuring pattern in HIR conversion.',
+          )
+          return true
+        }
+        const memberExpr = t.memberExpression(sourceExpr, t.identifier(keyName), false)
+        push({
+          kind: 'Assign',
+          target: { kind: 'Identifier', name: prop.value.name },
+          value: convertExpression(memberExpr),
+          isMutation: true,
+        })
+        continue
+      }
+      if (t.isRestElement(prop)) {
+        if (!t.isIdentifier(prop.argument)) {
+          reportUnsupportedExpression(
+            prop.argument as unknown as BabelCore.types.Node,
+            'Rest destructuring patterns must be identifiers in HIR conversion.',
+          )
+          return true
+        }
+        const restExpr = t.callExpression(t.identifier('__fictObjectRest'), [
+          sourceExpr,
+          t.arrayExpression(excludeKeys),
+        ])
+        push({
+          kind: 'Assign',
+          target: { kind: 'Identifier', name: prop.argument.name },
+          value: convertExpression(restExpr),
+          isMutation: true,
+        })
+        continue
+      }
+      reportUnsupportedExpression(
+        prop as unknown as BabelCore.types.Node,
+        'Unsupported object destructuring property in HIR conversion.',
+      )
+      return true
+    }
+    return true
+  }
+
   if (t.isIdentifier(unwrapped.left)) {
     push({
       kind: 'Assign',
