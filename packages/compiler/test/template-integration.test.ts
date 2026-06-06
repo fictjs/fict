@@ -904,6 +904,50 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('calls reactive object methods through call apply and bind', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export function App() {
+        let obj = $state({
+          value: 1,
+          fn(this: { value: number }) {
+            return this.value
+          },
+        })
+        return (
+          <section>
+            <span data-id="direct">{obj.fn()}</span>
+            <span data-id="call">{obj.fn.call({ value: 2 })}</span>
+            <span data-id="apply">{obj.fn.apply({ value: 3 })}</span>
+            <span data-id="bind">{obj.fn.bind({ value: 4 })()}</span>
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    const text = (id: string) => container.querySelector(`[data-id="${id}"]`)?.textContent
+    expect(text('direct')).toBe('1')
+    expect(text('call')).toBe('2')
+    expect(text('apply')).toBe('3')
+    expect(text('bind')).toBe('4')
+
+    teardown()
+    container.remove()
+  })
+
   it('invokes call/apply destructured function props', async () => {
     const source = `
       import { render } from 'fict'

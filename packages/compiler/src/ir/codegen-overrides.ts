@@ -529,17 +529,6 @@ export function replaceIdentifiersWithOverrides(
     return
   }
 
-  // fix: For MemberExpressions like `foo.call()`, `foo.apply()`, or `foo.bind()`,
-  // skip replacing the object identifier. These method calls need the original function
-  // reference for proper `this` binding.
-  const isMethodCallMember =
-    (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) &&
-    !(node as BabelCore.types.MemberExpression).computed &&
-    t.isIdentifier((node as BabelCore.types.MemberExpression).property) &&
-    ['call', 'apply', 'bind'].includes(
-      ((node as BabelCore.types.MemberExpression).property as BabelCore.types.Identifier).name,
-    )
-
   for (const key of Object.keys(node)) {
     if (key === 'type' || key === 'loc' || key === 'start' || key === 'end') continue
     if ((t.isObjectProperty(node) || t.isObjectMethod(node)) && key === 'key' && !node.computed) {
@@ -550,10 +539,6 @@ export function replaceIdentifiersWithOverrides(
       key === 'property' &&
       !node.computed
     ) {
-      continue
-    }
-    // fix: Skip the object of .call()/.apply()/.bind() member expressions
-    if (isMethodCallMember && key === 'object') {
       continue
     }
     const value = (node as unknown as Record<string, unknown>)[key]

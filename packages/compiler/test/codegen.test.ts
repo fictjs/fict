@@ -765,6 +765,37 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).not.toContain('const label = __props.label')
   })
 
+  it('keeps reactive object method receivers for call apply and bind', () => {
+    const ast = parseFile(`
+      function App() {
+        let obj = $state({
+          value: 1,
+          fn() {
+            return this.value
+          },
+        })
+        return (
+          <section>
+            <span>{obj.fn()}</span>
+            <span>{obj.fn.call({ value: 2 })}</span>
+            <span>{obj.fn.apply({ value: 3 })}</span>
+            <span>{obj.fn.bind({ value: 4 })()}</span>
+          </section>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('obj().fn.call')
+    expect(code).toContain('obj().fn.apply')
+    expect(code).toContain('obj().fn.bind')
+    expect(code).not.toContain('obj.fn.call')
+    expect(code).not.toContain('obj.fn.apply')
+    expect(code).not.toContain('obj.fn.bind')
+  })
+
   it('does not bypass the alias reassignment guard for reassigned local aliases', () => {
     const ast = parseFile(`
       function Child({ cb, other }) {
