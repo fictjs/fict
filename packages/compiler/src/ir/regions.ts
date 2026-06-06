@@ -4284,7 +4284,9 @@ function collectMutableNonReactiveDependencies(
   for (const dep of collectExprDependencies(expr)) {
     const name = deSSAVarName(dep)
     if (name === targetName) continue
-    if (!(ctx.mutatedVars?.has(name) ?? false)) continue
+    if (!(ctx.mutatedVars?.has(name) ?? false) && !(ctx.memberMutatedVars?.has(name) ?? false)) {
+      continue
+    }
     if (isReactiveSnapshotExcludedName(name, ctx, localValueNames)) continue
     names.add(name)
   }
@@ -4410,6 +4412,7 @@ function instructionRequiresEagerDerivedLowering(instr: Instruction, ctx: Codege
   if (instr.kind !== 'Assign') return false
   const baseName = deSSAVarName(instr.target.name)
   if (baseName.startsWith('__destruct_')) return false
+  if (collectMutableNonReactiveDependencies(instr.value, ctx, baseName).length > 0) return true
   if (!expressionUsesTracked(instr.value, ctx) && !(ctx.memoVars?.has(baseName) ?? false)) {
     return false
   }

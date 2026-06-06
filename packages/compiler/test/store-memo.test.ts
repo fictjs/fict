@@ -34,6 +34,41 @@ describe('$store memoization and dynamic access', () => {
     expect(output).toContain(`() => doubled()`)
   })
 
+  it('does not classify local $store shadows as store macros', () => {
+    const output = transform(`
+      import { render } from 'fict'
+      function Component() {
+        const $store = value => ({ ...value })
+        const local = $store({ count: 1 })
+        const shown = local.count * 2
+        local.count = 3
+        return <span>{shown}</span>
+      }
+    `)
+
+    expect(output).not.toContain(`const shown = __fictUseMemo`)
+    expect(output).not.toContain(`() => local.count * 2`)
+    expect(output).toContain(`const shown = local.count * 2`)
+  })
+
+  it('keeps imported and namespace $store calls reactive', () => {
+    const output = transform(`
+      import { $store, $store as makeStore } from 'fict/plus'
+      import * as F from 'fict/plus'
+      function Component() {
+        const one = $store({ count: 1 })
+        const two = makeStore({ count: 2 })
+        const three = F.$store({ count: 3 })
+        const total = one.count + two.count + three.count
+        return <span>{total}</span>
+      }
+    `)
+
+    expect(output).toContain(
+      `const total = __fictUseMemo(__fictCtx, () => one.count + two.count + three.count`,
+    )
+  })
+
   it('publishes aliased store macro exports as store metadata', () => {
     const moduleMetadata = new Map()
     const sourcePath = path.join(baseDir, 'aliased-store-export.ts')

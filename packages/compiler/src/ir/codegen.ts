@@ -13,6 +13,7 @@ import {
   convertStatementsToHIRFunction,
 } from './build-hir'
 import {
+  collectMemberMutatedIdentifiers,
   collectMutatedIdentifiers,
   collectCalledIdentifiers,
   collectFunctionDependencyMutations,
@@ -749,6 +750,8 @@ export interface CodegenContext {
   storeMacroNames?: Set<string> | undefined
   /** Variables that are assigned after declaration (need mutable binding) */
   mutatedVars?: Set<string> | undefined
+  /** Variables whose member properties are assigned or updated. */
+  memberMutatedVars?: Set<string> | undefined
   /** Whether we are emitting statements inside a region memo */
   inRegionMemo?: boolean | undefined
   /** Whether we are lowering a list item render callback */
@@ -904,6 +907,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     storeMacroNames: new Set(['$store']),
     strictMacroBindings: false,
     mutatedVars: new Set(),
+    memberMutatedVars: new Set(),
     inRegionMemo: false,
     inListRender: false,
     inModule: false,
@@ -6231,6 +6235,7 @@ function lowerTopLevelStatementBlock(
   const storeVars = ctx.storeVars ?? new Set<string>()
   const memoVars = ctx.memoVars ?? new Set<string>()
   const mutatedVars = new Set<string>()
+  const memberMutatedVars = new Set<string>()
   ctx.functionVars = functionVars
   ctx.signalVars = signalVars
   ctx.callableSignalVars = callableSignalVars
@@ -6238,6 +6243,7 @@ function lowerTopLevelStatementBlock(
   ctx.storeVars = storeVars
   ctx.memoVars = memoVars
   ctx.mutatedVars = mutatedVars
+  ctx.memberMutatedVars = memberMutatedVars
 
   // Initialize componentFunctionDefs for this component to track function definitions
   // These may need to be hoisted for handler dependency resolution
@@ -6287,6 +6293,7 @@ function lowerTopLevelStatementBlock(
     }
   }
   collectMutatedIdentifiers(fn).forEach(name => mutatedVars.add(name))
+  collectMemberMutatedIdentifiers(fn).forEach(name => memberMutatedVars.add(name))
   for (const [name, mutations] of collectFunctionDependencyMutations(fn, functionVars)) {
     componentFunctionMutations.set(name, mutations)
   }
@@ -7165,13 +7172,175 @@ function compareSourcePositions(
 function getSingleLexicalDeclaration(
   stmt: BabelCore.types.Statement,
   t: typeof BabelCore.types,
-): { name: string; loc: BabelCore.types.SourceLocation } | null {
+): {
+  name: string
+  loc: BabelCore.types.SourceLocation
+  dependencies: Set<string>
+} | null {
   if (!t.isVariableDeclaration(stmt)) return null
   if (stmt.kind !== 'const' && stmt.kind !== 'let') return null
   if (stmt.declarations.length !== 1) return null
   const decl = stmt.declarations[0]
   if (!decl || !t.isIdentifier(decl.id) || !stmt.loc) return null
-  return { name: decl.id.name, loc: stmt.loc }
+  return {
+    name: decl.id.name,
+    loc: stmt.loc,
+    dependencies: collectReferencedIdentifiers(decl.init, t),
+  }
+}
+
+function collectReferencedIdentifiers(
+  node: BabelCore.types.Node | null | undefined,
+  t: typeof BabelCore.types,
+): Set<string> {
+  const names = new Set<string>()
+  const visitorKeys =
+    (t as unknown as { VISITOR_KEYS?: Record<string, string[]> }).VISITOR_KEYS ?? {}
+
+  const visit = (
+    current: BabelCore.types.Node | null | undefined,
+    parent: BabelCore.types.Node | null = null,
+  ): void => {
+    if (!current) return
+    if (
+      parent &&
+      (t.isMemberExpression(parent) || t.isOptionalMemberExpression(parent)) &&
+      parent.property === current &&
+      !parent.computed
+    ) {
+      return
+    }
+    if (
+      parent &&
+      t.isObjectProperty(parent) &&
+      parent.key === current &&
+      !(parent.shorthand && parent.value === current) &&
+      !parent.computed
+    ) {
+      return
+    }
+    if (
+      t.isFunctionDeclaration(current) ||
+      t.isFunctionExpression(current) ||
+      t.isArrowFunctionExpression(current) ||
+      t.isObjectMethod(current) ||
+      t.isClassMethod(current)
+    ) {
+      return
+    }
+    if (t.isIdentifier(current)) {
+      names.add(current.name)
+      return
+    }
+    const keys = visitorKeys[(current as { type: string }).type] ?? []
+    for (const key of keys) {
+      const value = (current as unknown as Record<string, unknown>)[key]
+      if (Array.isArray(value)) {
+        for (const child of value) {
+          if (child && typeof child === 'object' && 'type' in child) {
+            visit(child as BabelCore.types.Node, current)
+          }
+        }
+      } else if (value && typeof value === 'object' && 'type' in value) {
+        visit(value as BabelCore.types.Node, current)
+      }
+    }
+  }
+
+  visit(node)
+  return names
+}
+
+function collectAssignmentTargetRootNames(
+  node: BabelCore.types.Node | null | undefined,
+  t: typeof BabelCore.types,
+  names: Set<string>,
+): void {
+  if (!node) return
+  if (t.isIdentifier(node)) {
+    names.add(node.name)
+    return
+  }
+  if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+    collectAssignmentTargetRootNames(node.object, t, names)
+    return
+  }
+  if (t.isAssignmentPattern(node)) {
+    collectAssignmentTargetRootNames(node.left, t, names)
+    return
+  }
+  if (t.isRestElement(node)) {
+    collectAssignmentTargetRootNames(node.argument, t, names)
+    return
+  }
+  if (t.isObjectPattern(node) || t.isArrayPattern(node)) {
+    const ids = t.getBindingIdentifiers(node)
+    Object.keys(ids).forEach(name => names.add(name))
+  }
+}
+
+function statementMutatesAnyIdentifier(
+  stmt: BabelCore.types.Statement,
+  names: Set<string>,
+  t: typeof BabelCore.types,
+): boolean {
+  if (names.size === 0) return false
+  const visitorKeys =
+    (t as unknown as { VISITOR_KEYS?: Record<string, string[]> }).VISITOR_KEYS ?? {}
+  let found = false
+
+  const checkTargets = (targets: Set<string>): void => {
+    for (const target of targets) {
+      if (names.has(target)) {
+        found = true
+        return
+      }
+    }
+  }
+
+  const visit = (node: BabelCore.types.Node | null | undefined, isRoot = false): void => {
+    if (!node || found) return
+    if (
+      !isRoot &&
+      (t.isFunctionDeclaration(node) ||
+        t.isFunctionExpression(node) ||
+        t.isArrowFunctionExpression(node) ||
+        t.isObjectMethod(node) ||
+        t.isClassMethod(node))
+    ) {
+      return
+    }
+    if (t.isAssignmentExpression(node)) {
+      const targets = new Set<string>()
+      collectAssignmentTargetRootNames(node.left, t, targets)
+      checkTargets(targets)
+      if (found) return
+    } else if (t.isUpdateExpression(node)) {
+      const targets = new Set<string>()
+      collectAssignmentTargetRootNames(node.argument, t, targets)
+      checkTargets(targets)
+      if (found) return
+    }
+
+    const keys = visitorKeys[(node as { type: string }).type] ?? []
+    for (const key of keys) {
+      const value = (node as unknown as Record<string, unknown>)[key]
+      if (Array.isArray(value)) {
+        for (const child of value) {
+          if (child && typeof child === 'object' && 'type' in child) {
+            visit(child as BabelCore.types.Node)
+            if (found) return
+          }
+        }
+      } else if (value && typeof value === 'object' && 'type' in value) {
+        visit(value as BabelCore.types.Node)
+      }
+      if (found) return
+    }
+  }
+
+  visit(stmt, true)
+  return found
 }
 
 function statementReferencesIdentifier(
@@ -7237,7 +7406,10 @@ function restoreLexicalDeclarationUseOrder(
       if (!candidate?.loc) continue
       const sourceOrder = compareSourcePositions(declaration.loc.start, candidate.loc.start)
       if (sourceOrder === null || sourceOrder >= 0) continue
-      if (statementReferencesIdentifier(candidate, declaration.name, t)) {
+      if (
+        statementReferencesIdentifier(candidate, declaration.name, t) ||
+        statementMutatesAnyIdentifier(candidate, declaration.dependencies, t)
+      ) {
         insertionIndex = candidateIndex
         break
       }
@@ -7270,6 +7442,7 @@ function lowerFunctionWithRegions(
   const prevStoreVars = ctx.storeVars
   const prevNamespaceStoreAliasVars = ctx.namespaceStoreAliasVars
   const prevMutatedVars = ctx.mutatedVars
+  const prevMemberMutatedVars = ctx.memberMutatedVars
   const prevAliasVars = ctx.aliasVars
   const prevNoMemo = ctx.noMemo
   const prevWrapTracked = ctx.wrapTrackedExpressions
@@ -7321,6 +7494,7 @@ function lowerFunctionWithRegions(
   ctx.storeVars = new Set(prevStoreVars ?? [])
   ctx.namespaceStoreAliasVars = new Set(prevNamespaceStoreAliasVars ?? [])
   ctx.mutatedVars = new Set()
+  ctx.memberMutatedVars = new Set()
   ctx.noMemo = !!(prevNoMemo || fn.meta?.noMemo)
   ctx.hookResultVarMap = new Map()
   // Save and initialize componentFunctionDefs for this function scope
@@ -7579,6 +7753,7 @@ function lowerFunctionWithRegions(
     }
   }
   collectMutatedIdentifiers(fn).forEach(name => ctx.mutatedVars?.add(name))
+  collectMemberMutatedIdentifiers(fn).forEach(name => ctx.memberMutatedVars?.add(name))
   ctx.componentFunctionMutations = collectFunctionDependencyMutations(
     fn,
     ctx.functionVars ?? new Set(),
@@ -8123,6 +8298,7 @@ function lowerFunctionWithRegions(
       ctx.memoVars = prevMemoVars
       ctx.storeVars = prevStoreVars
       ctx.mutatedVars = prevMutatedVars
+      ctx.memberMutatedVars = prevMemberMutatedVars
       ctx.aliasVars = prevAliasVars
       ctx.noMemo = prevNoMemo
       ctx.wrapTrackedExpressions = prevWrapTracked
@@ -8152,6 +8328,7 @@ function lowerFunctionWithRegions(
     ctx.memoVars = prevMemoVars
     ctx.storeVars = prevStoreVars
     ctx.mutatedVars = prevMutatedVars
+    ctx.memberMutatedVars = prevMemberMutatedVars
     ctx.aliasVars = prevAliasVars
     ctx.noMemo = prevNoMemo
     ctx.wrapTrackedExpressions = prevWrapTracked
@@ -8283,6 +8460,7 @@ function lowerFunctionWithRegions(
   ctx.storeVars = prevStoreVars
   ctx.namespaceStoreAliasVars = prevNamespaceStoreAliasVars
   ctx.mutatedVars = prevMutatedVars
+  ctx.memberMutatedVars = prevMemberMutatedVars
   ctx.aliasVars = prevAliasVars
   ctx.noMemo = prevNoMemo
   ctx.wrapTrackedExpressions = prevWrapTracked

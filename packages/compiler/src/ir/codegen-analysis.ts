@@ -1056,6 +1056,74 @@ function collectMutatedIdentifiersFromAssignmentTarget(
   }
 }
 
+function collectMemberMutationRootFromTarget(
+  target: Expression | null | undefined,
+  into: Set<string>,
+): void {
+  if (!target) return
+  if (target.kind !== 'MemberExpression' && target.kind !== 'OptionalMemberExpression') return
+
+  let object = target.object
+  while (object.kind === 'MemberExpression' || object.kind === 'OptionalMemberExpression') {
+    object = object.object
+  }
+  if (object.kind === 'Identifier') {
+    into.add(deSSAVarName(object.name))
+  }
+}
+
+function collectMemberMutatedIdentifiersFromExpression(
+  expr: Expression | null | undefined,
+  into: Set<string>,
+): void {
+  if (!expr) return
+  walkExpression(
+    expr,
+    node => {
+      if (node.kind === 'AssignmentExpression') {
+        collectMemberMutationRootFromTarget(node.left, into)
+      } else if (node.kind === 'UpdateExpression') {
+        collectMemberMutationRootFromTarget(node.argument, into)
+      }
+    },
+    { includeFunctionBodies: false },
+  )
+}
+
+function collectMemberMutatedIdentifiersFromTerminator(term: Terminator, into: Set<string>): void {
+  switch (term.kind) {
+    case 'Return':
+      collectMemberMutatedIdentifiersFromExpression(term.argument ?? null, into)
+      return
+    case 'Throw':
+      collectMemberMutatedIdentifiersFromExpression(term.argument, into)
+      return
+    case 'Branch':
+      collectMemberMutatedIdentifiersFromExpression(term.test, into)
+      return
+    case 'Switch':
+      collectMemberMutatedIdentifiersFromExpression(term.discriminant, into)
+      term.cases.forEach(c => collectMemberMutatedIdentifiersFromExpression(c.test ?? null, into))
+      return
+    case 'ForOf':
+      collectMemberMutatedIdentifiersFromExpression(term.iterable, into)
+      collectMemberMutationRootFromTarget(term.assignmentTarget ?? null, into)
+      return
+    case 'ForIn':
+      collectMemberMutatedIdentifiersFromExpression(term.object, into)
+      collectMemberMutationRootFromTarget(term.assignmentTarget ?? null, into)
+      return
+    case 'Jump':
+    case 'Unreachable':
+    case 'Break':
+    case 'Continue':
+    case 'Try':
+      return
+    default:
+      assertNever(term)
+  }
+}
+
 function collectMutatedIdentifiersFromTerminator(term: Terminator, into: Set<string>): void {
   switch (term.kind) {
     case 'Return':
@@ -1102,6 +1170,21 @@ export function collectMutatedIdentifiers(fn: HIRFunction): Set<string> {
       }
     }
     collectMutatedIdentifiersFromTerminator(block.terminator, mutated)
+  }
+
+  return mutated
+}
+
+export function collectMemberMutatedIdentifiers(fn: HIRFunction): Set<string> {
+  const mutated = new Set<string>()
+
+  for (const block of fn.blocks) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' || instr.kind === 'Expression') {
+        collectMemberMutatedIdentifiersFromExpression(instr.value, mutated)
+      }
+    }
+    collectMemberMutatedIdentifiersFromTerminator(block.terminator, mutated)
   }
 
   return mutated

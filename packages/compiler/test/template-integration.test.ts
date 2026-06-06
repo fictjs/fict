@@ -200,6 +200,36 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not treat local $store functions as reactive stores', () => {
+    const source = `
+      import { render } from 'fict'
+
+      function App() {
+        const $store = value => ({ ...value })
+        const local = $store({ count: 1 })
+        const shown = local.count * 2
+        local.count = 3
+        return <span data-testid="value">{shown}</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('2')
+
+    teardown()
+    container.remove()
+  })
+
   it('evaluates impure reactive derived declaration initializers eagerly', async () => {
     const source = `
       import { $state, render } from 'fict'
