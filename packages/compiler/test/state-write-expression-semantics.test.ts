@@ -1036,6 +1036,56 @@ describe('state write expression semantics', () => {
     expect(raw).toEqual([1, 1])
   })
 
+  it('records static computed hook-return object keys', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useObj() {
+        let count = $state(1)
+        let other = $state(2)
+        return { other, ['count']: count, [0]: count }
+      }
+
+      export function useStaticComputedHookObjectKeys() {
+        const obj = useObj()
+        return [obj.count, obj.other, obj[0], obj['0']]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toContain('obj.count()')
+    expect(output).toContain('obj.other()')
+    expect(output).toContain('obj[0]()')
+    expect(output).toContain('obj["0"]()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useStaticComputedHookObjectKeys')() as unknown[]
+    expect(raw).toEqual([1, 2, 1, 1])
+  })
+
+  it('keeps dynamic computed hook-return object keys conservative', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      function useObj(key) {
+        let count = $state(1)
+        let other = $state(2)
+        return { other, [key]: count }
+      }
+
+      export function useDynamicComputedHookObjectKey() {
+        const obj = useObj('count')
+        return [typeof obj.count, obj.other]
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).not.toContain('obj.count()')
+    expect(output).toContain('obj.other()')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'useDynamicComputedHookObjectKey')() as unknown[]
+    expect(raw).toEqual(['function', 2])
+  })
+
   it('preserves bigint update semantics for $state', () => {
     const source = `
       import { $state } from 'fict'

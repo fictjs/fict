@@ -282,14 +282,9 @@ export function analyzeHookReturnInfo(
     if (expr.kind === 'ObjectExpression') {
       expr.properties.forEach(prop => {
         if (prop.kind !== 'Property') return
-        if (prop.computed) return
-        const keyName =
-          prop.key.kind === 'Identifier'
-            ? prop.key.name
-            : prop.key.kind === 'Literal'
-              ? String(prop.key.value)
-              : undefined
-        if (!keyName) return
+        const propName = getStaticPropName(prop.key as Expression, prop.computed === true)
+        if (propName === null) return
+        const keyName = String(propName)
         const kind = returnExprAccessorKind(prop.value)
         recordAccessor(kind, () => {
           if (!info.objectProps) info.objectProps = new Map()
