@@ -217,6 +217,49 @@ describe('createStore reconciliation', () => {
     expect(hasFooSnapshots[hasFooSnapshots.length - 1]).toBe(true)
   })
 
+  it('reconciles enumerable symbol keys', async () => {
+    const sym = Symbol('value')
+    const [state, setState] = createStore<Record<string | symbol, unknown>>({
+      [sym]: 1,
+      a: 1,
+    })
+    const seen: unknown[] = []
+
+    createEffect(() => {
+      seen.push(state[sym])
+    })
+
+    await tick()
+    expect(seen[seen.length - 1]).toBe(1)
+
+    setState(() => ({ [sym]: 2, a: 2 }))
+    await tick()
+
+    expect(state[sym]).toBe(2)
+    expect(seen[seen.length - 1]).toBe(2)
+    expect(Reflect.ownKeys(state)).toEqual(['a', sym])
+
+    setState(() => ({ a: 3 }))
+    await tick()
+
+    expect(sym in state).toBe(false)
+    expect(state[sym]).toBeUndefined()
+    expect(seen[seen.length - 1]).toBeUndefined()
+  })
+
+  it('reconciles nested enumerable symbol keys', async () => {
+    const sym = Symbol('nested')
+    const [state, setState] = createStore<{ box: Record<string | symbol, unknown> }>({
+      box: { [sym]: 1, label: 'a' },
+    })
+
+    setState(() => ({ box: { [sym]: 2, label: 'a' } }))
+    await tick()
+
+    expect(state.box[sym]).toBe(2)
+    expect(Reflect.ownKeys(state.box)).toEqual(['label', sym])
+  })
+
   it('does not retrigger nested subscribers for structurally equal object updates', async () => {
     const [state, setState] = createStore<{ user: { name: string; profile: { age: number } } }>({
       user: { name: 'Ada', profile: { age: 30 } },

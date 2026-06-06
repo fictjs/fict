@@ -57,6 +57,16 @@ function isArrayIndexKey(prop: string | symbol): prop is string {
   return Number.isInteger(index) && index >= 0 && String(index) === prop
 }
 
+function enumerableOwnKeys(value: object): (string | symbol)[] {
+  const keys: (string | symbol)[] = Object.keys(value)
+  for (const key of Object.getOwnPropertySymbols(value)) {
+    if (Object.prototype.propertyIsEnumerable.call(value, key)) {
+      keys.push(key)
+    }
+  }
+  return keys
+}
+
 function wrap<T>(value: T): T {
   if (value === null || typeof value !== 'object') return value
   if (Reflect.get(value, PROXY)) return value
@@ -244,10 +254,10 @@ function reconcile(target: object, value: unknown, seenPairs?: WeakMap<object, W
   if (visitedValues.has(realValue)) return
   visitedValues.add(realValue)
 
-  const keys = new Set([...Object.keys(realTarget), ...Object.keys(realValue)])
+  const keys = new Set([...enumerableOwnKeys(realTarget), ...enumerableOwnKeys(realValue)])
   for (const key of keys) {
-    const rTarget = realTarget as Record<string, unknown>
-    const rValue = realValue as Record<string, unknown>
+    const rTarget = realTarget as Record<string | symbol, unknown>
+    const rValue = realValue as Record<string | symbol, unknown>
     const hasCurrent = Object.prototype.hasOwnProperty.call(rTarget, key)
     const hasNext = Object.prototype.hasOwnProperty.call(rValue, key)
     const current = rTarget[key]
@@ -255,12 +265,12 @@ function reconcile(target: object, value: unknown, seenPairs?: WeakMap<object, W
 
     if (!hasNext && hasCurrent) {
       // deleted
-      delete (target as Record<string, unknown>)[key] // Triggers proxy trap
+      delete (target as Record<string | symbol, unknown>)[key] // Triggers proxy trap
     } else if (hasNext && (!hasCurrent || current !== next)) {
       if (canReconcileNestedValues(current, next)) {
-        reconcile((target as Record<string, unknown>)[key] as object, next, seen)
+        reconcile((target as Record<string | symbol, unknown>)[key] as object, next, seen)
       } else {
-        ;(target as Record<string, unknown>)[key] = next // Triggers proxy trap
+        ;(target as Record<string | symbol, unknown>)[key] = next // Triggers proxy trap
       }
     }
   }
