@@ -111,10 +111,19 @@ const isSameIdentifier = (
 
 const rewriteObjectRestHelpers = (ast: BabelCore.types.File): void => {
   const traverse = resolveTraverse()
+  const isGeneratedBinding = (path: BabelCore.NodePath, name: string): boolean => {
+    const binding = path.scope.getBinding(name)
+    return !!binding && !binding.path.node.loc
+  }
+
   traverse(ast, {
     CallExpression(path: BabelCore.NodePath<BabelCore.types.CallExpression>) {
       const { callee, arguments: args } = path.node
-      if (t.isIdentifier(callee) && OBJECT_REST_HELPERS.has(callee.name)) {
+      if (
+        t.isIdentifier(callee) &&
+        OBJECT_REST_HELPERS.has(callee.name) &&
+        isGeneratedBinding(path, callee.name)
+      ) {
         path.node.callee = t.identifier('__fictObjectRest')
         return
       }
@@ -122,6 +131,7 @@ const rewriteObjectRestHelpers = (ast: BabelCore.types.File): void => {
       if (
         t.isIdentifier(callee) &&
         callee.name === EXTENDS_HELPER &&
+        isGeneratedBinding(path, callee.name) &&
         args.length === 2 &&
         t.isObjectExpression(args[0]) &&
         args[0].properties.length === 0 &&
@@ -133,6 +143,7 @@ const rewriteObjectRestHelpers = (ast: BabelCore.types.File): void => {
           t.isCallExpression(checkExpr) &&
           t.isIdentifier(checkExpr.callee) &&
           checkExpr.callee.name === OBJECT_DESTRUCTURING_EMPTY_HELPER &&
+          isGeneratedBinding(path, checkExpr.callee.name) &&
           checkExpr.arguments.length === 1
         ) {
           const checkArg = checkExpr.arguments[0]

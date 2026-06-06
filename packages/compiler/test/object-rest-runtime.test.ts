@@ -35,6 +35,81 @@ function compileModule(source: string): Record<string, unknown> {
 }
 
 describe('object rest runtime regressions', () => {
+  it('preserves user-defined _objectWithoutProperties calls', () => {
+    const { output, exports } = compileModuleWithOutput(
+      `
+        function _objectWithoutProperties(value, keys) {
+          return 'user:' + value + ':' + keys.length
+        }
+
+        export function useProbe() {
+          return _objectWithoutProperties('x', ['a'])
+        }
+      `,
+    )
+
+    expect(output).toContain('_objectWithoutProperties("x", ["a"])')
+    expect(output).not.toContain('__fictObjectRest("x"')
+    expect((exports.useProbe as () => string)()).toBe('user:x:1')
+  })
+
+  it('preserves user-defined _objectWithoutPropertiesLoose calls', () => {
+    const { output, exports } = compileModuleWithOutput(
+      `
+        function _objectWithoutPropertiesLoose(value, keys) {
+          return 'loose:' + value + ':' + keys.length
+        }
+
+        export function useProbe() {
+          return _objectWithoutPropertiesLoose('x', ['a', 'b'])
+        }
+      `,
+    )
+
+    expect(output).toContain('_objectWithoutPropertiesLoose("x", ["a", "b"])')
+    expect(output).not.toContain('__fictObjectRest("x"')
+    expect((exports.useProbe as () => string)()).toBe('loose:x:2')
+  })
+
+  it('preserves shadowed object rest helper names in nested scopes', () => {
+    const { output, exports } = compileModuleWithOutput(
+      `
+        export function useProbe() {
+          const _objectWithoutProperties = (value, keys) => {
+            return 'nested:' + value + ':' + keys.length
+          }
+          return _objectWithoutProperties('x', ['a'])
+        }
+      `,
+    )
+
+    expect(output).not.toContain('__fictObjectRest("x"')
+    expect((exports.useProbe as () => string)()).toBe('nested:x:1')
+  })
+
+  it('preserves user-defined _extends calls with object-rest-like arguments', () => {
+    const { output, exports } = compileModuleWithOutput(
+      `
+        function _objectDestructuringEmpty(value) {
+          return value
+        }
+
+        function _extends(target, source) {
+          return 'extends:' + source.a
+        }
+
+        export function useProbe() {
+          const obj = { a: 1 }
+          return _extends({}, (_objectDestructuringEmpty(obj), obj))
+        }
+      `,
+    )
+
+    expect(output).toContain('_extends({}, (_objectDestructuringEmpty(obj), obj))')
+    expect(output).not.toContain('__fictObjectRest(obj, [])')
+    expect((exports.useProbe as () => string)()).toBe('extends:1')
+  })
+
   it('copies only own enumerable properties for ordinary object rest', () => {
     const exports = compileModule(
       `
