@@ -22,6 +22,8 @@ type SerializedMarker =
   | { __t: 'm'; v: [unknown, unknown][] } // Map (as entries array)
   | { __t: 's'; v: unknown[] } // Set (as array)
   | { __t: 'r'; v: { s: string; f: string } } // RegExp (source + flags)
+  | { __t: 'sym'; v: { k: 'g' | 'w'; n: string } } // Symbol.for / well-known Symbol
+  | { __t: 'o'; v: [unknown, unknown][] } // Object with symbol keys
   | { __t: 'u' } // undefined
   | { __t: 'n' } // NaN
   | { __t: '+i' } // Infinity
@@ -65,6 +67,26 @@ const resumedScopes = new Map<
   string,
   { ctx: HookContext; host: Element; props?: Record<string, unknown> }
 >()
+
+const WELL_KNOWN_SYMBOLS = new Map<symbol, string>([
+  [Symbol.asyncIterator, 'asyncIterator'],
+  [Symbol.hasInstance, 'hasInstance'],
+  [Symbol.isConcatSpreadable, 'isConcatSpreadable'],
+  [Symbol.iterator, 'iterator'],
+  [Symbol.match, 'match'],
+  [Symbol.matchAll, 'matchAll'],
+  [Symbol.replace, 'replace'],
+  [Symbol.search, 'search'],
+  [Symbol.species, 'species'],
+  [Symbol.split, 'split'],
+  [Symbol.toPrimitive, 'toPrimitive'],
+  [Symbol.toStringTag, 'toStringTag'],
+  [Symbol.unscopables, 'unscopables'],
+])
+
+const WELL_KNOWN_SYMBOL_BY_NAME = new Map(
+  Array.from(WELL_KNOWN_SYMBOLS, ([symbol, name]) => [name, symbol] as const),
+)
 
 function getSSRSession(): FictSSRSession {
   return __fictGetCurrentSSRSession() ?? defaultSSRSession
@@ -415,9 +437,31 @@ function isSerializedMarker(value: unknown): value is SerializedMarker {
   )
 }
 
+function serializeSymbol(value: symbol, path: string): SerializedMarker {
+  const globalKey = Symbol.keyFor(value)
+  if (globalKey !== undefined) {
+    return { __t: 'sym', v: { k: 'g', n: globalKey } }
+  }
+
+  const wellKnownName = WELL_KNOWN_SYMBOLS.get(value)
+  if (wellKnownName) {
+    return { __t: 'sym', v: { k: 'w', n: wellKnownName } }
+  }
+
+  throw new Error(
+    `[Fict] Cannot serialize local symbol at ${path}. Use Symbol.for(...) or a well-known Symbol for resumable snapshot values.`,
+  )
+}
+
+function enumerableOwnSymbols(value: object): symbol[] {
+  return Object.getOwnPropertySymbols(value).filter(symbol =>
+    Object.prototype.propertyIsEnumerable.call(value, symbol),
+  )
+}
+
 /**
  * Serialize a value with support for complex types.
- * Handles: Date, Map, Set, RegExp, undefined, NaN, Infinity, -Infinity, BigInt, circular references
+ * Handles: Date, Map, Set, RegExp, Symbol.for/well-known Symbol, undefined, NaN, Infinity, -Infinity, BigInt, circular references
  */
 export function serializeValue(
   value: unknown,
@@ -444,6 +488,10 @@ export function serializeValue(
 
   if (typeof value === 'bigint') {
     return { __t: 'b', v: value.toString() } as SerializedMarker
+  }
+
+  if (typeof value === 'symbol') {
+    return serializeSymbol(value, path)
   }
 
   // Primitives that JSON handles correctly
@@ -508,6 +556,32 @@ export function serializeValue(
 
     // Plain object
     seen.set(value, path)
+    const symbolKeys = enumerableOwnSymbols(value)
+    if (symbolKeys.length > 0) {
+      const entries: [unknown, unknown][] = []
+      for (const key of Object.keys(value)) {
+        const serialized = serializeValue(
+          (value as Record<string, unknown>)[key],
+          seen,
+          `${path}.${key}`,
+        )
+        if (serialized !== undefined) {
+          entries.push([key, serialized])
+        }
+      }
+      for (const key of symbolKeys) {
+        const serialized = serializeValue(
+          (value as Record<symbol, unknown>)[key],
+          seen,
+          `${path}.${String(key)}`,
+        )
+        if (serialized !== undefined) {
+          entries.push([serializeSymbol(key, `${path}.${String(key)}`), serialized])
+        }
+      }
+      return { __t: 'o', v: entries } as SerializedMarker
+    }
+
     const result: Record<string, unknown> = {}
     for (const key of Object.keys(value)) {
       const serialized = serializeValue(
@@ -560,6 +634,24 @@ export function deserializeValue(
         return new Date(value.v)
       case 'r':
         return new RegExp(value.v.s, value.v.f)
+      case 'sym':
+        if (value.v.k === 'g') {
+          return Symbol.for(value.v.n)
+        }
+        return WELL_KNOWN_SYMBOL_BY_NAME.get(value.v.n)
+      case 'o': {
+        const obj: Record<string | symbol, unknown> = {}
+        refs.set(path, obj)
+        for (let i = 0; i < value.v.length; i++) {
+          const entry = value.v[i]
+          if (!entry) continue
+          const [rawKey, rawValue] = entry
+          const key = deserializeValue(rawKey, refs, `${path}.key${i}`)
+          if (typeof key !== 'string' && typeof key !== 'symbol') continue
+          obj[key] = deserializeValue(rawValue, refs, `${path}.${String(key)}`)
+        }
+        return obj
+      }
       case 'm': {
         const map = new Map<unknown, unknown>()
         refs.set(path, map)

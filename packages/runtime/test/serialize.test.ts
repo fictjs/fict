@@ -49,6 +49,15 @@ describe('serializeValue / deserializeValue', () => {
         BigInt('9007199254740993'),
       )
     })
+
+    it('should handle global and well-known symbols', () => {
+      const global = Symbol.for('fict.serialize.global')
+      const serializedGlobal = JSON.parse(JSON.stringify(serializeValue(global)))
+      const serializedIterator = JSON.parse(JSON.stringify(serializeValue(Symbol.iterator)))
+
+      expect(deserializeValue(serializedGlobal)).toBe(global)
+      expect(deserializeValue(serializedIterator)).toBe(Symbol.iterator)
+    })
   })
 
   describe('Date', () => {
@@ -193,6 +202,21 @@ describe('serializeValue / deserializeValue', () => {
       expect(result.nested.map).toBeInstanceOf(Map)
       expect((result.nested.map as Map<string, string>).get('key')).toBe('value')
     })
+
+    it('should serialize symbol values and enumerable symbol keys through JSON', () => {
+      const key = Symbol.for('fict.serialize.key')
+      const value = Symbol.for('fict.serialize.value')
+      const obj: Record<string | symbol, unknown> = {
+        a: value,
+        [key]: 1,
+      }
+      const serialized = JSON.parse(JSON.stringify(serializeValue(obj)))
+      const result = deserializeValue(serialized) as Record<string | symbol, unknown>
+
+      expect(result.a).toBe(value)
+      expect(result[key]).toBe(1)
+      expect(Reflect.ownKeys(result)).toEqual(['a', key])
+    })
   })
 
   describe('circular references', () => {
@@ -253,6 +277,18 @@ describe('serializeValue / deserializeValue', () => {
       expect(result.name).toBe('test')
       expect(result.handler).toBe(undefined)
       expect((result.nested as Record<string, unknown>).fn).toBe(undefined)
+    })
+  })
+
+  describe('symbols', () => {
+    it('should reject local symbols that cannot be restored', () => {
+      const localKey = Symbol('local-key')
+
+      expect(() => serializeValue(Symbol('local-value'))).toThrow(/Cannot serialize local symbol/)
+      expect(() => serializeValue({ value: Symbol('local-value') })).toThrow(
+        /Cannot serialize local symbol/,
+      )
+      expect(() => serializeValue({ [localKey]: 1 })).toThrow(/Cannot serialize local symbol/)
     })
   })
 
