@@ -2122,6 +2122,8 @@ function createHIREntrypointVisitor(
               return true
             }
             if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
+              if (checkNode(node.callee)) return true
+              if (node.arguments.some(arg => checkNode(arg as BabelCore.types.Node))) return true
               if (t.isArrowFunctionExpression(node.callee) || t.isFunctionExpression(node.callee)) {
                 return checkNode(node.callee.body)
               }

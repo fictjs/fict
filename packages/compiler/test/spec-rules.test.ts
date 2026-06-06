@@ -597,6 +597,54 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
   })
 
+  it('warns when memo call arguments contain side effects', () => {
+    const cases = [
+      "return Math.max(fetch('/api'), 1)",
+      "return wrap(fetch('/api'))",
+      "return obj.method(fetch('/api'))",
+      "return obj[fetch('/api')]()",
+      "return maybe?.(fetch('/api'))",
+      "return wrap(...[fetch('/api')])",
+    ]
+
+    for (const body of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        const obj = { method(value: unknown) { return value } }
+        const maybe = (value: unknown) => value
+        function wrap(value: unknown) {
+          return value
+        }
+        const value = $memo(() => {
+          ${body}
+        })
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+    }
+  })
+
+  it('does not warn when memo call arguments are pure', () => {
+    const cases = ['return Math.max(1, 2)', 'return wrap(1)', 'return obj.method(1)']
+
+    for (const body of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        const obj = { method(value: unknown) { return value } }
+        function wrap(value: unknown) {
+          return value
+        }
+        const value = $memo(() => {
+          ${body}
+        })
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+    }
+  })
+
   it('does not warn when memo returns lazy closures with side effects', () => {
     const cases = [
       'return () => console.log("later")',
