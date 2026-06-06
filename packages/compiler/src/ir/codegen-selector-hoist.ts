@@ -4,12 +4,9 @@ import { RUNTIME_ALIASES } from '../constants'
 
 import type { CodegenContext } from './codegen'
 import { expressionUsesIdentifier } from './codegen-delegated-data'
+import { createGeneratedIdentifier } from './codegen-name-allocation'
 import { runtimeIdentifier } from './codegen-runtime-helpers'
 import { deSSAVarName } from './regions'
-
-function genTemp(ctx: CodegenContext, prefix = 'tmp'): BabelCore.types.Identifier {
-  return ctx.t.identifier(`__${prefix}_${ctx.tempCounter++}`)
-}
 
 function getTrackedCallIdentifier(
   expr: BabelCore.types.Expression,
@@ -155,7 +152,7 @@ export function applySelectorHoist(
   const getSelectorId = (name: string): BabelCore.types.Identifier => {
     const existing = selectorIds.get(name)
     if (existing) return existing
-    const selectorId = genTemp(ctx, 'sel')
+    const selectorId = createGeneratedIdentifier(ctx, 'sel')
     selectorIds.set(name, selectorId)
     return selectorId
   }

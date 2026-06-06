@@ -3168,6 +3168,49 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps selector hoist temps from shadowing list item locals', async () => {
+    const reservedNames = Array.from({ length: 21 }, (_, index) => `__sel_${index}`)
+    const expected = reservedNames.map((_, index) => `user${index}`).join('|')
+    const source = `
+      import { $state, render } from 'fict'
+
+      export function App() {
+        ${reservedNames.map((name, index) => `const ${name} = 'user${index}'`).join('\n        ')}
+        let selected = $state(1)
+        const items = [{ id: 1, name: 'a' }]
+
+        return (
+          <ul>
+            {items.map(item => (
+              <li key={item.id} class={item.id === selected ? 'on' : ''}>
+                {[${reservedNames.join(', ')}].join('|')}
+              </li>
+            ))}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    const item = container.querySelector('li')
+    expect(item?.className).toBe('on')
+    expect(item?.textContent).toBe(expected)
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves map callback arguments semantics by falling back from list specialization', async () => {
     const source = `
       import { render } from 'fict'

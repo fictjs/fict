@@ -124,6 +124,39 @@ describe('P1: Selector Hoist Optimization', () => {
     expect(output).toMatch(/__sel_\d+/)
   })
 
+  it('should avoid selector temp names declared by user code', () => {
+    const reservedNames = Array.from({ length: 21 }, (_, index) => `__sel_${index}`)
+    const source = `
+      import { $state, render } from "fict";
+
+      function App() {
+        ${reservedNames.map(name => `const ${name} = "${name}"`).join('\n        ')}
+        let data = $state([{ id: 1, name: 'Alice' }]);
+        let selected = $state(1);
+
+        return (
+          <ul>
+            {data.map((item) => (
+              <li key={item.id} class={item.id === selected ? "active" : ""}>
+                {[${reservedNames.join(', ')}].join('|')}
+              </li>
+            ))}
+          </ul>
+        );
+      }
+    `
+    const output = transform(source)
+    const selectorNames = Array.from(
+      output.matchAll(/const (__sel_\d+) = createSelector/g),
+      match => match[1],
+    )
+
+    expect(selectorNames.length).toBeGreaterThan(0)
+    for (const name of selectorNames) {
+      expect(reservedNames).not.toContain(name)
+    }
+  })
+
   it('should hoist selector for benchmark-like pattern', () => {
     const source = `
       import { $state, render } from "fict";
