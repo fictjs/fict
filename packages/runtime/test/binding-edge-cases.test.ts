@@ -548,6 +548,42 @@ describe('Binding Edge Cases', () => {
       await tick()
       expect(el.hasAttributeNS(xlinkNS, 'href')).toBe(false)
     })
+
+    it('repairs attributes when DOM is externally mutated but value cache is unchanged', async () => {
+      const el = document.createElement('div')
+      const attr = createSignal('a')
+      const trigger = createSignal(0)
+
+      bindAttribute(el, 'data-x', () => {
+        trigger()
+        return attr()
+      })
+      expect(el.getAttribute('data-x')).toBe('a')
+
+      el.removeAttribute('data-x')
+      trigger(1)
+      await tick()
+
+      expect(el.getAttribute('data-x')).toBe('a')
+    })
+
+    it('repairs removed attributes when cached value still removes them', async () => {
+      const el = document.createElement('div')
+      const attr = createSignal<string | undefined>(undefined)
+      const trigger = createSignal(0)
+
+      bindAttribute(el, 'data-x', () => {
+        trigger()
+        return attr()
+      })
+      expect(el.hasAttribute('data-x')).toBe(false)
+
+      el.setAttribute('data-x', 'external')
+      trigger(1)
+      await tick()
+
+      expect(el.hasAttribute('data-x')).toBe(false)
+    })
   })
 
   describe('bindProperty', () => {
@@ -601,6 +637,42 @@ describe('Binding Edge Cases', () => {
       value('test') // Same value
       await tick()
       expect(el.value).toBe(initialValue)
+    })
+
+    it('repairs properties when DOM is externally mutated but value cache is unchanged', async () => {
+      const el = document.createElement('input') as HTMLInputElement
+      const value = createSignal('a')
+      const trigger = createSignal(0)
+
+      bindProperty(el, 'value', () => {
+        trigger()
+        return value()
+      })
+      expect(el.value).toBe('a')
+
+      el.value = 'external'
+      trigger(1)
+      await tick()
+
+      expect(el.value).toBe('a')
+    })
+
+    it('repairs property fallback values when cached value still clears them', async () => {
+      const el = document.createElement('input') as HTMLInputElement
+      const value = createSignal<string | undefined>(undefined)
+      const trigger = createSignal(0)
+
+      bindProperty(el, 'value', () => {
+        trigger()
+        return value()
+      })
+      expect(el.value).toBe('')
+
+      el.value = 'external'
+      trigger(1)
+      await tick()
+
+      expect(el.value).toBe('')
     })
   })
 
@@ -722,6 +794,43 @@ describe('Binding Edge Cases', () => {
       className('foo bar')
       await tick()
       expect(el.className).toBe('foo bar')
+    })
+
+    it('repairs string classes when DOM is externally mutated but value cache is unchanged', async () => {
+      const el = document.createElement('div')
+      const className = createSignal('foo bar')
+      const trigger = createSignal(0)
+
+      bindClass(el, () => {
+        trigger()
+        return className()
+      })
+      expect(el.className).toBe('foo bar')
+
+      el.className = 'external'
+      trigger(1)
+      await tick()
+
+      expect(el.className).toBe('foo bar')
+    })
+
+    it('repairs SVG string classes when the class attribute is externally mutated', async () => {
+      const el = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+      const className = createSignal('hot')
+      const trigger = createSignal(0)
+
+      bindClass(el, () => {
+        trigger()
+        return className()
+      })
+      expect(el.getAttribute('class')).toBe('hot')
+
+      el.setAttribute('class', 'external')
+      trigger(1)
+      await tick()
+
+      expect(el.getAttribute('class')).toBe('hot')
+      expect((el.className as SVGAnimatedString).baseVal).toBe('hot')
     })
 
     it('transitions from string to object class', async () => {

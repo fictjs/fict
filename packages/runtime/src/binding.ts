@@ -610,10 +610,10 @@ export function setAttr(el: Element, key: string, value: unknown): void {
   const attrCache =
     (cacheTarget[ATTR_CACHE] as Record<string, unknown> | undefined) ??
     (cacheTarget[ATTR_CACHE] = Object.create(null))
-  if (attrCache[key] === value) return
+  const namespaced = getNamespacedAttribute(key)
+  if (attrCache[key] === value && isAttributeCurrent(el, key, value, namespaced)) return
   attrCache[key] = value
 
-  const namespaced = getNamespacedAttribute(key)
   if (namespaced) {
     if (value === undefined || value === null || value === false) {
       el.removeAttributeNS(namespaced.namespace, namespaced.localName)
@@ -639,6 +639,30 @@ export function setAttr(el: Element, key: string, value: unknown): void {
   }
 }
 
+function isAttributeCurrent(
+  el: Element,
+  key: string,
+  value: unknown,
+  namespaced: ReturnType<typeof getNamespacedAttribute>,
+): boolean {
+  if (value === undefined || value === null || value === false) {
+    return namespaced
+      ? !el.hasAttributeNS(namespaced.namespace, namespaced.localName)
+      : !el.hasAttribute(key)
+  }
+
+  const expected =
+    value === true
+      ? ''
+      : !namespaced && typeof value === 'boolean' && shouldStringifyBooleanAttribute(key)
+        ? String(value)
+        : String(value)
+
+  return namespaced
+    ? el.getAttributeNS(namespaced.namespace, namespaced.localName) === expected
+    : el.getAttribute(key) === expected
+}
+
 /**
  * Bind a reactive value to an element's property.
  */
@@ -654,15 +678,19 @@ export function setProp(el: Element, key: string, value: unknown): void {
   const propCache =
     (cacheTarget[PROP_CACHE] as Record<string, unknown> | undefined) ??
     (cacheTarget[PROP_CACHE] = Object.create(null))
-  if (propCache[key] === value) return
-  propCache[key] = value
-
-  if (PROPERTY_BINDING_KEYS.has(key) && (value === undefined || value === null)) {
-    const fallback = key === 'checked' || key === 'selected' ? false : ''
-    ;(el as unknown as Record<string, unknown>)[key] = fallback
+  const next = normalizePropertyValue(key, value)
+  if (propCache[key] === value && (el as unknown as Record<string, unknown>)[key] === next) {
     return
   }
-  ;(el as unknown as Record<string, unknown>)[key] = value
+  propCache[key] = value
+  ;(el as unknown as Record<string, unknown>)[key] = next
+}
+
+function normalizePropertyValue(key: string, value: unknown): unknown {
+  if (PROPERTY_BINDING_KEYS.has(key) && (value === undefined || value === null)) {
+    return key === 'checked' || key === 'selected' ? false : ''
+  }
+  return value
 }
 
 // ============================================================================
@@ -811,6 +839,14 @@ function setClassString(el: Element, value: string): void {
   }
 }
 
+function getClassString(el: Element): string {
+  if (el.namespaceURI === SVG_NAMESPACE_URI) {
+    return el.getAttribute('class') ?? ''
+  }
+  const className = (el as HTMLElement).className
+  return typeof className === 'string' ? className : (el.getAttribute('class') ?? '')
+}
+
 /**
  * Apply class to an element, supporting reactive class values.
  */
@@ -867,7 +903,7 @@ export function setClass(
 
   // Preserve existing behavior: short-circuit only for stable string values.
   if (typeof value === 'string') {
-    if (typeof prevValue === 'string' && prevValue === value) return
+    if (typeof prevValue === 'string' && prevValue === value && getClassString(el) === value) return
     setClassString(el, value)
     cache[CLASS_STATE_CACHE] = {}
     cache[CLASS_VALUE_CACHE] = value
