@@ -804,6 +804,19 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('import.meta().url')
   })
 
+  it('preserves object shorthand __proto__ as an own data property', () => {
+    const output = transform(`
+      export function f() {
+        const __proto__ = 1
+        const obj = { __proto__, other: Math.random() }
+        return Object.prototype.hasOwnProperty.call(obj, '__proto__')
+      }
+    `)
+
+    expect(output).toContain('["__proto__"]: 1')
+    expect(output).not.toContain('__proto__: 1')
+  })
+
   it('keeps call/apply destructured function props unwrapped', () => {
     const ast = parseFile(`
       function Child({ cb }) {

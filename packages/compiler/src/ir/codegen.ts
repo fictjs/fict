@@ -3603,12 +3603,21 @@ function lowerExpressionImpl(
             t.isIdentifier(valueExpr) &&
             keyIsIdentifier &&
             deSSAVarName(keyIdent) === valueExpr.name
+          const forceComputedProtoKey =
+            p.shorthand &&
+            !useShorthand &&
+            keyIsIdentifier &&
+            deSSAVarName(keyIdent) === '__proto__'
 
           return t.objectProperty(
-            useShorthand ? t.identifier(valueExpr.name) : keyNode,
+            forceComputedProtoKey
+              ? t.stringLiteral('__proto__')
+              : useShorthand
+                ? t.identifier(valueExpr.name)
+                : keyNode,
             valueExpr,
-            !!p.computed,
-            useShorthand,
+            forceComputedProtoKey ? true : !!p.computed,
+            forceComputedProtoKey ? false : useShorthand,
           )
         }),
       )
@@ -3911,8 +3920,7 @@ function lowerExpressionImpl(
         ),
       )
 
-    case 'ClassExpression': // Class bodies are stored as Babel AST, so patch tracked writes before read overrides run.
-    {
+    case 'ClassExpression': { // Class bodies are stored as Babel AST, so patch tracked writes before read overrides run.
       const prevShadowed = ctx.shadowedNames
       if (expr.name) {
         const classShadowed = new Set(prevShadowed ?? [])

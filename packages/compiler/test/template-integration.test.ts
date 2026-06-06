@@ -3726,6 +3726,37 @@ describe('compiled templates DOM integration', () => {
     })
   })
 
+  it('keeps object shorthand __proto__ as an own data property', () => {
+    const source = `
+      export function make() {
+        const __proto__ = { marker: 'payload' }
+        const obj = { __proto__, other: Math.random() }
+        return {
+          keys: Object.keys(obj),
+          ownProto: Object.prototype.hasOwnProperty.call(obj, '__proto__'),
+          protoIsPayload: Object.getPrototypeOf(obj) === __proto__,
+          protoValue: obj.__proto__.marker,
+        }
+      }
+    `
+
+    const mod = compileAndLoad<{
+      make: () => {
+        keys: string[]
+        ownProto: boolean
+        protoIsPayload: boolean
+        protoValue: string
+      }
+    }>(source, { fineGrainedDom: false })
+
+    expect(mod.make()).toEqual({
+      keys: ['__proto__', 'other'],
+      ownProto: true,
+      protoIsPayload: false,
+      protoValue: 'payload',
+    })
+  })
+
   it('rejects dangerouslySetInnerHTML with explicit JSX children', () => {
     const source = `
       import { render } from 'fict'

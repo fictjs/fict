@@ -5976,7 +5976,27 @@ function deSSAExpression(
           const key =
             prop.computed && t.isExpression(prop.key) ? deSSAExpression(prop.key, t) : prop.key
           const value = t.isExpression(prop.value) ? deSSAExpression(prop.value, t) : prop.value
-          return t.objectProperty(key, value, prop.computed, prop.shorthand)
+          let keyName = ''
+          if (!prop.computed && t.isIdentifier(prop.key)) {
+            keyName = prop.key.name
+          }
+          const keyIsIdentifier = keyName !== ''
+          const useShorthand =
+            prop.shorthand &&
+            keyIsIdentifier &&
+            t.isIdentifier(value) &&
+            deSSAVarName(keyName) === value.name
+          const forceComputedProtoKey =
+            prop.shorthand &&
+            !useShorthand &&
+            keyIsIdentifier &&
+            deSSAVarName(keyName) === '__proto__'
+          return t.objectProperty(
+            forceComputedProtoKey ? t.stringLiteral('__proto__') : key,
+            value,
+            forceComputedProtoKey ? true : prop.computed,
+            forceComputedProtoKey ? false : prop.shorthand,
+          )
         }
         if (t.isObjectMethod(prop)) {
           // Object methods - de-SSA the body if needed
@@ -6252,11 +6272,25 @@ function exprToAST(
           if (p.kind === 'SpreadElement') {
             return t.spreadElement(exprToAST(p.argument, t))
           }
+          const key = exprToAST(p.key, t)
+          const value = exprToAST(p.value, t)
+          let keyName = ''
+          if (!p.computed && p.key.kind === 'Identifier') {
+            keyName = p.key.name
+          }
+          const keyIsIdentifier = keyName !== ''
+          const useShorthand =
+            p.shorthand &&
+            keyIsIdentifier &&
+            t.isIdentifier(value) &&
+            deSSAVarName(keyName) === value.name
+          const forceComputedProtoKey =
+            p.shorthand && !useShorthand && keyIsIdentifier && deSSAVarName(keyName) === '__proto__'
           return t.objectProperty(
-            exprToAST(p.key, t),
-            exprToAST(p.value, t),
-            p.computed || false,
-            p.shorthand || false,
+            forceComputedProtoKey ? t.stringLiteral('__proto__') : key,
+            value,
+            forceComputedProtoKey ? true : p.computed || false,
+            forceComputedProtoKey ? false : p.shorthand || false,
           )
         }),
       )
