@@ -7266,8 +7266,10 @@ function lowerFunctionWithRegions(
   // Save and initialize componentFunctionDefs for this function scope
   const prevComponentFunctionDefs = ctx.componentFunctionDefs
   const prevComponentFunctionMutations = ctx.componentFunctionMutations
+  const prevHoistedFunctionDepNames = ctx.hoistedFunctionDepNames
   ctx.componentFunctionDefs = new Map()
   ctx.componentFunctionMutations = new Map()
+  ctx.hoistedFunctionDepNames = new Map()
   const hookResultVars = new Set<string>()
   const hookAccessorAliases = new Set<string>()
   const prevPropsParam = ctx.propsParamName
@@ -7863,6 +7865,7 @@ function lowerFunctionWithRegions(
       ctx.functionVars = prevFunctionVars
       ctx.componentFunctionDefs = prevComponentFunctionDefs
       ctx.componentFunctionMutations = prevComponentFunctionMutations
+      ctx.hoistedFunctionDepNames = prevHoistedFunctionDepNames
       ctx.memoVars = prevMemoVars
       ctx.storeVars = prevStoreVars
       ctx.mutatedVars = prevMutatedVars
@@ -7891,6 +7894,7 @@ function lowerFunctionWithRegions(
     ctx.functionVars = prevFunctionVars
     ctx.componentFunctionDefs = prevComponentFunctionDefs
     ctx.componentFunctionMutations = prevComponentFunctionMutations
+    ctx.hoistedFunctionDepNames = prevHoistedFunctionDepNames
     ctx.memoVars = prevMemoVars
     ctx.storeVars = prevStoreVars
     ctx.mutatedVars = prevMutatedVars
@@ -8020,6 +8024,7 @@ function lowerFunctionWithRegions(
   ctx.functionVars = prevFunctionVars
   ctx.componentFunctionDefs = prevComponentFunctionDefs
   ctx.componentFunctionMutations = prevComponentFunctionMutations
+  ctx.hoistedFunctionDepNames = prevHoistedFunctionDepNames
   ctx.memoVars = prevMemoVars
   ctx.storeVars = prevStoreVars
   ctx.namespaceStoreAliasVars = prevNamespaceStoreAliasVars

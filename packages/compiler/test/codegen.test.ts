@@ -1638,6 +1638,86 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('const __handler = () => __fict_fn_helper_1()')
   })
 
+  it('does not reuse hoisted function deps across components with the same local name', () => {
+    const ast = parseFile(`
+      export function A() {
+        const handler = () => 'A'
+        return <button onClick$={handler}>A</button>
+      }
+
+      export function B() {
+        const handler = () => 'B'
+        return <button onClick$={handler}>B</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    const helperMatches = Array.from(
+      code.matchAll(
+        /export const (__fict_fn_handler_\d+) = \(\(\) => \{\s*const handler = \(\) => "([AB])";\s*return handler;\s*\}\)\(\);/g,
+      ),
+    ) as RegExpMatchArray[]
+    const helpersByValue = new Map(helperMatches.map(match => [match[2], match[1]]))
+    const aHelper = helpersByValue.get('A')
+    const bHelper = helpersByValue.get('B')
+    expect(aHelper).toBeDefined()
+    expect(bHelper).toBeDefined()
+    expect(aHelper).not.toBe(bHelper)
+    const handlerAssignments = Array.from(
+      code.matchAll(/const __handler = (__fict_fn_handler_\d+)/g),
+    ) as RegExpMatchArray[]
+    expect(handlerAssignments.map(match => match[1])).toEqual([aHelper, bHelper])
+  })
+
+  it('reuses hoisted function deps for repeated uses of the same binding', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const handler = () => 'hit'
+        return (
+          <>
+            <button onClick$={handler}>A</button>
+            <button onClick$={handler}>B</button>
+          </>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    const helperExports = Array.from(
+      code.matchAll(/export const (__fict_fn_handler_\d+) =/g),
+    ) as RegExpMatchArray[]
+    expect(helperExports).toHaveLength(1)
+    const helperName = helperExports[0]![1]
+    const handlerAssignments = Array.from(
+      code.matchAll(/const __handler = (__fict_fn_handler_\d+)/g),
+    ) as RegExpMatchArray[]
+    expect(handlerAssignments.map(match => match[1])).toEqual([helperName, helperName])
+  })
+
+  it('validates same-named hoisted function deps in later components', () => {
+    const ast = parseFile(`
+      export function A() {
+        const handler = () => 'A'
+        return <button onClick$={handler}>A</button>
+      }
+
+      export function B() {
+        const label = 'B'
+        const handler = () => label
+        return <button onClick$={handler}>B</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(
+      /function deps: handler -> label/i,
+    )
+  })
+
   it('restores destructured prop captures as accessors in resumable handlers', () => {
     const ast = parseFile(`
       function Button({ id }) {
