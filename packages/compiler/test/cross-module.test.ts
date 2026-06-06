@@ -2523,6 +2523,84 @@ describe('Cross-Module Reactivity', () => {
       expect(consumerOutput).toMatch(/state\.total/)
     })
 
+    it('keeps computed identifier runtime creator calls out of default export metadata', () => {
+      const directPath = path.join(baseDir, 'runtime-default-direct.ts')
+      const literalPath = path.join(baseDir, 'runtime-default-literal.ts')
+      const dynamicSignalPath = path.join(baseDir, 'runtime-default-dynamic-signal.ts')
+      const dynamicMemoPath = path.join(baseDir, 'runtime-default-dynamic-memo.ts')
+      const dynamicStorePath = path.join(baseDir, 'runtime-default-dynamic-store.ts')
+      const consumerPath = path.join(baseDir, 'runtime-default-dynamic-consumer.tsx')
+      const moduleMetadata = new Map()
+
+      transform(
+        `
+          import * as runtime from 'fict/advanced'
+          export default runtime.createSignal(1)
+        `,
+        { moduleMetadata },
+        directPath,
+      )
+      transform(
+        `
+          import * as runtime from 'fict/advanced'
+          export default runtime['createMemo'](() => 1)
+        `,
+        { moduleMetadata },
+        literalPath,
+      )
+      transform(
+        `
+          import * as runtime from 'fict/advanced'
+          const createSignal = 'createEffect'
+          export default runtime[createSignal](() => 1)
+        `,
+        { moduleMetadata },
+        dynamicSignalPath,
+      )
+      transform(
+        `
+          import * as runtime from 'fict/advanced'
+          const createMemo = 'createEffect'
+          export default runtime[createMemo](() => 1)
+        `,
+        { moduleMetadata },
+        dynamicMemoPath,
+      )
+      transform(
+        `
+          import * as runtime from 'fict/advanced'
+          const createStore = 'createEffect'
+          export default runtime[createStore](() => 1)
+        `,
+        { moduleMetadata },
+        dynamicStorePath,
+      )
+
+      expect(moduleMetadata.get(path.resolve(directPath))?.exports).toEqual({
+        default: 'signal',
+      })
+      expect(moduleMetadata.get(path.resolve(literalPath))?.exports).toEqual({
+        default: 'memo',
+      })
+      expect(moduleMetadata.get(path.resolve(dynamicSignalPath))?.exports).toEqual({})
+      expect(moduleMetadata.get(path.resolve(dynamicMemoPath))?.exports).toEqual({})
+      expect(moduleMetadata.get(path.resolve(dynamicStorePath))?.exports).toEqual({})
+
+      const consumerOutput = transform(
+        `
+          import value from './runtime-default-dynamic-signal'
+
+          export function App() {
+            return <div>{value}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        consumerPath,
+      )
+
+      expect(consumerOutput).not.toMatch(/value\(\)/)
+    })
+
     it('publishes direct default namespace hook metadata', () => {
       const sourcePath = path.join(baseDir, 'reactive-namespace-default-hook-source.ts')
       const forwardPath = path.join(baseDir, 'reactive-namespace-default-hook.ts')

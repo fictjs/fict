@@ -98,6 +98,24 @@ export function getStaticPropName(expr: Expression, computed: boolean): string |
   return null
 }
 
+function getStaticBabelPropName(
+  property:
+    | BabelCore.types.MemberExpression['property']
+    | BabelCore.types.OptionalMemberExpression['property'],
+  computed: boolean | undefined,
+  t: typeof BabelCore.types,
+): string | number | null {
+  if (!computed) {
+    if (t.isIdentifier(property)) return property.name
+    if (t.isStringLiteral(property)) return property.value
+    if (t.isNumericLiteral(property)) return property.value
+    return null
+  }
+  if (t.isStringLiteral(property)) return property.value
+  if (t.isNumericLiteral(property)) return property.value
+  return null
+}
+
 export function getReactiveCallKind(
   expr: Expression,
   ctx: CodegenContext,
@@ -137,19 +155,13 @@ export function getReactiveCallKindFromBabel(
     return getRuntimeImportedKind(name, ctx)
   }
   if (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) {
-    const memberCallee = callee as BabelCore.types.MemberExpression
+    const memberCallee = callee
     if (!t.isIdentifier(memberCallee.object)) return null
     const objectName = memberCallee.object.name
     if (isNameShadowed(objectName, ctx)) return null
     if (!ctx.moduleRuntimeNamespaceImports?.has(objectName)) return null
-    const propName = t.isIdentifier(memberCallee.property)
-      ? memberCallee.property.name
-      : t.isStringLiteral(memberCallee.property)
-        ? memberCallee.property.value
-        : t.isNumericLiteral(memberCallee.property)
-          ? String(memberCallee.property.value)
-          : null
-    if (!propName) return null
+    const propName = getStaticBabelPropName(memberCallee.property, memberCallee.computed, t)
+    if (typeof propName !== 'string') return null
     return getRuntimeReactiveCreatorKind(
       propName,
       ctx.moduleRuntimeNamespaceImportSources?.get(objectName),
