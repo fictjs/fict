@@ -916,6 +916,98 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toMatch(/insertBetween\([^,]+,\s*[^,]+,\s*\(\)\s*=>\s*createPortal/)
   })
 
+  it('lowers object-property JSX member components with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const UI = {
+        Button: () => {
+          const count = $state(1)
+          return <button>{count}</button>
+        },
+      }
+
+      export function App() {
+        return <UI.Button />
+      }
+    `)
+
+    expect(output).toContain('Button: () => {')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).toContain('type: UI.Button')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('lowers object-method JSX member components with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const UI = {
+        Button() {
+          const count = $state(1)
+          return <button>{count}</button>
+        },
+      }
+
+      export function App() {
+        return <UI.Button />
+      }
+    `)
+
+    expect(output).toContain('Button() {')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).toContain('type: UI.Button')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('lowers nested object-property JSX member components with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const UI = {
+        Nav: {
+          Item: () => {
+            const count = $state(1)
+            return <button>{count}</button>
+          },
+        },
+      }
+
+      export function App() {
+        return <UI.Nav.Item />
+      }
+    `)
+
+    expect(output).toContain('Item: () => {')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).toContain('type: UI.Nav.Item')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('does not component-lower object-property functions that are not used as JSX member tags', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const UI = {
+        Button: () => {
+          const count = $state(1)
+          return <button>{count}</button>
+        },
+      }
+
+      export function App() {
+        return <div>app</div>
+      }
+    `)
+
+    expect(output).toContain('Button: () => {')
+    expect(output).toContain('createSignal(1')
+    expect(output).not.toContain('__fictUseSignal(__fictCtx, 1')
+  })
+
   it('lowers array-literal component spreads to index props', () => {
     const output = transform(`
       import { $state } from 'fict'

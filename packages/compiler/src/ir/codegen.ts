@@ -154,6 +154,47 @@ const COMPONENT_CONTEXT_PRIMITIVE_CALLEES = new Set([
   'createStore',
 ])
 
+function jsxMemberNamePath(node: BabelCore.types.JSXMemberExpression): string[] | null {
+  const objectPath =
+    node.object.type === 'JSXIdentifier' ? [node.object.name] : jsxMemberNamePath(node.object)
+  if (!objectPath) return null
+  return [...objectPath, node.property.name]
+}
+
+function collectJSXMemberComponentPaths(
+  statements: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): Set<string> {
+  const paths = new Set<string>()
+  const visitorKeys =
+    (t as unknown as { VISITOR_KEYS?: Record<string, string[]> }).VISITOR_KEYS ?? {}
+
+  const visit = (node: BabelCore.types.Node | null | undefined): void => {
+    if (!node) return
+    if (t.isJSXElement(node) && t.isJSXMemberExpression(node.openingElement.name)) {
+      const path = jsxMemberNamePath(node.openingElement.name)
+      if (path) paths.add(path.join('.'))
+    }
+
+    const keys = visitorKeys[node.type] ?? []
+    for (const key of keys) {
+      const value = (node as unknown as Record<string, unknown>)[key]
+      if (Array.isArray(value)) {
+        value.forEach(child => {
+          if (child && typeof child === 'object' && 'type' in child) {
+            visit(child as BabelCore.types.Node)
+          }
+        })
+      } else if (value && typeof value === 'object' && 'type' in value) {
+        visit(value as BabelCore.types.Node)
+      }
+    }
+  }
+
+  statements.forEach(visit)
+  return paths
+}
+
 function isComponentContextPrimitiveCall(expr: Expression): boolean {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
   if (expr.callee.kind !== 'Identifier') return false
@@ -812,6 +853,10 @@ export interface CodegenContext {
   nonReactiveScopeDepth?: number | undefined
   /** Current assignment target name (for devtools metadata) */
   currentAssignmentName?: string | undefined
+  /** Static JSX member component paths used in this module, e.g. "UI.Button". */
+  jsxMemberComponentPaths?: Set<string> | undefined
+  /** Static path of the object literal currently being lowered, e.g. ["UI", "Nav"]. */
+  objectLiteralPath?: string[] | undefined
   /** Depth counter for conditional child lowering (disable memo caching) */
   inConditional?: number | undefined
   /** Whether we are lowering JSX props (enables prop getter wrapping) */
@@ -931,6 +976,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     nonSerializableSignalVars: new Set(),
     functionVars: new Set(),
     functionBindingKinds: new Map(),
+    jsxMemberComponentPaths: new Set(),
     importedReactiveVars: new Set(),
     importedReactiveKinds: new Map(),
     memoVars: new Set(),
@@ -1326,6 +1372,10 @@ export function lowerHIRToBabel(
   const ctx = createCodegenContext(t)
   ctx.programFunctions = new Map(
     program.functions.filter(fn => !!fn.name).map(fn => [fn.name as string, fn]),
+  )
+  ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(
+    (program.originalBody ?? []) as BabelCore.types.Statement[],
+    t,
   )
   const body: BabelCore.types.Statement[] = []
   const emittedFunctionNames = new Set<string>()
@@ -2291,6 +2341,89 @@ function lowerMemberExpressionForAssignmentTarget(
     return ctx.t.optionalMemberExpression(object, property, expr.computed, expr.optional)
   }
   return ctx.t.memberExpression(object, property, expr.computed, expr.optional)
+}
+
+function withObjectLiteralPath<T>(ctx: CodegenContext, path: string[] | undefined, fn: () => T): T {
+  if (!path) return fn()
+  const prevPath = ctx.objectLiteralPath
+  ctx.objectLiteralPath = path
+  try {
+    return fn()
+  } finally {
+    ctx.objectLiteralPath = prevPath
+  }
+}
+
+function getStaticObjectPropertySegment(
+  prop: Extract<Expression, { kind: 'ObjectExpression' }>['properties'][number],
+): string | null {
+  if (prop.kind === 'SpreadElement' || prop.computed) return null
+  const name = getStaticPropName(prop.key as Expression, false)
+  return typeof name === 'string' || typeof name === 'number' ? String(name) : null
+}
+
+function objectPathKey(path: string[]): string {
+  return path.join('.')
+}
+
+function isJSXMemberComponentPath(path: string[] | undefined, ctx: CodegenContext): boolean {
+  if (!path) return false
+  return ctx.jsxMemberComponentPaths?.has(objectPathKey(path)) ?? false
+}
+
+function functionValueToHIRFunction(
+  value: Extract<Expression, { kind: 'ArrowFunction' | 'FunctionExpression' }>,
+  componentName: string,
+): HIRFunction {
+  const blocks: BasicBlock[] = Array.isArray(value.body)
+    ? (value.body as BasicBlock[])
+    : [
+        {
+          id: 0,
+          instructions: [],
+          terminator: {
+            kind: 'Return',
+            argument: value.body as Expression,
+            loc: value.loc ?? null,
+          },
+        },
+      ]
+
+  return {
+    name: componentName,
+    params: value.params,
+    rawParams: value.rawParams,
+    blocks,
+    meta: {
+      fromExpression: true,
+      isArrow: value.kind === 'ArrowFunction',
+      hasExpressionBody: value.kind === 'ArrowFunction' && value.isExpression,
+      isAsync: value.isAsync ?? false,
+      ...(value.kind === 'FunctionExpression' && value.isGenerator
+        ? { isGenerator: value.isGenerator }
+        : null),
+      ...(value.kind === 'FunctionExpression' && value.name
+        ? { functionExpressionName: value.name }
+        : null),
+      ...(value.noMemo ? { noMemo: true } : null),
+      ...(value.pure ? { pure: true } : null),
+    },
+    loc: value.loc ?? null,
+  }
+}
+
+function lowerJSXMemberComponentFunctionValue(
+  value: Expression,
+  path: string[] | undefined,
+  ctx: CodegenContext,
+): BabelCore.types.Expression | null {
+  if (!isJSXMemberComponentPath(path, ctx)) return null
+  if (value.kind !== 'ArrowFunction' && value.kind !== 'FunctionExpression') return null
+  const componentName = path?.[path.length - 1] ?? 'Component'
+  const fn = functionValueToHIRFunction(value, componentName)
+  const lowered = lowerFunctionWithRegions(fn, ctx, { forceComponentContext: true })
+  if (!lowered) return null
+  return buildFunctionDeclaratorExpression({ fn, stmt: lowered }, ctx.t)
 }
 
 function lowerExpressionImpl(
@@ -3530,6 +3663,22 @@ function lowerExpressionImpl(
           if (p.kind === 'SpreadElement') {
             return t.spreadElement(lowerExpression(p.argument, ctx))
           }
+          const segment = getStaticObjectPropertySegment(p)
+          const propertyPath =
+            ctx.objectLiteralPath && segment ? [...ctx.objectLiteralPath, segment] : undefined
+          const lowerObjectPropertyValue = (): BabelCore.types.Expression => {
+            const loweredComponentValue = lowerJSXMemberComponentFunctionValue(
+              p.value,
+              propertyPath,
+              ctx,
+            )
+            if (loweredComponentValue) return loweredComponentValue
+            return withObjectLiteralPath(
+              ctx,
+              p.value.kind === 'ObjectExpression' ? propertyPath : undefined,
+              () => lowerExpression(p.value, ctx),
+            )
+          }
           const keyIsIdentifier = !p.computed && p.key.kind === 'Identifier'
           const keyIdent = keyIsIdentifier && p.key.kind === 'Identifier' ? p.key.name : ''
           const keyNode = p.computed
@@ -3539,7 +3688,7 @@ function lowerExpressionImpl(
               : lowerExpression(p.key, ctx)
 
           if (p.propertyKind && p.propertyKind !== 'init') {
-            const valueExpr = lowerExpression(p.value, ctx)
+            const valueExpr = lowerObjectPropertyValue()
             if (!t.isFunctionExpression(valueExpr)) {
               throw new HIRError(
                 `Object method property did not lower to function expression.`,
@@ -3566,7 +3715,7 @@ function lowerExpressionImpl(
             expressionUsesTracked(p.value, ctx)
           const valueExprRaw = usesTracked
             ? (lowerTrackedExpression(p.value as Expression, ctx) as BabelCore.types.Expression)
-            : lowerExpression(p.value, ctx)
+            : lowerObjectPropertyValue()
           const shouldMemoProp =
             usesTracked &&
             !t.isIdentifier(valueExprRaw) &&
@@ -6197,6 +6346,8 @@ export function lowerHIRWithRegions(
     program.functions.filter(fn => !!fn.name).map(fn => [fn.name as string, fn]),
   )
   ctx.options = options
+  const originalBody = (program.originalBody ?? []) as BabelCore.types.Statement[]
+  ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(originalBody, t)
   ctx.resumableEnabled = options?.resumable === true
   // Auto-extract defaults to true when resumable is enabled, unless explicitly disabled
   ctx.autoExtractEnabled = options?.autoExtractHandlers ?? options?.resumable === true
@@ -6205,7 +6356,6 @@ export function lowerHIRWithRegions(
   const topLevelAliases = new Set<string>()
   let topLevelCtxInjected = false
   const emittedFunctionNames = new Set<string>()
-  const originalBody = (program.originalBody ?? []) as BabelCore.types.Statement[]
   ctx.moduleDeclaredNames = collectDeclaredNames(originalBody, t)
   ctx.moduleBindingKinds = collectModuleBindingKinds(originalBody, t)
   const runtimeImports = collectRuntimeImports(originalBody, t)
@@ -7854,7 +8004,7 @@ function restoreLexicalDeclarationUseOrder(
 function lowerFunctionWithRegions(
   fn: HIRFunction,
   ctx: CodegenContext,
-  options?: { forceHookContext?: boolean },
+  options?: { forceHookContext?: boolean; forceComponentContext?: boolean },
 ): BabelCore.types.FunctionDeclaration | null {
   const { t } = ctx
   const prevTracked = ctx.trackedVars
@@ -8219,8 +8369,9 @@ function lowerFunctionWithRegions(
   const prevHookFlag = ctx.currentFnIsHook
   ctx.currentFnIsHook = inferredHook
   const isComponent =
-    isComponentName(fn.name ? deSSAVarName(fn.name) : undefined) &&
-    (hasJSX || functionUsesComponentContextPrimitives(fn))
+    options?.forceComponentContext === true ||
+    (isComponentName(fn.name ? deSSAVarName(fn.name) : undefined) &&
+      (hasJSX || functionUsesComponentContextPrimitives(fn)))
   ctx.isComponentFn = isComponent
   // Non-component, non-hook functions should use non-hook-based primitives (createSignal, createMemo)
   // to avoid requiring hook context. Only component functions and hooks use hook-based APIs.

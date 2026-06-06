@@ -5325,8 +5325,17 @@ function instructionToStatement(
     const canLazyMemoizeDerived = expressionIsLazyMemoSafe(instr.value, ctx)
     // fix: Check if variable will be mutated (assigned to later without declaration)
     const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
-    const lowerAssignedValue = (forceAssigned = false) =>
-      lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
+    const lowerAssignedValue = (forceAssigned = false) => {
+      const prevObjectLiteralPath = ctx.objectLiteralPath
+      if (instr.value.kind === 'ObjectExpression') {
+        ctx.objectLiteralPath = [baseName]
+      }
+      try {
+        return lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
+      } finally {
+        ctx.objectLiteralPath = prevObjectLiteralPath
+      }
+    }
     const needsAsyncContext = expressionNeedsAsyncContext(instr.value)
     const shouldEagerDerivedValue =
       !needsAsyncContext && !isMemoReturningCall && !canLazyMemoizeDerived
