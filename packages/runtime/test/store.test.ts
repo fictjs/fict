@@ -557,6 +557,100 @@ describe('createDiffingSignal reactivity', () => {
     expect(seen).toEqual([false, true, false])
   })
 
+  it('does not execute own getters during presence and descriptor reflection', () => {
+    let calls = 0
+    const source = {} as { x: number }
+    Object.defineProperty(source, 'x', {
+      get() {
+        calls += 1
+        return 1
+      },
+      enumerable: true,
+      configurable: true,
+    })
+    const [read] = createDiffingSignal(source)
+
+    expect(Object.keys(read())).toEqual(['x'])
+    expect('x' in read()).toBe(true)
+    expect(Object.hasOwn(read(), 'x')).toBe(true)
+    const descriptor = Object.getOwnPropertyDescriptor(read(), 'x')
+
+    expect(typeof descriptor?.get).toBe('function')
+    expect(calls).toBe(0)
+    expect(read().x).toBe(1)
+    expect(calls).toBe(1)
+  })
+
+  it('does not throw while reflecting over throwing getters', () => {
+    const source = {} as { x: number }
+    Object.defineProperty(source, 'x', {
+      get() {
+        throw new Error('boom')
+      },
+      enumerable: true,
+      configurable: true,
+    })
+    const [read] = createDiffingSignal(source)
+
+    expect(() => Object.keys(read())).not.toThrow()
+    expect(() => 'x' in read()).not.toThrow()
+    expect(() => Object.hasOwn(read(), 'x')).not.toThrow()
+    expect(() => Object.getOwnPropertyDescriptor(read(), 'x')).not.toThrow()
+    expect(() => read().x).toThrow('boom')
+  })
+
+  it('does not execute inherited getters during presence reflection', () => {
+    let calls = 0
+    const proto = {} as { x: number }
+    Object.defineProperty(proto, 'x', {
+      get() {
+        calls += 1
+        return 1
+      },
+      enumerable: true,
+      configurable: true,
+    })
+    const source = Object.create(proto) as { x: number }
+    const [read] = createDiffingSignal(source)
+
+    expect('x' in read()).toBe(true)
+    expect(Object.hasOwn(read(), 'x')).toBe(false)
+    expect(Object.getOwnPropertyDescriptor(read(), 'x')).toBeUndefined()
+    expect(Object.keys(read())).toEqual([])
+    expect(calls).toBe(0)
+    expect(read().x).toBe(1)
+    expect(calls).toBe(1)
+  })
+
+  it('updates reflection subscribers without executing accessors', async () => {
+    let calls = 0
+    const first = {} as { x?: number }
+    Object.defineProperty(first, 'x', {
+      get() {
+        calls += 1
+        return 1
+      },
+      enumerable: true,
+      configurable: true,
+    })
+    const [read, write] = createDiffingSignal(first)
+    const seen: string[] = []
+
+    createEffect(() => {
+      seen.push(`${'x' in read()}:${Object.keys(read()).join(',')}`)
+    })
+
+    await tick()
+    expect(seen).toEqual(['true:x'])
+    expect(calls).toBe(0)
+
+    write({})
+    await tick()
+
+    expect(seen).toEqual(['true:x', 'false:'])
+    expect(calls).toBe(0)
+  })
+
   it('tracks enumerable true-to-false descriptor changes', async () => {
     const first = {} as Record<string, number>
     Object.defineProperty(first, 'x', {

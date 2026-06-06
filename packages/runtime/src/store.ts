@@ -135,6 +135,16 @@ function descriptorShapeChanged(
   return before.get !== after.get || before.set !== after.set
 }
 
+function descriptorContentChanged(
+  before: PropertyDescriptor | undefined,
+  after: PropertyDescriptor | undefined,
+): boolean {
+  if (descriptorShapeChanged(before, after)) return true
+  if (!before || !after) return false
+  if ('value' in before && 'value' in after) return before.value !== after.value
+  return false
+}
+
 function descriptorValue(
   target: object,
   prop: string | symbol,
@@ -452,6 +462,12 @@ function reconcile(target: object, value: unknown, seenPairs?: WeakMap<object, W
 export function createDiffingSignal<T extends object>(initialValue: T) {
   let currentValue = unwrap(initialValue)
   const signals = new Map<string | symbol, SignalAccessor<unknown>>()
+  const presenceSignals = new Map<string | symbol, SignalAccessor<number>>()
+  const presenceVersions = new Map<string | symbol, number>()
+  const presenceSnapshots = new Map<string | symbol, boolean>()
+  const descriptorSignals = new Map<string | symbol, SignalAccessor<number>>()
+  const descriptorVersions = new Map<string | symbol, number>()
+  const descriptorSnapshots = new Map<string | symbol, PropertyDescriptor | undefined>()
   let iterateSignal: SignalAccessor<number> | undefined
   let iterateVersion = 0
   let ownKeysSnapshot = Reflect.ownKeys(currentValue as object)
@@ -497,6 +513,60 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
     return s
   }
 
+  const bumpVersionedSignal = (
+    versions: Map<string | symbol, number>,
+    s: SignalAccessor<number>,
+    prop: string | symbol,
+  ) => {
+    const nextVersion = (versions.get(prop) ?? 0) + 1
+    versions.set(prop, nextVersion)
+    s(nextVersion)
+  }
+
+  const getPresenceSignal = (prop: string | symbol) => {
+    let s = presenceSignals.get(prop)
+    if (!s) {
+      s = signal(0)
+      presenceSignals.set(prop, s)
+      presenceVersions.set(prop, 0)
+      presenceSnapshots.set(prop, Reflect.has(currentValue as object, prop))
+    }
+    return s
+  }
+
+  const getDescriptorSignal = (prop: string | symbol) => {
+    let s = descriptorSignals.get(prop)
+    if (!s) {
+      s = signal(0)
+      descriptorSignals.set(prop, s)
+      descriptorVersions.set(prop, 0)
+      descriptorSnapshots.set(prop, Reflect.getOwnPropertyDescriptor(currentValue as object, prop))
+    }
+    return s
+  }
+
+  const updatePresenceSignals = (next: object): void => {
+    for (const [prop, s] of presenceSignals) {
+      const oldHas = presenceSnapshots.get(prop)
+      const newHas = Reflect.has(next, prop)
+      presenceSnapshots.set(prop, newHas)
+      if (oldHas !== newHas) {
+        bumpVersionedSignal(presenceVersions, s, prop)
+      }
+    }
+  }
+
+  const updateDescriptorSignals = (next: object): void => {
+    for (const [prop, s] of descriptorSignals) {
+      const oldDescriptor = descriptorSnapshots.get(prop)
+      const newDescriptor = Reflect.getOwnPropertyDescriptor(next, prop)
+      descriptorSnapshots.set(prop, newDescriptor)
+      if (descriptorContentChanged(oldDescriptor, newDescriptor)) {
+        bumpVersionedSignal(descriptorVersions, s, prop)
+      }
+    }
+  }
+
   const trackIterate = () => {
     if (!iterateSignal) {
       iterateSignal = signal(iterateVersion)
@@ -536,11 +606,11 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
       return Reflect.ownKeys(currentValue)
     },
     has(target, prop) {
-      getPropSignal(prop)()
+      getPresenceSignal(prop)()
       return Reflect.has(currentValue, prop)
     },
     getOwnPropertyDescriptor(target, prop) {
-      getPropSignal(prop)()
+      getDescriptorSignal(prop)()
       const descriptor = Reflect.getOwnPropertyDescriptor(currentValue, prop)
       if (!descriptor) return undefined
 
@@ -590,6 +660,8 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
         const newVal = Reflect.get(next as object, prop)
         s(newVal)
       }
+      updatePresenceSignals(next as object)
+      updateDescriptorSignals(next as object)
       updateIterateFromOwnKeys(next as object)
       return
     }
@@ -615,6 +687,8 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
         s(newVal)
       }
     }
+    updatePresenceSignals(next as object)
+    updateDescriptorSignals(next as object)
     updateIterateFromOwnKeys(next as object)
 
     // Note: If new properties appeared that weren't tracked, we don't care
