@@ -4,6 +4,7 @@ import type { CodegenContext, RegionInfo } from './codegen'
 import { reserveGeneratedIndexedModuleName } from './codegen-name-allocation'
 import {
   collectFreeIdentifiersInExpr,
+  capturesLexicalArgumentsInExpr,
   genModuleUrlExpr,
   renameIdentifiersInExpr,
 } from './codegen-resumable-utils'
@@ -292,7 +293,11 @@ export function emitResumableEventBinding(
   // Hoisted resumable helpers execute at module scope, so local closures are unsafe here.
   const loweredFunctionDeps = new Map<string, BabelCore.types.Expression>()
   const unsafeFunctionCaptures: string[] = []
+  const lexicalArgumentsCaptures: string[] = []
   const mutatedFunctionDeps: string[] = []
+  if (capturesLexicalArgumentsInExpr(handlerExpr, t)) {
+    lexicalArgumentsCaptures.push('handler -> arguments')
+  }
   for (const name of captured) {
     if (!ctx.functionVars?.has(name) || ctx.signalVars?.has(name)) continue
     const mutationDetails = ctx.componentFunctionMutations?.get(name)
@@ -314,6 +319,10 @@ export function emitResumableEventBinding(
       skipHookAccessors: true,
       skipRegionRootOverride: true,
     })
+    if (capturesLexicalArgumentsInExpr(loweredFn, t)) {
+      lexicalArgumentsCaptures.push(`${name} -> arguments`)
+      continue
+    }
     const fnCaptured = collectFreeIdentifiersInExpr(loweredFn, t)
     const localFnCaptures = Array.from(fnCaptured)
       .filter(dep => ctx.localDeclaredNames?.has(dep))
@@ -336,6 +345,7 @@ export function emitResumableEventBinding(
     nonSerializableSignalCaptures.length > 0 ||
     outerSignalCaptures.length > 0 ||
     unsafeFunctionCaptures.length > 0 ||
+    lexicalArgumentsCaptures.length > 0 ||
     mutatedFunctionDeps.length > 0 ||
     calledPropMembers.length > 0
   ) {
@@ -351,6 +361,9 @@ export function emitResumableEventBinding(
     }
     if (unsafeFunctionCaptures.length > 0) {
       detailParts.push(`function deps: ${unsafeFunctionCaptures.sort().join('; ')}`)
+    }
+    if (lexicalArgumentsCaptures.length > 0) {
+      detailParts.push(`arguments: ${lexicalArgumentsCaptures.sort().join('; ')}`)
     }
     if (mutatedFunctionDeps.length > 0) {
       detailParts.push(`function mutations: ${mutatedFunctionDeps.sort().join('; ')}`)
