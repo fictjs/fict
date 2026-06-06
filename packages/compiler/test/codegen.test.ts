@@ -284,6 +284,86 @@ describe('lowerHIRWithRegions', () => {
     expect(output).toMatch(/switch \(choose\(\)\) \{\s+case "hit":\s+out = 2;/)
   })
 
+  it('keeps output assignments after earlier ordinary side effects', () => {
+    const expectBefore = (output: string, earlier: string, later: string) => {
+      const earlierIndex = output.indexOf(earlier)
+      const laterIndex = output.indexOf(later)
+      expect(earlierIndex).toBeGreaterThanOrEqual(0)
+      expect(laterIndex).toBeGreaterThanOrEqual(0)
+      expect(earlierIndex).toBeLessThan(laterIndex)
+    }
+
+    const callOutput = transform(`
+      const log = []
+
+      export function App() {
+        let out = 0
+        function side() {
+          log.push(out)
+        }
+        side()
+        out = 1
+        return <span>{out}:{log.join(',')}</span>
+      }
+    `)
+
+    expectBefore(callOutput, 'side();', 'out = 1;')
+
+    const throwOutput = transform(`
+      export function App() {
+        let out = 0
+        maybeThrow()
+        out = 1
+        return <span>{out}</span>
+      }
+    `)
+
+    expectBefore(throwOutput, 'maybeThrow();', 'out = 1;')
+
+    const rhsOutput = transform(`
+      export function App() {
+        let out = 0
+        first()
+        out = second()
+        return <span>{out}</span>
+      }
+    `)
+
+    expectBefore(rhsOutput, 'first();', 'out = second();')
+
+    const getterOutput = transform(`
+      const source = {
+        get value() {
+          return 1
+        }
+      }
+
+      export function App() {
+        let out = 0
+        source.value
+        out = 1
+        return <span>{out}</span>
+      }
+    `)
+
+    expectBefore(getterOutput, 'source.value;', 'out = 1;')
+
+    const multipleOutput = transform(`
+      export function App() {
+        let out = 0
+        first()
+        out = 1
+        second()
+        out = 2
+        return <span>{out}</span>
+      }
+    `)
+
+    expectBefore(multipleOutput, 'first();', 'out = 1;')
+    expectBefore(multipleOutput, 'out = 1;', 'second();')
+    expectBefore(multipleOutput, 'second();', 'out = 2;')
+  })
+
   it('keeps destructuring temps with branch region outputs', () => {
     const output = transform(`
       import { $state } from 'fict'

@@ -3682,6 +3682,112 @@ function instructionsMatch(a: Instruction, b: Instruction): boolean {
   return a === b
 }
 
+function expressionHasOrderingEffects(expr: Expression): boolean {
+  switch (expr.kind) {
+    case 'Identifier':
+    case 'Literal':
+    case 'MetaProperty':
+    case 'ThisExpression':
+    case 'SuperExpression':
+    case 'ArrowFunction':
+    case 'FunctionExpression':
+      return false
+    case 'CallExpression':
+    case 'OptionalCallExpression':
+    case 'ImportExpression':
+    case 'NewExpression':
+    case 'AwaitExpression':
+    case 'YieldExpression':
+    case 'TaggedTemplateExpression':
+    case 'ClassExpression':
+    case 'JSXElement':
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+    case 'AssignmentExpression':
+    case 'UpdateExpression':
+    case 'SpreadElement':
+      return true
+    case 'BinaryExpression':
+    case 'LogicalExpression':
+      return expressionHasOrderingEffects(expr.left) || expressionHasOrderingEffects(expr.right)
+    case 'UnaryExpression':
+      return expr.operator === 'delete' || expressionHasOrderingEffects(expr.argument)
+    case 'ConditionalExpression':
+      return (
+        expressionHasOrderingEffects(expr.test) ||
+        expressionHasOrderingEffects(expr.consequent) ||
+        expressionHasOrderingEffects(expr.alternate)
+      )
+    case 'ArrayExpression':
+      return expr.elements.some(element =>
+        element ? expressionHasOrderingEffects(element) : false,
+      )
+    case 'ObjectExpression':
+      return expr.properties.some(prop =>
+        prop.kind === 'SpreadElement'
+          ? true
+          : (prop.computed && expressionHasOrderingEffects(prop.key)) ||
+            expressionHasOrderingEffects(prop.value),
+      )
+    case 'TemplateLiteral':
+      return expr.expressions.some(part => expressionHasOrderingEffects(part))
+    case 'SequenceExpression':
+      return expr.expressions.some(part => expressionHasOrderingEffects(part))
+  }
+}
+
+function instructionHasOrderingEffects(instr: Instruction): boolean {
+  if (instr.kind === 'Debugger') return true
+  if (instr.kind === 'Phi') return false
+  if (instr.kind === 'Expression') return expressionHasOrderingEffects(instr.value)
+  if (!instr.declarationKind) return true
+  if (instr.declarationKind === 'function') return false
+  return expressionHasOrderingEffects(instr.value)
+}
+
+function collectOrderingBarrierRegionIds(
+  buffer: { instr: Instruction; region?: Region | undefined }[],
+  ctx: CodegenContext,
+): Set<number> {
+  const disabled = new Set<number>()
+  const ranges = new Map<number, { first: number; last: number }>()
+
+  buffer.forEach((item, index) => {
+    const region = item.region
+    const hasTrackedDependency = region
+      ? Array.from(region.dependencies).some(dep => {
+          const name = deSSAVarName(dep)
+          return (
+            ctx.trackedVars.has(name) ||
+            (ctx.signalVars?.has(name) ?? false) ||
+            (ctx.memoVars?.has(name) ?? false) ||
+            (ctx.storeVars?.has(name) ?? false)
+          )
+        })
+      : false
+    if (!region || region.hasControlFlow || hasTrackedDependency) return
+    const range = ranges.get(region.id)
+    if (range) {
+      range.last = index
+    } else {
+      ranges.set(region.id, { first: index, last: index })
+    }
+  })
+
+  if (ranges.size === 0) return disabled
+
+  buffer.forEach((item, index) => {
+    if (!instructionHasOrderingEffects(item.instr)) return
+    for (const [id, range] of ranges) {
+      if (index <= range.first || index >= range.last) continue
+      if (item.region?.id === id) continue
+      disabled.add(id)
+    }
+  })
+
+  return disabled
+}
+
 /**
  * Flush pending instructions, emitting regions as needed
  */
@@ -3700,6 +3806,7 @@ function flushInstructionBuffer(
   collectSignalWriteDeclarationBarrierRegionIds(buffer, ctx).forEach(id =>
     regionCtx?.disabledRegions.add(id),
   )
+  collectOrderingBarrierRegionIds(buffer, ctx).forEach(id => regionCtx?.disabledRegions.add(id))
 
   for (const item of buffer) {
     if (regionCtx?.hoistedInstructions.has(item.instr)) {
