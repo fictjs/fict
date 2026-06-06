@@ -783,6 +783,27 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('class count()')
   })
 
+  it('preserves meta-property identifiers from reactive overrides', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const target = $state(1)
+        const meta = $state(2)
+        const Fn = function () {
+          return new.target
+        }
+        const url = import.meta.url
+        return <span>{target}{meta}{String(Fn())}{url}</span>
+      }
+    `)
+
+    expect(output).toContain('return new.target;')
+    expect(output).toContain('const url = import.meta.url;')
+    expect(output).not.toContain('new.target()')
+    expect(output).not.toContain('import.meta().url')
+  })
+
   it('keeps call/apply destructured function props unwrapped', () => {
     const ast = parseFile(`
       function Child({ cb }) {

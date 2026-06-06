@@ -532,6 +532,10 @@ export function replaceIdentifiersWithOverrides(
     return
   }
 
+  if (t.isMetaProperty(node)) {
+    return
+  }
+
   if (t.isClassExpression(node) || t.isClassDeclaration(node)) {
     const classNames = new Set<string>()
     if (node.id) {
