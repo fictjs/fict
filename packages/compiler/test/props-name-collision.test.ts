@@ -36,6 +36,22 @@ describe('destructured props generated name collisions', () => {
     expect(output).toContain('prop(() => __props.name)')
   })
 
+  it('uses an unshadowable default check for defaulted props params', () => {
+    const output = transform(
+      `
+        export function Child({ name } = { name: 'default' }) {
+          const undefined = 'shadow'
+          return <span>{undefined}:{name}</span>
+        }
+      `,
+      { dev: false, optimize: true },
+    )
+
+    expect(output).toContain('__propsParam === void 0 ?')
+    expect(output).not.toContain('__propsParam === undefined')
+    expect(output).toContain('const undefined = "shadow";')
+  })
+
   it('renames generated props source params for rest props', () => {
     const output = transform(
       `

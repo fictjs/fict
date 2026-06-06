@@ -192,6 +192,24 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('applies defaulted destructured props when undefined is shadowed', async () => {
+    const source = `
+      export function Greeting({ name } = { name: 'Anon' }) {
+        const undefined = 'shadow'
+        return <span data-testid="name">{undefined}:{name}</span>
+      }
+    `
+
+    const mod = compileAndLoad<{
+      Greeting: (props?: { name: string }) => HTMLElement
+    }>(source, { fineGrainedDom: true })
+    const node = runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () =>
+      mod.Greeting(undefined),
+    ) as HTMLElement
+
+    expect(node.textContent).toBe('shadow:Anon')
+  })
+
   it('evaluates destructured prop defaults during component invocation', async () => {
     const source = `
       import { render } from 'fict'
