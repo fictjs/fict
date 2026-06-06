@@ -3856,6 +3856,11 @@ function lowerExpressionImpl(
         const calleeIsCallableSignal =
           (ctx.signalVars?.has(calleeName) ?? false) &&
           (ctx.callableSignalVars?.has(calleeName) ?? false)
+        const calleeIsMemoAccessor =
+          !calleeIsFunctionVar &&
+          (ctx.memoVars?.has(calleeName) ?? false) &&
+          !(ctx.signalVars?.has(calleeName) ?? false) &&
+          !(ctx.storeVars?.has(calleeName) ?? false)
         if (calleeIsPropAccessor) {
           return withCallCacheBarrier(
             t.optionalCallExpression(
@@ -3866,6 +3871,15 @@ function lowerExpressionImpl(
           )
         }
         if (calleeIsCallableSignal) {
+          return withCallCacheBarrier(
+            t.optionalCallExpression(
+              t.callExpression(t.identifier(calleeName), []),
+              lowerCallArguments(expr.arguments),
+              expr.optional,
+            ),
+          )
+        }
+        if (calleeIsMemoAccessor) {
           return withCallCacheBarrier(
             t.optionalCallExpression(
               t.callExpression(t.identifier(calleeName), []),

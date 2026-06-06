@@ -39,6 +39,7 @@ function createRuntimeStub() {
       }
       return ctx.slots[index] as () => unknown
     },
+    createMemo: (fn: () => unknown) => (() => fn()) as () => unknown,
     __fictUseEffect: () => {
       throw new Error('__fictUseEffect should not be called in this test')
     },
@@ -155,6 +156,49 @@ describe('state write expression semantics', () => {
     const returned = compiledFunction(mod, 'swapAndReturn')() as () => void
     returned()
     expect(compiledFunction(mod, 'run')()).toEqual(['b', 'c', 'c'])
+  })
+
+  it('unwraps function-valued memo optional calls', () => {
+    const source = `
+      import { $memo, $state } from 'fict'
+
+      export function callOptionalMemo() {
+        const fn = $memo(() => (value) => value.toUpperCase())
+        const noArg = $memo(() => () => 'zero')
+        const maybe = $memo(() => null)
+        const direct = fn('a')
+        const optional = fn?.('b')
+        const optionalNoArg = noArg?.()
+        const nullish = maybe?.('c')
+        return [direct, optional, optionalNoArg, nullish]
+      }
+
+      export function useOptionalState() {
+        const fn = $state((value) => value + '!')
+        return fn?.('s')
+      }
+
+      export function callOptionalPlain() {
+        const plain = (value) => value + '?'
+        return plain?.('p')
+      }
+    `
+    const output = transformCommonJS(source)
+    expect(output).toContain('fn()?.("b")')
+    expect(output).toContain('noArg()?.()')
+    expect(output).toContain('maybe()?.("c")')
+    expect(output).not.toContain('fn?.("b")')
+    expect(output).not.toContain('noArg?.()')
+    expect(output).not.toContain('maybe?.("c")')
+
+    const mod = runCompiled(output)
+    const raw = compiledFunction(mod, 'callOptionalMemo')() as unknown[]
+    const values = raw.map(value =>
+      typeof value === 'function' ? (value as () => unknown)() : value,
+    )
+    expect(values).toEqual(['A', 'B', 'zero', undefined])
+    expect(compiledFunction(mod, 'useOptionalState')()).toBe('s!')
+    expect(compiledFunction(mod, 'callOptionalPlain')()).toBe('p?')
   })
 
   it('preserves unused identifier assignment statements', () => {
