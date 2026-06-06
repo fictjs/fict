@@ -21,7 +21,7 @@ type SerializedMarker =
   | { __t: 'd'; v: number | 'invalid' } // Date (as timestamp or invalid marker)
   | { __t: 'm'; v: [unknown, unknown][] } // Map (as entries array)
   | { __t: 's'; v: unknown[] } // Set (as array)
-  | { __t: 'r'; v: { s: string; f: string } } // RegExp (source + flags)
+  | { __t: 'r'; v: { s: string; f: string; l?: number } } // RegExp (source + flags + lastIndex)
   | { __t: 'sym'; v: { k: 'g' | 'w'; n: string } } // Symbol.for / well-known Symbol
   | { __t: 'o'; v: [unknown, unknown][]; p?: 'n' } // Object with symbol keys/null prototype
   | { __t: 'h' } // Array hole
@@ -563,7 +563,10 @@ export function serializeValue(
 
     // RegExp
     if (value instanceof RegExp) {
-      return { __t: 'r', v: { s: value.source, f: value.flags } } as SerializedMarker
+      return {
+        __t: 'r',
+        v: { s: value.source, f: value.flags, l: value.lastIndex },
+      } as SerializedMarker
     }
 
     // Map
@@ -674,8 +677,13 @@ export function deserializeValue(
         return BigInt(value.v)
       case 'd':
         return value.v === 'invalid' ? new Date(NaN) : new Date(value.v)
-      case 'r':
-        return new RegExp(value.v.s, value.v.f)
+      case 'r': {
+        const regex = new RegExp(value.v.s, value.v.f)
+        if (typeof value.v.l === 'number') {
+          regex.lastIndex = value.v.l
+        }
+        return regex
+      }
       case 'sym':
         if (value.v.k === 'g') {
           return Symbol.for(value.v.n)

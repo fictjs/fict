@@ -115,6 +115,20 @@ describe('serializeValue / deserializeValue', () => {
         expect(result.flags).toBe(regex.flags)
       }
     })
+
+    it('should preserve RegExp lastIndex through JSON', () => {
+      const patterns = [/a/g, /a/y, /a/]
+      patterns[0]!.lastIndex = 2
+      patterns[1]!.lastIndex = 1
+      patterns[2]!.lastIndex = 3
+
+      for (const regex of patterns) {
+        const result = deserializeValue(JSON.parse(JSON.stringify(serializeValue(regex)))) as RegExp
+        expect(result.source).toBe(regex.source)
+        expect(result.flags).toBe(regex.flags)
+        expect(result.lastIndex).toBe(regex.lastIndex)
+      }
+    })
   })
 
   describe('Map', () => {
