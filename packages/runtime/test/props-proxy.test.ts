@@ -191,6 +191,78 @@ describe('Props proxy', () => {
     })
   })
 
+  it('unwraps frozen prop-getter data properties without violating proxy invariants', () => {
+    const count = createSignal(1)
+    const raw = Object.freeze({ value: __fictProp(() => count()) })
+    const proxied = createPropsProxy(raw)
+
+    expect(proxied.value).toBe(1)
+    expect(Object.getOwnPropertyDescriptor(proxied, 'value')).toEqual({
+      value: 1,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    })
+
+    count(2)
+
+    expect(proxied.value).toBe(2)
+    expect(Object.getOwnPropertyDescriptor(proxied, 'value')?.value).toBe(2)
+  })
+
+  it('unwraps non-configurable prop-getter data properties without invariant errors', () => {
+    const count = createSignal(1)
+    const raw: Record<string, unknown> = {}
+    Object.defineProperty(raw, 'value', {
+      value: __fictProp(() => count()),
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    })
+    const proxied = createPropsProxy(raw)
+
+    expect(proxied.value).toBe(1)
+    expect(Object.getOwnPropertyDescriptor(proxied, 'value')).toEqual({
+      value: 1,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    })
+
+    count(2)
+
+    expect(proxied.value).toBe(2)
+  })
+
+  it('unwraps sealed prop-getter data properties without invariant errors', () => {
+    const count = createSignal(1)
+    const raw = Object.seal({ value: __fictProp(() => count()) })
+    const proxied = createPropsProxy(raw)
+
+    expect(proxied.value).toBe(1)
+
+    count(2)
+
+    expect(proxied.value).toBe(2)
+  })
+
+  it('unwraps prop getters returned by accessor props', () => {
+    const count = createSignal(1)
+    const raw = {
+      get value() {
+        return __fictProp(() => count())
+      },
+    }
+    const proxied = createPropsProxy(raw)
+
+    expect(proxied.value).toBe(1)
+    expect(Object.getOwnPropertyDescriptor(proxied, 'value')?.get).toBeTypeOf('function')
+
+    count(2)
+
+    expect(proxied.value).toBe(2)
+  })
+
   it('marks callback props without adding own symbols', () => {
     const callback = () => 42
     const proxied = createPropsProxy({ callback })

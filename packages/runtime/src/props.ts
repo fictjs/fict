@@ -109,6 +109,34 @@ function normalizePropsFunction(value: unknown): unknown {
   return markNonReactiveFn(value as (...args: unknown[]) => unknown)
 }
 
+function needsInvariantSafePropsTarget(props: Record<string, unknown>): boolean {
+  for (const prop of Reflect.ownKeys(props)) {
+    const descriptor = Object.getOwnPropertyDescriptor(props, prop)
+    if (!descriptor || !('value' in descriptor)) continue
+    if (!isPropGetter(descriptor.value)) continue
+    if (!descriptor.configurable || !descriptor.writable) return true
+  }
+  return false
+}
+
+function createInvariantSafePropsTarget<T extends Record<string, unknown>>(props: T): T {
+  const target = Object.create(Object.getPrototypeOf(props)) as T
+  for (const prop of Reflect.ownKeys(props)) {
+    const descriptor = Object.getOwnPropertyDescriptor(props, prop)
+    if (!descriptor) continue
+    if ('value' in descriptor && isPropGetter(descriptor.value)) {
+      Object.defineProperty(target, prop, {
+        ...descriptor,
+        configurable: true,
+        writable: true,
+      })
+      continue
+    }
+    Object.defineProperty(target, prop, descriptor)
+  }
+  return target
+}
+
 export function createPropsProxy<T extends Record<string, unknown>>(props: T): T {
   if (!props || typeof props !== 'object') {
     return props
@@ -123,7 +151,11 @@ export function createPropsProxy<T extends Record<string, unknown>>(props: T): T
     return cached as T
   }
 
-  const proxy = new Proxy(props, {
+  const target = needsInvariantSafePropsTarget(props)
+    ? createInvariantSafePropsTarget(props)
+    : props
+
+  const proxy = new Proxy(target, {
     get(target, prop, receiver) {
       const value = Reflect.get(target, prop, receiver)
       if (isPropGetter(value)) {
