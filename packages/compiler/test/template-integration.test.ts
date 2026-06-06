@@ -905,6 +905,69 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('parses modifier event props from intrinsic spreads', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        const modifierProps = {
+          onClickCapture: () => calls.push('capture'),
+          onClickPassive: () => calls.push('passive'),
+          onClickOnce: () => calls.push('once'),
+          onClickCapturePassive: () => calls.push('combo'),
+        }
+        const namedProps = {
+          'on:click': () => calls.push('named'),
+          'oncapture:click': () => calls.push('named-capture'),
+        }
+        return (
+          <section>
+            <button data-testid="modifiers" {...modifierProps}>Modifiers</button>
+            <button data-testid="named" {...namedProps}>Named</button>
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        calls.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      calls: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const modifiers = container.querySelector('[data-testid="modifiers"]') as HTMLButtonElement
+    const named = container.querySelector('[data-testid="named"]') as HTMLButtonElement
+
+    modifiers.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    modifiers.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    named.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    named.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+
+    const counts = mod.calls.reduce<Record<string, number>>((acc, item) => {
+      acc[item] = (acc[item] ?? 0) + 1
+      return acc
+    }, {})
+    expect(counts).toEqual({
+      capture: 2,
+      passive: 2,
+      once: 1,
+      combo: 2,
+      named: 2,
+      'named-capture': 2,
+    })
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps missing dangerouslySetInnerHTML __html from writing an attribute', async () => {
     const source = `
       import { render } from 'fict'

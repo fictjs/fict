@@ -474,6 +474,72 @@ function shouldStringifyBooleanAttribute(key: string): boolean {
   return key === 'draggable' || key.startsWith('aria-') || key.startsWith('data-')
 }
 
+const EVENT_NAMES_WITH_MODIFIER_SUFFIX = ['GotPointerCapture', 'LostPointerCapture'] as const
+
+function parseModifierSuffixes(
+  suffix: string,
+): { capture: boolean; passive: boolean; once: boolean } | null {
+  let rest = suffix
+  const modifiers = { capture: false, passive: false, once: false }
+  while (rest.length > 0) {
+    if (rest.startsWith('Capture')) {
+      modifiers.capture = true
+      rest = rest.slice('Capture'.length)
+      continue
+    }
+    if (rest.startsWith('Passive')) {
+      modifiers.passive = true
+      rest = rest.slice('Passive'.length)
+      continue
+    }
+    if (rest.startsWith('Once')) {
+      modifiers.once = true
+      rest = rest.slice('Once'.length)
+      continue
+    }
+    return null
+  }
+  return modifiers
+}
+
+function parseEventNameWithModifiers(eventName: string): {
+  eventName: string
+  capture: boolean
+  passive: boolean
+  once: boolean
+} {
+  for (const knownEventName of EVENT_NAMES_WITH_MODIFIER_SUFFIX) {
+    if (!eventName.startsWith(knownEventName)) continue
+    const modifiers = parseModifierSuffixes(eventName.slice(knownEventName.length))
+    if (!modifiers) continue
+    return { eventName: knownEventName, ...modifiers }
+  }
+
+  let baseEventName = eventName
+  const modifiers = { capture: false, passive: false, once: false }
+  let changed = true
+  while (changed) {
+    changed = false
+    if (baseEventName.endsWith('Capture')) {
+      baseEventName = baseEventName.slice(0, -7)
+      modifiers.capture = true
+      changed = true
+    }
+    if (baseEventName.endsWith('Passive')) {
+      baseEventName = baseEventName.slice(0, -7)
+      modifiers.passive = true
+      changed = true
+    }
+    if (baseEventName.endsWith('Once')) {
+      baseEventName = baseEventName.slice(0, -4)
+      modifiers.once = true
+      changed = true
+    }
+  }
+
+  return { eventName: baseEventName, ...modifiers }
+}
+
 /**
  * Create a reactive attribute binding on an element.
  *
@@ -2349,10 +2415,18 @@ function assignProp(
 
   // Standard event handling: onClick, onInput, etc.
   if (prop.slice(0, 2) === 'on') {
-    const eventName = prop.slice(2).toLowerCase()
-    const shouldDelegate = DelegatedEvents.has(eventName)
+    const parsedEvent = parseEventNameWithModifiers(prop.slice(2))
+    const eventName = parsedEvent.eventName.toLowerCase()
+    const hasEventOptions = parsedEvent.capture || parsedEvent.passive || parsedEvent.once
+    const options: boolean | AddEventListenerOptions = hasEventOptions ? {} : false
+    if (hasEventOptions && typeof options === 'object') {
+      if (parsedEvent.capture) options.capture = true
+      if (parsedEvent.passive) options.passive = true
+      if (parsedEvent.once) options.once = true
+    }
+    const shouldDelegate = DelegatedEvents.has(eventName) && !hasEventOptions
     if (!shouldDelegate && prev) {
-      removeStoredEventListener(node, eventName)
+      removeStoredEventListener(node, eventName, options)
     }
     if (shouldDelegate || value) {
       addEventListener(
@@ -2360,7 +2434,7 @@ function assignProp(
         eventName,
         value as EventListenerOrEventListenerObject | EventHandlerTuple | null | undefined,
         shouldDelegate,
-        false,
+        options,
       )
     }
     return value
