@@ -6365,9 +6365,21 @@ export function lowerHIRWithRegions(
 
     if (t.isExportDefaultDeclaration(stmt) && t.isExpression(stmt.declaration)) {
       flushLowerableBuffer()
+      const defaultExpr = stmt.declaration
+      const isStaticImportedNamespaceMemberDefault =
+        t.isMemberExpression(defaultExpr) &&
+        t.isIdentifier(defaultExpr.object) &&
+        (ctx.importedNamespaces?.has(defaultExpr.object.name) ?? false) &&
+        ((!defaultExpr.computed && t.isIdentifier(defaultExpr.property)) ||
+          t.isStringLiteral(defaultExpr.property) ||
+          t.isNumericLiteral(defaultExpr.property))
+      if (isStaticImportedNamespaceMemberDefault) {
+        body.push(lowerRawStatement(stmt))
+        continue
+      }
       const name = `__default_export_value_${segmentCounter++}`
       const declaration = t.variableDeclaration('const', [
-        t.variableDeclarator(t.identifier(name), stmt.declaration),
+        t.variableDeclarator(t.identifier(name), defaultExpr),
       ])
       const { statements, aliases } = lowerTopLevelStatementBlock(
         [declaration],

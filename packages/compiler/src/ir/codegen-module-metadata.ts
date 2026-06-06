@@ -186,6 +186,14 @@ export function buildModuleReactiveMetadata(
   const getSpecifierName = (
     specifierName: BabelCore.types.Identifier | BabelCore.types.StringLiteral,
   ): string => (t.isIdentifier(specifierName) ? specifierName.name : specifierName.value)
+  const getStaticMemberName = (
+    member: BabelCore.types.MemberExpression,
+  ): string | number | null => {
+    if (!member.computed && t.isIdentifier(member.property)) return member.property.name
+    if (t.isStringLiteral(member.property)) return member.property.value
+    if (t.isNumericLiteral(member.property)) return member.property.value
+    return null
+  }
   const addExport = (exportName: string, localName: string) => {
     markExplicitExport(exportName)
     const kind = classifyReactiveExport(localName, ctx)
@@ -221,6 +229,27 @@ export function buildModuleReactiveMetadata(
     if (kind) {
       metadata.exports.default = kind
     }
+  }
+  const addDefaultExportFromNamespaceMember = (
+    member: BabelCore.types.MemberExpression,
+  ): boolean => {
+    if (!t.isIdentifier(member.object)) return false
+    const namespaceMeta = ctx.importedNamespaces?.get(member.object.name)
+    if (!namespaceMeta) return false
+    const memberName = getStaticMemberName(member)
+    if (memberName === null) return false
+
+    markExplicitExport('default')
+    const key = String(memberName)
+    const kind = namespaceMeta.exports[key]
+    if (kind) {
+      metadata.exports.default = kind
+    }
+    const hookInfo = namespaceMeta.hooks?.[key]
+    if (hookInfo) {
+      hookExports.default = hookInfo
+    }
+    return true
   }
 
   for (const stmt of body) {
@@ -287,6 +316,8 @@ export function buildModuleReactiveMetadata(
         addExport('default', decl.id.name)
       } else if (t.isClassDeclaration(decl) && decl.id) {
         addExport('default', decl.id.name)
+      } else if (t.isMemberExpression(decl)) {
+        addDefaultExportFromNamespaceMember(decl)
       } else if (t.isCallExpression(decl) || t.isOptionalCallExpression(decl)) {
         const kind = getReactiveCallKindFromBabel(decl, ctx, t)
         addDefaultExportKind(kind)

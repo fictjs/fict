@@ -1788,6 +1788,142 @@ describe('Cross-Module Reactivity', () => {
       )
     })
 
+    it('publishes direct default namespace reactive member metadata', () => {
+      const sourcePath = path.join(baseDir, 'reactive-namespace-default-source.ts')
+      const signalForwardPath = path.join(baseDir, 'reactive-namespace-default-signal.ts')
+      const memoForwardPath = path.join(baseDir, 'reactive-namespace-default-memo.ts')
+      const storeForwardPath = path.join(baseDir, 'reactive-namespace-default-store.ts')
+      const dynamicForwardPath = path.join(baseDir, 'reactive-namespace-default-dynamic.ts')
+      const consumerPath = path.join(baseDir, 'reactive-namespace-default-consumer.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(sourcePath), {
+        version: 1,
+        exports: {
+          count: 'signal',
+          doubled: 'memo',
+          state: 'store',
+        },
+      })
+
+      const signalOutput = transform(
+        `
+          import * as source from './reactive-namespace-default-source'
+          export default source.count
+        `,
+        { moduleMetadata },
+        signalForwardPath,
+      )
+      transform(
+        `
+          import * as source from './reactive-namespace-default-source'
+          export default source['doubled']
+        `,
+        { moduleMetadata },
+        memoForwardPath,
+      )
+      transform(
+        `
+          import * as source from './reactive-namespace-default-source'
+          export default source.state
+        `,
+        { moduleMetadata },
+        storeForwardPath,
+      )
+      transform(
+        `
+          import * as source from './reactive-namespace-default-source'
+          const key = 'count'
+          export default source[key]
+        `,
+        { moduleMetadata },
+        dynamicForwardPath,
+      )
+
+      expect(signalOutput).toContain('export default source.count')
+      expect(moduleMetadata.get(path.resolve(signalForwardPath))?.exports).toEqual({
+        default: 'signal',
+      })
+      expect(moduleMetadata.get(path.resolve(memoForwardPath))?.exports).toEqual({
+        default: 'memo',
+      })
+      expect(moduleMetadata.get(path.resolve(storeForwardPath))?.exports).toEqual({
+        default: 'store',
+      })
+      expect(moduleMetadata.get(path.resolve(dynamicForwardPath))?.exports).toEqual({})
+
+      const consumerOutput = transform(
+        `
+          import count from './reactive-namespace-default-signal'
+          import state from './reactive-namespace-default-store'
+
+          export function App() {
+            return <div>{count}{state.total}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        consumerPath,
+      )
+
+      expect(consumerOutput).toMatch(/count\(\)/)
+      expect(consumerOutput).toMatch(/state\.total/)
+    })
+
+    it('publishes direct default namespace hook metadata', () => {
+      const sourcePath = path.join(baseDir, 'reactive-namespace-default-hook-source.ts')
+      const forwardPath = path.join(baseDir, 'reactive-namespace-default-hook.ts')
+      const computedForwardPath = path.join(baseDir, 'reactive-namespace-default-hook-computed.ts')
+      const consumerPath = path.join(baseDir, 'reactive-namespace-default-hook-consumer.tsx')
+      const hookInfo = { objectProps: { count: 'signal' as const, doubled: 'memo' as const } }
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(sourcePath), {
+        version: 1,
+        exports: {},
+        hooks: {
+          useCounter: hookInfo,
+        },
+      })
+
+      transform(
+        `
+          import * as hooks from './reactive-namespace-default-hook-source'
+          export default hooks.useCounter
+        `,
+        { moduleMetadata },
+        forwardPath,
+      )
+      transform(
+        `
+          import * as hooks from './reactive-namespace-default-hook-source'
+          export default hooks['useCounter']
+        `,
+        { moduleMetadata },
+        computedForwardPath,
+      )
+
+      expect(moduleMetadata.get(path.resolve(forwardPath))?.hooks).toMatchObject({
+        default: hookInfo,
+      })
+      expect(moduleMetadata.get(path.resolve(computedForwardPath))?.hooks).toMatchObject({
+        default: hookInfo,
+      })
+
+      const consumerOutput = transform(
+        `
+          import useCounter from './reactive-namespace-default-hook'
+
+          export function App() {
+            const state = useCounter()
+            return <div>{state.count}{state.doubled}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        consumerPath,
+      )
+
+      expect(consumerOutput).toMatch(/state\.count\(\)/)
+      expect(consumerOutput).toMatch(/state\.doubled\(\)/)
+    })
+
     it('publishes hook metadata for imported accessor returns', () => {
       const sourcePath = path.join(baseDir, 'imported-accessor-source.ts')
       const hookPath = path.join(baseDir, 'imported-accessor-hooks.tsx')
