@@ -234,6 +234,130 @@ describe('$store', () => {
     expect(seen).toEqual([1, 2])
   })
 
+  it('does not notify subscribers after failed non-writable own property writes', async () => {
+    const raw: { value?: number } = {}
+    Object.defineProperty(raw, 'value', {
+      value: 1,
+      enumerable: true,
+      configurable: true,
+      writable: false,
+    })
+    const state = $store(raw)
+    const seen: Array<number | undefined> = []
+
+    createEffect(() => {
+      seen.push(state.value)
+    })
+
+    expect(() => {
+      state.value = 2
+    }).toThrow(TypeError)
+    await tick()
+
+    expect(raw.value).toBe(1)
+    expect(seen).toEqual([1])
+  })
+
+  it('does not notify subscribers after failed frozen object writes', async () => {
+    const raw = Object.freeze({ value: 1 })
+    const state = $store(raw)
+    const seen: number[] = []
+
+    createEffect(() => {
+      seen.push(state.value)
+    })
+
+    expect(() => {
+      state.value = 2
+    }).toThrow(TypeError)
+    await tick()
+
+    expect(raw.value).toBe(1)
+    expect(seen).toEqual([1])
+  })
+
+  it('does not notify subscribers after failed read-only inherited property writes', async () => {
+    const proto: { value?: number } = {}
+    Object.defineProperty(proto, 'value', {
+      value: 1,
+      enumerable: true,
+      configurable: true,
+      writable: false,
+    })
+    const raw = Object.create(proto) as { value: number }
+    const state = $store(raw)
+    const seen: number[] = []
+
+    createEffect(() => {
+      seen.push(state.value)
+    })
+
+    expect(() => {
+      state.value = 2
+    }).toThrow(TypeError)
+    await tick()
+
+    expect(Object.prototype.hasOwnProperty.call(raw, 'value')).toBe(false)
+    expect(seen).toEqual([1])
+  })
+
+  it('does not notify subscribers when accessor setters throw', async () => {
+    const error = new Error('setter failed')
+    const raw = {
+      get value() {
+        return 1
+      },
+      set value(_next: number) {
+        throw error
+      },
+    }
+    const state = $store(raw)
+    const seen: number[] = []
+
+    createEffect(() => {
+      seen.push(state.value)
+    })
+
+    expect(() => {
+      state.value = 2
+    }).toThrow(error)
+    await tick()
+
+    expect(seen).toEqual([1])
+  })
+
+  it('does not notify iteration subscribers after failed new-key writes', async () => {
+    const raw = Object.preventExtensions({}) as Record<string, number>
+    const state = $store(raw)
+    const seen: string[] = []
+
+    createEffect(() => {
+      seen.push(Object.keys(state).join(','))
+    })
+
+    expect(() => {
+      state.value = 1
+    }).toThrow(TypeError)
+    await tick()
+
+    expect(Object.prototype.hasOwnProperty.call(raw, 'value')).toBe(false)
+    expect(seen).toEqual([''])
+  })
+
+  it('continues to notify subscribers after successful writable property writes', async () => {
+    const state = $store({ value: 1 })
+    const seen: number[] = []
+
+    createEffect(() => {
+      seen.push(state.value)
+    })
+
+    state.value = 2
+    await tick()
+
+    expect(seen).toEqual([1, 2])
+  })
+
   describe('Method binding and cache invalidation', () => {
     it('should invalidate bound method cache when method is reassigned', () => {
       const state = $store({

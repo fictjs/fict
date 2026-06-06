@@ -244,6 +244,10 @@ export function $store<T extends object>(initialValue: T): T {
       }
 
       const result = Reflect.set(target, prop, newValue, receiver)
+      if (!result) {
+        return false
+      }
+
       const nextValue =
         descriptor && !('value' in descriptor) ? Reflect.get(target, prop, receiver) : newValue
 
