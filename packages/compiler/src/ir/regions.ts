@@ -1871,6 +1871,7 @@ function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, f
   const prevShadowed = ctx.shadowedNames
   const prevSignals = ctx.signalVars
   const prevCallableSignals = ctx.callableSignalVars
+  const prevNonSerializableSignals = ctx.nonSerializableSignalVars
   const prevMemos = ctx.memoVars
   const prevAliases = ctx.aliasVars
   const prevResumablePropAccessors = ctx.resumablePropAccessors
@@ -1886,6 +1887,11 @@ function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, f
     const callableSignals = new Set(ctx.callableSignalVars)
     bindingNames.forEach(name => callableSignals.delete(name))
     ctx.callableSignalVars = callableSignals
+  }
+  if (ctx.nonSerializableSignalVars) {
+    const nonSerializableSignals = new Set(ctx.nonSerializableSignalVars)
+    bindingNames.forEach(name => nonSerializableSignals.delete(name))
+    ctx.nonSerializableSignalVars = nonSerializableSignals
   }
   if (ctx.memoVars) {
     const memos = new Set(ctx.memoVars)
@@ -1913,6 +1919,7 @@ function withShadowedBindings<T>(ctx: CodegenContext, names: Iterable<string>, f
     ctx.shadowedNames = prevShadowed
     ctx.signalVars = prevSignals
     ctx.callableSignalVars = prevCallableSignals
+    ctx.nonSerializableSignalVars = prevNonSerializableSignals
     ctx.memoVars = prevMemos
     ctx.aliasVars = prevAliases
     ctx.resumablePropAccessors = prevResumablePropAccessors
@@ -4773,6 +4780,39 @@ function isCallableSignalInitializer(expr: Expression, ctx: CodegenContext): boo
   return getReactiveCallKind(expr, ctx) === 'signal' && isFunctionExpressionValue(expr.arguments[0])
 }
 
+function expressionContainsNonSerializableFunctionValue(
+  expr: Expression | null | undefined,
+): boolean {
+  if (!expr) return false
+  switch (expr.kind) {
+    case 'ArrowFunction':
+    case 'FunctionExpression':
+      return true
+    case 'ArrayExpression':
+      return expr.elements.some(element => expressionContainsNonSerializableFunctionValue(element))
+    case 'ObjectExpression':
+      return expr.properties.some(prop => {
+        if (prop.kind === 'SpreadElement') {
+          return expressionContainsNonSerializableFunctionValue(prop.argument)
+        }
+        return (
+          (prop.propertyKind !== undefined && prop.propertyKind !== 'init') ||
+          expressionContainsNonSerializableFunctionValue(prop.value)
+        )
+      })
+    default:
+      return false
+  }
+}
+
+function isNonSerializableSignalInitializer(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
+  return (
+    getReactiveCallKind(expr, ctx) === 'signal' &&
+    expressionContainsNonSerializableFunctionValue(expr.arguments[0])
+  )
+}
+
 function markCallableSignalIfFunctionValue(
   name: string,
   value: Expression,
@@ -4780,6 +4820,19 @@ function markCallableSignalIfFunctionValue(
 ): void {
   if (isFunctionExpressionValue(value) || isCallableSignalInitializer(value, ctx)) {
     ctx.callableSignalVars?.add(name)
+  }
+}
+
+function markNonSerializableSignalIfFunctionValue(
+  name: string,
+  value: Expression,
+  ctx: CodegenContext,
+): void {
+  if (
+    expressionContainsNonSerializableFunctionValue(value) ||
+    isNonSerializableSignalInitializer(value, ctx)
+  ) {
+    ctx.nonSerializableSignalVars?.add(name)
   }
 }
 
@@ -4908,6 +4961,7 @@ function instructionToStatement(
       instr.value.kind === 'ArrowFunction' || instr.value.kind === 'FunctionExpression'
     if (isStateCall || isSignal) {
       markCallableSignalIfFunctionValue(baseName, instr.value, ctx)
+      markNonSerializableSignalIfFunctionValue(baseName, instr.value, ctx)
     }
     const isHoistedDeclarationInitializer = hoistedDeclarationInitializers?.has(baseName) ?? false
     const markLocalValue = (): void => {

@@ -1746,6 +1746,69 @@ describe('resumable event handler transformation', () => {
     )
   })
 
+  it('throws for explicit resumable handlers that capture function-valued signals', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const callback = $state(() => 'hit')
+        return <button onClick$={() => console.log(typeof callback())}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(/signals: callback/i)
+  })
+
+  it('throws for explicit resumable handlers that capture signals containing functions', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const state = $state({ label: 'x', run: () => 'hit' })
+        return <button onClick$={() => console.log(state().label)}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(/signals: state/i)
+  })
+
+  it('allows explicit resumable handlers that capture serializable scalar signals', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const count = $state(1)
+        return <button onClick$={() => console.log(count())}>Click</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('setAttribute("on:click"')
+    expect(code).toContain('__fictUseLexicalScope(scopeId, ["count"])')
+    expect(code).toContain('console.log(count())')
+  })
+
+  it('falls back for auto-extracted handlers that capture function-valued signals', () => {
+    const ast = parseFile(`
+      function Comp() {
+        const callback = $state(() => 'hit')
+        return (
+          <button onClick={() => {
+            console.log(callback())
+            console.log('a')
+            console.log('b')
+          }}>
+            Click
+          </button>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(code).not.toContain('setAttribute("on:click"')
+  })
+
   it('surfaces explicit resumable capture failures as HIRError', () => {
     const ast = parseFile(`
       function Comp() {

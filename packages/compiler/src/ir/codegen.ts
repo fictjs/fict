@@ -734,6 +734,8 @@ export interface CodegenContext {
   knownArrayVars?: Set<string> | undefined
   /** Signal bindings whose current value is known to be callable. */
   callableSignalVars?: Set<string> | undefined
+  /** Signal bindings whose known initial/current value cannot be snapshotted safely. */
+  nonSerializableSignalVars?: Set<string> | undefined
   /** Variables assigned to function expressions (should not be treated as reactive accessors) */
   functionVars?: Set<string> | undefined
   /** Variables that are memos (derived values) - these shouldn't be cached by getter cache */
@@ -887,6 +889,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     signalVars: new Set(),
     knownArrayVars: new Set(),
     callableSignalVars: new Set(),
+    nonSerializableSignalVars: new Set(),
     functionVars: new Set(),
     memoVars: new Set(),
     memoMacroNames: new Set(['$memo', 'createMemo']),
@@ -1399,17 +1402,21 @@ function lowerFunction(
   const { t } = ctx
   const prevTracked = ctx.trackedVars
   const prevCallableSignalVars = ctx.callableSignalVars
+  const prevNonSerializableSignalVars = ctx.nonSerializableSignalVars
   const prevLocalDeclared = ctx.localDeclaredNames
   const prevContextLocalName = ctx.contextLocalName
   const scopedTracked = new Set(ctx.trackedVars)
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
   ctx.trackedVars = scopedTracked
   ctx.callableSignalVars = new Set(prevCallableSignalVars ?? [])
+  ctx.nonSerializableSignalVars = new Set(prevNonSerializableSignalVars ?? [])
   fn.params.forEach(p => ctx.callableSignalVars?.delete(deSSAVarName(p.name)))
+  fn.params.forEach(p => ctx.nonSerializableSignalVars?.delete(deSSAVarName(p.name)))
   const localDeclared = new Set(prevLocalDeclared ?? [])
   for (const name of collectLocalDeclaredNames(fn.params, fn.blocks, t)) {
     localDeclared.add(name)
     ctx.callableSignalVars?.delete(name)
+    ctx.nonSerializableSignalVars?.delete(name)
   }
   ctx.localDeclaredNames = localDeclared
   ctx.contextLocalName = undefined
@@ -1453,6 +1460,7 @@ function lowerFunction(
   result.generator = !!fn.meta?.isGenerator || functionHasYield(fn)
   ctx.trackedVars = prevTracked
   ctx.callableSignalVars = prevCallableSignalVars
+  ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
   ctx.localDeclaredNames = prevLocalDeclared
   ctx.contextLocalName = prevContextLocalName
   ctx.currentFnIsHook = prevHookFlag
@@ -1506,6 +1514,39 @@ function isCallableSignalInitializer(expr: Expression, ctx: CodegenContext): boo
   return getReactiveCallKind(expr, ctx) === 'signal' && isFunctionExpressionValue(expr.arguments[0])
 }
 
+function expressionContainsNonSerializableFunctionValue(
+  expr: Expression | null | undefined,
+): boolean {
+  if (!expr) return false
+  switch (expr.kind) {
+    case 'ArrowFunction':
+    case 'FunctionExpression':
+      return true
+    case 'ArrayExpression':
+      return expr.elements.some(element => expressionContainsNonSerializableFunctionValue(element))
+    case 'ObjectExpression':
+      return expr.properties.some(prop => {
+        if (prop.kind === 'SpreadElement') {
+          return expressionContainsNonSerializableFunctionValue(prop.argument)
+        }
+        return (
+          (prop.propertyKind !== undefined && prop.propertyKind !== 'init') ||
+          expressionContainsNonSerializableFunctionValue(prop.value)
+        )
+      })
+    default:
+      return false
+  }
+}
+
+function isNonSerializableSignalInitializer(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
+  return (
+    getReactiveCallKind(expr, ctx) === 'signal' &&
+    expressionContainsNonSerializableFunctionValue(expr.arguments[0])
+  )
+}
+
 function markCallableSignalIfFunctionValue(
   name: string,
   value: Expression,
@@ -1513,6 +1554,19 @@ function markCallableSignalIfFunctionValue(
 ): void {
   if (isFunctionExpressionValue(value) || isCallableSignalInitializer(value, ctx)) {
     ctx.callableSignalVars?.add(name)
+  }
+}
+
+function markNonSerializableSignalIfFunctionValue(
+  name: string,
+  value: Expression,
+  ctx: CodegenContext,
+): void {
+  if (
+    expressionContainsNonSerializableFunctionValue(value) ||
+    isNonSerializableSignalInitializer(value, ctx)
+  ) {
+    ctx.nonSerializableSignalVars?.add(name)
   }
 }
 
@@ -1633,6 +1687,7 @@ function lowerInstruction(
         ctx.signalVars?.add(baseName)
         ctx.trackedVars.add(baseName)
         markCallableSignalIfFunctionValue(baseName, instr.value, ctx)
+        markNonSerializableSignalIfFunctionValue(baseName, instr.value, ctx)
         ctx.currentAssignmentName = baseName
         const loweredValue = (() => {
           try {
@@ -1650,6 +1705,7 @@ function lowerInstruction(
     }
     if (ctx.signalVars?.has(baseName)) {
       markCallableSignalIfFunctionValue(baseName, instr.value, ctx)
+      markNonSerializableSignalIfFunctionValue(baseName, instr.value, ctx)
       ctx.currentAssignmentName = baseName
       const loweredValue = (() => {
         try {
@@ -5462,6 +5518,8 @@ function lowerInstructionWithScopes(
     if (declKind && getReactiveCallKind(instr.value, ctx) === 'signal') {
       ctx.signalVars?.add(targetBase)
       ctx.trackedVars.add(targetBase)
+      markCallableSignalIfFunctionValue(targetBase, instr.value, ctx)
+      markNonSerializableSignalIfFunctionValue(targetBase, instr.value, ctx)
       ctx.currentAssignmentName = targetBase
       try {
         valueExpr = lowerExpression(instr.value, ctx)
@@ -6065,12 +6123,14 @@ function lowerTopLevelStatementBlock(
   const functionVars = ctx.functionVars ?? new Set<string>()
   const signalVars = ctx.signalVars ?? new Set<string>()
   const callableSignalVars = ctx.callableSignalVars ?? new Set<string>()
+  const nonSerializableSignalVars = ctx.nonSerializableSignalVars ?? new Set<string>()
   const storeVars = ctx.storeVars ?? new Set<string>()
   const memoVars = ctx.memoVars ?? new Set<string>()
   const mutatedVars = new Set<string>()
   ctx.functionVars = functionVars
   ctx.signalVars = signalVars
   ctx.callableSignalVars = callableSignalVars
+  ctx.nonSerializableSignalVars = nonSerializableSignalVars
   ctx.storeVars = storeVars
   ctx.memoVars = memoVars
   ctx.mutatedVars = mutatedVars
@@ -6092,6 +6152,7 @@ function lowerTopLevelStatementBlock(
           componentFunctionDefs.set(target, instr.value)
           if (signalVars.has(target)) {
             callableSignalVars.add(target)
+            nonSerializableSignalVars.add(target)
           }
         }
         if (
@@ -6103,6 +6164,9 @@ function lowerTopLevelStatementBlock(
             signalVars.add(target)
             if (isCallableSignalInitializer(instr.value, ctx)) {
               callableSignalVars.add(target)
+            }
+            if (isNonSerializableSignalInitializer(instr.value, ctx)) {
+              nonSerializableSignalVars.add(target)
             }
           } else if (callKind === 'store') {
             storeVars.add(target)
@@ -7092,6 +7156,7 @@ function lowerFunctionWithRegions(
   const prevSignalVars = ctx.signalVars
   const prevKnownArrayVars = ctx.knownArrayVars
   const prevCallableSignalVars = ctx.callableSignalVars
+  const prevNonSerializableSignalVars = ctx.nonSerializableSignalVars
   const prevFunctionVars = ctx.functionVars
   const prevMemoVars = ctx.memoVars
   const prevStoreVars = ctx.storeVars
@@ -7133,9 +7198,12 @@ function lowerFunctionWithRegions(
   ctx.aliasVars = new Set(prevAliasVars ?? [])
   ctx.signalVars = new Set(prevSignalVars ?? [])
   ctx.callableSignalVars = new Set(prevCallableSignalVars ?? [])
+  ctx.nonSerializableSignalVars = new Set(prevNonSerializableSignalVars ?? [])
   shadowedParams.forEach(name => ctx.callableSignalVars?.delete(name))
+  shadowedParams.forEach(name => ctx.nonSerializableSignalVars?.delete(name))
   for (const name of localDeclared) {
     ctx.callableSignalVars?.delete(name)
+    ctx.nonSerializableSignalVars?.delete(name)
   }
   ctx.functionVars = new Set(prevFunctionVars ?? [])
   ctx.memoVars = new Set(prevMemoVars ?? [])
@@ -7205,6 +7273,7 @@ function lowerFunctionWithRegions(
           ctx.componentFunctionDefs?.set(target, instr.value)
           if (ctx.signalVars?.has(target)) {
             ctx.callableSignalVars?.add(target)
+            ctx.nonSerializableSignalVars?.add(target)
           }
         }
         if (
@@ -7216,6 +7285,9 @@ function lowerFunctionWithRegions(
             ctx.signalVars?.add(target)
             if (isCallableSignalInitializer(instr.value, ctx)) {
               ctx.callableSignalVars?.add(target)
+            }
+            if (isNonSerializableSignalInitializer(instr.value, ctx)) {
+              ctx.nonSerializableSignalVars?.add(target)
             }
           } else if (callKind === 'store') {
             ctx.storeVars?.add(target)
@@ -7735,6 +7807,7 @@ function lowerFunctionWithRegions(
       ctx.signalVars = prevSignalVars
       ctx.knownArrayVars = prevKnownArrayVars
       ctx.callableSignalVars = prevCallableSignalVars
+      ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
       ctx.functionVars = prevFunctionVars
       ctx.componentFunctionDefs = prevComponentFunctionDefs
       ctx.componentFunctionMutations = prevComponentFunctionMutations
@@ -7761,6 +7834,7 @@ function lowerFunctionWithRegions(
     ctx.externalTracked = prevExternalTracked
     ctx.signalVars = prevSignalVars
     ctx.callableSignalVars = prevCallableSignalVars
+    ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
     ctx.functionVars = prevFunctionVars
     ctx.componentFunctionDefs = prevComponentFunctionDefs
     ctx.componentFunctionMutations = prevComponentFunctionMutations
@@ -7888,6 +7962,7 @@ function lowerFunctionWithRegions(
   ctx.signalVars = prevSignalVars
   ctx.knownArrayVars = prevKnownArrayVars
   ctx.callableSignalVars = prevCallableSignalVars
+  ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
   ctx.functionVars = prevFunctionVars
   ctx.componentFunctionDefs = prevComponentFunctionDefs
   ctx.componentFunctionMutations = prevComponentFunctionMutations
