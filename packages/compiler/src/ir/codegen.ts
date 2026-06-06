@@ -1084,8 +1084,19 @@ function isContextNameReserved(
   return (ctx.localDeclaredNames?.has(name) ?? false) || (ctx.shadowedNames?.has(name) ?? false)
 }
 
+function reservePreferredFunctionLocalName(ctx: CodegenContext, preferred: string): string {
+  if (!isContextNameReserved(ctx, preferred, 'function')) return preferred
+
+  let index = 1
+  while (true) {
+    const candidate = `${preferred}_${index++}`
+    if (!isContextNameReserved(ctx, candidate, 'function')) return candidate
+  }
+}
+
 function reserveContextLocalName(ctx: CodegenContext, scope: 'function' | 'module'): string {
   const preferred = '__fictCtx'
+  if (scope === 'function') return reservePreferredFunctionLocalName(ctx, preferred)
   if (!isContextNameReserved(ctx, preferred, scope)) return preferred
 
   let index = 1
@@ -7072,6 +7083,8 @@ function lowerFunctionWithRegions(
     usesProp: boolean
     usesPropsRest: boolean
   } | null = null
+  let propsSourceName: string | null = null
+  let propsDefaultParamName: string | null = null
 
   // Collect function-valued bindings, signals, and mutation info in this function
   for (const block of fn.blocks) {
@@ -7189,6 +7202,10 @@ function lowerFunctionWithRegions(
         : null
 
     if (pattern && pattern.type === 'ObjectPattern') {
+      propsSourceName = reservePreferredFunctionLocalName(ctx, '__props')
+      if (rawParam?.type === 'AssignmentPattern') {
+        propsDefaultParamName = reservePreferredFunctionLocalName(ctx, '__propsParam')
+      }
       const stmts: BabelCore.types.Statement[] = []
       const excludeKeys: BabelCore.types.Expression[] = []
       let supported = true
@@ -7494,7 +7511,7 @@ function lowerFunctionWithRegions(
       reportPropsPatternIssues(pattern, true)
 
       // Build destructuring for top-level pattern
-      buildDestructure(pattern, t.identifier('__props'), true)
+      buildDestructure(pattern, t.identifier(propsSourceName), true)
 
       if (supported) {
         propsDestructurePlan = {
@@ -7687,13 +7704,14 @@ function lowerFunctionWithRegions(
     ) {
       const pattern = rawParam.type === 'AssignmentPattern' ? rawParam.left : rawParam
       const defaultExpr = rawParam.type === 'AssignmentPattern' ? rawParam.right : null
+      const propsName = propsSourceName ?? '__props'
       if (defaultExpr) {
-        const propsParamName = '__propsParam'
+        const propsParamName = propsDefaultParamName ?? '__propsParam'
         finalParams = [t.identifier(propsParamName)]
         propsDestructuring.push(
           t.variableDeclaration('const', [
             t.variableDeclarator(
-              t.identifier('__props'),
+              t.identifier(propsName),
               t.conditionalExpression(
                 t.binaryExpression('===', t.identifier(propsParamName), voidZero(t)),
                 t.cloneNode(defaultExpr, true) as BabelCore.types.Expression,
@@ -7704,7 +7722,7 @@ function lowerFunctionWithRegions(
         )
       } else {
         // Replace params with __props
-        finalParams = [t.identifier('__props')]
+        finalParams = [t.identifier(propsName)]
       }
       // Add destructuring statement at start of function
       if (propsDestructurePlan) {
@@ -7717,7 +7735,7 @@ function lowerFunctionWithRegions(
         propsDestructuring.push(...propsDestructurePlan.statements)
       } else {
         propsDestructuring.push(
-          t.variableDeclaration('const', [t.variableDeclarator(pattern, t.identifier('__props'))]),
+          t.variableDeclaration('const', [t.variableDeclarator(pattern, t.identifier(propsName))]),
         )
       }
     }
