@@ -48,6 +48,54 @@ describe('directive preservation', () => {
     expect(output).not.toContain('use no memo')
   })
 
+  it('honors program compiler disable directives by skipping Fict lowering', () => {
+    const output = transform(`
+      'use fict-compiler-disable'
+
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(0)
+        return <div>{count}</div>
+      }
+    `)
+
+    expect(output.trimStart()).toMatch(/^['"]use fict-compiler-disable['"];/)
+    expect(output).toContain('$state(0)')
+    expect(output).toContain('return <div>{count}</div>')
+    expect(output).not.toContain('__fictUseSignal')
+    expect(output).not.toContain('template(')
+  })
+
+  it('lets program compiler disable directives take precedence over enable directives', () => {
+    const output = transform(`
+      'use fict-compiler'
+      'use fict-compiler-disable'
+
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(0)
+        return <div>{count}</div>
+      }
+    `)
+
+    expect(output).toContain('$state(0)')
+    expect(output).not.toContain('__fictUseSignal')
+  })
+
+  it('skips compiler-only TypeScript runtime declaration rejection when disabled', () => {
+    expect(() =>
+      transform(`
+        'use fict-compiler-disable'
+
+        export enum Color {
+          Red = 1,
+        }
+      `),
+    ).not.toThrow()
+  })
+
   it('preserves function body directives in transformed hooks', () => {
     const output = transform(`
       import { $state } from 'fict'

@@ -15,7 +15,9 @@ import { resolveModuleMetadata } from './module-metadata'
 import { MODULE_REACTIVE_METADATA_VERSION } from './types'
 import type { CompilerWarning, FictCompilerOptions } from './types'
 import {
+  DirectiveType,
   getRootIdentifier,
+  hasDirective,
   isComponentElement,
   isEffectCall,
   isMemoCall,
@@ -1950,6 +1952,7 @@ function createHIREntrypointVisitor(
   return {
     Program: {
       enter(path) {
+        if (hasDirective(path, DirectiveType.FictCompilerDisable, t)) return
         path.traverse({
           TSEnumDeclaration(tsPath) {
             const message = unsupportedTypeScriptRuntimeDeclarationMessage(tsPath.node, t)
@@ -1970,6 +1973,7 @@ function createHIREntrypointVisitor(
         })
       },
       exit(path) {
+        if (hasDirective(path, DirectiveType.FictCompilerDisable, t)) return
         const hub = path.hub as unknown as {
           file?: BabelCore.BabelFile & {
             opts?: { filename?: string }
