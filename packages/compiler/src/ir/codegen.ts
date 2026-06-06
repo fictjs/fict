@@ -1555,8 +1555,8 @@ function resolveNamespaceHookCallInfo(
   const nsMeta = getImportedNamespaceMetadata(namespaceName, ctx)
   if (!nsMeta?.hooks) return null
 
-  const propName = getStaticPropName(callee.property as Expression, callee.computed)
-  if (typeof propName !== 'string') return null
+  const propName = getStaticMemberMetadataKey(callee.property as Expression, callee.computed)
+  if (propName === null) return null
 
   if (!Object.prototype.hasOwnProperty.call(nsMeta.hooks, propName)) return null
   const serialized = nsMeta.hooks[propName]
@@ -1609,6 +1609,16 @@ function getHookReturnAccessorKind(
     }
   }
   return null
+}
+
+function getStaticMetadataPropertyKey(propName: string | number | null): string | null {
+  if (typeof propName === 'string') return propName
+  if (typeof propName === 'number') return String(propName)
+  return null
+}
+
+function getStaticMemberMetadataKey(property: Expression, computed: boolean): string | null {
+  return getStaticMetadataPropertyKey(getStaticPropName(property, computed))
 }
 
 function getCanonicalNumericKey(key: string): number | null {
@@ -1741,10 +1751,9 @@ function assertWritableImportedNamespaceMember(
   const nsMeta = getImportedNamespaceMetadata(namespaceName, ctx)
   if (!nsMeta) return
 
-  const propName = getStaticPropName(expr.property as Expression, expr.computed)
-  if (typeof propName !== 'string' && typeof propName !== 'number') return
+  const exportName = getStaticMemberMetadataKey(expr.property as Expression, expr.computed)
+  if (exportName === null) return
 
-  const exportName = String(propName)
   const kind = nsMeta.exports[exportName]
   if (isReadOnlyImportedReactiveKind(kind)) {
     throwImportedReactiveWrite(`${namespaceName}.${exportName}`, kind, ctx, expr.loc)
@@ -3930,8 +3939,8 @@ function lowerExpressionImpl(
     if (callee.object.kind !== 'Identifier') return false
     const nsMeta = getImportedNamespaceMetadata(callee.object.name, ctx)
     if (!nsMeta) return false
-    const propName = getStaticPropName(callee.property as Expression, callee.computed)
-    if (typeof propName !== 'string') return false
+    const propName = getStaticMemberMetadataKey(callee.property as Expression, callee.computed)
+    if (propName === null) return false
     const kind = nsMeta.exports[propName]
     return kind === 'signal' || kind === 'memo'
   }
@@ -4184,8 +4193,8 @@ function lowerExpressionImpl(
       if (expr.object.kind === 'Identifier') {
         const nsMeta = getImportedNamespaceMetadata(expr.object.name, ctx)
         if (nsMeta) {
-          const propName = getStaticPropName(expr.property as Expression, expr.computed)
-          if (typeof propName === 'string') {
+          const propName = getStaticMemberMetadataKey(expr.property as Expression, expr.computed)
+          if (propName !== null) {
             const kind = nsMeta.exports[propName]
             if (kind === 'signal' || kind === 'memo') {
               const member = t.memberExpression(

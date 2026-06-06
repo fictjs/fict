@@ -1872,6 +1872,89 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toContain('return hooks.useCounter().count;')
     })
 
+    it('normalizes numeric namespace hook metadata keys', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        export { useCounter as "0", useCounter as "1.5", useCounter as "00" }
+      `
+      const appSource = `
+        import * as hooks from './use-counter-numeric-namespace-member'
+
+        export function App() {
+          const zero = hooks[0]()
+          const decimal = hooks[1.5]()
+          const padded = hooks["00"]()
+          return <span>{zero.count}:{decimal.count}:{padded.count}:{hooks[0]().count}</span>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-numeric-namespace-member.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-numeric-namespace-member.tsx'),
+      )
+
+      expect(output).toMatch(/zero\.count\(\)/)
+      expect(output).toMatch(/decimal\.count\(\)/)
+      expect(output).toMatch(/padded\.count\(\)/)
+      expect(output).toMatch(/hooks\[(?:"0"|0)\]\(\)\.count\(\)/)
+    })
+
+    it('routes numeric namespace hook-result writes through signal setters', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { count: 'signal' } */
+        function useCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        export { useCounter as "0" }
+      `
+      const appSource = `
+        import * as hooks from './use-counter-numeric-namespace-write'
+
+        export function App() {
+          const state = hooks[0]()
+          state.count = 2
+          state.count++
+          return <span>{state.count}</span>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(
+        hookSource,
+        { moduleMetadata },
+        path.join(baseDir, 'use-counter-numeric-namespace-write.tsx'),
+      )
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-hook-numeric-namespace-write.tsx'),
+      )
+
+      expect(output).toContain('state.count(2)')
+      expect(output).toMatch(/state\.count\([+-]{2}__prev_/)
+      expect(output).toMatch(/state\.count\(\)/)
+      expect(output).not.toContain('state.count = 2')
+      expect(output).not.toContain('state.count++')
+    })
+
     it('unwraps default-import direct hook-call member reads across modules', () => {
       const hookSource = `
         import { $state } from 'fict'
@@ -4595,6 +4678,74 @@ describe('Cross-Module Reactivity', () => {
       )
 
       expect(output).toMatch(/count\(\)/)
+    })
+
+    it('normalizes numeric namespace reactive metadata keys', () => {
+      const storeSource = `
+        import { createMemo, createSignal, createStore } from 'fict/advanced'
+
+        const zero = createSignal(1)
+        const decimal = createMemo(() => 2)
+        const padded = createStore({ name: 'Ada' })
+
+        export { zero as "0", decimal as "1.5", padded as "00" }
+      `
+      const appSource = `
+        import * as ns from './store-ns-numeric-keys'
+
+        export function App() {
+          const called = ns[0]()
+          const optional = ns[1.5]?.()
+          return <div>{called}:{optional}:{ns[0]}:{ns["0"]}:{ns[1.5]}:{ns["00"].name}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-numeric-keys.ts'))
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-ns-numeric-keys.tsx'),
+      )
+
+      expect(output).toMatch(/ns\[(?:"0"|0)\]\(\)/)
+      expect(output).toMatch(/ns\[(?:"1\.5"|1\.5)\]\?\.\(\)/)
+      expect(output).toMatch(/ns\[(?:"1\.5"|1\.5)\]\(\)/)
+      expect(output).toMatch(/ns\["00"\]\.name/)
+      expect(output).not.toMatch(/ns\[(?:"0"|0)\]\(\)\(\)/)
+      expect(output).not.toMatch(/ns\[(?:"1\.5"|1\.5)\]\?\.\(\)\?\.\(\)/)
+    })
+
+    it('preserves numeric namespace signal assignment targets in non-strict mode', () => {
+      const storeSource = `
+        import { createSignal } from 'fict/advanced'
+
+        const zero = createSignal(1)
+        export { zero as "0" }
+      `
+      const appSource = `
+        import * as ns from './store-ns-numeric-write'
+
+        export function App() {
+          ns[0] = 2
+          ns[0]++
+          return ns[0]
+        }
+      `
+
+      const moduleMetadata = new Map()
+      transform(storeSource, { moduleMetadata }, path.join(baseDir, 'store-ns-numeric-write.ts'))
+      const output = transform(
+        appSource,
+        { moduleMetadata, strictGuarantee: false },
+        path.join(baseDir, 'app-ns-numeric-write.tsx'),
+      )
+
+      expect(output).toContain('ns[0] = 2')
+      expect(output).toContain('ns[0]++')
+      expect(output).toMatch(/return ns\[(?:"0"|0)\]\(\)/)
+      expect(output).not.toMatch(/ns\[(?:"0"|0)\]\(\)\s*=/)
+      expect(output).not.toMatch(/ns\[(?:"0"|0)\]\(\)\+\+/)
     })
 
     it('does not double-call namespace imported signal accessors used as calls', () => {
