@@ -37,12 +37,61 @@ describe('diagnostic suppression directives', () => {
     expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
   })
 
+  it('suppresses next-line warnings after multiline block directives', () => {
+    const warnings: CompilerWarning[] = []
+    transform(
+      `
+        import { $memo } from 'fict'
+        /*
+         * fict-ignore-next-line FICT-M003
+         */
+        const value = $memo(() => {
+          fetch('/api/data')
+        })
+      `,
+      { onWarn: w => warnings.push(w) },
+    )
+
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+  })
+
+  it('suppresses next-line warnings after single-line block directives', () => {
+    const warnings: CompilerWarning[] = []
+    transform(
+      `
+        import { $memo } from 'fict'
+        /* fict-ignore-next-line FICT-M003 */
+        const value = $memo(() => {
+          fetch('/api/data')
+        })
+      `,
+      { onWarn: w => warnings.push(w) },
+    )
+
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+  })
+
   it('suppresses inline warnings with fict-ignore', () => {
     const warnings: CompilerWarning[] = []
     transform(
       `
         import { $memo } from 'fict'
         const value = $memo(() => { // fict-ignore FICT-M003
+          console.log('side')
+        })
+      `,
+      { onWarn: w => warnings.push(w) },
+    )
+
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+  })
+
+  it('suppresses same-line warnings with inline block directives', () => {
+    const warnings: CompilerWarning[] = []
+    transform(
+      `
+        import { $memo } from 'fict'
+        const value = $memo(() => { /* fict-ignore FICT-M003 */
           console.log('side')
         })
       `,
@@ -83,5 +132,22 @@ describe('diagnostic suppression directives', () => {
         { strictGuarantee: true },
       ),
     ).not.toThrow(/strictGuarantee does not allow fict-ignore/)
+  })
+
+  it('rejects strictGuarantee when a multiline block contains a real directive', () => {
+    expect(() =>
+      transform(
+        `
+          import { $memo } from 'fict'
+          /*
+           * fict-ignore-next-line FICT-M003
+           */
+          const value = $memo(() => {
+            console.log('side')
+          })
+        `,
+        { strictGuarantee: true },
+      ),
+    ).toThrow(/strictGuarantee does not allow fict-ignore/)
   })
 })

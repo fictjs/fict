@@ -189,12 +189,23 @@ function parseSuppressions(
   if (!comments) return []
   const suppressions: SuppressionDirective[] = []
   for (const comment of comments) {
-    const match = comment.value.trim().match(/^fict-ignore(-next-line)?(?:\s+(.+))?$/i)
-    if (!match || !comment.loc) continue
+    if (!comment.loc) continue
+    const lines = comment.value.split(/\r\n|\n|\r/)
+    const matchEntry = lines
+      .map((line, index) => ({
+        line: comment.loc!.start.line + index,
+        match: line
+          .trim()
+          .replace(/^\*\s?/, '')
+          .match(/^fict-ignore(-next-line)?(?:\s+(.+))?$/i),
+      }))
+      .find(entry => entry.match)
+    if (!matchEntry?.match) continue
+    const nextLine = !!matchEntry.match[1]
     suppressions.push({
-      line: comment.loc.start.line,
-      nextLine: !!match[1],
-      codes: parseSuppressionCodes(match[2]),
+      line: nextLine ? comment.loc.end.line : matchEntry.line,
+      nextLine,
+      codes: parseSuppressionCodes(matchEntry.match[2]),
     })
   }
   return suppressions
