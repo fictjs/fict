@@ -355,6 +355,66 @@ describe('createDiffingSignal reactivity', () => {
     expect(seen[seen.length - 1]).toBe(true)
   })
 
+  it('tracks "in" checks when undefined keys are added or removed', async () => {
+    const [read, write] = createDiffingSignal<{ x?: undefined }>({})
+    const seen: boolean[] = []
+
+    createEffect(() => {
+      seen.push('x' in read())
+    })
+
+    await tick()
+    expect(seen).toEqual([false])
+
+    write({ x: undefined })
+    await tick()
+    expect(seen).toEqual([false, true])
+
+    write({})
+    await tick()
+    expect(seen).toEqual([false, true, false])
+  })
+
+  it('tracks descriptor checks when undefined keys are added or removed', async () => {
+    const [read, write] = createDiffingSignal<{ x?: undefined }>({ x: undefined })
+    const seen: boolean[] = []
+
+    createEffect(() => {
+      seen.push(Boolean(Object.getOwnPropertyDescriptor(read(), 'x')))
+    })
+
+    await tick()
+    expect(seen).toEqual([true])
+
+    write({})
+    await tick()
+    expect(seen).toEqual([true, false])
+
+    write({ x: undefined })
+    await tick()
+    expect(seen).toEqual([true, false, true])
+  })
+
+  it('tracks Object.hasOwn checks when undefined keys are added or removed', async () => {
+    const [read, write] = createDiffingSignal<{ x?: undefined }>({})
+    const seen: boolean[] = []
+
+    createEffect(() => {
+      seen.push(Object.hasOwn(read(), 'x'))
+    })
+
+    await tick()
+    expect(seen).toEqual([false])
+
+    write({ x: undefined })
+    await tick()
+    expect(seen).toEqual([false, true])
+
+    write({})
+    await tick()
+    expect(seen).toEqual([false, true, false])
+  })
+
   it('notifies iterate subscribers for same-reference writes', async () => {
     const value: { foo?: number; bar?: number } = { foo: 1 }
     const [read, write] = createDiffingSignal(value)
@@ -373,6 +433,36 @@ describe('createDiffingSignal reactivity', () => {
     await tick()
 
     expect(seen[seen.length - 1]).toEqual(['bar'])
+  })
+
+  it('notifies presence subscribers for same-reference writes', async () => {
+    const value: { x?: undefined } = {}
+    const [read, write] = createDiffingSignal(value)
+    const inSeen: boolean[] = []
+    const descriptorSeen: boolean[] = []
+
+    createEffect(() => {
+      inSeen.push('x' in read())
+    })
+    createEffect(() => {
+      descriptorSeen.push(Boolean(Object.getOwnPropertyDescriptor(read(), 'x')))
+    })
+
+    await tick()
+    expect(inSeen).toEqual([false])
+    expect(descriptorSeen).toEqual([false])
+
+    value.x = undefined
+    write(value)
+    await tick()
+    expect(inSeen).toEqual([false, true])
+    expect(descriptorSeen).toEqual([false, true])
+
+    delete value.x
+    write(value)
+    await tick()
+    expect(inSeen).toEqual([false, true, false])
+    expect(descriptorSeen).toEqual([false, true, false])
   })
 
   it('tracks ownKeys order changes for same-reference writes', async () => {

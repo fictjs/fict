@@ -312,7 +312,7 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
   const getPropSignal = (prop: string | symbol) => {
     let s = signals.get(prop)
     if (!s) {
-      s = signal(Reflect.get(currentValue as object, prop))
+      s = signal(Reflect.get(currentValue as object, prop), { equals: false })
       signals.set(prop, s)
     }
     return s
@@ -417,9 +417,13 @@ export function createDiffingSignal<T extends object>(initialValue: T) {
     // We only trigger signals for properties that exist in our cache (tracked)
     // and have changed.
     for (const [prop, s] of signals) {
+      const oldHas = Reflect.has(prev as object, prop)
+      const newHas = Reflect.has(next as object, prop)
+      const oldOwn = Reflect.getOwnPropertyDescriptor(prev as object, prop) !== undefined
+      const newOwn = Reflect.getOwnPropertyDescriptor(next as object, prop) !== undefined
       const oldVal = Reflect.get(prev as object, prop)
       const newVal = Reflect.get(next as object, prop)
-      if (oldVal !== newVal) {
+      if (oldVal !== newVal || oldHas !== newHas || oldOwn !== newOwn) {
         s(newVal)
       }
     }
