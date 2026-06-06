@@ -2377,6 +2377,19 @@ describe('spread operator in JSX', () => {
     expect(code).toMatch(/spread\([\s\S]*false,\s*false\)/)
   })
 
+  it('passes the SVG flag to descendant spreads in SVG root templates', () => {
+    const ast = parseFile(`
+      function Icon(props) {
+        return <svg><use {...props}></use></svg>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/spread\([\s\S]*true,\s*true\)/)
+  })
+
   it('should handle spread with additional props', () => {
     const ast = parseFile(`
       function ExtendedWrapper(props) {

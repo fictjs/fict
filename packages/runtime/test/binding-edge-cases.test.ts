@@ -1148,6 +1148,32 @@ describe('Binding Edge Cases', () => {
       dispose()
     })
 
+    it('sets explicit namespaced spread props without the SVG flag', async () => {
+      const xlinkNS = 'http://www.w3.org/1999/xlink'
+      const xmlNS = 'http://www.w3.org/XML/1998/namespace'
+      const el = document.createElementNS('http://www.w3.org/1998/Math/MathML', 'maction')
+      const props = createSignal<Record<string, unknown>>({
+        'xlink:href': '#a',
+        'xml:lang': 'en',
+      })
+
+      const { dispose } = createRoot(() => {
+        spread(el, () => props(), false)
+      })
+
+      await tick()
+      expect(el.getAttributeNS(xlinkNS, 'href')).toBe('#a')
+      expect(el.getAttributeNS(xmlNS, 'lang')).toBe('en')
+      expect(el.hasAttribute('xlink:href')).toBe(false)
+
+      props({ 'xlink:href': null, 'xml:lang': 'fr' })
+      await tick()
+      expect(el.hasAttributeNS(xlinkNS, 'href')).toBe(false)
+      expect(el.getAttributeNS(xmlNS, 'lang')).toBe('fr')
+
+      dispose()
+    })
+
     it('renders children from spread props', async () => {
       const el = document.createElement('div')
 

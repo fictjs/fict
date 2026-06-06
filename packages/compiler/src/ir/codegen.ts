@@ -4501,10 +4501,11 @@ function lowerIntrinsicElement(
         ctx,
         t.arrowFunctionExpression([], spreadValueExpr),
       )
+      const isSVGSpreadTarget = binding.namespace === 'svg'
       const spreadArgs: BabelCore.types.Expression[] = [
         targetId,
         spreadGetter,
-        t.booleanLiteral(Boolean(isSVG || isMathML)),
+        t.booleanLiteral(isSVGSpreadTarget),
         t.booleanLiteral(jsx.children.length > 0),
       ]
       if (binding.exclude && binding.exclude.length > 0) {

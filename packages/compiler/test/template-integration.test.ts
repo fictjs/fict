@@ -2972,6 +2972,84 @@ describe('compiled templates DOM integration', () => {
     },
   )
 
+  it('sets namespaced spread attributes on SVG and MathML descendants', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { setHref(value: string | null): void; setLang(value: string): void }
+
+      function App() {
+        const href = $state<string | null>('#a')
+        const lang = $state('en')
+        api = {
+          setHref: value => href(value),
+          setLang: value => lang(value),
+        }
+
+        return (
+          <div>
+            <svg data-id="svg-root" {...{ 'xml:lang': lang() }}>
+              <use data-id="svg-use" {...{ 'xlink:href': href(), 'xml:lang': lang() }}></use>
+            </svg>
+            <math data-id="math-root" {...{ 'xml:lang': lang() }}>
+              <maction data-id="math-action" {...{ 'xlink:href': href(), 'xml:lang': lang() }}></maction>
+            </math>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { setHref(value: string | null): void; setLang(value: string): void }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const xlinkNs = 'http://www.w3.org/1999/xlink'
+    const xmlNs = 'http://www.w3.org/XML/1998/namespace'
+    const svgRoot = container.querySelector('[data-id="svg-root"]') as Element
+    const svgUse = container.querySelector('[data-id="svg-use"]') as Element
+    const mathRoot = container.querySelector('[data-id="math-root"]') as Element
+    const mathAction = container.querySelector('[data-id="math-action"]') as Element
+
+    expect(svgRoot.getAttributeNS(xmlNs, 'lang')).toBe('en')
+    expect(svgUse.getAttributeNS(xlinkNs, 'href')).toBe('#a')
+    expect(svgUse.getAttributeNS(xmlNs, 'lang')).toBe('en')
+    expect(mathRoot.getAttributeNS(xmlNs, 'lang')).toBe('en')
+    expect(mathAction.getAttributeNS(xlinkNs, 'href')).toBe('#a')
+    expect(mathAction.getAttributeNS(xmlNs, 'lang')).toBe('en')
+    expect(svgUse.hasAttribute('xlink:href')).toBe(false)
+    expect(mathAction.hasAttribute('xlink:href')).toBe(false)
+
+    mod.api.setHref('#b')
+    mod.api.setLang('fr')
+    await flushUpdates()
+
+    expect(svgRoot.getAttributeNS(xmlNs, 'lang')).toBe('fr')
+    expect(svgUse.getAttributeNS(xlinkNs, 'href')).toBe('#b')
+    expect(svgUse.getAttributeNS(xmlNs, 'lang')).toBe('fr')
+    expect(mathRoot.getAttributeNS(xmlNs, 'lang')).toBe('fr')
+    expect(mathAction.getAttributeNS(xlinkNs, 'href')).toBe('#b')
+    expect(mathAction.getAttributeNS(xmlNs, 'lang')).toBe('fr')
+
+    mod.api.setHref(null)
+    await flushUpdates()
+
+    expect(svgUse.hasAttributeNS(xlinkNs, 'href')).toBe(false)
+    expect(mathAction.hasAttributeNS(xlinkNs, 'href')).toBe(false)
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps generated template temps from shadowing source bindings', async () => {
     const cases: Array<{
       source: string

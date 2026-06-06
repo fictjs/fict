@@ -19,7 +19,7 @@ export interface HIRBinding {
   resumable?: boolean | undefined
   resumableExplicit?: boolean | undefined
   bindingTarget?: 'attribute' | 'property' | undefined
-  /** Namespace context at this binding's location (for dynamic children) */
+  /** Namespace context at this binding's location */
   namespace?: NamespaceContext | undefined
 }
 
@@ -433,6 +433,7 @@ export function extractHIRStaticHtml(
           path: [...parentPath],
           expr: attr.spreadExpr,
           exclude: excluded.size > 0 ? Array.from(excluded) : undefined,
+          namespace: resolvedNamespace,
         })
       }
       continue

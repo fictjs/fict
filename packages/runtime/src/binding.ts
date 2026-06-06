@@ -2513,15 +2513,11 @@ function assignProp(
     }
   }
 
-  // SVG namespace handling
-  if (isSVG && prop.indexOf(':') > -1) {
-    const [prefix, name] = prop.split(':')
-    const ns = SVGNamespace[prefix!]
-    if (ns) {
-      if (value == null) node.removeAttributeNS(ns, name!)
-      else node.setAttributeNS(ns, name!, String(value))
-      return value
-    }
+  const namespaced = getNamespacedAttribute(prop)
+  if (namespaced) {
+    if (value == null) node.removeAttributeNS(namespaced.namespace, namespaced.localName)
+    else node.setAttributeNS(namespaced.namespace, namespaced.localName, String(value))
+    return value
   }
 
   // Default: set as attribute
