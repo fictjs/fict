@@ -4972,6 +4972,39 @@ function generateLazyConditionalMemo(
   const conditionDecl = t.variableDeclaration('const', [
     t.variableDeclarator(conditionId, conditionStmt),
   ])
+  const ignoredSignatureKeys = new Set([
+    'loc',
+    'start',
+    'end',
+    'leadingComments',
+    'innerComments',
+    'trailingComments',
+    'extra',
+  ])
+  const nodeSignature = (node: BabelCore.types.Node): string =>
+    JSON.stringify(node, (key, value) => (ignoredSignatureKeys.has(key) ? undefined : value))
+  const conditionSignature = nodeSignature(conditionStmt)
+  const visitorKeys = (t as unknown as { VISITOR_KEYS?: Record<string, string[]> }).VISITOR_KEYS
+  const rewriteConditionalTests = (statements: BabelCore.types.Statement[]): void => {
+    const visitValue = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        value.forEach(visitValue)
+        return
+      }
+      if (!value || typeof value !== 'object' || !('type' in value)) return
+      visitNode(value as BabelCore.types.Node)
+    }
+    const visitNode = (node: BabelCore.types.Node): void => {
+      if (t.isConditionalExpression(node) && nodeSignature(node.test) === conditionSignature) {
+        node.test = t.cloneNode(conditionId)
+      }
+      for (const key of visitorKeys?.[node.type] ?? []) {
+        visitValue((node as unknown as Record<string, unknown>)[key])
+      }
+    }
+    statements.forEach(visitNode)
+  }
+  rewriteConditionalTests(alwaysAfterLazy)
 
   // Create return statement helper
   const createReturnWithNulls = (nullFields: Set<string>): BabelCore.types.ReturnStatement => {

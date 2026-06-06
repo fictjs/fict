@@ -149,6 +149,26 @@ describe('lowerHIRWithRegions', () => {
     expect(code).not.toMatch(/const\s*\{\s*a,\s*out\s*\}\s*=\s*__region_\d+;/)
   })
 
+  it('reuses lazy conditional branch tests inside dependent callbacks', () => {
+    const ast = parseFile(`
+      export function Component(props) {
+        const a = props.x + 1
+        const b = props.y + 2
+        const out = props.choose ? a : b
+        return <span>{out}</span>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { lazyConditional: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/const (__cond_\d+) = props\.choose/)
+    const conditionName = code.match(/const (__cond_\d+) = props\.choose/)?.[1]
+    expect(conditionName).toBeDefined()
+    expect(code).toContain(`() => ${conditionName} ? a() : b()`)
+    expect(code).not.toContain('() => props.choose ? a() : b()')
+  })
+
   it('omits type-only imports and declarations from emitted modules', () => {
     const ast = parseFile(`
       import type { Foo } from './types'
