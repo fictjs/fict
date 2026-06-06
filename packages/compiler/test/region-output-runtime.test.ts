@@ -157,4 +157,36 @@ describe('region output runtime regressions', () => {
 
     expect(result).toBe('1:3:2')
   })
+
+  it('assigns region output accessors through mutable cells', () => {
+    const exports = compileModule(`
+      import { $state } from 'fict'
+
+      export function useProbe() {
+        const a = $state(1)
+        let y = a()
+        const assigned = (y = 2)
+        const compound = (y += 3)
+        const logicalAnd = (y &&= 8)
+        const logicalOrSkip = (y ||= 9)
+        const undefinedValue = (y = undefined)
+        const nullishSet = (y ??= 6)
+        return [
+          assigned,
+          compound,
+          logicalAnd,
+          logicalOrSkip,
+          undefinedValue,
+          nullishSet,
+          y,
+        ].map(value => String(value)).join(':')
+      }
+    `)
+
+    const result = runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () =>
+      (exports.useProbe as () => string)(),
+    )
+
+    expect(result).toBe('2:5:8:8:undefined:6:6')
+  })
 })

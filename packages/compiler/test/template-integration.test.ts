@@ -169,6 +169,37 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('renders JSX reads after assigning mutable region outputs', () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      function App() {
+        const a = $state(1)
+        let y = a()
+        const assigned = (y = 2)
+        const logical = (y ||= 3)
+        const compound = (y += 4)
+        return <span data-testid="value">{assigned}:{logical}:{compound}:{y}</span>
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('2:2:6:6')
+
+    teardown()
+    container.remove()
+  })
+
   it('evaluates impure reactive derived declaration initializers eagerly', async () => {
     const source = `
       import { $state, render } from 'fict'

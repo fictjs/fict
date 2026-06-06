@@ -1076,6 +1076,7 @@ interface RegionEmitContext {
   hoistedInstructions: Set<Instruction>
   pendingInstructions: Map<number, Instruction[]>
   rootNode: StructuredNode
+  fullRootNode: StructuredNode
   inlineUnownedInRegionBody?: boolean | undefined
 }
 
@@ -1121,6 +1122,7 @@ function lowerStructuredNodeInternal(
         hoistedInstructions: new Set<Instruction>(),
         pendingInstructions: new Map<number, Instruction[]>(),
         rootNode: node,
+        fullRootNode: node,
       }
     : undefined
 
@@ -1477,6 +1479,136 @@ function collectStructuredNodeWrites(node: StructuredNode): Set<string> {
     }
   }
   visit(node)
+  return writes
+}
+
+function collectPostRegionWrites(rootNode: StructuredNode, region: Region): Set<string> {
+  const writes = new Set<string>()
+  const remainingRegionInstructionIndexes = new Set<number>()
+  region.instructions.forEach((_instr, index) => remainingRegionInstructionIndexes.add(index))
+  let afterRegion = remainingRegionInstructionIndexes.size === 0
+
+  const addWrites = (values: Set<string>): void => {
+    if (!afterRegion) return
+    values.forEach(name => writes.add(name))
+  }
+  const addExpressionWrites = (expr: Expression | null | undefined): void => {
+    if (!expr) return
+    addWrites(collectExpressionWrites(expr))
+  }
+  const addInstructionWrites = (instr: Instruction): void =>
+    addWrites(collectInstructionWrites(instr))
+  const addTerminatorWrites = (term: Terminator): void => {
+    switch (term.kind) {
+      case 'Return':
+        addExpressionWrites(term.argument)
+        return
+      case 'Throw':
+        addExpressionWrites(term.argument)
+        return
+      case 'Branch':
+        addExpressionWrites(term.test)
+        return
+      case 'Switch':
+        addExpressionWrites(term.discriminant)
+        term.cases.forEach(item => addExpressionWrites(item.test))
+        return
+      case 'ForOf':
+        addExpressionWrites(term.iterable)
+        return
+      case 'ForIn':
+        addExpressionWrites(term.object)
+        return
+      default:
+        return
+    }
+  }
+  const noteInstruction = (instr: Instruction): void => {
+    for (const index of remainingRegionInstructionIndexes) {
+      const regionInstr = region.instructions[index]
+      if (regionInstr && instructionsMatch(instr, regionInstr)) {
+        remainingRegionInstructionIndexes.delete(index)
+        afterRegion = remainingRegionInstructionIndexes.size === 0
+        return
+      }
+    }
+    addInstructionWrites(instr)
+  }
+  const visit = (current: StructuredNode | null | undefined): void => {
+    if (!current) return
+    switch (current.kind) {
+      case 'instruction':
+        noteInstruction(current.instruction)
+        return
+      case 'sequence':
+        current.nodes.forEach(visit)
+        return
+      case 'block':
+        current.statements.forEach(visit)
+        return
+      case 'labeled':
+        visit(current.statement)
+        return
+      case 'if':
+        addExpressionWrites(current.test)
+        visit(current.consequent)
+        visit(current.alternate)
+        return
+      case 'while':
+      case 'doWhile':
+        addExpressionWrites(current.test)
+        visit(current.body)
+        return
+      case 'for':
+        current.init?.forEach(noteInstruction)
+        addExpressionWrites(current.test)
+        visit(current.body)
+        current.update?.forEach(noteInstruction)
+        return
+      case 'forOf':
+        if (afterRegion && current.leftKind === 'assignment') {
+          writes.add(deSSAVarName(current.variable))
+          addExpressionWrites(current.assignmentTarget)
+        }
+        addExpressionWrites(current.iterable)
+        visit(current.body)
+        return
+      case 'forIn':
+        if (afterRegion && current.leftKind === 'assignment') {
+          writes.add(deSSAVarName(current.variable))
+          addExpressionWrites(current.assignmentTarget)
+        }
+        addExpressionWrites(current.object)
+        visit(current.body)
+        return
+      case 'switch':
+        addExpressionWrites(current.discriminant)
+        current.cases.forEach(item => {
+          addExpressionWrites(item.test)
+          visit(item.body)
+        })
+        return
+      case 'try':
+        visit(current.block)
+        visit(current.handler?.body)
+        visit(current.finalizer)
+        return
+      case 'return':
+      case 'throw':
+        addExpressionWrites(current.argument)
+        return
+      case 'stateMachine':
+        current.blocks.forEach(block => {
+          block.instructions.forEach(noteInstruction)
+          addTerminatorWrites(block.terminator)
+        })
+        return
+      default:
+        return
+    }
+  }
+
+  visit(rootNode)
   return writes
 }
 
@@ -3549,6 +3681,9 @@ function generateRegionStatements(
   const hasTrackedOutputs =
     region.hasControlFlow &&
     Array.from(region.declarations).some(name => ctx.trackedVars.has(deSSAVarName(name)))
+  const postRegionWrites = regionCtx
+    ? collectPostRegionWrites(regionCtx.fullRootNode, region)
+    : new Set<string>()
   const shouldInline =
     (ctx.nonReactiveScopeDepth && ctx.nonReactiveScopeDepth > 0) ||
     ctx.noMemo ||
@@ -3672,6 +3807,7 @@ function generateRegionStatements(
           ctx,
           [...prefixStatements, ...bodyStatements],
           outputNamesOverride,
+          postRegionWrites,
         ),
       )
     }
@@ -3708,6 +3844,7 @@ function generateRegionStatements(
       ctx,
       bodyStatementsOverride,
       outputNamesOverride,
+      postRegionWrites,
     )
     statements.push(...memoStatements)
   }
@@ -3726,6 +3863,7 @@ function wrapInMemo(
   ctx: CodegenContext,
   bodyStatementsOverride?: BabelCore.types.Statement[],
   outputNamesOverride?: string[],
+  mutableGetterOutputs?: Set<string>,
 ): BabelCore.types.Statement[] {
   const statements: BabelCore.types.Statement[] = []
   const bodyStatements: BabelCore.types.Statement[] = []
@@ -3850,10 +3988,45 @@ function wrapInMemo(
       declaredVars.add(name)
       const callRegion = t.callExpression(t.identifier(regionVarName), [])
       const baseAccess = t.memberExpression(callRegion, t.identifier(name))
+      const accessorExpr = (() => {
+        if (!mutableGetterOutputs?.has(name)) {
+          return t.arrowFunctionExpression([], baseAccess)
+        }
+
+        const overrideName = reserveFunctionLocalName(ctx, `__region_${name}_value`)
+        const hasOverrideName = reserveFunctionLocalName(ctx, `__region_${name}_hasValue`)
+        const argsName = reserveFunctionLocalName(ctx, `__region_${name}_args`)
+        const overrideId = t.identifier(overrideName)
+        const hasOverrideId = t.identifier(hasOverrideName)
+        const argsId = t.identifier(argsName)
+        statements.push(
+          t.variableDeclaration('let', [t.variableDeclarator(overrideId)]),
+          t.variableDeclaration('let', [
+            t.variableDeclarator(hasOverrideId, t.booleanLiteral(false)),
+          ]),
+        )
+        return t.arrowFunctionExpression(
+          [t.restElement(argsId)],
+          t.conditionalExpression(
+            t.memberExpression(t.cloneNode(argsId), t.identifier('length')),
+            t.sequenceExpression([
+              t.assignmentExpression('=', t.cloneNode(hasOverrideId), t.booleanLiteral(true)),
+              t.assignmentExpression(
+                '=',
+                t.cloneNode(overrideId),
+                t.memberExpression(t.cloneNode(argsId), t.numericLiteral(0), true),
+              ),
+            ]),
+            t.conditionalExpression(
+              t.cloneNode(hasOverrideId),
+              t.cloneNode(overrideId),
+              baseAccess,
+            ),
+          ),
+        )
+      })()
       statements.push(
-        t.variableDeclaration('const', [
-          t.variableDeclarator(t.identifier(name), t.arrowFunctionExpression([], baseAccess)),
-        ]),
+        t.variableDeclaration('const', [t.variableDeclarator(t.identifier(name), accessorExpr)]),
       )
       // Mark as a memo so buildDependencyGetter will add () when this name is used
       ctx.memoVars?.add(name)
