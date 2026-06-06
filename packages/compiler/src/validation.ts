@@ -72,6 +72,20 @@ export enum DiagnosticCode {
   FICT_X003 = 'FICT-X003', // Inline function in JSX props
 }
 
+export function matchesDiagnosticCode(code: string, pattern: string): boolean {
+  if (code === pattern) return true
+  if (!code.startsWith(pattern)) return false
+  const suffix = code.slice(pattern.length)
+  return /^[0-9]/.test(suffix)
+}
+
+export function matchesAnyDiagnosticCode(code: string, patterns: Iterable<string>): boolean {
+  for (const pattern of patterns) {
+    if (matchesDiagnosticCode(code, pattern)) return true
+  }
+  return false
+}
+
 /**
  * Diagnostic message templates
  */
@@ -208,21 +222,28 @@ export function resolveDiagnosticSeverity(
     process.env.NODE_ENV === 'production' ||
     options.strictGuarantee !== false
 
-  if (strictGuaranteeEnabled && STRICT_GUARANTEE_DIAGNOSTICS.has(code)) {
+  if (strictGuaranteeEnabled && matchesAnyDiagnosticCode(code, STRICT_GUARANTEE_DIAGNOSTICS)) {
     return DiagnosticSeverity.Error
   }
 
-  const override = options.warningLevels?.[code]
+  const override =
+    options.warningLevels?.[code] ??
+    Object.entries(options.warningLevels ?? {}).find(([pattern]) =>
+      matchesDiagnosticCode(code, pattern),
+    )?.[1]
   if (override === 'error') return DiagnosticSeverity.Error
   if (override === 'warn') return DiagnosticSeverity.Warning
   if (override === 'off') return DiagnosticSeverity.Hint
 
-  if (options.strictReactivity && STRICT_REACTIVITY_DIAGNOSTICS.has(code)) {
+  if (options.strictReactivity && matchesAnyDiagnosticCode(code, STRICT_REACTIVITY_DIAGNOSTICS)) {
     return DiagnosticSeverity.Error
   }
 
   if (options.warningsAsErrors === true) return DiagnosticSeverity.Error
-  if (Array.isArray(options.warningsAsErrors) && options.warningsAsErrors.includes(code)) {
+  if (
+    Array.isArray(options.warningsAsErrors) &&
+    matchesAnyDiagnosticCode(code, options.warningsAsErrors)
+  ) {
     return DiagnosticSeverity.Error
   }
 

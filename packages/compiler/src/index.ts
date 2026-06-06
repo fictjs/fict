@@ -21,6 +21,7 @@ import {
   isMemoCall,
   isStateCall,
 } from './utils'
+import { matchesAnyDiagnosticCode, matchesDiagnosticCode } from './validation'
 
 export type { FictCompilerOptions, CompilerWarning } from './types'
 
@@ -208,7 +209,7 @@ function shouldSuppressWarning(
     const targetLine = entry.nextLine ? entry.line + 1 : entry.line
     if (targetLine !== line) return false
     if (!entry.codes || entry.codes.size === 0) return true
-    return entry.codes.has(code)
+    return matchesAnyDiagnosticCode(code, entry.codes)
   })
 }
 
@@ -257,12 +258,21 @@ function validateStrictGuaranteeConfig(
   }
   if (!options.warningLevels) return
   for (const [code, level] of Object.entries(options.warningLevels)) {
-    if (!STRICT_GUARANTEE_WARNING_CODES.has(code)) continue
+    if (!diagnosticCodeOverlaps(code, STRICT_GUARANTEE_WARNING_CODES)) continue
     if (level === 'error') continue
     throw new SyntaxError(
       `strictGuarantee does not allow downgrading ${code} to "${level}". Remove this warningLevels override.`,
     )
   }
+}
+
+function diagnosticCodeOverlaps(code: string, patterns: Iterable<string>): boolean {
+  for (const pattern of patterns) {
+    if (matchesDiagnosticCode(code, pattern) || matchesDiagnosticCode(pattern, code)) {
+      return true
+    }
+  }
+  return false
 }
 
 function hasErrorEscalation(options: FictCompilerOptions): boolean {
@@ -278,15 +288,26 @@ function hasErrorEscalation(options: FictCompilerOptions): boolean {
 }
 
 function resolveWarningLevel(code: string, options: FictCompilerOptions): WarningLevel {
-  if (options.strictGuarantee && STRICT_GUARANTEE_WARNING_CODES.has(code)) return 'error'
-  const override = options.warningLevels?.[code]
-  if (override) return override
-  if (options.strictReactivity && STRICT_REACTIVITY_WARNING_CODES.has(code)) return 'error'
-  if (options.warningsAsErrors === true) return 'error'
-  if (Array.isArray(options.warningsAsErrors) && options.warningsAsErrors.includes(code)) {
+  if (options.strictGuarantee && matchesAnyDiagnosticCode(code, STRICT_GUARANTEE_WARNING_CODES)) {
     return 'error'
   }
-  if (DEFAULT_ERROR_WARNING_CODES.has(code)) return 'error'
+  const override =
+    options.warningLevels?.[code] ??
+    Object.entries(options.warningLevels ?? {}).find(([pattern]) =>
+      matchesDiagnosticCode(code, pattern),
+    )?.[1]
+  if (override) return override
+  if (options.strictReactivity && matchesAnyDiagnosticCode(code, STRICT_REACTIVITY_WARNING_CODES)) {
+    return 'error'
+  }
+  if (options.warningsAsErrors === true) return 'error'
+  if (
+    Array.isArray(options.warningsAsErrors) &&
+    matchesAnyDiagnosticCode(code, options.warningsAsErrors)
+  ) {
+    return 'error'
+  }
+  if (matchesAnyDiagnosticCode(code, DEFAULT_ERROR_WARNING_CODES)) return 'error'
   return 'warn'
 }
 

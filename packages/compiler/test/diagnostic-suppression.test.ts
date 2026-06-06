@@ -21,6 +21,22 @@ describe('diagnostic suppression directives', () => {
     expect(warnings.length).toBe(0)
   })
 
+  it('suppresses diagnostic subcodes with family directives', () => {
+    const warnings: CompilerWarning[] = []
+    transform(
+      `
+        import { $memo } from 'fict'
+        // fict-ignore-next-line FICT-M
+        const value = $memo(() => {
+          console.log('side')
+        })
+      `,
+      { onWarn: w => warnings.push(w) },
+    )
+
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+  })
+
   it('suppresses inline warnings with fict-ignore', () => {
     const warnings: CompilerWarning[] = []
     transform(

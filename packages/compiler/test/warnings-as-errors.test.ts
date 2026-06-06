@@ -11,6 +11,13 @@ describe('warnings as errors', () => {
       return state.count
     }
   `
+  const memoSideEffectSource = `
+    import { $memo } from 'fict'
+    const value = $memo(() => {
+      console.log('side')
+      return 1
+    })
+  `
 
   it('throws when warnings are escalated to errors (dev)', () => {
     expect(() => transform(source, { warningsAsErrors: true })).toThrow(
@@ -35,9 +42,30 @@ describe('warnings as errors', () => {
     )
   })
 
+  it('warningsAsErrors family entries escalate memo subcodes', () => {
+    expect(() =>
+      transform(memoSideEffectSource, {
+        strictGuarantee: false,
+        dev: false,
+        warningsAsErrors: ['FICT-M'],
+      }),
+    ).toThrow(/FICT-M003/)
+  })
+
   it('allows warning suppression via warningLevels', () => {
     expect(() =>
       transform(source, {
+        warningsAsErrors: true,
+        warningLevels: { 'FICT-M': 'off' },
+      }),
+    ).not.toThrow()
+  })
+
+  it('warningLevels family entries can suppress memo subcodes outside strictGuarantee', () => {
+    expect(() =>
+      transform(memoSideEffectSource, {
+        strictGuarantee: false,
+        dev: false,
         warningsAsErrors: true,
         warningLevels: { 'FICT-M': 'off' },
       }),
@@ -177,6 +205,12 @@ describe('warnings as errors', () => {
     expect(() => transform(mutationSource, { strictGuarantee: true, dev: false })).toThrow(/FICT-M/)
     expect(() => transform(dynamicAccessSource, { strictGuarantee: true, dev: false })).toThrow(
       /FICT-H/,
+    )
+  })
+
+  it('strictGuarantee escalates memo side-effect subcodes', () => {
+    expect(() => transform(memoSideEffectSource, { strictGuarantee: true, dev: false })).toThrow(
+      /FICT-M003/,
     )
   })
 
@@ -328,6 +362,16 @@ describe('warnings as errors', () => {
         warningLevels: { 'FICT-M': 'warn' },
       }),
     ).toThrow(/strictGuarantee does not allow downgrading FICT-M/)
+  })
+
+  it('strictGuarantee disallows warningLevels downgrades for memo subcodes', () => {
+    expect(() =>
+      transform(memoSideEffectSource, {
+        strictGuarantee: true,
+        dev: false,
+        warningLevels: { 'FICT-M003': 'warn' },
+      }),
+    ).toThrow(/strictGuarantee does not allow downgrading FICT-M003/)
   })
 
   it('strictGuarantee warning-level downgrade failures surface as SyntaxError', () => {
