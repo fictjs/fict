@@ -1975,6 +1975,7 @@ function collectDirectBlockBindingNames(
     const isFunctionDecl =
       instruction.value.kind === 'FunctionExpression' &&
       !!instruction.value.name &&
+      !instruction.isMutation &&
       deSSAVarName(instruction.value.name) === deSSAVarName(instruction.target.name)
     if (instruction.declarationKind || isFunctionDecl) {
       names.add(deSSAVarName(instruction.target.name))
@@ -5276,7 +5277,8 @@ function instructionToStatement(
     const declKind = declKindRaw && declKindRaw !== 'function' ? declKindRaw : undefined
     const isFunctionDecl =
       instr.value.kind === 'FunctionExpression' &&
-      (declKindRaw === 'function' || (!declKindRaw && instr.value.name === baseName))
+      (declKindRaw === 'function' ||
+        (!declKindRaw && !instr.isMutation && instr.value.name === baseName))
     if (isFunctionDecl) {
       const loweredFn = lowerExpressionWithDeSSA(instr.value, ctx)
       if (t.isFunctionExpression(loweredFn)) {

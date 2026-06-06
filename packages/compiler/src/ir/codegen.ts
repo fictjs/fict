@@ -2153,7 +2153,7 @@ function lowerInstruction(
     const isFunctionDecl =
       instr.value.kind === 'FunctionExpression' &&
       (instr.declarationKind === 'function' ||
-        (!instr.declarationKind && instr.value.name === baseName))
+        (!instr.declarationKind && !instr.isMutation && instr.value.name === baseName))
     if (isFunctionDecl) {
       const loweredFn = lowerExpression(instr.value, ctx)
       if (t.isFunctionExpression(loweredFn)) {
@@ -2513,6 +2513,7 @@ function collectLocalDeclaredNames(
       const isFunctionDecl =
         instr.value.kind === 'FunctionExpression' &&
         !!instr.value.name &&
+        !instr.isMutation &&
         deSSAVarName(instr.value.name) === target
       if (instr.declarationKind || isFunctionDecl) {
         declared.add(target)
@@ -2727,7 +2728,14 @@ function lowerComponentExpressionFunctionValue(
   if (!componentName) return null
   if (value.kind !== 'ArrowFunction' && value.kind !== 'FunctionExpression') return null
   const fn = functionValueToHIRFunction(value, componentName)
-  const lowered = lowerFunctionWithRegions(fn, ctx, { forceComponentContext: true })
+  const prevComponentWrapperName = ctx.componentWrapperName
+  ctx.componentWrapperName = undefined
+  let lowered: BabelCore.types.FunctionDeclaration | null
+  try {
+    lowered = lowerFunctionWithRegions(fn, ctx, { forceComponentContext: true })
+  } finally {
+    ctx.componentWrapperName = prevComponentWrapperName
+  }
   if (!lowered) return null
   return buildFunctionDeclaratorExpression({ fn, stmt: lowered }, ctx.t)
 }
@@ -4088,6 +4096,8 @@ function lowerExpressionImpl(
       return lowerJSXElement(expr, ctx)
 
     case 'ArrowFunction': {
+      const componentLowered = lowerComponentExpressionFunctionValue(expr, ctx)
+      if (componentLowered) return componentLowered
       const reactiveLowered = lowerReactiveScopeExpression(expr)
       if (reactiveLowered) return reactiveLowered
       const paramIds = buildFunctionParams(expr.params, expr.rawParams, ctx)
@@ -4162,6 +4172,8 @@ function lowerExpressionImpl(
     }
 
     case 'FunctionExpression': {
+      const componentLowered = lowerComponentExpressionFunctionValue(expr, ctx)
+      if (componentLowered) return componentLowered
       const reactiveLowered = lowerReactiveScopeExpression(expr)
       if (reactiveLowered) return reactiveLowered
       const paramIds = buildFunctionParams(expr.params, expr.rawParams, ctx)
@@ -6477,7 +6489,7 @@ function lowerInstructionWithScopes(
     const isFunctionDecl =
       instr.value.kind === 'FunctionExpression' &&
       (instr.declarationKind === 'function' ||
-        (!instr.declarationKind && instr.value.name === targetBase))
+        (!instr.declarationKind && !instr.isMutation && instr.value.name === targetBase))
     if (isFunctionDecl) {
       const loweredFn = lowerExpression(instr.value, ctx)
       if (t.isFunctionExpression(loweredFn)) {

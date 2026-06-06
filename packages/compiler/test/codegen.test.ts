@@ -1456,6 +1456,140 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('const app = (0, function App')
   })
 
+  it('lowers assigned identifier arrow components with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      let App: any
+
+      App = () => {
+        const count = $state(1)
+        return <button>{count}</button>
+      }
+
+      export function Parent() {
+        return <App />
+      }
+    `)
+
+    expect(output).toContain('App = () => {')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).toContain('type: App')
+    expect(output).not.toContain('createSignal(1')
+    expect(output).not.toContain('() => count, createElement')
+  })
+
+  it('lowers assigned identifier function components with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      let App: any
+
+      App = function App() {
+        const count = $state(1)
+        return <button>{count}</button>
+      }
+
+      export function Parent() {
+        return <App />
+      }
+    `)
+
+    expect(output).toContain('App = function App()')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('keeps assigned identifier component props reactive', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      let App: any
+
+      App = ({ value }: { value: number }) => <span>{value}</span>
+
+      export function Parent() {
+        const count = $state(1)
+        return <App value={count} />
+      }
+    `)
+
+    expect(output).toContain('const value = prop(() => __props.value)')
+    expect(output).toContain('() => value()')
+    expect(output).toContain('value: __fictProp(() => count())')
+    expect(output).not.toContain('({ value })')
+    expect(output).not.toContain('() => value, createElement')
+  })
+
+  it('lowers conditional assigned identifier components with component semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const flag = true
+      let App: any
+
+      if (flag) {
+        App = () => {
+          const count = $state(1)
+          return <button>{count}</button>
+        }
+      } else {
+        App = () => <span>fallback</span>
+      }
+
+      export function Parent() {
+        return <App />
+      }
+    `)
+
+    expect(output).toContain('App = () => {')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('lowers exported assigned identifier components with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export let App: any
+
+      App = () => {
+        const count = $state(1)
+        return <button>{count}</button>
+      }
+    `)
+
+    expect(output).toContain('export let App')
+    expect(output).toContain('App = () => {')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('does not component-lower assigned identifier functions unused as JSX tags', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      let App: any
+
+      App = () => {
+        const count = $state(1)
+        return <button>{count}</button>
+      }
+
+      export function Parent() {
+        return <div>app</div>
+      }
+    `)
+
+    expect(output).toContain('App = () => {')
+    expect(output).toContain('createSignal(1')
+    expect(output).not.toContain('__fictUseSignal(__fictCtx, 1')
+  })
+
   it('lowers array-literal component spreads to index props', () => {
     const output = transform(`
       import { $state } from 'fict'
