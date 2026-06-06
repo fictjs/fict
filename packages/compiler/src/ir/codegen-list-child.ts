@@ -1027,19 +1027,6 @@ export function buildListCallExpression(
 
     if (Object.keys(overrides).length > 0) {
       if (t.isBlockStatement(callbackExpr.body)) {
-        for (const stmt of callbackExpr.body.body) {
-          if (!t.isVariableDeclaration(stmt) || stmt.kind !== 'const') continue
-          for (const decl of stmt.declarations) {
-            if (!t.isIdentifier(decl.id) || !decl.init) continue
-            const replacement = t.cloneNode(decl.init, true) as BabelCore.types.Expression
-            replaceIdentifiersWithOverrides(replacement, overrides, t, callbackExpr.type, 'body')
-            overrides[decl.id.name] = () =>
-              t.cloneNode(replacement, true) as BabelCore.types.Expression
-          }
-        }
-      }
-
-      if (t.isBlockStatement(callbackExpr.body)) {
         replaceIdentifiersWithOverrides(callbackExpr.body, overrides, t, callbackExpr.type, 'body')
       } else {
         const newBody = t.cloneNode(callbackExpr.body, true) as BabelCore.types.Expression

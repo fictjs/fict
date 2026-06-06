@@ -6484,6 +6484,55 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not inline list callback aliases into render bindings', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      export function App() {
+        const items = [
+          {
+            get value() {
+              log.push('read value')
+              return 'a'
+            },
+          },
+        ]
+        return (
+          <ul>
+            {items.map(item => {
+              const x = item.value
+              return <li data-x={x}>{x}{x}</li>
+            })}
+          </ul>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const item = container.querySelector('li') as HTMLLIElement
+    expect(mod.log).toEqual(['read value'])
+    expect(item.getAttribute('data-x')).toBe('a')
+    expect(item.textContent).toBe('aa')
+
+    teardown()
+    container.remove()
+  })
+
   it('preserves sparse array hole semantics in specialized map children', async () => {
     const source = `
       import { $state, render } from 'fict'

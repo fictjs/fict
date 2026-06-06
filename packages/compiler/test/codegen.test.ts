@@ -1145,6 +1145,29 @@ describe('event handler transformation', () => {
     expect(code).not.toMatch(/const key = makeKey/)
   })
 
+  it('preserves callback-local list aliases in specialized render callbacks', () => {
+    const ast = parseFile(`
+      function List() {
+        const rows = [{ id: 'a', label: 'A' }]
+        return (
+          <ul>
+            {rows.map(row => {
+              const label = row.label
+              return <li key={row.id} data-label={label}>{label}{label}</li>
+            })}
+          </ul>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('createKeyedList')
+    expect(code).toContain('const label = row().label')
+    expect(code.match(/row\(\)\.label/g) ?? []).toHaveLength(1)
+  })
+
   it('falls back when list key aliases are reassigned', () => {
     const ast = parseFile(`
       function List() {
