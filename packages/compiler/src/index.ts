@@ -89,12 +89,12 @@ function hookReturnInfoHasAccessor(info: HookReturnInfoSerializable, key: string
 function pathReadsHookReturnAccessor(
   exprPath: BabelCore.NodePath,
   hookReturnBindingInfo: Map<BabelCore.types.Identifier, HookReturnInfoSerializable>,
-  callbackScope: BabelCore.NodePath['scope'],
+  localScopeToIgnore: BabelCore.NodePath['scope'] | undefined,
   t: typeof BabelCore.types,
 ): boolean {
   if (exprPath.isIdentifier()) {
     const binding = exprPath.scope.getBinding(exprPath.node.name)
-    if (!binding || binding.scope === callbackScope) return false
+    if (!binding || (localScopeToIgnore && binding.scope === localScopeToIgnore)) return false
     const info = hookReturnBindingInfo.get(binding.identifier as BabelCore.types.Identifier)
     return !!info?.directAccessor
   }
@@ -103,7 +103,7 @@ function pathReadsHookReturnAccessor(
   const object = exprPath.node.object
   if (!t.isIdentifier(object)) return false
   const binding = exprPath.scope.getBinding(object.name)
-  if (!binding || binding.scope === callbackScope) return false
+  if (!binding || (localScopeToIgnore && binding.scope === localScopeToIgnore)) return false
   const info = hookReturnBindingInfo.get(binding.identifier as BabelCore.types.Identifier)
   if (!info) return false
   const key = getStaticMemberKeyForDiagnostics(exprPath.node, t)
@@ -962,17 +962,44 @@ function runWarningPass(
     options: CaptureOptions = {},
   ): Set<string> => {
     const captured = new Set<string>()
+    const addHookReturnAccessorCapture = (exprPath: BabelCore.NodePath): boolean => {
+      if (!pathReadsHookReturnAccessor(exprPath, hookReturnBindingInfo, fnPath.scope, t)) {
+        return false
+      }
+      if (exprPath.isIdentifier()) {
+        captured.add(exprPath.node.name)
+        return true
+      }
+      if (exprPath.isMemberExpression() || exprPath.isOptionalMemberExpression()) {
+        const object = exprPath.node.object
+        if (t.isIdentifier(object)) {
+          captured.add(object.name)
+          return true
+        }
+      }
+      return false
+    }
     fnPath.traverse({
       Function(inner) {
         if (inner === fnPath) return
         if (options.includeNestedFunctions) return
         inner.skip()
       },
+      MemberExpression(memberPath) {
+        if (addHookReturnAccessorCapture(memberPath)) memberPath.stop()
+      },
+      OptionalMemberExpression(memberPath) {
+        if (addHookReturnAccessorCapture(memberPath)) memberPath.stop()
+      },
       Identifier(idPath) {
         if (shouldIgnoreIdentifierReference(idPath)) return
         const name = idPath.node.name
         const binding = idPath.scope.getBinding(name)
         if (!binding) return
+        if (addHookReturnAccessorCapture(idPath)) {
+          idPath.stop()
+          return
+        }
         if (!reactiveBindingIds.has(binding.identifier as BabelCore.types.Identifier)) return
         if (binding.scope === idPath.scope || binding.scope === fnPath.scope) return
         captured.add(name)
@@ -1162,6 +1189,10 @@ function runWarningPass(
       return captured.size > 0 ? captured : null
     }
     if (exprPath.isMemberExpression() || exprPath.isOptionalMemberExpression()) {
+      if (pathReadsHookReturnAccessor(exprPath, hookReturnBindingInfo, undefined, t)) {
+        const object = exprPath.node.object
+        return t.isIdentifier(object) ? new Set([object.name]) : null
+      }
       return getCapturedFromMemberExpression(exprPath.node, exprPath, options)
     }
     if (exprPath.isObjectExpression() || exprPath.isArrayExpression()) {
@@ -1181,6 +1212,9 @@ function runWarningPass(
       return captured
     }
     if (!exprPath.isIdentifier()) return null
+    if (pathReadsHookReturnAccessor(exprPath, hookReturnBindingInfo, undefined, t)) {
+      return new Set([exprPath.node.name])
+    }
     const binding = exprPath.scope.getBinding(exprPath.node.name)
     return binding ? getCapturedFromBinding(binding, options) : null
   }
@@ -1635,7 +1669,10 @@ function runWarningPass(
       return argumentHasReactive(inner)
     }
     if (argPath.isIdentifier()) {
-      return hasTrackedBinding(argPath, argPath.node.name, reactiveBindingIds)
+      return (
+        pathReadsHookReturnAccessor(argPath, hookReturnBindingInfo, undefined, t) ||
+        hasTrackedBinding(argPath, argPath.node.name, reactiveBindingIds)
+      )
     }
     if (!argPath.isExpression()) return false
     let found = false
@@ -1643,8 +1680,25 @@ function runWarningPass(
       Function(path) {
         path.skip()
       },
+      MemberExpression(memberPath) {
+        if (pathReadsHookReturnAccessor(memberPath, hookReturnBindingInfo, undefined, t)) {
+          found = true
+          memberPath.stop()
+        }
+      },
+      OptionalMemberExpression(memberPath) {
+        if (pathReadsHookReturnAccessor(memberPath, hookReturnBindingInfo, undefined, t)) {
+          found = true
+          memberPath.stop()
+        }
+      },
       Identifier(idPath) {
         if (shouldIgnoreIdentifierReference(idPath)) return
+        if (pathReadsHookReturnAccessor(idPath, hookReturnBindingInfo, undefined, t)) {
+          found = true
+          idPath.stop()
+          return
+        }
         const binding = idPath.scope.getBinding(idPath.node.name)
         if (binding && reactiveBindingIds.has(binding.identifier as BabelCore.types.Identifier)) {
           found = true

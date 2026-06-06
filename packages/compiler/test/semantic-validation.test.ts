@@ -632,6 +632,61 @@ describe('semantic validation', () => {
     expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-R005/)
   })
 
+  it('warns when hook-return accessors escape unknown call boundaries', () => {
+    const source = `
+      import { $state } from 'fict'
+      function sink(value) {
+        return value
+      }
+      function useBucket() {
+        const count = $state(0)
+        return { count }
+      }
+      function useCount() {
+        const count = $state(1)
+        return count
+      }
+      function App() {
+        const bucket = useBucket()
+        const count = useCount()
+        sink(() => bucket.count)
+        sink(() => count)
+        sink({ value: bucket.count })
+        sink([count])
+        return <div>{bucket.count}</div>
+      }
+    `
+
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
+    expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-R002/)
+  })
+
+  it('does not warn when plain hook-return properties cross unknown call boundaries', () => {
+    const source = `
+      function sink(value) {
+        return value
+      }
+      function usePlain() {
+        return { count: 1 }
+      }
+      function App() {
+        const bucket = usePlain()
+        sink(() => bucket.count)
+        sink({ value: bucket.count })
+        return <div>{bucket.count}</div>
+      }
+    `
+
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-R005')).toBe(false)
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).not.toThrow(/FICT-R002/)
+  })
+
   it('warns when SAFE_FUNCTIONS callees are locally shadowed', () => {
     const cases = [
       `
