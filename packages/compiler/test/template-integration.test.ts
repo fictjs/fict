@@ -504,15 +504,18 @@ describe('compiled templates DOM integration', () => {
     const source = `
       import { render } from 'fict'
 
-      function Greeting({ name = 'Anon' }: { name?: string | null }) {
-        return <span data-testid="name">{name}</span>
+      function Greeting({ value = 'Anon' }: { value?: unknown }) {
+        return <span data-testid="name">{String(value)}</span>
       }
 
       export function mount(el: HTMLElement) {
         return render(() => (
           <>
-            <Greeting name={null} />
-            <Greeting name={undefined} />
+            <Greeting value={null} />
+            <Greeting value={false} />
+            <Greeting value={0} />
+            <Greeting value="" />
+            <Greeting value={undefined} />
             <Greeting />
           </>
         ), el)
@@ -530,7 +533,7 @@ describe('compiled templates DOM integration', () => {
     const names = Array.from(container.querySelectorAll('[data-testid="name"]')).map(
       node => node.textContent,
     )
-    expect(names).toEqual(['', 'Anon', 'Anon'])
+    expect(names).toEqual(['null', 'false', '0', '', 'Anon', 'Anon'])
 
     teardown()
     container.remove()
