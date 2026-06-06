@@ -2270,6 +2270,32 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('keeps query-suffixed imports opaque when base module metadata exists', () => {
+      const moduleMetadata = new Map()
+      const depPath = path.join(baseDir, 'dep.ts')
+      const appPath = path.join(baseDir, 'app-query-import.tsx')
+      moduleMetadata.set(path.resolve(depPath), {
+        exports: {
+          default: 'signal',
+        },
+      })
+
+      const output = transform(
+        `
+          import raw from './dep.ts?raw'
+
+          export function App() {
+            return <div>{raw}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        appPath,
+      )
+
+      expect(output).not.toContain('raw()')
+      expect(output).toContain('raw')
+    })
+
     it('resolves module metadata from sidecar files', () => {
       const hookSource = `
         import { $state } from 'fict'

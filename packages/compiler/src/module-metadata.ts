@@ -131,6 +131,10 @@ function normalizeFileName(fileName: string): string {
   return path.resolve(normalized)
 }
 
+function hasQuerySuffix(source: string): boolean {
+  return source.includes('?')
+}
+
 function resolveMetadataWriteMode(options?: FictCompilerOptions): MetadataWriteMode {
   const opt = options?.emitModuleMetadata
   if (opt === true) return 'adjacent'
@@ -553,6 +557,7 @@ export function resolveModuleMetadata(
     const resolved = options.resolveModuleMetadata(source, importer)
     if (resolved) return resolved
   }
+  if (hasQuerySuffix(source)) return undefined
   const store = getMetadataStore(options)
   const hasExternalMetadataStore = !!options?.moduleMetadata
   // When a caller provides an explicit metadata store, treat it as the source

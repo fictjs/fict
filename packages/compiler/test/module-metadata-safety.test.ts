@@ -612,6 +612,58 @@ describe('module metadata safety', () => {
     }
   })
 
+  it('does not resolve reactive metadata for query-suffixed import sources', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_metadata_query_suffix__')
+    const importer = path.join(baseDir, 'consumer.ts')
+    const queryImporter = `${importer}?import`
+    const depPath = path.join(baseDir, 'dep.ts')
+    const depMetaPath = `${depPath}.fict.meta.json`
+    const moduleMetadata = new Map<string, ModuleReactiveMetadata>([
+      [depPath, { exports: { default: 'signal', value: 'memo' } }],
+    ])
+    mkdirSync(baseDir, { recursive: true })
+
+    try {
+      expect(
+        resolveModuleMetadata('./dep.ts', importer, {
+          emitModuleMetadata: false,
+          moduleMetadata,
+        }),
+      ).toEqual({ exports: { default: 'signal', value: 'memo' } })
+      expect(
+        resolveModuleMetadata('./dep.ts', queryImporter, {
+          emitModuleMetadata: false,
+          moduleMetadata,
+        }),
+      ).toEqual({ exports: { default: 'signal', value: 'memo' } })
+
+      for (const query of ['raw', 'url', 'worker', 'import']) {
+        expect(
+          resolveModuleMetadata(`./dep.ts?${query}`, importer, {
+            emitModuleMetadata: false,
+            moduleMetadata,
+          }),
+        ).toBeUndefined()
+      }
+
+      writeFileSync(depMetaPath, JSON.stringify({ exports: { default: 'signal' } }), 'utf8')
+      expect(
+        resolveModuleMetadata('./dep.ts?raw', importer, {
+          emitModuleMetadata: false,
+        }),
+      ).toBeUndefined()
+    } finally {
+      if (existsSync(depMetaPath)) {
+        rmSync(depMetaPath, { force: true })
+      }
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
   it('invalidates fs probe cache when metadata sidecars are created', () => {
     clearModuleMetadata()
     const baseDir = path.join(process.cwd(), '__fict_metadata_probe_cache__')
