@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 
 import {
   Suspense,
@@ -390,6 +390,156 @@ describe('Suspense', () => {
     await tick()
 
     expect(container.textContent).toBe('ok')
+
+    dispose()
+  })
+
+  it('calls onResolve for each reset pending cycle', async () => {
+    const container = document.createElement('div')
+    const shouldSuspend = createSignal(true)
+    const reset = createSignal(0)
+    const onResolve = vi.fn()
+    let current = createSuspenseToken()
+
+    const Child = () => {
+      if (shouldSuspend()) {
+        throw current.token
+      }
+      return { type: 'span', props: { children: `ready-${reset()}` } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'loading',
+          onResolve,
+          resetKeys: reactive(() => reset()),
+          children: { type: Child, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('loading')
+
+    shouldSuspend(false)
+    current.resolve()
+    await tick()
+    await tick()
+    expect(container.textContent).toBe('ready-0')
+    expect(onResolve).toHaveBeenCalledTimes(1)
+
+    shouldSuspend(true)
+    current = createSuspenseToken()
+    reset(1)
+    await tick()
+    expect(container.textContent).toBe('loading')
+
+    shouldSuspend(false)
+    current.resolve()
+    await tick()
+    await tick()
+    expect(container.textContent).toBe('ready-1')
+    expect(onResolve).toHaveBeenCalledTimes(2)
+
+    shouldSuspend(true)
+    current = createSuspenseToken()
+    reset(2)
+    await tick()
+    expect(container.textContent).toBe('loading')
+
+    shouldSuspend(false)
+    current.resolve()
+    await tick()
+    await tick()
+    expect(container.textContent).toBe('ready-2')
+    expect(onResolve).toHaveBeenCalledTimes(3)
+
+    dispose()
+  })
+
+  it('ignores stale token resolution after resetKeys changes', async () => {
+    const container = document.createElement('div')
+    const shouldSuspend = createSignal(true)
+    const reset = createSignal(0)
+    const onResolve = vi.fn()
+    const stale = createSuspenseToken()
+    let current = stale
+
+    const Child = () => {
+      if (shouldSuspend()) {
+        throw current.token
+      }
+      return { type: 'span', props: { children: 'ready' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'loading',
+          onResolve,
+          resetKeys: reactive(() => reset()),
+          children: { type: Child, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('loading')
+
+    current = createSuspenseToken()
+    reset(1)
+    await tick()
+    expect(container.textContent).toBe('loading')
+
+    stale.resolve()
+    await tick()
+    await tick()
+    expect(container.textContent).toBe('loading')
+    expect(onResolve).not.toHaveBeenCalled()
+
+    shouldSuspend(false)
+    current.resolve()
+    await tick()
+    await tick()
+    expect(container.textContent).toBe('ready')
+    expect(onResolve).toHaveBeenCalledTimes(1)
+
+    dispose()
+  })
+
+  it('does not call onResolve for non-suspending initial or reset renders', async () => {
+    const container = document.createElement('div')
+    const reset = createSignal(0)
+    const onResolve = vi.fn()
+
+    const Child = () => ({ type: 'span', props: { children: `ready-${reset()}` } })
+
+    const dispose = render(
+      () => ({
+        type: Suspense,
+        props: {
+          fallback: 'loading',
+          onResolve,
+          resetKeys: reactive(() => reset()),
+          children: { type: Child, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('ready-0')
+    expect(onResolve).not.toHaveBeenCalled()
+
+    reset(1)
+    await tick()
+    expect(container.textContent).toBe('ready-1')
+    expect(onResolve).not.toHaveBeenCalled()
 
     dispose()
   })

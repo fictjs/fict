@@ -271,6 +271,7 @@ export function Suspense(props: SuspenseProps): FictNode {
         prev = next
         epoch++
         pending(0)
+        resolvedOnce = false
         // Directly render children instead of using switchView
         renderView(props.children ?? null)
         if (streamPending && streamBoundaryId && streamHooks?.boundaryResolved) {
