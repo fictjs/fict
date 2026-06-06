@@ -877,6 +877,103 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('alias.count++')
   })
 
+  it('preserves static plain hook-return object properties in DOM bindings', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useBucket() {
+          const count = $state(1)
+          return { count, plain: 7 }
+        }
+
+        export function App() {
+          const bucket = useBucket()
+          return <span>{bucket.plain}:{bucket.count}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toMatch(/bucket\.plain/)
+    expect(output).not.toMatch(/bucket\.plain\(\)/)
+    expect(output).toMatch(/bucket\.count\(\)/)
+  })
+
+  it('preserves static plain hook-return array slots in DOM bindings', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useBucket() {
+          const count = $state(1)
+          return [count, 7]
+        }
+
+        export function App() {
+          const bucket = useBucket()
+          return <span>{bucket[1]}:{bucket[0]}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toMatch(/bucket\[1\]/)
+    expect(output).not.toMatch(/bucket\[1\]\(\)/)
+    expect(output).toMatch(/bucket\[0\]\(\)/)
+  })
+
+  it('keeps derived locals from plain hook-return properties as plain values', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useBucket() {
+          const count = $state(1)
+          return { count, plain: 7 }
+        }
+
+        export function App() {
+          const bucket = useBucket()
+          const value = bucket.plain
+          return <span title={bucket.plain}>{value}</span>
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toMatch(/bucket\.plain/)
+    expect(output).toMatch(/value/)
+    expect(output).not.toMatch(/bucket\.plain\(\)/)
+    expect(output).not.toMatch(/value\(\)/)
+  })
+
+  it('passes plain hook-return properties to component props without accessor calls', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useBucket() {
+          const count = $state(1)
+          return { count, plain: 7 }
+        }
+
+        function Child(props: { value: number }) {
+          return <span>{props.value}</span>
+        }
+
+        export function App() {
+          const bucket = useBucket()
+          return <Child value={bucket.plain} />
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toMatch(/value: bucket\.plain/)
+    expect(output).not.toMatch(/bucket\.plain\(\)/)
+  })
+
   it('preserves explicit calls to hook return accessor members', () => {
     const ast = parseFile(`
       const useCounter = () => {
