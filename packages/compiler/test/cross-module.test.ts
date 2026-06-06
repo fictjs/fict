@@ -89,6 +89,72 @@ describe('Cross-Module Reactivity', () => {
       }
     })
 
+    it('preserves special string-named hook export metadata keys', () => {
+      const sourcePath = path.join(baseDir, 'special-string-hook-export.tsx')
+      const appPath = path.join(baseDir, 'app-special-string-hook-export.tsx')
+      const moduleMetadata = new Map()
+      const source = `
+        import { $state } from 'fict'
+
+        function useDirect() {
+          const count = $state(1)
+          return count
+        }
+
+        function useObject() {
+          const count = $state(2)
+          return { count }
+        }
+
+        function useArray() {
+          const count = $state(3)
+          return [count]
+        }
+
+        export {
+          useDirect as "__proto__",
+          useObject as "constructor",
+          useArray as "toString",
+          useDirect as normal,
+        }
+      `
+
+      transform(source, { moduleMetadata }, sourcePath)
+
+      const hooks = moduleMetadata.get(path.resolve(sourcePath))?.hooks
+      expect(Object.prototype.hasOwnProperty.call(hooks, '__proto__')).toBe(true)
+      expect(hooks?.['__proto__']).toMatchObject({ directAccessor: 'signal' })
+      expect(hooks?.constructor).toMatchObject({ objectProps: { count: 'signal' } })
+      expect(hooks?.toString).toMatchObject({ arrayProps: { '0': 'signal' } })
+      expect(hooks?.normal).toMatchObject({ directAccessor: 'signal' })
+
+      const output = transform(
+        `
+          import {
+            "__proto__" as useProto,
+            constructor as useCtor,
+            toString as useToString,
+            normal,
+          } from './special-string-hook-export'
+
+          export function App() {
+            const direct = useProto()
+            const object = useCtor()
+            const array = useToString()
+            const ordinary = normal()
+            return <div>{direct}{object.count}{array[0]}{ordinary}</div>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        appPath,
+      )
+
+      expect(output).toContain('direct()')
+      expect(output).toContain('object.count()')
+      expect(output).toContain('array[0]()')
+      expect(output).toContain('ordinary()')
+    })
+
     it('preserves special string-named reactive metadata through star exports', () => {
       const source = `
         import { createMemo } from 'fict'
