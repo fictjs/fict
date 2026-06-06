@@ -2546,6 +2546,60 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('renders dynamic annotation-xml HTML children in the HTML namespace', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const show = true
+        return (
+          <math data-id="math">
+            <annotation-xml encoding="text/html">
+              {show && <mi data-id="html-mi">html</mi>}
+            </annotation-xml>
+            <annotation-xml encoding=" APPLICATION/XHTML+XML ">
+              {show && <><mi data-id="fragment-mi">fragment</mi></>}
+            </annotation-xml>
+            <annotation-xml encoding="application/xml">
+              {show && <mi data-id="math-mi">math</mi>}
+            </annotation-xml>
+          </math>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const output = transformCommonJS(source, { fineGrainedDom: true })
+    expect(output).not.toMatch(/"<mi data-id=\\"html-mi\\">html<\/mi>", void 0, void 0, true/)
+    expect(output).not.toMatch(
+      /"<mi data-id=\\"fragment-mi\\">fragment<\/mi>", void 0, void 0, true/,
+    )
+    expect(output).toMatch(/"<mi data-id=\\"math-mi\\">math<\/mi>", void 0, void 0, true/)
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const htmlMi = container.querySelector('[data-id="html-mi"]') as Element
+    const fragmentMi = container.querySelector('[data-id="fragment-mi"]') as Element
+    const mathMi = container.querySelector('[data-id="math-mi"]') as Element
+
+    expect(htmlMi.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
+    expect(fragmentMi.namespaceURI).toBe('http://www.w3.org/1999/xhtml')
+    expect(mathMi.namespaceURI).toBe('http://www.w3.org/1998/Math/MathML')
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps generated template temps from shadowing source bindings', async () => {
     const cases: Array<{
       source: string

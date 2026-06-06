@@ -40,6 +40,8 @@ export interface TemplateExtractionOps {
   isLikelyTextExpression: (expr: Expression, ctx: CodegenContext) => boolean
 }
 
+type JSXElementAttribute = JSXElementExpression['attributes'][number]
+
 /**
  * Normalize attribute names for special cases.
  */
@@ -158,20 +160,49 @@ function parseKnownEventNameWithModifiers(
   return null
 }
 
+function getStaticStringAttribute(
+  attrs: readonly JSXElementAttribute[] | undefined,
+  name: string,
+): string | null {
+  if (!attrs) return null
+  const expected = name.toLowerCase()
+  for (const attr of attrs) {
+    if (attr.isSpread || attr.name.toLowerCase() !== expected) continue
+    if (attr.value?.kind !== 'Literal' || typeof attr.value.value !== 'string') return null
+    return attr.value.value
+  }
+  return null
+}
+
+function isHtmlAnnotationXmlEncoding(value: string | null): boolean {
+  if (!value) return false
+  const normalized = value.trim().toLowerCase()
+  return normalized === 'text/html' || normalized === 'application/xhtml+xml'
+}
+
 /**
  * Resolve namespace context based on tag name and parent context.
  * - 'svg' enters SVG namespace
  * - 'math' enters MathML namespace
  * - 'foreignObject' inside SVG exits to null (HTML namespace)
+ * - 'annotation-xml' with an HTML encoding inside MathML exits to null
  * - Otherwise inherit from parent context
  */
 export function resolveNamespaceContext(
   tagName: string,
   parentNamespace: NamespaceContext,
+  attrs?: readonly JSXElementAttribute[],
 ): NamespaceContext {
   if (tagName === 'svg') return 'svg'
   if (tagName === 'math') return 'mathml'
   if (tagName === 'foreignObject' && parentNamespace === 'svg') return null
+  if (
+    tagName === 'annotation-xml' &&
+    parentNamespace === 'mathml' &&
+    isHtmlAnnotationXmlEncoding(getStaticStringAttribute(attrs, 'encoding'))
+  ) {
+    return null
+  }
   return parentNamespace
 }
 
@@ -324,7 +355,7 @@ export function extractHIRStaticHtml(
 
   const tagName = jsx.tagName as string
   // Resolve namespace for this element
-  const resolvedNamespace = resolveNamespaceContext(tagName, namespace)
+  const resolvedNamespace = resolveNamespaceContext(tagName, namespace, jsx.attributes)
   const isCustomElement =
     resolvedNamespace === null &&
     (isCustomElementTagName(tagName) || hasExplicitIsAttribute(jsx, resolvedNamespace))

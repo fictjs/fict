@@ -176,6 +176,51 @@ describe('SVG/MathML Namespace Support ()', () => {
       expect(output).toContain('<mi>')
       expect(output).toMatch(/template\([^)]*mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
     })
+
+    it('exits MathML namespace inside annotation-xml with HTML encoding', () => {
+      const source = `
+        import { $state } from 'fict'
+        export function App() {
+          const show = $state(true)
+          return (
+            <math>
+              <annotation-xml encoding="text/html">
+                {show && <mi data-id="html-mi">y</mi>}
+              </annotation-xml>
+              <annotation-xml encoding="APPLICATION/XHTML+XML">
+                {show && <mi data-id="xhtml-mi">z</mi>}
+              </annotation-xml>
+            </math>
+          )
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toContain('<mi data-id=\\"html-mi\\">')
+      expect(output).toContain('<mi data-id=\\"xhtml-mi\\">')
+      expect(output).not.toMatch(/template\([^)]*html-mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
+      expect(output).not.toMatch(/template\([^)]*xhtml-mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
+    })
+
+    it('keeps non-HTML annotation-xml dynamic children in MathML namespace', () => {
+      const source = `
+        import { $state } from 'fict'
+        export function App() {
+          const show = $state(true)
+          return (
+            <math>
+              <annotation-xml encoding="application/xml">
+                {show && <mi data-id="math-mi">y</mi>}
+              </annotation-xml>
+            </math>
+          )
+        }
+      `
+      const output = transform(source)
+
+      expect(output).toContain('<mi data-id=\\"math-mi\\">')
+      expect(output).toMatch(/template\([^)]*math-mi[^)]*,\s*void 0,\s*void 0,\s*true\)/)
+    })
   })
 
   describe('List rendering inside SVG', () => {

@@ -4252,7 +4252,11 @@ function lowerIntrinsicElement(
   const tagName = typeof jsx.tagName === 'string' ? jsx.tagName : null
   const prevNamespace = ctx.namespaceContext
   if (tagName) {
-    const elementNamespace = resolveNamespaceContext(tagName, ctx.namespaceContext ?? null)
+    const elementNamespace = resolveNamespaceContext(
+      tagName,
+      ctx.namespaceContext ?? null,
+      jsx.attributes,
+    )
     ctx.namespaceContext = elementNamespace
   }
 
