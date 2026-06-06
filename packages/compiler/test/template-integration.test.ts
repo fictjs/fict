@@ -1627,6 +1627,73 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('invokes signal and memo held functions through call apply and bind', async () => {
+    const source = `
+      import { $state, createMemo, render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        function local(this: { label: string }, value: string) {
+          calls.push(this.label + ':' + value)
+        }
+
+        let fn = $state((value: string) => calls.push('state:' + value))
+        const memoFn = createMemo(() => (value: string) => calls.push('memo:' + value))
+        let value = $state(123 as any)
+
+        local.call({ label: 'local' }, 'call')
+        fn.call(null, 'call')
+        fn.apply(null, ['apply'])
+        fn.bind(null, 'bind')()
+        fn?.call(null, 'optional')
+        memoFn.call(null, 'call')
+        memoFn.apply(null, ['apply'])
+        memoFn.bind(null, 'bind')()
+        memoFn?.call(null, 'optional')
+
+        try {
+          value.call(null)
+        } catch (error) {
+          calls.push(error instanceof TypeError ? 'value:typeerror' : 'value:error')
+        }
+
+        return <div data-testid="done">done</div>
+      }
+
+      export function mount(el: HTMLElement) {
+        calls.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      calls: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(container.querySelector('[data-testid="done"]')).toBeTruthy()
+    expect(mod.calls).toEqual([
+      'local:call',
+      'state:call',
+      'state:apply',
+      'state:bind',
+      'state:optional',
+      'memo:call',
+      'memo:apply',
+      'memo:bind',
+      'memo:optional',
+      'value:typeerror',
+    ])
+
+    teardown()
+    container.remove()
+  })
+
   it('invokes destructured function props through local aliases', async () => {
     const source = `
       import { render } from 'fict'
