@@ -183,6 +183,24 @@ describe('reactivity guarantee contract', () => {
         error: /FICT-P005/,
       },
       {
+        name: 'class expression static props spread fallback',
+        source: `
+          function Parent() {
+            return <Child {...class Props {
+              static x = 1
+              static [String('y')] = 2
+              static {
+                this.z = 3
+              }
+            }} />
+          }
+          function Child(allProps) {
+            return <div>{allProps.x}{allProps.y}{allProps.z}</div>
+          }
+        `,
+        error: /FICT-P005/,
+      },
+      {
         name: 'direct state argument escape fallback',
         source: `
           import { $state } from 'fict'
