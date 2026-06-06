@@ -933,6 +933,7 @@ export interface RegionLoweringOps {
   lowerExpression: typeof lowerExpression
   propagateHookResultAlias: typeof propagateHookResultAlias
   reserveFunctionLocalName: typeof reservePreferredFunctionLocalName
+  resolveHookReturnMemberAccessorKind: typeof resolveHookReturnMemberAccessorKind
   resolveHookMemberValue: typeof resolveHookMemberValue
 }
 
@@ -1153,6 +1154,7 @@ function createRegionLoweringOps(): RegionLoweringOps {
     lowerExpression,
     propagateHookResultAlias,
     reserveFunctionLocalName: reservePreferredFunctionLocalName,
+    resolveHookReturnMemberAccessorKind,
     resolveHookMemberValue,
   }
 }

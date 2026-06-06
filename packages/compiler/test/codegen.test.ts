@@ -974,6 +974,112 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toMatch(/bucket\.plain\(\)/)
   })
 
+  it('wraps hook-return accessor object members passed as component props', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useBucket() {
+          const count = $state(1)
+          return { count, plain: 7 }
+        }
+
+        function Child(props: { value: number; plain: number }) {
+          return <span>{props.value}:{props.plain}</span>
+        }
+
+        export function App() {
+          const bucket = useBucket()
+          return <Child value={bucket.count} plain={bucket.plain} />
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toMatch(/value: (?:prop|propGetter)\(\(\) => bucket\.count\(\)\)/)
+    expect(output).toMatch(/plain: bucket\.plain/)
+    expect(output).not.toMatch(/value: bucket\.count\(\)/)
+    expect(output).not.toMatch(/bucket\.plain\(\)/)
+  })
+
+  it('wraps hook-return accessor members in component prop spreads', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useBucket() {
+          const count = $state(1)
+          return { count, plain: 7 }
+        }
+
+        function Child(props: { value: number; plain: number }) {
+          return <span>{props.value}:{props.plain}</span>
+        }
+
+        export function App() {
+          const bucket = useBucket()
+          return <Child {...{ value: bucket.count, plain: bucket.plain }} />
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toMatch(/value: (?:prop|propGetter)\(\(\) => bucket\.count\(\)\)/)
+    expect(output).toMatch(/plain: bucket\.plain/)
+    expect(output).not.toMatch(/value: bucket\.count\(\)/)
+    expect(output).not.toMatch(/bucket\.plain\(\)/)
+  })
+
+  it('wraps hook-return accessor array slots passed as component props', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function usePair() {
+          const count = $state(1)
+          return [count, 7]
+        }
+
+        function Child(props: { value: number; plain: number }) {
+          return <span>{props.value}:{props.plain}</span>
+        }
+
+        export function App() {
+          const pair = usePair()
+          return <Child value={pair[0]} plain={pair[1]} />
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toMatch(/value: (?:prop|propGetter)\(\(\) => pair\[0\]\(\)\)/)
+    expect(output).toMatch(/plain: pair\[1\]/)
+    expect(output).not.toMatch(/value: pair\[0\]\(\)/)
+    expect(output).not.toMatch(/pair\[1\]\(\)/)
+  })
+
+  it('keeps hook-return accessor intrinsic attributes live', () => {
+    const output = transform(
+      `
+        import { $state } from 'fict'
+
+        function useBucket() {
+          const count = $state(1)
+          return { count }
+        }
+
+        export function App() {
+          const bucket = useBucket()
+          return <div data-count={bucket.count} />
+        }
+      `,
+      { fineGrainedDom: true },
+    )
+
+    expect(output).toMatch(/\(\) => bucket\.count\(\)/)
+    expect(output).not.toMatch(/data-count[^]*bucket\.count(?!\(\))/)
+  })
+
   it('preserves explicit calls to hook return accessor members', () => {
     const ast = parseFile(`
       const useCounter = () => {

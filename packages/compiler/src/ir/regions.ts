@@ -303,6 +303,9 @@ const propagateHookResultAlias: RegionLoweringOps['propagateHookResultAlias'] = 
   ctx,
 ) => getRegionLoweringOps(ctx).propagateHookResultAlias(targetBase, value, ctx)
 
+const resolveHookReturnMemberAccessorKind: RegionLoweringOps['resolveHookReturnMemberAccessorKind'] =
+  (expr, ctx) => getRegionLoweringOps(ctx).resolveHookReturnMemberAccessorKind(expr, ctx)
+
 const resolveHookMemberValue: RegionLoweringOps['resolveHookMemberValue'] = (expr, ctx) =>
   getRegionLoweringOps(ctx).resolveHookMemberValue(expr, ctx)
 
@@ -929,6 +932,7 @@ export function expressionUsesTracked(expr: Expression, ctx: CodegenContext): bo
     case 'MemberExpression':
     case 'OptionalMemberExpression':
       if (getNamespaceReactiveMemberKind(expr, ctx)) return true
+      if (resolveHookReturnMemberAccessorKind(expr, ctx)) return true
       if (expressionUsesTracked(expr.object as Expression, ctx)) return true
       if (expr.computed && expr.property.kind !== 'Literal') {
         return expressionUsesTracked(expr.property as Expression, ctx)
