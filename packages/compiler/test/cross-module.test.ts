@@ -1379,6 +1379,110 @@ describe('Cross-Module Reactivity', () => {
       expect(output).toMatch(/count\(\)/)
     })
 
+    it('propagates hook return metadata through namespace hook-call wrappers', () => {
+      const hookSource = `
+        import { $state } from 'fict'
+
+        /** @fictReturn { directAccessor: "signal" } */
+        export function useCounter() {
+          const count = $state(0)
+          return count
+        }
+
+        /** @fictReturn { count: "signal" } */
+        export function useObjectCounter() {
+          const count = $state(0)
+          return { count }
+        }
+
+        /** @fictReturn [0: "signal"] */
+        export function useArrayCounter() {
+          const count = $state(0)
+          return [count]
+        }
+      `
+      const wrapperSource = `
+        import * as hooks from './use-counter-namespace-wrapper-source'
+
+        export function useWrapped() {
+          return hooks.useCounter()
+        }
+
+        export function useOptionalWrapped() {
+          return hooks.useCounter?.()
+        }
+
+        export function useObjectWrapped() {
+          return hooks.useObjectCounter()
+        }
+
+        export function useArrayWrapped() {
+          return hooks.useArrayCounter?.()
+        }
+      `
+      const appSource = `
+        import {
+          useArrayWrapped,
+          useObjectWrapped,
+          useOptionalWrapped,
+          useWrapped,
+        } from './namespace-wrapper'
+
+        export function App() {
+          const count = useWrapped()
+          const optional = useOptionalWrapped()
+          const { count: objectCount } = useObjectWrapped()
+          const [arrayCount] = useArrayWrapped()
+          return <div>{count}{optional}{objectCount}{arrayCount}</div>
+        }
+      `
+
+      const moduleMetadata = new Map()
+      const hookPath = path.join(baseDir, 'use-counter-namespace-wrapper-source.tsx')
+      const wrapperPath = path.join(baseDir, 'namespace-wrapper.tsx')
+      transform(hookSource, { moduleMetadata }, hookPath)
+      transform(wrapperSource, { moduleMetadata }, wrapperPath)
+      const output = transform(
+        appSource,
+        { fineGrainedDom: true, moduleMetadata },
+        path.join(baseDir, 'app-namespace-wrapper.tsx'),
+      )
+
+      expect(moduleMetadata.get(path.resolve(wrapperPath))?.hooks).toMatchObject({
+        useWrapped: { directAccessor: 'signal' },
+        useOptionalWrapped: { directAccessor: 'signal' },
+        useObjectWrapped: { objectProps: { count: 'signal' } },
+        useArrayWrapped: { arrayProps: { 0: 'signal' } },
+      })
+      expect(output).toMatch(/count\(\)/)
+      expect(output).toMatch(/optional\(\)/)
+      expect(output).toMatch(/objectCount\(\)/)
+      expect(output).toMatch(/arrayCount\(\)/)
+    })
+
+    it('keeps namespace hook-call wrappers opaque without source metadata', () => {
+      const hookSource = `
+        export function useOpaque() {
+          return { count: 1 }
+        }
+      `
+      const wrapperSource = `
+        import * as hooks from './use-opaque-namespace-wrapper-source'
+
+        export function useWrapped() {
+          return hooks.useOpaque()
+        }
+      `
+
+      const moduleMetadata = new Map()
+      const hookPath = path.join(baseDir, 'use-opaque-namespace-wrapper-source.tsx')
+      const wrapperPath = path.join(baseDir, 'opaque-namespace-wrapper.tsx')
+      transform(hookSource, { moduleMetadata }, hookPath)
+      transform(wrapperSource, { moduleMetadata }, wrapperPath)
+
+      expect(moduleMetadata.get(path.resolve(wrapperPath))?.hooks).toBeUndefined()
+    })
+
     it('propagates hook return metadata through namespace wrapper imports', () => {
       const hookSource = `
         import { $state } from 'fict'

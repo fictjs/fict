@@ -191,6 +191,20 @@ export function analyzeHookReturnInfo(
     const kind = nsMeta.exports[propName]
     return kind === 'signal' || kind === 'memo' ? kind : undefined
   }
+  const namespaceHookCallInfo = (expr: Expression): HookReturnInfo | null => {
+    if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return null
+    const callee = expr.callee
+    if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') {
+      return null
+    }
+    if (callee.object.kind !== 'Identifier') return null
+    const nsMeta = ctx.importedNamespaces?.get(deSSAVarName(callee.object.name))
+    if (!nsMeta?.hooks) return null
+    const propName = getStaticPropName(callee.property as Expression, callee.computed)
+    if (typeof propName !== 'string') return null
+    const hookInfo = nsMeta.hooks[propName]
+    return hookInfo ? deserializeHookReturnInfo(hookInfo) : null
+  }
   const compatibleAccessorKind = (
     left: HookAccessorKind | undefined,
     right: HookAccessorKind | undefined,
@@ -314,11 +328,18 @@ export function analyzeHookReturnInfo(
           info.arrayProps.set(idx, kind!)
         })
       })
-    } else if (
-      (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') &&
-      expr.callee.kind === 'Identifier'
-    ) {
-      copyHookInfo(getHookReturnInfo(expr.callee.name, ctx, ops))
+    } else if (expr.kind === 'CallExpression' || expr.kind === 'OptionalCallExpression') {
+      const namespaceInfo = namespaceHookCallInfo(expr)
+      if (namespaceInfo) {
+        copyHookInfo(namespaceInfo)
+      } else if (expr.callee.kind === 'Identifier') {
+        copyHookInfo(getHookReturnInfo(expr.callee.name, ctx, ops))
+      } else {
+        const kind = returnExprAccessorKind(expr)
+        recordAccessor(kind, () => {
+          info.directAccessor = kind
+        })
+      }
     } else {
       const kind = returnExprAccessorKind(expr)
       recordAccessor(kind, () => {
