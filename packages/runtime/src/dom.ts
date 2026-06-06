@@ -1004,7 +1004,10 @@ function setAttributeNS(el: Element, namespace: string, name: string, value: unk
  * Check if a prop key is an event handler (starts with "on")
  */
 function isEventKey(key: string): boolean {
-  return key.startsWith('on') && key.length > 2 && key[2]!.toUpperCase() === key[2]
+  const marker = key[2]
+  return (
+    key.startsWith('on') && key.length > 2 && marker !== undefined && marker >= 'A' && marker <= 'Z'
+  )
 }
 
 /**

@@ -3920,6 +3920,57 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('wires namespaced on: event handlers in VNode fallback mode', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        return (
+          <section>
+            <button
+              data-id="named"
+              on:click={() => calls.push('named-click')}
+              on:custom-event={() => calls.push('custom')}
+              onClick={() => calls.push('react-click')}
+            >
+              named
+            </button>
+            <div data-id="outer" oncapture:click={() => calls.push('capture')}>
+              <button data-id="inner">inner</button>
+            </div>
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        calls.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      calls: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const named = container.querySelector('[data-id="named"]') as HTMLButtonElement
+    const inner = container.querySelector('[data-id="inner"]') as HTMLButtonElement
+    named.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    named.dispatchEvent(new Event('custom-event', { bubbles: true }))
+    inner.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushUpdates()
+
+    expect(mod.calls).toEqual(['named-click', 'react-click', 'custom', 'capture'])
+
+    teardown()
+    container.remove()
+  })
+
   it('dispatches EventListenerObject handlers in fine-grained mode', async () => {
     const source = `
       import { render } from 'fict'
