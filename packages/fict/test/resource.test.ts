@@ -222,6 +222,137 @@ describe('resource', () => {
     dispose()
   })
 
+  it('retries a pending suspense read after specific-key invalidation', async () => {
+    const resolvers: Array<(value: string) => void> = []
+    const fetcher = vi.fn(
+      ({ signal }) =>
+        new Promise<string>((resolve, reject) => {
+          resolvers.push(resolve)
+          signal.addEventListener('abort', () => {
+            reject(new DOMException('aborted', 'AbortError'))
+          })
+        }),
+    )
+    const r = resource<string, string>({ fetch: fetcher, suspense: true })
+    const container = document.createElement('div')
+
+    const View = () => {
+      const result = r.read('k')
+      return { type: 'span', props: { children: result.data } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense as any,
+        props: {
+          fallback: 'loading',
+          children: { type: View, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('loading')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    r.invalidate('k')
+    await tick()
+    await tick()
+
+    expect(container.textContent).toBe('loading')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+
+    resolvers[0]?.('stale')
+    await tick()
+    expect(container.textContent).toBe('loading')
+
+    resolvers[1]?.('fresh')
+    await tick()
+    await tick()
+    await tick()
+
+    expect(container.textContent).toBe('fresh')
+    dispose()
+  })
+
+  it('retries all pending suspense reads after invalidate-all', async () => {
+    const resolvers: Array<(value: string) => void> = []
+    const fetcher = vi.fn(
+      ({ signal }, key: string) =>
+        new Promise<string>((resolve, reject) => {
+          resolvers.push(resolve)
+          signal.addEventListener('abort', () => {
+            reject(new DOMException(`aborted:${key}`, 'AbortError'))
+          })
+        }),
+    )
+    const r = resource<string, string>({ fetch: fetcher, suspense: true })
+    const container = document.createElement('div')
+
+    const View = () => {
+      const first = r.read('a')
+      const second = r.read('b')
+      return {
+        type: 'span',
+        props: { children: `${first.data}:${second.data}` },
+      }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense as any,
+        props: {
+          fallback: 'loading',
+          children: { type: View, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    await tick()
+    expect(container.textContent).toBe('loading')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+
+    r.invalidate()
+    await tick()
+    await tick()
+
+    expect(container.textContent).toBe('loading')
+    expect(fetcher).toHaveBeenCalledTimes(4)
+
+    resolvers[2]?.('fresh-a')
+    resolvers[3]?.('fresh-b')
+    await tick()
+    await tick()
+    await tick()
+
+    expect(container.textContent).toBe('fresh-a:fresh-b')
+    dispose()
+  })
+
+  it('keeps non-suspense invalidation retry behavior unchanged', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce('first').mockResolvedValueOnce('second')
+    const r = resource<string, string>({ fetch: fetcher })
+    let result: any
+
+    createRoot(() => {
+      result = r.read('k')
+    })
+
+    expect(result.loading).toBe(true)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    r.invalidate('k')
+    await tick()
+    await vi.runAllTimersAsync()
+    await tick()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(result.data).toBe('second')
+  })
+
   it('dedupes concurrent reads for the same key', async () => {
     const fetcher = vi.fn().mockResolvedValue('ok')
     const r = resource(fetcher)

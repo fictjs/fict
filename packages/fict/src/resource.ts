@@ -386,10 +386,17 @@ export function resource<T, Args = void>(
     })
   }
 
+  const resolvePendingToken = (entry: ResourceEntry<T, Args>) => {
+    if (!entry.pendingToken) return
+    entry.pendingToken.resolve()
+    entry.pendingToken = null
+  }
+
   const invalidate = (key?: unknown) => {
     if (key === undefined) {
       cache.forEach(entry => {
         entry.controller?.abort()
+        resolvePendingToken(entry)
         entry.version(entry.version() + 1)
         entry.expiresAt = Date.now() - 1
       })
@@ -399,6 +406,7 @@ export function resource<T, Args = void>(
     const entry = cache.get(key)
     if (entry) {
       entry.controller?.abort()
+      resolvePendingToken(entry)
       entry.version(entry.version() + 1)
       entry.expiresAt = Date.now() - 1
       cache.delete(key)
