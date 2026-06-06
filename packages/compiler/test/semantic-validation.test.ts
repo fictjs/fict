@@ -504,6 +504,77 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
   })
 
+  it('warns when passing JSX with reactive values to unknown functions', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        function Child(props) {
+          return <span>{props.value}</span>
+        }
+        function sink(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          sink(<Child value={count} />)
+          return <div />
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function sink(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          sink({ vnode: <div>{count}</div> })
+          return <div />
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        function Child(props) {
+          return <span>{props.value}</span>
+        }
+        function sink(value) {
+          return value
+        }
+        function App() {
+          let count = $state(0)
+          sink(<Child {...{ value: count }} />)
+          return <div />
+        }
+      `,
+    ]
+
+    for (const source of cases) {
+      const warnings: Array<{ code: string }> = []
+      transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+      expect(warnings.some(w => w.code === 'FICT-R002')).toBe(true)
+      expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-R002/)
+    }
+  })
+
+  it('warns FICT-R005 for JSX callback props escaping unknown functions', () => {
+    const source = `
+      import { $state } from 'fict'
+      function sink(value) {
+        return value
+      }
+      function App() {
+        let count = $state(0)
+        sink(<button onClick={() => count}>go</button>)
+        return <div />
+      }
+    `
+
+    const warnings: Array<{ code: string }> = []
+    transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    expect(warnings.some(w => w.code === 'FICT-R002')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-R005')).toBe(true)
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-R005/)
+  })
+
   it('warns when SAFE_FUNCTIONS callees are locally shadowed', () => {
     const cases = [
       `

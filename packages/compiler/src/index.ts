@@ -925,6 +925,19 @@ function runWarningPass(
     if (exprPath.isObjectExpression() || exprPath.isArrayExpression()) {
       return getCapturedFromInlineSlots(exprPath, options)
     }
+    if (exprPath.isJSXElement() || exprPath.isJSXFragment()) {
+      let captured: Set<string> | null = null
+      exprPath.traverse({
+        Function(fnPath) {
+          const fnCaptured = collectCapturedReactiveNames(fnPath, options)
+          if (fnCaptured.size > 0) {
+            captured = mergeCapturedSets(captured, fnCaptured)
+          }
+          fnPath.skip()
+        },
+      })
+      return captured
+    }
     if (!exprPath.isIdentifier()) return null
     const binding = exprPath.scope.getBinding(exprPath.node.name)
     return binding ? getCapturedFromBinding(binding, options) : null
@@ -1379,7 +1392,6 @@ function runWarningPass(
       const inner = argPath.get('argument') as BabelCore.NodePath
       return argumentHasReactive(inner)
     }
-    if (argPath.isJSXElement() || argPath.isJSXFragment()) return false
     if (argPath.isIdentifier()) {
       return hasTrackedBinding(argPath, argPath.node.name, reactiveBindingIds)
     }
@@ -1387,12 +1399,6 @@ function runWarningPass(
     let found = false
     argPath.traverse({
       Function(path) {
-        path.skip()
-      },
-      JSXElement(path) {
-        path.skip()
-      },
-      JSXFragment(path) {
         path.skip()
       },
       Identifier(idPath) {
