@@ -866,6 +866,30 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
   })
 
+  it('warns when runtime createMemo contains side-effectful calls (FICT-M003)', () => {
+    const cases = [
+      `
+        import { createMemo } from '@fictjs/runtime'
+        const value = createMemo(() => {
+          fetch('/api')
+          return 1
+        })
+      `,
+      `
+        import { createMemo as memo } from '@fictjs/runtime'
+        const value = memo(() => {
+          fetch('/api')
+          return 1
+        })
+      `,
+    ]
+
+    for (const input of cases) {
+      const { warnings } = transformWithWarnings(input)
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+    }
+  })
+
   it('warns when memo contains side-effectful optional calls (FICT-M003)', () => {
     const cases = [
       "fetch?.('/api')",
@@ -1315,6 +1339,15 @@ describe('Spec rule coverage', () => {
         const value = $memo(() => 1)
         return <div>{value}</div>
       }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+  })
+
+  it('warns when runtime createMemo has no reactive dependencies (FICT-M001)', () => {
+    const { warnings } = transformWithWarnings(`
+      import { createMemo } from '@fictjs/runtime'
+      const value = createMemo(() => 1)
     `)
 
     expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)

@@ -2529,6 +2529,13 @@ function createHIREntrypointVisitor(
                     }
                   }
                 }
+                if (isRuntimeSource && importedName === 'createMemo') {
+                  fictImports.add(importedName)
+                  if (t.isIdentifier(spec.local)) {
+                    memoMacroNames.add(spec.local.name)
+                    addImportBinding(macroBindingIds.memo, spec.local.name)
+                  }
+                }
                 if (source === 'fict/plus' && importedName === '$store') {
                   fictImports.add(importedName)
                   if (t.isIdentifier(spec.local)) {
