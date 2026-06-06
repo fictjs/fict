@@ -352,13 +352,14 @@ export function callEventHandler(
   data?: unknown,
   dataOnly = false,
   plainThis = false,
+  hasDataOverride?: boolean,
 ): void {
   if (!handler) return
 
   const context = plainThis
     ? undefined
     : ((node ?? event.currentTarget ?? undefined) as EventTarget | undefined)
-  const hasData = dataOnly || data !== undefined
+  const hasData = hasDataOverride ?? (dataOnly || data !== undefined)
   const invoke = (fn: EventListenerOrEventListenerObject | null | undefined): void => {
     if (typeof fn === 'function') {
       const result = !hasData
@@ -1519,13 +1520,22 @@ function globalEventHandler(e: Event): void {
       // Wrap event handler calls in batch for synchronous flush & reduced microtasks
       batch(() => {
         if (typeof handler === 'function') {
-          callEventHandler(handler, e, node, hasData ? resolvedNodeData : undefined)
+          callEventHandler(
+            handler,
+            e,
+            node,
+            hasData ? resolvedNodeData : undefined,
+            false,
+            false,
+            hasData,
+          )
         } else if (Array.isArray(handler)) {
           const tuple = handler as EventHandlerTuple
           const tupleHandler = resolveEventHandlerValue(
             tuple[0] as EventListenerOrEventListenerObject | null | undefined,
           )
-          const tupleData = resolveEventData(tuple[1], e)
+          const tupleHasData = tuple.length > 1
+          const tupleData = tupleHasData ? resolveEventData(tuple[1], e) : undefined
           const tupleMarker = tuple[2]
           callEventHandler(
             tupleHandler,
@@ -1535,6 +1545,7 @@ function globalEventHandler(e: Event): void {
             tupleMarker === DELEGATED_DATA_ONLY_MARKER ||
               tupleMarker === DELEGATED_DATA_PLAIN_MARKER,
             tupleMarker === DELEGATED_DATA_PLAIN_MARKER,
+            tupleHasData,
           )
         }
       })
@@ -1736,7 +1747,8 @@ function createEventInvoker(
         const resolvedHandler = resolveEventHandlerValue(
           handler[0] as EventListenerOrEventListenerObject | null | undefined,
         )
-        const data = resolveEventData(handler[1], event)
+        const hasData = handler.length > 1
+        const data = hasData ? resolveEventData(handler[1], event) : undefined
         callEventHandler(
           resolvedHandler,
           event,
@@ -1744,6 +1756,7 @@ function createEventInvoker(
           data,
           handler[2] === DELEGATED_DATA_ONLY_MARKER || handler[2] === DELEGATED_DATA_PLAIN_MARKER,
           handler[2] === DELEGATED_DATA_PLAIN_MARKER,
+          hasData,
         )
         return
       }

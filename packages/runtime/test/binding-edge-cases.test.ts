@@ -1821,6 +1821,55 @@ describe('Binding Edge Cases', () => {
       expect(handler).toHaveBeenCalledWith(data, expect.any(Event))
     })
 
+    it('passes undefined as explicit plain tuple data', () => {
+      const el = document.createElement('button')
+      const handler = vi.fn()
+      container.appendChild(el)
+      delegateEvents(['click'])
+
+      addEventListener(el, 'click', [handler, undefined] as any, true)
+
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(handler).toHaveBeenCalledWith(undefined, expect.any(Event))
+    })
+
+    it('passes undefined returned by tuple data getters', () => {
+      const el = document.createElement('button')
+      const handler = vi.fn()
+      container.appendChild(el)
+      delegateEvents(['click'])
+
+      addEventListener(el, 'click', [handler, () => undefined] as any, true)
+
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(handler).toHaveBeenCalledWith(undefined, expect.any(Event))
+    })
+
+    it('treats missing tuple data as no data', () => {
+      const el = document.createElement('button')
+      const handler = vi.fn()
+      container.appendChild(el)
+      delegateEvents(['click'])
+
+      addEventListener(el, 'click', [handler] as any, true)
+
+      const event = new Event('click', { bubbles: true })
+      el.dispatchEvent(event)
+      expect(handler).toHaveBeenCalledWith(event)
+    })
+
+    it.each([null, false, 0])('keeps %s as explicit tuple data', data => {
+      const el = document.createElement('button')
+      const handler = vi.fn()
+      container.appendChild(el)
+      delegateEvents(['click'])
+
+      addEventListener(el, 'click', [handler, data] as any, true)
+
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(handler).toHaveBeenCalledWith(data, expect.any(Event))
+    })
+
     it('handles compiler-tagged delegated data without adding the event argument', () => {
       const el = document.createElement('button')
       const data = { id: 123 }

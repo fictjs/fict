@@ -975,6 +975,24 @@ describe('event handler transformation', () => {
     )
   })
 
+  it('preserves undefined delegated event payloads as tuple data', () => {
+    const ast = parseFile(`
+      function Button() {
+        function select(value) {
+          return value
+        }
+        return <button onClick={() => select(undefined)}>Pick</button>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(
+      /addEventListener\([^,]+,\s*"click",\s*\[select,\s*__fictReactive\(\(\) => undefined\),\s*"__fictDataOnlyPlain"\],\s*true\)/,
+    )
+  })
+
   it('keeps optional key member aliases optimized in keyed lists', () => {
     const ast = parseFile(`
       function Table() {
