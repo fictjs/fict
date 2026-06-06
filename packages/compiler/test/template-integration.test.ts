@@ -905,6 +905,69 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves static hook member write ordering before template reads', () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export const log: string[] = []
+
+      function useThing() {
+        let count = $state(1)
+        return { count }
+      }
+
+      function App() {
+        const assigned = useThing()
+        const assignValue = (() => {
+          log.push('assign')
+          return 2
+        })()
+        assigned.count = assignValue
+
+        const compounded = useThing()
+        let compoundValue = (() => {
+          log.push('compound')
+          return 2
+        })()
+        compounded.count += compoundValue
+
+        const plain = { count: 1 }
+        const plainValue = 4
+        plain.count = plainValue
+
+        return (
+          <div>
+            <span data-testid="assigned">{assigned.count}</span>
+            <span data-testid="compounded">{compounded.count}</span>
+            <span data-testid="plain">{plain.count}</span>
+            <span data-testid="log">{log.join(',')}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      log: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="assigned"]')?.textContent).toBe('2')
+    expect(container.querySelector('[data-testid="compounded"]')?.textContent).toBe('3')
+    expect(container.querySelector('[data-testid="plain"]')?.textContent).toBe('4')
+    expect(container.querySelector('[data-testid="log"]')?.textContent).toBe('assign,compound')
+    expect(mod.log).toEqual(['assign', 'compound'])
+
+    teardown()
+    container.remove()
+  })
+
   it('throws impure reactive derived declaration initializers at declaration time', () => {
     const source = `
       import { $state, render } from 'fict'
