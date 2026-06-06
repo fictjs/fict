@@ -189,4 +189,62 @@ describe('region output runtime regressions', () => {
 
     expect(result).toBe('2:5:8:8:undefined:6:6')
   })
+
+  it('preserves member writes to mutable derived objects and arrays', () => {
+    const exports = compileModule(`
+      import { $state } from 'fict'
+
+      export function useProbe() {
+        const a = $state(1)
+
+        let obj = { v: a(), count: a() }
+        obj.v = 2
+        const compound = (obj.count += 4)
+        const updated = obj.count++
+        const deleted = delete obj.v
+
+        let arr = [a()]
+        arr[0] = 3
+        const arrCompound = (arr[0] += 4)
+        const arrUpdated = arr[0]++
+
+        return [
+          deleted,
+          'v' in obj,
+          obj.v,
+          compound,
+          updated,
+          obj.count,
+          arrCompound,
+          arrUpdated,
+          arr[0],
+        ].map(value => String(value)).join(':')
+      }
+    `)
+
+    const result = runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () =>
+      (exports.useProbe as () => string)(),
+    )
+
+    expect(result).toBe('true:false:undefined:5:5:6:7:7:8')
+  })
+
+  it('keeps unmutated derived object reads intact', () => {
+    const exports = compileModule(`
+      import { $state } from 'fict'
+
+      export function useProbe() {
+        const a = $state(1)
+        const obj = { v: a() }
+        const arr = [a()]
+        return String(obj.v) + ':' + String(arr[0])
+      }
+    `)
+
+    const result = runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () =>
+      (exports.useProbe as () => string)(),
+    )
+
+    expect(result).toBe('1:1')
+  })
 })
