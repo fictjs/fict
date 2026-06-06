@@ -208,6 +208,28 @@ const reportUnsupportedExpression = (
   })
 }
 
+const reportUserFacingUnsupportedExpression = (
+  node: BabelCore.types.Node,
+  message: string,
+): never => {
+  const loc = getLoc(node)
+  const line = loc?.start.line ?? 0
+  const column = loc ? loc.start.column + 1 : 0
+  const fileName = activeBuildOptions?.fileName ?? '<unknown>'
+
+  if (activeBuildOptions?.onWarn) {
+    activeBuildOptions.onWarn({
+      code: 'FICT-HIR-UNSUPPORTED',
+      message,
+      fileName,
+      line,
+      column,
+    })
+  }
+
+  throw new Error(message)
+}
+
 function unsupportedTypeScriptRuntimeDeclarationMessage(node: BabelCore.types.Node): string | null {
   if (t.isTSEnumDeclaration(node) && !node.declare) {
     return 'TypeScript enum declarations must be lowered by TypeScript before Fict compilation.'
@@ -926,9 +948,9 @@ function appendJSXChild(
   }
 
   if (t.isJSXSpreadChild(child)) {
-    return reportUnsupportedExpression(
+    return reportUserFacingUnsupportedExpression(
       child,
-      'JSX spread children are not supported in HIR conversion.',
+      'JSX spread children are not supported. Use an expression child like {children} or map the values explicitly.',
     )
   }
 

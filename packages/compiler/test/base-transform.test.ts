@@ -150,6 +150,51 @@ describe('createFictPlugin (HIR)', () => {
       ).toThrow('$state() cannot be declared inside loops or conditionals')
     })
 
+    it.each([
+      [
+        'intrinsic',
+        `
+          export function App() {
+            const kids = ['a', 'b']
+            return <div>{...kids}</div>
+          }
+        `,
+      ],
+      [
+        'component',
+        `
+          function Child(props: any) {
+            return <div>{props.children}</div>
+          }
+
+          export function App() {
+            const kids = ['a']
+            return <Child>{...kids}</Child>
+          }
+        `,
+      ],
+      [
+        'fragment',
+        `
+          export function App() {
+            const kids = ['a']
+            return <>{...kids}</>
+          }
+        `,
+      ],
+    ])('throws a source-level error for JSX spread children: %s', (_name, input) => {
+      let message = ''
+      try {
+        transform(input)
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error)
+      }
+
+      expect(message).toContain('JSX spread children are not supported')
+      expect(message).not.toContain('[HIR]')
+      expect(message).not.toContain('HIR conversion')
+    })
+
     it('throws on $effect inside loops or conditionals', () => {
       expect(() =>
         transform(`
