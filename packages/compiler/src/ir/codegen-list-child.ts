@@ -762,6 +762,89 @@ function hasUnsupportedMapCallbackParams(expr: Expression, ctx: CodegenContext):
   return false
 }
 
+function getMutationTargetRootName(expr: Expression): string | null {
+  let current = expr
+  while (current.kind === 'MemberExpression' || current.kind === 'OptionalMemberExpression') {
+    current = current.object
+  }
+  return current.kind === 'Identifier' ? deSSAVarName(current.name) : null
+}
+
+function expressionMutatesAnyName(expr: Expression, names: Set<string>): boolean {
+  let mutates = false
+  walkExpression(
+    expr,
+    node => {
+      if (mutates) return
+      if (node.kind === 'AssignmentExpression') {
+        const root = getMutationTargetRootName(node.left)
+        if (root && names.has(root)) mutates = true
+      } else if (node.kind === 'UpdateExpression') {
+        const root = getMutationTargetRootName(node.argument)
+        if (root && names.has(root)) mutates = true
+      }
+    },
+    { includeFunctionBodies: false },
+  )
+  return mutates
+}
+
+function callbackMutatesParameters(callback: Expression): boolean {
+  if (callback.kind !== 'ArrowFunction' && callback.kind !== 'FunctionExpression') return false
+  const paramNames = new Set(callback.params.map(param => deSSAVarName(param.name)))
+  if (paramNames.size === 0) return false
+
+  const expressionMutatesParams = (expr: Expression): boolean =>
+    expressionMutatesAnyName(expr, paramNames)
+
+  if (callback.kind === 'ArrowFunction' && callback.isExpression && !Array.isArray(callback.body)) {
+    return expressionMutatesParams(callback.body)
+  }
+
+  for (const block of getCallbackBlocks(callback)) {
+    for (const instr of block.instructions) {
+      if (instr.kind === 'Assign' && paramNames.has(deSSAVarName(instr.target.name))) {
+        return true
+      }
+      if (
+        (instr.kind === 'Assign' || instr.kind === 'Expression') &&
+        expressionMutatesParams(instr.value)
+      ) {
+        return true
+      }
+    }
+
+    const term = block.terminator
+    switch (term.kind) {
+      case 'Return':
+        if (term.argument && expressionMutatesParams(term.argument)) return true
+        break
+      case 'Throw':
+        if (expressionMutatesParams(term.argument)) return true
+        break
+      case 'Branch':
+        if (expressionMutatesParams(term.test)) return true
+        break
+      case 'Switch':
+        if (expressionMutatesParams(term.discriminant)) return true
+        for (const switchCase of term.cases) {
+          if (switchCase.test && expressionMutatesParams(switchCase.test)) return true
+        }
+        break
+      case 'ForOf':
+        if (expressionMutatesParams(term.iterable)) return true
+        break
+      case 'ForIn':
+        if (expressionMutatesParams(term.object)) return true
+        break
+      default:
+        break
+    }
+  }
+
+  return false
+}
+
 /**
  * Build a list binding call expression (array.map).
  */
@@ -809,6 +892,7 @@ export function buildListCallExpression(
     return null
   }
   if (hasUnsupportedMapCallbackParams(mapCallback, ctx)) return null
+  if (callbackMutatesParameters(mapCallback)) return null
   if (isDefinitelyNonCallableMapCallback(mapCallback)) return null
   const extractedKeyExpr = extractKeyFromMapCallback(mapCallback)
   const keyAliasDeclarations = extractedKeyExpr

@@ -3286,6 +3286,52 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves map callback parameter mutation semantics', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export function App() {
+        const items = [1]
+
+        return (
+          <div>
+            {items.map(item => {
+              item = item + 1
+              return <span data-id="assign" key="assign">{item}</span>
+            })}
+            {items.map(item => {
+              item++
+              return <span data-id="postfix" key="postfix">{item}</span>
+            })}
+            {items.map((item, index) => {
+              index = index + 10
+              return <span data-id="index" key="index">{index}</span>
+            })}
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    await flushUpdates()
+
+    expect(container.querySelector('[data-id="assign"]')?.textContent).toBe('2')
+    expect(container.querySelector('[data-id="postfix"]')?.textContent).toBe('2')
+    expect(container.querySelector('[data-id="index"]')?.textContent).toBe('10')
+
+    teardown()
+    container.remove()
+  })
+
   it('renders repeated local JSX helper calls without collapsing DOM nodes', async () => {
     const source = `
       import { render } from 'fict'

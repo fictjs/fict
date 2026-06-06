@@ -211,6 +211,55 @@ describe('Fict Compiler - Control Flow', () => {
       expect(output).toContain('if (user.id > 1)')
     })
 
+    it('falls back when map callbacks assign item parameters', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let items = $state([1])
+          return (
+            <ul>
+              {items.map(item => {
+                item = item + 1
+                return <li key={item}>{item}</li>
+              })}
+            </ul>
+          )
+        }
+      `
+
+      const output = runTransform(input)
+      expect(output).not.toContain('createKeyedList')
+      expect(output).toContain('items().map')
+      expect(output).toContain('item = item + 1')
+      expect(output).not.toContain('item() =')
+    })
+
+    it('falls back when map callbacks update item or index parameters', () => {
+      const input = `
+        import { $state } from 'fict'
+        function Component() {
+          let items = $state([1])
+          return (
+            <ul>
+              {items.map((item, index) => {
+                item++
+                ++index
+                return <li key={index}>{item}:{index}</li>
+              })}
+            </ul>
+          )
+        }
+      `
+
+      const output = runTransform(input)
+      expect(output).not.toContain('createKeyedList')
+      expect(output).toContain('items().map')
+      expect(output).toContain('item++')
+      expect(output).toContain('++index')
+      expect(output).not.toContain('item()++')
+      expect(output).not.toContain('++index()')
+    })
+
     it('handles list without key via keyed list with index keys', () => {
       const input = `
         import { $state } from 'fict'
