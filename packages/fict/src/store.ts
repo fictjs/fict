@@ -285,6 +285,10 @@ export function $store<T extends object>(initialValue: T): T {
 
       // If the value is an object/array, we recursively wrap it in a store
       if (typeof currentValue === 'object' && currentValue !== null) {
+        if (mustReturnExactDataValue(target, prop)) {
+          return currentValue
+        }
+
         return $store(currentValue as Record<string, unknown>)
       }
 

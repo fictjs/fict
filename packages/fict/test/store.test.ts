@@ -635,6 +635,85 @@ describe('$store', () => {
     expect(seen).toEqual(['3:3', '1:undefined'])
   })
 
+  it('returns frozen object-valued properties without deep wrapping', () => {
+    const child = { value: 1 }
+    const raw = Object.freeze({ child })
+    const state = $store(raw)
+
+    expect(state.child).toBe(child)
+    expect(state.child.value).toBe(1)
+  })
+
+  it('returns descriptor-defined read-only object properties without deep wrapping', () => {
+    const child = { value: 1 }
+    const raw: { child?: { value: number } } = {}
+    Object.defineProperty(raw, 'child', {
+      value: child,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    })
+    const state = $store(raw as { child: { value: number } })
+
+    expect(state.child).toBe(child)
+    expect(state.child.value).toBe(1)
+  })
+
+  it('returns descriptor-defined read-only array properties without deep wrapping', () => {
+    const items = [1, 2]
+    const raw: { items?: number[] } = {}
+    Object.defineProperty(raw, 'items', {
+      value: items,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    })
+    const state = $store(raw as { items: number[] })
+
+    expect(state.items).toBe(items)
+    expect(state.items[0]).toBe(1)
+  })
+
+  it('keeps mutable object-valued properties deeply reactive', async () => {
+    const raw = { child: { value: 1 } }
+    const state = $store(raw)
+    const seen: number[] = []
+
+    expect(state.child).not.toBe(raw.child)
+
+    createEffect(() => {
+      seen.push(state.child.value)
+    })
+
+    state.child.value = 2
+    await tick()
+
+    expect(seen).toEqual([1, 2])
+  })
+
+  it('does not claim deep reactivity for invariant-forced raw nested objects', async () => {
+    const child = { value: 1 }
+    const raw: { child?: { value: number } } = {}
+    Object.defineProperty(raw, 'child', {
+      value: child,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    })
+    const state = $store(raw as { child: { value: number } })
+    const seen: number[] = []
+
+    createEffect(() => {
+      seen.push(state.child.value)
+    })
+
+    child.value = 2
+    await tick()
+
+    expect(state.child).toBe(child)
+    expect(seen).toEqual([1])
+  })
+
   describe('Method binding and cache invalidation', () => {
     it('returns frozen function properties without binding', () => {
       const fn = () => 'ok'
