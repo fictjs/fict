@@ -44,12 +44,41 @@ describe('Hook Return Annotation (@fictReturn)', () => {
       expect(result?.objectProps?.get('0')).toBe('signal')
     })
 
+    it('parses multiline object return annotation', () => {
+      const node = createAnnotatedNode(`*
+       * @fictReturn {
+       *   count: 'signal',
+       *   double: 'memo'
+       * }
+       * Additional text.
+       `)
+
+      const result = parseFictReturnAnnotation(node)
+      expect(result).not.toBeNull()
+      expect(result?.objectProps?.get('count')).toBe('signal')
+      expect(result?.objectProps?.get('double')).toBe('memo')
+    })
+
     it('parses array return annotation', () => {
       const node = createAnnotatedNode('* @fictReturn [0: signal, 1: memo] ')
 
       const result = parseFictReturnAnnotation(node)
       expect(result).not.toBeNull()
       expect(result?.arrayProps).toBeDefined()
+      expect(result?.arrayProps?.get(0)).toBe('signal')
+      expect(result?.arrayProps?.get(1)).toBe('memo')
+    })
+
+    it('parses multiline array return annotation', () => {
+      const node = createAnnotatedNode(`*
+       * @fictReturn [
+       *   0: 'signal',
+       *   1: 'memo'
+       * ]
+       `)
+
+      const result = parseFictReturnAnnotation(node)
+      expect(result).not.toBeNull()
       expect(result?.arrayProps?.get(0)).toBe('signal')
       expect(result?.arrayProps?.get(1)).toBe('memo')
     })
@@ -84,6 +113,18 @@ describe('Hook Return Annotation (@fictReturn)', () => {
 
     it('parses direct accessor annotation - signal', () => {
       const node = createAnnotatedNode("* @fictReturn 'signal' ")
+
+      const result = parseFictReturnAnnotation(node)
+      expect(result).not.toBeNull()
+      expect(result?.directAccessor).toBe('signal')
+    })
+
+    it('parses direct accessor annotation with surrounding JSDoc text', () => {
+      const node = createAnnotatedNode(`*
+       * Hook result metadata.
+       * @fictReturn "signal"
+       * Other docs.
+       `)
 
       const result = parseFictReturnAnnotation(node)
       expect(result).not.toBeNull()

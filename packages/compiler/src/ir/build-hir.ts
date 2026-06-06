@@ -541,6 +541,66 @@ export interface ParsedFictReturn {
   directAccessor?: 'signal' | 'memo'
 }
 
+function normalizeJSDocComment(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map(line => line.replace(/^\s*\*\s?/, '').trimEnd())
+    .join('\n')
+}
+
+function extractBalancedFictReturnPayload(
+  rest: string,
+  open: string,
+  close: string,
+): string | null {
+  let quote: '"' | "'" | null = null
+  let escaped = false
+  let depth = 0
+
+  for (let i = 0; i < rest.length; i++) {
+    const char = rest[i]
+    if (!char) continue
+
+    if (quote) {
+      if (escaped) {
+        escaped = false
+      } else if (char === '\\') {
+        escaped = true
+      } else if (char === quote) {
+        quote = null
+      }
+      continue
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char
+      continue
+    }
+    if (char === open) {
+      depth++
+      continue
+    }
+    if (char === close) {
+      depth--
+      if (depth === 0) return rest.slice(0, i + 1).trim()
+    }
+  }
+
+  return null
+}
+
+function extractFictReturnPayload(commentValue: string): string | null {
+  const normalized = normalizeJSDocComment(commentValue)
+  const markerIndex = normalized.indexOf('@fictReturn')
+  if (markerIndex < 0) return null
+
+  const rest = normalized.slice(markerIndex + '@fictReturn'.length).trimStart()
+  if (!rest) return null
+  if (rest.startsWith('{')) return extractBalancedFictReturnPayload(rest, '{', '}')
+  if (rest.startsWith('[')) return extractBalancedFictReturnPayload(rest, '[', ']')
+  return rest.split(/\r?\n/, 1)[0]?.trim() ?? null
+}
+
 /**
  * Parse @fictReturn JSDoc annotation from one or more nodes.
  *
@@ -563,11 +623,7 @@ export function parseFictReturnAnnotation(
     if (!current) continue
     const comments = current.leadingComments ?? []
     for (const comment of comments) {
-      // Match @fictReturn annotation
-      const match = comment.value.match(/@fictReturn\s+(.+?)(?:\s*\*\/|\s*$|\n)/s)
-      if (!match) continue
-
-      const content = match[1]?.trim()
+      const content = extractFictReturnPayload(comment.value)
       if (!content) continue
 
       // Direct accessor: 'signal' or 'memo'
