@@ -248,6 +248,30 @@ export function emitResumableEventBinding(
     return false
   }
 
+  if (t.isIdentifier(valueExpr)) {
+    const name = valueExpr.name
+    const isFunctionLocal = ctx.currentFunctionDeclaredNames?.has(name) ?? false
+    const isModuleBinding = !isFunctionLocal && (ctx.moduleDeclaredNames?.has(name) ?? false)
+    const kind = ctx.moduleBindingKinds?.get(name) ?? 'unknown'
+    const isStableModuleBinding = kind === 'const' || kind === 'function' || kind === 'class'
+
+    if (isModuleBinding && !isStableModuleBinding) {
+      if (options?.explicit) {
+        const loc = expr.loc?.start
+        throw new HIRError(
+          `Resumable event handlers cannot use mutable module handler identifiers because they are read at event time instead of render time. Use a module const/function binding or remove '$' suffix.`,
+          'BUILD_ERROR',
+          {
+            file: ctx.options?.filename ?? '<unknown>',
+            line: loc?.line,
+            variable: name,
+          },
+        )
+      }
+      return false
+    }
+  }
+
   const ensureHandlerParam = (fn: BabelCore.types.Expression): BabelCore.types.Expression => {
     if (t.isArrowFunctionExpression(fn)) {
       return fn

@@ -667,6 +667,15 @@ function withNoMemoAndDynamicHooks<T>(ctx: CodegenContext, fn: () => T): T {
   }
 }
 
+export type ModuleBindingKind =
+  | 'const'
+  | 'let'
+  | 'var'
+  | 'function'
+  | 'class'
+  | 'import'
+  | 'unknown'
+
 /**
  * Codegen context for tracking state during code generation
  */
@@ -676,6 +685,8 @@ export interface CodegenContext {
   options?: FictCompilerOptions | undefined
   /** Module-level declared names for helper shadowing checks. */
   moduleDeclaredNames?: Set<string> | undefined
+  /** Module-level binding kinds for resumable stability checks. */
+  moduleBindingKinds?: Map<string, ModuleBindingKind> | undefined
   /** Module-level runtime helper imports (e.g., from 'fict'). */
   moduleRuntimeNames?: Set<string> | undefined
   /** Module-level runtime import map (local name -> imported name). */
@@ -878,6 +889,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
   return {
     t,
     moduleDeclaredNames: new Set(),
+    moduleBindingKinds: new Map(),
     moduleRuntimeNames: new Set(),
     moduleRuntimeImportMap: new Map(),
     moduleRuntimeNamespaceImports: new Set(),
@@ -4283,6 +4295,97 @@ function preserveTopLevelHookReturnAccessorsInStatement(
   return stmt
 }
 
+function collectModuleBindingKinds(
+  body: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): Map<string, ModuleBindingKind> {
+  const bindings = new Map<string, ModuleBindingKind>()
+  const addPatternNames = (
+    pattern: BabelCore.types.LVal | BabelCore.types.PatternLike,
+    kind: ModuleBindingKind,
+  ): void => {
+    if (t.isIdentifier(pattern)) {
+      bindings.set(pattern.name, kind)
+      return
+    }
+    if (t.isAssignmentPattern(pattern)) {
+      addPatternNames(pattern.left as BabelCore.types.PatternLike, kind)
+      return
+    }
+    if (t.isRestElement(pattern)) {
+      addPatternNames(pattern.argument as BabelCore.types.PatternLike, kind)
+      return
+    }
+    if (t.isObjectPattern(pattern)) {
+      for (const prop of pattern.properties) {
+        if (t.isRestElement(prop)) {
+          addPatternNames(prop.argument as BabelCore.types.PatternLike, kind)
+        } else if (t.isObjectProperty(prop)) {
+          addPatternNames(prop.value as BabelCore.types.PatternLike, kind)
+        }
+      }
+      return
+    }
+    if (t.isArrayPattern(pattern)) {
+      for (const el of pattern.elements) {
+        if (el && t.isPatternLike(el)) addPatternNames(el as BabelCore.types.PatternLike, kind)
+      }
+    }
+  }
+  const addVariableDeclaration = (decl: BabelCore.types.VariableDeclaration): void => {
+    const kind: ModuleBindingKind =
+      decl.kind === 'const' || decl.kind === 'let' || decl.kind === 'var' ? decl.kind : 'unknown'
+    for (const item of decl.declarations) addPatternNames(item.id, kind)
+  }
+
+  for (const stmt of body) {
+    if (t.isImportDeclaration(stmt)) {
+      if ((stmt as { importKind?: string | null }).importKind === 'type') continue
+      for (const spec of stmt.specifiers) {
+        if (t.isImportSpecifier(spec) && spec.importKind === 'type') continue
+        bindings.set(spec.local.name, 'import')
+      }
+      continue
+    }
+    if (t.isFunctionDeclaration(stmt) && stmt.id) {
+      bindings.set(stmt.id.name, 'function')
+      continue
+    }
+    if (t.isClassDeclaration(stmt) && stmt.id) {
+      bindings.set(stmt.id.name, 'class')
+      continue
+    }
+    if (t.isVariableDeclaration(stmt)) {
+      addVariableDeclaration(stmt)
+      continue
+    }
+    if (t.isExportNamedDeclaration(stmt)) {
+      if (stmt.declaration) {
+        const decl = stmt.declaration
+        if (t.isFunctionDeclaration(decl) && decl.id) bindings.set(decl.id.name, 'function')
+        if (t.isClassDeclaration(decl) && decl.id) bindings.set(decl.id.name, 'class')
+        if (t.isVariableDeclaration(decl)) addVariableDeclaration(decl)
+      } else {
+        const kind: ModuleBindingKind = stmt.source ? 'import' : 'unknown'
+        for (const spec of stmt.specifiers) {
+          if ((spec as { exportKind?: string | null }).exportKind === 'type') continue
+          if (t.isExportSpecifier(spec) && !bindings.has(spec.local.name)) {
+            bindings.set(spec.local.name, kind)
+          }
+        }
+      }
+      continue
+    }
+    if (t.isExportDefaultDeclaration(stmt)) {
+      const decl = stmt.declaration
+      if (t.isFunctionDeclaration(decl) && decl.id) bindings.set(decl.id.name, 'function')
+      if (t.isClassDeclaration(decl) && decl.id) bindings.set(decl.id.name, 'class')
+    }
+  }
+
+  return bindings
+}
+
 function propagateLocalHookAliasMetadata(
   body: BabelCore.types.Statement[],
   ctx: CodegenContext,
@@ -5847,6 +5950,7 @@ export function lowerHIRWithRegions(
   const emittedFunctionNames = new Set<string>()
   const originalBody = (program.originalBody ?? []) as BabelCore.types.Statement[]
   ctx.moduleDeclaredNames = collectDeclaredNames(originalBody, t)
+  ctx.moduleBindingKinds = collectModuleBindingKinds(originalBody, t)
   const runtimeImports = collectRuntimeImports(originalBody, t)
   ctx.moduleRuntimeNames = runtimeImports.names
   ctx.moduleRuntimeImportMap = runtimeImports.importMap

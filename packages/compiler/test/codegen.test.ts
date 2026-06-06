@@ -1555,6 +1555,87 @@ describe('resumable event handler transformation', () => {
     }
   })
 
+  it('throws for explicit resumable mutable module handler identifiers', () => {
+    const cases = [
+      {
+        name: 'exported let',
+        source: `
+          export let handler = () => 1
+          export function swap() {
+            handler = () => 2
+          }
+          export function Comp() {
+            return <button onClick$={handler}>Click</button>
+          }
+        `,
+      },
+      {
+        name: 'module var',
+        source: `
+          var handler = () => 1
+          export function Comp() {
+            return <button onClick$={handler}>Click</button>
+          }
+        `,
+      },
+      {
+        name: 'imported binding',
+        source: `
+          import { handler } from './handlers'
+          export function Comp() {
+            return <button onClick$={handler}>Click</button>
+          }
+        `,
+      },
+      {
+        name: 're-exported import',
+        source: `
+          import { handler } from './handlers'
+          export { handler }
+          export function Comp() {
+            return <button onClick$={handler}>Click</button>
+          }
+        `,
+      },
+    ]
+
+    for (const testCase of cases) {
+      const ast = parseFile(testCase.source)
+      const hir = buildHIR(ast)
+
+      expect(
+        () => lowerHIRWithRegions(hir, t, { resumable: true, filename: `${testCase.name}.tsx` }),
+        testCase.name,
+      ).toThrow(/mutable module handler identifiers/i)
+    }
+  })
+
+  it('allows explicit resumable stable module handler identifiers', () => {
+    const ast = parseFile(`
+      const constHandler = () => 'const'
+      function declaredHandler() {
+        return 'declared'
+      }
+
+      export function Comp() {
+        return (
+          <>
+            <button onClick$={constHandler}>Const</button>
+            <button onClick$={declaredHandler}>Declared</button>
+          </>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('const __handler = constHandler')
+    expect(code).toContain('const __handler = declaredHandler')
+    expect(code).toContain('__fictQrl(import.meta.url, "__fict_e0")')
+    expect(code).toContain('__fictQrl(import.meta.url, "__fict_e1")')
+  })
+
   it('captures function deps used in nested returned closures (resumable)', () => {
     const ast = parseFile(`
       function Comp() {
