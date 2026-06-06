@@ -2110,8 +2110,42 @@ function createHIREntrypointVisitor(
               return node.declarations.some(decl => checkPattern(decl.id) || checkNode(decl.init))
             }
             if (t.isSequenceExpression(node)) return node.expressions.some(expr => checkNode(expr))
+            if (t.isLogicalExpression(node)) return checkNode(node.left) || checkNode(node.right)
             if (t.isConditionalExpression(node))
               return checkNode(node.test) || checkNode(node.consequent) || checkNode(node.alternate)
+            if (t.isIfStatement(node)) {
+              return checkNode(node.test) || checkNode(node.consequent) || checkNode(node.alternate)
+            }
+            if (t.isForStatement(node)) {
+              return (
+                checkNode(node.init) ||
+                checkNode(node.test) ||
+                checkNode(node.update) ||
+                checkNode(node.body)
+              )
+            }
+            if (t.isForInStatement(node) || t.isForOfStatement(node)) {
+              return checkNode(node.left) || checkNode(node.right) || checkNode(node.body)
+            }
+            if (t.isWhileStatement(node) || t.isDoWhileStatement(node)) {
+              return checkNode(node.test) || checkNode(node.body)
+            }
+            if (t.isSwitchStatement(node)) {
+              return (
+                checkNode(node.discriminant) ||
+                node.cases.some(
+                  switchCase =>
+                    checkNode(switchCase.test) ||
+                    switchCase.consequent.some(statement => checkNode(statement)),
+                )
+              )
+            }
+            if (t.isTryStatement(node)) {
+              return (
+                checkNode(node.block) || checkNode(node.handler?.body) || checkNode(node.finalizer)
+              )
+            }
+            if (t.isLabeledStatement(node)) return checkNode(node.body)
             if (t.isArrowFunctionExpression(node) || t.isFunctionExpression(node)) {
               return false
             }

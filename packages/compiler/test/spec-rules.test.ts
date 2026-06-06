@@ -423,6 +423,57 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
   })
 
+  it('warns when memo control-flow bodies contain side effects', () => {
+    const cases = [
+      'if (true) fetch("/api")',
+      'if (false) {} else fetch("/api")',
+      'for (let i = 0; i < 1; i++) fetch("/api")',
+      'while (false) fetch("/api")',
+      'do { fetch("/api") } while (false)',
+      'for (const item of [1]) fetch("/api")',
+      'switch (1) { case 1: fetch("/api"); break }',
+      'try { fetch("/api") } catch {}',
+      'label: { fetch("/api") }',
+    ]
+
+    for (const statement of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        function Demo() {
+          const value = $memo(() => {
+            ${statement}
+            return 1
+          })
+          return <div>{value}</div>
+        }
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+    }
+  })
+
+  it('does not warn when memo control-flow bodies are pure', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $memo } from 'fict'
+      function Demo() {
+        const value = $memo(() => {
+          if (true) {
+            const x = 1
+          }
+          for (const item of [1]) {
+            const y = item
+          }
+          return 1
+        })
+        return <div>{value}</div>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+  })
+
   it('warns on non-event inline JSX function props (FICT-X003)', () => {
     const { warnings } = transformWithWarnings(`
       function Panel({ label }) {
