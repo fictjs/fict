@@ -105,6 +105,15 @@ describe('Reactive DOM Binding', () => {
       expect(isReactive(callback)).toBe(false)
     })
 
+    it('marks non-reactive callbacks without adding own symbols', () => {
+      const callback = () => 1
+      const marked = nonReactive(callback)
+
+      expect(marked).toBe(callback)
+      expect(isReactive(marked)).toBe(false)
+      expect(Object.getOwnPropertySymbols(marked)).not.toContain(Symbol.for('fict:non-reactive-fn'))
+    })
+
     it('supports explicitly marking zero-arg getters as reactive', () => {
       const getter = reactive(() => 1)
       expect(isReactive(getter)).toBe(true)

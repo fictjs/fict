@@ -96,6 +96,21 @@ describe('Props proxy', () => {
     expect((resolved as () => number)()).toBe(42)
   })
 
+  it('marks callback props without adding own symbols', () => {
+    const callback = () => 42
+    const proxied = createPropsProxy({ callback })
+    const marker = Symbol.for('fict:non-reactive-fn')
+
+    expect(Object.getOwnPropertySymbols(callback)).not.toContain(marker)
+    expect(Object.getOwnPropertyDescriptor(proxied, 'callback')?.value).toBe(callback)
+
+    const resolved = proxied.callback as unknown
+
+    expect(resolved).toBe(callback)
+    expect(isReactive(resolved)).toBe(false)
+    expect(Object.getOwnPropertySymbols(callback)).not.toContain(marker)
+  })
+
   it('preserves explicitly reactive getter props', () => {
     const getter = reactive(() => 42)
     const proxied = createPropsProxy({ getter })

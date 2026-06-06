@@ -86,13 +86,6 @@ function isNonReactiveFn(value: unknown): boolean {
 
 function markNonReactiveFn<T extends (...args: unknown[]) => unknown>(fn: T): T {
   getNonReactiveFnRegistry().add(fn as (...args: unknown[]) => unknown)
-  if (Object.isExtensible(fn)) {
-    try {
-      ;(fn as T & { [NON_REACTIVE_FN_MARKER]?: boolean })[NON_REACTIVE_FN_MARKER] = true
-    } catch {
-      // Ignore marker failures on non-standard function objects.
-    }
-  }
   return fn
 }
 

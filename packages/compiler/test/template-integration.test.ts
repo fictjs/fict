@@ -435,6 +435,56 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('does not expose non-reactive markers before function prop reflection', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const observed = {
+        before: [] as string[],
+        after: [] as string[],
+        value: '',
+      }
+
+      function Child(props: { fn: () => string }) {
+        const marker = 'Symbol(fict:non-reactive-fn)'
+        const descriptor = Object.getOwnPropertyDescriptor(props, 'fn')
+        observed.before = descriptor?.value
+          ? Object.getOwnPropertySymbols(descriptor.value).map(String)
+          : []
+
+        observed.after = Object.getOwnPropertySymbols(props.fn).map(String)
+        observed.value = props.fn()
+
+        return <span data-testid="value">{observed.value}:{observed.before.includes(marker) ? 'marked' : 'clean'}</span>
+      }
+
+      export function App() {
+        return <Child fn={() => 'ok'} />
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      observed: { before: string[]; after: string[]; value: string }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+    expect(mod.observed.before).not.toContain('Symbol(fict:non-reactive-fn)')
+    expect(mod.observed.after).not.toContain('Symbol(fict:non-reactive-fn)')
+    expect(mod.observed.value).toBe('ok')
+    expect(container.querySelector('[data-testid="value"]')?.textContent).toBe('ok:clean')
+
+    teardown()
+    container.remove()
+  })
+
   it('invokes optional-called destructured function props', async () => {
     const source = `
       import { render } from 'fict'
