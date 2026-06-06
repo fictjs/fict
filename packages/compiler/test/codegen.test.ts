@@ -2050,6 +2050,81 @@ describe('tracked reads/writes in HIR codegen', () => {
 
   it.each([
     {
+      name: 'local class declaration',
+      source: `
+        class App {
+          constructor() {
+            return document.createElement('span')
+          }
+        }
+
+        export function Parent() {
+          return <App />
+        }
+      `,
+      expected: /Class component "App"/,
+    },
+    {
+      name: 'class expression binding',
+      source: `
+        const App = class App {}
+
+        export function Parent() {
+          return <App />
+        }
+      `,
+      expected: /Class component "App"/,
+    },
+    {
+      name: 'exported class declaration',
+      source: `
+        export class App {}
+
+        export function Parent() {
+          return <App />
+        }
+      `,
+      expected: /Class component "App"/,
+    },
+    {
+      name: 'member class binding',
+      source: `
+        const UI = {
+          App: class App {},
+        }
+
+        export function Parent() {
+          return <UI.App />
+        }
+      `,
+      expected: /Class component "UI\.App"/,
+    },
+  ])('rejects JSX class component bindings: $name', testCase => {
+    expect(() => transform(testCase.source)).toThrow(testCase.expected)
+  })
+
+  it('allows ordinary function components and non-JSX class helpers', () => {
+    const output = transform(`
+      class ViewModel {
+        value = 1
+      }
+
+      function App() {
+        return <span>ok</span>
+      }
+
+      export function Parent() {
+        const model = new ViewModel()
+        return <App value={model.value} />
+      }
+    `)
+
+    expect(output).toContain('class ViewModel')
+    expect(output).toContain('type: App')
+  })
+
+  it.each([
+    {
       name: 'local declaration',
       source: `
         import { $state } from 'fict'

@@ -285,6 +285,75 @@ function collectExportedComponentNames(
   return names
 }
 
+function getBabelStaticMemberPath(
+  node: BabelCore.types.Expression,
+  t: typeof BabelCore.types,
+): string[] | null {
+  if (t.isIdentifier(node)) return [node.name]
+  if (!t.isMemberExpression(node) && !t.isOptionalMemberExpression(node)) return null
+  if (!t.isIdentifier(node.object) && !t.isMemberExpression(node.object)) return null
+  const objectPath = getBabelStaticMemberPath(node.object as BabelCore.types.Expression, t)
+  if (!objectPath) return null
+  const property = node.property
+  if (node.computed) {
+    if (t.isStringLiteral(property) || t.isNumericLiteral(property)) {
+      return [...objectPath, String(property.value)]
+    }
+    return null
+  }
+  if (t.isIdentifier(property)) return [...objectPath, property.name]
+  return null
+}
+
+function collectObjectClassComponentPaths(
+  value: BabelCore.types.Expression | null | undefined,
+  path: string[],
+  into: Set<string>,
+  t: typeof BabelCore.types,
+): void {
+  if (!value || !t.isObjectExpression(value)) return
+  for (const prop of value.properties) {
+    if (!t.isObjectProperty(prop) || prop.computed) continue
+    const key = t.isIdentifier(prop.key)
+      ? prop.key.name
+      : t.isStringLiteral(prop.key) || t.isNumericLiteral(prop.key)
+        ? String(prop.key.value)
+        : null
+    if (!key) continue
+    const nextPath = [...path, key]
+    if (t.isClassExpression(prop.value)) {
+      into.add(objectPathKey(nextPath))
+    } else if (t.isObjectExpression(prop.value)) {
+      collectObjectClassComponentPaths(prop.value, nextPath, into, t)
+    }
+  }
+}
+
+function collectClassComponentPaths(
+  statements: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): Set<string> {
+  const paths = new Set<string>()
+  for (const stmt of statements) {
+    const declaration = t.isExportNamedDeclaration(stmt) ? stmt.declaration : stmt
+    if (t.isVariableDeclaration(declaration)) {
+      for (const decl of declaration.declarations) {
+        if (t.isIdentifier(decl.id)) {
+          collectObjectClassComponentPaths(decl.init, [decl.id.name], paths, t)
+        }
+      }
+      continue
+    }
+    if (!t.isExpressionStatement(stmt)) continue
+    const expr = stmt.expression
+    if (!t.isAssignmentExpression(expr) || expr.operator !== '=') continue
+    if (!t.isExpression(expr.left) || !t.isClassExpression(expr.right)) continue
+    const path = getBabelStaticMemberPath(expr.left, t)
+    if (path && path.length > 1) paths.add(objectPathKey(path))
+  }
+  return paths
+}
+
 function isComponentContextPrimitiveCall(expr: Expression): boolean {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
   if (expr.callee.kind !== 'Identifier') return false
@@ -1124,6 +1193,8 @@ export interface CodegenContext {
   jsxComponentNames?: Set<string> | undefined
   /** Static JSX member component paths used in this module, e.g. "UI.Button". */
   jsxMemberComponentPaths?: Set<string> | undefined
+  /** Static member component paths known to resolve to class constructors. */
+  classComponentPaths?: Set<string> | undefined
   /** Static path of the object literal currently being lowered, e.g. ["UI", "Nav"]. */
   objectLiteralPath?: string[] | undefined
   /** Depth counter for conditional child lowering (disable memo caching) */
@@ -1247,6 +1318,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     functionBindingKinds: new Map(),
     jsxComponentNames: new Set(),
     jsxMemberComponentPaths: new Set(),
+    classComponentPaths: new Set(),
     importedReactiveVars: new Set(),
     importedReactiveKinds: new Map(),
     memoVars: new Set(),
@@ -1649,6 +1721,7 @@ export function lowerHIRToBabel(
     ctx.jsxComponentNames.add(name)
   }
   ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(originalBody, t)
+  ctx.classComponentPaths = collectClassComponentPaths(originalBody, t)
   addDestructuredJSXComponentSourcePaths(program, ctx)
   const body: BabelCore.types.Statement[] = []
   const emittedFunctionNames = new Set<string>()
@@ -2647,6 +2720,33 @@ function isJSXMemberComponentPath(path: string[] | undefined, ctx: CodegenContex
 
 function isJSXIdentifierComponentName(name: string, ctx: CodegenContext): boolean {
   return ctx.jsxComponentNames?.has(name) ?? false
+}
+
+function classComponentNameForJSXTag(
+  tagName: string | Expression,
+  ctx: CodegenContext,
+): string | null {
+  if (typeof tagName === 'string') {
+    return ctx.moduleBindingKinds?.get(tagName) === 'class' ? tagName : null
+  }
+  const path = getStaticMemberPath(tagName)
+  if (!path) return null
+  if (path.length === 1) {
+    const name = path[0]
+    return name && ctx.moduleBindingKinds?.get(name) === 'class' ? name : null
+  }
+  const key = objectPathKey(path)
+  return ctx.classComponentPaths?.has(key) ? key : null
+}
+
+function assertSupportedJSXComponentTag(jsx: JSXElementExpression, ctx: CodegenContext): void {
+  const className = classComponentNameForJSXTag(jsx.tagName, ctx)
+  if (!className) return
+  throw new HIRError(
+    `Class component "${className}" is not supported. Fict components must be functions.`,
+    'CODEGEN_ERROR',
+    { file: ctx.options?.filename, line: jsx.loc?.start.line },
+  )
 }
 
 function getStaticMemberPath(expr: Expression): string[] | null {
@@ -4658,6 +4758,7 @@ function lowerJSXElement(
     }
 
     // Component - create VNode {type, props} for runtime createElement
+    assertSupportedJSXComponentTag(jsx, ctx)
     ctx.helpersUsed.add('createElement')
     const children = jsx.children.map(c => ({
       value: lowerJSXChild(c, ctx),
@@ -5098,9 +5199,11 @@ function collectModuleBindingKinds(
     }
   }
   const addVariableDeclaration = (decl: BabelCore.types.VariableDeclaration): void => {
-    const kind: ModuleBindingKind =
+    const declKind: ModuleBindingKind =
       decl.kind === 'const' || decl.kind === 'let' || decl.kind === 'var' ? decl.kind : 'unknown'
-    for (const item of decl.declarations) addPatternNames(item.id, kind)
+    for (const item of decl.declarations) {
+      addPatternNames(item.id, item.init && t.isClassExpression(item.init) ? 'class' : declKind)
+    }
   }
 
   for (const stmt of body) {
@@ -5122,6 +5225,18 @@ function collectModuleBindingKinds(
     }
     if (t.isVariableDeclaration(stmt)) {
       addVariableDeclaration(stmt)
+      continue
+    }
+    if (t.isExpressionStatement(stmt)) {
+      const expr = stmt.expression
+      if (
+        t.isAssignmentExpression(expr) &&
+        expr.operator === '=' &&
+        t.isIdentifier(expr.left) &&
+        t.isClassExpression(expr.right)
+      ) {
+        bindings.set(expr.left.name, 'class')
+      }
       continue
     }
     if (t.isExportNamedDeclaration(stmt)) {
@@ -6428,6 +6543,7 @@ export function codegenWithScopes(
     ctx.jsxComponentNames.add(name)
   }
   ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(originalBody, t)
+  ctx.classComponentPaths = collectClassComponentPaths(originalBody, t)
   addDestructuredJSXComponentSourcePaths(program, ctx)
   ctx.scopes = scopes
 
@@ -6744,6 +6860,7 @@ export function lowerHIRWithRegions(
     ctx.jsxComponentNames.add(name)
   }
   ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(originalBody, t)
+  ctx.classComponentPaths = collectClassComponentPaths(originalBody, t)
   addDestructuredJSXComponentSourcePaths(program, ctx)
   ctx.resumableEnabled = options?.resumable === true
   // Auto-extract defaults to true when resumable is enabled, unless explicitly disabled
