@@ -1090,6 +1090,118 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).not.toContain('({ value: label = "fallback", ...rest })')
   })
 
+  it('lowers assigned JSX member arrow components with component state semantics', () => {
+    const ast = parseFile(`
+      import { $state } from 'fict'
+
+      const UI: any = {}
+      UI.Button = () => {
+        const count = $state(1)
+        return <button>{count}</button>
+      }
+
+      export function App() {
+        return <UI.Button />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('UI.Button =')
+    expect(code).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(code).toContain('() => count()')
+    expect(code).toContain('type: UI.Button')
+    expect(code).not.toContain('createSignal(1')
+    expect(code).not.toContain('() => count, createElement')
+  })
+
+  it('lowers assigned JSX member function expressions with component state semantics', () => {
+    const ast = parseFile(`
+      import { $state } from 'fict'
+
+      const UI: any = {}
+      UI.Button = function Button() {
+        const count = $state(1)
+        return <button>{count}</button>
+      }
+
+      export function App() {
+        return <UI.Button />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('UI.Button = function Button')
+    expect(code).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(code).toContain('() => count()')
+    expect(code).not.toContain('createSignal(1')
+  })
+
+  it('keeps assigned JSX member component props reactive', () => {
+    const ast = parseFile(`
+      import { $state } from 'fict'
+
+      const UI: any = {}
+      UI.Label = ({ value }: { value: number }) => <span>{value}</span>
+
+      export function App() {
+        const count = $state(1)
+        return <UI.Label value={count} />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('const value = prop(() => __props.value)')
+    expect(code).toContain('() => value()')
+    expect(code).toContain('value: __fictProp(() => count())')
+    expect(code).toContain('type: UI.Label')
+    expect(code).not.toContain('({ value })')
+    expect(code).not.toContain('const value = __props.value')
+  })
+
+  it('keeps nested assigned JSX member component props reactive', () => {
+    const ast = parseFile(`
+      import { $state } from 'fict'
+
+      const UI: any = {}
+      UI.Nav = {}
+      UI.Nav.Item = ({ value }: { value: number }) => <span>{value}</span>
+
+      export function App() {
+        const count = $state(1)
+        return <UI.Nav.Item value={count} />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toContain('const value = prop(() => __props.value)')
+    expect(code).toContain('() => value()')
+    expect(code).toContain('type: UI.Nav.Item')
+    expect(code).not.toContain('const value = __props.value')
+  })
+
+  it('does not component-lower assigned member functions unused as JSX member tags', () => {
+    const output = transform(`
+      const UI: any = {}
+      UI.Button = () => <button>unused</button>
+
+      export function App() {
+        return <div>ok</div>
+      }
+    `)
+
+    expect(output).toContain('UI.Button = () =>')
+    expect(output).toContain('template("<button>unused</button>")')
+    expect(output).not.toContain('UI.Button = function Button')
+  })
+
   it('lowers array-literal component spreads to index props', () => {
     const output = transform(`
       import { $state } from 'fict'

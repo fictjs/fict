@@ -2546,6 +2546,16 @@ function isJSXMemberComponentPath(path: string[] | undefined, ctx: CodegenContex
   return ctx.jsxMemberComponentPaths?.has(objectPathKey(path)) ?? false
 }
 
+function getStaticMemberPath(expr: Expression): string[] | null {
+  if (expr.kind === 'Identifier') return [deSSAVarName(expr.name)]
+  if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') return null
+  const objectPath = getStaticMemberPath(expr.object as Expression)
+  if (!objectPath) return null
+  const propertyName = getStaticPropName(expr.property as Expression, expr.computed)
+  if (propertyName === null) return null
+  return [...objectPath, String(propertyName)]
+}
+
 function functionValueToHIRFunction(
   value: Extract<Expression, { kind: 'ArrowFunction' | 'FunctionExpression' }>,
   componentName: string,
@@ -4097,10 +4107,18 @@ function lowerExpressionImpl(
 
       if (expr.left.kind === 'MemberExpression' || expr.left.kind === 'OptionalMemberExpression') {
         assertWritableImportedNamespaceMember(expr.left, ctx)
+        const assignedComponentValue =
+          expr.operator === '='
+            ? lowerJSXMemberComponentFunctionValue(
+                expr.right,
+                getStaticMemberPath(expr.left) ?? undefined,
+                ctx,
+              )
+            : null
         return t.assignmentExpression(
           expr.operator as BabelCore.types.AssignmentExpression['operator'],
           lowerMemberExpressionForAssignmentTarget(expr.left, ctx) as BabelCore.types.LVal,
-          lowerExpression(expr.right, ctx),
+          assignedComponentValue ?? lowerExpression(expr.right, ctx),
         )
       }
 
