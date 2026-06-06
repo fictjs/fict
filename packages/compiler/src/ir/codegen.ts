@@ -4,7 +4,7 @@ import { DelegatedEvents } from '../constants'
 import { debugLog } from '../debug'
 import { applyRegionMetadata, shouldMemoizeRegion, type RegionMetadata } from '../fine-grained-dom'
 import { setModuleMetadata } from '../module-metadata'
-import type { FictCompilerOptions, ModuleReactiveMetadata } from '../types'
+import type { FictCompilerOptions, ModuleReactiveMetadata, ReactiveExportKind } from '../types'
 import { isLogicalAssignmentOperator } from '../utils'
 import { DiagnosticCode, reportDiagnostic } from '../validation'
 
@@ -516,6 +516,7 @@ export interface RegionLoweringOps {
   buildDependencyGetter: typeof buildDependencyGetter
   contextIdentifier: typeof contextIdentifier
   getReactiveCallKind: typeof getReactiveCallKind
+  assertWritableImportedReactiveIdentifier: typeof assertWritableImportedReactiveIdentifier
   lowerExpression: typeof lowerExpression
   propagateHookResultAlias: typeof propagateHookResultAlias
   reserveFunctionLocalName: typeof reservePreferredFunctionLocalName
@@ -604,6 +605,7 @@ function createRegionLoweringOps(): RegionLoweringOps {
     buildDependencyGetter,
     contextIdentifier,
     getReactiveCallKind,
+    assertWritableImportedReactiveIdentifier,
     lowerExpression,
     propagateHookResultAlias,
     reserveFunctionLocalName: reservePreferredFunctionLocalName,
@@ -759,6 +761,8 @@ export interface CodegenContext {
   functionBindingKinds?: Map<string, ModuleBindingKind> | undefined
   /** Imported reactive bindings tracked separately from component-local accessors. */
   importedReactiveVars?: Set<string> | undefined
+  /** Imported reactive binding kind by local name. */
+  importedReactiveKinds?: Map<string, ReactiveExportKind> | undefined
   /** Variables that are memos (derived values) - these shouldn't be cached by getter cache */
   memoVars?: Set<string> | undefined
   /** Memo call names (including aliases) that return accessors */
@@ -922,6 +926,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     functionVars: new Set(),
     functionBindingKinds: new Map(),
     importedReactiveVars: new Set(),
+    importedReactiveKinds: new Map(),
     memoVars: new Set(),
     memoMacroNames: new Set(['$memo', 'createMemo']),
     storeMacroNames: new Set(['$store']),
@@ -1071,6 +1076,66 @@ function getCanonicalNumericKey(key: string): number | null {
   const numeric = Number(key)
   if (!Number.isFinite(numeric) || String(numeric) !== key) return null
   return numeric
+}
+
+type ReadOnlyImportedReactiveKind = Extract<ReactiveExportKind, 'memo' | 'store'>
+
+function isReadOnlyImportedReactiveKind(
+  kind: ReactiveExportKind | undefined,
+): kind is ReadOnlyImportedReactiveKind {
+  return kind === 'memo' || kind === 'store'
+}
+
+function importedReactiveWriteMessage(kind: ReadOnlyImportedReactiveKind, name: string): string {
+  const detail =
+    kind === 'memo'
+      ? 'Imported memo bindings are read-only accessors.'
+      : 'Imported store bindings are proxy objects, not writable signal accessors.'
+  return `Cannot write to imported ${kind} binding "${name}". ${detail}`
+}
+
+function throwImportedReactiveWrite(
+  name: string,
+  kind: ReadOnlyImportedReactiveKind,
+  ctx: CodegenContext,
+  loc?: BabelCore.types.SourceLocation | null,
+): never {
+  throw new HIRError(importedReactiveWriteMessage(kind, name), 'BUILD_ERROR', {
+    file: ctx.options?.filename,
+    line: loc?.start.line,
+    variable: name,
+  })
+}
+
+function assertWritableImportedReactiveIdentifier(
+  name: string,
+  ctx: CodegenContext,
+  loc?: BabelCore.types.SourceLocation | null,
+): void {
+  const baseName = deSSAVarName(name)
+  const kind = ctx.importedReactiveKinds?.get(baseName)
+  if (isReadOnlyImportedReactiveKind(kind)) {
+    throwImportedReactiveWrite(baseName, kind, ctx, loc)
+  }
+}
+
+function assertWritableImportedNamespaceMember(
+  expr: Extract<Expression, { kind: 'MemberExpression' | 'OptionalMemberExpression' }>,
+  ctx: CodegenContext,
+): void {
+  if (expr.object.kind !== 'Identifier') return
+  const namespaceName = deSSAVarName(expr.object.name)
+  const nsMeta = ctx.importedNamespaces?.get(namespaceName)
+  if (!nsMeta) return
+
+  const propName = getStaticPropName(expr.property as Expression, expr.computed)
+  if (typeof propName !== 'string' && typeof propName !== 'number') return
+
+  const exportName = String(propName)
+  const kind = nsMeta.exports[exportName]
+  if (isReadOnlyImportedReactiveKind(kind)) {
+    throwImportedReactiveWrite(`${namespaceName}.${exportName}`, kind, ctx, expr.loc)
+  }
 }
 
 function resolveHookReturnMemberInfo(
@@ -1468,10 +1533,14 @@ function lowerFunction(
   const prevCallableSignalVars = ctx.callableSignalVars
   const prevNonSerializableSignalVars = ctx.nonSerializableSignalVars
   const prevLocalDeclared = ctx.localDeclaredNames
+  const prevImportedReactiveKinds = ctx.importedReactiveKinds
   const prevContextLocalName = ctx.contextLocalName
   const scopedTracked = new Set(ctx.trackedVars)
+  const scopedImportedReactiveKinds = new Map(prevImportedReactiveKinds ?? [])
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
+  fn.params.forEach(p => scopedImportedReactiveKinds.delete(deSSAVarName(p.name)))
   ctx.trackedVars = scopedTracked
+  ctx.importedReactiveKinds = scopedImportedReactiveKinds
   ctx.callableSignalVars = new Set(prevCallableSignalVars ?? [])
   ctx.nonSerializableSignalVars = new Set(prevNonSerializableSignalVars ?? [])
   fn.params.forEach(p => ctx.callableSignalVars?.delete(deSSAVarName(p.name)))
@@ -1479,6 +1548,7 @@ function lowerFunction(
   const localDeclared = new Set(prevLocalDeclared ?? [])
   for (const name of collectLocalDeclaredNames(fn.params, fn.blocks, t)) {
     localDeclared.add(name)
+    ctx.importedReactiveKinds?.delete(name)
     ctx.callableSignalVars?.delete(name)
     ctx.nonSerializableSignalVars?.delete(name)
   }
@@ -1526,6 +1596,7 @@ function lowerFunction(
   ctx.callableSignalVars = prevCallableSignalVars
   ctx.nonSerializableSignalVars = prevNonSerializableSignalVars
   ctx.localDeclaredNames = prevLocalDeclared
+  ctx.importedReactiveKinds = prevImportedReactiveKinds
   ctx.contextLocalName = prevContextLocalName
   ctx.currentFnIsHook = prevHookFlag
   return result
@@ -1651,7 +1722,15 @@ function lowerLoopAssignmentTarget(
   target: Expression,
   ctx: CodegenContext,
 ): BabelCore.types.Identifier | BabelCore.types.MemberExpression {
-  const lowered = lowerExpression(target, ctx)
+  if (target.kind === 'Identifier') {
+    assertWritableImportedReactiveIdentifier(target.name, ctx, target.loc)
+  } else if (target.kind === 'MemberExpression' || target.kind === 'OptionalMemberExpression') {
+    assertWritableImportedNamespaceMember(target, ctx)
+  }
+  const lowered =
+    target.kind === 'MemberExpression' || target.kind === 'OptionalMemberExpression'
+      ? lowerMemberExpressionForAssignmentTarget(target, ctx)
+      : lowerExpression(target, ctx)
   if (ctx.t.isIdentifier(lowered) || ctx.t.isMemberExpression(lowered)) {
     return lowered
   }
@@ -1693,6 +1772,9 @@ function lowerInstruction(
     }
 
     const declKind = instr.declarationKind === 'function' ? undefined : instr.declarationKind
+    if (!declKind) {
+      assertWritableImportedReactiveIdentifier(baseName, ctx, instr.loc ?? instr.value.loc)
+    }
     const listKeyAliasReplacement = declKind ? getListKeyAliasReplacementName(baseName, ctx) : null
     if (declKind && listKeyAliasReplacement) {
       return applyLoc(
@@ -1884,6 +1966,9 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
           ? lowerLoopAssignmentTarget(term.assignmentTarget, ctx)
           : t.identifier(term.variable)
         : t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
+      if (isAssignmentTarget && !term.assignmentTarget) {
+        assertWritableImportedReactiveIdentifier(term.variable, ctx, term.loc)
+      }
       if (
         isAssignmentTarget &&
         !term.assignmentTarget &&
@@ -1928,6 +2013,9 @@ function lowerTerminator(block: BasicBlock, ctx: CodegenContext): BabelCore.type
           ? lowerLoopAssignmentTarget(term.assignmentTarget, ctx)
           : t.identifier(term.variable)
         : t.variableDeclaration(varKind, [t.variableDeclarator(leftPattern)])
+      if (isAssignmentTarget && !term.assignmentTarget) {
+        assertWritableImportedReactiveIdentifier(term.variable, ctx, term.loc)
+      }
       if (
         isAssignmentTarget &&
         !term.assignmentTarget &&
@@ -2186,6 +2274,7 @@ function lowerExpressionImpl(
     const prevSignals = ctx.signalVars
     const prevMemos = ctx.memoVars
     const prevCallableSignals = ctx.callableSignalVars
+    const prevImportedReactiveKinds = ctx.importedReactiveKinds
     const prevExternal = ctx.externalTracked
     const prevShadowed = ctx.shadowedNames
     const prevLocalDeclared = ctx.localDeclaredNames
@@ -2219,6 +2308,13 @@ function lowerExpressionImpl(
         ctx.callableSignalVars?.delete(deSSAVarName(name))
       }
     }
+    ctx.importedReactiveKinds = new Map(prevImportedReactiveKinds ?? [])
+    paramNames.forEach(n => ctx.importedReactiveKinds?.delete(deSSAVarName(n)))
+    if (localDeclared) {
+      for (const name of localDeclared) {
+        ctx.importedReactiveKinds?.delete(deSSAVarName(name))
+      }
+    }
     ctx.aliasVars = new Set(ctx.aliasVars)
     ctx.externalTracked = new Set(prevTracked)
     const shadowed = new Set(prevShadowed ?? [])
@@ -2247,6 +2343,7 @@ function lowerExpressionImpl(
     ctx.signalVars = prevSignals
     ctx.memoVars = prevMemos
     ctx.callableSignalVars = prevCallableSignals
+    ctx.importedReactiveKinds = prevImportedReactiveKinds
     ctx.externalTracked = prevExternal
     ctx.shadowedNames = prevShadowed
     ctx.localDeclaredNames = prevLocalDeclared
@@ -2567,6 +2664,7 @@ function lowerExpressionImpl(
             ctx.trackedVars.has(baseName) &&
             !(ctx.localValueVars?.has(baseName) ?? false)
           ) {
+            assertWritableImportedReactiveIdentifier(baseName, ctx, astNode.loc)
             const callee = t.identifier(baseName)
             const currentValue = t.callExpression(t.identifier(baseName), [])
             return lowerTrackedAssignmentWrite(
@@ -2586,6 +2684,7 @@ function lowerExpressionImpl(
           ctx.trackedVars.has(baseName) &&
           !(ctx.localValueVars?.has(baseName) ?? false)
         ) {
+          assertWritableImportedReactiveIdentifier(baseName, ctx, astNode.loc)
           return lowerTrackedUpdateCall(t.identifier(baseName), astNode.operator, astNode.prefix)
         }
       }
@@ -3558,6 +3657,7 @@ function lowerExpressionImpl(
       if (expr.left.kind === 'Identifier') {
         const baseName = deSSAVarName(expr.left.name)
         if (ctx.trackedVars.has(baseName) && !(ctx.localValueVars?.has(baseName) ?? false)) {
+          assertWritableImportedReactiveIdentifier(baseName, ctx, expr.loc)
           const callee = t.identifier(baseName)
           const current = t.callExpression(t.identifier(baseName), [])
           const right = lowerExpression(expr.right, ctx)
@@ -3571,6 +3671,7 @@ function lowerExpressionImpl(
       }
 
       if (expr.left.kind === 'MemberExpression' || expr.left.kind === 'OptionalMemberExpression') {
+        assertWritableImportedNamespaceMember(expr.left, ctx)
         return t.assignmentExpression(
           expr.operator as BabelCore.types.AssignmentExpression['operator'],
           lowerMemberExpressionForAssignmentTarget(expr.left, ctx) as BabelCore.types.LVal,
@@ -3592,6 +3693,7 @@ function lowerExpressionImpl(
       if (expr.argument.kind === 'Identifier') {
         const baseName = deSSAVarName(expr.argument.name)
         if (ctx.trackedVars.has(baseName) && !(ctx.localValueVars?.has(baseName) ?? false)) {
+          assertWritableImportedReactiveIdentifier(baseName, ctx, expr.loc)
           return lowerTrackedUpdateCall(t.identifier(baseName), expr.operator, expr.prefix)
         }
       }
@@ -3600,6 +3702,7 @@ function lowerExpressionImpl(
         expr.argument.kind === 'MemberExpression' ||
         expr.argument.kind === 'OptionalMemberExpression'
       ) {
+        assertWritableImportedNamespaceMember(expr.argument, ctx)
         return t.updateExpression(
           expr.operator,
           lowerMemberExpressionForAssignmentTarget(expr.argument, ctx),
@@ -5697,8 +5800,14 @@ function lowerFunctionWithScopes(
 ): BabelCore.types.FunctionDeclaration | null {
   const { t } = ctx
   const prevKnownArrayVars = ctx.knownArrayVars
+  const prevImportedReactiveKinds = ctx.importedReactiveKinds
   ctx.knownArrayVars = new Set(prevKnownArrayVars ?? [])
+  ctx.importedReactiveKinds = new Map(prevImportedReactiveKinds ?? [])
   fn.params.forEach(p => ctx.knownArrayVars?.delete(deSSAVarName(p.name)))
+  fn.params.forEach(p => ctx.importedReactiveKinds?.delete(deSSAVarName(p.name)))
+  for (const name of collectLocalDeclaredNames(fn.params, fn.blocks, t)) {
+    ctx.importedReactiveKinds?.delete(name)
+  }
   const params = buildOutputParams(fn, ctx)
   const statements: BabelCore.types.Statement[] = []
 
@@ -5722,6 +5831,7 @@ function lowerFunctionWithScopes(
   result.async = !!fn.meta?.isAsync || functionHasAsyncAwait(fn)
   result.generator = !!fn.meta?.isGenerator || functionHasYield(fn)
   ctx.knownArrayVars = prevKnownArrayVars
+  ctx.importedReactiveKinds = prevImportedReactiveKinds
   return result
 }
 
@@ -5763,6 +5873,9 @@ function lowerInstructionWithScopes(
       }
     }
     const declKind = instr.declarationKind === 'function' ? undefined : instr.declarationKind
+    if (!declKind) {
+      assertWritableImportedReactiveIdentifier(targetBase, ctx, instr.loc ?? instr.value.loc)
+    }
     const listKeyAliasReplacement = declKind
       ? getListKeyAliasReplacementName(targetBase, ctx)
       : null
@@ -7610,6 +7723,7 @@ function lowerFunctionWithRegions(
   const prevContextLocalName = ctx.contextLocalName
   const prevLocalValueVars = ctx.localValueVars
   const prevMutablePropVars = ctx.mutablePropVars
+  const prevImportedReactiveKinds = ctx.importedReactiveKinds
   const scopedTracked = new Set(ctx.trackedVars)
   const shadowedParams = new Set(fn.params.map(p => deSSAVarName(p.name)))
   fn.params.forEach(p => scopedTracked.delete(deSSAVarName(p.name)))
@@ -7635,6 +7749,11 @@ function lowerFunctionWithRegions(
   }
   ctx.localDeclaredNames = localDeclared
   ctx.currentFunctionDeclaredNames = currentFunctionDeclared
+  ctx.importedReactiveKinds = new Map(prevImportedReactiveKinds ?? [])
+  shadowedParams.forEach(name => ctx.importedReactiveKinds?.delete(name))
+  for (const name of currentFunctionDeclared) {
+    ctx.importedReactiveKinds?.delete(name)
+  }
   const prevExternalTracked = ctx.externalTracked
   const inheritedTracked = new Set(ctx.trackedVars)
   ctx.externalTracked = inheritedTracked
@@ -8461,6 +8580,7 @@ function lowerFunctionWithRegions(
       ctx.localDeclaredNames = prevLocalDeclared
       ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
       ctx.localValueVars = prevLocalValueVars
+      ctx.importedReactiveKinds = prevImportedReactiveKinds
       ctx.mutablePropVars = prevMutablePropVars
       ctx.trackedVars = prevTracked
       ctx.externalTracked = prevExternalTracked
@@ -8494,6 +8614,7 @@ function lowerFunctionWithRegions(
     ctx.localDeclaredNames = prevLocalDeclared
     ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
     ctx.localValueVars = prevLocalValueVars
+    ctx.importedReactiveKinds = prevImportedReactiveKinds
     ctx.mutablePropVars = prevMutablePropVars
     ctx.trackedVars = prevTracked
     ctx.externalTracked = prevExternalTracked
@@ -8626,6 +8747,7 @@ function lowerFunctionWithRegions(
   ctx.localDeclaredNames = prevLocalDeclared
   ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
   ctx.localValueVars = prevLocalValueVars
+  ctx.importedReactiveKinds = prevImportedReactiveKinds
   ctx.mutablePropVars = prevMutablePropVars
   ctx.trackedVars = prevTracked
   ctx.externalTracked = prevExternalTracked

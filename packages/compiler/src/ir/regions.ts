@@ -268,6 +268,10 @@ const buildDependencyGetter: RegionLoweringOps['buildDependencyGetter'] = (deps,
 const getReactiveCallKind: RegionLoweringOps['getReactiveCallKind'] = (expr, ctx) =>
   getRegionLoweringOps(ctx).getReactiveCallKind(expr, ctx)
 
+const assertWritableImportedReactiveIdentifier: RegionLoweringOps['assertWritableImportedReactiveIdentifier'] =
+  (name, ctx, loc) =>
+    getRegionLoweringOps(ctx).assertWritableImportedReactiveIdentifier(name, ctx, loc)
+
 const lowerExpression: RegionLoweringOps['lowerExpression'] = (expr, ctx, isAssigned = false) =>
   getRegionLoweringOps(ctx).lowerExpression(expr, ctx, isAssigned)
 
@@ -5075,6 +5079,9 @@ function instructionToStatement(
           loweredFn.async ?? false,
         )
       }
+    }
+    if (!declKindRaw) {
+      assertWritableImportedReactiveIdentifier(baseName, ctx, instr.loc ?? instr.value.loc)
     }
     const isTracked = ctx.trackedVars.has(baseName)
     const isSignal = ctx.signalVars?.has(baseName) ?? false

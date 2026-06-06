@@ -21,6 +21,7 @@ function addImportedReactiveBinding(
 ): void {
   const base = deSSAVarName(name)
   ctx.importedReactiveVars?.add(base)
+  ctx.importedReactiveKinds?.set(base, kind)
   if (kind === 'signal') {
     ctx.signalVars?.add(base)
   } else if (kind === 'store') {

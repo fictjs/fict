@@ -2247,6 +2247,207 @@ describe('Cross-Module Reactivity', () => {
       expect(output).not.toMatch(/store\.count\(\)\+\+/)
     })
 
+    it('rejects statement assignment to named imported memos', () => {
+      const storePath = path.join(baseDir, 'store-readonly-memo-assignment.ts')
+      const appPath = path.join(baseDir, 'app-readonly-memo-assignment.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(storePath), {
+        exports: { total: 'memo' },
+      })
+
+      expect(() =>
+        transform(
+          `
+            import { total } from './store-readonly-memo-assignment'
+
+            export function App() {
+              total = 1
+              return <div>{total}</div>
+            }
+          `,
+          { fineGrainedDom: true, moduleMetadata },
+          appPath,
+        ),
+      ).toThrow('Cannot write to imported memo binding "total"')
+    })
+
+    it('rejects compound assignment to named imported memos', () => {
+      const storePath = path.join(baseDir, 'store-readonly-memo-compound.ts')
+      const appPath = path.join(baseDir, 'app-readonly-memo-compound.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(storePath), {
+        exports: { total: 'memo' },
+      })
+
+      expect(() =>
+        transform(
+          `
+            import { total } from './store-readonly-memo-compound'
+
+            export function App() {
+              total += 1
+              return <div>{total}</div>
+            }
+          `,
+          { fineGrainedDom: true, moduleMetadata },
+          appPath,
+        ),
+      ).toThrow('Cannot write to imported memo binding "total"')
+    })
+
+    it('rejects update expressions on named imported memos', () => {
+      const storePath = path.join(baseDir, 'store-readonly-memo-update.ts')
+      const appPath = path.join(baseDir, 'app-readonly-memo-update.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(storePath), {
+        exports: { total: 'memo' },
+      })
+
+      expect(() =>
+        transform(
+          `
+            import { total } from './store-readonly-memo-update'
+
+            export function App() {
+              total++
+              return <div>{total}</div>
+            }
+          `,
+          { fineGrainedDom: true, moduleMetadata },
+          appPath,
+        ),
+      ).toThrow('Cannot write to imported memo binding "total"')
+    })
+
+    it('rejects update expressions on default imported memos', () => {
+      const storePath = path.join(baseDir, 'store-readonly-default-memo.ts')
+      const appPath = path.join(baseDir, 'app-readonly-default-memo.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(storePath), {
+        exports: { default: 'memo' },
+      })
+
+      expect(() =>
+        transform(
+          `
+            import total from './store-readonly-default-memo'
+
+            export function App() {
+              total++
+              return <div>{total}</div>
+            }
+          `,
+          { fineGrainedDom: true, moduleMetadata },
+          appPath,
+        ),
+      ).toThrow('Cannot write to imported memo binding "total"')
+    })
+
+    it('keeps imported signals writable', () => {
+      const storePath = path.join(baseDir, 'store-imported-signal-writes.ts')
+      const appPath = path.join(baseDir, 'app-imported-signal-writes.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(storePath), {
+        exports: { count: 'signal' },
+      })
+
+      const output = transform(
+        `
+          import { count } from './store-imported-signal-writes'
+
+          export function App() {
+            count++
+            count = 2
+            return <button>{count}</button>
+          }
+        `,
+        { fineGrainedDom: true, moduleMetadata },
+        appPath,
+      )
+
+      expect(output).toContain('count(2)')
+      expect(output).not.toContain('count++')
+      expect(output).toMatch(/count\(\)/)
+    })
+
+    it('rejects direct writes to imported stores', () => {
+      const storePath = path.join(baseDir, 'store-readonly-store-update.ts')
+      const appPath = path.join(baseDir, 'app-readonly-store-update.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(storePath), {
+        exports: { state: 'store' },
+      })
+
+      expect(() =>
+        transform(
+          `
+            import { state } from './store-readonly-store-update'
+
+            export function App() {
+              state = { count: 1 }
+              return <div>{state.count}</div>
+            }
+          `,
+          { fineGrainedDom: true, moduleMetadata },
+          appPath,
+        ),
+      ).toThrow('Cannot write to imported store binding "state"')
+
+      expect(() =>
+        transform(
+          `
+            import { state } from './store-readonly-store-update'
+
+            export function App() {
+              state++
+              return <div>{state.count}</div>
+            }
+          `,
+          { fineGrainedDom: true, moduleMetadata },
+          appPath,
+        ),
+      ).toThrow('Cannot write to imported store binding "state"')
+    })
+
+    it('rejects direct writes to namespace imported memo members', () => {
+      const storePath = path.join(baseDir, 'store-readonly-ns-memo.ts')
+      const appPath = path.join(baseDir, 'app-readonly-ns-memo.tsx')
+      const moduleMetadata = new Map()
+      moduleMetadata.set(path.resolve(storePath), {
+        exports: { total: 'memo' },
+      })
+
+      expect(() =>
+        transform(
+          `
+            import * as store from './store-readonly-ns-memo'
+
+            export function App() {
+              store.total = 1
+              return <div>{store.total}</div>
+            }
+          `,
+          { fineGrainedDom: true, moduleMetadata },
+          appPath,
+        ),
+      ).toThrow('Cannot write to imported memo binding "store.total"')
+
+      expect(() =>
+        transform(
+          `
+            import * as store from './store-readonly-ns-memo'
+
+            export function App() {
+              store.total++
+              return <div>{store.total}</div>
+            }
+          `,
+          { fineGrainedDom: true, moduleMetadata },
+          appPath,
+        ),
+      ).toThrow('Cannot write to imported memo binding "store.total"')
+    })
+
     it('does not double-call namespace imported memo accessors used as calls', () => {
       const storeSource = `
         import { createMemo } from 'fict/advanced'
