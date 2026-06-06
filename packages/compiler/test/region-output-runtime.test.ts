@@ -78,4 +78,42 @@ describe('region output runtime regressions', () => {
       'null,undefined,0,false,,NaN,null,undefined,0,false,,NaN',
     )
   })
+
+  it('uses intrinsic undefined for missing region outputs when undefined is shadowed', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      const format = value => value === void 0 ? 'undefined' : String(value)
+
+      export function useProbe() {
+        const undefined = 'shadow'
+        let flag = $state(false)
+        let missing
+        let explicit = void 0
+
+        if (flag) {
+          missing = 'yes'
+          explicit = 'yes'
+        }
+
+        return format(missing) + ':' + format(explicit) + ':' + undefined
+      }
+    `
+    const output = transformCommonJS(source, {
+      dev: false,
+      emitModuleMetadata: false,
+      strictGuarantee: false,
+      optimize: true,
+    })
+    expect(output).toMatch(/missing:\s*missing\s*!==\s*void 0\s*\?\s*missing\s*:\s*void 0/)
+    expect(output).not.toMatch(/missing:\s*missing\s*!==\s*undefined\s*\?/)
+    expect(output).not.toContain('let missing = undefined')
+
+    const exports = compileModule(source)
+    const result = runtimeInternal.__fictRender({ slots: [], cursor: 0 }, () =>
+      (exports.useProbe as () => string)(),
+    )
+
+    expect(result).toBe('undefined:undefined:shadow')
+  })
 })
