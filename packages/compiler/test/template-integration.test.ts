@@ -863,6 +863,81 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps destructured value props reactive when unreachable calls exist', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let returnedApi: { set(value: string): void }
+      export let deadBranchApi: { set(value: string): void }
+
+      function Returned({ value }: { value: string }) {
+        return <span data-testid="returned" title={value}>{value}</span>
+        value()
+      }
+
+      function DeadBranch({ value }: { value: string }) {
+        if (false) {
+          value()
+        }
+        return <span data-testid="dead-branch" title={value}>{value}</span>
+      }
+
+      function ReturnedApp() {
+        const value = $state('one')
+        returnedApi = { set: next => value(next) }
+        return <Returned value={value} />
+      }
+
+      function DeadBranchApp() {
+        const value = $state('one')
+        deadBranchApi = { set: next => value(next) }
+        return <DeadBranch value={value} />
+      }
+
+      export function mountReturned(el: HTMLElement) {
+        return render(() => <ReturnedApp />, el)
+      }
+
+      export function mountDeadBranch(el: HTMLElement) {
+        return render(() => <DeadBranchApp />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mountReturned: (el: HTMLElement) => () => void
+      mountDeadBranch: (el: HTMLElement) => () => void
+      returnedApi: { set(value: string): void }
+      deadBranchApi: { set(value: string): void }
+    }>(source, { fineGrainedDom: true })
+    const returnedContainer = document.createElement('div')
+    const deadBranchContainer = document.createElement('div')
+    document.body.append(returnedContainer, deadBranchContainer)
+    const teardownReturned = mod.mountReturned(returnedContainer)
+    const teardownDeadBranch = mod.mountDeadBranch(deadBranchContainer)
+    const returned = returnedContainer.querySelector('[data-testid="returned"]') as HTMLSpanElement
+    const deadBranch = deadBranchContainer.querySelector(
+      '[data-testid="dead-branch"]',
+    ) as HTMLSpanElement
+
+    expect(returned.textContent).toBe('one')
+    expect(returned.getAttribute('title')).toBe('one')
+    expect(deadBranch.textContent).toBe('one')
+    expect(deadBranch.getAttribute('title')).toBe('one')
+
+    mod.returnedApi.set('two')
+    mod.deadBranchApi.set('two')
+    await flushUpdates()
+    expect(returned.textContent).toBe('two')
+    expect(returned.getAttribute('title')).toBe('two')
+    expect(deadBranch.textContent).toBe('two')
+    expect(deadBranch.getAttribute('title')).toBe('two')
+
+    teardownReturned()
+    teardownDeadBranch()
+    returnedContainer.remove()
+    deadBranchContainer.remove()
+  })
+
   it('passes props to local components named Fragment', async () => {
     const source = `
       import { render } from 'fict'

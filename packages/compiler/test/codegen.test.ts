@@ -725,6 +725,29 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).not.toContain('const value = __props.value')
   })
 
+  it('keeps value props reactive when unreachable prop calls exist', () => {
+    const ast = parseFile(`
+      function Returned({ value }) {
+        return <span title={value}>{value}</span>
+        value()
+      }
+
+      function DeadBranch({ value }) {
+        if (false) {
+          value()
+        }
+        return <span title={value}>{value}</span>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code.match(/const value = prop\(\(\) => __props\.value\)/g)).toHaveLength(2)
+    expect(code).toContain('() => value()')
+    expect(code).not.toContain('const value = __props.value')
+  })
+
   it('does not bypass the alias reassignment guard for reassigned local aliases', () => {
     const ast = parseFile(`
       function Child({ cb, other }) {

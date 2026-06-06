@@ -497,6 +497,11 @@ export function collectCalledIdentifiers(
     return next
   }
 
+  const staticTruthiness = (expr: Expression): boolean | null => {
+    if (expr.kind !== 'Literal') return null
+    return Boolean(expr.value)
+  }
+
   const visitExpr = (expr: Expression | undefined | null, shadowed = new Set<string>()) => {
     if (!expr) return
     switch (expr.kind) {
@@ -596,8 +601,18 @@ export function collectCalledIdentifiers(
     switch (term.kind) {
       case 'Branch':
         visitExpr(term.test, shadowed)
-        visitBlockById?.(term.consequent, shadowed)
-        visitBlockById?.(term.alternate, shadowed)
+        switch (staticTruthiness(term.test)) {
+          case true:
+            visitBlockById?.(term.consequent, shadowed)
+            break
+          case false:
+            visitBlockById?.(term.alternate, shadowed)
+            break
+          default:
+            visitBlockById?.(term.consequent, shadowed)
+            visitBlockById?.(term.alternate, shadowed)
+            break
+        }
         return
       case 'Switch':
         visitExpr(term.discriminant, shadowed)
@@ -680,10 +695,6 @@ export function collectCalledIdentifiers(
     }
 
     if (blocks[0]) visitBlockById(blocks[0].id, initialShadowed)
-    blocks.forEach(block => {
-      const seen = Array.from(visited).some(key => key.startsWith(`${block.id}:`))
-      if (!seen) visitBlockById(block.id, initialShadowed)
-    })
   }
 
   if (shadowRoots.size > 0) {
