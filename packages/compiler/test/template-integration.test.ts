@@ -5992,4 +5992,65 @@ describe('compiled templates DOM integration', () => {
     teardown()
     container.remove()
   })
+
+  it('keeps conditional JSX child predicates from generated temp shadowing', async () => {
+    const globals = globalThis as Record<string, unknown>
+    globals.__fictConditionalChildTernary = false
+    globals.__fictConditionalChildLogical = true
+
+    const source = `
+      import { render } from 'fict'
+
+      function TernaryChild() {
+        const flag = (globalThis as any).__fictConditionalChildTernary === true
+        const __cond_0 = flag
+
+        return (
+          <div data-id="ternary">
+            {__cond_0 ? <span>A</span> : <span>B</span>}
+          </div>
+        )
+      }
+
+      function LogicalChild() {
+        const flag = (globalThis as any).__fictConditionalChildLogical === true
+        const __cond_1 = flag
+
+        return (
+          <div data-id="logical">
+            {__cond_1 && <span>Visible</span>}
+          </div>
+        )
+      }
+
+      export function App() {
+        return (
+          <section>
+            <TernaryChild />
+            <LogicalChild />
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+      lazyConditional: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-id="ternary"]')?.textContent).toBe('B')
+    expect(container.querySelector('[data-id="logical"]')?.textContent).toBe('Visible')
+
+    teardown()
+    container.remove()
+    delete globals.__fictConditionalChildTernary
+    delete globals.__fictConditionalChildLogical
+  })
 })
