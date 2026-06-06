@@ -18,6 +18,7 @@ import {
   template,
   toNodeArray,
 } from '../src/internal'
+import { registerErrorHandler } from '../src/lifecycle'
 import type { HydrationIssue } from '../src/internal'
 
 const tick = () =>
@@ -394,6 +395,169 @@ describe('DOM Module', () => {
       )
 
       warnSpy.mockRestore()
+    })
+
+    it('cleans up effects when hydrated mount flushing throws', async () => {
+      container.innerHTML = '<span>app</span>'
+      const trigger = createSignal(0)
+      let runs = 0
+      let mountCleanups = 0
+      let destroyed = 0
+      const span = template('<span>app</span>')
+
+      const App = () => {
+        createEffect(() => {
+          trigger()
+          runs++
+        })
+        onDestroy(() => {
+          destroyed++
+        })
+        onMount(() => {
+          return () => {
+            mountCleanups++
+          }
+        })
+        onMount(() => {
+          throw new Error('hydrate mount boom')
+        })
+        return span()
+      }
+
+      expect(() => {
+        hydrateComponent(() => createElement({ type: App, props: {}, key: undefined }), container)
+      }).toThrow('hydrate mount boom')
+
+      expect(runs).toBe(1)
+      expect(mountCleanups).toBe(1)
+      expect(destroyed).toBe(1)
+
+      trigger(1)
+      await tick()
+
+      expect(runs).toBe(1)
+    })
+
+    it('routes hydrated mount cleanup errors while destroying failed setup', async () => {
+      container.innerHTML = '<span>app</span>'
+      const trigger = createSignal(0)
+      let runs = 0
+      let cleanupErrors = 0
+      let destroyed = 0
+      const span = template('<span>app</span>')
+
+      const App = () => {
+        registerErrorHandler((err, info) => {
+          if (err instanceof Error && err.message === 'hydrate cleanup boom') {
+            cleanupErrors++
+            expect(info?.source).toBe('cleanup')
+            return true
+          }
+          return false
+        })
+        createEffect(() => {
+          trigger()
+          runs++
+        })
+        onDestroy(() => {
+          destroyed++
+        })
+        onMount(() => {
+          return () => {
+            throw new Error('hydrate cleanup boom')
+          }
+        })
+        onMount(() => {
+          throw new Error('hydrate mount boom')
+        })
+        return span()
+      }
+
+      expect(() => {
+        hydrateComponent(() => createElement({ type: App, props: {}, key: undefined }), container)
+      }).toThrow('hydrate mount boom')
+
+      expect(cleanupErrors).toBe(1)
+      expect(destroyed).toBe(1)
+
+      trigger(1)
+      await tick()
+
+      expect(runs).toBe(1)
+    })
+
+    it('cleans up effects when a hydration issue handler throws', async () => {
+      container.innerHTML = 'server'
+      const trigger = createSignal(0)
+      let runs = 0
+
+      expect(() => {
+        hydrateComponent(
+          () => {
+            createEffect(() => {
+              trigger()
+              runs++
+            })
+            return createElement('client')
+          },
+          container,
+          {
+            onHydrationIssue: () => {
+              throw new Error('issue boom')
+            },
+          },
+        )
+      }).toThrow('issue boom')
+
+      expect(runs).toBe(1)
+
+      trigger(1)
+      await tick()
+
+      expect(runs).toBe(1)
+    })
+
+    it('cleans up effects when strict hydration fails after setup', async () => {
+      container.innerHTML = 'server'
+      const trigger = createSignal(0)
+      const issues: HydrationIssue[] = []
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      let runs = 0
+
+      try {
+        expect(() => {
+          hydrateComponent(
+            () => {
+              createEffect(() => {
+                trigger()
+                runs++
+              })
+              return createElement('client')
+            },
+            container,
+            {
+              strictHydration: true,
+              onHydrationIssue: issue => issues.push(issue),
+            },
+          )
+        }).toThrow('[fict/hydration] Hydrated text content does not match client output.')
+
+        expect(runs).toBe(1)
+        expect(issues).toContainEqual(
+          expect.objectContaining({
+            code: 'text_mismatch',
+            expected: 'client',
+            actual: 'server',
+          }),
+        )
+
+        trigger(1)
+        await tick()
+
+        expect(runs).toBe(1)
+      } finally {
+        warnSpy.mockRestore()
+      }
     })
 
     it('reports node mismatches during hydration', () => {

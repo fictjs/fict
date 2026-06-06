@@ -227,38 +227,46 @@ export function hydrateComponent(
   const root = createRootContext()
   root.ownerDocument = container.ownerDocument ?? document
   const prev = pushRoot(root)
-
-  // Enable hydration flags for bindings that check __fictIsHydrating()
-  __fictEnterHydration()
+  let completed = false
+  let hydrationEntered = false
 
   try {
-    // Run the view function INSIDE withHydration so template() can claim nodes
-    withHydration(
-      container,
-      () => {
-        view()
-      },
-      {
-        onHydrationIssue: options.onHydrationIssue,
-        strictHydration: options.strictHydration,
-      },
-    )
-  } catch (err) {
-    destroyRoot(root)
-    throw err
+    try {
+      // Enable hydration flags for bindings that check __fictIsHydrating()
+      __fictEnterHydration()
+      hydrationEntered = true
+      // Run the view function INSIDE withHydration so template() can claim nodes
+      withHydration(
+        container,
+        () => {
+          view()
+        },
+        {
+          onHydrationIssue: options.onHydrationIssue,
+          strictHydration: options.strictHydration,
+        },
+      )
+    } finally {
+      if (hydrationEntered) {
+        __fictExitHydration()
+      }
+      popRoot(prev)
+    }
+
+    container.setAttribute('data-fict-fine-grained', '1')
+    flushOnMount(root)
+
+    const teardown = () => {
+      destroyRoot(root)
+    }
+
+    completed = true
+    return teardown
   } finally {
-    __fictExitHydration()
-    popRoot(prev)
+    if (!completed) {
+      destroyRoot(root)
+    }
   }
-
-  container.setAttribute('data-fict-fine-grained', '1')
-  flushOnMount(root)
-
-  const teardown = () => {
-    destroyRoot(root)
-  }
-
-  return teardown
 }
 
 // ============================================================================
