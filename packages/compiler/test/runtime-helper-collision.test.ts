@@ -208,15 +208,22 @@ describe('runtime helper name collisions', () => {
     expect(output).toMatch(/const count = __fictUseSignal\(__fictCtx, 1/)
   })
 
-  it('renames inlined for-of and for-in helpers when source declares their names', () => {
+  it('preserves user for-of and for-in marker-named calls', () => {
     const output = transform(
       `
         const __fictForOf = () => 'local for-of'
         const __fictForIn = () => 'local for-in'
 
+        function __forOf(items, cb) {
+          return 'user:' + items.length
+        }
+
+        function __forIn(obj, cb) {
+          return 'user:' + Object.keys(obj).length
+        }
+
         export function probe() {
-          __forOf([1], item => item)
-          __forIn({ a: 1 }, key => key)
+          return __forOf([1], item => item) + __forIn({ a: 1 }, key => key)
         }
       `,
       { dev: false, optimize: false },
@@ -224,9 +231,53 @@ describe('runtime helper name collisions', () => {
 
     expect(output).toContain('const __fictForOf = () => "local for-of";')
     expect(output).toContain('const __fictForIn = () => "local for-in";')
-    expect(output).toMatch(/function __fictForOf_1\(/)
-    expect(output).toMatch(/function __fictForIn_1\(/)
-    expect(output).toMatch(/__fictForOf_1\(\[1\], item => item\)/)
-    expect(output).toMatch(/__fictForIn_1\(\{\s*a: 1\s*\}, key => key\)/)
+    expect(output).toMatch(/function __forOf\(/)
+    expect(output).toMatch(/function __forIn\(/)
+    expect(output).toMatch(/__forOf\(\[1\], item => item\)/)
+    expect(output).toMatch(/__forIn\(\{\s*a: 1\s*\}, key => key\)/)
+    expect(output).not.toMatch(/function __fictForOf_?\d*\(/)
+    expect(output).not.toMatch(/function __fictForIn_?\d*\(/)
+    expect(output).not.toMatch(/__fictForOf_?\d*\(\[1\]/)
+    expect(output).not.toMatch(/__fictForIn_?\d*\(\{\s*a: 1\s*\}/)
+  })
+
+  it('preserves imported parameter and nested marker-named calls', () => {
+    const importedOutput = transform(
+      `
+        import { __forOf, __forIn } from './iter'
+
+        export function probe() {
+          return __forOf([1], item => item) + __forIn({ a: 1 }, key => key)
+        }
+      `,
+      { dev: false, optimize: false },
+    )
+
+    expect(importedOutput).toMatch(/import \{ __forOf, __forIn \} from ['"]\.\/iter['"]/)
+    expect(importedOutput).toMatch(/__forOf\(\[1\], item => item\)/)
+    expect(importedOutput).toMatch(/__forIn\(\{\s*a: 1\s*\}, key => key\)/)
+    expect(importedOutput).not.toContain('__fictForOf')
+    expect(importedOutput).not.toContain('__fictForIn')
+
+    const scopedOutput = transform(
+      `
+        export function withParams(__forOf, __forIn) {
+          return __forOf([1], item => item) + __forIn({ a: 1 }, key => key)
+        }
+
+        export function nested() {
+          const __forOf = (items, cb) => items.map(cb).join(',')
+          const __forIn = (obj, cb) => Object.keys(obj).map(cb).join(',')
+          return __forOf([1], item => item) + __forIn({ a: 1 }, key => key)
+        }
+      `,
+      { dev: false, optimize: false },
+    )
+
+    expect(scopedOutput).toMatch(/function withParams\(__forOf, __forIn\)/)
+    expect(scopedOutput).toMatch(/__forOf\(\[1\], item => item\)/)
+    expect(scopedOutput).toMatch(/__forIn\(\{\s*a: 1\s*\}, key => key\)/)
+    expect(scopedOutput).not.toContain('__fictForOf')
+    expect(scopedOutput).not.toContain('__fictForIn')
   })
 })

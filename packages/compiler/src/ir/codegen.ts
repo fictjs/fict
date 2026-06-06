@@ -91,7 +91,7 @@ import {
   emitResumableEventBinding,
   type ResumableEventBindingOps,
 } from './codegen-resumable-events'
-import { inlineHelperIdentifier, runtimeIdentifier } from './codegen-runtime-helpers'
+import { runtimeIdentifier } from './codegen-runtime-helpers'
 import { collectRuntimeImports } from './codegen-runtime-imports'
 import {
   extractHIRStaticHtml,
@@ -2255,12 +2255,6 @@ function lowerExpressionImpl(
   valueUsed = true,
 ): BabelCore.types.Expression {
   const { t } = ctx
-  const lowerArgsAsExpressions = (args: Expression[]): BabelCore.types.Expression[] =>
-    args.map(arg =>
-      arg.kind === 'SpreadElement'
-        ? lowerExpression(arg.argument as Expression, ctx)
-        : lowerExpression(arg, ctx),
-    )
   const lowerCallArguments = (
     args: Expression[],
     mapArg?: (arg: Expression, idx: number) => BabelCore.types.Expression,
@@ -3258,22 +3252,6 @@ function lowerExpressionImpl(
         return t.callExpression(runtimeIdentifier(ctx, 'useEffect'), [
           contextIdentifier(ctx),
           ...args,
-        ])
-      }
-      if (expr.callee.kind === 'Identifier' && expr.callee.name === '__forOf') {
-        ctx.needsForOfHelper = true
-        const [iterable, cb] = lowerArgsAsExpressions(expr.arguments)
-        return t.callExpression(inlineHelperIdentifier(ctx, 'forOf'), [
-          iterable ?? voidZero(t),
-          cb ?? t.arrowFunctionExpression([], voidZero(t)),
-        ])
-      }
-      if (expr.callee.kind === 'Identifier' && expr.callee.name === '__forIn') {
-        ctx.needsForInHelper = true
-        const [obj, cb] = lowerArgsAsExpressions(expr.arguments)
-        return t.callExpression(inlineHelperIdentifier(ctx, 'forIn'), [
-          obj ?? voidZero(t),
-          cb ?? t.arrowFunctionExpression([], voidZero(t)),
         ])
       }
       if (expr.callee.kind === 'Identifier' && expr.callee.name === '__fictPropsRest') {
