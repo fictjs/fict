@@ -353,6 +353,136 @@ describe('resource', () => {
     expect(result.data).toBe('second')
   })
 
+  it('does not create unhandled suspense tokens for failing prefetches', async () => {
+    let resolveFetch: ((value: string) => void) | undefined
+    const fetcher = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(new Error('prefetch failed'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<string>(resolve => {
+            resolveFetch = resolve
+          }),
+      )
+    const r = resource<string, string>({ fetch: fetcher, suspense: true })
+    const container = document.createElement('div')
+
+    r.prefetch('k')
+    await tick()
+    await tick()
+
+    const View = () => {
+      const result = r.read('k')
+      return { type: 'span', props: { children: result.data } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense as any,
+        props: {
+          fallback: 'loading',
+          children: { type: View, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('loading')
+    expect(fetcher).toHaveBeenCalledTimes(2)
+
+    resolveFetch?.('ready')
+    await tick()
+    await tick()
+    await tick()
+    expect(container.textContent).toBe('ready')
+    dispose()
+  })
+
+  it('reuses successful suspense prefetches on later reads', async () => {
+    const fetcher = vi.fn().mockResolvedValue('prefetched')
+    const r = resource<string, string>({ fetch: fetcher, suspense: true })
+    const container = document.createElement('div')
+
+    r.prefetch('k')
+    await tick()
+    await tick()
+
+    const View = () => {
+      const result = r.read('k')
+      return { type: 'span', props: { children: result.data } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense as any,
+        props: {
+          fallback: 'loading',
+          children: { type: View, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('prefetched')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
+  it('attaches suspense reads to an in-flight prefetch', async () => {
+    let resolveFetch: ((value: string) => void) | undefined
+    const fetcher = vi.fn(
+      () =>
+        new Promise<string>(resolve => {
+          resolveFetch = resolve
+        }),
+    )
+    const r = resource<string, string>({ fetch: fetcher, suspense: true })
+    const container = document.createElement('div')
+
+    r.prefetch('k')
+    const View = () => {
+      const result = r.read('k')
+      return { type: 'span', props: { children: result.data } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: Suspense as any,
+        props: {
+          fallback: 'loading',
+          children: { type: View, props: {} },
+        },
+      }),
+      container,
+    )
+
+    await tick()
+    expect(container.textContent).toBe('loading')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    resolveFetch?.('ready')
+    await tick()
+    await tick()
+    await tick()
+
+    expect(container.textContent).toBe('ready')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    dispose()
+  })
+
+  it('keeps non-suspense prefetch failures internal', async () => {
+    const fetcher = vi.fn().mockRejectedValue(new Error('prefetch failed'))
+    const r = resource<string, string>({ fetch: fetcher })
+
+    r.prefetch('k')
+    await tick()
+    await tick()
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
   it('dedupes concurrent reads for the same key', async () => {
     const fetcher = vi.fn().mockResolvedValue('ok')
     const r = resource(fetcher)

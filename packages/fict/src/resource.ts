@@ -319,9 +319,14 @@ export function resource<T, Args = void>(
     entry: ResourceEntry<T, Args>,
     key: unknown,
     args: Args,
-    isRevalidating = false,
+    options: { isRevalidating?: boolean; createToken?: boolean } = {},
   ) => {
+    const createToken = options.createToken !== false
+    const isRevalidating = options.isRevalidating === true
     if (entry.inFlight && entry.inFlightArgs === args) {
+      if (createToken && useSuspense && !entry.hasValue && !entry.pendingToken) {
+        entry.pendingToken = createSuspenseToken()
+      }
       return
     }
     entry.controller?.abort()
@@ -337,7 +342,7 @@ export function resource<T, Args = void>(
     entry.generation += 1
     const currentGen = entry.generation
 
-    const shouldSuspend = useSuspense && !entry.hasValue
+    const shouldSuspend = createToken && useSuspense && !entry.hasValue
     entry.pendingToken = shouldSuspend ? createSuspenseToken() : null
 
     const fetchPromise = fetcher({ signal: controller.signal }, args)
@@ -420,7 +425,7 @@ export function resource<T, Args = void>(
     if (!usableData) {
       entry.lastArgs = args
       entry.lastVersion = entry.version()
-      startFetch(entry, key, args)
+      startFetch(entry, key, args, { createToken: false })
     }
   }
 
@@ -485,12 +490,14 @@ export function resource<T, Args = void>(
           versionChanged ||
           resetChanged ||
           (entry.status === 'error' && !resolvedCacheOptions.cacheErrors)
+        const shouldAttachSuspenseToken =
+          useSuspense && !!entry.inFlight && !entry.hasValue && !entry.pendingToken
 
         entry.lastArgs = args
         entry.lastVersion = currentVersion
         entry.lastReset = resetToken
 
-        if (shouldRefetch) {
+        if (shouldRefetch || shouldAttachSuspenseToken) {
           if (entry.inFlight && (argsChanged || versionChanged)) {
             entry.controller?.abort()
             entry.inFlight = undefined
@@ -503,7 +510,7 @@ export function resource<T, Args = void>(
         } else if (canUseStaleData && entry.inFlight === undefined) {
           // stale-while-revalidate: return stale data immediately, refresh in background
           // Pass isRevalidating=true to avoid showing loading state
-          startFetch(entry, key, args as Args, true)
+          startFetch(entry, key, args as Args, { isRevalidating: true })
         }
       })
 
