@@ -1913,6 +1913,104 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('resolves dynamic bindings inside template element content', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let seen: { span: Element | null; clicks: number } = { span: null, clicks: 0 }
+      export let api: {
+        setTitle(value: string): void
+        hide(): void
+        setItems(value: string[]): void
+      }
+
+      export function App() {
+        let title = $state('first')
+        let show = $state(true)
+        let items = $state(['a', 'b'])
+        api = {
+          setTitle: value => (title = value),
+          hide: () => (show = false),
+          setItems: value => (items = value),
+        }
+        return (
+          <section>
+            <template data-testid="tpl">
+              <span data-id="target" title={title} ref={el => (seen.span = el)}>
+                {title}
+              </span>
+              <button data-id="button" on:click={() => (seen.clicks += 1)}>click</button>
+              {show && <em data-id="conditional">{title}</em>}
+              {items.map(item => <i key={item} data-row={item}>{item}</i>)}
+              <template data-id="nested">
+                <b data-id="nested-target" title={title}>{title}</b>
+              </template>
+            </template>
+          </section>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      seen: { span: Element | null; clicks: number }
+      api: {
+        setTitle(value: string): void
+        hide(): void
+        setItems(value: string[]): void
+      }
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const tpl = container.querySelector('[data-testid="tpl"]') as HTMLTemplateElement
+    const content = tpl.content
+    const target = content.querySelector('[data-id="target"]') as HTMLSpanElement
+    const button = content.querySelector('[data-id="button"]') as HTMLButtonElement
+    const nestedTpl = content.querySelector('[data-id="nested"]') as HTMLTemplateElement
+    const nestedTarget = nestedTpl.content.querySelector('[data-id="nested-target"]') as HTMLElement
+
+    expect(target.getAttribute('title')).toBe('first')
+    expect(target.textContent?.trim()).toBe('first')
+    expect(mod.seen.span).toBe(target)
+    expect(content.querySelector('[data-id="conditional"]')?.textContent).toBe('first')
+    expect(
+      Array.from(content.querySelectorAll('[data-row]')).map(node => node.textContent),
+    ).toEqual(['a', 'b'])
+    expect(nestedTarget.getAttribute('title')).toBe('first')
+    expect(nestedTarget.textContent).toBe('first')
+
+    document.body.appendChild(button)
+    button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(mod.seen.clicks).toBe(1)
+
+    mod.api.setTitle('next')
+    await flushUpdates()
+    expect(target.getAttribute('title')).toBe('next')
+    expect(target.textContent?.trim()).toBe('next')
+    expect(content.querySelector('[data-id="conditional"]')?.textContent).toBe('next')
+    expect(nestedTarget.getAttribute('title')).toBe('next')
+    expect(nestedTarget.textContent).toBe('next')
+
+    mod.api.setItems(['c'])
+    await flushUpdates()
+    expect(
+      Array.from(content.querySelectorAll('[data-row]')).map(node => node.textContent),
+    ).toEqual(['c'])
+
+    mod.api.hide()
+    await flushUpdates()
+    expect(content.querySelector('[data-id="conditional"]')).toBeNull()
+
+    teardown()
+    container.remove()
+  })
+
   it('renders intrinsic children props as child content in fine-grained output', async () => {
     const source = `
       import { $state, render } from 'fict'

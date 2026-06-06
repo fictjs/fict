@@ -1289,6 +1289,21 @@ describe('DOM Module', () => {
       expect(node).toBeInstanceOf(HTMLImageElement)
     })
 
+    it('resolves paths through template element content', () => {
+      const factory = template(
+        '<template><span data-id="inner">inner</span><template><b data-id="nested">nested</b></template></template>',
+      )
+
+      const node = factory() as HTMLTemplateElement
+      const inner = node.content.querySelector('[data-id="inner"]')
+      const nestedTemplate = node.content.querySelector('template') as HTMLTemplateElement
+      const nested = nestedTemplate.content.querySelector('[data-id="nested"]')
+
+      expect(node.childNodes).toHaveLength(0)
+      expect(resolvePath(node, [0])).toBe(inner)
+      expect(resolvePath(node, [1, 0])).toBe(nested)
+    })
+
     it('handles SVG templates', () => {
       // With isSVG=true, pass content without <svg> wrapper
       // Runtime wraps it in <svg> for proper namespace parsing, then extracts content

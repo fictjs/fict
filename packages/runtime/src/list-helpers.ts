@@ -559,21 +559,17 @@ function createFineGrainedKeyedList<T>(
   const getConnectedParent = (): (ParentNode & Node) | null => {
     const endParent = container.endMarker.parentNode
     const startParent = container.startMarker.parentNode
-    if (
-      endParent &&
-      startParent &&
-      endParent === startParent &&
-      (endParent as Node).nodeType !== 11
-    ) {
+    if (endParent && startParent && endParent === startParent) {
       const parentNode = endParent as ParentNode & Node
+      if (parentNode.nodeType === 11) {
+        if (isShadowRoot(parentNode)) {
+          const host = parentNode.host
+          if ('isConnected' in host && !host.isConnected) return null
+        }
+        return parentNode
+      }
       if ('isConnected' in parentNode && !parentNode.isConnected) return null
       return parentNode
-    }
-    if (endParent && startParent && endParent === startParent && isShadowRoot(endParent as Node)) {
-      const shadowRoot = endParent as ShadowRoot
-      const host = shadowRoot.host
-      if ('isConnected' in host && !host.isConnected) return null
-      return shadowRoot as unknown as ParentNode & Node
     }
     return null
   }

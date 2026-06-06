@@ -232,7 +232,8 @@ export function resolvePath(root: Node, path: number[]): Node | null {
 }
 
 function getChildAtPathIndex(current: Node, index: number): Node | null {
-  const hydratedNodes = getHydratedFragmentNodes(current)
+  const childRoot = getTemplateContentRoot(current) ?? current
+  const hydratedNodes = getHydratedFragmentNodes(childRoot)
   if (hydratedNodes) {
     let currentIndex = 0
     for (let offset = 0; offset < hydratedNodes.length; offset += 1) {
@@ -253,7 +254,7 @@ function getChildAtPathIndex(current: Node, index: number): Node | null {
     return null
   }
 
-  let child: Node | null = current.firstChild
+  let child: Node | null = childRoot.firstChild
   let currentIndex = 0
   while (child) {
     if (isSlotStart(child)) {
@@ -268,4 +269,11 @@ function getChildAtPathIndex(current: Node, index: number): Node | null {
     child = child.nextSibling
   }
   return null
+}
+
+function getTemplateContentRoot(current: Node): DocumentFragment | null {
+  if (current.nodeType !== 1) return null
+  const element = current as Element & { content?: DocumentFragment }
+  const content = element.localName === 'template' ? element.content : undefined
+  return content?.nodeType === DOCUMENT_FRAGMENT_NODE ? content : null
 }
