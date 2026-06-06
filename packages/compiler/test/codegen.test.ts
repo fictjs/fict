@@ -1858,6 +1858,57 @@ describe('resumable event handler transformation', () => {
     expect(code).toContain('console.log(count())')
   })
 
+  it('throws for explicit nested resumable handlers that capture outer signals', () => {
+    const ast = parseFile(`
+      function App() {
+        const count = $state(0)
+        function Inner() {
+          return <button onClick$={() => count(count() + 1)}>Click</button>
+        }
+        return <Inner />
+      }
+    `)
+    const hir = buildHIR(ast)
+
+    expect(() => lowerHIRWithRegions(hir, t, { resumable: true })).toThrow(/outer signals: count/i)
+  })
+
+  it('falls back for auto nested resumable handlers that capture outer signals', () => {
+    const ast = parseFile(`
+      function App() {
+        const count = $state(0)
+        function Inner() {
+          return <button onClick={() => count(count() + 1)}>Click</button>
+        }
+        return <Inner />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
+    expect(code).not.toContain('setAttribute("on:click"')
+  })
+
+  it('allows nested resumable handlers that capture their own signals', () => {
+    const ast = parseFile(`
+      function App() {
+        function Inner() {
+          const count = $state(0)
+          return <button onClick$={() => count(count() + 1)}>Click</button>
+        }
+        return <Inner />
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t, { resumable: true })
+    const { code } = generate(file)
+
+    expect(code).toContain('setAttribute("on:click"')
+    expect(code).toContain('__fictUseLexicalScope(scopeId, ["count"])')
+  })
+
   it('falls back for auto-extracted handlers that capture function-valued signals', () => {
     const ast = parseFile(`
       function Comp() {

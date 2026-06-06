@@ -267,6 +267,9 @@ export function emitResumableEventBinding(
   const nonSerializableSignalCaptures = lexicalNames.filter(name =>
     ctx.nonSerializableSignalVars?.has(name),
   )
+  const outerSignalCaptures = ctx.currentFunctionDeclaredNames
+    ? lexicalNames.filter(name => !ctx.currentFunctionDeclaredNames?.has(name))
+    : []
   const propsName =
     ctx.propsParamName &&
     captured.has(ctx.propsParamName) &&
@@ -331,6 +334,7 @@ export function emitResumableEventBinding(
   if (
     unsupportedLocals.length > 0 ||
     nonSerializableSignalCaptures.length > 0 ||
+    outerSignalCaptures.length > 0 ||
     unsafeFunctionCaptures.length > 0 ||
     mutatedFunctionDeps.length > 0 ||
     calledPropMembers.length > 0
@@ -341,6 +345,9 @@ export function emitResumableEventBinding(
     }
     if (nonSerializableSignalCaptures.length > 0) {
       detailParts.push(`signals: ${nonSerializableSignalCaptures.sort().join(', ')}`)
+    }
+    if (outerSignalCaptures.length > 0) {
+      detailParts.push(`outer signals: ${outerSignalCaptures.sort().join(', ')}`)
     }
     if (unsafeFunctionCaptures.length > 0) {
       detailParts.push(`function deps: ${unsafeFunctionCaptures.sort().join('; ')}`)

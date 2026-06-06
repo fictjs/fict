@@ -687,6 +687,8 @@ export interface CodegenContext {
   strictMacroBindings?: boolean | undefined
   /** Local (function-scope) declared names for helper shadowing checks. */
   localDeclaredNames?: Set<string> | undefined
+  /** Names declared directly by the function currently being lowered. */
+  currentFunctionDeclaredNames?: Set<string> | undefined
   /** Locals that should be treated as plain values even if reactive analysis tracks the name. */
   localValueVars?: Set<string> | undefined
   /** Tracks which runtime helpers are used */
@@ -872,6 +874,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     moduleRuntimeNamespaceImports: new Set(),
     stateMacroNames: new Set(),
     localDeclaredNames: new Set(),
+    currentFunctionDeclaredNames: new Set(),
     helpersUsed: new Set(),
     runtimeHelperLocalNames: new Map(),
     inlineHelperLocalNames: new Map(),
@@ -2133,6 +2136,7 @@ function lowerExpressionImpl(
     const prevExternal = ctx.externalTracked
     const prevShadowed = ctx.shadowedNames
     const prevLocalDeclared = ctx.localDeclaredNames
+    const prevCurrentFunctionDeclared = ctx.currentFunctionDeclaredNames
     const scoped = new Set(ctx.trackedVars)
     paramNames.forEach(n => scoped.delete(deSSAVarName(n)))
     if (localDeclared) {
@@ -2173,12 +2177,17 @@ function lowerExpressionImpl(
     }
     ctx.shadowedNames = shadowed
     const localNames = new Set(prevLocalDeclared ?? [])
+    const currentFunctionDeclared = new Set<string>()
+    paramNames.forEach(n => currentFunctionDeclared.add(deSSAVarName(n)))
     if (localDeclared) {
       for (const name of localDeclared) {
-        localNames.add(deSSAVarName(name))
+        const declaredName = deSSAVarName(name)
+        localNames.add(declaredName)
+        currentFunctionDeclared.add(declaredName)
       }
     }
     ctx.localDeclaredNames = localNames
+    ctx.currentFunctionDeclaredNames = currentFunctionDeclared
     const result = fn()
     ctx.trackedVars = prevTracked
     ctx.aliasVars = prevAlias
@@ -2188,6 +2197,7 @@ function lowerExpressionImpl(
     ctx.externalTracked = prevExternal
     ctx.shadowedNames = prevShadowed
     ctx.localDeclaredNames = prevLocalDeclared
+    ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
     return result
   }
   const lowerTrackedWriteCall = (
@@ -6235,11 +6245,14 @@ function lowerTopLevelStatementBlock(
 
   const prevInModule = ctx.inModule
   const prevLocalDeclared = ctx.localDeclaredNames
+  const prevCurrentFunctionDeclared = ctx.currentFunctionDeclaredNames
+  const currentFunctionDeclared = collectLocalDeclaredNames(fn.params, fn.blocks, t)
   const topLevelDeclared = new Set(prevLocalDeclared ?? [])
-  for (const declaredName of collectLocalDeclaredNames(fn.params, fn.blocks, t)) {
+  for (const declaredName of currentFunctionDeclared) {
     topLevelDeclared.add(declaredName)
   }
   ctx.localDeclaredNames = topLevelDeclared
+  ctx.currentFunctionDeclaredNames = currentFunctionDeclared
   ctx.inModule = true
   try {
     const lowered = generateRegionCode(fn, scopeResult, t, ctx)
@@ -6247,6 +6260,7 @@ function lowerTopLevelStatementBlock(
   } finally {
     ctx.inModule = prevInModule
     ctx.localDeclaredNames = prevLocalDeclared
+    ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
   }
 }
 
@@ -7220,11 +7234,14 @@ function lowerFunctionWithRegions(
   shadowedParams.forEach(n => functionShadowed.add(n))
   ctx.shadowedNames = functionShadowed
   const prevLocalDeclared = ctx.localDeclaredNames
+  const prevCurrentFunctionDeclared = ctx.currentFunctionDeclaredNames
+  const currentFunctionDeclared = collectLocalDeclaredNames(fn.params, fn.blocks, t)
   const localDeclared = new Set(prevLocalDeclared ?? [])
-  for (const name of collectLocalDeclaredNames(fn.params, fn.blocks, t)) {
+  for (const name of currentFunctionDeclared) {
     localDeclared.add(name)
   }
   ctx.localDeclaredNames = localDeclared
+  ctx.currentFunctionDeclaredNames = currentFunctionDeclared
   const prevExternalTracked = ctx.externalTracked
   const inheritedTracked = new Set(ctx.trackedVars)
   ctx.externalTracked = inheritedTracked
@@ -7835,6 +7852,7 @@ function lowerFunctionWithRegions(
       ctx.needsCtx = prevNeedsCtx
       ctx.shadowedNames = prevShadowed
       ctx.localDeclaredNames = prevLocalDeclared
+      ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
       ctx.localValueVars = prevLocalValueVars
       ctx.trackedVars = prevTracked
       ctx.externalTracked = prevExternalTracked
@@ -7863,6 +7881,7 @@ function lowerFunctionWithRegions(
     ctx.needsCtx = prevNeedsCtx
     ctx.shadowedNames = prevShadowed
     ctx.localDeclaredNames = prevLocalDeclared
+    ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
     ctx.localValueVars = prevLocalValueVars
     ctx.trackedVars = prevTracked
     ctx.externalTracked = prevExternalTracked
@@ -7990,6 +8009,7 @@ function lowerFunctionWithRegions(
   ctx.needsCtx = prevNeedsCtx
   ctx.shadowedNames = prevShadowed
   ctx.localDeclaredNames = prevLocalDeclared
+  ctx.currentFunctionDeclaredNames = prevCurrentFunctionDeclared
   ctx.localValueVars = prevLocalValueVars
   ctx.trackedVars = prevTracked
   ctx.externalTracked = prevExternalTracked
