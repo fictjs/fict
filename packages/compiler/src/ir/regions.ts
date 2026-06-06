@@ -5383,7 +5383,7 @@ function instructionToStatement(
       if (instr.value.kind === 'ObjectExpression') {
         ctx.objectLiteralPath = [baseName]
       }
-      if (instr.value.kind === 'CallExpression' && isComponentName(baseName)) {
+      if (isComponentName(baseName) && ctx.jsxComponentNames?.has(baseName)) {
         ctx.componentWrapperName = baseName
       }
       try {

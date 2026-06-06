@@ -126,20 +126,29 @@ function unsupportedTypeScriptRuntimeDeclarationMessage(
 }
 
 function isInsideLoop(path: BabelCore.NodePath): boolean {
-  return !!path.findParent(
-    p =>
-      p.isForStatement?.() ||
-      p.isWhileStatement?.() ||
-      p.isDoWhileStatement?.() ||
-      p.isForInStatement?.() ||
-      p.isForOfStatement?.(),
-  )
+  let current: BabelCore.NodePath | null = path
+  while (current?.parentPath) {
+    const parent: BabelCore.NodePath = current.parentPath as BabelCore.NodePath
+    if (parent.isFunction?.()) return false
+    if (
+      parent.isForStatement?.() ||
+      parent.isWhileStatement?.() ||
+      parent.isDoWhileStatement?.() ||
+      parent.isForInStatement?.() ||
+      parent.isForOfStatement?.()
+    ) {
+      return true
+    }
+    current = parent
+  }
+  return false
 }
 
 function isInsideConditional(path: BabelCore.NodePath): boolean {
   let current: BabelCore.NodePath | null = path
   while (current?.parentPath) {
     const parent: BabelCore.NodePath = current.parentPath as BabelCore.NodePath
+    if (parent.isFunction?.()) return false
     if (parent.isIfStatement?.() || parent.isConditionalExpression?.() || parent.isSwitchCase?.()) {
       return true
     }

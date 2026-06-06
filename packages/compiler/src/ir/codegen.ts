@@ -195,6 +195,96 @@ function collectJSXMemberComponentPaths(
   return paths
 }
 
+function collectJSXComponentNames(
+  statements: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): Set<string> {
+  const names = new Set<string>()
+  const visitorKeys =
+    (t as unknown as { VISITOR_KEYS?: Record<string, string[]> }).VISITOR_KEYS ?? {}
+
+  const visit = (node: BabelCore.types.Node | null | undefined): void => {
+    if (!node) return
+    if (t.isJSXElement(node) && t.isJSXIdentifier(node.openingElement.name)) {
+      const name = node.openingElement.name.name
+      if (isComponentName(name)) names.add(name)
+    }
+
+    const keys = visitorKeys[node.type] ?? []
+    for (const key of keys) {
+      const value = (node as unknown as Record<string, unknown>)[key]
+      if (Array.isArray(value)) {
+        value.forEach(child => {
+          if (child && typeof child === 'object' && 'type' in child) {
+            visit(child as BabelCore.types.Node)
+          }
+        })
+      } else if (value && typeof value === 'object' && 'type' in value) {
+        visit(value as BabelCore.types.Node)
+      }
+    }
+  }
+
+  statements.forEach(visit)
+  return names
+}
+
+function collectExportedComponentNames(
+  statements: BabelCore.types.Statement[],
+  t: typeof BabelCore.types,
+): Set<string> {
+  const names = new Set<string>()
+  const specifierName = (node: BabelCore.types.Identifier | BabelCore.types.StringLiteral) =>
+    t.isIdentifier(node) ? node.name : node.value
+
+  for (const stmt of statements) {
+    if (t.isExportNamedDeclaration(stmt)) {
+      const declaration = stmt.declaration
+      if (declaration) {
+        if (
+          (t.isFunctionDeclaration(declaration) || t.isClassDeclaration(declaration)) &&
+          declaration.id &&
+          isComponentName(declaration.id.name)
+        ) {
+          names.add(declaration.id.name)
+        }
+        if (t.isVariableDeclaration(declaration)) {
+          for (const decl of declaration.declarations) {
+            if (t.isIdentifier(decl.id) && isComponentName(decl.id.name)) {
+              names.add(decl.id.name)
+            }
+          }
+        }
+        continue
+      }
+      if (!stmt.source) {
+        for (const spec of stmt.specifiers) {
+          if (!t.isExportSpecifier(spec)) continue
+          const exportedName = specifierName(spec.exported)
+          if (t.isIdentifier(spec.local) && isComponentName(exportedName)) {
+            names.add(spec.local.name)
+          }
+        }
+      }
+      continue
+    }
+    if (t.isExportDefaultDeclaration(stmt)) {
+      const declaration = stmt.declaration
+      if (t.isIdentifier(declaration) && isComponentName(declaration.name)) {
+        names.add(declaration.name)
+      } else if (
+        (t.isFunctionDeclaration(declaration) || t.isClassDeclaration(declaration)) &&
+        declaration.id &&
+        isComponentName(declaration.id.name)
+      ) {
+        names.add(declaration.id.name)
+      }
+    }
+  }
+
+  return names
+}
+
 function isComponentContextPrimitiveCall(expr: Expression): boolean {
   if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return false
   if (expr.callee.kind !== 'Identifier') return false
@@ -1030,6 +1120,8 @@ export interface CodegenContext {
   currentAssignmentName?: string | undefined
   /** Uppercase component binding currently being initialized through a wrapper call. */
   componentWrapperName?: string | undefined
+  /** Static JSX identifier component names used in this module, e.g. "App". */
+  jsxComponentNames?: Set<string> | undefined
   /** Static JSX member component paths used in this module, e.g. "UI.Button". */
   jsxMemberComponentPaths?: Set<string> | undefined
   /** Static path of the object literal currently being lowered, e.g. ["UI", "Nav"]. */
@@ -1153,6 +1245,7 @@ export function createCodegenContext(t: typeof BabelCore.types): CodegenContext 
     nonSerializableSignalVars: new Set(),
     functionVars: new Set(),
     functionBindingKinds: new Map(),
+    jsxComponentNames: new Set(),
     jsxMemberComponentPaths: new Set(),
     importedReactiveVars: new Set(),
     importedReactiveKinds: new Map(),
@@ -1547,13 +1640,15 @@ export function lowerHIRToBabel(
   t: typeof BabelCore.types,
 ): BabelCore.types.File {
   const ctx = createCodegenContext(t)
+  const originalBody = (program.originalBody ?? []) as BabelCore.types.Statement[]
   ctx.programFunctions = new Map(
     program.functions.filter(fn => !!fn.name).map(fn => [fn.name as string, fn]),
   )
-  ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(
-    (program.originalBody ?? []) as BabelCore.types.Statement[],
-    t,
-  )
+  ctx.jsxComponentNames = collectJSXComponentNames(originalBody, t)
+  for (const name of collectExportedComponentNames(originalBody, t)) {
+    ctx.jsxComponentNames.add(name)
+  }
+  ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(originalBody, t)
   const body: BabelCore.types.Statement[] = []
   const emittedFunctionNames = new Set<string>()
   for (const fn of program.functions) {
@@ -2548,6 +2643,10 @@ function isJSXMemberComponentPath(path: string[] | undefined, ctx: CodegenContex
   return ctx.jsxMemberComponentPaths?.has(objectPathKey(path)) ?? false
 }
 
+function isJSXIdentifierComponentName(name: string, ctx: CodegenContext): boolean {
+  return ctx.jsxComponentNames?.has(name) ?? false
+}
+
 function getStaticMemberPath(expr: Expression): string[] | null {
   if (expr.kind === 'Identifier') return [deSSAVarName(expr.name)]
   if (expr.kind !== 'MemberExpression' && expr.kind !== 'OptionalMemberExpression') return null
@@ -2617,6 +2716,13 @@ function lowerComponentWrapperFunctionArgument(
   value: Expression,
   ctx: CodegenContext,
 ): BabelCore.types.Expression | null {
+  return lowerComponentExpressionFunctionValue(value, ctx)
+}
+
+function lowerComponentExpressionFunctionValue(
+  value: Expression,
+  ctx: CodegenContext,
+): BabelCore.types.Expression | null {
   const componentName = ctx.componentWrapperName
   if (!componentName) return null
   if (value.kind !== 'ArrowFunction' && value.kind !== 'FunctionExpression') return null
@@ -2624,6 +2730,14 @@ function lowerComponentWrapperFunctionArgument(
   const lowered = lowerFunctionWithRegions(fn, ctx, { forceComponentContext: true })
   if (!lowered) return null
   return buildFunctionDeclaratorExpression({ fn, stmt: lowered }, ctx.t)
+}
+
+function lowerExpressionComponentCandidate(
+  value: Expression,
+  ctx: CodegenContext,
+  valueUsed = true,
+): BabelCore.types.Expression {
+  return lowerComponentExpressionFunctionValue(value, ctx) ?? lowerExpression(value, ctx, valueUsed)
 }
 
 function lowerExpressionImpl(
@@ -3839,15 +3953,15 @@ function lowerExpressionImpl(
     case 'LogicalExpression':
       return t.logicalExpression(
         expr.operator as BabelCore.types.LogicalExpression['operator'],
-        lowerExpression(expr.left, ctx),
-        lowerExpression(expr.right, ctx),
+        lowerExpressionComponentCandidate(expr.left, ctx),
+        lowerExpressionComponentCandidate(expr.right, ctx),
       )
 
     case 'ConditionalExpression':
       return t.conditionalExpression(
         lowerExpression(expr.test, ctx),
-        lowerExpression(expr.consequent, ctx),
-        lowerExpression(expr.alternate, ctx),
+        lowerExpressionComponentCandidate(expr.consequent, ctx),
+        lowerExpressionComponentCandidate(expr.alternate, ctx),
       )
 
     case 'ArrayExpression':
@@ -3857,7 +3971,7 @@ function lowerExpressionImpl(
             ? null
             : el.kind === 'SpreadElement'
               ? t.spreadElement(lowerExpression(el.argument, ctx))
-              : lowerExpression(el, ctx),
+              : lowerExpressionComponentCandidate(el, ctx),
         ),
       )
 
@@ -3877,6 +3991,11 @@ function lowerExpressionImpl(
               ctx,
             )
             if (loweredComponentValue) return loweredComponentValue
+            const loweredComponentExpressionValue = lowerComponentExpressionFunctionValue(
+              p.value,
+              ctx,
+            )
+            if (loweredComponentExpressionValue) return loweredComponentExpressionValue
             return withObjectLiteralPath(
               ctx,
               p.value.kind === 'ObjectExpression' ? propertyPath : undefined,
@@ -4199,9 +4318,11 @@ function lowerExpressionImpl(
 
     case 'SequenceExpression':
       return t.sequenceExpression(
-        expr.expressions.map((e, index) =>
-          lowerExpression(e, ctx, index === expr.expressions.length - 1 ? valueUsed : false),
-        ),
+        expr.expressions.map((e, index) => {
+          const isLast = index === expr.expressions.length - 1
+          if (isLast) return lowerExpressionComponentCandidate(e, ctx, valueUsed)
+          return lowerExpression(e, ctx, false)
+        }),
       )
 
     case 'YieldExpression':
@@ -6390,7 +6511,7 @@ function lowerInstructionWithScopes(
     let valueExpr: BabelCore.types.Expression
     const lowerInitializerExpression = (): BabelCore.types.Expression => {
       const prevComponentWrapperName = ctx.componentWrapperName
-      if (instr.value.kind === 'CallExpression' && isComponentName(targetBase)) {
+      if (isComponentName(targetBase) && isJSXIdentifierComponentName(targetBase, ctx)) {
         ctx.componentWrapperName = targetBase
       }
       try {
@@ -6570,6 +6691,10 @@ export function lowerHIRWithRegions(
   )
   ctx.options = options
   const originalBody = (program.originalBody ?? []) as BabelCore.types.Statement[]
+  ctx.jsxComponentNames = collectJSXComponentNames(originalBody, t)
+  for (const name of collectExportedComponentNames(originalBody, t)) {
+    ctx.jsxComponentNames.add(name)
+  }
   ctx.jsxMemberComponentPaths = collectJSXMemberComponentPaths(originalBody, t)
   ctx.resumableEnabled = options?.resumable === true
   // Auto-extract defaults to true when resumable is enabled, unless explicitly disabled

@@ -1319,6 +1319,143 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('const view = wrap(function View')
   })
 
+  it('lowers sequence-wrapped component functions with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const App = (0, () => {
+        const count = $state(1)
+        return <button>{count}</button>
+      })
+
+      export function Parent() {
+        return <App />
+      }
+    `)
+
+    expect(output).toContain('const App = (0,')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).toContain('type: App')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('keeps sequence-wrapped component props reactive', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const App = (0, ({ value }: { value: number }) => <span>{value}</span>)
+
+      export function Parent() {
+        const count = $state(1)
+        return <App value={count} />
+      }
+    `)
+
+    expect(output).toContain('const value = prop(() => __props.value)')
+    expect(output).toContain('() => value()')
+    expect(output).toContain('value: __fictProp(() => count())')
+    expect(output).not.toContain('({ value })')
+    expect(output).not.toContain('const value = __props.value')
+  })
+
+  it('lowers logical component function expressions with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const App = true && (() => {
+        const count = $state(1)
+        return <button>{count}</button>
+      })
+
+      export function Parent() {
+        return <App />
+      }
+    `)
+
+    expect(output).toContain('const App = true &&')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('lowers conditional component function expressions with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const flag = true
+      const App = flag ? (() => {
+        const count = $state(1)
+        return <button>{count}</button>
+      }) : (() => <span>fallback</span>)
+
+      export function Parent() {
+        return <App />
+      }
+    `)
+
+    expect(output).toContain('const App = flag ?')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('lowers array-selected component functions with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const App = [() => {
+        const count = $state(1)
+        return <button>{count}</button>
+      }][0]
+
+      export function Parent() {
+        return <App />
+      }
+    `)
+
+    expect(output).toContain('const App = [')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('lowers object-selected component functions with component state semantics', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      const App = ({
+        Impl: () => {
+          const count = $state(1)
+          return <button>{count}</button>
+        },
+      }).Impl
+
+      export function Parent() {
+        return <App />
+      }
+    `)
+
+    expect(output).toContain('Impl:')
+    expect(output).toContain('__fictUseSignal(__fictCtx, 1')
+    expect(output).toContain('() => count()')
+    expect(output).not.toContain('createSignal(1')
+  })
+
+  it('does not component-lower lower-case expression-produced callbacks', () => {
+    const output = transform(`
+      const app = (0, () => <button>plain</button>)
+
+      export function Parent() {
+        return <div>ok</div>
+      }
+    `)
+
+    expect(output).toContain('const app = (0, () =>')
+    expect(output).toContain('template("<button>plain</button>")')
+    expect(output).not.toContain('const app = (0, function App')
+  })
+
   it('lowers array-literal component spreads to index props', () => {
     const output = transform(`
       import { $state } from 'fict'
