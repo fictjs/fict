@@ -113,6 +113,33 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-R003')).toBe(false)
   })
 
+  it('uses computed props access for literal destructuring keys', () => {
+    const output = transform(`
+      function Child({
+        'data-id': dataId,
+        'aria-label': ariaLabel,
+        0: zero,
+        default: defaultValue,
+        user: { 'data-id': nestedDataId },
+        ...rest
+      }) {
+        return <div>{dataId}{ariaLabel}{zero}{defaultValue}{nestedDataId}{rest.extra}</div>
+      }
+    `)
+
+    expect(output).toContain('prop(() => __props["data-id"])')
+    expect(output).toContain('prop(() => __props["aria-label"])')
+    expect(output).toContain('prop(() => __props[0])')
+    expect(output).toContain('prop(() => __props["default"])')
+    expect(output).toContain('prop(() => __props.user["data-id"])')
+    expect(output).toContain(
+      '__fictPropsRest(__props, ["data-id", "aria-label", "0", "default", "user"])',
+    )
+    expect(output).not.toContain('__props.data-id')
+    expect(output).not.toContain('__props.aria-label')
+    expect(output).not.toContain('__props.0')
+  })
+
   it('emits warnings for deep mutations and dynamic property access', () => {
     const warnings: any[] = []
     const input = `
