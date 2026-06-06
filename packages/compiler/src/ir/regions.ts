@@ -4408,6 +4408,64 @@ function isReactiveAccessorReadCall(expr: Expression, ctx: CodegenContext): bool
   return getNamespaceReactiveMemberKind(callee, ctx) !== null
 }
 
+function isFunctionExpressionValue(expr: Expression | undefined): boolean {
+  return expr?.kind === 'ArrowFunction' || expr?.kind === 'FunctionExpression'
+}
+
+function instructionIsLazyMemoSafe(instr: Instruction, ctx: CodegenContext): boolean {
+  if (instr.kind === 'Phi') return true
+  if (instr.kind === 'Expression') return expressionIsLazyMemoSafe(instr.value, ctx)
+  if (instr.kind !== 'Assign') return true
+  if (!instr.declarationKind) return false
+  return expressionIsLazyMemoSafe(instr.value, ctx)
+}
+
+function terminatorIsLazyMemoSafe(term: Terminator, ctx: CodegenContext): boolean {
+  switch (term.kind) {
+    case 'Return':
+      return !term.argument || expressionIsLazyMemoSafe(term.argument, ctx)
+    case 'Branch':
+      return expressionIsLazyMemoSafe(term.test, ctx)
+    case 'Switch':
+      return (
+        expressionIsLazyMemoSafe(term.discriminant, ctx) &&
+        term.cases.every(item => !item.test || expressionIsLazyMemoSafe(item.test, ctx))
+      )
+    case 'Throw':
+    case 'ForOf':
+    case 'ForIn':
+    case 'Try':
+      return false
+    case 'Jump':
+    case 'Unreachable':
+    case 'Break':
+    case 'Continue':
+      return true
+  }
+}
+
+function functionExpressionBodyIsLazyMemoSafe(expr: Expression, ctx: CodegenContext): boolean {
+  if (expr.kind === 'ArrowFunction') {
+    if (expr.isExpression && expr.body && !Array.isArray(expr.body)) {
+      return expressionIsLazyMemoSafe(expr.body as Expression, ctx)
+    }
+    if (!Array.isArray(expr.body)) return true
+    return expr.body.every(
+      block =>
+        block.instructions.every(instr => instructionIsLazyMemoSafe(instr, ctx)) &&
+        terminatorIsLazyMemoSafe(block.terminator, ctx),
+    )
+  }
+  if (expr.kind === 'FunctionExpression') {
+    return expr.body.every(
+      block =>
+        block.instructions.every(instr => instructionIsLazyMemoSafe(instr, ctx)) &&
+        terminatorIsLazyMemoSafe(block.terminator, ctx),
+    )
+  }
+  return false
+}
+
 function expressionIsLazyMemoSafe(expr: Expression, ctx: CodegenContext): boolean {
   switch (expr.kind) {
     case 'Identifier':
@@ -4421,6 +4479,12 @@ function expressionIsLazyMemoSafe(expr: Expression, ctx: CodegenContext): boolea
     case 'CallExpression':
     case 'OptionalCallExpression':
       if (isReactiveAccessorReadCall(expr, ctx)) return true
+      if (isFunctionExpressionValue(expr.callee)) {
+        return (
+          functionExpressionBodyIsLazyMemoSafe(expr.callee, ctx) &&
+          expr.arguments.every(arg => expressionIsLazyMemoSafe(arg, ctx))
+        )
+      }
       if (
         expr.callee.kind === 'MemberExpression' ||
         expr.callee.kind === 'OptionalMemberExpression'
@@ -4871,10 +4935,6 @@ function createNonReactiveVarDecl(
   ctx.trackedVars.delete(baseName)
   ctx.memoVars?.delete(baseName)
   return t.variableDeclaration('let', [t.variableDeclarator(t.identifier(baseName), derivedExpr)])
-}
-
-function isFunctionExpressionValue(expr: Expression | undefined): boolean {
-  return expr?.kind === 'ArrowFunction' || expr?.kind === 'FunctionExpression'
 }
 
 function isCallableSignalInitializer(expr: Expression, ctx: CodegenContext): boolean {

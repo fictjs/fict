@@ -319,6 +319,74 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('tracks state reads inside immediately invoked function initializers', async () => {
+    const source = `
+      import { $state, render } from 'fict'
+
+      export let api: { set(value: number): void }
+      export const callbacks: Array<() => unknown> = []
+
+      function App() {
+        const count = $state(1)
+        api = { set: (value: number) => count(value) }
+
+        const arrow = (() => count())()
+        const fn = (function () {
+          return count() + 1
+        })()
+        const param = ((offset: number) => count() + offset)(2)
+        const shadowedParam = ((count: number) => count)(9)
+        const shadowedLocal = (() => {
+          const count = 10
+          return count
+        })()
+        const returnedClosure = (() => () => count())()
+        const pass = (fn: () => unknown) => {
+          callbacks.push(fn)
+          return 'pass'
+        }
+        const passedFunction = pass(() => count())
+
+        return (
+          <div>
+            <span data-testid="iife">{arrow}:{fn}:{param}</span>
+            <span data-testid="shadow">{shadowedParam}:{shadowedLocal}</span>
+            <span data-testid="controls">{typeof returnedClosure}:{passedFunction}</span>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      api: { set(value: number): void }
+      callbacks: Array<() => unknown>
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    expect(container.querySelector('[data-testid="iife"]')?.textContent).toBe('1:2:3')
+    expect(container.querySelector('[data-testid="shadow"]')?.textContent).toBe('9:10')
+    expect(container.querySelector('[data-testid="controls"]')?.textContent).toBe('function:pass')
+    expect(mod.callbacks).toHaveLength(1)
+
+    mod.api.set(5)
+    await flushUpdates()
+
+    expect(container.querySelector('[data-testid="iife"]')?.textContent).toBe('5:6:7')
+    expect(container.querySelector('[data-testid="shadow"]')?.textContent).toBe('9:10')
+    expect(container.querySelector('[data-testid="controls"]')?.textContent).toBe('function:pass')
+    expect(mod.callbacks).toHaveLength(1)
+
+    teardown()
+    container.remove()
+  })
+
   it('evaluates impure reactive derived declaration initializers eagerly', async () => {
     const source = `
       import { $state, render } from 'fict'
@@ -347,6 +415,7 @@ describe('compiled templates DOM integration', () => {
         log.push('after-delayed')
 
         const getterValue = obj.value + a()
+        const iifeValue = (() => side(a() + 4))()
 
         let assigned = 0
         const assignedValue = (assigned = a() + 2)
@@ -358,6 +427,7 @@ describe('compiled templates DOM integration', () => {
           <div>
             <span data-testid="delayed">{delayed}</span>
             <span data-testid="getter">{getterValue}</span>
+            <span data-testid="iife">{iifeValue}</span>
             <span data-testid="assigned">{assignedValue}</span>
             <span data-testid="pure">{pure}</span>
           </div>
@@ -378,18 +448,20 @@ describe('compiled templates DOM integration', () => {
     document.body.appendChild(container)
     const teardown = mod.mount(container)
 
-    expect(mod.log).toEqual([1, 2, 'after-delayed', 'get', ['assigned', 3]])
+    expect(mod.log).toEqual([1, 2, 'after-delayed', 'get', 5, ['assigned', 3]])
     expect(container.querySelector('[data-testid="delayed"]')?.textContent).toBe('2')
     expect(container.querySelector('[data-testid="getter"]')?.textContent).toBe('5')
+    expect(container.querySelector('[data-testid="iife"]')?.textContent).toBe('5')
     expect(container.querySelector('[data-testid="assigned"]')?.textContent).toBe('3')
     expect(container.querySelector('[data-testid="pure"]')?.textContent).toBe('11')
 
     mod.api.set(5)
     await flushUpdates()
-    expect(mod.log).toEqual([1, 2, 'after-delayed', 'get', ['assigned', 3]])
+    expect(mod.log).toEqual([1, 2, 'after-delayed', 'get', 5, ['assigned', 3]])
     expect(container.querySelector('[data-testid="pure"]')?.textContent).toBe('15')
     expect(container.querySelector('[data-testid="delayed"]')?.textContent).toBe('2')
     expect(container.querySelector('[data-testid="getter"]')?.textContent).toBe('5')
+    expect(container.querySelector('[data-testid="iife"]')?.textContent).toBe('5')
     expect(container.querySelector('[data-testid="assigned"]')?.textContent).toBe('3')
 
     teardown()

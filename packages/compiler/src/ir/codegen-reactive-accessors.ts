@@ -245,11 +245,32 @@ function collectExpressionIdentifiers(expr: Expression, into: Set<string>): void
   }
 }
 
+function collectExecutedExpressionIdentifiers(
+  expr: Expression,
+  into: Set<string>,
+  bound: Set<string>,
+  scopeFunctionLocals: boolean,
+  includeReturnedFunctionBodies: boolean,
+): void {
+  if (isFunctionExpressionValue(expr)) {
+    collectExpressionIdentifiers(expr, into)
+    return
+  }
+  collectExpressionIdentifiersDeep(
+    expr,
+    into,
+    bound,
+    scopeFunctionLocals,
+    includeReturnedFunctionBodies,
+  )
+}
+
 export function collectExpressionIdentifiersDeep(
   expr: Expression,
   into: Set<string>,
   bound = new Set<string>(),
   scopeFunctionLocals = false,
+  includeReturnedFunctionBodies = true,
 ): void {
   if (!expr || typeof expr !== 'object') return
 
@@ -266,13 +287,20 @@ export function collectExpressionIdentifiersDeep(
       return
     case 'MemberExpression':
     case 'OptionalMemberExpression':
-      collectExpressionIdentifiersDeep(expr.object as Expression, into, bound, scopeFunctionLocals)
+      collectExpressionIdentifiersDeep(
+        expr.object as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+        includeReturnedFunctionBodies,
+      )
       if (expr.computed && expr.property.kind !== 'Literal') {
         collectExpressionIdentifiersDeep(
           expr.property as Expression,
           into,
           bound,
           scopeFunctionLocals,
+          includeReturnedFunctionBodies,
         )
       }
       return
@@ -283,17 +311,17 @@ export function collectExpressionIdentifiersDeep(
         (expr.callee.name === '$state' ||
           expr.callee.name === '$effect' ||
           expr.callee.name === '$store')
-      // For IIFEs (callee is a function literal), don't traverse into the callee body.
-      // IIFEs are snapshots - they execute once and capture values at that moment.
-      // Only traverse into the callee for regular calls (identifiers, member expressions).
       const isIIFE =
         expr.callee.kind === 'ArrowFunction' || expr.callee.kind === 'FunctionExpression'
-      if (!isMacroCallee && !isIIFE) {
+      if (isIIFE) {
+        collectExpressionIdentifiersDeep(expr.callee as Expression, into, bound, true, false)
+      } else if (!isMacroCallee) {
         collectExpressionIdentifiersDeep(
           expr.callee as Expression,
           into,
           bound,
           scopeFunctionLocals,
+          includeReturnedFunctionBodies,
         )
       }
       const deepScanFunctionArgs = isKnownSynchronousCallbackHost(expr.callee)
@@ -301,18 +329,42 @@ export function collectExpressionIdentifiersDeep(
         const argExpr = arg as Expression
         if (isFunctionExpressionValue(argExpr)) {
           if (deepScanFunctionArgs) {
-            collectExpressionIdentifiersDeep(argExpr, into, bound, true)
+            collectExpressionIdentifiersDeep(
+              argExpr,
+              into,
+              bound,
+              true,
+              includeReturnedFunctionBodies,
+            )
           }
           return
         }
-        collectExpressionIdentifiersDeep(argExpr, into, bound, scopeFunctionLocals)
+        collectExpressionIdentifiersDeep(
+          argExpr,
+          into,
+          bound,
+          scopeFunctionLocals,
+          includeReturnedFunctionBodies,
+        )
       })
       return
     }
     case 'BinaryExpression':
     case 'LogicalExpression':
-      collectExpressionIdentifiersDeep(expr.left as Expression, into, bound, scopeFunctionLocals)
-      collectExpressionIdentifiersDeep(expr.right as Expression, into, bound, scopeFunctionLocals)
+      collectExpressionIdentifiersDeep(
+        expr.left as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+        includeReturnedFunctionBodies,
+      )
+      collectExpressionIdentifiersDeep(
+        expr.right as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+        includeReturnedFunctionBodies,
+      )
       return
     case 'UnaryExpression':
       collectExpressionIdentifiersDeep(
@@ -320,26 +372,43 @@ export function collectExpressionIdentifiersDeep(
         into,
         bound,
         scopeFunctionLocals,
+        includeReturnedFunctionBodies,
       )
       return
     case 'ConditionalExpression':
-      collectExpressionIdentifiersDeep(expr.test as Expression, into, bound, scopeFunctionLocals)
+      collectExpressionIdentifiersDeep(
+        expr.test as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+        includeReturnedFunctionBodies,
+      )
       collectExpressionIdentifiersDeep(
         expr.consequent as Expression,
         into,
         bound,
         scopeFunctionLocals,
+        includeReturnedFunctionBodies,
       )
       collectExpressionIdentifiersDeep(
         expr.alternate as Expression,
         into,
         bound,
         scopeFunctionLocals,
+        includeReturnedFunctionBodies,
       )
       return
     case 'ArrayExpression':
       expr.elements.forEach(el => {
-        if (el) collectExpressionIdentifiersDeep(el as Expression, into, bound, scopeFunctionLocals)
+        if (el) {
+          collectExpressionIdentifiersDeep(
+            el as Expression,
+            into,
+            bound,
+            scopeFunctionLocals,
+            includeReturnedFunctionBodies,
+          )
+        }
       })
       return
     case 'ObjectExpression':
@@ -350,25 +419,40 @@ export function collectExpressionIdentifiersDeep(
             into,
             bound,
             scopeFunctionLocals,
+            includeReturnedFunctionBodies,
           )
           return
         }
         if (prop.computed) {
-          collectExpressionIdentifiersDeep(prop.key as Expression, into, bound, scopeFunctionLocals)
+          collectExpressionIdentifiersDeep(
+            prop.key as Expression,
+            into,
+            bound,
+            scopeFunctionLocals,
+            includeReturnedFunctionBodies,
+          )
         }
-        collectExpressionIdentifiersDeep(prop.value as Expression, into, bound, scopeFunctionLocals)
+        collectExpressionIdentifiersDeep(
+          prop.value as Expression,
+          into,
+          bound,
+          scopeFunctionLocals,
+          includeReturnedFunctionBodies,
+        )
       })
       return
     case 'TemplateLiteral':
       expr.expressions.forEach(ex =>
-        collectExpressionIdentifiersDeep(ex as Expression, into, bound, scopeFunctionLocals),
+        collectExpressionIdentifiersDeep(
+          ex as Expression,
+          into,
+          bound,
+          scopeFunctionLocals,
+          includeReturnedFunctionBodies,
+        ),
       )
       return
     case 'ArrowFunction': {
-      // Collect identifiers used in the function body, but use SHALLOW traversal
-      // to avoid treating nested returned functions as dependencies.
-      // E.g., for `numbers.find(n => n === target)`: detect `target`
-      // But for `(() => { return () => count })()`: don't detect `count` in the inner function
       const tempSet = new Set<string>()
       const localFunctions = new Map<string, Expression>()
       const bodyBlocks = Array.isArray(expr.body) ? expr.body : []
@@ -384,7 +468,13 @@ export function collectExpressionIdentifiersDeep(
         : new Set(expr.params.map(p => deSSAVarName(p.name)))
       localNames.forEach(name => scopedBound.add(name))
       if (expr.isExpression && expr.body && !Array.isArray(expr.body)) {
-        collectExpressionIdentifiers(expr.body as Expression, tempSet)
+        collectExecutedExpressionIdentifiers(
+          expr.body as Expression,
+          tempSet,
+          scopedBound,
+          scopeFunctionLocals,
+          includeReturnedFunctionBodies,
+        )
       } else if (Array.isArray(expr.body)) {
         for (const block of expr.body) {
           for (const instr of block.instructions) {
@@ -395,28 +485,78 @@ export function collectExpressionIdentifiersDeep(
               ) {
                 localFunctions.set(deSSAVarName(instr.target.name), instr.value)
               }
-              collectExpressionIdentifiers(instr.value, tempSet)
+              collectExecutedExpressionIdentifiers(
+                instr.value,
+                tempSet,
+                scopedBound,
+                scopeFunctionLocals,
+                includeReturnedFunctionBodies,
+              )
             } else if (instr.kind === 'Expression') {
-              collectExpressionIdentifiers(instr.value, tempSet)
+              collectExecutedExpressionIdentifiers(
+                instr.value,
+                tempSet,
+                scopedBound,
+                scopeFunctionLocals,
+                includeReturnedFunctionBodies,
+              )
             } else if (instr.kind === 'Phi') {
               instr.sources.forEach(src => tempSet.add(deSSAVarName(src.id.name)))
             }
           }
           const term = block.terminator
           if (term.kind === 'Branch') {
-            collectExpressionIdentifiers(term.test, tempSet)
+            collectExecutedExpressionIdentifiers(
+              term.test,
+              tempSet,
+              scopedBound,
+              scopeFunctionLocals,
+              includeReturnedFunctionBodies,
+            )
           } else if (term.kind === 'Switch') {
-            collectExpressionIdentifiers(term.discriminant, tempSet)
+            collectExecutedExpressionIdentifiers(
+              term.discriminant,
+              tempSet,
+              scopedBound,
+              scopeFunctionLocals,
+              includeReturnedFunctionBodies,
+            )
             term.cases.forEach(c => {
-              if (c.test) collectExpressionIdentifiers(c.test, tempSet)
+              if (c.test) {
+                collectExecutedExpressionIdentifiers(
+                  c.test,
+                  tempSet,
+                  scopedBound,
+                  scopeFunctionLocals,
+                  includeReturnedFunctionBodies,
+                )
+              }
             })
           } else if (term.kind === 'ForOf') {
-            collectExpressionIdentifiers(term.iterable, tempSet)
+            collectExecutedExpressionIdentifiers(
+              term.iterable,
+              tempSet,
+              scopedBound,
+              scopeFunctionLocals,
+              includeReturnedFunctionBodies,
+            )
           } else if (term.kind === 'ForIn') {
-            collectExpressionIdentifiers(term.object, tempSet)
+            collectExecutedExpressionIdentifiers(
+              term.object,
+              tempSet,
+              scopedBound,
+              scopeFunctionLocals,
+              includeReturnedFunctionBodies,
+            )
           } else if (term.kind === 'Return' && term.argument) {
-            collectExpressionIdentifiers(term.argument, tempSet)
-            if (term.argument.kind === 'Identifier') {
+            collectExecutedExpressionIdentifiers(
+              term.argument,
+              tempSet,
+              scopedBound,
+              scopeFunctionLocals,
+              includeReturnedFunctionBodies,
+            )
+            if (includeReturnedFunctionBodies && term.argument.kind === 'Identifier') {
               const returnedFunction = localFunctions.get(deSSAVarName(term.argument.name))
               if (returnedFunction) {
                 collectExpressionIdentifiersDeep(
@@ -424,11 +564,18 @@ export function collectExpressionIdentifiersDeep(
                   tempSet,
                   scopedBound,
                   scopeFunctionLocals,
+                  includeReturnedFunctionBodies,
                 )
               }
             }
           } else if (term.kind === 'Throw') {
-            collectExpressionIdentifiers(term.argument, tempSet)
+            collectExecutedExpressionIdentifiers(
+              term.argument,
+              tempSet,
+              scopedBound,
+              scopeFunctionLocals,
+              includeReturnedFunctionBodies,
+            )
           }
         }
       }
@@ -439,7 +586,6 @@ export function collectExpressionIdentifiersDeep(
       return
     }
     case 'FunctionExpression': {
-      // Same logic as ArrowFunction - use shallow traversal inside function bodies
       const tempSet = new Set<string>()
       const localFunctions = new Map<string, Expression>()
       const scopedBound = new Set(bound)
@@ -462,28 +608,78 @@ export function collectExpressionIdentifiersDeep(
             ) {
               localFunctions.set(deSSAVarName(instr.target.name), instr.value)
             }
-            collectExpressionIdentifiers(instr.value, tempSet)
+            collectExecutedExpressionIdentifiers(
+              instr.value,
+              tempSet,
+              scopedBound,
+              scopeFunctionLocals,
+              includeReturnedFunctionBodies,
+            )
           } else if (instr.kind === 'Expression') {
-            collectExpressionIdentifiers(instr.value, tempSet)
+            collectExecutedExpressionIdentifiers(
+              instr.value,
+              tempSet,
+              scopedBound,
+              scopeFunctionLocals,
+              includeReturnedFunctionBodies,
+            )
           } else if (instr.kind === 'Phi') {
             instr.sources.forEach(src => tempSet.add(deSSAVarName(src.id.name)))
           }
         }
         const term = block.terminator
         if (term.kind === 'Branch') {
-          collectExpressionIdentifiers(term.test, tempSet)
+          collectExecutedExpressionIdentifiers(
+            term.test,
+            tempSet,
+            scopedBound,
+            scopeFunctionLocals,
+            includeReturnedFunctionBodies,
+          )
         } else if (term.kind === 'Switch') {
-          collectExpressionIdentifiers(term.discriminant, tempSet)
+          collectExecutedExpressionIdentifiers(
+            term.discriminant,
+            tempSet,
+            scopedBound,
+            scopeFunctionLocals,
+            includeReturnedFunctionBodies,
+          )
           term.cases.forEach(c => {
-            if (c.test) collectExpressionIdentifiers(c.test, tempSet)
+            if (c.test) {
+              collectExecutedExpressionIdentifiers(
+                c.test,
+                tempSet,
+                scopedBound,
+                scopeFunctionLocals,
+                includeReturnedFunctionBodies,
+              )
+            }
           })
         } else if (term.kind === 'ForOf') {
-          collectExpressionIdentifiers(term.iterable, tempSet)
+          collectExecutedExpressionIdentifiers(
+            term.iterable,
+            tempSet,
+            scopedBound,
+            scopeFunctionLocals,
+            includeReturnedFunctionBodies,
+          )
         } else if (term.kind === 'ForIn') {
-          collectExpressionIdentifiers(term.object, tempSet)
+          collectExecutedExpressionIdentifiers(
+            term.object,
+            tempSet,
+            scopedBound,
+            scopeFunctionLocals,
+            includeReturnedFunctionBodies,
+          )
         } else if (term.kind === 'Return' && term.argument) {
-          collectExpressionIdentifiers(term.argument, tempSet)
-          if (term.argument.kind === 'Identifier') {
+          collectExecutedExpressionIdentifiers(
+            term.argument,
+            tempSet,
+            scopedBound,
+            scopeFunctionLocals,
+            includeReturnedFunctionBodies,
+          )
+          if (includeReturnedFunctionBodies && term.argument.kind === 'Identifier') {
             const returnedFunction = localFunctions.get(deSSAVarName(term.argument.name))
             if (returnedFunction) {
               collectExpressionIdentifiersDeep(
@@ -491,11 +687,18 @@ export function collectExpressionIdentifiersDeep(
                 tempSet,
                 scopedBound,
                 scopeFunctionLocals,
+                includeReturnedFunctionBodies,
               )
             }
           }
         } else if (term.kind === 'Throw') {
-          collectExpressionIdentifiers(term.argument, tempSet)
+          collectExecutedExpressionIdentifiers(
+            term.argument,
+            tempSet,
+            scopedBound,
+            scopeFunctionLocals,
+            includeReturnedFunctionBodies,
+          )
         }
       }
       // Filter out bound parameters
@@ -505,8 +708,20 @@ export function collectExpressionIdentifiersDeep(
       return
     }
     case 'AssignmentExpression':
-      collectExpressionIdentifiersDeep(expr.left as Expression, into, bound, scopeFunctionLocals)
-      collectExpressionIdentifiersDeep(expr.right as Expression, into, bound, scopeFunctionLocals)
+      collectExpressionIdentifiersDeep(
+        expr.left as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+        includeReturnedFunctionBodies,
+      )
+      collectExpressionIdentifiersDeep(
+        expr.right as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+        includeReturnedFunctionBodies,
+      )
       return
     case 'UpdateExpression':
       collectExpressionIdentifiersDeep(
@@ -514,6 +729,7 @@ export function collectExpressionIdentifiersDeep(
         into,
         bound,
         scopeFunctionLocals,
+        includeReturnedFunctionBodies,
       )
       return
     case 'AwaitExpression':
@@ -522,17 +738,36 @@ export function collectExpressionIdentifiersDeep(
         into,
         bound,
         scopeFunctionLocals,
+        includeReturnedFunctionBodies,
       )
       return
     case 'NewExpression':
-      collectExpressionIdentifiersDeep(expr.callee as Expression, into, bound, scopeFunctionLocals)
+      collectExpressionIdentifiersDeep(
+        expr.callee as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+        includeReturnedFunctionBodies,
+      )
       expr.arguments.forEach(arg =>
-        collectExpressionIdentifiersDeep(arg as Expression, into, bound, scopeFunctionLocals),
+        collectExpressionIdentifiersDeep(
+          arg as Expression,
+          into,
+          bound,
+          scopeFunctionLocals,
+          includeReturnedFunctionBodies,
+        ),
       )
       return
     case 'SequenceExpression':
       expr.expressions.forEach(ex =>
-        collectExpressionIdentifiersDeep(ex as Expression, into, bound, scopeFunctionLocals),
+        collectExpressionIdentifiersDeep(
+          ex as Expression,
+          into,
+          bound,
+          scopeFunctionLocals,
+          includeReturnedFunctionBodies,
+        ),
       )
       return
     case 'YieldExpression':
@@ -542,13 +777,26 @@ export function collectExpressionIdentifiersDeep(
           into,
           bound,
           scopeFunctionLocals,
+          includeReturnedFunctionBodies,
         )
       }
       return
     case 'TaggedTemplateExpression':
-      collectExpressionIdentifiersDeep(expr.tag as Expression, into, bound, scopeFunctionLocals)
+      collectExpressionIdentifiersDeep(
+        expr.tag as Expression,
+        into,
+        bound,
+        scopeFunctionLocals,
+        includeReturnedFunctionBodies,
+      )
       expr.quasi.expressions.forEach(ex =>
-        collectExpressionIdentifiersDeep(ex as Expression, into, bound, scopeFunctionLocals),
+        collectExpressionIdentifiersDeep(
+          ex as Expression,
+          into,
+          bound,
+          scopeFunctionLocals,
+          includeReturnedFunctionBodies,
+        ),
       )
       return
     case 'SpreadElement':
@@ -557,6 +805,7 @@ export function collectExpressionIdentifiersDeep(
         into,
         bound,
         scopeFunctionLocals,
+        includeReturnedFunctionBodies,
       )
       return
     case 'JSXElement': {
@@ -566,15 +815,28 @@ export function collectExpressionIdentifiersDeep(
           into,
           bound,
           scopeFunctionLocals,
+          includeReturnedFunctionBodies,
         )
       }
       expr.attributes.forEach(attr => {
         if (attr.isSpread && attr.spreadExpr) {
-          collectExpressionIdentifiersDeep(attr.spreadExpr, into, bound, scopeFunctionLocals)
+          collectExpressionIdentifiersDeep(
+            attr.spreadExpr,
+            into,
+            bound,
+            scopeFunctionLocals,
+            includeReturnedFunctionBodies,
+          )
           return
         }
         if (attr.value) {
-          collectExpressionIdentifiersDeep(attr.value, into, bound, scopeFunctionLocals)
+          collectExpressionIdentifiersDeep(
+            attr.value,
+            into,
+            bound,
+            scopeFunctionLocals,
+            includeReturnedFunctionBodies,
+          )
         }
       })
       expr.children.forEach(child => {
@@ -584,6 +846,7 @@ export function collectExpressionIdentifiersDeep(
             into,
             bound,
             scopeFunctionLocals,
+            includeReturnedFunctionBodies,
           )
         } else if (child.kind === 'element') {
           collectExpressionIdentifiersDeep(
@@ -591,6 +854,7 @@ export function collectExpressionIdentifiersDeep(
             into,
             bound,
             scopeFunctionLocals,
+            includeReturnedFunctionBodies,
           )
         }
       })
