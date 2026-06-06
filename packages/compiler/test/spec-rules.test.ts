@@ -500,6 +500,63 @@ describe('Spec rule coverage', () => {
     }
   })
 
+  it('warns when memo literals contain eagerly evaluated side effects', () => {
+    const cases = [
+      "return [fetch('/api')]",
+      "return [...fetch('/api')]",
+      "return { value: fetch('/api') }",
+      "return { [fetch('/api')]: 1 }",
+      "return { [fetch('/api')]() { return 1 } }",
+      "return { ...fetch('/api') }",
+      "return { nested: [fetch('/api')] }",
+    ]
+
+    for (const body of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        const value = $memo(() => {
+          ${body}
+        })
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+    }
+  })
+
+  it('does not warn when memo literals only contain lazy object members', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $memo } from 'fict'
+      const value = $memo(() => {
+        return {
+          run() {
+            fetch('/api')
+          },
+          get value() {
+            fetch('/api')
+            return 1
+          },
+        }
+      })
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+  })
+
+  it('does not warn when memo literals are pure', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $memo } from 'fict'
+      const key = 'value'
+      const value = $memo(() => {
+        return [{ [key]: 1 }, { nested: [2] }]
+      })
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+  })
+
   it('does not warn when memo returns lazy closures with side effects', () => {
     const cases = [
       'return () => console.log("later")',

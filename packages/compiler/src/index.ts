@@ -2135,6 +2135,22 @@ function createHIREntrypointVisitor(
               return node.declarations.some(decl => checkPattern(decl.id) || checkNode(decl.init))
             }
             if (t.isSequenceExpression(node)) return node.expressions.some(expr => checkNode(expr))
+            if (t.isArrayExpression(node)) {
+              return node.elements.some(element => checkNode(element))
+            }
+            if (t.isObjectExpression(node)) {
+              return node.properties.some(prop => {
+                if (t.isSpreadElement(prop)) return checkNode(prop.argument)
+                if (t.isObjectProperty(prop)) {
+                  return (prop.computed && checkNode(prop.key)) || checkNode(prop.value)
+                }
+                if (t.isObjectMethod(prop)) {
+                  return prop.computed && checkNode(prop.key)
+                }
+                return false
+              })
+            }
+            if (t.isSpreadElement(node)) return checkNode(node.argument)
             if (t.isLogicalExpression(node)) return checkNode(node.left) || checkNode(node.right)
             if (t.isConditionalExpression(node))
               return checkNode(node.test) || checkNode(node.consequent) || checkNode(node.alternate)
