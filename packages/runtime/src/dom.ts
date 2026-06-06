@@ -22,6 +22,7 @@ import {
   bindEvent,
   bindRef,
   isReactive,
+  parseEventNameWithModifiers,
   registerCreateElement,
   type MaybeReactive,
   type AttributeSetter,
@@ -745,10 +746,19 @@ function applyProps(el: Element, props: Record<string, unknown>, isSVG = false):
 
     // Event handling with delegation support
     if (isEventKey(key)) {
+      const parsedEvent = parseEventNameWithModifiers(key.slice(2))
+      const hasEventOptions = parsedEvent.capture || parsedEvent.passive || parsedEvent.once
+      const options: AddEventListenerOptions | undefined = hasEventOptions ? {} : undefined
+      if (options) {
+        if (parsedEvent.capture) options.capture = true
+        if (parsedEvent.passive) options.passive = true
+        if (parsedEvent.once) options.once = true
+      }
       bindEvent(
         el,
-        eventNameFromProp(key),
+        parsedEvent.eventName.toLowerCase(),
         value as MaybeReactive<EventListenerOrEventListenerObject | null | undefined>,
+        options,
       )
       continue
     }
@@ -1008,14 +1018,6 @@ function isEventKey(key: string): boolean {
   return (
     key.startsWith('on') && key.length > 2 && marker !== undefined && marker >= 'A' && marker <= 'Z'
   )
-}
-
-/**
- * Convert a React-style event prop to a DOM event name
- * e.g., "onClick" -> "click", "onMouseDown" -> "mousedown"
- */
-function eventNameFromProp(key: string): string {
-  return key.slice(2).toLowerCase()
 }
 
 // ============================================================================

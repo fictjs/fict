@@ -502,7 +502,7 @@ function parseModifierSuffixes(
   return modifiers
 }
 
-function parseEventNameWithModifiers(eventName: string): {
+export function parseEventNameWithModifiers(eventName: string): {
   eventName: string
   capture: boolean
   passive: boolean

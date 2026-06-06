@@ -3971,6 +3971,62 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('parses direct event modifiers in VNode fallback mode', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        return (
+          <div
+            data-id="outer"
+            onClick={() => calls.push('click')}
+            onClickCapture={() => calls.push('capture')}
+            onClickPassive={() => calls.push('passive')}
+            onClickOnce={() => calls.push('once')}
+            onClickCapturePassive={() => calls.push('combo')}
+          >
+            <button data-id="inner">inner</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        calls.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      calls: string[]
+      mount: (el: HTMLElement) => () => void
+    }>(source, { fineGrainedDom: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const inner = container.querySelector('[data-id="inner"]') as HTMLButtonElement
+    inner.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    inner.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flushUpdates()
+
+    const counts = mod.calls.reduce<Record<string, number>>((acc, item) => {
+      acc[item] = (acc[item] ?? 0) + 1
+      return acc
+    }, {})
+    expect(counts).toEqual({
+      click: 2,
+      capture: 2,
+      passive: 2,
+      once: 1,
+      combo: 2,
+    })
+
+    teardown()
+    container.remove()
+  })
+
   it('dispatches EventListenerObject handlers in fine-grained mode', async () => {
     const source = `
       import { render } from 'fict'
