@@ -968,6 +968,47 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves declaration ordering before setup expression effects', () => {
+    const source = `
+      import { $state } from 'fict'
+
+      export const seen: unknown[] = []
+
+      export function App() {
+        let count = $state(1)
+
+        const constValue = 2
+        seen.push(count, constValue)
+
+        let letValue = 3
+        count && seen.push(letValue)
+
+        var varValue = 4
+        seen.push?.(count, varValue)
+
+        return <span>{seen.length}:{count}</span>
+      }
+    `
+
+    const output = transformCommonJS(source, { fineGrainedDom: true })
+    const constDecl = output.indexOf('const constValue = 2')
+    const constEffect = output.indexOf('seen.push(count(), constValue)')
+    const letDecl = output.indexOf('let letValue = 3')
+    const letEffect = output.indexOf('seen.push(letValue)')
+    const varDecl = output.indexOf('var varValue = 4')
+    const varEffect = output.indexOf('seen.push?.(count(), varValue)')
+
+    expect(constDecl).toBeGreaterThanOrEqual(0)
+    expect(constEffect).toBeGreaterThanOrEqual(0)
+    expect(constDecl).toBeLessThan(constEffect)
+    expect(letDecl).toBeGreaterThanOrEqual(0)
+    expect(letEffect).toBeGreaterThanOrEqual(0)
+    expect(letDecl).toBeLessThan(letEffect)
+    expect(varDecl).toBeGreaterThanOrEqual(0)
+    expect(varEffect).toBeGreaterThanOrEqual(0)
+    expect(varDecl).toBeLessThan(varEffect)
+  })
+
   it('throws impure reactive derived declaration initializers at declaration time', () => {
     const source = `
       import { $state, render } from 'fict'

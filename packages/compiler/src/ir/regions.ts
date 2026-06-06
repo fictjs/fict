@@ -3493,7 +3493,11 @@ function collectSignalWriteDeclarationBarrierRegionIds(
       continue
     }
 
-    if (item.region && instr.kind === 'Expression' && isComputedMemberMutation(instr.value)) {
+    if (
+      item.region &&
+      instr.kind === 'Expression' &&
+      (isComputedMemberMutation(instr.value) || expressionUsesTracked(instr.value, ctx))
+    ) {
       for (const dep of collectInstructionDependencies(instr)) {
         const depName = deSSAVarName(dep)
         const declaration = priorDeclarations.get(depName)
