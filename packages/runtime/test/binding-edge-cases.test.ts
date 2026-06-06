@@ -1657,6 +1657,27 @@ describe('Binding Edge Cases', () => {
       expect(handler).toHaveBeenCalled()
     })
 
+    it('keeps lower-case on-prefixed spread props as attributes', () => {
+      const el = document.createElement('div')
+      container.appendChild(el)
+      const handler = vi.fn()
+
+      assign(el, {
+        on: 'yes',
+        once: 'once-value',
+        online: 'online-value',
+        onClick: handler,
+      })
+
+      expect(el.getAttribute('on')).toBe('yes')
+      expect(el.getAttribute('once')).toBe('once-value')
+      expect(el.getAttribute('online')).toBe('online-value')
+      expect(el.getAttribute('onclick')).toBeNull()
+
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      expect(handler).toHaveBeenCalledTimes(1)
+    })
+
     it('removes delegated handlers when onX prop is cleared', () => {
       const el = document.createElement('button')
       container.appendChild(el)

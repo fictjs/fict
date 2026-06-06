@@ -118,6 +118,17 @@ const PROPERTY_BINDING_KEYS = new Set([
   'muted',
 ])
 
+function isStandardEventKey(prop: string): boolean {
+  const marker = prop[2]
+  return (
+    prop.startsWith('on') &&
+    prop.length > 2 &&
+    marker !== undefined &&
+    marker >= 'A' &&
+    marker <= 'Z'
+  )
+}
+
 const STYLE_PROP_CACHE = new Map<string, string>()
 const hasOwn = Object.prototype.hasOwnProperty
 const propertyIsEnumerable = Object.prototype.propertyIsEnumerable
@@ -2500,7 +2511,7 @@ function assignProp(
   }
 
   // Standard event handling: onClick, onInput, etc.
-  if (prop.slice(0, 2) === 'on') {
+  if (isStandardEventKey(prop)) {
     const parsedEvent = parseEventNameWithModifiers(prop.slice(2))
     const eventName = parsedEvent.eventName.toLowerCase()
     const hasEventOptions = parsedEvent.capture || parsedEvent.passive || parsedEvent.once

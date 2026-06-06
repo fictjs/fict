@@ -1730,6 +1730,49 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves lower-case on-prefixed intrinsic spread attributes', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const calls: string[] = []
+
+      export function App() {
+        const props = {
+          on: 'yes',
+          once: 'once-value',
+          online: 'online-value',
+          onClick: () => calls.push('click'),
+        }
+        return <div data-testid="box" {...props} />
+      }
+
+      export function mount(el: HTMLElement) {
+        calls.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      calls: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+    const box = container.querySelector('[data-testid="box"]') as HTMLDivElement
+
+    expect(box.getAttribute('on')).toBe('yes')
+    expect(box.getAttribute('once')).toBe('once-value')
+    expect(box.getAttribute('online')).toBe('online-value')
+    expect(box.getAttribute('onclick')).toBeNull()
+
+    box.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(mod.calls).toEqual(['click'])
+
+    teardown()
+    container.remove()
+  })
+
   it('parses modifier event props from intrinsic spreads', async () => {
     const source = `
       import { render } from 'fict'
