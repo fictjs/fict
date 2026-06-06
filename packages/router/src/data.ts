@@ -17,7 +17,7 @@ import type {
   NavigationIntent,
   Params,
 } from './types'
-import { hashParams } from './utils'
+import { hashQueryArgs } from './utils'
 
 // ============================================================================
 // Query Cache
@@ -139,7 +139,7 @@ export function query<T, Args extends unknown[]>(
   startCacheCleanup()
 
   return (...args: Args) => {
-    const cacheKey = `${name}:${hashParams(args as unknown as Record<string, unknown>)}`
+    const cacheKey = `${name}:${hashQueryArgs(args)}`
 
     // Check cache
     const cached = queryCache.get(cacheKey) as QueryCacheEntry<T> | undefined

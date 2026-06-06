@@ -546,6 +546,152 @@ export function hashParams(params: Record<string, unknown>): string {
   return JSON.stringify(entries)
 }
 
+const queryFunctionIds = new WeakMap<object, number>()
+const querySymbolIds = new Map<symbol, number>()
+let nextQueryIdentity = 1
+
+function getQueryObjectId(value: object): number {
+  let id = queryFunctionIds.get(value)
+  if (id === undefined) {
+    id = nextQueryIdentity++
+    queryFunctionIds.set(value, id)
+  }
+  return id
+}
+
+function getQuerySymbolKey(value: symbol): string {
+  const globalKey = Symbol.keyFor(value)
+  if (globalKey !== undefined) {
+    return `global:${globalKey}`
+  }
+
+  let id = querySymbolIds.get(value)
+  if (id === undefined) {
+    id = nextQueryIdentity++
+    querySymbolIds.set(value, id)
+  }
+  return `local:${id}:${value.description ?? ''}`
+}
+
+function isArrayIndexKey(key: string): boolean {
+  if (key === '') return false
+  const index = Number(key)
+  return Number.isInteger(index) && index >= 0 && index < 2 ** 32 - 1 && String(index) === key
+}
+
+function encodeQueryValue(value: unknown, path: string, stack: WeakMap<object, string>): unknown {
+  if (value === null) return ['null']
+
+  switch (typeof value) {
+    case 'undefined':
+      return ['undefined']
+    case 'boolean':
+      return ['boolean', value]
+    case 'string':
+      return ['string', value]
+    case 'number':
+      if (Number.isNaN(value)) return ['number', 'NaN']
+      if (Object.is(value, -0)) return ['number', '-0']
+      if (!Number.isFinite(value)) return ['number', String(value)]
+      return ['number', value]
+    case 'bigint':
+      return ['bigint', value.toString()]
+    case 'symbol':
+      return ['symbol', getQuerySymbolKey(value)]
+    case 'function':
+      return ['function', getQueryObjectId(value)]
+  }
+
+  const objectValue = value as object
+  const seenPath = stack.get(objectValue)
+  if (seenPath !== undefined) {
+    return ['cycle', seenPath]
+  }
+
+  stack.set(objectValue, path)
+  try {
+    if (Array.isArray(value)) {
+      const items: unknown[] = []
+      for (let index = 0; index < value.length; index++) {
+        if (Object.prototype.hasOwnProperty.call(value, index)) {
+          items.push(encodeQueryValue(value[index], `${path}[${index}]`, stack))
+        } else {
+          items.push(['hole'])
+        }
+      }
+
+      const props = Object.keys(value)
+        .filter(key => !isArrayIndexKey(key))
+        .sort()
+        .map(key => [key, encodeQueryValue(Reflect.get(value, key), `${path}.${key}`, stack)])
+      const symbolProps = Object.getOwnPropertySymbols(value)
+        .filter(symbol => Object.prototype.propertyIsEnumerable.call(value, symbol))
+        .map(symbol => [
+          getQuerySymbolKey(symbol),
+          encodeQueryValue(Reflect.get(value, symbol), `${path}.${String(symbol)}`, stack),
+        ])
+        .sort(([a], [b]) => String(a).localeCompare(String(b)))
+
+      return ['array', items, props, symbolProps]
+    }
+
+    if (value instanceof Date) {
+      return ['date', Number.isNaN(value.getTime()) ? 'Invalid Date' : value.toISOString()]
+    }
+
+    if (value instanceof RegExp) {
+      return ['regexp', value.source, value.flags]
+    }
+
+    if (value instanceof Map) {
+      const entries = Array.from(value.entries())
+        .map(([key, entryValue], index) => [
+          encodeQueryValue(key, `${path}.<map-key:${index}>`, stack),
+          encodeQueryValue(entryValue, `${path}.<map-value:${index}>`, stack),
+        ])
+        .sort(([a], [b]) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+      return ['map', entries]
+    }
+
+    if (value instanceof Set) {
+      const entries = Array.from(value.values())
+        .map((entryValue, index) => encodeQueryValue(entryValue, `${path}.<set:${index}>`, stack))
+        .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+      return ['set', entries]
+    }
+
+    const record = value as Record<string, unknown>
+    const props = Object.keys(record)
+      .sort()
+      .map(key => [key, encodeQueryValue(record[key], `${path}.${key}`, stack)])
+    const symbolProps = Object.getOwnPropertySymbols(value)
+      .filter(symbol => Object.prototype.propertyIsEnumerable.call(value, symbol))
+      .map(symbol => [
+        getQuerySymbolKey(symbol),
+        encodeQueryValue(Reflect.get(value, symbol), `${path}.${String(symbol)}`, stack),
+      ])
+      .sort(([a], [b]) => String(a).localeCompare(String(b)))
+    const prototype = Object.getPrototypeOf(value)
+
+    return [
+      'object',
+      Object.prototype.toString.call(value),
+      prototype?.constructor?.name ?? null,
+      props,
+      symbolProps,
+    ]
+  } finally {
+    stack.delete(objectValue)
+  }
+}
+
+/**
+ * Generate a stable, type-tagged hash for query arguments.
+ */
+export function hashQueryArgs(args: readonly unknown[]): string {
+  return JSON.stringify(encodeQueryValue(args, '$', new WeakMap()))
+}
+
 /**
  * Scroll to top of the page
  */

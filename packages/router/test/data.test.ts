@@ -165,6 +165,138 @@ describe('query', () => {
     expect(first()).toBe(undefined)
     expect(second()).toBe(undefined)
   })
+
+  it('should keep null and undefined query args separate', async () => {
+    const fetcher = vi.fn((value: null | undefined) =>
+      value === null ? 'from-null' : 'from-undefined',
+    )
+    const fetchValue = query(fetcher, 'nullUndefinedQuery')
+
+    const nullValue = fetchValue(null)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const undefinedValue = fetchValue(undefined)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(nullValue()).toBe('from-null')
+    expect(undefinedValue()).toBe('from-undefined')
+  })
+
+  it('should keep different function query args separate by identity', async () => {
+    const fetcher = vi.fn((callback: () => string) => callback())
+    const fetchValue = query(fetcher, 'functionArgQuery')
+    const firstCallback = () => 'first'
+    const secondCallback = () => 'second'
+
+    const first = fetchValue(firstCallback)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const firstAgain = fetchValue(firstCallback)
+    const second = fetchValue(secondCallback)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(first()).toBe('first')
+    expect(firstAgain()).toBe('first')
+    expect(second()).toBe('second')
+  })
+
+  it('should keep different symbol query args separate by identity', async () => {
+    const firstSymbol = Symbol('id')
+    const secondSymbol = Symbol('id')
+    const fetcher = vi.fn((value: symbol) => (value === firstSymbol ? 'first' : 'second'))
+    const fetchValue = query(fetcher, 'symbolArgQuery')
+
+    const first = fetchValue(firstSymbol)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const firstAgain = fetchValue(firstSymbol)
+    const second = fetchValue(secondSymbol)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(first()).toBe('first')
+    expect(firstAgain()).toBe('first')
+    expect(second()).toBe('second')
+  })
+
+  it('should keep sparse array holes separate from undefined query values', async () => {
+    const fetcher = vi.fn((value: unknown[]) =>
+      Object.prototype.hasOwnProperty.call(value, 0) ? 'present' : 'hole',
+    )
+    const fetchValue = query(fetcher, 'sparseArrayQuery')
+    const sparseValue = new Array(1)
+
+    const present = fetchValue([undefined])
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const sparse = fetchValue(sparseValue)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(present()).toBe('present')
+    expect(sparse()).toBe('hole')
+  })
+
+  it('should keep object query keys stable regardless of property order', async () => {
+    const fetcher = vi.fn((_value: { a: number; b: number }) => 'ok')
+    const fetchValue = query(fetcher, 'objectOrderQuery')
+
+    const first = fetchValue({ a: 1, b: 2 })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const second = fetchValue({ b: 2, a: 1 })
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    expect(first()).toBe('ok')
+    expect(second()).toBe('ok')
+  })
+
+  it('should keep nested undefined properties separate from missing properties', async () => {
+    type NestedArg = { nested: { value?: undefined } }
+    const fetcher = vi.fn((value: NestedArg) =>
+      Object.prototype.hasOwnProperty.call(value.nested, 'value') ? 'has-value' : 'missing',
+    )
+    const fetchValue = query(fetcher, 'nestedUndefinedQuery')
+
+    const withUndefined = fetchValue({ nested: { value: undefined } })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    const missing = fetchValue({ nested: {} })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(withUndefined()).toBe('has-value')
+    expect(missing()).toBe('missing')
+  })
+
+  it('should keep primitive query arg types separate', async () => {
+    const fetcher = vi.fn((value: boolean | number | string) => `${typeof value}:${String(value)}`)
+    const fetchValue = query(fetcher, 'primitiveArgQuery')
+
+    const numberValue = fetchValue(1)
+    const stringValue = fetchValue('1')
+    const booleanValue = fetchValue(true)
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(numberValue()).toBe('number:1')
+    expect(stringValue()).toBe('string:1')
+    expect(booleanValue()).toBe('boolean:true')
+  })
 })
 
 describe('revalidate', () => {
