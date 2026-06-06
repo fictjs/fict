@@ -335,13 +335,14 @@ function normalizeEscalatedCompilerError(error: unknown): AnalyzeDiagnostic | nu
       column: number
     }
   }
+  const location = errorWithLocation.loc ?? extractLocationFromCompilerMessage(error.message)
 
   return {
     code,
     message,
     severity: DiagnosticSeverity.Error,
-    line: errorWithLocation.loc?.line ?? 0,
-    column: (errorWithLocation.loc?.column ?? -1) + 1,
+    line: location?.line ?? 0,
+    column: location ? location.column + 1 : 0,
   }
 }
 
@@ -406,13 +407,22 @@ function extractLocationFromCompilerMessage(
   }
 
   const summaryMatch = /\((\d+):(\d+)\)(?:\s|$)/.exec(message)
-  if (!summaryMatch) return null
+  if (summaryMatch) {
+    const line = Number.parseInt(summaryMatch[1] ?? '', 10)
+    const column = Number.parseInt(summaryMatch[2] ?? '', 10)
+    if (!Number.isFinite(line) || !Number.isFinite(column)) return null
 
-  const line = Number.parseInt(summaryMatch[1] ?? '', 10)
-  const column = Number.parseInt(summaryMatch[2] ?? '', 10)
+    return { line, column }
+  }
+
+  const atLocationMatch = /^\s+at .+:(\d+):(\d+)\s*$/m.exec(message)
+  if (!atLocationMatch) return null
+
+  const line = Number.parseInt(atLocationMatch[1] ?? '', 10)
+  const column = Number.parseInt(atLocationMatch[2] ?? '', 10)
   if (!Number.isFinite(line) || !Number.isFinite(column)) return null
 
-  return { line, column }
+  return { line, column: Math.max(0, column - 1) }
 }
 
 function classifyCompilerPlacementError(

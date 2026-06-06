@@ -24,6 +24,12 @@ function sourceLine(source: string, needle: string): number {
   return line + 1
 }
 
+function sourceColumn(source: string, needle: string): number {
+  const line = source.split(/\r?\n/).find(text => text.includes(needle))
+  expect(line).toBeDefined()
+  return (line?.indexOf(needle) ?? -1) + 1
+}
+
 function hasTraceMarker(
   source: string,
   identifier: string,
@@ -343,6 +349,34 @@ describe('analyzeFictFile', () => {
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([expect.objectContaining({ code: 'FICT-P002', severity: 'error' })]),
     )
+  })
+
+  it('preserves source locations for warning-as-error diagnostics', () => {
+    const source = `
+      export function App() {
+        const props = { id: 'demo' }
+        return <div {...props}>Hello</div>
+      }
+    `
+    const result = analyzeFictFile(source, 'native-spread.tsx', {
+      includeRegions: false,
+      includeDiagnostics: true,
+    })
+
+    const spreadLine = sourceLine(source, '{...props}')
+    const spreadStartColumn = sourceColumn(source, '{...props}')
+    const spreadEndColumn = sourceColumn(source, '}>Hello')
+    const diagnostic = result.diagnostics.find(entry => entry.code === 'FICT-J003')
+
+    expect(diagnostic).toEqual(
+      expect.objectContaining({
+        code: 'FICT-J003',
+        severity: 'error',
+        line: spreadLine,
+      }),
+    )
+    expect(diagnostic?.column).toBeGreaterThanOrEqual(spreadStartColumn)
+    expect(diagnostic?.column).toBeLessThanOrEqual(spreadEndColumn)
   })
 
   it('honors default FICT-R004 error behavior in tooling analysis', () => {
