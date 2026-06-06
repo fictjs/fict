@@ -512,6 +512,8 @@ export interface JSXElementExpression extends SourceInfo {
   isComponent: boolean
   /** True only for source JSX fragment syntax (`<>...</>`). */
   isFragmentSyntax?: boolean | undefined
+  /** True when source JSX authored child syntax before HIR child normalization. */
+  hasAuthoredChildren?: boolean | undefined
   attributes: JSXAttribute[]
   children: JSXChild[]
 }

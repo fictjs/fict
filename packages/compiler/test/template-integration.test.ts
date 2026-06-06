@@ -3050,6 +3050,51 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('keeps authored whitespace children from rendering earlier spread children', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      function App() {
+        const props = { children: 'spread' }
+        return (
+          <div>
+            <div data-id="single-space" {...props}> </div>
+            <div data-id="newline-space" {...props}>
+            </div>
+            <div data-id="comment-only" {...props}>{/* comment */}</div>
+            <div data-id="expression-empty" {...props}>{''}</div>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{ mount: (el: HTMLElement) => () => void }>(source, {
+      fineGrainedDom: true,
+    })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    await flushUpdates()
+
+    const singleSpace = container.querySelector('[data-id="single-space"]') as HTMLElement
+    const newlineSpace = container.querySelector('[data-id="newline-space"]') as HTMLElement
+    const commentOnly = container.querySelector('[data-id="comment-only"]') as HTMLElement
+    const expressionEmpty = container.querySelector('[data-id="expression-empty"]') as HTMLElement
+
+    expect(singleSpace.textContent).toBe(' ')
+    expect(newlineSpace.textContent).toBe('')
+    expect(commentOnly.textContent).toBe('')
+    expect(expressionEmpty.textContent).toBe('')
+
+    teardown()
+    container.remove()
+  })
+
   it('keeps generated template temps from shadowing source bindings', async () => {
     const cases: Array<{
       source: string

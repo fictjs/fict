@@ -2377,6 +2377,35 @@ describe('spread operator in JSX', () => {
     expect(code).toMatch(/spread\([\s\S]*false,\s*false\)/)
   })
 
+  it('skips spread children when authored whitespace children are normalized away', () => {
+    const ast = parseFile(`
+      function Box(props) {
+        return (
+          <div {...props}>
+          </div>
+        )
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/spread\([\s\S]*false,\s*true\)/)
+  })
+
+  it('skips spread children for comments-only host child syntax', () => {
+    const ast = parseFile(`
+      function Box(props) {
+        return <div {...props}>{/* comment */}</div>
+      }
+    `)
+    const hir = buildHIR(ast)
+    const file = lowerHIRWithRegions(hir, t)
+    const { code } = generate(file)
+
+    expect(code).toMatch(/spread\([\s\S]*false,\s*true\)/)
+  })
+
   it('passes the SVG flag to descendant spreads in SVG root templates', () => {
     const ast = parseFile(`
       function Icon(props) {

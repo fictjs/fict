@@ -4246,6 +4246,7 @@ function lowerIntrinsicElement(
   // Build a cache for resolved node paths
   const nodeCache = new Map<string, BabelCore.types.Identifier>()
   nodeCache.set('', elId)
+  const hasAuthoredChildren = jsx.hasAuthoredChildren === true || jsx.children.length > 0
 
   // Determine and set namespace context for this element's children
   // This allows dynamic child expressions to know they're inside SVG/MathML
@@ -4506,7 +4507,7 @@ function lowerIntrinsicElement(
         targetId,
         spreadGetter,
         t.booleanLiteral(isSVGSpreadTarget),
-        t.booleanLiteral(jsx.children.length > 0),
+        t.booleanLiteral(hasAuthoredChildren),
       ]
       if (binding.exclude && binding.exclude.length > 0) {
         spreadArgs.push(t.arrayExpression(binding.exclude.map(name => t.stringLiteral(name))))

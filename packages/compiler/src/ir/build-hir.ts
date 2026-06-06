@@ -762,6 +762,13 @@ function appendJSXChild(
   }
 }
 
+function hasAuthoredJSXChild(child: BabelJSXChild): boolean {
+  if (t.isJSXText(child)) {
+    return child.value.length > 0
+  }
+  return true
+}
+
 function isWhitespaceSensitiveJSXTag(tagName: string | Expression): boolean {
   return (
     typeof tagName === 'string' &&
@@ -3537,6 +3544,7 @@ export function convertExpression(
       tagName: { kind: 'Identifier', name: 'Fragment', loc: getLoc(node) } as HIdentifier,
       isComponent: true,
       isFragmentSyntax: true,
+      hasAuthoredChildren: node.children.some(hasAuthoredJSXChild),
       attributes: [],
       children,
       loc: getLoc(node),
@@ -3838,6 +3846,7 @@ function convertJSXElement(node: BabelCore.types.JSXElement): HJSXElementExpress
     kind: 'JSXElement',
     tagName,
     isComponent,
+    hasAuthoredChildren: node.children.some(hasAuthoredJSXChild),
     attributes,
     children,
     loc: getLoc(node),

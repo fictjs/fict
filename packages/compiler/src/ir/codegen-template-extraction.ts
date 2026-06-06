@@ -396,6 +396,7 @@ export function extractHIRStaticHtml(
   const hasRenderableChildren = jsx.children.some(
     child => child.kind !== 'text' || child.value.length > 0,
   )
+  const hasAuthoredChildren = jsx.hasAuthoredChildren === true || jsx.children.length > 0
   let childrenPropExpr: Expression | undefined
 
   // Process attributes
@@ -673,7 +674,7 @@ export function extractHIRStaticHtml(
       path: [...parentPath],
       expr: rawTextContentChild,
     })
-  } else if (childrenPropExpr && !hasRenderableChildren) {
+  } else if (childrenPropExpr && !hasAuthoredChildren) {
     if (shouldBindRawTextContent(tagName, namespace, resolvedNamespace)) {
       bindings.push({
         type: 'textContent',
