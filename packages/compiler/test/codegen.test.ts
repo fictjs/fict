@@ -3897,6 +3897,59 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(trueShadowOutput).not.toMatch(/\(\) => count\(\), createElement/)
   })
 
+  it('keeps sequence-wrapped memo creators as memo accessors', () => {
+    const cases = [
+      {
+        name: 'macro memo',
+        importSource: "import { $state, $memo } from 'fict'",
+        declaration: 'const doubled = (0, $memo)(() => count * 2)',
+        promotedCallPattern: /__fictUseMemo\(__fictCtx,\s*\(\) => \(0, \$memo\)/,
+      },
+      {
+        name: 'aliased macro memo',
+        importSource: "import { $state, $memo as memo } from 'fict'",
+        declaration: 'const doubled = (0, memo)(() => count * 2)',
+        promotedCallPattern: /__fictUseMemo\(__fictCtx,\s*\(\) => \(0, memo\)/,
+      },
+      {
+        name: 'runtime createMemo',
+        importSource: "import { $state, createMemo } from 'fict'",
+        declaration: 'const doubled = (0, createMemo)(() => count * 2)',
+        promotedCallPattern: /__fictUseMemo\(__fictCtx,\s*\(\) => \(0, createMemo\)/,
+      },
+      {
+        name: 'aliased runtime createMemo',
+        importSource: "import { $state, createMemo as memo } from 'fict'",
+        declaration: 'const doubled = (0, memo)(() => count * 2)',
+        promotedCallPattern: /__fictUseMemo\(__fictCtx,\s*\(\) => \(0, memo\)/,
+      },
+    ]
+
+    for (const testCase of cases) {
+      const warnings: string[] = []
+      const output = transform(
+        `
+        ${testCase.importSource}
+
+        export function App() {
+          const count = $state(1)
+          ${testCase.declaration}
+          return <span>{doubled}</span>
+        }
+      `,
+        {
+          onWarn: warning => warnings.push(warning.code),
+        },
+      )
+
+      expect(output, testCase.name).toMatch(/doubled\(\)/)
+      expect(output, testCase.name).not.toMatch(/doubled\(\)\(\)/)
+      expect(output, testCase.name).not.toMatch(testCase.promotedCallPattern)
+      expect(warnings, testCase.name).not.toContain('FICT-R002')
+      expect(warnings, testCase.name).not.toContain('FICT-R005')
+    }
+  })
+
   it('keeps value props reactive when unreachable prop calls exist', () => {
     const ast = parseFile(`
       function Returned({ value }) {

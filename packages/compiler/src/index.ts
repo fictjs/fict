@@ -855,6 +855,28 @@ function functionHasJSX<T extends BabelCore.types.Function>(
   return found
 }
 
+function unwrapTransparentCallCallee(
+  callee:
+    | BabelCore.types.CallExpression['callee']
+    | BabelCore.types.OptionalCallExpression['callee'],
+  t: typeof BabelCore.types,
+): BabelCore.types.CallExpression['callee'] | BabelCore.types.OptionalCallExpression['callee'] {
+  if (t.isSequenceExpression(callee) && callee.expressions.length > 0) {
+    return unwrapTransparentCallCallee(callee.expressions[callee.expressions.length - 1]!, t)
+  }
+  if (
+    t.isParenthesizedExpression(callee) ||
+    t.isTSAsExpression(callee) ||
+    t.isTSTypeAssertion(callee) ||
+    t.isTSNonNullExpression(callee) ||
+    t.isTSSatisfiesExpression(callee) ||
+    t.isTypeCastExpression(callee)
+  ) {
+    return unwrapTransparentCallCallee(callee.expression, t)
+  }
+  return callee
+}
+
 function functionUsesStateLike<T extends BabelCore.types.Function>(
   fnPath: BabelCore.NodePath<T>,
   t: typeof BabelCore.types,
@@ -866,8 +888,9 @@ function functionUsesStateLike<T extends BabelCore.types.Function>(
   const isStateLikeMacroBinding = (
     callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
   ) => {
-    if (!t.isIdentifier(callPath.node.callee)) return false
-    const calleeName = callPath.node.callee.name
+    const callee = unwrapTransparentCallCallee(callPath.node.callee, t)
+    if (!t.isIdentifier(callee)) return false
+    const calleeName = callee.name
     const binding = callPath.scope.getBinding(calleeName)
     if (!binding) {
       return calleeName === '$state' || calleeName === '$effect' || calleeName === '$memo'
@@ -3575,7 +3598,7 @@ function createHIREntrypointVisitor(
             BabelCore.types.CallExpression | BabelCore.types.OptionalCallExpression
           >,
         ): FictMacroKind | null => {
-          const callee = callPath.node.callee
+          const callee = unwrapTransparentCallCallee(callPath.node.callee, t)
           if (!t.isIdentifier(callee)) return null
           const binding = callPath.scope.getBinding(callee.name)
           if (!binding) return null
@@ -3864,7 +3887,7 @@ function createHIREntrypointVisitor(
         const isImportedDollarMemoCall = (
           callPath: BabelCore.NodePath<BabelCore.types.CallExpression>,
         ): boolean => {
-          const callee = callPath.node.callee
+          const callee = unwrapTransparentCallCallee(callPath.node.callee, t)
           if (!t.isIdentifier(callee)) return false
           const binding = callPath.scope.getBinding(callee.name)
           return !!(

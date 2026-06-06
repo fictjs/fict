@@ -2665,6 +2665,26 @@ describe('Spec rule coverage', () => {
           return <div />
         }
       `,
+      `
+        import { $memo } from 'fict'
+        function Demo({ ready }) {
+          if (ready) {
+            const value = (0, $memo)(() => 2)
+            return <div>{value}</div>
+          }
+          return <div />
+        }
+      `,
+      `
+        import { $memo as memo } from 'fict'
+        function Demo({ ready }) {
+          if (ready) {
+            const value = (0, memo)(() => 2)
+            return <div>{value}</div>
+          }
+          return <div />
+        }
+      `,
     ]
 
     for (const input of cases) {
