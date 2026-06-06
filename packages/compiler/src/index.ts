@@ -1855,6 +1855,65 @@ function runWarningPass(
       break
     }
   }
+  const emitReactiveMemberMutationWarning = (
+    target: BabelCore.types.MemberExpression | BabelCore.types.OptionalMemberExpression,
+    path: BabelCore.NodePath,
+  ): boolean => {
+    const stateRoot = isStateRoot(target.object as BabelCore.types.Expression, path)
+    const reactiveRoot = isReactiveRoot(target.object as BabelCore.types.Expression, path)
+    if (!stateRoot && !reactiveRoot) return false
+    emitWarning(
+      path,
+      'FICT-M',
+      'Direct mutation of nested property detected; use immutable update or $store helpers',
+      warn,
+      fileName,
+    )
+    if (isDynamicPropertyAccess(target, t)) {
+      emitWarning(
+        path,
+        'FICT-H',
+        'Dynamic property access widens dependency tracking',
+        warn,
+        fileName,
+      )
+    }
+    return true
+  }
+  const emitPatternMemberMutationWarnings = (
+    node: BabelCore.types.Node | null | undefined,
+    path: BabelCore.NodePath,
+  ): boolean => {
+    if (!node) return false
+    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      return emitReactiveMemberMutationWarning(node, path)
+    }
+    if (t.isAssignmentPattern(node)) {
+      return emitPatternMemberMutationWarnings(node.left, path)
+    }
+    if (t.isRestElement(node)) {
+      return emitPatternMemberMutationWarnings(node.argument, path)
+    }
+    if (t.isObjectPattern(node)) {
+      let emitted = false
+      for (const prop of node.properties) {
+        if (t.isObjectProperty(prop)) {
+          emitted = emitPatternMemberMutationWarnings(prop.value, path) || emitted
+        } else if (t.isRestElement(prop)) {
+          emitted = emitPatternMemberMutationWarnings(prop.argument, path) || emitted
+        }
+      }
+      return emitted
+    }
+    if (t.isArrayPattern(node)) {
+      let emitted = false
+      for (const element of node.elements) {
+        emitted = emitPatternMemberMutationWarnings(element, path) || emitted
+      }
+      return emitted
+    }
+    return false
+  }
   programPath.traverse({
     AssignmentExpression(path) {
       const { left } = path.node
@@ -1874,27 +1933,12 @@ function runWarningPass(
       }
       if (t.isIdentifier(left)) return
       if (t.isMemberExpression(left) || t.isOptionalMemberExpression(left)) {
-        const stateRoot = isStateRoot(left.object as BabelCore.types.Expression, path)
-        const reactiveRoot = isReactiveRoot(left.object as BabelCore.types.Expression, path)
-        if (stateRoot || reactiveRoot) {
-          emitWarning(
-            path,
-            'FICT-M',
-            'Direct mutation of nested property detected; use immutable update or $store helpers',
-            warn,
-            fileName,
-          )
-          if (isDynamicPropertyAccess(left, t)) {
-            emitWarning(
-              path,
-              'FICT-H',
-              'Dynamic property access widens dependency tracking',
-              warn,
-              fileName,
-            )
-          }
+        if (emitReactiveMemberMutationWarning(left, path)) {
           return
         }
+      }
+      if (t.isObjectPattern(left) || t.isArrayPattern(left)) {
+        emitPatternMemberMutationWarnings(left, path)
       }
     },
     VariableDeclarator(path) {

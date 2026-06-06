@@ -2022,6 +2022,71 @@ describe('semantic validation', () => {
     expect(warnings.some(w => w.code === 'FICT-M')).toBe(true)
   })
 
+  it('warns on destructuring pattern member mutations through state', () => {
+    const collectWarnings = (assignment: string): Array<{ code: string }> => {
+      const source = `
+        import { $state } from 'fict'
+        function App(key: 'x') {
+          const state = $state({ x: 1, nested: { x: 1 } })
+          ${assignment}
+          return <div />
+        }
+      `
+      const warnings: Array<{ code: string }> = []
+      try {
+        transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+      } catch {
+        // Later HIR lowering may reject non-identifier destructuring targets.
+      }
+      return warnings
+    }
+
+    const cases = [
+      ';({ x: state.x } = { x: 2 })',
+      ';[state.x] = [2]',
+      ';({ nested: { x: state.x } } = { nested: { x: 2 } })',
+      ';({ x: state.x = 0 } = { x: 2 })',
+    ]
+
+    for (const assignment of cases) {
+      expect(collectWarnings(assignment).some(w => w.code === 'FICT-M')).toBe(true)
+    }
+
+    const dynamicWarnings = collectWarnings(';({ x: state[key] } = { x: 2 })')
+    expect(dynamicWarnings.some(w => w.code === 'FICT-M')).toBe(true)
+    expect(dynamicWarnings.some(w => w.code === 'FICT-H')).toBe(true)
+  })
+
+  it('throws under strictGuarantee for destructuring pattern member mutations through state', () => {
+    const source = `
+      import { $state } from 'fict'
+      function App() {
+        const state = $state({ x: 1 })
+        ;({ x: state.x } = { x: 2 })
+        return <div />
+      }
+    `
+
+    expect(() => transform(source, { strictGuarantee: true, dev: false })).toThrow(/FICT-M/)
+  })
+
+  it('does not warn for destructuring pattern member writes to non-reactive objects', () => {
+    const source = `
+      function App() {
+        const state = { x: 1 }
+        ;({ x: state.x } = { x: 2 })
+        return <div />
+      }
+    `
+    const warnings: Array<{ code: string }> = []
+    try {
+      transform(source, { onWarn: warning => warnings.push(warning as { code: string }) })
+    } catch {
+      // Later HIR lowering may reject non-identifier destructuring targets.
+    }
+    expect(warnings.some(w => w.code === 'FICT-M')).toBe(false)
+  })
+
   it('warns when deleting a nested property from state', () => {
     const source = `
       import { $state } from 'fict'
