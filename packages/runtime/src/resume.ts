@@ -548,9 +548,10 @@ export function serializeValue(
     return value
   }
 
-  // Handle functions - can't serialize, skip
   if (typeof value === 'function') {
-    return undefined
+    throw new Error(
+      `[Fict] Cannot serialize function at ${path}. Functions cannot be stored in resumable snapshot values.`,
+    )
   }
 
   // Handle objects - check for circular references first

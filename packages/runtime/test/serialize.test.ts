@@ -470,7 +470,11 @@ describe('serializeValue / deserializeValue', () => {
   })
 
   describe('functions', () => {
-    it('should skip functions during serialization', () => {
+    it('should reject top-level functions during serialization', () => {
+      expect(() => serializeValue(() => 'hello')).toThrow(/Cannot serialize function at \$/)
+    })
+
+    it('should reject function properties during serialization', () => {
       const obj = {
         name: 'test',
         handler: () => console.log('hello'),
@@ -478,10 +482,40 @@ describe('serializeValue / deserializeValue', () => {
           fn: function () {},
         },
       }
-      const result = deserializeValue(serializeValue(obj)) as Record<string, unknown>
-      expect(result.name).toBe('test')
-      expect(result.handler).toBe(undefined)
-      expect((result.nested as Record<string, unknown>).fn).toBe(undefined)
+
+      expect(() => serializeValue(obj)).toThrow(/Cannot serialize function at \$\."handler"/)
+      expect(() => serializeValue({ nested: obj.nested })).toThrow(
+        /Cannot serialize function at \$\."nested"\."fn"/,
+      )
+    })
+
+    it('should reject array function entries during serialization', () => {
+      expect(() => serializeValue([() => 'x'])).toThrow(/Cannot serialize function at \$\[0\]/)
+    })
+
+    it('should reject map function keys and values during serialization', () => {
+      expect(() => serializeValue(new Map([[() => 'key', 'value']]))).toThrow(
+        /Cannot serialize function at \$\.k0/,
+      )
+      expect(() => serializeValue(new Map([['key', () => 'value']]))).toThrow(
+        /Cannot serialize function at \$\.v0/,
+      )
+    })
+
+    it('should reject set function entries during serialization', () => {
+      expect(() => serializeValue(new Set([() => 'x']))).toThrow(
+        /Cannot serialize function at \$\[0\]/,
+      )
+    })
+
+    it('should keep explicit undefined distinct from rejected functions', () => {
+      const result = deserializeValue(
+        JSON.parse(JSON.stringify(serializeValue([undefined, { value: undefined }]))),
+      ) as [undefined, { value: undefined }]
+
+      expect(0 in result).toBe(true)
+      expect(result[0]).toBe(undefined)
+      expect(result[1].value).toBe(undefined)
     })
   })
 
