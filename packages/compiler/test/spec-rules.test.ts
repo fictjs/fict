@@ -670,6 +670,64 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
   })
 
+  it('warns when rendered map calls without keys are wrapped in JSX expressions', () => {
+    const cases = [
+      'ok && items.map(item => <li>{item.name}</li>)',
+      'ok ? items.map(item => <li>{item.name}</li>) : null',
+      'ok ? null : items.map(item => <li>{item.name}</li>)',
+      '(0, items.map(item => <li>{item.name}</li>))',
+      '(items.map(item => <li>{item.name}</li>) as any)',
+    ]
+
+    for (const expression of cases) {
+      const { warnings } = transformWithWarnings(`
+        export function List({ items, ok }) {
+          return <ul>{${expression}}</ul>
+        }
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-J002')).toBe(true)
+    }
+  })
+
+  it('warns when rendered wrapped map calls use index keys', () => {
+    const cases = [
+      'ok && items.map((item, index) => <li key={index}>{item.name}</li>)',
+      'ok ? items.map((item, index) => <li key={index}>{item.name}</li>) : null',
+      'ok ? null : items.map((item, index) => <li key={index}>{item.name}</li>)',
+      '(0, items.map((item, index) => <li key={index}>{item.name}</li>))',
+      '(items.map((item, index) => <li key={index}>{item.name}</li>) as any)',
+    ]
+
+    for (const expression of cases) {
+      const { warnings } = transformWithWarnings(`
+        export function List({ items, ok }) {
+          return <ul>{${expression}}</ul>
+        }
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-J001')).toBe(true)
+    }
+  })
+
+  it('does not warn for wrapped keyed map calls or non-rendered nested map functions', () => {
+    const keyed = transformWithWarnings(`
+      export function List({ items, ok }) {
+        return <ul>{ok && items.map(item => <li key={item.id}>{item.name}</li>)}</ul>
+      }
+    `)
+
+    expect(keyed.warnings.some(w => w.code === 'FICT-J001' || w.code === 'FICT-J002')).toBe(false)
+
+    const nested = transformWithWarnings(`
+      export function List({ items }) {
+        return <ul>{() => items.map(item => <li>{item.name}</li>)}</ul>
+      }
+    `)
+
+    expect(nested.warnings.some(w => w.code === 'FICT-J002')).toBe(false)
+  })
+
   it('warns when map callbacks return arrays with unkeyed JSX', () => {
     const cases = [
       '[<li key={item.id}>{item.name}</li>, <li>{item.name}</li>]',
