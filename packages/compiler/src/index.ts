@@ -2735,8 +2735,8 @@ function createHIREntrypointVisitor(
           const callee = callPath.node.callee
           if (!t.isIdentifier(callee)) return null
           if (callPath.scope.getBinding(callee.name)) return null
-          if (callee.name === '$state') return 'state'
-          if (callee.name === '$effect') return 'effect'
+          if (callee.name === '$state' && !fictImports.has('$state')) return 'state'
+          if (callee.name === '$effect' && !fictImports.has('$effect')) return 'effect'
           return null
         }
         const getImportedValueOnlyMacroName = (

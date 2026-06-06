@@ -75,6 +75,65 @@ describe('macro binding recognition', () => {
     expect(output).toContain('devToolsSource')
   })
 
+  it('does not match local $state calls through an imported alias', () => {
+    const output = transform(`
+      import { $state as macro } from 'fict'
+      function $state(value: number) {
+        return value + 1
+      }
+      export function App() {
+        const local = $state(1)
+        let count = macro(10)
+        return [local, count]
+      }
+    `)
+
+    expect(output).toContain('const local = $state(1)')
+    expect(output).toContain('__fictUseSignal')
+  })
+
+  it('does not match local $effect calls through an imported alias', () => {
+    const output = transform(`
+      import { $effect as macroEffect } from 'fict'
+      const calls: string[] = []
+      function $effect(fn: () => void) {
+        calls.push('local')
+        fn()
+      }
+      export function App() {
+        $effect(() => calls.push('default'))
+        macroEffect(() => calls.push('alias'))
+        return calls.length
+      }
+    `)
+
+    expect(output).toContain('$effect(() => calls.push')
+    expect(output).toContain('__fictUseEffect')
+  })
+
+  it('does not match local memo helpers through imported aliases', () => {
+    const output = transform(`
+      import { $memo as macroMemo, createMemo as macroCreateMemo } from 'fict'
+      function $memo<T>(fn: () => T): T {
+        return fn()
+      }
+      function createMemo<T>(fn: () => T): T {
+        return fn()
+      }
+      export function App() {
+        const localMemo = $memo(() => 1)
+        const localCreate = createMemo(() => 2)
+        const importedMemo = macroMemo(() => localMemo + localCreate)
+        const importedCreate = macroCreateMemo(() => importedMemo())
+        return importedCreate()
+      }
+    `)
+
+    expect(output).toContain('const localMemo = $memo(() => 1)')
+    expect(output).toContain('const localCreate = createMemo(() => 2)')
+    expect(output).toContain('devToolsSource')
+  })
+
   it('tracks namespace $memo runtime calls as memo accessors', () => {
     const output = transform(`
       import { $state } from 'fict'
