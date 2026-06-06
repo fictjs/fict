@@ -1476,6 +1476,78 @@ describe('Spec rule coverage', () => {
     ).not.toThrow(/FICT-R004/)
   })
 
+  it('throws when createSelector from fict/advanced is created inside non-JSX control flow (FICT-R004)', () => {
+    const cases = [
+      `
+        import { $state } from 'fict'
+        import { createSelector } from 'fict/advanced'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            createSelector(() => count)
+          }
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        import { createSelector as selector } from 'fict/advanced'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            selector(() => count)
+          }
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        import * as F from 'fict/advanced'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            F.createSelector(() => count)
+          }
+          return <button>{count}</button>
+        }
+      `,
+      `
+        import { $state } from 'fict'
+        import { createSelector } from 'fict/advanced'
+        function Demo({ items }) {
+          const count = $state(0)
+          for (const item of items) {
+            createSelector(() => count === item)
+          }
+          return <button>{count}</button>
+        }
+      `,
+    ]
+
+    for (const input of cases) {
+      expect(() => transform(input)).toThrow(/FICT-R004/)
+    }
+  })
+
+  it('can downgrade fict/advanced createSelector FICT-R004 diagnostics to warnings', () => {
+    const { warnings } = transformWithWarnings(
+      `
+        import { $state } from 'fict'
+        import { createSelector } from 'fict/advanced'
+        function Demo({ ready }) {
+          const count = $state(0)
+          if (ready) {
+            createSelector(() => count)
+          }
+          return <button>{count}</button>
+        }
+      `,
+      { warningLevels: { 'FICT-R004': 'warn' } },
+    )
+
+    expect(warnings.some(w => w.code === 'FICT-R004')).toBe(true)
+  })
+
   it('throws when namespace reactive creators are created inside non-JSX control flow (FICT-R004)', () => {
     const cases = [
       `
