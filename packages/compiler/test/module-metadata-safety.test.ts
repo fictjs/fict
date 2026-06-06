@@ -340,6 +340,59 @@ describe('module metadata safety', () => {
     }
   })
 
+  it('rejects package metadata with non-canonical hook array prop keys', () => {
+    clearModuleMetadata()
+    const baseDir = path.join(process.cwd(), '__fict_package_metadata_array_props__')
+    const packageDir = path.join(baseDir, 'node_modules', 'fict-hook-lib')
+    const importer = path.join(baseDir, 'src', 'consumer.tsx')
+    const metaPath = path.join(packageDir, 'dist', 'index.fict.meta.json')
+    const writeMetadata = (arrayProps: Record<string, string>): void => {
+      writeFileSync(
+        metaPath,
+        JSON.stringify({
+          exports: {},
+          hooks: {
+            usePair: {
+              arrayProps,
+            },
+          },
+        }),
+        'utf8',
+      )
+    }
+    const resolve = (): ModuleReactiveMetadata | undefined =>
+      resolveModuleMetadata('fict-hook-lib', importer, {
+        emitModuleMetadata: false,
+      })
+
+    try {
+      mkdirSync(path.dirname(metaPath), { recursive: true })
+      mkdirSync(path.dirname(importer), { recursive: true })
+      writeFileSync(
+        path.join(packageDir, 'package.json'),
+        JSON.stringify({
+          name: 'fict-hook-lib',
+          fict: { metadata: './dist/index.fict.meta.json' },
+        }),
+        'utf8',
+      )
+
+      writeMetadata({ '0': 'signal', '1': 'memo' })
+      expect(resolve()?.hooks?.usePair?.arrayProps).toEqual({ '0': 'signal', '1': 'memo' })
+
+      for (const key of ['01', '00', '-1', '1.5', '9007199254740992']) {
+        clearModuleMetadata()
+        writeMetadata({ [key]: 'signal' })
+        expect(resolve()).toBeUndefined()
+      }
+    } finally {
+      if (existsSync(baseDir)) {
+        rmSync(baseDir, { recursive: true, force: true })
+      }
+      clearModuleMetadata()
+    }
+  })
+
   it('rejects package metadata files with unsupported versions', () => {
     clearModuleMetadata()
     const baseDir = path.join(process.cwd(), '__fict_package_metadata_unsupported_version__')

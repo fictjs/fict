@@ -12,6 +12,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { MODULE_REACTIVE_METADATA_VERSION } from './types'
+import { isCanonicalArrayPropIndex } from './metadata-indices'
 import type { FictCompilerOptions, ModuleReactiveMetadata } from './types'
 
 const globalMetadata = new Map<string, ModuleReactiveMetadata>()
@@ -300,7 +301,7 @@ function isHookReturnInfo(value: unknown): boolean {
 
   if ('arrayProps' in value) {
     if (!isPlainObject(value.arrayProps)) return false
-    if (!Object.keys(value.arrayProps).every(key => /^\d+$/.test(key))) return false
+    if (!Object.keys(value.arrayProps).every(isCanonicalArrayPropIndex)) return false
     if (!Object.values(value.arrayProps).every(isHookAccessorKind)) return false
   }
 

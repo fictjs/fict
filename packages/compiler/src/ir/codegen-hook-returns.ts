@@ -1,5 +1,6 @@
 import type * as BabelCore from '@babel/core'
 
+import { parseCanonicalArrayPropIndex } from '../metadata-indices'
 import type { HookReturnInfoSerializable, ReactiveExportKind } from '../types'
 
 import type { CodegenContext } from './codegen'
@@ -46,7 +47,12 @@ export function serializeHookReturnInfo(info: HookReturnInfo): HookReturnInfoSer
 export function deserializeHookReturnInfo(info: HookReturnInfoSerializable): HookReturnInfo {
   const objectProps = info.objectProps ? new Map(Object.entries(info.objectProps)) : undefined
   const arrayProps = info.arrayProps
-    ? new Map(Object.entries(info.arrayProps).map(([k, v]) => [Number.parseInt(k, 10), v]))
+    ? new Map(
+        Object.entries(info.arrayProps).flatMap(([k, v]) => {
+          const index = parseCanonicalArrayPropIndex(k)
+          return index === null ? [] : [[index, v]]
+        }),
+      )
     : undefined
   return {
     objectProps,
