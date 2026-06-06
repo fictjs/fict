@@ -557,6 +557,46 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
   })
 
+  it('warns when memo operator and template expressions contain side effects', () => {
+    const cases = [
+      "return fetch('/api') || 1",
+      "return fetch('/api') + 1",
+      "return void fetch('/api')",
+      "return `${fetch('/api')}`",
+      "return tag`${fetch('/api')}`",
+      "return obj[fetch('/api')]",
+      "return obj?.[fetch('/api')]",
+    ]
+
+    for (const body of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $memo } from 'fict'
+        const obj = {}
+        const tag = (_strings: TemplateStringsArray, value: unknown) => value
+        const value = $memo(() => {
+          ${body}
+        })
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M003')).toBe(true)
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+    }
+  })
+
+  it('does not warn when memo operator and template expressions are pure', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $memo } from 'fict'
+      const key = 'value'
+      const obj = { value: 1 }
+      const value = $memo(() => {
+        return \`\${obj[key] + Math.abs(-1)}\`
+      })
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-M003')).toBe(false)
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+  })
+
   it('does not warn when memo returns lazy closures with side effects', () => {
     const cases = [
       'return () => console.log("later")',

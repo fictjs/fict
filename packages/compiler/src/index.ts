@@ -2152,6 +2152,23 @@ function createHIREntrypointVisitor(
             }
             if (t.isSpreadElement(node)) return checkNode(node.argument)
             if (t.isLogicalExpression(node)) return checkNode(node.left) || checkNode(node.right)
+            if (t.isBinaryExpression(node)) return checkNode(node.left) || checkNode(node.right)
+            if (t.isUnaryExpression(node)) {
+              return node.operator === 'delete' || checkNode(node.argument)
+            }
+            if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+              return checkNode(node.object) || (node.computed && checkNode(node.property))
+            }
+            if (t.isTemplateLiteral(node)) {
+              return node.expressions.some(expression => checkNode(expression))
+            }
+            if (t.isTaggedTemplateExpression(node)) {
+              return (
+                checkNode(node.tag) ||
+                node.quasi.expressions.some(expression => checkNode(expression))
+              )
+            }
+            if (t.isParenthesizedExpression(node)) return checkNode(node.expression)
             if (t.isConditionalExpression(node))
               return checkNode(node.test) || checkNode(node.consequent) || checkNode(node.alternate)
             if (t.isIfStatement(node)) {
