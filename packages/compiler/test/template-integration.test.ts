@@ -5302,6 +5302,54 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('preserves plain-call this semantics for extracted delegated event data', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const seen: string[] = []
+      const receiver = { name: 'receiver' }
+
+      function select(this: unknown, value: number) {
+        seen.push(this === undefined ? 'undefined' : this === receiver ? 'receiver' : 'other')
+        seen.push(String(value))
+      }
+
+      export function App() {
+        const id = 7
+        return (
+          <div>
+            <button data-id="plain" onClick={() => select(id)}>Plain</button>
+            <button data-id="call" onClick={() => select.call(receiver, id)}>Call</button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        seen.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      mount: (el: HTMLElement) => () => void
+      seen: string[]
+    }>(source, { fineGrainedDom: true })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    const plain = container.querySelector('[data-id="plain"]') as HTMLButtonElement
+    const call = container.querySelector('[data-id="call"]') as HTMLButtonElement
+    plain.click()
+    call.click()
+    await flushUpdates()
+
+    expect(mod.seen).toEqual(['undefined', '7', 'receiver', '7'])
+
+    teardown()
+    container.remove()
+  })
+
   it('wires namespaced on: event handlers in fine-grained mode', async () => {
     const source = `
       import { render } from 'fict'

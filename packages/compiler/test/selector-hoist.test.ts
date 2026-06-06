@@ -225,7 +225,7 @@ describe('P1: Selector Hoist Optimization', () => {
     expect(output).not.toMatch(/bindText\([^,]+,\s*\(\)\s*=>\s*__key\)/)
 
     expect(output).toMatch(
-      /addEventListener\([^,]+,\s*"click",\s*\[remove,\s*__key,\s*"__fictDataOnly"\],\s*true\)/,
+      /addEventListener\([^,]+,\s*"click",\s*\[remove,\s*__key,\s*"__fictDataOnlyPlain"\],\s*true\)/,
     )
     expect(output).not.toMatch(
       /addEventListener\([^,]+,\s*"click",\s*\[remove,\s*\(\)\s*=>\s*__key\],\s*true\)/,

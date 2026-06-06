@@ -135,6 +135,7 @@ export { getReactiveCallKind } from './codegen-reactive-kind'
 
 const HOOK_SLOT_BASE = 1000
 const DELEGATED_DATA_ONLY_MARKER = '__fictDataOnly'
+const DELEGATED_DATA_PLAIN_MARKER = '__fictDataOnlyPlain'
 const COMPONENT_CONTEXT_PRIMITIVE_CALLEES = new Set([
   '$effect',
   '$memo',
@@ -4662,7 +4663,7 @@ function lowerIntrinsicElement(
               t.arrayExpression([
                 handlerExpr,
                 dataValue,
-                t.stringLiteral(DELEGATED_DATA_ONLY_MARKER),
+                t.stringLiteral(DELEGATED_DATA_PLAIN_MARKER),
               ]),
               t.booleanLiteral(true),
             ]),

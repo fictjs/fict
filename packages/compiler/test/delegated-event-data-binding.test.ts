@@ -14,7 +14,7 @@ describe('Delegated event data binding', () => {
     const output = transform(source)
 
     expect(output).toMatch(
-      /addEventListener\([^,]+,\s*"click",\s*\[handleClick,\s*1,\s*"__fictDataOnly"\],\s*true\)/,
+      /addEventListener\([^,]+,\s*"click",\s*\[handleClick,\s*1,\s*"__fictDataOnlyPlain"\],\s*true\)/,
     )
   })
 

@@ -968,7 +968,7 @@ describe('event handler transformation', () => {
     expect(code).not.toMatch(/bindText\([^,]+,\s*\(\)\s*=>\s*__key\)/)
 
     expect(code).toMatch(
-      /addEventListener\([^,]+,\s*"click",\s*\[pick,\s*__key,\s*"__fictDataOnly"\],\s*true\)/,
+      /addEventListener\([^,]+,\s*"click",\s*\[pick,\s*__key,\s*"__fictDataOnlyPlain"\],\s*true\)/,
     )
     expect(code).not.toMatch(
       /addEventListener\([^,]+,\s*"click",\s*\[pick,\s*\(\)\s*=>\s*__key\],\s*true\)/,
@@ -1000,7 +1000,7 @@ describe('event handler transformation', () => {
     expect(code).toContain('__key')
     expect(code).not.toMatch(/bindText\([^,]+,\s*\(\)\s*=>\s*__key\)/)
     expect(code).toMatch(
-      /addEventListener\([^,]+,\s*"click",\s*\[pick,\s*row\(\)\?\.id,\s*"__fictDataOnly"\],\s*true\)/,
+      /addEventListener\([^,]+,\s*"click",\s*\[pick,\s*row\(\)\?\.id,\s*"__fictDataOnlyPlain"\],\s*true\)/,
     )
     expect(code).not.toMatch(
       /addEventListener\([^,]+,\s*"click",\s*\[pick,\s*\(\)\s*=>\s*row\(\)\?\.id\],\s*true\)/,
@@ -1925,7 +1925,7 @@ describe('resumable event handler transformation', () => {
 
     expect(code).toMatch(/addEventListener\([^,]+,\s*"click",/)
     expect(code).toMatch(
-      /addEventListener\([^,]+,\s*"click",\s*\[remove,\s*__key,\s*"__fictDataOnly"\],\s*true\)/,
+      /addEventListener\([^,]+,\s*"click",\s*\[remove,\s*__key,\s*"__fictDataOnlyPlain"\],\s*true\)/,
     )
     expect(code).not.toContain('setAttribute(\"on:click\"')
   })

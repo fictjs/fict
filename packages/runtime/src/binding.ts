@@ -66,6 +66,7 @@ const NON_REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:non-reactive-fn-registry')
 const REACTIVE_FN_REGISTRY_KEY = Symbol.for('fict:reactive-fn-registry')
 const PROP_GETTER_REGISTRY_KEY = Symbol.for('fict:prop-getter-registry')
 const DELEGATED_DATA_ONLY_MARKER = '__fictDataOnly'
+const DELEGATED_DATA_PLAIN_MARKER = '__fictDataOnlyPlain'
 
 type EventHandlerTuple = [EventListenerOrEventListenerObject, unknown, string?]
 
@@ -350,10 +351,13 @@ export function callEventHandler(
   node?: EventTarget | null,
   data?: unknown,
   dataOnly = false,
+  plainThis = false,
 ): void {
   if (!handler) return
 
-  const context = (node ?? event.currentTarget ?? undefined) as EventTarget | undefined
+  const context = plainThis
+    ? undefined
+    : ((node ?? event.currentTarget ?? undefined) as EventTarget | undefined)
   const hasData = dataOnly || data !== undefined
   const invoke = (fn: EventListenerOrEventListenerObject | null | undefined): void => {
     if (typeof fn === 'function') {
@@ -1481,11 +1485,21 @@ function globalEventHandler(e: Event): void {
         if (typeof handler === 'function') {
           callEventHandler(handler, e, node, hasData ? resolvedNodeData : undefined)
         } else if (Array.isArray(handler)) {
+          const tuple = handler as EventHandlerTuple
           const tupleHandler = resolveEventHandlerValue(
-            handler[0] as EventListenerOrEventListenerObject | null | undefined,
+            tuple[0] as EventListenerOrEventListenerObject | null | undefined,
           )
-          const tupleData = resolveEventData(handler[1], e)
-          callEventHandler(tupleHandler, e, node, tupleData)
+          const tupleData = resolveEventData(tuple[1], e)
+          const tupleMarker = tuple[2]
+          callEventHandler(
+            tupleHandler,
+            e,
+            node,
+            tupleData,
+            tupleMarker === DELEGATED_DATA_ONLY_MARKER ||
+              tupleMarker === DELEGATED_DATA_PLAIN_MARKER,
+            tupleMarker === DELEGATED_DATA_PLAIN_MARKER,
+          )
         }
       })
       if (e.cancelBubble) return false
@@ -1692,7 +1706,8 @@ function createEventInvoker(
           event,
           node,
           data,
-          handler[2] === DELEGATED_DATA_ONLY_MARKER,
+          handler[2] === DELEGATED_DATA_ONLY_MARKER || handler[2] === DELEGATED_DATA_PLAIN_MARKER,
+          handler[2] === DELEGATED_DATA_PLAIN_MARKER,
         )
         return
       }

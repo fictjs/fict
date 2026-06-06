@@ -1745,6 +1745,23 @@ describe('Binding Edge Cases', () => {
       expect(observed).toEqual({ length: 1, value: undefined })
     })
 
+    it('handles compiler-tagged delegated data with plain-call this semantics', () => {
+      const el = document.createElement('button')
+      const data = { id: 123 }
+      let thisValue: unknown = 'unset'
+      container.appendChild(el)
+      delegateEvents(['click'])
+
+      function handler(this: unknown) {
+        thisValue = this
+      }
+
+      addEventListener(el, 'click', [handler, data, '__fictDataOnlyPlain'] as any, true)
+
+      el.dispatchEvent(new Event('click', { bubbles: true }))
+      expect(thisValue).toBeUndefined()
+    })
+
     it('adds non-delegated listener directly', () => {
       const el = document.createElement('button')
       const handler = vi.fn()
