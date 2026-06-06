@@ -137,6 +137,103 @@ describe('$store', () => {
     expect(fn).toHaveBeenCalledTimes(2)
   })
 
+  it('calls own accessor setters for same-value assignments', () => {
+    const setter = vi.fn()
+    const raw = {
+      get value() {
+        return 1
+      },
+      set value(next: number) {
+        setter(next)
+      },
+    }
+    const state = $store(raw)
+
+    state.value = 1
+
+    expect(setter).toHaveBeenCalledWith(1)
+    expect(setter).toHaveBeenCalledTimes(1)
+  })
+
+  it('calls inherited accessor setters for same-value assignments', () => {
+    const setter = vi.fn()
+    let current = 1
+    const proto = {
+      get value() {
+        return current
+      },
+      set value(next: number) {
+        setter(next)
+        current = next
+      },
+    }
+    const raw = Object.create(proto) as { value: number }
+    const state = $store(raw)
+
+    state.value = 1
+
+    expect(setter).toHaveBeenCalledWith(1)
+    expect(setter).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not notify subscribers for same-value writable data assignments', async () => {
+    const state = $store({ value: 1 })
+    const fn = vi.fn()
+
+    createEffect(() => {
+      fn(state.value)
+    })
+
+    expect(fn).toHaveBeenCalledWith(1)
+
+    state.value = 1
+    await tick()
+
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets same-value accessor setter errors propagate', () => {
+    const error = new Error('setter failed')
+    const raw = {
+      get value() {
+        return 1
+      },
+      set value(_next: number) {
+        throw error
+      },
+    }
+    const state = $store(raw)
+
+    expect(() => {
+      state.value = 1
+    }).toThrow(error)
+  })
+
+  it('notifies subscribers with the post-set accessor value', async () => {
+    let current = 1
+    const raw = {
+      get value() {
+        return current
+      },
+      set value(next: number) {
+        current = next + 1
+      },
+    }
+    const state = $store(raw)
+    const seen: number[] = []
+
+    createEffect(() => {
+      seen.push(state.value)
+    })
+
+    expect(seen).toEqual([1])
+
+    state.value = 1
+    await tick()
+
+    expect(seen).toEqual([1, 2])
+  })
+
   describe('Method binding and cache invalidation', () => {
     it('should invalidate bound method cache when method is reassigned', () => {
       const state = $store({

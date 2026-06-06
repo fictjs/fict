@@ -98,6 +98,32 @@ function triggerIteration(target: object): void {
   }
 }
 
+function getPropertyDescriptor(
+  target: object,
+  prop: string | symbol,
+): PropertyDescriptor | undefined {
+  let current: object | null = target
+  while (current) {
+    const descriptor = Object.getOwnPropertyDescriptor(current, prop)
+    if (descriptor) return descriptor
+    current = Object.getPrototypeOf(current)
+  }
+  return undefined
+}
+
+function canSkipSameValueSet(
+  target: object,
+  prop: string | symbol,
+  descriptor: PropertyDescriptor | undefined,
+): boolean {
+  return (
+    !!descriptor &&
+    Object.prototype.hasOwnProperty.call(target, prop) &&
+    'value' in descriptor &&
+    descriptor.writable === true
+  )
+}
+
 /**
  * Create a deep reactive store using Proxy.
  *
@@ -210,13 +236,16 @@ export function $store<T extends object>(initialValue: T): T {
       const oldLength = Array.isArray(target) && prop === 'length' ? target.length : undefined
       const oldValue = Reflect.get(target, prop, receiver)
       const hadKey = Object.prototype.hasOwnProperty.call(target, prop)
+      const descriptor = getPropertyDescriptor(target, prop)
 
-      // If value hasn't changed, do nothing
-      if (oldValue === newValue && hadKey) {
+      // Same-value assignment is only inert for own writable data properties.
+      if (oldValue === newValue && hadKey && canSkipSameValueSet(target, prop, descriptor)) {
         return true
       }
 
       const result = Reflect.set(target, prop, newValue, receiver)
+      const nextValue =
+        descriptor && !('value' in descriptor) ? Reflect.get(target, prop, receiver) : newValue
 
       // IMPORTANT: Clear bound method cache BEFORE updating the signal
       const boundMethods = BOUND_METHOD_CACHE.get(target)
@@ -230,7 +259,7 @@ export function $store<T extends object>(initialValue: T): T {
       // Update the signal if it exists
       const signals = SIGNAL_CACHE.get(target)
       if (signals && signals[prop]) {
-        signals[prop](newValue)
+        signals[prop](nextValue)
       }
 
       // If new property, trigger iteration update
