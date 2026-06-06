@@ -170,7 +170,7 @@ export function replaceIdentifiersWithOverrides(
     return names
   }
 
-  const collectFunctionLocalNames = (
+  const collectFunctionScopedNames = (
     body: BabelCore.types.Node | null | undefined,
   ): Set<string> => {
     const names = new Set<string>()
@@ -182,6 +182,8 @@ export function replaceIdentifiersWithOverrides(
         return
       }
       if (
+        t.isClassDeclaration(current) ||
+        t.isClassExpression(current) ||
         t.isFunctionExpression(current) ||
         t.isArrowFunctionExpression(current) ||
         t.isFunctionDeclaration(current) ||
@@ -193,23 +195,24 @@ export function replaceIdentifiersWithOverrides(
       }
 
       if (t.isVariableDeclaration(current)) {
-        current.declarations.forEach(decl => {
-          collectPatternNames(decl.id as BabelCore.types.PatternLike, names)
-          visit(decl.init)
-        })
+        if (current.kind === 'var') {
+          current.declarations.forEach(decl => {
+            collectPatternNames(decl.id as BabelCore.types.PatternLike, names)
+            visit(decl.init)
+          })
+        } else {
+          current.declarations.forEach(decl => visit(decl.init))
+        }
         return
       }
 
       if (t.isCatchClause(current)) {
-        if (current.param) {
-          collectPatternNames(current.param as BabelCore.types.PatternLike, names)
-        }
         visit(current.body)
         return
       }
 
       if (t.isForOfStatement(current) || t.isForInStatement(current)) {
-        if (t.isVariableDeclaration(current.left)) {
+        if (t.isVariableDeclaration(current.left) && current.left.kind === 'var') {
           current.left.declarations.forEach(decl => {
             collectPatternNames(decl.id as BabelCore.types.PatternLike, names)
           })
@@ -220,6 +223,11 @@ export function replaceIdentifiersWithOverrides(
       }
 
       if (t.isForStatement(current)) {
+        if (t.isVariableDeclaration(current.init) && current.init.kind === 'var') {
+          current.init.declarations.forEach(decl => {
+            collectPatternNames(decl.id as BabelCore.types.PatternLike, names)
+          })
+        }
         visit(current.init as BabelCore.types.Node | null)
         visit(current.test as BabelCore.types.Node | null)
         visit(current.update as BabelCore.types.Node | null)
@@ -251,6 +259,22 @@ export function replaceIdentifiersWithOverrides(
     return names
   }
 
+  const collectBlockScopedNames = (body: BabelCore.types.BlockStatement): Set<string> => {
+    const names = new Set<string>()
+    body.body.forEach(stmt => {
+      if (t.isVariableDeclaration(stmt) && stmt.kind !== 'var') {
+        stmt.declarations.forEach(decl =>
+          collectPatternNames(decl.id as BabelCore.types.PatternLike, names),
+        )
+      } else if (t.isFunctionDeclaration(stmt) && stmt.id) {
+        names.add(normalizeDependencyKey(stmt.id.name).split('.')[0] ?? stmt.id.name)
+      } else if (t.isClassDeclaration(stmt) && stmt.id) {
+        names.add(normalizeDependencyKey(stmt.id.name).split('.')[0] ?? stmt.id.name)
+      }
+    })
+    return names
+  }
+
   const scopeOverrides = (names: Set<string>): RegionOverrideMap => {
     if (names.size === 0) return overrides
     const scopedOverrides = Object.create(null) as RegionOverrideMap
@@ -265,7 +289,7 @@ export function replaceIdentifiersWithOverrides(
 
   if (t.isFunctionDeclaration(node)) {
     const names = collectParamNames(node.params)
-    collectFunctionLocalNames(node.body).forEach(name => names.add(name))
+    collectFunctionScopedNames(node.body).forEach(name => names.add(name))
     replaceIdentifiersWithOverrides(
       node.body,
       scopeOverrides(names),
@@ -283,7 +307,6 @@ export function replaceIdentifiersWithOverrides(
     if (node.param) {
       collectPatternNames(node.param as BabelCore.types.PatternLike, names)
     }
-    collectFunctionLocalNames(node.body).forEach(name => names.add(name))
     replaceIdentifiersWithOverrides(
       node.body,
       scopeOverrides(names),
@@ -298,7 +321,7 @@ export function replaceIdentifiersWithOverrides(
 
   if (t.isForOfStatement(node) || t.isForInStatement(node)) {
     const names = new Set<string>()
-    if (t.isVariableDeclaration(node.left)) {
+    if (t.isVariableDeclaration(node.left) && node.left.kind !== 'var') {
       node.left.declarations.forEach(decl =>
         collectPatternNames(decl.id as BabelCore.types.PatternLike, names),
       )
@@ -336,7 +359,7 @@ export function replaceIdentifiersWithOverrides(
 
   if (t.isForStatement(node)) {
     const names = new Set<string>()
-    if (t.isVariableDeclaration(node.init)) {
+    if (t.isVariableDeclaration(node.init) && node.init.kind !== 'var') {
       node.init.declarations.forEach(decl =>
         collectPatternNames(decl.id as BabelCore.types.PatternLike, names),
       )
@@ -388,7 +411,7 @@ export function replaceIdentifiersWithOverrides(
   }
 
   if (t.isBlockStatement(node)) {
-    const names = collectFunctionLocalNames(node)
+    const names = collectBlockScopedNames(node)
     const scopedOverrides = scopeOverrides(names)
     node.body.forEach(stmt =>
       replaceIdentifiersWithOverrides(
@@ -444,7 +467,7 @@ export function replaceIdentifiersWithOverrides(
     if (t.isFunctionExpression(node) && node.id) {
       paramNames.add(normalizeDependencyKey(node.id.name).split('.')[0] ?? node.id.name)
     }
-    const localNames = collectFunctionLocalNames(node.body)
+    const localNames = collectFunctionScopedNames(node.body)
     localNames.forEach(name => paramNames.add(name))
     const scopedOverrides = scopeOverrides(paramNames)
     // Avoid replacing parameter identifiers; only walk the body
@@ -485,7 +508,7 @@ export function replaceIdentifiersWithOverrides(
       )
     }
     const names = collectParamNames(node.params)
-    collectFunctionLocalNames(node.body).forEach(name => names.add(name))
+    collectFunctionScopedNames(node.body).forEach(name => names.add(name))
     replaceIdentifiersWithOverrides(
       node.body,
       scopeOverrides(names),
@@ -511,7 +534,7 @@ export function replaceIdentifiersWithOverrides(
       )
     }
     const names = collectParamNames(node.params)
-    collectFunctionLocalNames(node.body).forEach(name => names.add(name))
+    collectFunctionScopedNames(node.body).forEach(name => names.add(name))
     replaceIdentifiersWithOverrides(
       node.body,
       scopeOverrides(names),
@@ -525,7 +548,7 @@ export function replaceIdentifiersWithOverrides(
   }
 
   if (t.isStaticBlock(node)) {
-    const names = collectFunctionLocalNames(node)
+    const names = collectBlockScopedNames(t.blockStatement(node.body))
     node.body.forEach(stmt =>
       replaceIdentifiersWithOverrides(
         stmt,

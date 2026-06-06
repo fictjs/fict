@@ -987,6 +987,75 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(code).not.toContain('const value = __props.value')
   })
 
+  it('keeps outer reactive reads around nested lexical shadows', () => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(0)
+        const catchShadow = () => {
+          const before = count
+          try {
+            throw { count: 1 }
+          } catch ({ count }) {
+            count
+          }
+          const after = count
+          return before + after
+        }
+        const ofShadow = () => {
+          const before = count
+          for (const [count] of [[1]]) {
+            count
+          }
+          const after = count
+          return before + after
+        }
+        const inShadow = () => {
+          const before = count
+          for (const count in { a: 1 }) {
+            count
+          }
+          const after = count
+          return before + after
+        }
+        const forShadow = () => {
+          const before = count
+          for (let count = 0; count < 1; count++) {
+            count
+          }
+          const after = count
+          return before + after
+        }
+        const paramShadow = count => count
+        const varShadow = () => {
+          const before = count
+          var count = 1
+          const after = count
+          return before + after
+        }
+        return <span>{count}</span>
+      }
+    `)
+
+    expect(output).toMatch(
+      /const catchShadow = \(\) => \{\s+(?:const|let) before = count\(\);[\s\S]+(?:const|let) after = count\(\);/,
+    )
+    expect(output).toMatch(
+      /const ofShadow = \(\) => \{\s+(?:const|let) before = count\(\);[\s\S]+(?:const|let) after = count\(\);/,
+    )
+    expect(output).toMatch(
+      /const inShadow = \(\) => \{\s+(?:const|let) before = count\(\);[\s\S]+(?:const|let) after = count\(\);/,
+    )
+    expect(output).toMatch(
+      /const forShadow = \(\) => \{\s+(?:const|let) before = count\(\);[\s\S]+(?:const|let) after = count\(\);/,
+    )
+    expect(output).toContain('const paramShadow = count => count;')
+    expect(output).toMatch(
+      /const varShadow = \(\) => \{\s+(?:const|let) before = count;\s+var count = 1;\s+(?:const|let) after = count;/,
+    )
+  })
+
   it('keeps value props reactive when unreachable prop calls exist', () => {
     const ast = parseFile(`
       function Returned({ value }) {
