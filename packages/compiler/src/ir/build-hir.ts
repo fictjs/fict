@@ -595,12 +595,16 @@ export function parseFictReturnAnnotation(
         if (directAccessorMatch) {
           return { directAccessor: directAccessorMatch[1] as 'signal' | 'memo' }
         }
-        // Parse key: 'value' pairs
-        const propPattern = /(\w+)\s*:\s*['"]?(signal|memo)['"]?/g
+        // Parse key: 'value' pairs. Keys may be identifiers, numeric keys, or quoted strings.
+        const propPattern =
+          /(?:([A-Za-z_$][\w$]*|\d+)|"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')\s*:\s*['"]?(signal|memo)['"]?/g
         let propMatch
         while ((propMatch = propPattern.exec(propsStr)) !== null) {
-          const key = propMatch[1]
-          const value = propMatch[2]
+          const key =
+            propMatch[1] ??
+            propMatch[2]?.replace(/\\(['"\\])/g, '$1') ??
+            propMatch[3]?.replace(/\\(['"\\])/g, '$1')
+          const value = propMatch[4]
           if (!key || (value !== 'signal' && value !== 'memo')) continue
           objectProps.set(key, value)
         }

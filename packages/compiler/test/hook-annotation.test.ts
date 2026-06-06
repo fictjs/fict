@@ -32,6 +32,18 @@ describe('Hook Return Annotation (@fictReturn)', () => {
       expect(result?.objectProps?.get('double')).toBe('memo')
     })
 
+    it('parses quoted object keys', () => {
+      const node = createAnnotatedNode(
+        '* @fictReturn { "foo-bar": "signal", "default": "memo", "0": "signal" } ',
+      )
+
+      const result = parseFictReturnAnnotation(node)
+      expect(result).not.toBeNull()
+      expect(result?.objectProps?.get('foo-bar')).toBe('signal')
+      expect(result?.objectProps?.get('default')).toBe('memo')
+      expect(result?.objectProps?.get('0')).toBe('signal')
+    })
+
     it('parses array return annotation', () => {
       const node = createAnnotatedNode('* @fictReturn [0: signal, 1: memo] ')
 
