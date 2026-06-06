@@ -2442,7 +2442,7 @@ describe('Cross-Module Reactivity', () => {
 
       expect(moduleMetadata.get(path.resolve(hookPath))?.hooks).toMatchObject({
         useDirect: { directAccessor: 'signal' },
-        useObject: { objectProps: { count: 'signal', doubled: 'memo' } },
+        useObject: { objectProps: { count: 'signal', doubled: 'memo', state: 'store' } },
         useArrayAlias: { arrayProps: { 0: 'signal', 1: 'memo' } },
       })
       expect(moduleMetadata.get(path.resolve(hookPath))?.hooks).not.toHaveProperty('useShadow')
@@ -2490,7 +2490,7 @@ describe('Cross-Module Reactivity', () => {
       expect(moduleMetadata.get(path.resolve(hookPath))?.hooks).toMatchObject({
         useCount: { directAccessor: 'signal' },
         useDoubled: { directAccessor: 'memo' },
-        useObject: { objectProps: { count: 'signal', doubled: 'memo' } },
+        useObject: { objectProps: { count: 'signal', doubled: 'memo', state: 'store' } },
         useTuple: { arrayProps: { 0: 'signal', 1: 'memo' } },
       })
     })
@@ -2652,6 +2652,150 @@ describe('Cross-Module Reactivity', () => {
 
       expect(appOutput).toMatch(/v\(\)/)
       expect(appOutput).toMatch(/seq\(\)/)
+    })
+
+    it('publishes and consumes store-valued hook returns', () => {
+      const hookPath = path.join(baseDir, 'store-hook-returns.tsx')
+      const appPath = path.join(baseDir, 'store-hook-consumer.tsx')
+      const localPath = path.join(baseDir, 'store-hook-same-file.tsx')
+      const moduleMetadata = new Map()
+      const hookSource = `
+        import { $memo, $state, $store } from 'fict'
+
+        export function useUser() {
+          const user = $store({ name: 'Ada' })
+          return user
+        }
+
+        export function useObjectUser() {
+          const user = $store({ name: 'Ada' })
+          return { user }
+        }
+
+        export function useArrayUser() {
+          const user = $store({ name: 'Ada' })
+          return [user]
+        }
+
+        export function useMixed() {
+          const count = $state(0)
+          const user = $store({ name: 'Ada' })
+          const doubled = $memo(() => count() * 2)
+          return { count, user, doubled }
+        }
+
+        export function usePlain() {
+          return { user: { name: 'Plain' } }
+        }
+      `
+      const appSource = `
+        import { useArrayUser, useMixed, useObjectUser, usePlain, useUser } from './store-hook-returns'
+
+        export function App() {
+          const direct = useUser()
+          const { user: objectUser } = useObjectUser()
+          const [arrayUser] = useArrayUser()
+          const { count, user: mixedUser, doubled } = useMixed()
+          const plain = usePlain()
+          return <div>{direct.name}{objectUser.name}{arrayUser.name}{mixedUser.name}{count}{doubled}{plain.user.name}</div>
+        }
+      `
+      const localSource = `
+        import { $store } from 'fict'
+
+        function useUser() {
+          const user = $store({ name: 'Ada' })
+          return user
+        }
+
+        export function App() {
+          const direct = useUser()
+          return <div>{direct.name}</div>
+        }
+      `
+
+      transform(hookSource, { moduleMetadata }, hookPath)
+
+      expect(moduleMetadata.get(path.resolve(hookPath))?.hooks).toMatchObject({
+        useUser: { directAccessor: 'store' },
+        useObjectUser: { objectProps: { user: 'store' } },
+        useArrayUser: { arrayProps: { 0: 'store' } },
+        useMixed: { objectProps: { count: 'signal', user: 'store', doubled: 'memo' } },
+      })
+      expect(moduleMetadata.get(path.resolve(hookPath))?.hooks).not.toHaveProperty('usePlain')
+
+      const appOutput = transform(appSource, { fineGrainedDom: true, moduleMetadata }, appPath)
+
+      expect(appOutput).toMatch(/direct\.name/)
+      expect(appOutput).toMatch(/objectUser\.name/)
+      expect(appOutput).toMatch(/arrayUser\.name/)
+      expect(appOutput).toMatch(/mixedUser\.name/)
+      expect(appOutput).toMatch(/count\(\)/)
+      expect(appOutput).toMatch(/doubled\(\)/)
+      expect(appOutput).toMatch(/plain\.user\.name/)
+      expect(appOutput).not.toMatch(/(?:direct|objectUser|arrayUser|mixedUser)\.name\(\)/)
+      expect(appOutput).not.toMatch(/plain\.user\.name\(\)/)
+
+      const localOutput = transform(localSource, { fineGrainedDom: true }, localPath)
+
+      expect(localOutput).toMatch(/direct\.name/)
+      expect(localOutput).not.toMatch(/direct\.name\(\)/)
+    })
+
+    it('propagates store hook metadata through namespace wrappers', () => {
+      const sourcePath = path.join(baseDir, 'namespace-store-hook-source.tsx')
+      const wrapperPath = path.join(baseDir, 'namespace-store-hook-wrapper.ts')
+      const appPath = path.join(baseDir, 'namespace-store-hook-consumer.tsx')
+      const moduleMetadata = new Map()
+      const source = `
+        import { $store } from 'fict'
+
+        export function useUser() {
+          const user = $store({ name: 'Ada' })
+          return user
+        }
+      `
+      const wrapper = `
+        import * as hooks from './namespace-store-hook-source'
+
+        export function useWrapped() {
+          return hooks.useUser()
+        }
+
+        export function useOptionalWrapped() {
+          return hooks.useUser?.()
+        }
+
+        export function useObjectWrapped() {
+          return { user: hooks.useUser() }
+        }
+      `
+      const app = `
+        import { useObjectWrapped, useOptionalWrapped, useWrapped } from './namespace-store-hook-wrapper'
+
+        export function App() {
+          const direct = useWrapped()
+          const optional = useOptionalWrapped()
+          const { user } = useObjectWrapped()
+          return <div>{direct.name}{optional.name}{user.name}</div>
+        }
+      `
+
+      transform(source, { moduleMetadata }, sourcePath)
+      transform(wrapper, { moduleMetadata }, wrapperPath)
+
+      expect(moduleMetadata.get(path.resolve(wrapperPath))?.hooks).toMatchObject({
+        useWrapped: { directAccessor: 'store' },
+        useOptionalWrapped: { directAccessor: 'store' },
+        useObjectWrapped: { objectProps: { user: 'store' } },
+      })
+
+      const output = transform(app, { fineGrainedDom: true, moduleMetadata }, appPath)
+
+      expect(output).toMatch(/direct\.name/)
+      expect(output).toMatch(/optional\.name/)
+      expect(output).toMatch(/user\.name/)
+      expect(output).not.toMatch(/(?:direct|optional|user)\.name\(\)/)
     })
 
     it('propagates createSignal exports from advanced modules (namespace)', () => {

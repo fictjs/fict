@@ -539,12 +539,7 @@ export function propagateHookResultAlias(
     if (!hookName) return
     ctx.hookResultVarMap?.set(targetBase, hookName)
     const info = getHookReturnInfo(hookName, ctx)
-    if (info?.directAccessor === 'signal') {
-      ctx.signalVars?.add(targetBase)
-      ctx.trackedVars.add(targetBase)
-    } else if (info?.directAccessor === 'memo') {
-      ctx.memoVars?.add(targetBase)
-    }
+    markHookReactiveLocal(targetBase, info?.directAccessor, ctx)
   }
 
   if (value.kind === 'Identifier') {
@@ -1082,6 +1077,28 @@ function getCanonicalNumericKey(key: string): number | null {
   const numeric = Number(key)
   if (!Number.isFinite(numeric) || String(numeric) !== key) return null
   return numeric
+}
+
+function isCallableHookAccessorKind(
+  kind: HookAccessorKind | null | undefined,
+): kind is Extract<HookAccessorKind, 'signal' | 'memo'> {
+  return kind === 'signal' || kind === 'memo'
+}
+
+function markHookReactiveLocal(
+  name: string,
+  kind: HookAccessorKind | null | undefined,
+  ctx: CodegenContext,
+): void {
+  if (kind === 'signal') {
+    ctx.signalVars?.add(name)
+    ctx.trackedVars.add(name)
+  } else if (kind === 'memo') {
+    ctx.memoVars?.add(name)
+  } else if (kind === 'store') {
+    ctx.storeVars?.add(name)
+    ctx.trackedVars.add(name)
+  }
 }
 
 type ReadOnlyImportedReactiveKind = Extract<ReactiveExportKind, 'memo' | 'store'>
@@ -1802,12 +1819,7 @@ function lowerInstruction(
     propagateHookResultAlias(baseName, instr.value, ctx)
     const hookMember = resolveHookMemberValue(instr.value, ctx)
     if (hookMember) {
-      if (hookMember.kind === 'signal') {
-        ctx.signalVars?.add(baseName)
-        ctx.trackedVars.add(baseName)
-      } else if (hookMember.kind === 'memo') {
-        ctx.memoVars?.add(baseName)
-      }
+      markHookReactiveLocal(baseName, hookMember.kind, ctx)
       if (declKind) {
         return applyLoc(
           t.variableDeclaration(declKind, [
@@ -1825,22 +1837,12 @@ function lowerInstruction(
     if (directHookCall && directHookCall.hookName.indexOf('.') === -1) {
       ctx.hookResultVarMap?.set(baseName, directHookCall.hookName)
       const retInfo = directHookCall.info
-      if (retInfo?.directAccessor === 'signal') {
-        ctx.signalVars?.add(baseName)
-        ctx.trackedVars.add(baseName)
-      } else if (retInfo?.directAccessor === 'memo') {
-        ctx.memoVars?.add(baseName)
-      }
+      markHookReactiveLocal(baseName, retInfo?.directAccessor, ctx)
     }
     const namespaceHookCall = resolveNamespaceHookCallInfo(instr.value, ctx)
     if (namespaceHookCall) {
       ctx.hookResultVarMap?.set(baseName, namespaceHookCall.hookName)
-      if (namespaceHookCall.info.directAccessor === 'signal') {
-        ctx.signalVars?.add(baseName)
-        ctx.trackedVars.add(baseName)
-      } else if (namespaceHookCall.info.directAccessor === 'memo') {
-        ctx.memoVars?.add(baseName)
-      }
+      markHookReactiveLocal(baseName, namespaceHookCall.info.directAccessor, ctx)
     }
     if (declKind) {
       const initKind = getReactiveCallKind(instr.value, ctx)
@@ -3107,7 +3109,7 @@ function lowerExpressionImpl(
     if (callee.kind !== 'MemberExpression' && callee.kind !== 'OptionalMemberExpression') {
       return false
     }
-    return !!resolveHookReturnMemberAccessorKind(callee, ctx)
+    return isCallableHookAccessorKind(resolveHookReturnMemberAccessorKind(callee, ctx))
   }
 
   const lowerCallCalleeExpression = (callee: Expression): BabelCore.types.Expression => {
@@ -3395,7 +3397,7 @@ function lowerExpressionImpl(
         expr.object.kind === 'OptionalCallExpression'
       ) {
         const accessorKind = resolveHookReturnMemberAccessorKind(expr, ctx)
-        if (accessorKind) {
+        if (isCallableHookAccessorKind(accessorKind)) {
           return t.callExpression(lowerMemberExpressionWithoutAccessorCall(expr), [])
         }
       }
@@ -3881,7 +3883,7 @@ function lowerDomExpression(
   if (
     !skipHookAccessors &&
     (expr.kind === 'MemberExpression' || expr.kind === 'OptionalMemberExpression') &&
-    resolveHookReturnMemberAccessorKind(expr, ctx) &&
+    isCallableHookAccessorKind(resolveHookReturnMemberAccessorKind(expr, ctx)) &&
     ctx.t.isMemberExpression(lowered) &&
     ctx.t.isIdentifier(lowered.object)
   ) {
@@ -3890,7 +3892,7 @@ function lowerDomExpression(
     const hookName = ctx.hookResultVarMap?.get(deSSAVarName(lowered.name))
     if (hookName) {
       const info = getHookReturnInfo(hookName, ctx)
-      if (info?.directAccessor) {
+      if (isCallableHookAccessorKind(info?.directAccessor)) {
         lowered = ctx.t.callExpression(ctx.t.identifier(deSSAVarName(lowered.name)), [])
       }
     }
@@ -8052,13 +8054,18 @@ function lowerFunctionWithRegions(
           hookResultVars.add(target)
           ctx.hookResultVarMap?.set(target, namespaceHookCall.hookName)
         }
-        if (
+        const hookMemberKind =
           instr.value.kind === 'MemberExpression' &&
           instr.value.object.kind === 'Identifier' &&
-          hookResultVars.has(deSSAVarName(instr.value.object.name)) &&
-          resolveHookReturnMemberAccessorKind(instr.value, ctx)
-        ) {
-          hookAccessorAliases.add(target)
+          hookResultVars.has(deSSAVarName(instr.value.object.name))
+            ? resolveHookReturnMemberAccessorKind(instr.value, ctx)
+            : null
+        if (hookMemberKind) {
+          if (isCallableHookAccessorKind(hookMemberKind)) {
+            hookAccessorAliases.add(target)
+          } else {
+            markHookReactiveLocal(target, hookMemberKind, ctx)
+          }
         }
         if (!instr.declarationKind) {
           ctx.mutatedVars?.add(target)
@@ -8560,12 +8567,7 @@ function lowerFunctionWithRegions(
   hookResultVars.forEach(varName => {
     const hookName = ctx.hookResultVarMap?.get(varName)
     const info = hookName ? getHookReturnInfo(hookName, ctx) : null
-    if (info?.directAccessor === 'signal') {
-      ctx.signalVars?.add(varName)
-      ctx.trackedVars.add(varName)
-    } else if (info?.directAccessor === 'memo') {
-      ctx.memoVars?.add(varName)
-    }
+    markHookReactiveLocal(varName, info?.directAccessor, ctx)
   })
 
   emitReactiveControlFlowReexecutionWarning(fn, scopeResult, ctx, { hasJSX, isComponent })

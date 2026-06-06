@@ -4,7 +4,7 @@ import transformDestructuring from '@babel/plugin-transform-destructuring'
 import traverseModule from '@babel/traverse'
 import * as t from '@babel/types'
 
-import type { CompilerWarning } from '../types'
+import type { CompilerWarning, ReactiveExportKind } from '../types'
 import { isLogicalAssignmentOperator } from '../utils'
 
 import {
@@ -536,9 +536,9 @@ function hasPureAnnotation(node: BabelCore.types.Node | null | undefined): boole
  * Parsed @fictReturn annotation result.
  */
 export interface ParsedFictReturn {
-  objectProps?: Map<string, 'signal' | 'memo'>
-  arrayProps?: Map<number, 'signal' | 'memo'>
-  directAccessor?: 'signal' | 'memo'
+  objectProps?: Map<string, ReactiveExportKind>
+  arrayProps?: Map<number, ReactiveExportKind>
+  directAccessor?: ReactiveExportKind
 }
 
 function normalizeJSDocComment(value: string): string {
@@ -607,7 +607,7 @@ function extractFictReturnPayload(commentValue: string): string | null {
  * Supported formats:
  * - Object return: @fictReturn { count: 'signal', double: 'memo' }
  * - Array return: @fictReturn [0: 'signal', 1: 'memo']
- * - Direct accessor: @fictReturn 'signal' or @fictReturn 'memo'
+ * - Direct reactive return: @fictReturn 'signal', @fictReturn 'memo', or @fictReturn 'store'
  * - Direct accessor object: @fictReturn { directAccessor: 'signal' }
  *
  * @param node - The function node to parse annotations from
@@ -626,12 +626,15 @@ export function parseFictReturnAnnotation(
       const content = extractFictReturnPayload(comment.value)
       if (!content) continue
 
-      // Direct accessor: 'signal' or 'memo'
+      // Direct reactive return: 'signal', 'memo', or 'store'
       if (content === "'signal'" || content === '"signal"') {
         return { directAccessor: 'signal' }
       }
       if (content === "'memo'" || content === '"memo"') {
         return { directAccessor: 'memo' }
+      }
+      if (content === "'store'" || content === '"store"') {
+        return { directAccessor: 'store' }
       }
 
       // Empty object format: {}
@@ -642,22 +645,22 @@ export function parseFictReturnAnnotation(
       // Object format: { key: 'signal', key2: 'memo' }
       const objectMatch = content.match(/^\{([^}]+)\}$/)
       if (objectMatch) {
-        const objectProps = new Map<string, 'signal' | 'memo'>()
+        const objectProps = new Map<string, ReactiveExportKind>()
         const propsStr = objectMatch[1]
         if (!propsStr) continue
         const directAccessorMatch = propsStr.match(
-          /^\s*directAccessor\s*:\s*(?:"(signal|memo)"|'(signal|memo)'|(signal|memo))\s*,?\s*$/,
+          /^\s*directAccessor\s*:\s*(?:"(signal|memo|store)"|'(signal|memo|store)'|(signal|memo|store))\s*,?\s*$/,
         )
         if (directAccessorMatch) {
           return {
             directAccessor: (directAccessorMatch[1] ??
               directAccessorMatch[2] ??
-              directAccessorMatch[3]) as 'signal' | 'memo',
+              directAccessorMatch[3]) as ReactiveExportKind,
           }
         }
         // Parse key: 'value' pairs. Keys may be identifiers, numeric keys, or quoted strings.
         const propPattern =
-          /(?:([A-Za-z_$][\w$]*|\d+)|"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')\s*:\s*(?:"(signal|memo)"|'(signal|memo)'|(signal|memo))(?=\s*(?:,|$))/g
+          /(?:([A-Za-z_$][\w$]*|\d+)|"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')\s*:\s*(?:"(signal|memo|store)"|'(signal|memo|store)'|(signal|memo|store))(?=\s*(?:,|$))/g
         let propMatch
         while ((propMatch = propPattern.exec(propsStr)) !== null) {
           const key =
@@ -665,7 +668,7 @@ export function parseFictReturnAnnotation(
             propMatch[2]?.replace(/\\(['"\\])/g, '$1') ??
             propMatch[3]?.replace(/\\(['"\\])/g, '$1')
           const value = propMatch[4] ?? propMatch[5] ?? propMatch[6]
-          if (!key || (value !== 'signal' && value !== 'memo')) continue
+          if (!key || (value !== 'signal' && value !== 'memo' && value !== 'store')) continue
           objectProps.set(key, value)
         }
         if (objectProps.size > 0) {
@@ -676,17 +679,17 @@ export function parseFictReturnAnnotation(
       // Array format: [0: 'signal', 1: 'memo']
       const arrayMatch = content.match(/^\[([^\]]+)\]$/)
       if (arrayMatch) {
-        const arrayProps = new Map<number, 'signal' | 'memo'>()
+        const arrayProps = new Map<number, ReactiveExportKind>()
         const propsStr = arrayMatch[1]
         if (!propsStr) continue
         // Parse index: 'value' pairs
         const propPattern =
-          /(\d+)\s*:\s*(?:"(signal|memo)"|'(signal|memo)'|(signal|memo))(?=\s*(?:,|$))/g
+          /(\d+)\s*:\s*(?:"(signal|memo|store)"|'(signal|memo|store)'|(signal|memo|store))(?=\s*(?:,|$))/g
         let propMatch
         while ((propMatch = propPattern.exec(propsStr)) !== null) {
           const index = propMatch[1]
           const value = propMatch[2] ?? propMatch[3] ?? propMatch[4]
-          if (!index || (value !== 'signal' && value !== 'memo')) continue
+          if (!index || (value !== 'signal' && value !== 'memo' && value !== 'store')) continue
           arrayProps.set(parseInt(index, 10), value)
         }
         if (arrayProps.size > 0) {

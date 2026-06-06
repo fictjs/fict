@@ -106,9 +106,9 @@ export const MODULE_REACTIVE_METADATA_VERSION = 1
 export type ModuleReactiveMetadataVersion = typeof MODULE_REACTIVE_METADATA_VERSION
 
 export interface HookReturnInfoSerializable {
-  objectProps?: Record<string, 'signal' | 'memo'> | undefined
-  arrayProps?: Record<string, 'signal' | 'memo'> | undefined
-  directAccessor?: 'signal' | 'memo' | undefined
+  objectProps?: Record<string, ReactiveExportKind> | undefined
+  arrayProps?: Record<string, ReactiveExportKind> | undefined
+  directAccessor?: ReactiveExportKind | undefined
 }
 
 export interface ModuleReactiveMetadata {

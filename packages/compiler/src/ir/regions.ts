@@ -3502,6 +3502,9 @@ function lowerInstructionsToInitExpr(
             ctx.trackedVars.add(base)
           } else if (hookMember.kind === 'memo') {
             ctx.memoVars?.add(base)
+          } else if (hookMember.kind === 'store') {
+            ctx.storeVars?.add(base)
+            ctx.trackedVars.add(base)
           }
         }
         return t.variableDeclarator(
@@ -3533,6 +3536,9 @@ function lowerInstructionsToInitExpr(
           ctx.trackedVars.add(base)
         } else if (hookMember.kind === 'memo') {
           ctx.memoVars?.add(base)
+        } else if (hookMember.kind === 'store') {
+          ctx.storeVars?.add(base)
+          ctx.trackedVars.add(base)
         }
       }
       return t.assignmentExpression(
@@ -5074,6 +5080,9 @@ function instructionToStatement(
         ctx.trackedVars.add(baseName)
       } else if (hookMember.kind === 'memo') {
         ctx.memoVars?.add(baseName)
+      } else if (hookMember.kind === 'store') {
+        ctx.storeVars?.add(baseName)
+        ctx.trackedVars.add(baseName)
       }
       const declKind =
         declKindRaw && declKindRaw !== 'function' ? (declKindRaw as 'const' | 'let' | 'var') : null

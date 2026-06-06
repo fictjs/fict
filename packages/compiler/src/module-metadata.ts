@@ -282,8 +282,8 @@ function isReactiveExportKind(value: unknown): value is ModuleReactiveMetadata['
   return value === 'signal' || value === 'memo' || value === 'store'
 }
 
-function isHookAccessorKind(value: unknown): value is 'signal' | 'memo' {
-  return value === 'signal' || value === 'memo'
+function isHookAccessorKind(value: unknown): value is ModuleReactiveMetadata['exports'][string] {
+  return isReactiveExportKind(value)
 }
 
 function isHookReturnInfo(value: unknown): boolean {

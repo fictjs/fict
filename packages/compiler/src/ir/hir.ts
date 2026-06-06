@@ -8,6 +8,8 @@ import type {
   Statement,
 } from '@babel/types'
 
+import type { ReactiveExportKind } from '../types'
+
 import type { FictMacroKind } from './macro-bindings'
 
 /**
@@ -706,9 +708,9 @@ export interface HIRFunction extends SourceInfo {
          * Allows cross-module hook return type declarations.
          */
         hookReturnInfo?: {
-          objectProps?: Map<string, 'signal' | 'memo'> | undefined
-          arrayProps?: Map<number, 'signal' | 'memo'> | undefined
-          directAccessor?: 'signal' | 'memo' | undefined
+          objectProps?: Map<string, ReactiveExportKind> | undefined
+          arrayProps?: Map<number, ReactiveExportKind> | undefined
+          directAccessor?: ReactiveExportKind | undefined
         }
         /** Labels attached to structured hosts or explicit labeled-statement entry blocks. */
         labeledStatements?: Map<BlockId, LabeledStatementMeta> | undefined

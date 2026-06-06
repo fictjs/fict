@@ -1,6 +1,6 @@
 import type * as BabelCore from '@babel/core'
 
-import type { HookReturnInfoSerializable } from '../types'
+import type { HookReturnInfoSerializable, ReactiveExportKind } from '../types'
 
 import type { CodegenContext } from './codegen'
 import { collectMutatedIdentifiers } from './codegen-analysis'
@@ -11,7 +11,7 @@ import { isHookName } from './hook-utils'
 import { deSSAVarName, generateRegions, type Region } from './regions'
 import { analyzeReactiveScopesWithSSA, type ReactiveScopeResult } from './scopes'
 
-export type HookAccessorKind = 'signal' | 'memo'
+export type HookAccessorKind = ReactiveExportKind
 
 export interface HookReturnInfo {
   objectProps?: Map<string, HookAccessorKind> | undefined
@@ -127,6 +127,7 @@ export function analyzeHookReturnInfo(
     })
   }
   seedImportedVars(ctx.signalVars, signalVars)
+  seedImportedVars(ctx.storeVars, storeVars)
   seedImportedVars(ctx.memoVars, memoVars)
   const tmpCtx = ops.createCodegenContext(ctx.t)
   tmpCtx.signalVars = new Set(signalVars)
@@ -176,6 +177,7 @@ export function analyzeHookReturnInfo(
     if (!name) return undefined
     const base = deSSAVarName(name)
     if (tmpCtx.signalVars?.has(base)) return 'signal'
+    if (tmpCtx.storeVars?.has(base)) return 'store'
     if (tmpCtx.memoVars?.has(base)) return 'memo'
     return undefined
   }
@@ -189,7 +191,7 @@ export function analyzeHookReturnInfo(
     const propName = getStaticPropName(expr.property as Expression, expr.computed)
     if (typeof propName !== 'string') return undefined
     const kind = nsMeta.exports[propName]
-    return kind === 'signal' || kind === 'memo' ? kind : undefined
+    return kind
   }
   const namespaceHookCallInfo = (expr: Expression): HookReturnInfo | null => {
     if (expr.kind !== 'CallExpression' && expr.kind !== 'OptionalCallExpression') return null
@@ -211,7 +213,7 @@ export function analyzeHookReturnInfo(
       namespaceHookCallInfo(expr) ??
       (expr.callee.kind === 'Identifier' ? getHookReturnInfo(expr.callee.name, ctx, ops) : null)
     const kind = info?.directAccessor
-    return kind === 'signal' || kind === 'memo' ? kind : undefined
+    return kind
   }
   const compatibleAccessorKind = (
     left: HookAccessorKind | undefined,
