@@ -6757,6 +6757,64 @@ describe('compiled templates DOM integration', () => {
     container.remove()
   })
 
+  it('snapshots bare VNode fallback event handler identifiers during render', async () => {
+    const source = `
+      import { render } from 'fict'
+
+      export const log: string[] = []
+
+      let moduleHandler = () => log.push('module:a')
+
+      export function swapModuleHandler() {
+        moduleHandler = () => log.push('module:b')
+      }
+
+      export function App() {
+        let closureHandler = () => log.push('closure:a')
+
+        return (
+          <div>
+            <button data-id="module" onClick={moduleHandler}>module</button>
+            <button data-id="closure" onClick={closureHandler}>closure</button>
+            <button
+              data-id="swap-closure"
+              onClick={() => {
+                closureHandler = () => log.push('closure:b')
+              }}
+            >
+              swap closure
+            </button>
+          </div>
+        )
+      }
+
+      export function mount(el: HTMLElement) {
+        log.length = 0
+        return render(() => <App />, el)
+      }
+    `
+
+    const mod = compileAndLoad<{
+      log: string[]
+      mount: (el: HTMLElement) => () => void
+      swapModuleHandler: () => void
+    }>(source, { fineGrainedDom: false })
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const teardown = mod.mount(container)
+
+    mod.swapModuleHandler()
+    ;(container.querySelector('[data-id="swap-closure"]') as HTMLButtonElement).click()
+    ;(container.querySelector('[data-id="module"]') as HTMLButtonElement).click()
+    ;(container.querySelector('[data-id="closure"]') as HTMLButtonElement).click()
+    await flushUpdates()
+
+    expect(mod.log).toEqual(['module:a', 'closure:a'])
+
+    teardown()
+    container.remove()
+  })
+
   it('throws VNode fallback event handler factories during render', () => {
     const source = `
       import { render } from 'fict'
