@@ -401,6 +401,8 @@ export interface QueryCacheEntry<T = unknown> {
   timestamp: number
   /** Cached promise */
   promise: Promise<T>
+  /** Whether the promise has settled */
+  settled?: boolean
   /** Resolved result */
   result?: T
   /** Intent when fetched */

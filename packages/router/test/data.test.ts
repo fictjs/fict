@@ -98,6 +98,73 @@ describe('query', () => {
 
     expect(second()).toBe('ok')
   })
+
+  it('should dedupe pending requests for the same key', async () => {
+    let resolveFetch: ((value: string) => void) | undefined
+    const fetcher = vi.fn<(id: string) => Promise<string>>(
+      _id =>
+        new Promise<string>(resolve => {
+          resolveFetch = resolve
+        }),
+    )
+    const fetchUser = query(fetcher, 'pendingQuery')
+
+    const first = fetchUser('123')
+    const second = fetchUser('123')
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    resolveFetch?.('ok')
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(first()).toBe('ok')
+    expect(second()).toBe('ok')
+  })
+
+  it('should keep different pending keys separate', async () => {
+    const fetcher = vi.fn(
+      (id: string) =>
+        new Promise<string>(resolve => {
+          resolve(`ok:${id}`)
+        }),
+    )
+    const fetchUser = query(fetcher, 'pendingDifferentQuery')
+
+    const first = fetchUser('123')
+    const second = fetchUser('456')
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(first()).toBe('ok:123')
+    expect(second()).toBe('ok:456')
+  })
+
+  it('should dedupe pending failures for the same key', async () => {
+    let rejectFetch: ((err: unknown) => void) | undefined
+    const fetcher = vi.fn<(id: string) => Promise<string>>(
+      _id =>
+        new Promise<string>((_, reject) => {
+          rejectFetch = reject
+        }),
+    )
+    const fetchUser = query(fetcher, 'pendingFailureQuery')
+
+    const first = fetchUser('123')
+    const second = fetchUser('123')
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    rejectFetch?.(new Error('failed'))
+    await Promise.resolve()
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(first()).toBe(undefined)
+    expect(second()).toBe(undefined)
+  })
 })
 
 describe('revalidate', () => {

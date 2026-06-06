@@ -157,6 +157,16 @@ export function query<T, Args extends unknown[]>(
     const errorSignal = createSignal<unknown>(undefined)
     const loadingSignal = createSignal<boolean>(true)
 
+    if (cached && cached.result === undefined && !cached.settled) {
+      void cached.promise.then(result => {
+        batch(() => {
+          resultSignal(result)
+          loadingSignal(false)
+        })
+      })
+      return () => resultSignal()
+    }
+
     // Fetch the data
     const promise = Promise.resolve(fn(...args))
       .then(result => {
@@ -164,6 +174,7 @@ export function query<T, Args extends unknown[]>(
         const entry: QueryCacheEntry<T> = {
           timestamp: Date.now(),
           promise: promise as Promise<T>,
+          settled: true,
           result,
           intent: 'navigate',
         }
@@ -183,6 +194,10 @@ export function query<T, Args extends unknown[]>(
           errorSignal(error)
           loadingSignal(false)
         })
+        const entry = queryCache.get(cacheKey) as QueryCacheEntry<T> | undefined
+        if (entry?.promise === (promise as Promise<T>)) {
+          entry.settled = true
+        }
         return undefined
       })
 
@@ -191,6 +206,7 @@ export function query<T, Args extends unknown[]>(
       queryCache.set(cacheKey, {
         timestamp: Date.now(),
         promise: promise as Promise<unknown>,
+        settled: false,
         intent: 'navigate',
       })
     }
