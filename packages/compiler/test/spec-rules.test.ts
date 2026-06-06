@@ -388,6 +388,44 @@ describe('Spec rule coverage', () => {
     expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
   })
 
+  it('warns when memo reactive reads are only inside nested closures', () => {
+    const cases = [
+      'const f = () => count',
+      'function f() { return count }',
+      'const obj = { read() { return count } }',
+      'class Box { read() { return count } }',
+    ]
+
+    for (const statement of cases) {
+      const { warnings } = transformWithWarnings(`
+        import { $state, $memo } from 'fict'
+        function Demo() {
+          const count = $state(0)
+          const value = $memo(() => {
+            ${statement}
+            return 1
+          })
+          return <div>{value}</div>
+        }
+      `)
+
+      expect(warnings.some(w => w.code === 'FICT-M001')).toBe(true)
+    }
+  })
+
+  it('does not warn when memo IIFEs read reactive values', () => {
+    const { warnings } = transformWithWarnings(`
+      import { $state, $memo } from 'fict'
+      function Demo() {
+        const count = $state(0)
+        const value = $memo(() => (() => count)())
+        return <div>{value}</div>
+      }
+    `)
+
+    expect(warnings.some(w => w.code === 'FICT-M001')).toBe(false)
+  })
+
   it('warns when passing state as function argument (FICT-S002)', () => {
     const warnings: CompilerWarning[] = []
     const input = `

@@ -3008,6 +3008,16 @@ function createHIREntrypointVisitor(
                 const firstArg = firstArgPath.node
                 let hasReactiveDependency = false
                 firstArgPath.traverse({
+                  Function(fnPath) {
+                    const parent = fnPath.parentPath
+                    if (
+                      (parent.isCallExpression() || parent.isOptionalCallExpression()) &&
+                      parent.node.callee === fnPath.node
+                    ) {
+                      return
+                    }
+                    fnPath.skip()
+                  },
                   Identifier(idPath) {
                     if (
                       idPath.parentPath.isMemberExpression({ property: idPath.node }) &&
