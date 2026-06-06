@@ -329,6 +329,133 @@ describe('ErrorBoundary', () => {
     dispose()
   })
 
+  it('does not capture sibling effect errors outside the boundary subtree', async () => {
+    const container = document.createElement('div')
+    const trigger = createSignal(false)
+    let innerCaptured: unknown = null
+    let outerCaptured: unknown = null
+
+    const Outside = () => {
+      createEffect(() => {
+        if (trigger()) {
+          throw new Error('outside effect boom')
+        }
+      })
+      return { type: 'span', props: { children: 'outside' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'outer-fallback',
+          onError: err => {
+            outerCaptured = err
+          },
+          children: {
+            type: Fragment,
+            props: {
+              children: [
+                {
+                  type: ErrorBoundary,
+                  props: {
+                    fallback: 'inner-fallback',
+                    onError: err => {
+                      innerCaptured = err
+                    },
+                    children: { type: 'span', props: { children: 'inside' } },
+                  },
+                },
+                { type: Outside, props: {} },
+              ],
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('insideoutside')
+
+    trigger(true)
+    await nextTick()
+
+    expect(innerCaptured).toBeNull()
+    expect(outerCaptured).toBeInstanceOf(Error)
+    expect((outerCaptured as Error).message).toBe('outside effect boom')
+    expect(container.textContent).toBe('outer-fallback')
+
+    dispose()
+  })
+
+  it('does not capture sibling errors after the boundary unmounts', async () => {
+    const container = document.createElement('div')
+    const showInner = createSignal(true)
+    const trigger = createSignal(false)
+    let innerCaptured: unknown = null
+    let outerCaptured: unknown = null
+
+    const Outside = () => {
+      createEffect(() => {
+        if (trigger()) {
+          throw new Error('post-unmount sibling boom')
+        }
+      })
+      return { type: 'span', props: { children: 'outside' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'outer-unmount-fallback',
+          onError: err => {
+            outerCaptured = err
+          },
+          children: {
+            type: Fragment,
+            props: {
+              children: [
+                reactive(() =>
+                  showInner()
+                    ? {
+                        type: ErrorBoundary,
+                        props: {
+                          fallback: 'inner-unmount-fallback',
+                          onError: err => {
+                            innerCaptured = err
+                          },
+                          children: { type: 'span', props: { children: 'inside' } },
+                        },
+                      }
+                    : null,
+                ),
+                { type: Outside, props: {} },
+              ],
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('insideoutside')
+
+    showInner(false)
+    await nextTick()
+    expect(container.textContent).toBe('outside')
+
+    trigger(true)
+    await nextTick()
+
+    expect(innerCaptured).toBeNull()
+    expect(outerCaptured).toBeInstanceOf(Error)
+    expect((outerCaptured as Error).message).toBe('post-unmount sibling boom')
+    expect(container.textContent).toBe('outer-unmount-fallback')
+
+    dispose()
+  })
+
   it('captures effect cleanup errors and switches to fallback', async () => {
     const container = document.createElement('div')
     const trigger = createSignal(0)
@@ -370,6 +497,70 @@ describe('ErrorBoundary', () => {
     expect(captured).toBeInstanceOf(Error)
     expect((captured as Error).message).toBe('cleanup boom')
     expect(container.textContent).toBe('cleanup-fallback')
+
+    dispose()
+  })
+
+  it('does not capture sibling effect cleanup errors outside the boundary subtree', async () => {
+    const container = document.createElement('div')
+    const trigger = createSignal(0)
+    let shouldThrow = false
+    let innerCaptured: unknown = null
+    let outerCaptured: unknown = null
+
+    const Outside = () => {
+      createEffect(() => {
+        trigger()
+        return () => {
+          if (shouldThrow) {
+            throw new Error('outside cleanup boom')
+          }
+        }
+      })
+      return { type: 'span', props: { children: 'outside' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'outer-cleanup-fallback',
+          onError: err => {
+            outerCaptured = err
+          },
+          children: {
+            type: Fragment,
+            props: {
+              children: [
+                {
+                  type: ErrorBoundary,
+                  props: {
+                    fallback: 'inner-cleanup-fallback',
+                    onError: err => {
+                      innerCaptured = err
+                    },
+                    children: { type: 'span', props: { children: 'inside' } },
+                  },
+                },
+                { type: Outside, props: {} },
+              ],
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('insideoutside')
+
+    shouldThrow = true
+    trigger(1)
+    await nextTick()
+
+    expect(innerCaptured).toBeNull()
+    expect(outerCaptured).toBeInstanceOf(Error)
+    expect((outerCaptured as Error).message).toBe('outside cleanup boom')
+    expect(container.textContent).toBe('outer-cleanup-fallback')
 
     dispose()
   })
@@ -500,11 +691,15 @@ describe('ErrorBoundary', () => {
     const btn = document.createElement('button')
     let captured: unknown = null
 
-    const App = () => {
+    const BoundButton = () => {
       bindEvent(btn, 'click', (event: Event) => {
         void event
         throw new Error('event boom')
       })
+      return btn
+    }
+
+    const App = () => {
       return {
         type: Fragment,
         props: {
@@ -515,7 +710,7 @@ describe('ErrorBoundary', () => {
               onError: err => {
                 captured = err
               },
-              children: btn,
+              children: { type: BoundButton, props: {} },
             },
           },
         },
@@ -536,6 +731,116 @@ describe('ErrorBoundary', () => {
     dispose()
     // Clean up
     document.body.removeChild(container)
+  })
+
+  it('does not capture sibling event errors outside the boundary subtree', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    let innerCaptured: unknown = null
+    let outerCaptured: unknown = null
+
+    const OutsideButton = () => {
+      const button = document.createElement('button')
+      button.textContent = 'outside'
+      bindEvent(button, 'click', () => {
+        throw new Error('outside event boom')
+      })
+      return button
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'outer-event-fallback',
+          onError: err => {
+            outerCaptured = err
+          },
+          children: {
+            type: Fragment,
+            props: {
+              children: [
+                {
+                  type: ErrorBoundary,
+                  props: {
+                    fallback: 'inner-event-fallback',
+                    onError: err => {
+                      innerCaptured = err
+                    },
+                    children: { type: 'span', props: { children: 'inside' } },
+                  },
+                },
+                { type: OutsideButton, props: {} },
+              ],
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    const button = container.querySelector('button') as HTMLButtonElement
+    button.dispatchEvent(new Event('click', { bubbles: true }))
+    await nextTick()
+
+    expect(innerCaptured).toBeNull()
+    expect(outerCaptured).toBeInstanceOf(Error)
+    expect((outerCaptured as Error).message).toBe('outside event boom')
+    expect(container.textContent).toBe('outer-event-fallback')
+
+    dispose()
+    document.body.removeChild(container)
+  })
+
+  it('keeps nested boundary child errors inside the inner boundary', async () => {
+    const container = document.createElement('div')
+    const trigger = createSignal(false)
+    let innerCaptured: unknown = null
+    let outerCaptured: unknown = null
+
+    const Inside = () => {
+      createEffect(() => {
+        if (trigger()) {
+          throw new Error('inside effect boom')
+        }
+      })
+      return { type: 'span', props: { children: 'inside' } }
+    }
+
+    const dispose = render(
+      () => ({
+        type: ErrorBoundary,
+        props: {
+          fallback: 'outer-fallback',
+          onError: err => {
+            outerCaptured = err
+          },
+          children: {
+            type: ErrorBoundary,
+            props: {
+              fallback: 'inner-fallback',
+              onError: err => {
+                innerCaptured = err
+              },
+              children: { type: Inside, props: {} },
+            },
+          },
+        },
+      }),
+      container,
+    )
+
+    expect(container.textContent).toBe('inside')
+
+    trigger(true)
+    await nextTick()
+
+    expect(innerCaptured).toBeInstanceOf(Error)
+    expect((innerCaptured as Error).message).toBe('inside effect boom')
+    expect(outerCaptured).toBeNull()
+    expect(container.textContent).toBe('inner-fallback')
+
+    dispose()
   })
 
   it('captures spread event errors', async () => {

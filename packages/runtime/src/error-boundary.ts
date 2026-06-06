@@ -10,6 +10,7 @@ import {
   popRoot,
   registerErrorHandler,
   registerRootCleanup,
+  withRootContext,
 } from './lifecycle'
 import { insertNodesBefore, removeNodes, toNodeArray } from './node-ops'
 import type { BaseProps, FictNode } from './types'
@@ -22,6 +23,7 @@ interface ErrorBoundaryProps extends BaseProps {
 
 export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
   const hostRoot = getCurrentRoot()
+  const boundaryRoot = createRootContext(hostRoot)
   const markerOwnerDocument = hostRoot?.ownerDocument ?? document
   const fragment = markerOwnerDocument.createDocumentFragment()
   const marker = markerOwnerDocument.createComment('fict:error-boundary')
@@ -55,7 +57,7 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       return
     }
 
-    const root = createRootContext(hostRoot)
+    const root = createRootContext(boundaryRoot)
     const prev = pushRoot(root)
     let nodes: Node[] = []
     let didPopRoot = false
@@ -119,12 +121,15 @@ export function ErrorBoundary(props: ErrorBoundaryProps): FictNode {
       cleanup()
       cleanup = undefined
     }
+    destroyRoot(boundaryRoot)
   })
 
-  registerErrorHandler(err => {
-    renderValue(toView(err))
-    props.onError?.(err)
-    return true
+  withRootContext(boundaryRoot, () => {
+    registerErrorHandler(err => {
+      renderValue(toView(err))
+      props.onError?.(err)
+      return true
+    })
   })
 
   if (props.resetKeys !== undefined) {
