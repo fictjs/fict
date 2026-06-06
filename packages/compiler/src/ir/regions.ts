@@ -820,6 +820,33 @@ function containsJSXExpr(expr: Expression | null | undefined): boolean {
       )
     case 'ConditionalExpression':
       return containsJSXExpr(expr.consequent) || containsJSXExpr(expr.alternate)
+    case 'LogicalExpression':
+    case 'BinaryExpression':
+      return containsJSXExpr(expr.left) || containsJSXExpr(expr.right)
+    case 'UnaryExpression':
+    case 'AwaitExpression':
+      return containsJSXExpr(expr.argument)
+    case 'AssignmentExpression':
+      return containsJSXExpr(expr.left) || containsJSXExpr(expr.right)
+    case 'UpdateExpression':
+      return containsJSXExpr(expr.argument)
+    case 'MemberExpression':
+    case 'OptionalMemberExpression':
+      return (
+        containsJSXExpr(expr.object) ||
+        (expr.computed && expr.property.kind !== 'Literal' && containsJSXExpr(expr.property))
+      )
+    case 'NewExpression':
+      if (containsJSXExpr(expr.callee)) return true
+      return expr.arguments.some(a => containsJSXExpr(a))
+    case 'TemplateLiteral':
+      return expr.expressions.some(item => containsJSXExpr(item))
+    case 'TaggedTemplateExpression':
+      return containsJSXExpr(expr.tag) || containsJSXExpr(expr.quasi)
+    case 'SequenceExpression':
+      return expr.expressions.some(item => containsJSXExpr(item))
+    case 'ImportExpression':
+      return containsJSXExpr(expr.source) || (!!expr.options && containsJSXExpr(expr.options))
     case 'ArrowFunction':
       if (expr.isExpression && !Array.isArray(expr.body)) {
         return containsJSXExpr(expr.body)
@@ -840,6 +867,8 @@ function containsJSXExpr(expr: Expression | null | undefined): boolean {
       )
     case 'SpreadElement':
       return containsJSXExpr(expr.argument)
+    case 'YieldExpression':
+      return expr.argument ? containsJSXExpr(expr.argument) : false
     default:
       return false
   }
@@ -5332,15 +5361,30 @@ function instructionToStatement(
     const isMemoReturningCall = isAccessorReturningCall
     const canLazyMemoizeDerived = expressionIsLazyMemoSafe(instr.value, ctx)
     const needsReactiveClassMemo = classExpressionNeedsReactiveMemo(instr, ctx)
+    const derivedValueContainsJSX = containsJSXExpr(instr.value)
     // fix: Check if variable will be mutated (assigned to later without declaration)
     const needsMutable = ctx.mutatedVars?.has(baseName) ?? false
-    const lowerAssignedValue = (forceAssigned = false) => {
+    const lowerWithoutRenderMemo = <T>(fn: () => T): T => {
+      const prevNoMemo = ctx.noMemo
+      const prevDynamicHookSlotDepth = ctx.dynamicHookSlotDepth ?? 0
+      ctx.noMemo = true
+      ctx.dynamicHookSlotDepth = prevDynamicHookSlotDepth + 1
+      try {
+        return fn()
+      } finally {
+        ctx.noMemo = prevNoMemo
+        ctx.dynamicHookSlotDepth = prevDynamicHookSlotDepth
+      }
+    }
+    const lowerAssignedValue = (forceAssigned = false, noRenderMemo = false) => {
       const prevObjectLiteralPath = ctx.objectLiteralPath
       if (instr.value.kind === 'ObjectExpression') {
         ctx.objectLiteralPath = [baseName]
       }
       try {
-        return lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
+        const lower = () =>
+          lowerExpressionWithDeSSA(instr.value, ctx, forceAssigned || isFunctionValue)
+        return noRenderMemo ? lowerWithoutRenderMemo(lower) : lower()
       } finally {
         ctx.objectLiteralPath = prevObjectLiteralPath
       }
@@ -5350,7 +5394,8 @@ function instructionToStatement(
       !needsAsyncContext &&
       !isMemoReturningCall &&
       !canLazyMemoizeDerived &&
-      !needsReactiveClassMemo
+      !needsReactiveClassMemo &&
+      !derivedValueContainsJSX
     const lowerEagerDerivedValue = (): BabelCore.types.Expression => {
       ctx.memoVars?.add(baseName)
       const valueName = reserveFunctionLocalName(ctx, `__eager_${baseName}`)
@@ -5392,14 +5437,17 @@ function instructionToStatement(
     } => {
       const snapshots = createDerivedSnapshotPlan()
       if (snapshots.length === 0) {
-        return { expr: lowerAssignedValue(true), snapshots }
+        return { expr: lowerAssignedValue(true, derivedValueContainsJSX), snapshots }
       }
       const replacements = new Map(
         snapshots.map(snapshot => [snapshot.sourceName, snapshot.paramName]),
       )
       const snapshotExpr = replaceMutableSnapshotIdentifiers(instr.value, replacements)
+      const lowerSnapshotExpr = () => lowerExpressionWithDeSSA(snapshotExpr, ctx, true)
       return {
-        expr: lowerExpressionWithDeSSA(snapshotExpr, ctx, true),
+        expr: derivedValueContainsJSX
+          ? lowerWithoutRenderMemo(lowerSnapshotExpr)
+          : lowerSnapshotExpr(),
         snapshots,
       }
     }
@@ -5449,6 +5497,7 @@ function instructionToStatement(
       needsAsyncContext
         ? expr
         : wrapDerivedWithSnapshots(t.arrowFunctionExpression([], expr), snapshots)
+    const shouldUseNoMemoDerivedValue = ctx.noMemo || (inRegionMemo && derivedValueContainsJSX)
     const buildHoistedInitializer = (): BabelCore.types.Expression => {
       if (isStateCall) {
         ctx.currentAssignmentName = baseName
@@ -5470,7 +5519,7 @@ function instructionToStatement(
         }
         const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
         trackDerivedMemoVar()
-        if (ctx.noMemo) {
+        if (shouldUseNoMemoDerivedValue) {
           return buildNoMemoDerivedValue(derivedExpr, snapshots)
         }
         return buildDerivedValue(derivedExpr, snapshots)
@@ -5556,7 +5605,7 @@ function instructionToStatement(
           const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
           // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
           trackDerivedMemoVar()
-          if (ctx.noMemo) {
+          if (shouldUseNoMemoDerivedValue) {
             return t.variableDeclaration(normalizedDecl, [
               t.variableDeclarator(
                 t.identifier(baseName),
@@ -5596,7 +5645,7 @@ function instructionToStatement(
         const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
         // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
         trackDerivedMemoVar()
-        if (ctx.noMemo) {
+        if (shouldUseNoMemoDerivedValue) {
           return t.variableDeclaration(normalizedDecl, [
             t.variableDeclarator(
               t.identifier(baseName),
@@ -5659,7 +5708,7 @@ function instructionToStatement(
 
       const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
       trackDerivedMemoVar()
-      if (ctx.noMemo) {
+      if (shouldUseNoMemoDerivedValue) {
         return t.expressionStatement(
           t.assignmentExpression(
             '=',
@@ -5742,7 +5791,7 @@ function instructionToStatement(
         const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
         // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
         trackDerivedMemoVar()
-        if (ctx.noMemo) {
+        if (shouldUseNoMemoDerivedValue) {
           return t.variableDeclaration('const', [
             t.variableDeclarator(
               t.identifier(baseName),
@@ -5782,7 +5831,7 @@ function instructionToStatement(
       const { expr: derivedExpr, snapshots } = lowerDerivedAssignedValue()
       // Track as memo only for accessor-returning calls - reactive objects shouldn't be treated as accessors
       trackDerivedMemoVar()
-      if (ctx.noMemo) {
+      if (shouldUseNoMemoDerivedValue) {
         return t.variableDeclaration('const', [
           t.variableDeclarator(
             t.identifier(baseName),

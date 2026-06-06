@@ -719,7 +719,7 @@ describe('createFictPlugin (HIR)', () => {
         export default createMemo(() => <div />)
       `)
 
-      expect(output).toContain('template("<div></div>")')
+      expect(output).toContain('type: "div"')
       expect(output).not.toContain('=> <div')
     })
 

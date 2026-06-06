@@ -1252,6 +1252,62 @@ describe('tracked reads/writes in HIR codegen', () => {
     expect(output).not.toContain('new (C())()')
   })
 
+  it.each([
+    {
+      name: 'sequence',
+      initializer: '(0, <div>{count}</div>)',
+      result: 'node',
+    },
+    {
+      name: 'tagged template',
+      setup: 'function tag(_strings: TemplateStringsArray, value: unknown) { return value }',
+      initializer: 'tag`${<div>{count}</div>}`',
+      result: 'node',
+    },
+    {
+      name: 'call argument',
+      setup: 'const wrap = (value: unknown) => value',
+      initializer: 'wrap(<div>{count}</div>)',
+      result: 'node',
+    },
+    {
+      name: 'conditional',
+      initializer: 'count ? <div>{count}</div> : <span>empty</span>',
+      result: 'node',
+    },
+    {
+      name: 'logical',
+      initializer: 'count && <div>{count}</div>',
+      result: 'node',
+    },
+    {
+      name: 'array',
+      initializer: '[<div>{count}</div>]',
+      result: 'node[0]',
+    },
+    {
+      name: 'object',
+      initializer: '({ child: <div>{count}</div> })',
+      result: 'node.child',
+    },
+  ])('lowers hidden JSX in derived $name initializers without nested render hooks', testCase => {
+    const output = transform(`
+      import { $state } from 'fict'
+
+      export function App() {
+        const count = $state(1)
+        ${testCase.setup ?? ''}
+        const node = ${testCase.initializer}
+        return ${testCase.result}
+      }
+    `)
+
+    expect(output).toContain('type: "div"')
+    expect(output).not.toContain('template("<')
+    expect(output).not.toContain('(__eager_node')
+    expect(output.match(/__fictUseMemo\(__fictCtx/g)?.length ?? 0).toBe(1)
+  })
+
   it('preserves meta-property identifiers from reactive overrides', () => {
     const output = transform(`
       import { $state } from 'fict'
