@@ -183,6 +183,103 @@ describe('resource', () => {
     expect(abortSpy).toHaveBeenCalled()
   })
 
+  it('does not let stale abort rejection clear the newest controller', async () => {
+    const abortSpy = vi.fn()
+    const rejecters: Array<(err: unknown) => void> = []
+    const fetcher = vi.fn(({ signal }) => {
+      signal.addEventListener('abort', abortSpy)
+      return new Promise<string>((_, reject) => {
+        rejecters.push(reject)
+      })
+    })
+    const r = resource<string, void>({ fetch: fetcher, key: 'k' })
+    let result: any
+
+    createRoot(() => {
+      result = r.read(undefined)
+    })
+
+    expect(fetcher).toHaveBeenCalledTimes(1)
+
+    result.refresh()
+    await tick()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(abortSpy).toHaveBeenCalledTimes(1)
+
+    rejecters[0]?.(new DOMException('aborted later', 'AbortError'))
+    await tick()
+
+    result.refresh()
+    await tick()
+
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(abortSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not let stale success clear the newest controller', async () => {
+    const abortSpy = vi.fn()
+    const resolvers: Array<(value: string) => void> = []
+    const fetcher = vi.fn(({ signal }) => {
+      signal.addEventListener('abort', abortSpy)
+      return new Promise<string>(resolve => {
+        resolvers.push(resolve)
+      })
+    })
+    const r = resource<string, void>({ fetch: fetcher, key: 'k' })
+    let result: any
+
+    createRoot(() => {
+      result = r.read(undefined)
+    })
+
+    result.refresh()
+    await tick()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(abortSpy).toHaveBeenCalledTimes(1)
+
+    resolvers[0]?.('stale')
+    await tick()
+
+    result.refresh()
+    await tick()
+
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(abortSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('preserves the newest controller after stale args-change completion', async () => {
+    const abortSpy = vi.fn()
+    const resolvers: Array<(value: string) => void> = []
+    const fetcher = vi.fn(({ signal }, key: string) => {
+      signal.addEventListener('abort', abortSpy)
+      return new Promise<string>(resolve => {
+        resolvers.push(value => resolve(`${key}:${value}`))
+      })
+    })
+    const r = resource<string, string>({ fetch: fetcher, key: 'static' })
+    const arg = createSignal('a')
+    let result: any
+
+    createRoot(() => {
+      result = r.read(arg)
+    })
+
+    arg('b')
+    await tick()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+    expect(abortSpy).toHaveBeenCalledTimes(1)
+
+    resolvers[0]?.('stale')
+    await tick()
+
+    arg('c')
+    await tick()
+
+    expect(fetcher).toHaveBeenCalledTimes(3)
+    expect(abortSpy).toHaveBeenCalledTimes(2)
+    expect(result.loading).toBe(true)
+  })
+
   it('supports suspense fallback while fetching', async () => {
     vi.useRealTimers()
     const fetcher = vi.fn(() => new Promise(resolve => setTimeout(() => resolve('done'), 0)))

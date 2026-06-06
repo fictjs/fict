@@ -375,9 +375,12 @@ export function resource<T, Args = void>(
         }
       })
       .finally(() => {
+        if (entry.generation !== currentGen || entry.inFlight !== fetchPromise) return
         entry.inFlight = undefined
         entry.inFlightArgs = undefined
-        entry.controller = undefined
+        if (entry.controller === controller) {
+          entry.controller = undefined
+        }
       })
 
     entry.inFlight = fetchPromise
