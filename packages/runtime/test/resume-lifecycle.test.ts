@@ -69,6 +69,33 @@ describe('SSR lifecycle state cleanup', () => {
     expect(Object.prototype.hasOwnProperty.call(App, '__fictMeta')).toBe(false)
   })
 
+  it('keeps component metadata out of function reflection', () => {
+    function App() {}
+    const meta = { id: 'App@module', resume: '/module.js#__fict_r0' }
+
+    __fictSetComponentMeta(App, meta)
+
+    const enumerableKeys: string[] = []
+    for (const key in App) {
+      enumerableKeys.push(key)
+    }
+
+    expect(__fictGetComponentMeta(App)).toBe(meta)
+    expect(Object.keys(App)).toEqual([])
+    expect({ ...(App as unknown as Record<string, unknown>) }).toEqual({})
+    expect(enumerableKeys).toEqual([])
+    expect(Object.getOwnPropertyDescriptor(App, '__fictMeta')).toBeUndefined()
+  })
+
+  it('reads legacy component metadata properties', () => {
+    function App() {}
+    const meta = { id: 'legacy@module', resume: '/legacy.js#__fict_r0' }
+
+    ;(App as { __fictMeta?: typeof meta }).__fictMeta = meta
+
+    expect(__fictGetComponentMeta(App)).toBe(meta)
+  })
+
   it('restores cross-slot references with shared refs', () => {
     const seen = new Map<object, string>()
     const shared = { value: 1 }

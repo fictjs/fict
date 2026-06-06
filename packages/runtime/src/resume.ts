@@ -305,11 +305,6 @@ function isComponentMetaTarget(value: unknown): value is object {
 export function __fictSetComponentMeta(component: unknown, meta: ComponentMeta): void {
   if (!isComponentMetaTarget(component)) return
   componentMetaRegistry.set(component, meta)
-  try {
-    ;(component as { __fictMeta?: ComponentMeta }).__fictMeta = meta
-  } catch {
-    // Non-extensible user functions cannot accept compiler metadata properties.
-  }
 }
 
 export function __fictGetComponentMeta(component: unknown): ComponentMeta | undefined {
